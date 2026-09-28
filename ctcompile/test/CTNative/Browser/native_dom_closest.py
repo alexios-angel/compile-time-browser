@@ -4,7 +4,7 @@
 import re
 
 from CTNative.Browser import native_dom as dom
-from CTNative.harness import find_compilers, run
+from CTNative.harness import build_and_run, forge_module, run
 from CTNative.HostContract.contract import fingerprint
 from Target.Cpp.harness import FLAGS
 
@@ -145,60 +145,61 @@ REFUSALS = {
 
 def main():
     args = dom.parse_args(__doc__)
-    compilers = find_compilers()
-    compilers[1] = args.clang
+    compilers = args.compilers
     includes, libraries = dom.link_options(args, selectors=True)
     ir, contract = dom.prepare(args, "closest", SOURCE, 2)
     executions = 0
-    for owned in (False, True):
-        manifest = dict(
-            contract, provider="ctbrowser-dom-session-v1" if owned else "ctbrowser-dom-v1"
-        )
-        for optimize in (False, True):
-            name = f"closest-{owned}-{optimize}"
-            native = dom.lower(args, ir, manifest, name, optimize=optimize)
-            if (
-                dom.FUNCTION.search(native.read_text())
-                or len(dom.NATIVE.findall(native.read_text())) != 1
+    for owned, optimize, manifest in dom.variants(contract):
+        name = f"closest-{owned}-{optimize}"
+        native = dom.lower(args, ir, manifest, name, optimize=optimize)
+        if (
+            dom.FUNCTION.search(native.read_text())
+            or len(dom.NATIVE.findall(native.read_text())) != 1
+        ):
+            raise RuntimeError("closest did not lower the complete entry")
+        entry = dom.NATIVE.findall(native.read_text())[0]
+        deduced = args.work / f"{name}.deduced.mlir"
+        run([args.opt, str(native), "--ctnative-print-deduced", "-o", str(deduced)])
+        for mode, module in (("explicit", native), ("deduced", deduced)):
+            cpp = run([args.translate, "--mlir-to-cpp", str(module)]).stdout
+            if dom.VM.search(cpp) or "nullable_scalar" in cpp:
+                raise RuntimeError("closest introduced a VM or scalar value carrier")
+            for call in (
+                "ctnative::Element.prototype.closest.call(",
+                "ctnative::Element.prototype.matches.call(",
+                "ctnative::toggle_class(",
             ):
-                raise RuntimeError("closest did not lower the complete entry")
-            entry = dom.NATIVE.findall(native.read_text())[0]
-            deduced = args.work / f"{name}.deduced.mlir"
-            run([args.opt, str(native), "--ctnative-print-deduced", "-o", str(deduced)])
-            for mode, module in (("explicit", native), ("deduced", deduced)):
-                cpp = run([args.translate, "--mlir-to-cpp", str(module)]).stdout
-                if dom.VM.search(cpp) or "nullable_scalar" in cpp:
-                    raise RuntimeError("closest introduced a VM or scalar value carrier")
-                for call in (
-                    "ctnative::Element.prototype.closest.call(",
-                    "ctnative::Element.prototype.matches.call(",
-                    "ctnative::toggle_class(",
-                ):
-                    if call not in cpp:
-                        raise RuntimeError("closest bypassed the public browser helpers")
-                setup = OWNED if owned else BORROWED
-                if owned:
-                    owner = re.findall(r"class (\w+_session) \{", cpp)
-                    if len(owner) != 1:
-                        raise RuntimeError("closest lost its document owner")
-                    setup = setup.replace("@OWNER@", owner[0])
-                client = (
-                    CLIENT.replace("@SETUP@", setup)
-                    .replace("@VALIDATION@", DOMAIN_CHECK if owned else STYLE_CHECK)
-                    .replace("@ENTRY@", entry)
+                if call not in cpp:
+                    raise RuntimeError("closest bypassed the public browser helpers")
+            setup = OWNED if owned else BORROWED
+            if owned:
+                owner = re.findall(r"class (\w+_session) \{", cpp)
+                if len(owner) != 1:
+                    raise RuntimeError("closest lost its document owner")
+                setup = setup.replace("@OWNER@", owner[0])
+            client = (
+                CLIENT.replace("@SETUP@", setup)
+                .replace("@VALIDATION@", DOMAIN_CHECK if owned else STYLE_CHECK)
+                .replace("@ENTRY@", entry)
+            )
+            path = args.work / f"{name}.{mode}.cpp"
+            path.write_text(cpp + client)
+            flags = [*FLAGS, *includes]
+            for index, compiler in enumerate(compilers):
+                binary = path.with_suffix(f".{index}")
+                result = build_and_run(
+                    compiler,
+                    path,
+                    binary,
+                    flags=flags,
+                    libraries=libraries,
+                    nm=args.nm,
+                    vm=dom.VM,
+                    clean=True,
                 )
-                path = args.work / f"{name}.{mode}.cpp"
-                path.write_text(cpp + client)
-                for index, compiler in enumerate(compilers):
-                    binary = path.with_suffix(f".{index}")
-                    compiled = run(
-                        [compiler, *FLAGS, *includes, str(path), *libraries, "-o", str(binary)]
-                    )
-                    if compiled.stderr or dom.VM.search(run([args.nm, "-C", str(binary)]).stdout):
-                        raise RuntimeError("closest did not compile cleanly without Script/AOT")
-                    if run([str(binary)]).stdout != "guarded closest passed\n":
-                        raise RuntimeError("closest client did not complete")
-                    executions += 1
+                if result.stdout != "guarded closest passed\n":
+                    raise RuntimeError("closest client did not complete")
+                executions += 1
     for name, body in REFUSALS.items():
         source = f"function refused(first, second) {{ {body} }}\n"
         refused, manifest = dom.prepare(args, name, source, 2)
@@ -217,16 +218,7 @@ def main():
     forged, manifest = dom.prepare(
         args, "forged", "function bad(first, second) { " + REFUSALS["absent-arm"] + " }", 2
     )
-    text, count = re.subn(
-        r"\bmodule( attributes)? \{",
-        lambda match: "module attributes {ctnative.dom_nonnull = true"
-        + ("," if match.group(1) else "} {"),
-        forged.read_text(),
-        count=1,
-    )
-    if count != 1:
-        raise RuntimeError("forged-proof control did not inject its attribute")
-    forged.write_text(text)
+    forged.write_text(forge_module(forged.read_text(), "ctnative.dom_nonnull = true"))
     manifest["module_sha256"] = fingerprint(args.opt, forged)
     dom.lower(args, forged, manifest, "forged-proof", success=False)
     print(

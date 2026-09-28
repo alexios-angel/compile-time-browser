@@ -24,21 +24,6 @@ void checkNestedMapResults(mlir::MLIRContext & context, const std::string & shar
                       "    %putResult = ctjs.call %putter(%owned, %actual)\n"
                       "    %outerPutter = ctjs.get_property %owned[%putKey]\n"
                       "    %outerResult = ctjs.call %outerPutter(%owned, %putResult)");
-    const auto requested = [](mlir::ModuleOp module) {
-        auto contract = contractFor(module);
-        contract.initialIntrinsics = {"Map"};
-        return contract;
-    };
-    const auto withheld = [](mlir::ModuleOp module, const HostContractAnalysis & query) {
-        bool empty = query.callables().empty();
-        module.walk([&](mlir::Operation * operation) {
-            empty &= !query.callable(operation);
-            if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
-                empty &= !query.property(read);
-            }
-        });
-        return empty;
-    };
     for (const bool prepared : {false, true}) {
         auto program = source;
         if (prepared) {
@@ -138,10 +123,9 @@ void checkNestedMapResults(mlir::MLIRContext & context, const std::string & shar
                                  unsigned count = 3, unsigned mask = Alternatives::String,
                                  unsigned dependencies = 1) {
             ++rows;
-            auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-            check(static_cast<bool>(module), "source/prepared nested Map fixture parses");
+            auto module = parsed(context, text, "source/prepared nested Map fixture parses");
             if (!module) { return; }
-            const auto contract = requested(*module);
+            const auto contract = mapContractFor(*module);
             HostContractAnalysis query(*module, contract);
             check(query.proved() == expected && !query.exhausted() &&
                       (expected || withheld(*module, query)),
@@ -209,10 +193,9 @@ void checkNestedMapResults(mlir::MLIRContext & context, const std::string & shar
         for (const auto & [text, label, count, mask] :
              {std::tuple{program, "String", 3u, unsigned(Alternatives::String)},
               {nullBefore, "nullable", 4u, nullable}}) {
-            auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-            check(static_cast<bool>(module), "nested result budget fixture parses");
+            auto module = parsed(context, text, "nested result budget fixture parses");
             if (!module) { continue; }
-            auto contract = requested(*module);
+            auto contract = mapContractFor(*module);
             HostContractAnalysis complete(*module, contract);
             const unsigned completion = complete.steps();
             check(complete.proved() && completion < 15000,
@@ -237,7 +220,7 @@ void checkNestedMapResults(mlir::MLIRContext & context, const std::string & shar
                 operation->setAttr("ctnative.map_write_type", builder.getStringAttr("string"));
                 operation->setAttr("ctnative.map_present", builder.getBoolAttr(true));
             });
-            contract = requested(*module);
+            contract = mapContractFor(*module);
             check(HostContractAnalysis(*module, contract).proved(),
                   "forged reports leave independent nested source proofs reproducible");
             const auto refusal = [&]() {
@@ -245,7 +228,7 @@ void checkNestedMapResults(mlir::MLIRContext & context, const std::string & shar
                 check(!stale.proved() && stale.reason().contains("fingerprint") &&
                           withheld(*module, stale),
                       "a changed dependency invalidates the original whole-module fingerprint");
-                HostContractAnalysis fresh(*module, requested(*module));
+                HostContractAnalysis fresh(*module, mapContractFor(*module));
                 check(!fresh.proved() && !fresh.exhausted() && withheld(*module, fresh),
                       "fresh fingerprints and forged results cannot repair incomplete source "
                       "evidence");
@@ -273,7 +256,7 @@ void checkNestedMapResults(mlir::MLIRContext & context, const std::string & shar
             const auto nestedContract = contract;
             const auto nestedActual = outer->getOperand(argument);
             outer->setOperand(argument, inner->getOperand(argument));
-            contract = requested(*module);
+            contract = mapContractFor(*module);
             HostContractAnalysis independent(*module, contract);
             check(independent.proved(), "two independent String calls retain complete host proof");
             if (independent.proved()) { edges(*module, independent, count, mask, 0); }

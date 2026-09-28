@@ -63,9 +63,8 @@ bool Walk::walk(mlir::Block & block, unsigned depth) {
             if (load.getName() != "Map" || !owner.globals["Map"].empty()) { return false; }
             constructors.insert(load);
         } else if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(operation)) {
-            auto constructor = made.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
-            if (!constructor || !constructors.contains(constructor) ||
-                made.getNewTarget() != made.getCallee() || !made.getArgs().empty() ||
+            if (!plainMapConstruction(made) ||
+                !constructors.contains(made.getCallee().getDefiningOp()) ||
                 !owner.dominance.dominates(made.getCallee(), made)) {
                 return false;
             }
@@ -198,14 +197,8 @@ bool Walk::walk(mlir::Block & block, unsigned depth) {
                 }
                 continue;
             }
-            if (!chargeStates(mapStates)) { return false; }
-            for (const auto & value : alternatives) {
-                (void)value;
-                if (!owner.step()) { return false; }
-            }
-            for (const auto & field : fields) {
-                (void)field;
-                if (!owner.step()) { return false; }
+            if (!chargeStates(mapStates) || !owner.spend(alternatives.size() + fields.size())) {
+                return false;
             }
             const auto incoming = mapStates;
             const auto incomingFields = fields;
@@ -217,14 +210,9 @@ bool Walk::walk(mlir::Block & block, unsigned depth) {
             auto thenStates = std::move(mapStates);
             auto thenFields = std::move(fields);
             auto thenAlternatives = std::move(alternatives);
-            if (!chargeStates(incoming)) { return false; }
-            for (const auto & value : incomingAlternatives) {
-                (void)value;
-                if (!owner.step()) { return false; }
-            }
-            for (const auto & field : incomingFields) {
-                (void)field;
-                if (!owner.step()) { return false; }
+            if (!chargeStates(incoming) ||
+                !owner.spend(incomingAlternatives.size() + incomingFields.size())) {
+                return false;
             }
             // Resolve then-arm cardinality while its scalar facts are live.
             alternatives = thenAlternatives;
@@ -380,9 +368,7 @@ bool Walk::walk(mlir::Block & block, unsigned depth) {
                         read.getResult(),
                         PrimitiveAlternatives::forTag(mlir::TypeID::get<ctjs::NumberAttr>()));
                 } else {
-                    auto literal = read.getKey().getDefiningOp<ctjs::ConstantOp>();
-                    auto number = literal ? llvm::dyn_cast<ctjs::NumberAttr>(literal.getValue())
-                                          : ctjs::NumberAttr{};
+                    auto number = ctjs::constantAttr<ctjs::NumberAttr>(read.getKey());
                     if (!number || !std::isfinite(number.getDouble()) || number.getDouble() < 0 ||
                         number.getDouble() >= 4294967295.0 ||
                         std::floor(number.getDouble()) != number.getDouble()) {
@@ -422,8 +408,7 @@ bool Walk::walk(mlir::Block & block, unsigned depth) {
                 continue;
             }
             if (!maps.contains(read.getObject()) ||
-                (key != "size" && key != "set" && key != "get" && key != "has" && key != "delete" &&
-                 key != "clear" && key != "keys")) {
+                (key != "size" && key != "keys" && !mapMethodArity(key))) {
                 return false;
             }
             if (key == "keys" && !prepareSnapshots()) { return false; }
@@ -453,10 +438,8 @@ bool Walk::walk(mlir::Block & block, unsigned depth) {
                 return false;
             }
             const auto key = ctjs::constantKey(read.getKey());
-            static const llvm::StringMap<unsigned> arities{{"set", 2}, {"clear", 0}, {"keys", 0}};
-            const auto method = key.size() <= 5 ? arities.find(key) : arities.end();
-            const unsigned arity = method != arities.end() ? method->second : 1U;
-            if (key == "size" || invoke.getArgs().size() != arity) { return false; }
+            const auto arity = key == "keys" ? std::optional(0u) : mapMethodArity(key);
+            if (invoke.getArgs().size() != arity) { return false; }
             const auto origin = maps.lookup(invoke.getReceiver());
             if (!origin.first) { return false; }
             if ((key == "set" || key == "delete" || key == "clear") && !invalidateAliases(origin)) {
@@ -495,18 +478,13 @@ bool Walk::walk(mlir::Block & block, unsigned depth) {
             } else if (key == "clear") {
                 // Saved SSA reads retain their old payload or object; only
                 // the mutable Map state and live has observations change.
+                if (!owner.spend(state.entries.size() + state.observations.size() +
+                                 state.possibleKeys.size())) {
+                    return false;
+                }
                 for (auto & entry : state.entries) {
-                    if (!owner.step()) { return false; }
                     entry.present = false;
                     entry.absent = true;
-                }
-                for (auto * observed : state.observations) {
-                    (void)observed;
-                    if (!owner.step()) { return false; }
-                }
-                for (mlir::Value written : state.possibleKeys) {
-                    (void)written;
-                    if (!owner.step()) { return false; }
                 }
                 state.observations.clear();
                 state.possibleKeys.clear();

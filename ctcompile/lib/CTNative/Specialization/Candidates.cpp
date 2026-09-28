@@ -24,18 +24,13 @@ bool recursive(ctjs::FuncOp function) {
 }
 
 bool primitive(mlir::Attribute attr) {
-    if (auto text = llvm::dyn_cast<ctjs::StringAttr>(attr)) {
-        return text.getValue().size() <= 65536;
-    }
-    return llvm::isa<ctjs::NumberAttr, ctjs::BooleanAttr, ctjs::UndefinedAttr, ctjs::NullAttr>(
-        attr);
+    auto text = llvm::dyn_cast<ctjs::StringAttr>(attr);
+    return text ? text.getValue().size() <= 65536 : ctjs::isPrimitiveAttr(attr);
 }
 } // namespace
 
 std::string refusal(ctjs::FuncOp function, mlir::ModuleOp module) {
-    if (function.getBody().empty() || function->getParentOp() != module ||
-        mlir::SymbolTable::getSymbolVisibility(function) !=
-            mlir::SymbolTable::Visibility::Private) {
+    if (function.getBody().empty() || function->getParentOp() != module || !function.isPrivate()) {
         return "requires a private module function with a visible body";
     }
     auto & entry = function.getBody().front();
@@ -43,18 +38,10 @@ std::string refusal(ctjs::FuncOp function, mlir::ModuleOp module) {
         function.getUpvalueCount() != 0) {
         return "requires a capture-free function with a single entry";
     }
-    for (unsigned i = 0; i < 3; ++i) {
-        for (mlir::Operation * use : entry.getArgument(i).getUsers()) {
-            if (!llvm::isa<ctjs::RootOp>(use)) { return "function observes implicit call state"; }
-        }
+    if (!implicitArgumentsRooted(entry)) { return "function observes implicit call state"; }
+    if (usesEnvironment(function)) {
+        return "closure or cell environments need separate specialization";
     }
-    bool createsEnvironment = false;
-    function.getBody().walk([&](mlir::Operation * op) {
-        createsEnvironment |=
-            llvm::isa<ctjs::CreateClosureOp, ctjs::CreateCellOp, ctjs::LoadUpvalueOp,
-                      ctjs::StoreUpvalueOp, ctjs::CellGetOp, ctjs::CellSetOp>(op);
-    });
-    if (createsEnvironment) { return "closure or cell environments need separate specialization"; }
     if (recursive(function)) { return "recursive call graph remains generic"; }
     return closedCallableProblem(function, module);
 }

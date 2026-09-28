@@ -3,33 +3,22 @@
 
 import argparse
 import json
-import os
 from pathlib import Path
 import re
 import shutil
-import subprocess
 
-from CTNative.harness import CORE_INCLUDE, RUNTIME_INCLUDE, find_compilers
+from CTNative.harness import (
+    CLEANUP,
+    CONSTANT_GLOBAL_NODE,
+    VM_SYMBOL as VM,
+    find_compilers,
+    run_sanitized,
+    threshold,
+)
 from CTNative.Exports import boundary
+from Target.Cpp.harness import FLAGS
 
 host = boundary.host
-VM = re.compile(r"ctbrowser::(?:script|aot)::|\bct_aot_")
-FLAGS = [
-    "-std=c++23",
-    RUNTIME_INCLUDE,
-    CORE_INCLUDE,
-    "-O2",
-    "-Wall",
-    "-Wextra",
-    "-Werror",
-    "-Wconversion",
-    "-pedantic",
-    "-ffp-contract=off",
-]
-CLEANUP = (
-    "emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,"
-    "canonicalize,ctnative-prune-dead-stores,canonicalize)"
-)
 
 
 def contract(args, ir, name, binding="host", *, absent=(), undefined=()):
@@ -66,6 +55,19 @@ def refused(args, ir, name, config, *, options="", reason=None):
         if len(re.findall(pattern, ir.read_text(), re.M)) != len(re.findall(pattern, text, re.M)):
             raise RuntimeError(f"{name}: failed ownership proof changed ctjs.{op}")
     return output
+
+
+def check_lifetime(args, name, mode, compiler, text, expected, label="lifetime"):
+    """Build the lifetime harness `text` under ASan/UBSan; it must print `expected` twice."""
+    source = args.work / f"{name}.{mode}.lifetime.cpp"
+    source.write_text(text)
+    binary = (args.work / f"{name}.{mode}.sanitized").resolve()
+    result = run_sanitized(compiler, source, binary, FLAGS)
+    if result.returncode or result.stdout != expected * 2:
+        raise RuntimeError(
+            f"{name}/{mode}: {label} failure (exit {result.returncode})\n"
+            f"{result.stdout}{result.stderr}"
+        )
 
 
 def standalone(args, output, name, expected, compilers, nm):
@@ -109,54 +111,26 @@ int main() {
     return 0;
 }
 """
-            lifetime = args.work / f"{name}.{mode}.lifetime.cpp"
-            lifetime.write_text(changed)
-            binary = (args.work / f"{name}.{mode}.sanitized").resolve()
-            host.run(
-                [
-                    compilers[1],
-                    *FLAGS,
-                    "-O1",
-                    "-g",
-                    "-fno-omit-frame-pointer",
-                    "-fsanitize=address,undefined",
-                    "-fsanitize-address-use-after-scope",
-                    str(lifetime),
-                    "-o",
-                    str(binary),
-                ]
-            )
-            result = subprocess.run(
-                [str(binary)],
-                capture_output=True,
-                text=True,
-                timeout=60,
-                env=dict(
-                    os.environ,
-                    ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
-                    UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1",
-                ),
-            )
-            if result.returncode or result.stdout != expected * 2:
-                raise RuntimeError(
-                    f"{name}/{mode}: lifetime failure\n{result.stdout}{result.stderr}"
-                )
+            check_lifetime(args, name, mode, compilers[1], changed, expected)
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--translate", required=True)
-    parser.add_argument("--opt", required=True)
-    parser.add_argument("--node", required=True)
-    parser.add_argument("--reference", required=True)
+def setup(parser):
+    """Every Ownership driver's command line, both compilers, and nm with its VM control."""
+    for name in ("translate", "opt", "node", "reference"):
+        parser.add_argument("--" + name, required=True)
     parser.add_argument("--work", type=Path, required=True)
     args = parser.parse_args()
     args.work.mkdir(parents=True, exist_ok=True)
-    node, reference = args.node, args.reference
     compilers = find_compilers()
-    nm = shutil.which("nm")
-    if not all(compilers) or not nm or not VM.search(host.run([nm, "-C", str(reference)]).stdout):
-        raise RuntimeError("need both compilers and a working VM-symbol positive control")
+    nm = shutil.which("nm") or shutil.which("llvm-nm")
+    if not nm or not VM.search(host.run([nm, "-C", str(args.reference)]).stdout):
+        raise RuntimeError("need nm and a working VM-symbol positive control")
+    return args, compilers, nm
+
+
+def main():
+    args, compilers, nm = setup(argparse.ArgumentParser(description=__doc__))
+    node, reference = args.node, args.reference
     positives = {
         "ordinary": ("var host = {}; host.slot = 42; var trace = host.slot;", "host", 42),
         "legacy_store_marker": (
@@ -343,9 +317,7 @@ def main():
     if boundary.GLOBAL_ESCAPE not in reasons:
         raise RuntimeError("fixed undefined forgery supplied authority without a manifest")
 
-    low, high = 0, 100000
-    while high - low > 1:
-        budget = (low + high) // 2
+    def admitted(budget):
         candidate = lower(
             args,
             ir,
@@ -354,10 +326,10 @@ def main():
             options=f"host-max-steps={budget}",
             cleanup=False,
         )
-        if boundary.NATIVE.search(candidate.read_text()):
-            high = budget
-        else:
-            low = budget
+        return boundary.NATIVE.search(candidate.read_text())
+
+    high = threshold(admitted)
+    low = high - 1
     rollback = refused(
         args, ir, "fixed-undefined-rollback", config, options=f"host-max-steps={low}"
     )

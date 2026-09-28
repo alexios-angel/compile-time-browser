@@ -6,18 +6,14 @@ failure returns the original String. Normalization owns ctbrowser::json_value;
 typeof and guarded spreads are compared against Node and the VM.
 """
 
-import argparse
 import json
-import os
-from pathlib import Path
 import re
-import shutil
 from urllib.parse import quote_from_bytes
 
 from CTNative.Browser import native_dom as dom
 from CTNative.Browser import native_dom_numbers as numbers
 from CTNative.Browser import native_dom_strings as strings
-from CTNative.harness import find_compilers, run
+from CTNative.harness import build_and_run, run
 from Target.Cpp.harness import FLAGS
 
 BODY = "try { return JSON.parse(decodeURIComponent(text)); } catch (ignored) { return text; }"
@@ -445,16 +441,10 @@ REFUSALS = {
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    for name in ("translate", "opt", "clang", "node", "reference", "build", "include", "work"):
-        parser.add_argument("--" + name, type=Path, required=True)
-    parser.add_argument("--nm", default=shutil.which("nm"))
-    args = parser.parse_args()
-    args.work = args.work.resolve()
-    args.work.mkdir(parents=True, exist_ok=True)
+    args = dom.parse_args(__doc__, oracles=True)
     if not args.nm:
         raise RuntimeError("native DOM JSON gate requires nm")
-    vendor = Path(__file__).resolve().parents[4] / "ctbrowser/vendor/bootstrap/bootstrap.bundle.js"
+    vendor = dom.BOOTSTRAP
     if any(
         source not in vendor.read_text()
         for source in (
@@ -467,8 +457,7 @@ def main():
     ):
         raise RuntimeError("Bootstrap M/F/getDataAttribute/Config spread source pin changed")
     expected = check_oracles(args)
-    compilers = find_compilers()
-    compilers[1] = args.clang
+    compilers = args.compilers
     includes, libraries = dom.link_options(args)
     intrinsics = ["decodeURIComponent", "JSON", "Number"]
     source_intrinsics = {
@@ -496,7 +485,7 @@ def main():
     ]
     for optimize in (False, True):
         modules = []
-        for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+        for provider in dom.PROVIDERS:
             owned = "session" in provider
             for name, ir, contract in prepared:
                 label = f"{name}-{owned}-{optimize}"
@@ -550,40 +539,20 @@ def main():
                 + "\n".join(bodies)
                 + CLIENT.replace("@RUNS@", "\n".join(runs))
             )
+            flags = [*FLAGS, *includes]
             for index, compiler in enumerate(compilers):
                 binary = path.with_suffix(f".{index}")
-                run([compiler, *FLAGS, *includes, str(path), *libraries, "-o", str(binary)])
-                if dom.VM.search(run([args.nm, "-C", str(binary)]).stdout):
-                    raise RuntimeError("native JSON entries link Script/AOT")
-                if run([str(binary)]).stdout.splitlines() != expected * 2:
+                result = build_and_run(
+                    compiler, path, binary, flags=flags, libraries=libraries, nm=args.nm, vm=dom.VM
+                )
+                if result.stdout.splitlines() != expected * 2:
                     raise RuntimeError(
                         f"{path.name}/{index}: native JSON observations disagree with Node"
                     )
             if optimize and layout == "explicit":
                 sanitized = path.with_suffix(".sanitized")
-                run(
-                    [
-                        compilers[1],
-                        *FLAGS,
-                        "-O1",
-                        "-g",
-                        "-fno-omit-frame-pointer",
-                        "-fsanitize=address,undefined",
-                        "-fsanitize-address-use-after-scope",
-                        *includes,
-                        str(path),
-                        *libraries,
-                        "-o",
-                        str(sanitized),
-                    ]
-                )
-                result = run(
-                    [str(sanitized)],
-                    environment=dict(
-                        os.environ,
-                        ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
-                        UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1",
-                    ),
+                result = build_and_run(
+                    compilers[1], path, sanitized, flags=flags, libraries=libraries, sanitize=True
                 )
                 if result.stdout.splitlines() != expected * 2 or result.stderr:
                     raise RuntimeError("native JSON lifetime sanitizer check failed")
@@ -598,19 +567,15 @@ def main():
             1,
             entry_name="invalid",
         )
-        for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
-            for optimize in (False, True):
-                diagnostic = dom.lower(
-                    args,
-                    ir,
-                    dict(contract, provider=provider, initial_intrinsics=intrinsics),
-                    f"{name}-{provider}-{optimize}",
-                    optimize=optimize,
-                    success=False,
-                )
-                if "DOM" not in diagnostic:
-                    raise RuntimeError(f"{name}: missing JSON source refusal\n{diagnostic}")
-                refusals += 1
+        for provider in dom.PROVIDERS:
+            dom.refuse(
+                args,
+                ir,
+                dict(contract, provider=provider, initial_intrinsics=intrinsics),
+                f"{name}-{provider}",
+                "DOM",
+            )
+            refusals += 2
     premises = {
         "json_object": (
             None,
@@ -640,7 +605,7 @@ def main():
                 del premise["initial_intrinsics"]
             else:
                 premise["initial_intrinsics"] = names
-            for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+            for provider in dom.PROVIDERS:
                 for optimize in (False, True):
                     diagnostic = dom.lower(
                         args,

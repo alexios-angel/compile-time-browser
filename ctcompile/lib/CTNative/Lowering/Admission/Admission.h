@@ -38,8 +38,6 @@ struct admission {
     bool ownedGlobalOperation(mlir::Operation * op);
     bool ownedGlobalValue(mlir::Value value) const;
 
-    static bool isDeclarationClosure(mlir::Operation * o);
-
     static bool isDeclarationStore(mlir::Operation * o);
 
     static bool isLiftedClosure(mlir::Operation * o);

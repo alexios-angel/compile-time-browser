@@ -11,7 +11,7 @@ from CTNative.Browser import native_dom as dom
 from CTNative.Browser.native_dom_json import ATTRIBUTE_HELPERS, BOOTSTRAP_M
 from CTNative.Browser import native_dom_strings as strings
 from CTNative.HostContract import contract as host
-from CTNative.harness import find_compilers, run
+from CTNative.harness import build_and_run, find_compilers, run
 from CTNative.Lowering.Objects import class_initialization as classes
 from CTNative.Lowering.Objects.constructor_refusals import check_mutable_helper
 from Target.Cpp.harness import FLAGS

@@ -52,9 +52,8 @@ bool diagnosticArm(mlir::Block & block, llvm::function_ref<bool(mlir::Value)> ma
             return self(self, concat.getLhs(), depth + 1) && self(self, concat.getRhs(), depth + 1);
         }
         auto first = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
-        auto index = first ? first.getKey().getDefiningOp<ctjs::ConstantOp>() : ctjs::ConstantOp{};
         auto number =
-            index ? llvm::dyn_cast<ctjs::NumberAttr>(index.getValue()) : ctjs::NumberAttr{};
+            first ? ctjs::constantAttr<ctjs::NumberAttr>(first.getKey()) : ctjs::NumberAttr{};
         auto copy = first ? first.getObject().getDefiningOp<ctjs::CallOp>() : ctjs::CallOp{};
         if (!number || number.getDouble() != 0 || !copy || copy->getBlock() != &block ||
             copy.getArgs().size() != 1 || ++snapshots != 1) {
@@ -98,19 +97,11 @@ bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope, const HostCont
     // Overlapping DOM key lifetimes need alias partitions, not distinct SSA identities.
     auto & entry = scope.getBody().front();
     const auto entryPosition = [&](mlir::Operation * op) {
-        while (op->getBlock() != &entry && llvm::isa<mlir::scf::IfOp>(op->getParentOp())) {
-            if (!step()) { break; }
-            op = op->getParentOp();
-        }
-        return op;
+        return positionIn<mlir::scf::IfOp>(op, &entry);
     };
     const auto localMap = [&](mlir::Value value) {
         auto made = sourceValue(value).getDefiningOp<ctjs::ConstructOp>();
-        auto load =
-            made ? made.getCallee().getDefiningOp<ctjs::LoadGlobalOp>() : ctjs::LoadGlobalOp{};
-        return made && load && load.getName() == "Map" && made.getArgs().empty() &&
-                       made.getNewTarget() == made.getCallee() &&
-                       entryPosition(made)->getBlock() == &entry
+        return made && plainMapConstruction(made) && entryPosition(made)->getBlock() == &entry
                    ? made
                    : ctjs::ConstructOp{};
     };
@@ -145,11 +136,10 @@ bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope, const HostCont
         // Captures box caller locals too. Discharge these already-proved
         // reads before a selected branch can retire their cached operations.
         for (ctjs::CellGetOp read : cellReads) {
-            if (!step()) { return false; }
-            if (!llvm::is_contained(bindings, read.getCell())) { continue; }
-            for (mlir::Operation * user : read->getUsers()) {
-                (void)user;
-                if (!step()) { return false; }
+            if (!spend(1 + (llvm::is_contained(bindings, read.getCell())
+                                ? read.getResult().getNumUses()
+                                : 0))) {
+                return false;
             }
         }
         llvm::erase_if(cellReads, [&](ctjs::CellGetOp read) {
@@ -161,6 +151,14 @@ bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope, const HostCont
         });
         llvm::DenseSet<mlir::Operation *> operations;
         llvm::DenseSet<mlir::Operation *> conditional;
+        // Record `op` and its ancestors below the scope as conditional.
+        const auto enclose = [&](mlir::Operation * op) {
+            for (; op != scope; op = op->getParentOp()) {
+                if (!step()) { return false; }
+                conditional.insert(op);
+            }
+            return true;
+        };
         llvm::SmallVector<ctjs::GetPropertyOp> selections;
         for (mlir::OpOperand * use : sourceUses(map.getResult())) {
             if (!step()) { return false; }
@@ -170,11 +168,7 @@ bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope, const HostCont
             if (position->getBlock() != &entry || !map->isBeforeInBlock(position)) {
                 return refuse("class nested Map requires ordered entry operations");
             }
-            for (auto * parent = op->getParentOp(); parent != scope;
-                 parent = parent->getParentOp()) {
-                if (!step()) { return false; }
-                conditional.insert(parent);
-            }
+            if (!enclose(op->getParentOp())) { return false; }
             if (auto call = llvm::dyn_cast<ctjs::CallOp>(op);
                 call && use->getOperandNumber() == 1) {
                 auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
@@ -190,16 +184,14 @@ bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope, const HostCont
                 operations.insert(read);
                 continue;
             }
-            const unsigned arity = key == "set" ? 2u : key == "clear" ? 0u : 1u;
-            if (key != "set" && key != "get" && key != "has" && key != "delete" && key != "clear") {
-                return refuse("class nested Map has an unproved member");
-            }
+            const auto arity = mapMethodArity(key);
+            if (!arity) { return refuse("class nested Map has an unproved member"); }
             for (mlir::OpOperand & selected : read.getResult().getUses()) {
                 if (!step()) { return false; }
                 if (llvm::isa<ctjs::RootOp>(selected.getOwner())) { continue; }
                 auto call = llvm::dyn_cast<ctjs::CallOp>(selected.getOwner());
                 if (!call || selected.getOperandNumber() != 0 ||
-                    call.getReceiver() != read.getObject() || call.getArgs().size() != arity ||
+                    call.getReceiver() != read.getObject() || call.getArgs().size() != *arity ||
                     entryPosition(call)->getBlock() != &entry) {
                     return refuse("class nested Map method escapes its exact receiver call");
                 }
@@ -290,11 +282,7 @@ bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope, const HostCont
             if (ctjs::constantKey(read.getKey()) == "get") {
                 observations.push_back(read.getResult());
             }
-            for (auto * parent = read->getParentOp(); parent != scope;
-                 parent = parent->getParentOp()) {
-                if (!step()) { return mlir::WalkResult::interrupt(); }
-                conditional.insert(parent);
-            }
+            if (!enclose(read->getParentOp())) { return mlir::WalkResult::interrupt(); }
             return mlir::WalkResult::advance();
         });
         if (childBranches.wasInterrupted() || !reason.empty()) { return false; }
@@ -326,11 +314,7 @@ bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope, const HostCont
                     if (entryPosition(branch)->getBlock() != &entry) {
                         return refuse("class nested Map result requires ordered entry branches");
                     }
-                    for (auto * parent = branch.getOperation(); parent != scope;
-                         parent = parent->getParentOp()) {
-                        if (!step()) { return false; }
-                        conditional.insert(parent);
-                    }
+                    if (!enclose(branch)) { return false; }
                     llvm::append_range(observations, branch.getResults());
                 }
             }
@@ -383,9 +367,8 @@ bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope, const HostCont
                                  : llvm::dyn_cast<ctjs::GetPropertyOp>(nested);
                 if (read && mapCandidate(mapCandidate, read.getObject(), 0)) {
                     const auto key = ctjs::constantKey(read.getKey());
-                    const unsigned arity = key == "set" ? 2u : key == "clear" ? 0u : 1u;
-                    if ((key == "set" || key == "get" || key == "has" || key == "delete" ||
-                         key == "clear" || (!call && key == "size")) &&
+                    const auto arity = mapMethodArity(key);
+                    if ((arity || (!call && key == "size")) &&
                         (!call || (call.getReceiver() == read.getObject() &&
                                    call.getArgs().size() == arity))) {
                         return mlir::WalkResult::advance();
@@ -515,10 +498,8 @@ bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope, const HostCont
                         }
                         continue;
                     }
-                    const unsigned arity = action == "set" ? 2u : action == "clear" ? 0u : 1u;
-                    if (call.getReceiver() != read.getObject() || call.getArgs().size() != arity ||
-                        (action != "set" && action != "get" && action != "has" &&
-                         action != "delete" && action != "clear")) {
+                    const auto arity = mapMethodArity(action);
+                    if (call.getReceiver() != read.getObject() || call.getArgs().size() != arity) {
                         return refuse("class nested Map child has an unproved invocation");
                     }
                     if (action == "clear") {
@@ -561,20 +542,12 @@ bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope, const HostCont
                     continue;
                 }
                 auto origin = resolved(call.getArgs()[0]);
-                auto key = origin.getDefiningOp<ctjs::ConstantOp>();
-                auto text =
-                    key ? llvm::dyn_cast<ctjs::StringAttr>(key.getValue()) : ctjs::StringAttr{};
+                auto text = ctjs::constantAttr<ctjs::StringAttr>(origin);
                 std::pair<mlir::Attribute, mlir::Value> identity{text, {}};
                 if (!text) {
                     auto fresh = origin.getDefiningOp<ctjs::CreateObjectOp>();
                     auto input = llvm::dyn_cast<mlir::BlockArgument>(origin);
-                    const bool element =
-                        contract.provider == HostContract::Provider::ctbrowserDOMDataSession &&
-                        scope.getSymName() == contract.entry && input &&
-                        input.getOwner() == &entry &&
-                        input.getArgNumber() >= ctjs::implicit_arguments &&
-                        llvm::is_contained(contract.elementParameters,
-                                           input.getArgNumber() - ctjs::implicit_arguments);
+                    const bool element = declaredElementInput(contract, scope, input);
                     if ((!fresh || fresh->getBlock() != &entry) && !element) {
                         return refuse("class nested Map requires literal String, fresh object "
                                       "or exact DOM input keys");
@@ -671,54 +644,20 @@ bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope, const HostCont
         }
         // Charge rewriting before mutation; the enclosing pass discards its
         // private module if any later child/record/effect proof fails.
+        uint64_t cost = cells.size();
         for (mlir::Operation * op : operations) {
-            if (!step()) { return false; }
-            if (constants.contains(op) && (!step() || !step())) { return false; }
-            for (mlir::OpOperand & use : op->getResult(0).getUses()) {
-                (void)use;
-                if (!step()) { return false; }
-            }
+            cost += (constants.contains(op) ? 3u : 1u) + op->getResult(0).getNumUses();
         }
-        for (mlir::Operation * op : lookupTests) {
-            if (!step() || !step()) { return false; }
-            for (mlir::Operation * user : op->getUsers()) {
-                (void)user;
-                if (!step()) { return false; }
-            }
-        }
-        for (ctjs::CallOp read : missingReads) {
-            if (!step()) { return false; }
-            for (mlir::Operation * user : read->getUsers()) {
-                (void)user;
-                if (!step()) { return false; }
-            }
-        }
-        for (auto [cell, initial] : cells) {
-            (void)cell;
-            (void)initial;
-            if (!step()) { return false; }
-        }
+        for (mlir::Operation * op : lookupTests) { cost += 2 + op->getResult(0).getNumUses(); }
+        for (ctjs::CallOp read : missingReads) { cost += 1 + read.getResult().getNumUses(); }
         for (auto [branch, selected] : branches) {
             (void)selected;
             for (mlir::Value result : branch.getResults()) {
-                for (mlir::Operation * user : result.getUsers()) {
-                    (void)user;
-                    if (!step()) { return false; }
-                }
-                for (auto [cell, initial] : cells) {
-                    (void)cell;
-                    (void)initial;
-                    if (!step()) { return false; }
-                }
+                cost += result.getNumUses() + cells.size();
             }
         }
-        for (mlir::Value cell : bindings) {
-            for (mlir::Operation * user : cell.getUsers()) {
-                (void)user;
-                if (!step()) { return false; }
-            }
-        }
-        if (!reason.empty()) { return false; }
+        for (mlir::Value cell : bindings) { cost += cell.getNumUses(); }
+        if (!spend(cost) || !reason.empty()) { return false; }
         llvm::erase_if(selections, [&](ctjs::GetPropertyOp read) {
             return !visited.contains(read.getOperation());
         });
@@ -770,9 +709,7 @@ bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope, const HostCont
         // Missing lookup results may disappear only after every observer was
         // discharged. Present reads retain the existing record/lifetime proof.
         for (ctjs::CallOp read : missingReads) {
-            if (llvm::all_of(read->getUsers(), [](mlir::Operation * user) {
-                    return llvm::isa<ctjs::RootOp>(user);
-                })) {
+            if (rootedOnly(read)) {
                 mapOperations.erase(read);
                 eraseRooted(read);
             }
@@ -787,21 +724,12 @@ bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope, const HostCont
             eraseRooted(read);
         }
         // Fixed outer aliases are transport only; no captured observer remains.
-        for (mlir::Value cell : bindings) {
-            for (mlir::Operation * user : llvm::make_early_inc_range(cell.getUsers())) {
-                cellOperations.erase(user);
-                user->erase();
-            }
-            cellOperations.erase(cell.getDefiningOp());
-            cells.erase(cell);
-            cell.getDefiningOp()->erase();
-        }
+        for (mlir::Value cell : bindings) { retireCell(cell); }
         maps.erase(map.getResult());
         mapOperations.erase(map);
         auto load = map.getCallee().getDefiningOp();
         eraseRooted(map);
-        if (llvm::all_of(load->getUsers(),
-                         [](mlir::Operation * user) { return llvm::isa<ctjs::RootOp>(user); })) {
+        if (rootedOnly(load)) {
             mapOperations.erase(load);
             eraseRooted(load);
         }
@@ -821,10 +749,7 @@ bool classInitialization::normalizeCapturedMapHelpers(ctjs::FuncOp scope) {
     const auto expand = [&](ctjs::CreateClosureOp helper) {
         auto function = target(helper);
         if (!function || helper.getUpvalues().size() != 1 || function.getUpvalueCount() != 1 ||
-            !function.getBody().hasOneBlock() ||
-            (helper.getEnclosingIndicesAttr() &&
-             llvm::any_of(helper.getEnclosingIndicesAttr().asArrayRef(),
-                          [](int32_t index) { return index >= 0; }))) {
+            !function.getBody().hasOneBlock() || hasOuterCapture(helper)) {
             return true;
         }
         auto mapCell = helper.getUpvalues().front();
@@ -858,22 +783,15 @@ bool classInitialization::normalizeCapturedMapHelpers(ctjs::FuncOp scope) {
                                                : mlir::WalkResult::interrupt();
             }
             if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(op)) {
-                auto load = made.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
-                if (!load || load.getName() != "Map" || !made.getArgs().empty() ||
-                    made.getNewTarget() != made.getCallee()) {
-                    return mlir::WalkResult::interrupt();
-                }
+                if (!plainMapConstruction(made)) { return mlir::WalkResult::interrupt(); }
                 captures.insert(made.getResult());
                 return mlir::WalkResult::advance();
             }
             if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) {
                 if (!captures.contains(read.getObject())) { return mlir::WalkResult::interrupt(); }
                 const auto key = ctjs::constantKey(read.getKey());
-                if (key != "size" && key != "set" && key != "get" && key != "has" &&
-                    key != "delete" && key != "clear") {
-                    return mlir::WalkResult::interrupt();
-                }
-                return mlir::WalkResult::advance();
+                return key == "size" || mapMethodArity(key) ? mlir::WalkResult::advance()
+                                                            : mlir::WalkResult::interrupt();
             }
             if (auto call = llvm::dyn_cast<ctjs::CallOp>(op)) {
                 auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
@@ -882,8 +800,7 @@ bool classInitialization::normalizeCapturedMapHelpers(ctjs::FuncOp scope) {
                     return mlir::WalkResult::interrupt();
                 }
                 const auto key = ctjs::constantKey(read.getKey());
-                const unsigned arity = key == "set" ? 2u : key == "clear" ? 0u : 1u;
-                if (key == "size" || call.getArgs().size() != arity) {
+                if (call.getArgs().size() != mapMethodArity(key)) {
                     return mlir::WalkResult::interrupt();
                 }
                 // A get is only a candidate child origin. Nested routing and
@@ -1081,64 +998,30 @@ bool classInitialization::normalizeCapturedMapHelpers(ctjs::FuncOp scope) {
             invocations.push_back(call);
         }
         if (invocations.empty()) { return true; }
-        for (const auto & uses : {mlir::SymbolTable::getSymbolUses(module.getOperation()),
-                                  mlir::SymbolTable::getSymbolUses(&module.getBodyRegion())}) {
-            if (!uses) { return true; }
-            for (const auto & use : *uses) {
-                if (!step()) { return false; }
-                if (mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
-                        use.getUser(), use.getSymbolRef()) == function &&
-                    !llvm::is_contained(invocations, use.getUser())) {
-                    return true;
-                }
-            }
+        if (auto stop = host_detail::forEachSymbolUse(
+                module, true, [&] { return step(); },
+                [&](const mlir::SymbolTable::SymbolUse & use, ctjs::FuncOp target) {
+                    return target == function && !llvm::is_contained(invocations, use.getUser())
+                               ? std::optional(true)
+                               : std::nullopt;
+                })) {
+            return *stop;
         }
         // Precharge expansion and cleanup before the first mutation. The
         // enclosing pass owns a disposable module if a later proof refuses.
         for (mlir::Operation * call : invocations) {
-            if (!step()) { return false; }
-            for (mlir::OpOperand & use : call->getResult(0).getUses()) {
-                (void)use;
-                if (!step()) { return false; }
+            if (!spend(1 + call->getResult(0).getNumUses() + cells.size()) ||
+                !spendWalk(function, cloneCost)) {
+                return false;
             }
-            for (auto [cell, initial] : cells) {
-                (void)cell;
-                (void)initial;
-                if (!step()) { return false; }
-            }
-            const auto counted = function.walk([&](mlir::Operation * op) {
-                const uint64_t cost = uint64_t(1) + op->getNumOperands() + op->getNumResults();
-                if (cost > remaining) {
-                    refuse("class initialization work budget exhausted");
-                    return mlir::WalkResult::interrupt();
-                }
-                remaining -= static_cast<unsigned>(cost);
-                return mlir::WalkResult::advance();
-            });
-            if (counted.wasInterrupted()) { return false; }
         }
+        uint64_t cost = cellReads.size() + helper.getResult().getNumUses() +
+                        (helperCell ? helperCell.getNumUses() : 0) +
+                        (publication ? publication.getObject().getNumUses() : 0);
         for (ctjs::CellGetOp read : cellReads) {
-            if (!step()) { return false; }
-            if (read.getCell() != helperCell) { continue; }
-            for (mlir::Operation * user : read->getUsers()) {
-                (void)user;
-                if (!step()) { return false; }
-            }
+            if (read.getCell() == helperCell) { cost += read.getResult().getNumUses(); }
         }
-        for (mlir::Value value : {mlir::Value(helper.getResult()), helperCell}) {
-            if (!value) { continue; }
-            for (mlir::Operation * user : value.getUsers()) {
-                (void)user;
-                if (!step()) { return false; }
-            }
-        }
-        if (publication) {
-            for (mlir::Operation * user : publication.getObject().getUsers()) {
-                (void)user;
-                if (!step()) { return false; }
-            }
-        }
-        if (!reason.empty()) { return false; }
+        if (!spend(cost) || !reason.empty()) { return false; }
         for (mlir::Operation * call : invocations) {
             mlir::IRMapping mapping;
             auto dynamic = llvm::dyn_cast<ctjs::CallOp>(call);
@@ -1181,31 +1064,10 @@ bool classInitialization::normalizeCapturedMapHelpers(ctjs::FuncOp scope) {
         if (publication) {
             auto object = publication.getObject();
             publication.erase();
-            if (llvm::all_of(object.getUsers(), [](mlir::Operation * user) {
-                    return llvm::isa<ctjs::RootOp>(user);
-                })) {
-                eraseRooted(object.getDefiningOp());
-            }
+            eraseIfRooted(object.getDefiningOp());
         }
-        if (helperCell) {
-            llvm::erase_if(cellReads, [&](ctjs::CellGetOp read) {
-                if (read.getCell() != helperCell) { return false; }
-                cellOperations.erase(read);
-                eraseRooted(read);
-                return true;
-            });
-            for (mlir::Operation * user : llvm::make_early_inc_range(helperCell.getUsers())) {
-                cellOperations.erase(user);
-                user->erase();
-            }
-            cellOperations.erase(helperCell.getDefiningOp());
-            cells.erase(helperCell);
-            helperCell.getDefiningOp()->erase();
-        }
-        earlyCaptures.erase(helper);
-        eraseRooted(helper);
-        functions.erase(*functionIndex(function));
-        function.erase();
+        if (helperCell) { retireCell(helperCell); }
+        retireHelper(helper, function);
         return true;
     };
     for (ctjs::CreateClosureOp helper : closures) {

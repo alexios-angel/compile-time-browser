@@ -47,8 +47,7 @@ module {
     };
     for (auto provider :
          {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
-        auto input = mlir::parseSourceString<mlir::ModuleOp>(source, &context);
-        check(static_cast<bool>(input), "independent iterator close suppression parses");
+        auto input = parsed(context, source, "independent iterator close suppression parses");
         if (!input) { return; }
         auto contract = contractForClose(*input);
         contract.provider = provider;
@@ -95,8 +94,7 @@ module {
         if (!repeated) { llvm::consumeError(repeated.takeError()); }
     }
     const auto refuses = [&](const std::string & text, unsigned budget = 100000) {
-        auto input = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(input), "hostile close suppression is valid source IR");
+        auto input = parsed(context, text, "hostile close suppression is valid source IR");
         if (!input) { return; }
         auto contract = contractForClose(*input);
         auto normalized = normalizeDOMIteratorClose(*input, contract, budget);
@@ -180,8 +178,7 @@ module {
         auto text = reversed ? replaced(mixed, "^install, ^normal", "^normal, ^install") : mixed;
         for (auto provider :
              {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
-            auto candidate = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-            check(static_cast<bool>(candidate), "mixed throw and return source parses");
+            auto candidate = parsed(context, text, "mixed throw and return source parses");
             if (!candidate) { continue; }
             auto proof = contractForClose(*candidate);
             proof.provider = provider;

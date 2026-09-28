@@ -13,7 +13,7 @@ Driver::Driver(mlir::ModuleOp module, ctjs::FuncOp source, Limits limits)
       drafts(mlir::ModuleOp::create(module.getLoc())) {}
 
 bool Driver::spend() {
-    if (budget.take()) { return true; }
+    if (budget.spend()) { return true; }
     problem = "driving budget exhausted; retained identity alternative";
     return false;
 }
@@ -115,12 +115,12 @@ bool Driver::build(llvm::ArrayRef<ctjs::CallDirectOp> roots) {
     // No IR is redirected before the entire alternative fits its budgets.
     for (auto call : roots) {
         auto residual = drive(specialization::staticArguments(call, source), {});
-        stats.steps = budget.steps;
+        stats.steps = static_cast<unsigned>(limits.steps - budget.remaining);
         stats.contexts = static_cast<unsigned>(configurations.size());
         if (!problem.empty()) { return false; }
         if (residual) { redirects.emplace_back(call, residual); }
     }
-    stats.steps = budget.steps;
+    stats.steps = static_cast<unsigned>(limits.steps - budget.remaining);
     stats.contexts = static_cast<unsigned>(configurations.size());
     if (redirects.empty() || (!stats.expressions && !stats.branches)) {
         problem = "identity alternative selected: no proved local simplification";

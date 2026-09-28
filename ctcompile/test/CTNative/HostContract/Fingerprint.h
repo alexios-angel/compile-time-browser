@@ -9,8 +9,7 @@
 namespace ctcompile::test::host_contract {
 
 inline void checkFingerprint(mlir::MLIRContext & context) {
-    auto module = mlir::parseSourceString<mlir::ModuleOp>(fixture, &context);
-    check(static_cast<bool>(module), "fingerprint fixture parses");
+    auto module = parsed(context, fixture, "fingerprint fixture parses");
     if (!module) { return; }
     const auto printed = [](mlir::ModuleOp source, bool locations) {
         std::string text;

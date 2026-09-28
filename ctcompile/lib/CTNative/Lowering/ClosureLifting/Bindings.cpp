@@ -56,19 +56,14 @@ std::optional<std::string> closureLifter::whyReadIsNotACall(mlir::Value read, ct
         // CallDirectOp::verifySymbolUses holds the operand count equal to
         // the entry block's, so a surplus call has to be refused HERE; a
         // short one is padded, as VM_CASE(call) pads.
-        if (call.getArgs().size() > parameters) {
-            return "a call passes " + std::to_string(call.getArgs().size()) + " argument(s) to " +
-                   std::to_string(parameters) + " parameter(s) - the surplus has frame semantics";
-        }
         if (call.getArgs().size() < parameters && readsRawArguments(target)) {
             return "a call passes " + std::to_string(call.getArgs().size()) + " argument(s) to " +
                    std::to_string(parameters) +
                    " parameter(s) and the callee reads its raw argument window, which the "
                    "pad would lengthen";
         }
-        auto caller = call->getParentOfType<ctjs::FuncOp>();
-        if (caller && passesNewTarget.contains(caller.getOperation())) {
-            return std::string{"a call of it sits in a function that passes new.target"};
+        if (auto why = whyCallSiteDoesNotLift(call, call.getArgs().size(), parameters, "a call")) {
+            return why;
         }
         ++calls;
     }
@@ -280,12 +275,8 @@ void closureLifter::makeBoundCallDirect(ctjs::CallOp call, ctjs::FuncOp target,
     const auto valueType = ctjs::ValueType::get(context);
     const mlir::Value undefined =
         ctjs::ConstantOp::create(at, call.getLoc(), valueType, ctjs::UndefinedAttr::get(context));
-    llvm::SmallVector<mlir::Value> arguments(call.getArgs());
-    while (arguments.size() < parameters) { arguments.push_back(undefined); }
-    auto direct = ctjs::CallDirectOp::create(at, call.getLoc(), valueType,
-                                             mlir::FlatSymbolRefAttr::get(target.getSymNameAttr()),
-                                             call.getReceiver(), undefined, undefined, arguments,
-                                             /*arg_attrs=*/nullptr, /*res_attrs=*/nullptr);
+    auto direct = directCall(at, call.getLoc(), target, call.getReceiver(), undefined, undefined,
+                             {}, call.getArgs(), parameters);
     boundCaptureCalls[target.getOperation()].push_back({direct, holder});
     call.getResult().replaceAllUsesWith(direct.getResult());
     call.erase();

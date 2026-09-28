@@ -1,5 +1,5 @@
 #include "Bytecode/Importer.h"
-#include "Bytecode/OperatorTables.h"
+#include "ctcompile/Support/CppLiterals.hpp"
 
 // THE IMPORTER.
 //
@@ -80,11 +80,8 @@ import_result import_program(const program & from, llvm::StringRef program_id,
         //
         // The source name stays in front of it, because a trace that says
         // @createCanvas$412 is worth reading and @fn412 is not.
-        std::string name = proto.name.empty() ? std::string{"fn"} : proto.name;
-        for (char & c : name) {
-            if (std::isalnum(static_cast<unsigned char>(c)) == 0 && c != '_') { c = '_'; }
-        }
-        name += "$" + std::to_string(index);
+        const std::string name =
+            cpp::identifier(proto.name.empty() ? "fn" : proto.name) + "$" + std::to_string(index);
         auto function = ctjs::FuncOp::create(
             into, into.getUnknownLoc(), into.getStringAttr(name), mlir::TypeAttr::get(signature),
             into.getI32IntegerAttr(static_cast<std::int32_t>(proto.upvalues.size())),
@@ -330,10 +327,6 @@ import_result import_program(const program & from, llvm::StringRef program_id,
             }
             const instruction & in = proto.code[at];
             const mlir::Location where = state.location_for(at);
-            const auto reg = [&](std::uint16_t slot) -> mlir::Value {
-                return slot < state.registers.size() ? state.registers[slot] : mlir::Value{};
-            };
-            const auto set = [&](std::uint16_t slot, mlir::Value v) { state.write(slot, v); };
 
             // THE REGISTER FILE AS OF THE THROW, SNAPSHOT BEFORE THE
             // INSTRUCTION RUNS. It is what the handler block will be given, and
@@ -343,49 +336,7 @@ import_result import_program(const program & from, llvm::StringRef program_id,
             const llvm::SmallVector<mlir::Value> before_instruction =
                 state.handlers.empty() ? llvm::SmallVector<mlir::Value>{} : state.outgoing();
 
-            bool handled = false;
-            for (const binary_row & row : binary_rows) {
-                if (row.code != in.code) { continue; }
-                mlir::Value made =
-                    row.re_entering
-                        ? ctjs::BinaryOp::create(into, where, value_type,
-                                                 ctjs::BinaryKindAttr::get(context, row.kind),
-                                                 reg(in.b), reg(in.c))
-                              .getResult()
-                        : ctjs::BinaryStaticOp::create(into, where, value_type,
-                                                       ctjs::BinaryKindAttr::get(context, row.kind),
-                                                       reg(in.b), reg(in.c))
-                              .getResult();
-                set(in.a, made);
-                handled = true;
-                break;
-            }
-            for (const compare_row & row : compare_rows) {
-                if (handled) { break; }
-                if (row.code != in.code) { continue; }
-                mlir::Value made = ctjs::CompareOp::create(
-                    into, where, value_type, ctjs::CompareKindAttr::get(context, row.kind),
-                    reg(in.b), reg(in.c));
-                if (row.negate) {
-                    made = ctjs::UnaryOp::create(
-                        into, where, value_type,
-                        ctjs::UnaryKindAttr::get(context, ctjs::UnaryKind::Not), made);
-                }
-                set(in.a, made);
-                handled = true;
-                break;
-            }
-            for (const unary_row & row : unary_rows) {
-                if (handled) { break; }
-                if (row.code != in.code) { continue; }
-                set(in.a,
-                    ctjs::UnaryOp::create(into, where, value_type,
-                                          ctjs::UnaryKindAttr::get(context, row.kind), reg(in.b)));
-                handled = true;
-                break;
-            }
-
-            if (!handled) { importInstruction(state, entry, at); }
+            importInstruction(state, entry, at);
 
             // ---- and the caught edge, if a region is open ------------------
             //
@@ -402,7 +353,8 @@ import_result import_program(const program & from, llvm::StringRef program_id,
             // to a plain branch and costs an eliminated block argument; deciding
             // which instructions can throw is the lowering's job, because it is
             // the lowering that knows which operations became status calls.
-            if (!state.gave_up && !state.handlers.empty() && !in_terminator(in.code)) {
+            // NOT after a terminator: a second one does not verify.
+            if (!state.gave_up && !state.handlers.empty() && !ends_a_block(in.code)) {
                 mlir::Block * fresh = &function.getBody().emplaceBlock();
                 fresh->addArguments(slot_types, state.slot_locations(at + 1));
                 ctjs::CheckOp::create(into, where, state.outgoing(), before_instruction, fresh,

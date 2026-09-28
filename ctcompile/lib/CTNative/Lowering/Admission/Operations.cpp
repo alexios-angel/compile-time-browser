@@ -47,10 +47,7 @@ bool admission::op(mlir::Operation * o) {
              domEntry->isDocumentElement(read) || domEntry->datasetValueElement(read))) {
             return true;
         }
-        if (auto closure = llvm::dyn_cast<CreateClosureOp>(o);
-            closure && domEntry->callback(closure)) {
-            return true;
-        }
+        if (domBookkeeping(*domEntry, o)) { return true; }
         if (auto object = llvm::dyn_cast<CreateObjectOp>(o);
             object && domEntry->jsonObject(object)) {
             return true;
@@ -67,20 +64,7 @@ bool admission::op(mlir::Operation * o) {
             carrierOf(typeOf(unary.getOperand())) == carrier::json) {
             return true;
         }
-        if (auto load = llvm::dyn_cast<LoadGlobalOp>(o);
-            load && (domEntry->isInitialIntrinsic(load) || domEntry->isCurrentDocument(load))) {
-            return true;
-        }
-        if (auto read = llvm::dyn_cast<GetPropertyOp>(o);
-            read &&
-            (domEntry->method(read) || domEntry->isElementPrototype(read) ||
-             domEntry->isTokenList(read.getResult()) || domEntry->isDataset(read.getResult()))) {
-            return true;
-        }
-        if (auto call = llvm::dyn_cast<CallOp>(o);
-            call && (domEntry->call(call) || domEntry->isStringPrefixRegExp(call))) {
-            return true;
-        }
+        if (auto call = llvm::dyn_cast<CallOp>(o); call && domEntry->call(call)) { return true; }
         if (auto invoke = llvm::dyn_cast<InvokeOp>(o); invoke && domEntry->invocation(invoke)) {
             return true;
         }
@@ -217,6 +201,15 @@ bool admission::op(mlir::Operation * o) {
             return refuse("nullable native Map key needs a proved scalar, String or absent "
                           "alternative with an owning carrier");
         }
+        // Whether the mixed variant `schema` has the alternative a proof tagged.
+        const auto tagInSchema = [](mlir::Type schema, llvm::StringRef tag) {
+            return llvm::any_of(llvm::cast<VariantType>(schema).getAlternatives(),
+                                [&](mlir::Type type) {
+                                    return (tag == "bool" && llvm::isa<BoolType>(type)) ||
+                                           (tag == "number" && llvm::isa<NumType>(type)) ||
+                                           (tag == "string" && carrierOf(type) == carrier::string);
+                                });
+        };
         if (!mixedMapKeySpelling(map.getKeyType()).empty() && !call.getArgs().empty() &&
             !typedAlternative(map.getKeyType(), call.getArgs()[0])) {
             const auto proof = o->getAttrOfType<mlir::StringAttr>(kNativeMapKeyType);
@@ -227,13 +220,7 @@ bool admission::op(mlir::Operation * o) {
                  (c == carrier::nullableString || c == carrier::booleanString)) ||
                 (tag == "bool" && (c == carrier::nullable || c == carrier::booleanString)) ||
                 (tag == "number" && c == carrier::nullable);
-            const bool inSchema = llvm::any_of(
-                llvm::cast<VariantType>(map.getKeyType()).getAlternatives(), [&](mlir::Type type) {
-                    return (tag == "bool" && llvm::isa<BoolType>(type)) ||
-                           (tag == "number" && llvm::isa<NumType>(type)) ||
-                           (tag == "string" && carrierOf(type) == carrier::string);
-                });
-            if (!represented || !inSchema) {
+            if (!represented || !tagInSchema(map.getKeyType(), tag)) {
                 return refuse("mixed native Map key needs one proved scalar alternative");
             }
         }
@@ -245,14 +232,7 @@ bool admission::op(mlir::Operation * o) {
                 const auto tag = proof ? proof.getValue() : llvm::StringRef{};
                 const auto c = carrierOf(typeOf(call.getArgs()[1]));
                 const bool represented = c == carrier::booleanString || c == carrier::nullable;
-                const bool inSchema =
-                    llvm::any_of(llvm::cast<VariantType>(map.getValueType()).getAlternatives(),
-                                 [&](mlir::Type type) {
-                                     return (tag == "bool" && llvm::isa<BoolType>(type)) ||
-                                            (tag == "number" && llvm::isa<NumType>(type)) ||
-                                            (tag == "string" && carrierOf(type) == carrier::string);
-                                 });
-                if (!represented || !inSchema) {
+                if (!represented || !tagInSchema(map.getValueType(), tag)) {
                     return refuse("mixed native Map write needs one proved scalar alternative");
                 }
             }

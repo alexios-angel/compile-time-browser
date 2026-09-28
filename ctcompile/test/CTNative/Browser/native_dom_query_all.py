@@ -2,7 +2,6 @@
 """Execute static Element.querySelectorAll snapshots against public DOM/Style."""
 
 from CTNative.Browser import native_dom as dom
-from CTNative.harness import find_compilers
 
 SOURCE = """function queryAll(element) {
   if (element.hasAttribute('data-invalid')) {
@@ -180,58 +179,45 @@ REFUSALS = {
 
 def main():
     args = dom.parse_args(__doc__)
-    compilers = find_compilers()
-    compilers[1] = args.clang
+    compilers = args.compilers
     includes, libraries = dom.link_options(args, selectors=True)
     ir, contract = dom.prepare(args, "query-all", SOURCE, 1)
     contract["initial_intrinsics"] = ["Number"]
-    for owned in (False, True):
-        manifest = dict(
-            contract, provider="ctbrowser-dom-session-v1" if owned else "ctbrowser-dom-v1"
+    for owned, optimize, manifest in dom.variants(contract):
+        name = f"query-all-{owned}-{optimize}"
+        native = dom.lower(args, ir, manifest, name, optimize=optimize)
+        emitted = native.read_text()
+        if (
+            '"ctnative::Element.prototype.querySelectorAll.call"' not in emitted
+            or "std::vector<ctnative::js_element_t>" not in emitted
+            or "std::vector<ctbrowser::element_ref>" in emitted
+        ):
+            raise RuntimeError("querySelectorAll lost its typed browser snapshot")
+        dom.standalone(
+            args,
+            native,
+            name,
+            CHECKS + (OWNED_CHECKS if owned else ""),
+            compilers,
+            includes,
+            libraries,
         )
-        for optimize in (False, True):
-            name = f"query-all-{owned}-{optimize}"
-            native = dom.lower(args, ir, manifest, name, optimize=optimize)
-            emitted = native.read_text()
-            if (
-                '"ctnative::Element.prototype.querySelectorAll.call"' not in emitted
-                or "std::vector<ctnative::js_element_t>" not in emitted
-                or "std::vector<ctbrowser::element_ref>" in emitted
-            ):
-                raise RuntimeError("querySelectorAll lost its typed browser snapshot")
-            dom.standalone(
-                args,
-                native,
-                name,
-                CHECKS + (OWNED_CHECKS if owned else ""),
-                compilers,
-                includes,
-                libraries,
-            )
-            # A declared dataset input keeps the loop's conservative alias gate,
-            # even when this particular body does not read a saved dataset view.
-            diagnostic = dom.lower(
-                args,
-                ir,
-                dict(manifest, dataset_parameters=[0]),
-                f"dataset-{name}",
-                optimize=optimize,
-                success=False,
-            )
-            if "backedge dataset-alias proof" not in diagnostic:
-                raise RuntimeError("DOM snapshot loop lost the dataset mutation boundary")
+        # A declared dataset input keeps the loop's conservative alias gate,
+        # even when this particular body does not read a saved dataset view.
+        diagnostic = dom.lower(
+            args,
+            ir,
+            dict(manifest, dataset_parameters=[0]),
+            f"dataset-{name}",
+            optimize=optimize,
+            success=False,
+        )
+        if "backedge dataset-alias proof" not in diagnostic:
+            raise RuntimeError("DOM snapshot loop lost the dataset mutation boundary")
     for name, body in REFUSALS.items():
         source = f"function bad(element) {{ {body} }}\n"
         refused, manifest = dom.prepare(args, name, source, 1, entry_name="bad")
-        for optimize in (False, True):
-            dom.lower(
-                args,
-                refused,
-                manifest,
-                f"refused-{name}-{optimize}",
-                optimize=optimize,
-                success=False,
-            )
+        dom.refuse(args, refused, manifest, f"refused-{name}")
     print(
         f"Element.querySelectorAll: 16 native executions, {2 * len(REFUSALS) + 4} refusals; "
         "DOM/Core/Style only"

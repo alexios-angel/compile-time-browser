@@ -5,35 +5,8 @@ namespace ctcompile::test::owned_global_shared_map {
 void checkDefiniteMapAbsenceOwner(mlir::MLIRContext & context, const std::string & source,
                                   bool prepared) {
     using Alternatives = ctcompile::ctnative::PrimitiveAlternatives;
-    const auto requested = [](mlir::ModuleOp module) {
-        auto contract = contractFor(module);
-        contract.initialIntrinsics = {"Map"};
-        return contract;
-    };
-    const auto withheld = [](mlir::ModuleOp module, const OwnedGlobalRoots & query) {
-        return empty(module, query);
-    };
     auto fixture =
-        replaced(source, "%entryKey: !ctjs.value)",
-                 "%entryKey: !ctjs.value, %aliasKey: !ctjs.value, %choice: !ctjs.value)");
-    fixture = replaced(fixture, "    %actual =",
-                       "    %other = ctjs.constant #ctjs.string<\"z\">\n"
-                       "    %choice = ctjs.constant #ctjs.boolean<true>\n"
-                       "    %actual =");
-    for (const auto & [name, actual] :
-         {std::pair{"putterEnv", "actual"}, {"repeatEnv", "actual"}, {"laterEnv", "future"}}) {
-        const std::string prefix = prepared ? std::string("%") + name + ", " : "%owned, ";
-        fixture = replaced(fixture, prefix + "%" + actual + ")",
-                           prefix + "%" + actual + ", %other, %choice)");
-    }
-    const std::string getterSignature =
-        "@get$3(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value" +
-        std::string(prepared ? ", %state: !ctjs.value" : "") + ")";
-    fixture =
-        replaced(fixture, getterSignature,
-                 getterSignature.substr(0, getterSignature.size() - 1) + ", %input: !ctjs.value)");
-    fixture = replaced(fixture, prepared ? "%getterEnv)" : "%getter(%owned)",
-                       prepared ? "%getterEnv, %putResult)" : "%getter(%owned, %putResult)");
+        choiceMapSource(source, prepared, {"putterEnv", "repeatEnv", "laterEnv"}, "@get$3");
     const std::string write = "    %written = ctjs.call %setter(%state, %entryKey, %value)";
     const std::string erase = "    %deleted = ctjs.call %eraser(%state, %entryKey)\n";
     const std::string read = "    %loaded = ctjs.call %reader(%state, %entryKey)\n";
@@ -124,13 +97,12 @@ void checkDefiniteMapAbsenceOwner(mlir::MLIRContext & context, const std::string
     const auto variant = [&](const std::string & text, bool expected, const char * message,
                              unsigned mask = Alternatives::Undefined) {
         ++rows;
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(module), "source/prepared definite absence fixture parses");
+        auto module = parsed(context, text, "source/prepared definite absence fixture parses");
         if (!module) { return; }
-        auto contract = requested(*module);
+        auto contract = mapContractFor(*module);
         OwnedGlobalRoots query(*module, contract);
         check(query.proved() == expected && !query.exhausted() &&
-                  (expected ? query.roots().size() == 1 : withheld(*module, query)),
+                  (expected ? query.roots().size() == 1 : empty(*module, query)),
               message);
         if (query.proved() != expected || query.exhausted()) {
             std::fprintf(stderr, "absence owner %s row %u: %s\n", prepared ? "prepared" : "source",
@@ -235,16 +207,15 @@ void checkDefiniteMapAbsenceOwner(mlir::MLIRContext & context, const std::string
                                    "      %elseSame = ctjs.compare strict_eq %loaded, %undefined\n"
                                    "      scf.yield\n    }\n"
                                    "    ctjs.return %loaded";
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(
-            replaced(base, "    ctjs.return %loaded", scoped), &context);
-        check(static_cast<bool>(module), "absence scope fixture parses before live mutation");
+        auto module = parsed(context, replaced(base, "    ctjs.return %loaded", scoped),
+                             "absence scope fixture parses before live mutation");
         if (!module) { continue; }
         mlir::Builder attributes(&context);
         module->walk([&](mlir::Operation * operation) {
             operation->setAttr("ctnative.map_absent", attributes.getBoolAttr(true));
             operation->setAttr("ctnative.map_read_type", attributes.getStringAttr("undefined"));
         });
-        const auto contract = requested(*module);
+        const auto contract = mapContractFor(*module);
         check(OwnedGlobalRoots(*module, contract).proved(),
               "the original scoped absence read has a complete independent proof");
         auto setter = module->lookupSymbol<ctjs::FuncOp>("put$4");
@@ -256,10 +227,10 @@ void checkDefiniteMapAbsenceOwner(mlir::MLIRContext & context, const std::string
         const auto original = consumer->getOperand(0);
         consumer->setOperand(0, inside.getResult());
         OwnedGlobalRoots stale(*module, contract);
-        check(!stale.proved() && stale.reason().contains("fingerprint") && withheld(*module, stale),
+        check(!stale.proved() && stale.reason().contains("fingerprint") && empty(*module, stale),
               "an out-of-scope absent value invalidates the previous fingerprint");
-        OwnedGlobalRoots fresh(*module, requested(*module));
-        check(!fresh.proved() && !fresh.exhausted() && withheld(*module, fresh),
+        OwnedGlobalRoots fresh(*module, mapContractFor(*module));
+        check(!fresh.proved() && !fresh.exhausted() && empty(*module, fresh),
               "fresh fingerprints and forged absence cannot authorize a then-only SSA value");
         consumer->setOperand(0, original);
         check(OwnedGlobalRoots(*module, contract).proved(),
@@ -288,16 +259,15 @@ void checkDefiniteMapAbsenceOwner(mlir::MLIRContext & context, const std::string
                 "    %outerLoad = ctjs.call %outerReader(%state, %entryKey)\n"
                 "    scf.if %flag {\n      scf.yield\n    }\n"
                 "    ctjs.return %loaded";
-            auto module = mlir::parseSourceString<mlir::ModuleOp>(
-                replaced(base, "    ctjs.return %loaded", scoped), &context);
-            check(static_cast<bool>(module), "absence dependency scope fixture parses");
+            auto module = parsed(context, replaced(base, "    ctjs.return %loaded", scoped),
+                                 "absence dependency scope fixture parses");
             if (!module) { continue; }
             mlir::Builder attributes(&context);
             module->walk([&](mlir::Operation * operation) {
                 operation->setAttr("ctnative.map_absent", attributes.getBoolAttr(true));
                 operation->setAttr("ctnative.map_read_type", attributes.getStringAttr("undefined"));
             });
-            const auto contract = requested(*module);
+            const auto contract = mapContractFor(*module);
             check(OwnedGlobalRoots(*module, contract).proved(),
                   "valid method, flag and fluent Map scopes have an independent absence proof");
             auto setter = module->lookupSymbol<ctjs::FuncOp>("put$4");
@@ -359,10 +329,10 @@ void checkDefiniteMapAbsenceOwner(mlir::MLIRContext & context, const std::string
             }
             OwnedGlobalRoots stale(*module, contract);
             check(!stale.proved() && stale.reason().contains("fingerprint") &&
-                      withheld(*module, stale),
+                      empty(*module, stale),
                   "a live dependency scope edit invalidates the old absence fingerprint");
-            OwnedGlobalRoots fresh(*module, requested(*module));
-            check(!fresh.proved() && !fresh.exhausted() && withheld(*module, fresh),
+            OwnedGlobalRoots fresh(*module, mapContractFor(*module));
+            check(!fresh.proved() && !fresh.exhausted() && empty(*module, fresh),
                   "fresh reports cannot authorize then-only method, flag or fluent Map values");
             for (const auto & edit : edits) { edit.op->setOperand(edit.operand, edit.original); }
             check(OwnedGlobalRoots(*module, contract).proved(),
@@ -372,10 +342,9 @@ void checkDefiniteMapAbsenceOwner(mlir::MLIRContext & context, const std::string
     }
     check(scopeMutations == 6, "all outer and sibling dependency scope controls ran");
     for (const auto & [text, label] : {std::pair{base, "deleted"}, {bothArms, "two arms"}}) {
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(module), "definite absence budget fixture parses");
+        auto module = parsed(context, text, "definite absence budget fixture parses");
         if (!module) { continue; }
-        auto contract = requested(*module);
+        auto contract = mapContractFor(*module);
         OwnedGlobalRoots query(*module, contract);
         const unsigned completion = query.steps();
         check(query.proved() && completion < 20000, "definite absence proof has bounded work");
@@ -383,7 +352,7 @@ void checkDefiniteMapAbsenceOwner(mlir::MLIRContext & context, const std::string
         for (unsigned budget = 0; budget < completion; ++budget) {
             OwnedGlobalRoots limited(*module, contract, budget);
             check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
-                      withheld(*module, limited),
+                      empty(*module, limited),
                   "every incomplete absence budget withholds the whole published owner");
         }
         OwnedGlobalRoots exact(*module, contract, completion);
@@ -397,7 +366,7 @@ void checkDefiniteMapAbsenceOwner(mlir::MLIRContext & context, const std::string
             operation->setAttr("ctnative.map_present", attributes.getBoolAttr(false));
             operation->setAttr("ctnative.map_read_type", attributes.getStringAttr("undefined"));
         });
-        contract = requested(*module);
+        contract = mapContractFor(*module);
         check(OwnedGlobalRoots(*module, contract).proved(),
               "forged absence reports leave the positive source independently provable");
         auto setter = module->lookupSymbol<ctjs::FuncOp>("put$4");
@@ -430,10 +399,10 @@ void checkDefiniteMapAbsenceOwner(mlir::MLIRContext & context, const std::string
             operation->setOperand(operand, value);
             OwnedGlobalRoots stale(*module, contract);
             check(!stale.proved() && stale.reason().contains("fingerprint") &&
-                      withheld(*module, stale),
+                      empty(*module, stale),
                   "a live absence mutation invalidates the old source fingerprint");
-            OwnedGlobalRoots fresh(*module, requested(*module));
-            check(!fresh.proved() && !fresh.exhausted() && withheld(*module, fresh),
+            OwnedGlobalRoots fresh(*module, mapContractFor(*module));
+            check(!fresh.proved() && !fresh.exhausted() && empty(*module, fresh),
                   "a fresh contract and forged reports cannot repair the missing source proof");
             operation->setOperand(operand, original);
             check(OwnedGlobalRoots(*module, contract).proved(),

@@ -8,11 +8,9 @@ namespace {
 
 void checkSessionOwner(mlir::MLIRContext & context) {
     for (const char * source : {capturedFixture, importedCapturedFixture}) {
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(source, &context);
-        check(static_cast<bool>(module), "session captured-table fixture parses");
+        auto module = parsed(context, source, "session captured-table fixture parses");
         if (!module) { continue; }
-        auto contract = contractFor(*module);
-        contract.initialIntrinsics = {"Map"};
+        auto contract = mapContractFor(*module);
         OwnedGlobalRoots ordinary(*module, contract);
         contract.provider = HostContract::Provider::closedSourceSession;
         OwnedGlobalRoots session(*module, contract);
@@ -45,11 +43,9 @@ void checkSessionOwner(mlir::MLIRContext & context) {
           replaced(capturedFixture, "captures %cell", "captures %u"),
           replaced(capturedFixture, "    ctjs.return %table",
                    "    ctjs.set_property %table[%key], %getter\n    ctjs.return %table")}) {
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(source, &context);
-        check(static_cast<bool>(module), "session refusal fixture parses");
+        auto module = parsed(context, source, "session refusal fixture parses");
         if (!module) { continue; }
-        auto contract = contractFor(*module);
-        contract.initialIntrinsics = {"Map"};
+        auto contract = mapContractFor(*module);
         contract.provider = HostContract::Provider::closedSourceSession;
         mlir::Builder builder(&context);
         (*module)->setAttr("ctnative.host_proved", builder.getBoolAttr(true));
@@ -57,11 +53,9 @@ void checkSessionOwner(mlir::MLIRContext & context) {
         check(!refused.proved() && !refused.exhausted() && empty(*module, refused),
               "session refuses uncaptured tables, escaping methods, wrong receivers and captures");
     }
-    auto module = mlir::parseSourceString<mlir::ModuleOp>(capturedFixture, &context);
-    check(static_cast<bool>(module), "session fingerprint fixture parses");
+    auto module = parsed(context, capturedFixture, "session fingerprint fixture parses");
     if (!module) { return; }
-    auto contract = contractFor(*module);
-    contract.initialIntrinsics = {"Map"};
+    auto contract = mapContractFor(*module);
     contract.provider = HostContract::Provider::closedSourceSession;
     auto getter = module->lookupSymbol<ctjs::FuncOp>("get$3");
     getter.walk([&](ctjs::ReturnOp returned) {

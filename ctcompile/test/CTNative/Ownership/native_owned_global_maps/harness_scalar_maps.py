@@ -81,14 +81,9 @@ int main() {
         "FRESH_OTHER_ARGUMENT", "ctnative::js_boolean_t{true}" if joined else ""
     )
     changed = changed.replace("INITIAL_SIZE", str(initial_size))
-    source = args.work / f"{name}.{mode}.lifetime.cpp"
-    source.write_text(changed)
-    binary = (args.work / f"{name}.{mode}.sanitized").resolve()
-    result = run_sanitized_lifetime(source, binary, compiler)
-    if result.returncode or result.stdout != f"trace={initial_size}\n" * 2:
-        raise RuntimeError(
-            f"{name}/{mode}: saved string lifetime failure\n" f"{result.stdout}{result.stderr}"
-        )
+    owned.check_lifetime(
+        args, name, mode, compiler, changed, f"trace={initial_size}\n", "saved string lifetime"
+    )
 
 
 def nullable_payload_lifetime(args, cpp, name, mode, compiler):
@@ -151,14 +146,9 @@ int main() {
 }
 """
     changed = changed.replace("EXPECTED_STRING", json.dumps(STRING_RESULT))
-    source = args.work / f"{name}.{mode}.lifetime.cpp"
-    source.write_text(changed)
-    binary = (args.work / f"{name}.{mode}.sanitized").resolve()
-    result = run_sanitized_lifetime(source, binary, compiler)
-    if result.returncode or result.stdout != "trace=2\n" * 2:
-        raise RuntimeError(
-            f"{name}/{mode}: nullable result lifetime failure\n" f"{result.stdout}{result.stderr}"
-        )
+    owned.check_lifetime(
+        args, name, mode, compiler, changed, "trace=2\n", "nullable result lifetime"
+    )
 
 
 def nullable_key_lifetime(args, cpp, name, mode, compiler):
@@ -223,14 +213,7 @@ int main() {
 }
 """
     changed = changed.replace("EXPECTED_STRING", json.dumps(STRING_RESULT))
-    source = args.work / f"{name}.{mode}.lifetime.cpp"
-    source.write_text(changed)
-    binary = (args.work / f"{name}.{mode}.sanitized").resolve()
-    result = run_sanitized_lifetime(source, binary, compiler)
-    if result.returncode or result.stdout != "trace=2\n" * 2:
-        raise RuntimeError(
-            f"{name}/{mode}: nullable key lifetime failure\n" f"{result.stdout}{result.stderr}"
-        )
+    owned.check_lifetime(args, name, mode, compiler, changed, "trace=2\n", "nullable key lifetime")
 
 
 def nullable_stored_payload_lifetime(args, cpp, name, mode, compiler):
@@ -364,16 +347,16 @@ int main() {
             "    for (int index = 0; index < 128; ++index) {",
         )
         changed = generated + separator + observer
-    source = args.work / f"{name}.{mode}.lifetime.cpp"
-    source.write_text(changed)
-    binary = (args.work / f"{name}.{mode}.sanitized").resolve()
-    result = run_sanitized_lifetime(source, binary, compiler)
     expected_trace = 1 if name == "nullable_host_result_saved" else 0
-    if result.returncode or result.stdout != f"trace={expected_trace}\n" * 2:
-        raise RuntimeError(
-            f"{name}/{mode}: nullable stored-payload lifetime failure\n"
-            f"{result.stdout}{result.stderr}"
-        )
+    owned.check_lifetime(
+        args,
+        name,
+        mode,
+        compiler,
+        changed,
+        f"trace={expected_trace}\n",
+        "nullable stored-payload lifetime",
+    )
 
 
 def check_call_preservation(original, output, name):

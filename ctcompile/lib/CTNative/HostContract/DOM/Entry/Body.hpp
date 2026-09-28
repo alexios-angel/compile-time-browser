@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../../Analysis.h"
+#include "../Snapshot/Bounds.h"
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
 
@@ -12,6 +13,7 @@
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/StringSet.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 
@@ -83,6 +85,14 @@ enum class Kind {
     undefined
 };
 
+// Scalars whose truth test runs no conversion hook.
+inline constexpr std::array truthyKinds{
+    Kind::boolean,         Kind::number,          Kind::string, Kind::optionalString,
+    Kind::undefinedString, Kind::nullableElement, Kind::null,   Kind::symbol};
+// Invariant scalars a loop may carry.
+inline constexpr std::array loopKinds{Kind::number, Kind::string,          Kind::boolean,
+                                      Kind::symbol, Kind::undefinedString, Kind::element};
+
 struct DatasetOrigin {
     mlir::Value element;
     unsigned epoch;
@@ -94,89 +104,49 @@ struct Predicate {
 };
 
 struct Body {
+    // Shared by every function body of one entry.
     std::string & refusal;
     bool & budgetExhausted;
-    mlir::Block & block;
-    std::vector<mlir::BlockArgument> & provedDatasetElements;
-    const bool & callbackBody;
-    const bool & replacementBody;
-    const bool & suppliedNumber;
-    const bool & suppliedURI;
-    const bool & suppliedObject;
-    const bool & suppliedJSON;
-    const bool & suppliedArray;
-    const bool & suppliedString;
-    const bool & suppliedRegExp;
-    const bool & suppliedElement;
-    const bool & suppliedFunction;
-    const bool & suppliedSymbol;
+    DOMEntryAnalysis::Evidence & proved;
+    const llvm::StringSet<> & intrinsics;
     mlir::BlockArgument documentParameter;
-    llvm::DenseSet<ctjs::LoadGlobalOp> & provedDocumentLoads;
-    llvm::DenseSet<ctjs::GetPropertyOp> & provedDocumentRoots;
-    bool & provedUndefinedReturn;
-    llvm::DenseMap<mlir::Value, Kind> & values;
-    llvm::DenseSet<mlir::Value> & increasingIndices;
-    llvm::DenseSet<mlir::Value> & prefixRequired;
-    llvm::DenseSet<mlir::Value> & prefixSnapshots;
-    unsigned & mutationEpoch;
-    llvm::DenseMap<mlir::Value, unsigned> & datasetEpochs;
-    llvm::DenseMap<mlir::Value, DatasetOrigin> & snapshotOrigins;
-    llvm::DenseMap<mlir::Value, DatasetOrigin> & keyOrigins;
-    llvm::DenseMap<mlir::Value, ctjs::GetPropertyOp> & strippedAssignmentKeys;
-    llvm::DenseMap<mlir::Value, mlir::Value> & firstUnits;
-    llvm::DenseMap<mlir::Value, mlir::Value> & stringTails;
-    llvm::DenseMap<mlir::Value, mlir::Value> & loweredFirstUnits;
-    llvm::DenseMap<mlir::Value, mlir::Value> & typeQueries;
-    llvm::DenseMap<mlir::Value, Predicate> & predicates;
-    llvm::DenseMap<mlir::Value, bool> & constantBooleans;
-    llvm::DenseMap<mlir::Value, std::size_t> & activeRefinements;
-    std::vector<ctjs::GetPropertyOp> & provedTokens;
-    std::vector<ctjs::GetPropertyOp> & provedDatasets;
-    std::vector<ctjs::GetPropertyOp> & provedStringVectorLengths;
-    std::vector<ctjs::GetPropertyOp> & provedStringVectorIndices;
-    llvm::DenseSet<ctjs::GetPropertyOp> & provedElementVectorLengths;
-    llvm::DenseSet<ctjs::GetPropertyOp> & provedElementVectorIndices;
-    llvm::DenseSet<ctjs::GetPropertyOp> & provedElementPrototypes;
-    llvm::DenseSet<ctjs::LoadGlobalOp> & provedElementIntrinsics;
-    llvm::DenseSet<ctjs::LoadGlobalOp> & provedSymbolIntrinsics;
-    llvm::DenseMap<ctjs::GetPropertyOp, llvm::StringRef> & provedSymbols;
-    llvm::DenseSet<ctjs::GetPropertyOp> & provedSymbolDescriptions;
-    llvm::DenseMap<ctjs::GetPropertyOp, mlir::Value> & provedDatasetValues;
-    std::vector<ctjs::LoadGlobalOp> & provedNumberIntrinsics;
-    std::vector<ctjs::LoadGlobalOp> & provedURIIntrinsics;
-    std::vector<ctjs::LoadGlobalOp> & provedJSONIntrinsics;
-    std::vector<ctjs::LoadGlobalOp> & provedObjectIntrinsics;
-    std::vector<ctjs::LoadGlobalOp> & provedRegExpIntrinsics;
-    std::vector<ctjs::CallOp> & provedPrefixRegExps;
-    std::vector<ctjs::InvokeOp> & provedInvocations;
-    std::vector<ctjs::ThrowOp> & provedThrows;
-    std::vector<HostDOMUnreachableYield> & provedThrowYields;
-    llvm::DenseMap<ctjs::GetPropertyOp, HostDOMMethod> & provedMethods;
-    std::vector<HostDOMCall> & provedCalls;
-    std::vector<ctjs::CreateObjectOp> & provedJSONObjects;
-    std::vector<ctjs::CopyPropsOp> & provedJSONCopies;
-    std::vector<ctjs::SetPropertyOp> & provedJSONAssignments;
-    std::vector<ctjs::SetPropertyOp> & provedSnapshotAssignments;
-    std::vector<mlir::Value> & provedOptionalStrings;
-    std::vector<mlir::Value> & provedStrings;
-    std::vector<HostDOMStringRefinement> & provedRefinements;
-    std::vector<std::pair<mlir::Value, bool>> & provedBooleans;
     mlir::DominanceInfo & dominance;
-    std::vector<std::pair<ctjs::CreateClosureOp, ctjs::FuncOp>> & provedClosures;
     llvm::DenseSet<mlir::Operation *> & usedCallbacks;
-    llvm::DenseSet<mlir::Operation *> & prefixCallbacks;
-    llvm::DenseSet<mlir::Operation *> & replacementCallbacks;
-    llvm::DenseMap<unsigned, ctjs::FuncOp> & indexedCallbacks;
-    ctjs::FuncOp & function;
-    ctjs::FuncOp & target;
+    const llvm::DenseSet<mlir::Operation *> & prefixCallbacks;
+    const llvm::DenseSet<mlir::Operation *> & replacementCallbacks;
+    const llvm::DenseMap<unsigned, ctjs::FuncOp> & indexedCallbacks;
     llvm::function_ref<bool()> spend;
-    llvm::function_ref<bool(mlir::Value)> emptyString;
+    // This function body and its local facts.
+    ctjs::FuncOp function;
+    mlir::Block & block;
+    bool callbackBody, replacementBody;
+    llvm::DenseMap<mlir::Value, Kind> values{};
+    llvm::DenseSet<mlir::Value> increasingIndices{};
+    unsigned mutationEpoch = 0;
+    llvm::DenseMap<mlir::Value, unsigned> datasetEpochs{};
+    llvm::DenseMap<mlir::Value, DatasetOrigin> snapshotOrigins{}, keyOrigins{};
+    // Boolean truth requires the callback input to start with "bs". This
+    // implication proves filtered-key uniqueness after removing that prefix.
+    llvm::DenseSet<mlir::Value> prefixRequired{}, prefixSnapshots{};
+    llvm::DenseMap<mlir::Value, ctjs::GetPropertyOp> strippedAssignmentKeys{};
+    llvm::DenseMap<mlir::Value, mlir::Value> firstUnits{}, stringTails{}, loweredFirstUnits{};
+    llvm::DenseMap<mlir::Value, mlir::Value> typeQueries{};
+    llvm::DenseMap<mlir::Value, Predicate> predicates{};
+    llvm::DenseMap<mlir::Value, bool> constantBooleans{};
+    llvm::DenseMap<mlir::Value, std::size_t> activeRefinements{};
     bool documentRootPresent = false;
     llvm::DenseSet<mlir::Block *> nonReturning{};
 
+    bool supplied(llvm::StringRef name) const { return intrinsics.contains(name); }
+    // The literal factory stands in for the original RegExp constructor.
+    bool suppliedRegExp() const { return supplied("RegExp") && supplied("__ctbrowser_regexp"); }
     bool hasKind(mlir::Value value, Kind kind) const {
         const auto found = values.find(value);
         return found != values.end() && found->second == kind;
+    }
+    bool hasKind(mlir::Value value, llvm::ArrayRef<Kind> kinds) const {
+        const auto found = values.find(value);
+        return found != values.end() && llvm::is_contained(kinds, found->second);
     }
     bool visit(mlir::Block & body, unsigned depth, mlir::Value & frame);
     std::optional<bool> controlFlow(mlir::Operation & operation, mlir::Block & body, unsigned depth,

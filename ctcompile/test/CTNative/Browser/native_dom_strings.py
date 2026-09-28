@@ -5,19 +5,10 @@ from CTNative.Browser.native_dom_string_provenance import *
 
 
 def main():
-    vendor = Path(__file__).resolve().parents[4] / "ctbrowser/vendor/bootstrap/bootstrap.bundle.js"
+    vendor = dom.BOOTSTRAP
     if any(source not in vendor.read_text() for source in (BOOTSTRAP_F, BOOTSTRAP_H_WRITES)):
         raise RuntimeError("original Bootstrap F/H source changed")
-    parser = argparse.ArgumentParser(description=__doc__)
-    for name in ("translate", "opt", "clang", "node", "reference"):
-        parser.add_argument("--" + name, required=True)
-    for name in ("build", "include", "work"):
-        parser.add_argument("--" + name, type=Path, required=True)
-    parser.add_argument("--nm", default=shutil.which("nm"))
-    parser.add_argument("--regexp-only", action="store_true")
-    args = parser.parse_args()
-    args.work = args.work.resolve()
-    args.work.mkdir(parents=True, exist_ok=True)
+    args = dom.parse_args(__doc__, oracles=True, switches=("regexp-only",))
     if not args.nm:
         raise RuntimeError("native DOM String gate requires nm")
     check_regexp_matching(args)
@@ -90,8 +81,7 @@ function makeElement(value) {
         encoded.append(f"observation{index}={value}\n")
     if reference != "".join(sorted(encoded, key=lambda line: line.partition("=")[0])):
         raise RuntimeError(f"VM optional String observations disagree with Node: {reference}")
-    compilers = find_compilers()
-    compilers[1] = args.clang
+    compilers = args.compilers
     includes, libraries = dom.link_options(args)
     prepared = [
         (
@@ -117,7 +107,7 @@ function makeElement(value) {
     prepared.extend(nullable_uri.prepare(args))
     for optimize in (False, True):
         modules = {}
-        for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+        for provider in dom.PROVIDERS:
             owned = "session" in provider
             for name, ir, contract in prepared:
                 label = f"{name}-{owned}-{optimize}"
@@ -220,13 +210,14 @@ function makeElement(value) {
                 + nullable_uri.CLIENT
                 + CLIENT.replace("@RUNS@", "\n".join(runs))
             )
+            flags = [*FLAGS, *includes]
             for index, compiler in enumerate(compilers):
                 binary = path.with_suffix(f".{index}")
-                run([compiler, *FLAGS, *includes, str(path), *libraries, "-o", str(binary)])
-                if dom.VM.search(run([args.nm, "-C", str(binary)]).stdout):
-                    raise RuntimeError("native DOM optional Strings link Script/AOT")
+                result = build_and_run(
+                    compiler, path, binary, flags=flags, libraries=libraries, nm=args.nm, vm=dom.VM
+                )
                 if (
-                    run([str(binary)]).stdout
+                    result.stdout
                     != (expected + numbers.EXPECTED + uri.EXPECTED + nullable_uri.EXPECTED) * 2
                 ):
                     raise RuntimeError("native optional String observations disagree with source")
@@ -240,17 +231,7 @@ function makeElement(value) {
         )
         for owned in (False, True):
             provider = "ctbrowser-dom-session-v1" if owned else "ctbrowser-dom-v1"
-            for optimize in (False, True):
-                diagnostic = dom.lower(
-                    args,
-                    ir,
-                    dict(contract, provider=provider),
-                    f"{name}-{owned}-{optimize}",
-                    optimize=optimize,
-                    success=False,
-                )
-                if "DOM" not in diagnostic:
-                    raise RuntimeError(f"{name}: missing intended DOM proof refusal\n{diagnostic}")
+            dom.refuse(args, ir, dict(contract, provider=provider), f"{name}-{owned}", "DOM")
     for name, source in HOST_REFUSALS.items():
         ir, contract = dom.prepare(
             args, name, "{\n" + source + "\n}\n", 1, entry_name="host_refusal"
@@ -258,18 +239,8 @@ function makeElement(value) {
         if name == "host_duplicate_export":
             raw = (args.work / f"{name}.raw.mlir").read_text()
             assert raw.count('ctjs.store_global "host_refusal"') == 2, raw
-        for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
-            for optimize in (False, True):
-                diagnostic = dom.lower(
-                    args,
-                    ir,
-                    dict(contract, provider=provider),
-                    f"{name}-{provider}-{optimize}",
-                    optimize=optimize,
-                    success=False,
-                )
-                if "DOM" not in diagnostic:
-                    raise RuntimeError(f"{name}: missing intended DOM proof refusal\n{diagnostic}")
+        for provider in dom.PROVIDERS:
+            dom.refuse(args, ir, dict(contract, provider=provider), f"{name}-{provider}", "DOM")
     _, completion_ir, completion_contract = next(
         row for row in prepared if row[0] == "helper_branch_completion_dispatch"
     )
@@ -321,7 +292,7 @@ function makeElement(value) {
                 1,
                 entry_name="branchDepth" if kind == "entry" else "branchHelper",
             )
-            for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+            for provider in dom.PROVIDERS:
                 for optimize in (False, True):
                     result = dom.lower(
                         args,
@@ -389,7 +360,7 @@ function makeElement(value) {
         ("replacement-captured", REGEXP_CAPTURED_SOURCE),
     ):
         ir, contract = dom.prepare(args, prefix, source, 1, entry_name="invalid")
-        for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+        for provider in dom.PROVIDERS:
             for optimize in (False, True):
                 label = f"{prefix}-{provider}-{optimize}"
                 native = dom.lower(

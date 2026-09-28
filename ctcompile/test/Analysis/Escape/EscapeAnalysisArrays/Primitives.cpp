@@ -12,17 +12,13 @@ void checkStaticBinaryProducers(mlir::MLIRContext & context) {
     const std::string overwrite = "  ctjs.set_property %a[%zero], %zero\n  ctjs.return %a\n";
     const std::string branch =
         "  %flag = ctjs.truthy %produced\n  cf.cond_br %flag, ^yes, ^no\n^yes:\n";
-    struct binary_row {
-        contents_row contents;
-        const char * discharged = "x";
-    };
     for (const auto kind : {ctjs::BinaryKind::Add, ctjs::BinaryKind::BitAnd,
                             ctjs::BinaryKind::BitOr, ctjs::BinaryKind::BitXor,
                             ctjs::BinaryKind::Shl, ctjs::BinaryKind::Shr, ctjs::BinaryKind::UShr}) {
         const std::string spelling = ctjs::stringifyBinaryKind(kind).str();
         const std::string operation = "  %produced = ctjs.binary_static " + spelling;
         const std::string produce = operation + " %zero, %zero {storage_test_id = \"produced\"}\n";
-        std::vector<binary_row> rows = {
+        std::vector<discharge_row> rows = {
             {.contents = {.what = "static Number results do not prune either overwrite arm",
                           .body = values + produce + branch + overwrite + "^no:\n" + overwrite,
                           .arrays = "a:[zero] | a:[zero]",
@@ -227,28 +223,15 @@ void checkStaticBinaryProducers(mlir::MLIRContext & context) {
             }
         }
         std::size_t budgets = 0;
-        const auto check = [&](mlir::ModuleOp module, const binary_row & expected) {
-            checkArrayContents(module, expected.contents);
-            const bool complete = expected.contents.failure == ArrayContentsFailure::None;
-            budgets +=
-                checkArrayRetention(module, {.what = expected.contents.what,
-                                             .body = expected.contents.body,
-                                             .discharged = complete ? expected.discharged : "",
-                                             .complete = complete});
+        const auto check = [&](mlir::ModuleOp module, const discharge_row & expected) {
+            budgets += checkDischarge(module, expected.contents, expected.discharged);
         };
-        const auto parse = [&](const binary_row & expected) {
-            return mlir::parseSourceString<mlir::ModuleOp>(
-                std::string{kPrologue} + expected.contents.body + "}\n", &context);
+        const auto parse = [&](const discharge_row & expected) {
+            return parseContents(context, expected.contents);
         };
-        const auto run = [&](const binary_row & expected) {
-            if (auto module = parse(expected)) {
-                check(*module, expected);
-            } else {
-                fail(row{.what = expected.contents.what,
-                         .body = expected.contents.body,
-                         .expected = ""},
-                     "the static binary fixture did not parse");
-            }
+        const auto run = [&](const discharge_row & expected) {
+            budgets += runDischarge(context, expected.contents, expected.discharged,
+                                    "the static binary fixture did not parse");
         };
         for (const auto & expected : rows) { run(expected); }
 
@@ -298,7 +281,7 @@ void checkStaticBinaryProducers(mlir::MLIRContext & context) {
                               .exit = "produced -> {}"}});
         }
 
-        binary_row wide = rows.front();
+        discharge_row wide = rows.front();
         std::string extras;
         for (unsigned i = 0; i < 32; ++i) {
             extras += "  %extra_" + std::to_string(i) + " = ctjs.binary_static " + spelling +
@@ -324,7 +307,7 @@ void checkStaticBinaryProducers(mlir::MLIRContext & context) {
                  "the static binary snapshot fixture did not parse");
         }
 
-        binary_row mutation = rows.front();
+        discharge_row mutation = rows.front();
         mutation.contents.what = "live static operand and kind edits defeat forged completion";
         unsigned liveStates = 0;
         if (auto module = parse(mutation)) {
@@ -414,15 +397,11 @@ void checkArithmeticUnaryProducers(mlir::MLIRContext & context) {
     const std::string overwrite = "  ctjs.set_property %a[%zero], %zero\n  ctjs.return %a\n";
     const std::string branch =
         "  %flag = ctjs.truthy %produced\n  cf.cond_br %flag, ^yes, ^no\n^yes:\n";
-    struct arithmetic_row {
-        contents_row contents;
-        const char * discharged = "x";
-    };
     for (const auto kind : {ctjs::UnaryKind::Neg, ctjs::UnaryKind::Plus, ctjs::UnaryKind::BitNot}) {
         const std::string spelling = ctjs::stringifyUnaryKind(kind).str();
         const std::string operation = "  %produced = ctjs.unary " + spelling;
         const std::string produce = operation + " %number {storage_test_id = \"produced\"}\n";
-        const std::vector<arithmetic_row> rows = {
+        const std::vector<discharge_row> rows = {
             {.contents = {.what = "arithmetic Number results cannot prune either overwrite arm",
                           .body = values + produce + branch + overwrite + "^no:\n" + overwrite,
                           .arrays = "a:[zero] | a:[zero]",
@@ -501,28 +480,15 @@ void checkArithmeticUnaryProducers(mlir::MLIRContext & context) {
                           .failure = ArrayContentsFailure::UnsupportedOperation}},
         };
         std::size_t budgets = 0;
-        const auto check = [&](mlir::ModuleOp module, const arithmetic_row & expected) {
-            checkArrayContents(module, expected.contents);
-            const bool complete = expected.contents.failure == ArrayContentsFailure::None;
-            budgets +=
-                checkArrayRetention(module, {.what = expected.contents.what,
-                                             .body = expected.contents.body,
-                                             .discharged = complete ? expected.discharged : "",
-                                             .complete = complete});
+        const auto check = [&](mlir::ModuleOp module, const discharge_row & expected) {
+            budgets += checkDischarge(module, expected.contents, expected.discharged);
         };
-        const auto parse = [&](const arithmetic_row & expected) {
-            return mlir::parseSourceString<mlir::ModuleOp>(
-                std::string{kPrologue} + expected.contents.body + "}\n", &context);
+        const auto parse = [&](const discharge_row & expected) {
+            return parseContents(context, expected.contents);
         };
-        const auto run = [&](const arithmetic_row & expected) {
-            if (auto module = parse(expected)) {
-                check(*module, expected);
-            } else {
-                fail(row{.what = expected.contents.what,
-                         .body = expected.contents.body,
-                         .expected = ""},
-                     "the arithmetic unary fixture did not parse");
-            }
+        const auto run = [&](const discharge_row & expected) {
+            budgets += runDischarge(context, expected.contents, expected.discharged,
+                                    "the arithmetic unary fixture did not parse");
         };
         for (const auto & expected : rows) { run(expected); }
         const std::vector<std::string> origins = {
@@ -577,7 +543,7 @@ void checkArithmeticUnaryProducers(mlir::MLIRContext & context) {
                               .reads = savedBigInt ? "a[0]=ctjs.constant" : "a[0]=zero",
                               .exit = "produced -> {}"}});
         }
-        arithmetic_row wide = rows.front();
+        discharge_row wide = rows.front();
         std::string extras;
         for (unsigned i = 0; i < 32; ++i) {
             extras += "  %extra_" + std::to_string(i) + " = ctjs.unary " + spelling + " %number\n";
@@ -605,7 +571,7 @@ void checkArithmeticUnaryProducers(mlir::MLIRContext & context) {
                 row{.what = "wide arithmetic snapshot", .body = wide.contents.body, .expected = ""},
                 "the arithmetic snapshot fixture did not parse");
         }
-        arithmetic_row mutation = rows.front();
+        discharge_row mutation = rows.front();
         mutation.contents.what = "live unary tags defeat stale and forged completion";
         unsigned liveStates = 0;
         if (auto module = parse(mutation)) {

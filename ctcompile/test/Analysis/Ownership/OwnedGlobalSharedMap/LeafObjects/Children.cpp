@@ -3,11 +3,6 @@
 namespace ctcompile::test::owned_global_shared_map {
 
 void checkChildMapOwner(mlir::MLIRContext & context, const std::string & source, bool lifted) {
-    const auto requested = [](mlir::ModuleOp module) {
-        auto contract = contractFor(module);
-        contract.initialIntrinsics = {"Map"};
-        return contract;
-    };
     auto nested = replaced(source, "    %value = ctjs.create_object", R"MLIR(
     %childConstructor = ctjs.load_global "Map"
     %value = ctjs.construct %childConstructor(%childConstructor)
@@ -62,10 +57,9 @@ void checkChildMapOwner(mlir::MLIRContext & context, const std::string & source,
                                                      {retained, true, false},
                                                      {conditional, false, true},
                                                      {conditionalize(retained), true, true}}) {
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
-        check(static_cast<bool>(module), "source/prepared nested child owner fixture parses");
+        auto module = parsed(context, program, "source/prepared nested child owner fixture parses");
         if (!module) { continue; }
-        auto contract = requested(*module);
+        auto contract = mapContractFor(*module);
         OwnedGlobalRoots query(*module, contract);
         check(query.proved() && query.roots().size() == 1,
               "a captured outer Map retains a distinct fresh child and its saved readback");
@@ -123,7 +117,7 @@ void checkChildMapOwner(mlir::MLIRContext & context, const std::string & source,
             operation->setAttr("ctnative.map_present", attributes.getBoolAttr(true));
             operation->setAttr("ctnative.map_group", attributes.getI64IntegerAttr(0));
         });
-        contract = requested(*module);
+        contract = mapContractFor(*module);
         check(OwnedGlobalRoots(*module, contract).proved(),
               "nested ownership is independently rederived despite forged native reports");
         ctjs::CallOp outerSet, childSet, childRead;
@@ -149,7 +143,7 @@ void checkChildMapOwner(mlir::MLIRContext & context, const std::string & source,
             check(!stale.proved() && stale.reason().contains("fingerprint") &&
                       empty(*module, stale),
                   "a changed child source invalidates the original owner fingerprint");
-            OwnedGlobalRoots fresh(*module, requested(*module));
+            OwnedGlobalRoots fresh(*module, mapContractFor(*module));
             check(!fresh.proved() && !fresh.exhausted() && empty(*module, fresh),
                   "fresh fingerprints and forged Map facts cannot authorize an unsafe child edge");
             operation->setOperand(operand, saved);
@@ -189,7 +183,7 @@ void checkChildMapOwner(mlir::MLIRContext & context, const std::string & source,
     check(static_cast<bool>(branchModule),
           "source/prepared independent child branch fixture parses");
     if (branchModule) {
-        const auto contract = requested(*branchModule);
+        const auto contract = mapContractFor(*branchModule);
         OwnedGlobalRoots query(*branchModule, contract);
         check(
             query.proved() && query.roots().size() == 1 && query.scalarReads().size() == 1 &&
@@ -207,15 +201,14 @@ void checkChildMapOwner(mlir::MLIRContext & context, const std::string & source,
         }
     }
     const auto refuse = [&](const std::string & program, const char * message) {
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
-        check(static_cast<bool>(module), "source/prepared child owner refusal parses");
+        auto module = parsed(context, program, "source/prepared child owner refusal parses");
         if (!module) { return; }
-        OwnedGlobalRoots query(*module, requested(*module));
+        OwnedGlobalRoots query(*module, mapContractFor(*module));
         check(!query.proved() && !query.exhausted() && empty(*module, query), message);
     };
     const auto checkLeafContents = [&](mlir::ModuleOp module, const OwnedGlobalRoots & query,
                                        const char * message) {
-        const auto contract = requested(module);
+        const auto contract = mapContractFor(module);
         HostContractAnalysis host(module, contract);
         check(host.proved() && query.proved() && !host.exhausted() && !query.exhausted() &&
                   query.roots().size() == 1 && host.callables().size() == 4 &&
@@ -245,10 +238,10 @@ void checkChildMapOwner(mlir::MLIRContext & context, const std::string & source,
               "leaf-only ownership preserves all historical source operations");
     };
     const auto leafOwner = [&](const std::string & program, const char * message) {
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
-        check(static_cast<bool>(module), "source/prepared leaf-only child owner fixture parses");
+        auto module =
+            parsed(context, program, "source/prepared leaf-only child owner fixture parses");
         if (!module) { return; }
-        OwnedGlobalRoots query(*module, requested(*module));
+        OwnedGlobalRoots query(*module, mapContractFor(*module));
         checkLeafContents(*module, query, message);
     };
     const auto branchOrigins =
@@ -277,10 +270,10 @@ void checkChildMapOwner(mlir::MLIRContext & context, const std::string & source,
     %replaced = ctjs.call %setter(%state, %entryKey, %replacement)
     %childReader = ctjs.get_property)MLIR");
     for (const auto & program : {branchOrigins, repeated, replacement}) {
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
-        check(static_cast<bool>(module), "source/prepared returned-child identity control parses");
+        auto module =
+            parsed(context, program, "source/prepared returned-child identity control parses");
         if (!module) { continue; }
-        const auto contract = requested(*module);
+        const auto contract = mapContractFor(*module);
         OwnedGlobalRoots query(*module, contract);
         check(query.proved() && query.roots().size() == 1,
               "returned children retain identity across unequal branches, repeat "
@@ -357,7 +350,7 @@ void checkChildMapOwner(mlir::MLIRContext & context, const std::string & source,
     auto crossModule = mlir::parseSourceString<mlir::ModuleOp>(cross, &context);
     check(static_cast<bool>(crossModule), "source/prepared cross-invocation child owner parses");
     if (crossModule) {
-        auto contract = requested(*crossModule);
+        auto contract = mapContractFor(*crossModule);
         OwnedGlobalRoots query(*crossModule, contract);
         check(query.proved() && query.roots().size() == 1 && query.scalarReads().size() == 1 &&
                   query.scalarReads().front().alternatives.tag() ==
@@ -388,7 +381,7 @@ void checkChildMapOwner(mlir::MLIRContext & context, const std::string & source,
                 operation->setAttr("ctnative.map_present", attributes.getBoolAttr(true));
                 operation->setAttr("ctnative.map_read_type", attributes.getStringAttr("number"));
             });
-            check(OwnedGlobalRoots(*crossModule, requested(*crossModule)).proved(),
+            check(OwnedGlobalRoots(*crossModule, mapContractFor(*crossModule)).proved(),
                   "forged reports never replace independent child-entry ownership proof");
         }
     }
@@ -500,8 +493,7 @@ void checkChildMapOwner(mlir::MLIRContext & context, const std::string & source,
                               bool reverse = false, bool exhaustive = false, int scalarRead = -1,
                               bool leafOnly = false) {
         ++nullableRows;
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
-        check(static_cast<bool>(module), "source/prepared nullable child fixture parses");
+        auto module = parsed(context, program, "source/prepared nullable child fixture parses");
         if (!module) { return; }
         auto getter = module->lookupSymbol<ctjs::FuncOp>("get$3");
         auto setter = module->lookupSymbol<ctjs::FuncOp>("put$4");
@@ -525,7 +517,7 @@ void checkChildMapOwner(mlir::MLIRContext & context, const std::string & source,
             getClosure->moveAfter(putWrite);
             getWrite->moveAfter(getClosure);
         }
-        auto contract = requested(*module);
+        auto contract = mapContractFor(*module);
         OwnedGlobalRoots query(*module, contract);
         check(query.proved() == expected && !query.exhausted() &&
                   (expected || empty(*module, query)),
@@ -577,7 +569,7 @@ void checkChildMapOwner(mlir::MLIRContext & context, const std::string & source,
             operation->setAttr("ctnative.map_present", mlir::UnitAttr::get(&context));
             operation->setAttr("ctnative.map_read_type", mlir::StringAttr::get(&context, "number"));
         });
-        contract = requested(*module);
+        contract = mapContractFor(*module);
         check(OwnedGlobalRoots(*module, contract).proved(),
               "forged reports cannot replace the independent nullable child proof");
         ctjs::CallOp childSet;
@@ -593,7 +585,7 @@ void checkChildMapOwner(mlir::MLIRContext & context, const std::string & source,
                                     mlir::Value(setter.getBody().front().getArgument(0))}) {
             childSet->setOperand(3, changed);
             OwnedGlobalRoots stale(*module, contract);
-            OwnedGlobalRoots fresh(*module, requested(*module));
+            OwnedGlobalRoots fresh(*module, mapContractFor(*module));
             check(!stale.proved() && stale.reason().contains("fingerprint") &&
                       empty(*module, stale) && !fresh.proved() && !fresh.exhausted() &&
                       empty(*module, fresh),
@@ -689,11 +681,6 @@ void checkChildMapOwner(mlir::MLIRContext & context, const std::string & source,
 void checkCallerPayloadOwner(mlir::MLIRContext & context, const std::string & source,
                              bool prepared) {
     using Alternatives = ctcompile::ctnative::PrimitiveAlternatives;
-    const auto requested = [](mlir::ModuleOp module) {
-        auto contract = contractFor(module);
-        contract.initialIntrinsics = {"Map"};
-        return contract;
-    };
     auto fixture =
         replaced(source, "%entryKey: !ctjs.value)", "%entryKey: !ctjs.value, %value: !ctjs.value)");
     fixture = replaced(fixture, "    %value = ctjs.create_object\n", "");
@@ -715,10 +702,9 @@ void checkCallerPayloadOwner(mlir::MLIRContext & context, const std::string & so
     const auto variant = [&](const std::string & text, bool expected, const char * message,
                              unsigned objects = 3) {
         ++rows;
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(module), "source/prepared caller payload fixture parses");
+        auto module = parsed(context, text, "source/prepared caller payload fixture parses");
         if (!module) { return; }
-        const auto contract = requested(*module);
+        const auto contract = mapContractFor(*module);
         HostContractAnalysis host(*module, contract);
         OwnedGlobalRoots owner(*module, contract);
         check(host.proved() == expected && owner.proved() == expected && !host.exhausted() &&
@@ -799,10 +785,9 @@ void checkCallerPayloadOwner(mlir::MLIRContext & context, const std::string & so
     variant(
         replaced(fixture, "    ctjs.return %size\n  }\n}\n", "    ctjs.return %value\n  }\n}\n"),
         false, "a payload formal still cannot escape through an owning result");
-    auto module = mlir::parseSourceString<mlir::ModuleOp>(observed, &context);
-    check(static_cast<bool>(module), "caller payload mutation fixture parses");
+    auto module = parsed(context, observed, "caller payload mutation fixture parses");
     if (!module) { return; }
-    OwnedGlobalRoots owner(*module, requested(*module));
+    OwnedGlobalRoots owner(*module, mapContractFor(*module));
     if (!owner.proved()) { return; }
     ctjs::SetPropertyOp field;
     auto entry = module->lookupSymbol<ctjs::FuncOp>("script$0");
@@ -828,13 +813,13 @@ void checkCallerPayloadOwner(mlir::MLIRContext & context, const std::string & so
         attributes, field.getLoc(), field.getKey().getDefiningOp<ctjs::ConstantOp>().getValue());
     field->setAttr("ctnative.object_schema", attributes.getStringAttr("scalar"));
     (*module)->setAttr("ctnative.host_owner_proved", attributes.getBoolAttr(true));
-    const auto contract = requested(*module);
+    const auto contract = mapContractFor(*module);
     const auto mutation = [&](mlir::Operation * operation, unsigned operand, mlir::Value value) {
         const auto saved = operation->getOperand(operand);
         operation->setOperand(operand, value);
         OwnedGlobalRoots stale(*module, contract);
-        HostContractAnalysis freshHost(*module, requested(*module));
-        OwnedGlobalRoots fresh(*module, requested(*module));
+        HostContractAnalysis freshHost(*module, mapContractFor(*module));
+        OwnedGlobalRoots fresh(*module, mapContractFor(*module));
         check(!stale.proved() && stale.reason().contains("fingerprint") && empty(*module, stale) &&
                   !freshHost.proved() && freshHost.callables().empty() && !fresh.proved() &&
                   empty(*module, fresh),

@@ -4,7 +4,6 @@
 from CTNative.Browser import native_dom as dom
 from CTNative.Browser.native_dom_element_iteration import INTRINSICS as SNAPSHOT_INTRINSICS
 from CTNative.Browser.native_dom_json import quote
-from CTNative.harness import find_compilers
 
 INTRINSICS = [
     *SNAPSHOT_INTRINSICS,
@@ -1772,40 +1771,36 @@ def mixed_selectors(args, compilers):
     for label, text in MIXED_SELECTOR_SOURCES.items():
         ir, contract = dom.prepare(args, f"custom-{label}", text, 2, entry_name="customElements")
         contract.update(initial_intrinsics=INTRINSICS)
-        for owned in (False, True):
-            manifest = dict(
-                contract, provider="ctbrowser-dom-session-v1" if owned else "ctbrowser-dom-v1"
+        for owned, optimize, manifest in dom.variants(contract):
+            name = f"custom-iteration-{label}-{owned}-{optimize}"
+            native = dom.lower(args, ir, manifest, name, optimize=optimize)
+            cpp = dom.run([args.translate, "--mlir-to-cpp", str(native)]).stdout
+            if any(helper in cpp for helper in INTRINSICS if helper.startswith("__ctbrowser_")):
+                raise RuntimeError(f"{name}: mixed selectors retained the VM protocol")
+            checks = (MIXED_CHECKS + (MIXED_OWNED_CHECKS if owned else "")).replace(
+                "@MATCH_RESULT@",
+                (
+                    "false"
+                    if "before-close" in label
+                    else 'selected.owner->read().local_name(selected.id) == "button"'
+                ),
             )
-            for optimize in (False, True):
-                name = f"custom-iteration-{label}-{owned}-{optimize}"
-                native = dom.lower(args, ir, manifest, name, optimize=optimize)
-                cpp = dom.run([args.translate, "--mlir-to-cpp", str(native)]).stdout
-                if any(helper in cpp for helper in INTRINSICS if helper.startswith("__ctbrowser_")):
-                    raise RuntimeError(f"{name}: mixed selectors retained the VM protocol")
-                checks = (MIXED_CHECKS + (MIXED_OWNED_CHECKS if owned else "")).replace(
-                    "@MATCH_RESULT@",
-                    (
-                        "false"
-                        if "before-close" in label
-                        else 'selected.owner->read().local_name(selected.id) == "button"'
-                    ),
+            dom.standalone(args, native, name, checks, compilers, includes, libraries)
+            executions += 2 * len(compilers)
+            for suffix, bad, budget in (
+                ("budget", manifest, 0),
+                ("missing-second", dict(manifest, element_parameters=[0]), None),
+            ):
+                dom.lower(
+                    args,
+                    ir,
+                    bad,
+                    name + "-" + suffix,
+                    optimize=optimize,
+                    max_steps=budget,
+                    success=False,
                 )
-                dom.standalone(args, native, name, checks, compilers, includes, libraries)
-                executions += 2 * len(compilers)
-                for suffix, bad, budget in (
-                    ("budget", manifest, 0),
-                    ("missing-second", dict(manifest, element_parameters=[0]), None),
-                ):
-                    dom.lower(
-                        args,
-                        ir,
-                        bad,
-                        name + "-" + suffix,
-                        optimize=optimize,
-                        max_steps=budget,
-                        success=False,
-                    )
-                    refused += 1
+                refused += 1
     return executions, refused
 
 
@@ -2389,28 +2384,24 @@ def protected_attribute(args, compilers, includes, libraries):
             "entry": "protectedAttribute$0",
             "element_parameters": [0, 1],
         }
-        for owned in (False, True):
-            manifest = dict(
-                contract, provider="ctbrowser-dom-session-v1" if owned else "ctbrowser-dom-v1"
+        for owned, optimize, manifest in dom.variants(contract):
+            name = f"protected-attribute-{label}-{owned}-{optimize}"
+            native = dom.lower(args, ir, manifest, name, optimize=optimize, success=accepted)
+            if not accepted:
+                refused += 1
+                continue
+            dom.standalone(
+                args,
+                native,
+                name,
+                (checks + (owned_checks if owned else "")).replace(
+                    "@ATTRIBUTE@", "1:closed" if label == "digit-name" else "data-closed"
+                ),
+                compilers,
+                includes,
+                libraries,
             )
-            for optimize in (False, True):
-                name = f"protected-attribute-{label}-{owned}-{optimize}"
-                native = dom.lower(args, ir, manifest, name, optimize=optimize, success=accepted)
-                if not accepted:
-                    refused += 1
-                    continue
-                dom.standalone(
-                    args,
-                    native,
-                    name,
-                    (checks + (owned_checks if owned else "")).replace(
-                        "@ATTRIBUTE@", "1:closed" if label == "digit-name" else "data-closed"
-                    ),
-                    compilers,
-                    includes,
-                    libraries,
-                )
-                executions += 2 * len(compilers)
+            executions += 2 * len(compilers)
     print(f"Protected raw DOM attribute: {executions} native executions, {refused} refusals")
 
 
@@ -2731,34 +2722,29 @@ var {name} = (function() {{
         )
         ir, contract = dom.prepare(args, label, text, 1, entry_name="customElements")
         contract.update(initial_intrinsics=INTRINSICS)
-        for owned in (False, True):
-            manifest = dict(
-                contract,
-                provider="ctbrowser-dom-session-v1" if owned else "ctbrowser-dom-v1",
-            )
-            for optimize in (False, True):
-                name = f"{label}-{owned}-{optimize}"
-                native = dom.lower(args, ir, manifest, name, optimize=optimize)
-                selected_checks = checks + (OWNED_CHECKS if owned else "")
-                selected_includes, selected_libraries = includes, libraries
-                if selecting:
-                    selected_checks = (
-                        "style::engine selectors{atoms}, foreign_selectors{foreign_atoms};\n"
-                        + selected_checks.replace(
-                            "@ENTRY@(alias)", "@ENTRY@(alias, selectors)"
-                        ).replace("@ENTRY@(foreign)", "@ENTRY@(foreign, foreign_selectors)")
-                    )
-                    selected_includes, selected_libraries = dom.link_options(args, selectors=True)
-                dom.standalone(
-                    args,
-                    native,
-                    name,
-                    selected_checks,
-                    compilers,
-                    selected_includes,
-                    selected_libraries,
+        for owned, optimize, manifest in dom.variants(contract):
+            name = f"{label}-{owned}-{optimize}"
+            native = dom.lower(args, ir, manifest, name, optimize=optimize)
+            selected_checks = checks + (OWNED_CHECKS if owned else "")
+            selected_includes, selected_libraries = includes, libraries
+            if selecting:
+                selected_checks = (
+                    "style::engine selectors{atoms}, foreign_selectors{foreign_atoms};\n"
+                    + selected_checks.replace(
+                        "@ENTRY@(alias)", "@ENTRY@(alias, selectors)"
+                    ).replace("@ENTRY@(foreign)", "@ENTRY@(foreign, foreign_selectors)")
                 )
-                executions += 2 * len(compilers)
+                selected_includes, selected_libraries = dom.link_options(args, selectors=True)
+            dom.standalone(
+                args,
+                native,
+                name,
+                selected_checks,
+                compilers,
+                selected_includes,
+                selected_libraries,
+            )
+            executions += 2 * len(compilers)
     print(
         f"Normal DOM close throw: {executions} native executions, {observations} Node/VM observations"
     )
@@ -8236,8 +8222,7 @@ var savedThrow, savedExhausted;
 def main():
     args = dom.parse_args(__doc__, oracles=True)
     observations = oracles(args) + mixed_oracles(args)
-    compilers = find_compilers()
-    compilers[1] = args.clang
+    compilers = args.compilers
     includes, libraries = dom.link_options(args)
     protected_attribute(args, compilers, includes, libraries)
     saved_throws(args, compilers, includes, libraries)
@@ -8385,11 +8370,8 @@ def main():
             continue  # Executed above, with the original source unchanged.
         ir, contract = dom.prepare(args, name, text, 1, entry_name="customElements")
         contract.update(initial_intrinsics=INTRINSICS)
-        for optimize in (False, True):
-            dom.lower(
-                args, ir, contract, f"refused-{name}-{optimize}", optimize=optimize, success=False
-            )
-            refused += 1
+        dom.refuse(args, ir, contract, f"refused-{name}")
+        refused += 2
     print(
         f"Closed custom DOM iteration: {executions} native executions, {refused} refusals; "
         f"{admitted} nonexecuted source admissions; "

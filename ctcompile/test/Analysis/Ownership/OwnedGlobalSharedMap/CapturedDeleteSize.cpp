@@ -4,11 +4,6 @@ namespace ctcompile::test::owned_global_shared_map {
 
 void checkCapturedMapDeleteSizeOwner(mlir::MLIRContext & context, const std::string & source,
                                      bool prepared) {
-    const auto requested = [](mlir::ModuleOp module) {
-        auto contract = contractFor(module);
-        contract.initialIntrinsics = {"Map"};
-        return contract;
-    };
     auto fixture =
         replaced(source, "%entryKey: !ctjs.value)",
                  "%entryKey: !ctjs.value, %aliasKey: !ctjs.value, %choice: !ctjs.value)");
@@ -101,10 +96,9 @@ void checkCapturedMapDeleteSizeOwner(mlir::MLIRContext & context, const std::str
     unsigned rows = 0;
     const auto variant = [&](const std::string & text, bool expected, const char * message) {
         ++rows;
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(module), "source/prepared delete cardinality fixture parses");
+        auto module = parsed(context, text, "source/prepared delete cardinality fixture parses");
         if (!module) { return; }
-        const auto contract = requested(*module);
+        const auto contract = mapContractFor(*module);
         OwnedGlobalRoots query(*module, contract);
         check(query.proved() == expected && !query.exhausted() &&
                   (expected || empty(*module, query)),
@@ -404,11 +398,10 @@ void checkCapturedMapDeleteSizeOwner(mlir::MLIRContext & context, const std::str
 
     for (const auto & [body, expectedKey] : {std::pair{joinBody + inserted + size, "%two"},
                                              {joinBody + absentDelete + size, "%one"}}) {
-        auto mutated =
-            mlir::parseSourceString<mlir::ModuleOp>(program(body, expectedKey), &context);
-        check(static_cast<bool>(mutated), "joined mutation live-control fixture parses");
+        auto mutated = parsed(context, program(body, expectedKey),
+                              "joined mutation live-control fixture parses");
         if (!mutated) { continue; }
-        auto contract = requested(*mutated);
+        auto contract = mapContractFor(*mutated);
         OwnedGlobalRoots complete(*mutated, contract);
         const unsigned completion = complete.steps();
         check(complete.proved() && completion < 30000,
@@ -443,13 +436,13 @@ void checkCapturedMapDeleteSizeOwner(mlir::MLIRContext & context, const std::str
             op->setAttr("ctnative.map_exact_size", attrs.getI32IntegerAttr(2));
             op->setAttr("ctnative.map_present", attrs.getUnitAttr());
         });
-        contract = requested(*mutated);
+        contract = mapContractFor(*mutated);
         const auto refuse = [&] {
             OwnedGlobalRoots stale(*mutated, contract);
             check(!stale.proved() && stale.reason().contains("fingerprint") &&
                       empty(*mutated, stale),
                   "live known-mutation edits invalidate their original fingerprint");
-            OwnedGlobalRoots fresh(*mutated, requested(*mutated));
+            OwnedGlobalRoots fresh(*mutated, mapContractFor(*mutated));
             check(!fresh.proved() && !fresh.exhausted() && empty(*mutated, fresh),
                   "fresh fingerprints and forged reports cannot prove changed key relations");
         };
@@ -473,7 +466,7 @@ void checkCapturedMapDeleteSizeOwner(mlir::MLIRContext & context, const std::str
     auto joinedModule = mlir::parseSourceString<mlir::ModuleOp>(joinedOne, &context);
     check(static_cast<bool>(joinedModule), "joined size budget and live-edit fixture parses");
     if (joinedModule) {
-        auto joinedContract = requested(*joinedModule);
+        auto joinedContract = mapContractFor(*joinedModule);
         OwnedGlobalRoots complete(*joinedModule, joinedContract);
         const unsigned completion = complete.steps();
         check(complete.proved() && completion < 30000, "the joined cardinality proof is bounded");
@@ -517,13 +510,13 @@ void checkCapturedMapDeleteSizeOwner(mlir::MLIRContext & context, const std::str
                     op->setAttr("ctnative.map_exact_size", attrs.getI32IntegerAttr(1));
                     op->setAttr("ctnative.map_present", attrs.getUnitAttr());
                 });
-                joinedContract = requested(*joinedModule);
+                joinedContract = mapContractFor(*joinedModule);
                 const auto refused = [&] {
                     OwnedGlobalRoots stale(*joinedModule, joinedContract);
                     check(!stale.proved() && stale.reason().contains("fingerprint") &&
                               empty(*joinedModule, stale),
                           "a live join edit invalidates the former ownership fingerprint");
-                    OwnedGlobalRoots fresh(*joinedModule, requested(*joinedModule));
+                    OwnedGlobalRoots fresh(*joinedModule, mapContractFor(*joinedModule));
                     check(!fresh.proved() && !fresh.exhausted() && empty(*joinedModule, fresh),
                           "fresh fingerprints and forged size reports cannot hide unequal arms");
                 };
@@ -551,10 +544,9 @@ void checkCapturedMapDeleteSizeOwner(mlir::MLIRContext & context, const std::str
     }
 
     for (const auto & [text, label] : {std::pair{last, "last key"}, {remaining, "one of two"}}) {
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(module), "delete-size live mutation fixture parses");
+        auto module = parsed(context, text, "delete-size live mutation fixture parses");
         if (!module) { continue; }
-        auto contract = requested(*module);
+        auto contract = mapContractFor(*module);
         OwnedGlobalRoots complete(*module, contract);
         const unsigned completion = complete.steps();
         check(complete.proved() && completion < 20000, "delete-size complete proof is bounded");
@@ -589,13 +581,13 @@ void checkCapturedMapDeleteSizeOwner(mlir::MLIRContext & context, const std::str
             op->setAttr("ctnative.map_exact_size", attrs.getI32IntegerAttr(0));
             op->setAttr("ctnative.map_present", attrs.getUnitAttr());
         });
-        contract = requested(*module);
+        contract = mapContractFor(*module);
         const auto refused = [&] {
             OwnedGlobalRoots stale(*module, contract);
             check(!stale.proved() && stale.reason().contains("fingerprint") &&
                       empty(*module, stale),
                   "live deletion edits invalidate the original owner fingerprint");
-            OwnedGlobalRoots fresh(*module, requested(*module));
+            OwnedGlobalRoots fresh(*module, mapContractFor(*module));
             check(!fresh.proved() && !fresh.exhausted() && empty(*module, fresh),
                   "fresh fingerprints and forged reports cannot repair changed deletion evidence");
         };

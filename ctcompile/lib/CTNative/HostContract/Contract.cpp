@@ -6,8 +6,10 @@
 #include "mlir/IR/AsmState.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/Support/JSON.h"
+#include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/SHA256.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -38,10 +40,9 @@ llvm::Error names(const llvm::json::Object & object, llvm::StringRef field,
 }
 
 bool keys(const llvm::json::Object & object, llvm::ArrayRef<llvm::StringRef> allowed) {
-    for (const auto & member : object) {
-        if (!llvm::is_contained(allowed, member.first.str())) { return false; }
-    }
-    return true;
+    return llvm::all_of(object, [&](const auto & member) {
+        return llvm::is_contained(allowed, member.first.str());
+    });
 }
 
 bool closedSourceIntrinsic(llvm::StringRef name) {
@@ -92,6 +93,25 @@ const llvm::StringSet<> & host_detail::domInitialIntrinsics() {
     return names;
 }
 
+llvm::StringRef hostProviderName(HostContract::Provider provider) {
+    using Provider = HostContract::Provider;
+    switch (provider) {
+    case Provider::closedSource: return "closed-source-v1";
+    case Provider::closedSourceSession: return "closed-source-session-v1";
+    case Provider::ctbrowserDOM: return "ctbrowser-dom-v1";
+    case Provider::ctbrowserDOMSession: return "ctbrowser-dom-session-v1";
+    case Provider::ctbrowserDOMDataSession: return "ctbrowser-dom-data-session-v1";
+    case Provider::ctbrowserIntrinsics: return "ctbrowser-intrinsics-v1";
+    }
+    llvm_unreachable("unknown host provider");
+}
+
+llvm::Expected<HostContract> readHostContract(llvm::StringRef path, llvm::StringRef unreadable) {
+    auto buffer = llvm::MemoryBuffer::getFile(path);
+    if (!buffer) { return error((unreadable + buffer.getError().message()).str()); }
+    return parseHostContract((*buffer)->getBuffer());
+}
+
 llvm::Expected<HostContract> parseHostContract(llvm::StringRef text) {
     auto parsed = llvm::json::parse(text);
     if (!parsed) { return parsed.takeError(); }
@@ -100,13 +120,16 @@ llvm::Expected<HostContract> parseHostContract(llvm::StringRef text) {
         return error("host contract must be an object with only supported fields");
     }
     if (object->getInteger("version") != 1) { return error("unsupported host contract version"); }
-    const bool domSession = object->getString("provider") == "ctbrowser-dom-session-v1";
-    const bool dom = domSession || object->getString("provider") == "ctbrowser-dom-v1";
-    const bool domData = object->getString("provider") == "ctbrowser-dom-data-session-v1";
-    const bool session = object->getString("provider") == "closed-source-session-v1";
-    const bool intrinsics = object->getString("provider") == "ctbrowser-intrinsics-v1";
+    const auto named = [provider = object->getString("provider")](HostContract::Provider kind) {
+        return provider == hostProviderName(kind);
+    };
+    const bool domSession = named(HostContract::Provider::ctbrowserDOMSession);
+    const bool dom = domSession || named(HostContract::Provider::ctbrowserDOM);
+    const bool domData = named(HostContract::Provider::ctbrowserDOMDataSession);
+    const bool session = named(HostContract::Provider::closedSourceSession);
+    const bool intrinsics = named(HostContract::Provider::ctbrowserIntrinsics);
     if (!dom && !domData && !session && !intrinsics &&
-        object->getString("provider") != "closed-source-v1") {
+        !named(HostContract::Provider::closedSource)) {
         return error("unsupported host provider; expected closed-source-v1, "
                      "closed-source-session-v1, ctbrowser-dom-v1, ctbrowser-dom-session-v1, "
                      "ctbrowser-dom-data-session-v1 or ctbrowser-intrinsics-v1");
@@ -336,16 +359,9 @@ std::string hostContractFingerprint(mlir::ModuleOp module) {
     std::string text;
     llvm::raw_string_ostream stream(text);
     module.print(stream, mlir::OpPrintingFlags().printGenericOpForm().enableDebugInfo(false));
-    const auto digest = llvm::SHA256::hash(llvm::ArrayRef<std::uint8_t>(
-        reinterpret_cast<const std::uint8_t *>(text.data()), text.size()));
-    constexpr char hex[] = "0123456789abcdef";
-    std::string result;
-    result.reserve(64);
-    for (const std::uint8_t byte : digest) {
-        result.push_back(hex[byte >> 4]);
-        result.push_back(hex[byte & 15]);
-    }
-    return result;
+    return llvm::toHex(llvm::SHA256::hash(llvm::ArrayRef<std::uint8_t>(
+                           reinterpret_cast<const std::uint8_t *>(text.data()), text.size())),
+                       /*LowerCase=*/true);
 }
 
 } // namespace ctcompile::ctnative
@@ -471,11 +487,7 @@ std::string initialBindingProblem(mlir::ModuleOp module, const HostContract & co
             // This narrow contract provides no descriptor/prototype mutation
             // model. Refuse possible changes anywhere, including a suffix or
             // alias not reached by prefix interpretation.
-            mlir::Value key;
-            if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) { key = read.getKey(); }
-            if (auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(operation)) {
-                key = write.getKey();
-            }
+            const auto key = ctjs::propertyKey(operation);
             const auto name = key ? ctjs::constantKey(key) : llvm::StringRef{};
             static const llvm::StringSet<> descriptorMutations{
                 "__proto__",      "prototype",        "defineProperty",  "defineProperties",
@@ -503,9 +515,7 @@ std::string initialBindingProblem(mlir::ModuleOp module, const HostContract & co
             if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
             if (load.getName() == "Map") {
                 auto construct = llvm::dyn_cast<ctjs::ConstructOp>(use.getOwner());
-                if (construct && use.getOperandNumber() < 2 &&
-                    construct.getCallee() == load.getResult() &&
-                    construct.getNewTarget() == load.getResult() && construct.getArgs().empty()) {
+                if (construct && use.getOperandNumber() < 2 && plainMapConstruction(construct)) {
                     continue;
                 }
             } else if (load.getName() == "Error") {
@@ -523,10 +533,8 @@ std::string initialBindingProblem(mlir::ModuleOp module, const HostContract & co
                                                   ? classIntrinsicArity(load.getName())
                                                   : iteratorIntrinsicArity(load.getName())) {
                 auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
-                auto receiver = call ? call.getReceiver().getDefiningOp<ctjs::ConstantOp>()
-                                     : ctjs::ConstantOp{};
                 if (call && use.getOperandNumber() == 0 && call.getArgs().size() == arity &&
-                    receiver && llvm::isa<ctjs::UndefinedAttr>(receiver.getValue()) &&
+                    ctjs::isUndefinedConstant(call.getReceiver()) &&
                     (load.getName() != classDefinedIntrinsic ||
                      call.getArgs().front().getDefiningOp<ctjs::CreateClosureOp>())) {
                     continue;

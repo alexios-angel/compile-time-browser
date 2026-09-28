@@ -5,35 +5,8 @@ namespace ctcompile::test::owned_global_shared_map {
 void checkCapturedMapClearOwner(mlir::MLIRContext & context, const std::string & source,
                                 bool prepared) {
     using Alternatives = ctcompile::ctnative::PrimitiveAlternatives;
-    const auto requested = [](mlir::ModuleOp module) {
-        auto contract = contractFor(module);
-        contract.initialIntrinsics = {"Map"};
-        return contract;
-    };
-    const auto withheld = [](mlir::ModuleOp module, const OwnedGlobalRoots & query) {
-        return empty(module, query);
-    };
     auto fixture =
-        replaced(source, "%entryKey: !ctjs.value)",
-                 "%entryKey: !ctjs.value, %aliasKey: !ctjs.value, %choice: !ctjs.value)");
-    fixture = replaced(fixture, "    %actual =",
-                       "    %other = ctjs.constant #ctjs.string<\"z\">\n"
-                       "    %choice = ctjs.constant #ctjs.boolean<true>\n"
-                       "    %actual =");
-    for (const auto & [name, actual] :
-         {std::pair{"putterEnv", "actual"}, {"repeatEnv", "actual"}, {"laterEnv", "future"}}) {
-        const std::string prefix = prepared ? std::string("%") + name + ", " : "%owned, ";
-        fixture = replaced(fixture, prefix + "%" + actual + ")",
-                           prefix + "%" + actual + ", %other, %choice)");
-    }
-    const std::string getterSignature =
-        "@get$3(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value" +
-        std::string(prepared ? ", %state: !ctjs.value" : "") + ")";
-    fixture =
-        replaced(fixture, getterSignature,
-                 getterSignature.substr(0, getterSignature.size() - 1) + ", %input: !ctjs.value)");
-    fixture = replaced(fixture, prepared ? "%getterEnv)" : "%getter(%owned)",
-                       prepared ? "%getterEnv, %putResult)" : "%getter(%owned, %putResult)");
+        choiceMapSource(source, prepared, {"putterEnv", "repeatEnv", "laterEnv"}, "@get$3");
     const std::string write = "    %written = ctjs.call %setter(%state, %entryKey, %value)";
     const std::string clear = "    %cleared = ctjs.call %clearer(%state)\n";
     const std::string erase = "    %deleted = ctjs.call %eraser(%state, %entryKey)\n";
@@ -129,13 +102,12 @@ void checkCapturedMapClearOwner(mlir::MLIRContext & context, const std::string &
     const auto variant = [&](const std::string & text, bool expected, const char * message,
                              unsigned mask = Alternatives::Undefined) {
         ++rows;
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(module), "source/prepared captured clear fixture parses");
+        auto module = parsed(context, text, "source/prepared captured clear fixture parses");
         if (!module) { return; }
-        auto contract = requested(*module);
+        auto contract = mapContractFor(*module);
         OwnedGlobalRoots query(*module, contract);
         check(query.proved() == expected && !query.exhausted() &&
-                  (expected || withheld(*module, query)),
+                  (expected || empty(*module, query)),
               message);
         if (query.proved() != expected || query.exhausted()) {
             std::fprintf(stderr, "clear owner %s row %u: %s\n", prepared ? "prepared" : "source",
@@ -265,9 +237,8 @@ void checkCapturedMapClearOwner(mlir::MLIRContext & context, const std::string &
                 "    %outerCleared = ctjs.call %outerClearer(%state)\n"
                 "    scf.if %flag {\n      scf.yield\n    }\n"
                 "    ctjs.return %loaded";
-            auto module = mlir::parseSourceString<mlir::ModuleOp>(
-                replaced(base, "    ctjs.return %loaded", scoped), &context);
-            check(static_cast<bool>(module), "clear dependency scope fixture parses");
+            auto module = parsed(context, replaced(base, "    ctjs.return %loaded", scoped),
+                                 "clear dependency scope fixture parses");
             if (!module) { continue; }
             mlir::Builder attributes(&context);
             module->walk([&](mlir::Operation * operation) {
@@ -275,7 +246,7 @@ void checkCapturedMapClearOwner(mlir::MLIRContext & context, const std::string &
                 operation->setAttr("ctnative.map_absent", attributes.getBoolAttr(true));
                 operation->setAttr("ctnative.map_read_type", attributes.getStringAttr("undefined"));
             });
-            const auto contract = requested(*module);
+            const auto contract = mapContractFor(*module);
             check(OwnedGlobalRoots(*module, contract).proved(),
                   "properly scoped clear dependencies have an independent complete proof");
             auto setter = module->lookupSymbol<ctjs::FuncOp>("put$4");
@@ -346,10 +317,10 @@ void checkCapturedMapClearOwner(mlir::MLIRContext & context, const std::string &
             }
             OwnedGlobalRoots stale(*module, contract);
             check(!stale.proved() && stale.reason().contains("fingerprint") &&
-                      withheld(*module, stale),
+                      empty(*module, stale),
                   "a clear dependency scope edit invalidates old reports");
-            OwnedGlobalRoots fresh(*module, requested(*module));
-            check(!fresh.proved() && !fresh.exhausted() && withheld(*module, fresh),
+            OwnedGlobalRoots fresh(*module, mapContractFor(*module));
+            check(!fresh.proved() && !fresh.exhausted() && empty(*module, fresh),
                   "fresh reports cannot authorize a then-only clear dependency outside its scope");
             for (const auto & edit : edits) { edit.op->setOperand(edit.operand, edit.original); }
             check(OwnedGlobalRoots(*module, contract).proved(),
@@ -359,10 +330,9 @@ void checkCapturedMapClearOwner(mlir::MLIRContext & context, const std::string &
     }
     check(scopeMutations == 8, "all scalar, callee, flag and fluent Map scope controls ran");
     for (const auto & [text, label] : {std::pair{base, "unseen key"}, {bothArms, "two arms"}}) {
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(module), "clear budget fixture parses");
+        auto module = parsed(context, text, "clear budget fixture parses");
         if (!module) { continue; }
-        auto contract = requested(*module);
+        auto contract = mapContractFor(*module);
         OwnedGlobalRoots query(*module, contract);
         const unsigned completion = query.steps();
         check(query.proved() && completion < 20000, "clear proof has bounded complete work");
@@ -370,7 +340,7 @@ void checkCapturedMapClearOwner(mlir::MLIRContext & context, const std::string &
         for (unsigned budget = 0; budget < completion; ++budget) {
             OwnedGlobalRoots limited(*module, contract, budget);
             check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
-                      withheld(*module, limited),
+                      empty(*module, limited),
                   "every incomplete clear budget withholds the complete published family");
         }
         OwnedGlobalRoots exact(*module, contract, completion);
@@ -384,7 +354,7 @@ void checkCapturedMapClearOwner(mlir::MLIRContext & context, const std::string &
             operation->setAttr("ctnative.map_absent", attributes.getBoolAttr(true));
             operation->setAttr("ctnative.map_read_type", attributes.getStringAttr("undefined"));
         });
-        contract = requested(*module);
+        contract = mapContractFor(*module);
         check(OwnedGlobalRoots(*module, contract).proved(),
               "forged clear reports leave the positive live proof independently reproducible");
         auto setter = module->lookupSymbol<ctjs::FuncOp>("put$4");
@@ -409,10 +379,10 @@ void checkCapturedMapClearOwner(mlir::MLIRContext & context, const std::string &
             ++mutations;
             OwnedGlobalRoots stale(*module, contract);
             check(!stale.proved() && stale.reason().contains("fingerprint") &&
-                      withheld(*module, stale),
+                      empty(*module, stale),
                   "live clear edits invalidate the prior fingerprint");
-            OwnedGlobalRoots fresh(*module, requested(*module));
-            check(!fresh.proved() && !fresh.exhausted() && withheld(*module, fresh),
+            OwnedGlobalRoots fresh(*module, mapContractFor(*module));
+            check(!fresh.proved() && !fresh.exhausted() && empty(*module, fresh),
                   "fresh fingerprints and forged empty reports cannot repair an invalid clear");
         };
         clearCall->setOperand(1, setter.getBody().front().getArgument(0));

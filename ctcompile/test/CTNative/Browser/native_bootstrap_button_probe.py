@@ -6,7 +6,6 @@ not a browser API implementation or evidence of native DOM/component support.
 Vendor Config, BaseComponent, Button and their helper dependencies stay verbatim.
 """
 
-import argparse
 import hashlib
 import importlib.util
 import json
@@ -14,8 +13,7 @@ from pathlib import Path
 import re
 
 from CTNative.Exports import boundary
-from CTNative.harness import run
-from CTNative.Ownership.native_owned_global_maps.driver_common import CONSTANT_GLOBAL_NODE
+from CTNative.harness import native_args, node_globals, run
 
 ROOT = Path(__file__).resolve().parents[4]
 VENDOR_SHA256 = "5b29f1692a632853edc37b45bc1deedd595a777c9b234e8262ccd74ebfcf3d65"
@@ -178,7 +176,7 @@ def source():
 def observe(args, name, program, expected):
     js = args.work / f"{name}.js"
     js.write_text(program)
-    node = run([args.node, "-e", CONSTANT_GLOBAL_NODE, str(js), json.dumps(sorted(expected))])
+    node = node_globals(args.node, js, sorted(expected))
     reference = run([args.reference, str(js)])
     for engine, result, values in (
         ("node", node, expected),
@@ -199,12 +197,7 @@ def observe(args, name, program, expected):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    for name in ("translate", "opt", "node", "reference"):
-        parser.add_argument("--" + name, required=True)
-    parser.add_argument("--work", type=Path, required=True)
-    args = parser.parse_args()
-    args.work.mkdir(parents=True, exist_ok=True)
+    args = native_args(__doc__)
     program, provenance = source()
     js = args.work / "bootstrap-button.js"
     js.write_text(program)

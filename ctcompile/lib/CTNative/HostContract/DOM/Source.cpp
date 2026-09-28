@@ -83,8 +83,7 @@ bool host_detail::isLowercaseReplacement(ctjs::FuncOp function, llvm::function_r
                     concat.getKind() != ctjs::BinaryKind::Add)) {
         return false;
     }
-    auto prefix = concat.getLhs().getDefiningOp<ctjs::ConstantOp>();
-    auto text = prefix ? llvm::dyn_cast<ctjs::StringAttr>(prefix.getValue()) : ctjs::StringAttr{};
+    auto text = ctjs::constantAttr<ctjs::StringAttr>(concat.getLhs());
     auto call = concat.getRhs().getDefiningOp<ctjs::CallOp>();
     auto read =
         call ? call.getCallee().getDefiningOp<ctjs::GetPropertyOp>() : ctjs::GetPropertyOp{};
@@ -164,14 +163,8 @@ llvm::Error expandDOMHelpers(mlir::ModuleOp candidate, llvm::StringRef entry, un
                 // Class lifting can retire an unread holder slot while retaining
                 // its original body. Numeric closures and symbolic calls must
                 // both be absent before its independent leaf proof can suffice.
-                if (source.remaining / 2 < source.operationCount) {
-                    source.refuse("DOM helper expansion work budget exhausted");
-                    break;
-                }
-                source.remaining -= 2 * source.operationCount;
-                if (source.creations.lookup(index) != 0 ||
-                    !mlir::SymbolTable::symbolKnownUseEmpty(function, candidate.getOperation()) ||
-                    !mlir::SymbolTable::symbolKnownUseEmpty(function, &candidate.getBodyRegion()) ||
+                if (!source.step(2 * uint64_t(source.operationCount))) { break; }
+                if (source.creations.lookup(index) != 0 || !symbolUnused(function, candidate) ||
                     !source.proveUnusedBody(function)) {
                     source.refuse("DOM helper source contains an unvisited function");
                     break;

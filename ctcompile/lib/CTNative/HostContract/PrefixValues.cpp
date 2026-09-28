@@ -28,6 +28,22 @@ std::optional<bool> prefixTruth(prefixValue value) {
     return {};
 }
 
+std::optional<prefixValue> prefixScalar(mlir::Operation * operation,
+                                        const prefixAnalysis::environment & values,
+                                        mlir::MLIRContext * context) {
+    if (auto constant = llvm::dyn_cast<ctjs::ConstantOp>(operation)) {
+        return prefixValue::constant(constant.getValue());
+    }
+    if (auto constant = llvm::dyn_cast<mlir::arith::ConstantOp>(operation)) {
+        return prefixValue::constant(constant.getValue());
+    }
+    if (!llvm::isa<ctjs::TruthyOp, mlir::arith::TruncIOp, mlir::arith::ExtUIOp>(operation)) {
+        return std::nullopt;
+    }
+    auto bit = prefixTruth(values.lookup(operation->getOperand(0)));
+    return bit ? prefixValue::constant(ctjs::BooleanAttr::get(context, *bit)) : prefixValue{};
+}
+
 prefixValue prefixUnary(ctjs::UnaryKind kind, prefixValue operand, mlir::MLIRContext * context) {
     if (kind == ctjs::UnaryKind::Void) {
         return prefixValue::constant(ctjs::UndefinedAttr::get(context));
@@ -84,12 +100,7 @@ prefixValue prefixCompare(ctjs::CompareKind kind, prefixValue left, prefixValue 
 prefixValue prefixAnalysis::operation(mlir::Operation * operation, environment & values,
                                       unsigned depth) {
     auto * context = module.getContext();
-    if (auto constant = llvm::dyn_cast<ctjs::ConstantOp>(operation)) {
-        return prefixValue::constant(constant.getValue());
-    }
-    if (auto constant = llvm::dyn_cast<mlir::arith::ConstantOp>(operation)) {
-        return prefixValue::constant(constant.getValue());
-    }
+    if (auto scalar = prefixScalar(operation, values, context)) { return *scalar; }
     if (auto made = llvm::dyn_cast<ctjs::CreateObjectOp>(operation)) {
         const unsigned id = static_cast<unsigned>(objects.size());
         objects.push_back({{}, made, made->getParentOfType<ctjs::FuncOp>(), false, false});
@@ -203,22 +214,11 @@ prefixValue prefixAnalysis::operation(mlir::Operation * operation, environment &
                    ? stop(operation, "unproved comparison behavior")
                    : result;
     }
-    if (auto truth = llvm::dyn_cast<ctjs::TruthyOp>(operation)) {
-        auto bit = prefixTruth(values.lookup(truth.getValue()));
-        return bit ? prefixValue::constant(ctjs::BooleanAttr::get(context, *bit)) : prefixValue{};
-    }
-    if (llvm::isa<mlir::arith::TruncIOp, mlir::arith::ExtUIOp>(operation)) {
-        auto bit = prefixTruth(values.lookup(operation->getOperand(0)));
-        return bit ? prefixValue::constant(ctjs::BooleanAttr::get(context, *bit)) : prefixValue{};
-    }
     if (auto invoked = llvm::dyn_cast<ctjs::CallDirectOp>(operation)) {
         auto closure = values.lookup(invoked.getCalleeValue());
         auto callee = target(closure);
-        auto lexical = closure.made
-                           ? closure.made.getEnclosingThis().getDefiningOp<ctjs::ConstantOp>()
-                           : ctjs::ConstantOp{};
-        if (!callee || callee.getSymName() != invoked.getCallee() || !lexical ||
-            !llvm::isa<ctjs::UndefinedAttr>(lexical.getValue()) ||
+        if (!callee || callee.getSymName() != invoked.getCallee() || !closure.made ||
+            !ctjs::isUndefinedConstant(closure.made.getEnclosingThis()) ||
             !uniqueContext(callee, invoked, closure.made)) {
             return stop(operation, "call lacks one closed source invocation context");
         }
@@ -237,14 +237,11 @@ prefixValue prefixAnalysis::operation(mlir::Operation * operation, environment &
     if (auto invoked = llvm::dyn_cast<ctjs::CallOp>(operation)) {
         auto closure = values.lookup(invoked.getCallee());
         auto callee = target(closure);
-        auto lexical = closure.made
-                           ? closure.made.getEnclosingThis().getDefiningOp<ctjs::ConstantOp>()
-                           : ctjs::ConstantOp{};
+        const bool lexical =
+            closure.made && ctjs::isUndefinedConstant(closure.made.getEnclosingThis());
         const bool summarizedClosure =
             followPublication && closure.made && factoryClosures.contains(closure.made);
-        if (!callee || callee.getBody().empty() ||
-            ((!lexical || !llvm::isa<ctjs::UndefinedAttr>(lexical.getValue())) &&
-             !summarizedClosure) ||
+        if (!callee || callee.getBody().empty() || (!lexical && !summarizedClosure) ||
             callee.getBody().front().getNumArguments() != invoked.getArgs().size() + 3 ||
             pendingNewTarget.contains(invoked->getParentOfType<ctjs::FuncOp>())) {
             return stop(operation, "indirect call lacks exact source target/argument state");

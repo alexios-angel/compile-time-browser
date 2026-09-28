@@ -118,10 +118,9 @@ bool admission::function(ctjs::FuncOp fn) {
     if (fn->hasAttr(kNativeStoredCallable)) {
         const auto supported = [&](mlir::Value value) {
             const auto c = carrierOf(typeOf(value));
-            return isScalarCarrier(c) || c == carrier::string || c == carrier::nullableString ||
-                   c == carrier::map || isObjectCarrier(c) ||
-                   (c == carrier::domElement && ownedGlobals && ownedGlobals->proved() &&
-                    !ownedGlobals->domInputs().empty());
+            return isCallableCarrier(c) &&
+                   (c != carrier::domElement ||
+                    (ownedGlobals && ownedGlobals->proved() && !ownedGlobals->domInputs().empty()));
         };
         for (unsigned i = 3; i < entry.getNumArguments(); ++i) {
             if (!supported(entry.getArgument(i))) {
@@ -141,25 +140,7 @@ bool admission::function(ctjs::FuncOp fn) {
         // neither has a carrier and neither needs one.
         if (isDeclarationClosure(o) || isLiftedClosure(o) || isUnboxedCell(o)) { return; }
         if (isNativeMapBookkeeping(o)) { return; }
-        if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(o);
-            closure && domEntry && domEntry->callback(closure)) {
-            return;
-        }
-        if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(o);
-            load && domEntry &&
-            (domEntry->isInitialIntrinsic(load) || domEntry->isCurrentDocument(load))) {
-            return;
-        }
-        if (auto call = llvm::dyn_cast<ctjs::CallOp>(o);
-            call && domEntry && domEntry->isStringPrefixRegExp(call)) {
-            return;
-        }
-        if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(o);
-            read && domEntry &&
-            (domEntry->method(read) || domEntry->isElementPrototype(read) ||
-             domEntry->isTokenList(read.getResult()) || domEntry->isDataset(read.getResult()))) {
-            return;
-        }
+        if (domEntry && domBookkeeping(*domEntry, o)) { return; }
         if (o->getName().getStringRef() == "ub.poison") { return; }
         if (llvm::isa<ctjs::CreateObjectOp>(o) || isKeyOnlyString(o) || isVectorKeyString(o)) {
             return;

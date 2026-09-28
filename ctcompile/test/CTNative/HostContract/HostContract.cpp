@@ -35,8 +35,7 @@ module {
     ctjs.return %key
   }
 })MLIR";
-    auto module = mlir::parseSourceString<mlir::ModuleOp>(source, &context);
-    check(static_cast<bool>(module), "intrinsic parameter fixture parses");
+    auto module = parsed(context, source, "intrinsic parameter fixture parses");
     if (!module) { return; }
     const std::string json = "{\"version\":1,\"provider\":\"ctbrowser-intrinsics-v1\","
                              "\"module_sha256\":\"" +
@@ -110,8 +109,7 @@ module {
 
 void checkSessionProvider(mlir::MLIRContext & context) {
     using namespace ctcompile::ctnative;
-    auto module = mlir::parseSourceString<mlir::ModuleOp>(callableFixture, &context);
-    check(static_cast<bool>(module), "session provider fixture parses");
+    auto module = parsed(context, callableFixture, "session provider fixture parses");
     if (!module) { return; }
     const std::string json = "{\"version\":1,\"provider\":\"closed-source-session-v1\","
                              "\"module_sha256\":\"" +
@@ -200,8 +198,7 @@ module {
   }
 }
 )MLIR";
-    auto module = mlir::parseSourceString<mlir::ModuleOp>(source, &context);
-    check(static_cast<bool>(module), "typed DOM action fixture parses");
+    auto module = parsed(context, source, "typed DOM action fixture parses");
     if (!module) { return; }
     HostContract contract;
     contract.provider = HostContract::Provider::ctbrowserDOM;
@@ -212,12 +209,12 @@ module {
                              "\"module_sha256\":\"" +
                              contract.moduleSha256 +
                              "\",\"entry\":\"toggle$1\",\"element_parameters\":[0]}";
-    auto parsed = parseHostContract(json);
-    check(parsed && parsed->provider == HostContract::Provider::ctbrowserDOM &&
-              parsed->elementParameters == contract.elementParameters && parsed->roots.empty() &&
-              !parsed->currentDocumentParameter,
+    auto decoded = parseHostContract(json);
+    check(decoded && decoded->provider == HostContract::Provider::ctbrowserDOM &&
+              decoded->elementParameters == contract.elementParameters && decoded->roots.empty() &&
+              !decoded->currentDocumentParameter,
           "DOM manifest declares only the selected function and its typed parameter positions");
-    if (!parsed) { llvm::consumeError(parsed.takeError()); }
+    if (!decoded) { llvm::consumeError(decoded.takeError()); }
     for (const auto provider : {"ctbrowser-dom-v1", "ctbrowser-dom-session-v1"}) {
         const auto document =
             replaced(replaced(json, "ctbrowser-dom-v1", provider), "\"element_parameters\"",
@@ -417,9 +414,9 @@ module {
               "an omitted source wrapper cannot masquerade as a complete standalone DOM entry");
     }
     for (llvm::StringRef returned : {"%this", "%new", "%callee", "%element", "%list"}) {
-        auto changed = mlir::parseSourceString<mlir::ModuleOp>(
-            replaced(source, "ctjs.return %state", ("ctjs.return " + returned).str()), &context);
-        check(static_cast<bool>(changed), "observed implicit/borrowed DOM return fixture parses");
+        auto changed = parsed(
+            context, replaced(source, "ctjs.return %state", ("ctjs.return " + returned).str()),
+            "observed implicit/borrowed DOM return fixture parses");
         if (!changed) { continue; }
         contract.moduleSha256 = hostContractFingerprint(*changed);
         check(!DOMEntryAnalysis(*changed, contract).proved(),
@@ -441,11 +438,10 @@ module {
                  "    %state = ctjs.call %toggle(%list, %active, %force)");
     for (const auto & [name, expected] :
          {std::pair{"undefined", true}, std::pair{"unknownForce", false}}) {
-        auto input = mlir::parseSourceString<mlir::ModuleOp>(
-            replaced(globalForce, "ctjs.load_global \"undefined\"",
-                     std::string{"ctjs.load_global \""} + name + "\""),
-            &context);
-        check(static_cast<bool>(input), "DOM provider initial global force fixture parses");
+        auto input = parsed(context,
+                            replaced(globalForce, "ctjs.load_global \"undefined\"",
+                                     std::string{"ctjs.load_global \""} + name + "\""),
+                            "DOM provider initial global force fixture parses");
         if (!input) { continue; }
         contract.moduleSha256 = hostContractFingerprint(*input);
         check(DOMEntryAnalysis(*input, contract).proved() == expected,
@@ -462,8 +458,7 @@ module {
         } else {
             text = replaced(text, "ctjs.return %state", "ctjs.return %unused");
         }
-        auto input = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(input), "typed DOM attribute operation fixture parses");
+        auto input = parsed(context, text, "typed DOM attribute operation fixture parses");
         if (!input) { continue; }
         contract.moduleSha256 = hostContractFingerprint(*input);
         ctjs::CallOp operation;
@@ -492,8 +487,7 @@ module {
 }
 
 void checkCallables(mlir::MLIRContext & context) {
-    auto module = mlir::parseSourceString<mlir::ModuleOp>(callableFixture, &context);
-    check(static_cast<bool>(module), "uncaptured exported getter fixture parses");
+    auto module = parsed(context, callableFixture, "uncaptured exported getter fixture parses");
     if (!module) { return; }
     const auto contract = contractFor(*module);
     ctjs::CallOp call;
@@ -556,8 +550,7 @@ void checkCallables(mlir::MLIRContext & context) {
     const auto checkVariant = [&](llvm::StringRef from, llvm::StringRef to, bool expected,
                                   const char * message) {
         auto variant =
-            mlir::parseSourceString<mlir::ModuleOp>(replaced(callableFixture, from, to), &context);
-        check(static_cast<bool>(variant), "callable variant parses");
+            parsed(context, replaced(callableFixture, from, to), "callable variant parses");
         if (!variant) { return; }
         HostContractAnalysis result(*variant, contractFor(*variant));
         check(result.proved() == expected &&
@@ -643,12 +636,10 @@ void checkCapturedParameters(mlir::MLIRContext & context, const std::string & sh
     };
     const auto query = [&](const std::string & program, bool prepared, bool expected,
                            const char * message) {
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(prepared ? prepare(program) : program,
-                                                              &context);
-        check(static_cast<bool>(module), "two-parameter source and prepared host fixture parses");
+        auto module = parsed(context, prepared ? prepare(program) : program,
+                             "two-parameter source and prepared host fixture parses");
         if (!module) { return; }
-        auto requested = contractFor(*module);
-        requested.initialIntrinsics = {"Map"};
+        auto requested = mapContractFor(*module);
         HostContractAnalysis result(*module, requested);
         check(result.proved() == expected && !result.exhausted(), message);
         check(hostContractFingerprint(*module) == requested.moduleSha256,
@@ -745,11 +736,9 @@ void checkCapturedCallables(mlir::MLIRContext & context) {
     const auto query = [&](const std::string & program, bool expected, unsigned reads = 1,
                            unsigned calls = 0, unsigned upvalues = 1, unsigned members = 1,
                            unsigned visibleCalls = 1) {
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
-        check(static_cast<bool>(module), "captured host getter fixture parses");
+        auto module = parsed(context, program, "captured host getter fixture parses");
         if (!module) { return; }
-        auto contract = contractFor(*module);
-        contract.initialIntrinsics = {"Map"};
+        auto contract = mapContractFor(*module);
         HostContractAnalysis result(*module, contract);
         check(result.proved() == expected && !result.exhausted(),
               "captured getter host proof follows the complete current source environment");
@@ -825,8 +814,7 @@ void checkCapturedCallables(mlir::MLIRContext & context) {
     auto sharedModule = mlir::parseSourceString<mlir::ModuleOp>(shared, &context);
     check(static_cast<bool>(sharedModule), "shared captured Map host fixture parses");
     if (sharedModule) {
-        auto requested = contractFor(*sharedModule);
-        requested.initialIntrinsics = {"Map"};
+        auto requested = mapContractFor(*sharedModule);
         HostContractAnalysis complete(*sharedModule, requested);
         check(complete.proved(), "shared host census completes before work-budget controls");
         if (complete.proved()) {
@@ -929,11 +917,9 @@ void checkCapturedCallables(mlir::MLIRContext & context) {
                    "ctjs.set_property %state[%setKey], %setter\n    ctjs.return %answer"),
           false);
 
-    auto module = mlir::parseSourceString<mlir::ModuleOp>(mutated, &context);
-    check(static_cast<bool>(module), "live Map effect mutation fixture parses");
+    auto module = parsed(context, mutated, "live Map effect mutation fixture parses");
     if (!module) { return; }
-    auto contract = contractFor(*module);
-    contract.initialIntrinsics = {"Map"};
+    auto contract = mapContractFor(*module);
     HostContractAnalysis original(*module, contract);
     check(original.proved() && original.callables().size() == 1,
           "live effect mutation starts with a complete captured source proof");
@@ -973,8 +959,7 @@ void checkCapturedCallables(mlir::MLIRContext & context) {
 int main() {
     mlir::MLIRContext context;
     context.getOrLoadDialect<ctjs::CTJSDialect>();
-    auto module = mlir::parseSourceString<mlir::ModuleOp>(fixture, &context);
-    check(static_cast<bool>(module), "publication fixture parses");
+    auto module = parsed(context, fixture, "publication fixture parses");
     if (!module) { return 1; }
     auto contract = contractFor(*module);
     HostContractAnalysis analysis(*module, contract);

@@ -57,7 +57,7 @@ def completion_provenance_checks(args, ir, contract):
     unsigned = args.work / "completion-unsigned-selector.mlir"
     unsigned.write_text(original.replace(helper, helper.replace(before, after, 1)))
     checked = dict(contract, module_sha256=dom.fingerprint(args.opt, unsigned))
-    for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+    for provider in dom.PROVIDERS:
         for optimize in (False, True):
             label = f"completion-unsigned-selector-{provider}-{optimize}"
             baseline = dom.lower(
@@ -97,18 +97,14 @@ def completion_provenance_checks(args, ir, contract):
         mutated = args.work / f"completion-{name}.mlir"
         mutated.write_text(original.replace(helper, helper.replace(before, after, 1)))
         checked = dict(contract, module_sha256=dom.fingerprint(args.opt, mutated))
-        for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
-            for optimize in (False, True):
-                diagnostic = dom.lower(
-                    args,
-                    mutated,
-                    dict(checked, provider=provider),
-                    f"completion-{name}-{provider}-{optimize}",
-                    optimize=optimize,
-                    success=False,
-                )
-                if "error: native DOM source:" not in diagnostic:
-                    raise RuntimeError(f"completion {name}: wrong refusal\n{diagnostic}")
+        for provider in dom.PROVIDERS:
+            dom.refuse(
+                args,
+                mutated,
+                dict(checked, provider=provider),
+                f"completion-{name}-{provider}",
+                "error: native DOM source:",
+            )
     for budget in (0, 32, 128):
         diagnostic = dom.lower(
             args, ir, contract, f"completion-budget-{budget}", max_steps=budget, success=False
@@ -201,17 +197,13 @@ def helper_provenance_refusals(args, ir, contract):
         checked = dict(contract, module_sha256=dom.fingerprint(args.opt, mutated))
         for owned in (False, True):
             provider = "ctbrowser-dom-session-v1" if owned else "ctbrowser-dom-v1"
-            for optimize in (False, True):
-                diagnostic = dom.lower(
-                    args,
-                    mutated,
-                    dict(checked, provider=provider),
-                    f"helper-provenance-{name}-{owned}-{optimize}",
-                    optimize=optimize,
-                    success=False,
-                )
-                if f"error: native DOM source: {reason}" not in diagnostic:
-                    raise RuntimeError(f"helper provenance {name}: wrong refusal\n{diagnostic}")
+            dom.refuse(
+                args,
+                mutated,
+                dict(checked, provider=provider),
+                f"helper-provenance-{name}-{owned}",
+                f"error: native DOM source: {reason}",
+            )
     # Each local helper calls only its own capture-free child. The 64th
     # expansion must hit the depth bound, independently of the work budget.
     body = "return target.getAttribute('x') === null;"
@@ -329,18 +321,14 @@ def factory_provenance_checks(args, ir, contract, *, table=False):
         mutated = args.work / f"{prefix}-provenance-{name}.mlir"
         mutated.write_text(text)
         checked = dict(contract, module_sha256=dom.fingerprint(args.opt, mutated))
-        for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
-            for optimize in (False, True):
-                diagnostic = dom.lower(
-                    args,
-                    mutated,
-                    dict(checked, provider=provider),
-                    f"{prefix}-provenance-{name}-{provider}-{optimize}",
-                    optimize=optimize,
-                    success=False,
-                )
-                if "error: native DOM source:" not in diagnostic:
-                    raise RuntimeError(f"{prefix} {name}: wrong refusal\n{diagnostic}")
+        for provider in dom.PROVIDERS:
+            dom.refuse(
+                args,
+                mutated,
+                dict(checked, provider=provider),
+                f"{prefix}-provenance-{name}-{provider}",
+                "error: native DOM source:",
+            )
     indirect = args.work / f"{prefix}-indirect.mlir"
     indirect.write_text(original.replace(call, "ctjs.call %2(%4, %3)"))
     checked = dict(contract, module_sha256=dom.fingerprint(args.opt, indirect))
@@ -381,18 +369,14 @@ def host_provenance_checks(args, ir, contract):
         mutated = args.work / f"host-provenance-{name}.mlir"
         mutated.write_text(text)
         checked = dict(contract, module_sha256=dom.fingerprint(args.opt, mutated))
-        for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
-            for optimize in (False, True):
-                diagnostic = dom.lower(
-                    args,
-                    mutated,
-                    dict(checked, provider=provider),
-                    f"host-provenance-{name}-{provider}-{optimize}",
-                    optimize=optimize,
-                    success=False,
-                )
-                if "error: native DOM source:" not in diagnostic:
-                    raise RuntimeError(f"host initialization {name}: wrong refusal\n{diagnostic}")
+        for provider in dom.PROVIDERS:
+            dom.refuse(
+                args,
+                mutated,
+                dict(checked, provider=provider),
+                f"host-provenance-{name}-{provider}",
+                "error: native DOM source:",
+            )
     for budget in (0, 1, 128):
         diagnostic = dom.lower(
             args, ir, contract, f"host-budget-{budget}", max_steps=budget, success=False
@@ -457,18 +441,14 @@ def capture_provenance_checks(args, ir, contract, graph_ir, graph_contract):
         mutated = args.work / f"capture-provenance-{name}.mlir"
         mutated.write_text(text)
         checked = dict(contract, module_sha256=dom.fingerprint(args.opt, mutated))
-        for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
-            for optimize in (False, True):
-                diagnostic = dom.lower(
-                    args,
-                    mutated,
-                    dict(checked, provider=provider),
-                    f"capture-provenance-{name}-{provider}-{optimize}",
-                    optimize=optimize,
-                    success=False,
-                )
-                if f"error: native DOM source: {reason}" not in diagnostic:
-                    raise RuntimeError(f"capture provenance {name}: wrong refusal\n{diagnostic}")
+        for provider in dom.PROVIDERS:
+            dom.refuse(
+                args,
+                mutated,
+                dict(checked, provider=provider),
+                f"capture-provenance-{name}-{provider}",
+                f"error: native DOM source: {reason}",
+            )
     diagnostic = dom.lower(args, ir, contract, "capture-budget", max_steps=128, success=False)
     if "budget exhausted" not in diagnostic:
         raise RuntimeError(f"capture query: missing work-budget refusal\n{diagnostic}")
@@ -487,7 +467,7 @@ def capture_provenance_checks(args, ir, contract, graph_ir, graph_contract):
         mutated = args.work / f"capture-storage-{name}.mlir"
         mutated.write_text(text)
         checked = dict(graph_contract, module_sha256=dom.fingerprint(args.opt, mutated))
-        for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+        for provider in dom.PROVIDERS:
             for optimize in (False, True):
                 label = f"capture-storage-{name}-{provider}-{optimize}"
                 result = dom.lower(
@@ -540,18 +520,14 @@ def forwarded_provenance_checks(args, ir, contract):
         mutated = args.work / f"forwarded-provenance-{name}.mlir"
         mutated.write_text(text)
         checked = dict(contract, module_sha256=dom.fingerprint(args.opt, mutated))
-        for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
-            for optimize in (False, True):
-                diagnostic = dom.lower(
-                    args,
-                    mutated,
-                    dict(checked, provider=provider),
-                    f"forwarded-provenance-{name}-{provider}-{optimize}",
-                    optimize=optimize,
-                    success=False,
-                )
-                if f"error: native DOM source: {reason}" not in diagnostic:
-                    raise RuntimeError(f"forwarded provenance {name}: wrong refusal\n{diagnostic}")
+        for provider in dom.PROVIDERS:
+            dom.refuse(
+                args,
+                mutated,
+                dict(checked, provider=provider),
+                f"forwarded-provenance-{name}-{provider}",
+                f"error: native DOM source: {reason}",
+            )
     diagnostic = dom.lower(args, ir, contract, "forwarded-budget", max_steps=128, success=False)
     if "budget exhausted" not in diagnostic:
         raise RuntimeError(f"forwarded capture: missing work-budget refusal\n{diagnostic}")
@@ -596,7 +572,7 @@ def method_provenance_checks(args, ir, contract):
         mutated = args.work / f"method-provenance-{name}.mlir"
         mutated.write_text(text)
         checked = dict(contract, module_sha256=dom.fingerprint(args.opt, mutated))
-        for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+        for provider in dom.PROVIDERS:
             for optimize in (False, True):
                 label = f"method-provenance-{name}-{provider}-{optimize}"
                 result = dom.lower(
@@ -638,7 +614,7 @@ def regexp_provenance_checks(args, ir, contract, *, prefix="replacement"):
         mutated = args.work / f"{prefix}-provenance-{name}.mlir"
         mutated.write_text(original.replace(before, after, 1))
         checked = dict(contract, module_sha256=dom.fingerprint(args.opt, mutated))
-        for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+        for provider in dom.PROVIDERS:
             for optimize in (False, True):
                 diagnostic = dom.lower(
                     args,
@@ -712,11 +688,10 @@ def check_regexp_matching(args):
         if result[0] != (None if expected == "null" else True):
             raise RuntimeError(f"{name}: original replacement return changed: {result}")
     includes, libraries = dom.link_options(args)
-    compilers = find_compilers()
-    compilers[1] = args.clang
+    compilers = args.compilers
     for optimize in (False, True):
         headers, bodies, checks = set(), [], []
-        for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+        for provider in dom.PROVIDERS:
             owned = "session" in provider
             for (name, ir, contract), result in zip(prepared, results):
                 label = f"{name}_{owned}_{optimize}"
@@ -753,17 +728,17 @@ def check_regexp_matching(args):
         )
         for index, compiler in enumerate(compilers):
             binary = path.with_suffix(f".{index}")
-            run([compiler, *FLAGS, *includes, str(path), *libraries, "-o", str(binary)])
-            if dom.VM.search(run([args.nm, "-C", str(binary)]).stdout):
-                raise RuntimeError("original replacement output links Script/AOT")
-            run([str(binary)])
+            flags = [*FLAGS, *includes]
+            build_and_run(
+                compiler, path, binary, flags=flags, libraries=libraries, nm=args.nm, vm=dom.VM
+            )
     refusals = 0
     if args.regexp_only:
         for name, body in REGEXP_REFUSALS.items():
             ir, contract = dom.prepare(
                 args, name, f"function invalid(element) {{ {body} }}\n", 1, entry_name="invalid"
             )
-            for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+            for provider in dom.PROVIDERS:
                 diagnostic = dom.lower(
                     args, ir, dict(contract, provider=provider), name + provider, success=False
                 )

@@ -69,8 +69,7 @@ module {
     contract.elementParameters = {0};
     contract.initialIntrinsics = {"Array", "Element"};
     const auto query = [&](const std::string & text, bool expected, bool indexes = false) {
-        auto input = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(input), "independent snapshot length fixture parses");
+        auto input = parsed(context, text, "independent snapshot length fixture parses");
         if (!input) { return; }
         auto request = contract;
         request.moduleSha256 = hostContractFingerprint(*input);

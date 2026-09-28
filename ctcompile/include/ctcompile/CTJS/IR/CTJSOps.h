@@ -97,4 +97,43 @@ inline bool ordinaryKey(mlir::Value key) {
     auto text = constantAttr<StringAttr>(key);
     return text && !reservedKey(text.getValue());
 }
+
+// Truthy, unary Not/TypeOf/Void and StrictEq: total on any operand, and none
+// converts an object or calls user code.
+inline bool nonCoercing(mlir::Operation * op) {
+    if (auto unary = llvm::dyn_cast<UnaryOp>(op)) {
+        return unary.getKind() == UnaryKind::Not || unary.getKind() == UnaryKind::TypeOf ||
+               unary.getKind() == UnaryKind::Void;
+    }
+    auto compare = llvm::dyn_cast<CompareOp>(op);
+    return llvm::isa<TruthyOp>(op) || (compare && compare.getKind() == CompareKind::StrictEq);
+}
+
+// The one ctjs.func under `scope` with function index `index`, or null when
+// none or several have it.
+inline FuncOp uniqueFunction(mlir::Operation * scope, unsigned index) {
+    FuncOp found;
+    unsigned matches = 0;
+    scope->walk([&](FuncOp function) {
+        if (functionIndex(function) == index) {
+            found = function;
+            ++matches;
+        }
+    });
+    return matches == 1 ? found : FuncOp{};
+}
+
+// The one ctjs.store_global of `name` under `scope`, or null when none or
+// several store it.
+inline StoreGlobalOp uniqueGlobalStore(mlir::Operation * scope, llvm::StringRef name) {
+    StoreGlobalOp found;
+    unsigned matches = 0;
+    scope->walk([&](StoreGlobalOp store) {
+        if (store.getName() == name) {
+            found = store;
+            ++matches;
+        }
+    });
+    return matches == 1 ? found : StoreGlobalOp{};
+}
 } // namespace ctcompile::ctjs

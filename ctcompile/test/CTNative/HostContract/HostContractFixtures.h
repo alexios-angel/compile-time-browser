@@ -6,6 +6,8 @@
 // used to construct the shared two-method Map fixture inline in
 // checkCapturedCallables, lifted so the seeded-result executable can build the
 // same string. `inline` in a named namespace only so both can include this.
+// The Analysis/Ownership tests take `contractFor`, `mapContractFor`, `parsed`,
+// `replaced` and `choiceMapSource` from here too.
 
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
@@ -14,8 +16,10 @@
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Parser/Parser.h"
 
+#include <array>
 #include <cstdio>
 #include <string>
+#include <string_view>
 
 #include "check.hpp"
 
@@ -92,6 +96,33 @@ inline HostContract contractFor(mlir::ModuleOp module) {
     return contract;
 }
 
+// contractFor with the Map intrinsic requested.
+inline HostContract mapContractFor(mlir::ModuleOp module) {
+    auto contract = contractFor(module);
+    contract.initialIntrinsics = {"Map"};
+    return contract;
+}
+
+// No callable family, callable lookup or slot lookup survives in `query`.
+inline bool withheld(mlir::ModuleOp module, const HostContractAnalysis & query) {
+    bool none = query.callables().empty();
+    module.walk([&](mlir::Operation * operation) {
+        none &= !query.callable(operation);
+        if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
+            none &= !query.property(read);
+        }
+    });
+    return none;
+}
+
+// parseSourceString, with the parse checked under `label`.
+inline mlir::OwningOpRef<mlir::ModuleOp> parsed(mlir::MLIRContext & context, llvm::StringRef text,
+                                                std::string_view label) {
+    auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
+    check(static_cast<bool>(module), label);
+    return module;
+}
+
 inline std::string replaced(std::string source, llvm::StringRef from, llvm::StringRef to) {
     const auto offset = source.find(from.str());
     if (offset == std::string::npos) { return {}; }
@@ -149,6 +180,36 @@ inline std::string sharedMapWithPutCall(std::string shared) {
                       "    %putResult = ctjs.call %putter(%owned)\n"
                       "    %answer = ctjs.call %getter(%owned)");
     return shared;
+}
+
+// A put-family source whose three putters (prepared environments `putterEnvs`)
+// also take %other and %choice, and whose getter `getter` takes the put result:
+// the base of the captured-clear and definite-absence checks.
+inline std::string choiceMapSource(const std::string & source, bool prepared,
+                                   const std::array<const char *, 3> & putterEnvs,
+                                   const char * getter) {
+    auto fixture =
+        replaced(source, "%entryKey: !ctjs.value)",
+                 "%entryKey: !ctjs.value, %aliasKey: !ctjs.value, %choice: !ctjs.value)");
+    fixture = replaced(fixture, "    %actual =",
+                       "    %other = ctjs.constant #ctjs.string<\"z\">\n"
+                       "    %choice = ctjs.constant #ctjs.boolean<true>\n"
+                       "    %actual =");
+    for (const auto & [env, actual] : {std::pair{putterEnvs[0], "actual"},
+                                       {putterEnvs[1], "actual"},
+                                       {putterEnvs[2], "future"}}) {
+        const std::string prefix = prepared ? std::string("%") + env + ", " : "%owned, ";
+        fixture = replaced(fixture, prefix + "%" + actual + ")",
+                           prefix + "%" + actual + ", %other, %choice)");
+    }
+    const std::string getterSignature =
+        std::string(getter) + "(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value" +
+        std::string(prepared ? ", %state: !ctjs.value" : "") + ")";
+    fixture =
+        replaced(fixture, getterSignature,
+                 getterSignature.substr(0, getterSignature.size() - 1) + ", %input: !ctjs.value)");
+    return replaced(fixture, prepared ? "%getterEnv)" : "%getter(%owned)",
+                    prepared ? "%getterEnv, %putResult)" : "%getter(%owned, %putResult)");
 }
 
 } // namespace ctcompile::test::host_contract

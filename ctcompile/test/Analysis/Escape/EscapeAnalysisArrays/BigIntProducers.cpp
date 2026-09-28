@@ -13,15 +13,11 @@ void checkBigIntUnaryProducers(mlir::MLIRContext & context) {
     const std::string overwrite = "  ctjs.set_property %a[%zero], %zero\n  ctjs.return %a\n";
     const std::string branch =
         "  %flag = ctjs.truthy %produced\n  cf.cond_br %flag, ^yes, ^no\n^yes:\n";
-    struct unary_row {
-        contents_row contents;
-        const char * discharged = "x";
-    };
     for (const auto kind : {ctjs::UnaryKind::Neg, ctjs::UnaryKind::BitNot}) {
         const std::string spelling = ctjs::stringifyUnaryKind(kind).str();
         const std::string produce =
             "  %produced = ctjs.unary " + spelling + " %big {storage_test_id = \"produced\"}\n";
-        const std::vector<unary_row> rows = {
+        const std::vector<discharge_row> rows = {
             {.contents = {.what = "a computed BigInt cannot prune either overwrite path",
                           .body = values + produce + branch + overwrite + "^no:\n" + overwrite,
                           .arrays = "a:[zero] | a:[zero]",
@@ -95,28 +91,15 @@ void checkBigIntUnaryProducers(mlir::MLIRContext & context) {
         unsigned rowCount = 0;
         unsigned liveStates = 0;
         std::size_t budgets = 0;
-        const auto check = [&](mlir::ModuleOp module, const unary_row & expected) {
-            checkArrayContents(module, expected.contents);
-            const bool complete = expected.contents.failure == ArrayContentsFailure::None;
-            budgets +=
-                checkArrayRetention(module, {.what = expected.contents.what,
-                                             .body = expected.contents.body,
-                                             .discharged = complete ? expected.discharged : "",
-                                             .complete = complete});
+        const auto check = [&](mlir::ModuleOp module, const discharge_row & expected) {
+            budgets += checkDischarge(module, expected.contents, expected.discharged);
         };
-        const auto parse = [&](const unary_row & expected) {
-            return mlir::parseSourceString<mlir::ModuleOp>(
-                std::string{kPrologue} + expected.contents.body + "}\n", &context);
+        const auto parse = [&](const discharge_row & expected) {
+            return parseContents(context, expected.contents);
         };
-        const auto run = [&](const unary_row & expected) {
-            if (auto module = parse(expected)) {
-                check(*module, expected);
-            } else {
-                fail(row{.what = expected.contents.what,
-                         .body = expected.contents.body,
-                         .expected = ""},
-                     "the computed BigInt unary fixture did not parse");
-            }
+        const auto run = [&](const discharge_row & expected) {
+            budgets += runDischarge(context, expected.contents, expected.discharged,
+                                    "the computed BigInt unary fixture did not parse");
             ++rowCount;
         };
         for (const auto & expected : rows) { run(expected); }
@@ -192,7 +175,7 @@ void checkBigIntUnaryProducers(mlir::MLIRContext & context) {
                      .body = values + produce + effect + done,
                      .failure = ArrayContentsFailure::UnsupportedOperation}});
         }
-        unary_row wide = rows.front();
+        discharge_row wide = rows.front();
         std::string extras;
         for (unsigned i = 0; i < 32; ++i) {
             extras += "  %extra_" + std::to_string(i) + " = ctjs.unary " + spelling + " %big\n";
@@ -216,7 +199,7 @@ void checkBigIntUnaryProducers(mlir::MLIRContext & context) {
                      .expected = ""},
                  "the BigInt unary snapshot fixture did not parse");
         }
-        unary_row mutation = rows.front();
+        discharge_row mutation = rows.front();
         if (auto module = parse(mutation)) {
             auto function = *module->getOps<ctjs::FuncOp>().begin();
             ctjs::UnaryOp unary;
@@ -293,10 +276,6 @@ void checkBigIntBinaryProducers(mlir::MLIRContext & context) {
     const std::string overwrite = "  ctjs.set_property %a[%zero], %zero\n  ctjs.return %a\n";
     const std::string branch =
         "  %flag = ctjs.truthy %produced\n  cf.cond_br %flag, ^yes, ^no\n^yes:\n";
-    struct binary_row {
-        contents_row contents;
-        const char * discharged = "x";
-    };
     struct binary_kind {
         ctjs::BinaryKind kind;
         bool isStatic;
@@ -315,7 +294,7 @@ void checkBigIntBinaryProducers(mlir::MLIRContext & context) {
                    " {storage_test_id = \"produced\"}\n";
         };
         const std::string produce = binary("%lhs", "%rhs");
-        const std::vector<binary_row> rows = {
+        const std::vector<discharge_row> rows = {
             {.contents = {.what = "computed BigInt arithmetic cannot select a structural path",
                           .body = values + produce + branch + overwrite + "^no:\n" + overwrite,
                           .arrays = "a:[zero] | a:[zero]",
@@ -360,28 +339,15 @@ void checkBigIntBinaryProducers(mlir::MLIRContext & context) {
         unsigned rowCount = 0;
         unsigned liveStates = 0;
         std::size_t budgets = 0;
-        const auto check = [&](mlir::ModuleOp module, const binary_row & expected) {
-            checkArrayContents(module, expected.contents);
-            const bool complete = expected.contents.failure == ArrayContentsFailure::None;
-            budgets +=
-                checkArrayRetention(module, {.what = expected.contents.what,
-                                             .body = expected.contents.body,
-                                             .discharged = complete ? expected.discharged : "",
-                                             .complete = complete});
+        const auto check = [&](mlir::ModuleOp module, const discharge_row & expected) {
+            budgets += checkDischarge(module, expected.contents, expected.discharged);
         };
-        const auto parse = [&](const binary_row & expected) {
-            return mlir::parseSourceString<mlir::ModuleOp>(
-                std::string{kPrologue} + expected.contents.body + "}\n", &context);
+        const auto parse = [&](const discharge_row & expected) {
+            return parseContents(context, expected.contents);
         };
-        const auto run = [&](const binary_row & expected) {
-            if (auto module = parse(expected)) {
-                check(*module, expected);
-            } else {
-                fail(row{.what = expected.contents.what,
-                         .body = expected.contents.body,
-                         .expected = ""},
-                     "the computed BigInt binary fixture did not parse");
-            }
+        const auto run = [&](const discharge_row & expected) {
+            budgets += runDischarge(context, expected.contents, expected.discharged,
+                                    "the computed BigInt binary fixture did not parse");
             ++rowCount;
         };
         for (const auto & expected : rows) { run(expected); }
@@ -620,7 +586,7 @@ void checkBigIntBinaryProducers(mlir::MLIRContext & context) {
                                   produce + "  ctjs.pop_handler\n" + overwrite +
                                   "^pad:\n  %id, %exception = ctjs.catch_land\n  ctjs.return %a\n",
                           .failure = ArrayContentsFailure::UnsupportedControlFlow}});
-        binary_row wide = rows.front();
+        discharge_row wide = rows.front();
         std::string extras;
         for (unsigned i = 0; i < 32; ++i) {
             extras += "  %extra_" + std::to_string(i) + " = ctjs." + form + " " + spelling +
@@ -645,7 +611,7 @@ void checkBigIntBinaryProducers(mlir::MLIRContext & context) {
                      .expected = ""},
                  "the wide computed BigInt binary fixture did not parse");
         }
-        binary_row mutation = rows.front();
+        discharge_row mutation = rows.front();
         if (auto module = parse(mutation)) {
             auto function = *module->getOps<ctjs::FuncOp>().begin();
             mlir::Operation * producer = nullptr;

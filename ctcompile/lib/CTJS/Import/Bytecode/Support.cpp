@@ -2,24 +2,6 @@
 
 namespace ctcompile::js::bytecode_detail {
 
-// EVERY OPCODE'S NAME, expanded from the same .def the VM decodes with. The
-// plan asks for exactly this - "the importer expands it into a static dispatch
-// table" - and the point is that a table built any other way is a second list
-// that can disagree with the first.
-#define CT_OPCODE(name_, ...) #name_,
-constexpr std::string_view opcode_names[] = {
-#include <ctbrowser/script/bytecode_opcodes.def>
-};
-#undef CT_OPCODE
-
-static_assert(std::size(opcode_names) == opcode_count,
-              "the importer's opcode-name table and `enum class op` disagree");
-
-[[nodiscard]] std::string_view name_of(op code) {
-    const auto index = static_cast<std::size_t>(code);
-    return index < std::size(opcode_names) ? opcode_names[index] : "<unknown>";
-}
-
 // WHICH OPCODES LIFT THE FRAME OUT OF THE STACK, from the .def's own column and
 // not from a list of two names. `await_value` and `yield_value` are the two
 // today; the point of deriving it is that a third would be refused the moment
@@ -233,19 +215,12 @@ static_assert(std::size(opcode_may_suspend) == opcode_count,
            code == op::throw_value || code == op::push_handler;
 }
 
-// AN INSTRUCTION THAT ALREADY LEFT THE BLOCK cannot be followed by a check -
-// the block has a terminator and a second one does not verify. push_handler is
-// here for the same reason it is in ends_a_block: it IS a terminator.
 // WHETHER CONTROL CAN RUN OFF THIS INSTRUCTION INTO THE NEXT. Not the negation
 // of ends_a_block: a CONDITIONAL jump ends a block and still falls through, and
 // push_handler ends a block and its body IS the next instruction.
 [[nodiscard]] bool falls_through(op code) {
     return code != op::jump && code != op::ret && code != op::ret_undef && code != op::halt &&
            code != op::throw_value;
-}
-
-[[nodiscard]] bool in_terminator(op code) {
-    return ends_a_block(code) || code == op::halt;
 }
 
 } // namespace ctcompile::js::bytecode_detail

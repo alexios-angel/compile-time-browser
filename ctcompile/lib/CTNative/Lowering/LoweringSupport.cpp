@@ -1,4 +1,6 @@
 #include "LoweringSupport.h"
+#include "ctcompile/CTNative/Analysis/HostContract.h"
+#include "ctcompile/Support/CppLiterals.hpp"
 
 namespace ctcompile::ctnative::lowering_detail {
 
@@ -145,59 +147,17 @@ bool isPrimitiveCarrier(carrier value) {
     return isScalarCarrier(value) || isStringCarrier(value) || isStringUnionCarrier(value);
 }
 
-bool isNullableCarrier(mlir::Type type) {
-    if (!type) { return false; }
-    if (auto value = llvm::dyn_cast<ec::LValueType>(type)) { type = value.getValueType(); }
-    auto opaque = llvm::dyn_cast<ec::OpaqueType>(type);
-    return opaque && opaque.getValue() == kNullableType;
+bool isCallableCarrier(carrier value) {
+    return isScalarCarrier(value) || isStringCarrier(value) || isObjectCarrier(value) ||
+           value == carrier::domElement || value == carrier::map;
 }
 
-bool isNumberCarrier(mlir::Type type) {
+llvm::StringRef opaqueSpelling(mlir::Type type) {
     if (auto value = llvm::dyn_cast_if_present<ec::LValueType>(type)) {
         type = value.getValueType();
     }
     auto opaque = llvm::dyn_cast_if_present<ec::OpaqueType>(type);
-    return opaque && opaque.getValue() == kNumberType;
-}
-
-bool isBooleanCarrier(mlir::Type type) {
-    if (auto value = llvm::dyn_cast_if_present<ec::LValueType>(type)) {
-        type = value.getValueType();
-    }
-    auto opaque = llvm::dyn_cast_if_present<ec::OpaqueType>(type);
-    return opaque && opaque.getValue() == kBooleanType;
-}
-
-bool isBooleanStringCarrier(mlir::Type type) {
-    if (auto value = llvm::dyn_cast_if_present<ec::LValueType>(type)) {
-        type = value.getValueType();
-    }
-    auto opaque = llvm::dyn_cast_if_present<ec::OpaqueType>(type);
-    return opaque && opaque.getValue() == kBooleanStringType;
-}
-
-bool isNumberStringCarrier(mlir::Type type) {
-    if (auto value = llvm::dyn_cast_if_present<ec::LValueType>(type)) {
-        type = value.getValueType();
-    }
-    auto opaque = llvm::dyn_cast_if_present<ec::OpaqueType>(type);
-    return opaque && opaque.getValue() == kNumberStringType;
-}
-
-bool isNullableBooleanStringCarrier(mlir::Type type) {
-    if (auto value = llvm::dyn_cast_if_present<ec::LValueType>(type)) {
-        type = value.getValueType();
-    }
-    auto opaque = llvm::dyn_cast_if_present<ec::OpaqueType>(type);
-    return opaque && opaque.getValue() == kNullableBooleanStringType;
-}
-
-bool isNullableNumberStringCarrier(mlir::Type type) {
-    if (auto value = llvm::dyn_cast_if_present<ec::LValueType>(type)) {
-        type = value.getValueType();
-    }
-    auto opaque = llvm::dyn_cast_if_present<ec::OpaqueType>(type);
-    return opaque && opaque.getValue() == kNullableNumberStringType;
+    return opaque ? opaque.getValue() : llvm::StringRef{};
 }
 
 // The one C++ type a dense array lowers to. Spelled once: the emitted
@@ -369,6 +329,25 @@ bool isScriptEntry(ctjs::FuncOp fn) {
     return fn.getSymName() == "_script_$0";
 }
 
+bool isDeclarationClosure(mlir::Operation * o) {
+    auto closure = llvm::dyn_cast_or_null<ctjs::CreateClosureOp>(o);
+    if (!closure || !closure.getResult().hasOneUse()) { return false; }
+    return llvm::isa<ctjs::StoreGlobalOp>(*closure.getResult().getUsers().begin());
+}
+
+bool domBookkeeping(const DOMEntryAnalysis & entry, mlir::Operation * op) {
+    if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(op)) {
+        return static_cast<bool>(entry.callback(closure));
+    }
+    if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op)) {
+        return entry.isInitialIntrinsic(load) || entry.isCurrentDocument(load);
+    }
+    if (auto call = llvm::dyn_cast<ctjs::CallOp>(op)) { return entry.isStringPrefixRegExp(call); }
+    auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
+    return read && (entry.method(read) || entry.isElementPrototype(read) ||
+                    entry.isTokenList(read.getResult()) || entry.isDataset(read.getResult()));
+}
+
 // Every value that names the same object as `v`, `v` included. A literal
 // nothing is lifted onto is a group of one, so callers need no special case.
 llvm::SmallVector<mlir::Value, 2> aliasesOf(const receiverGroups * groups, mlir::Value v) {
@@ -410,11 +389,7 @@ std::string siteOfFunction(ctjs::FuncOp fn) {
 }
 
 std::string cIdentifier(llvm::StringRef symbol) {
-    std::string name = symbol.str();
-    for (char & ch : name) {
-        if (!(std::isalnum(static_cast<unsigned char>(ch)) || ch == '_')) { ch = '_'; }
-    }
-    return name;
+    return cpp::identifier(symbol);
 }
 
 // BUILT ONCE PER LOWERING, not per function: FrozenRewritePatternSet is what

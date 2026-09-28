@@ -53,11 +53,6 @@ void checkSeededMapResults(mlir::MLIRContext & context, const std::string & shar
                         "    %answer = ctjs.call_direct @get$2(%owned, %u, %getter, "
                         "%getEnvironment)");
     };
-    const auto requested = [](mlir::ModuleOp module) {
-        auto contract = contractFor(module);
-        contract.initialIntrinsics = {"Map"};
-        return contract;
-    };
     const auto empty = [](mlir::ModuleOp module, const HostContractAnalysis & query) {
         bool withheld = query.callables().empty();
         module.walk([&](mlir::Operation * operation) {
@@ -81,11 +76,10 @@ void checkSeededMapResults(mlir::MLIRContext & context, const std::string & shar
                               "    %getKey = ctjs.constant");
         }
         for (const bool prepared : {false, true}) {
-            auto module = mlir::parseSourceString<mlir::ModuleOp>(
-                prepared ? prepare(source) : source, &context);
-            check(static_cast<bool>(module), "source/prepared seeded Map result fixture parses");
+            auto module = parsed(context, prepared ? prepare(source) : source,
+                                 "source/prepared seeded Map result fixture parses");
             if (!module) { continue; }
-            auto contract = requested(*module);
+            auto contract = mapContractFor(*module);
             HostContractAnalysis query(*module, contract);
             check(query.proved(),
                   "live per-key set facts independently type the same-key get result");
@@ -135,7 +129,7 @@ void checkSeededMapResults(mlir::MLIRContext & context, const std::string & shar
             mlir::Builder builder(&context);
             lookup->setAttr("ctnative.map_present", builder.getBoolAttr(true));
             lookup->setAttr("ctnative.host_proved", builder.getBoolAttr(true));
-            contract = requested(*module);
+            contract = mapContractFor(*module);
             check(HostContractAnalysis(*module, contract).proved(),
                   "forged presence reports do not replace the live seed/get proof");
             const auto originalKey = lookup.getArgs().front();
@@ -144,7 +138,7 @@ void checkSeededMapResults(mlir::MLIRContext & context, const std::string & shar
             check(!stale.proved() && stale.reason().contains("fingerprint") &&
                       empty(*module, stale),
                   "changing the queried key invalidates the earlier presence fingerprint");
-            HostContractAnalysis mismatch(*module, requested(*module));
+            HostContractAnalysis mismatch(*module, mapContractFor(*module));
             check(!mismatch.proved() && empty(*module, mismatch),
                   "a fresh fingerprint and forged presence cannot prove a different get key");
             lookup->setOperand(2, originalKey);
@@ -159,7 +153,7 @@ void checkSeededMapResults(mlir::MLIRContext & context, const std::string & shar
                 HostContractAnalysis old(*module, contract);
                 check(!old.proved() && old.reason().contains("fingerprint") && empty(*module, old),
                       "a payload mutation cannot reuse the previous result fingerprint");
-                HostContractAnalysis changed(*module, requested(*module));
+                HostContractAnalysis changed(*module, mapContractFor(*module));
                 check(changed.proved() && changed.callables().size() == 3 &&
                           changed.callables()[1].arguments.size() == 1 &&
                           changed.callables()[1].arguments.front().actual ==
@@ -172,7 +166,7 @@ void checkSeededMapResults(mlir::MLIRContext & context, const std::string & shar
                 changedPayload.erase();
             }
             seed->setOperand(3, getter.getBody().front().getArgument(0));
-            HostContractAnalysis unknown(*module, requested(*module));
+            HostContractAnalysis unknown(*module, mapContractFor(*module));
             check(!unknown.proved() && empty(*module, unknown),
                   "an unproved payload cannot inherit the last write's earlier primitive tag");
             seed->setOperand(3, originalPayload);
@@ -187,11 +181,10 @@ void checkSeededMapResults(mlir::MLIRContext & context, const std::string & shar
                                      mlir::TypeID expectedTag =
                                          mlir::TypeID::get<ctjs::NumberAttr>(),
                                      bool checkJoins = false) {
-                auto changed = mlir::parseSourceString<mlir::ModuleOp>(
-                    prepared ? prepare(program) : program, &context);
-                check(static_cast<bool>(changed), "seeded Map presence variant parses");
+                auto changed = parsed(context, prepared ? prepare(program) : program,
+                                      "seeded Map presence variant parses");
                 if (!changed) { return; }
-                HostContractAnalysis result(*changed, requested(*changed));
+                HostContractAnalysis result(*changed, mapContractFor(*changed));
                 check(result.proved() == expected && !result.exhausted() &&
                           (expected || empty(*changed, result)),
                       message);
@@ -209,7 +202,7 @@ void checkSeededMapResults(mlir::MLIRContext & context, const std::string & shar
                           "original SSA edge");
                 }
                 if (!checkJoins || !result.proved()) { return; }
-                const auto joinedContract = requested(*changed);
+                const auto joinedContract = mapContractFor(*changed);
                 const unsigned joinedCompletion = result.steps();
                 check(joinedCompletion < 15000,
                       "joined payload proof stays within its fixture work limit");
@@ -235,7 +228,7 @@ void checkSeededMapResults(mlir::MLIRContext & context, const std::string & shar
                 const auto writtenPayload = possible.getArgs()[1];
                 const auto queriedKey = get.getArgs()[0];
                 const auto assertTag = [&](mlir::TypeID tag, const char * reason) {
-                    HostContractAnalysis fresh(*changed, requested(*changed));
+                    HostContractAnalysis fresh(*changed, mapContractFor(*changed));
                     check(fresh.proved() && fresh.callables().size() == 3 &&
                               fresh.callables()[1].arguments.size() == 1 &&
                               fresh.callables()[1].arguments.front().alternatives.tag() == tag,
@@ -253,7 +246,7 @@ void checkSeededMapResults(mlir::MLIRContext & context, const std::string & shar
                           "a changed possible payload invalidates the original join fingerprint");
                     get->setAttr("ctnative.map_present", at.getBoolAttr(true));
                     get->setAttr("ctnative.host_proved", at.getBoolAttr(true));
-                    HostContractAnalysis mixed(*changed, requested(*changed));
+                    HostContractAnalysis mixed(*changed, mapContractFor(*changed));
                     check(!mixed.proved() && !mixed.exhausted() && empty(*changed, mixed),
                           "fresh forged presence cannot retain a tag across incompatible payloads");
                     possible->setOperand(2, first.getArgs()[0]);
@@ -270,7 +263,7 @@ void checkSeededMapResults(mlir::MLIRContext & context, const std::string & shar
                               "restoring the live payload restores the independent joined tag");
                 }
                 get->setOperand(2, writtenPayload);
-                HostContractAnalysis absent(*changed, requested(*changed));
+                HostContractAnalysis absent(*changed, mapContractFor(*changed));
                 check(!absent.proved() && empty(*changed, absent),
                       "a numeric dynamic write cannot prove a different literal is present");
                 get->setOperand(2, queriedKey);
@@ -483,11 +476,10 @@ void checkSeededMapResults(mlir::MLIRContext & context, const std::string & shar
                             "SameValueZero duplicates never inflate a size bound past two");
                 }
                 for (const auto & specimen : {nonempty, twoEntries}) {
-                    auto checked = mlir::parseSourceString<mlir::ModuleOp>(
-                        prepared ? prepare(specimen) : specimen, &context);
-                    check(static_cast<bool>(checked), "nonempty size budget fixture parses");
+                    auto checked = parsed(context, prepared ? prepare(specimen) : specimen,
+                                          "nonempty size budget fixture parses");
                     if (!checked) { continue; }
-                    const auto sizeContract = requested(*checked);
+                    const auto sizeContract = mapContractFor(*checked);
                     HostContractAnalysis complete(*checked, sizeContract);
                     const unsigned sizeCompletion = complete.steps();
                     check(complete.proved() && sizeCompletion < 15000,
@@ -524,18 +516,18 @@ void checkSeededMapResults(mlir::MLIRContext & context, const std::string & shar
                               empty(*checked, staleSize),
                           "moving size before seed invalidates the original fingerprint");
                     size->setAttr("ctnative.nonempty_size", builder.getBoolAttr(true));
-                    HostContractAnalysis beforeSeed(*checked, requested(*checked));
+                    HostContractAnalysis beforeSeed(*checked, mapContractFor(*checked));
                     check(
                         !beforeSeed.proved() && empty(*checked, beforeSeed),
                         "a fresh fingerprint and forged size marker cannot prove initial contents");
                     sizeSeed->moveBefore(seedNext);
                     erased->setOperand(2, operations.back().getArgs()[0]);
-                    HostContractAnalysis equalDelete(*checked, requested(*checked));
+                    HostContractAnalysis equalDelete(*checked, mapContractFor(*checked));
                     check(!equalDelete.proved() && empty(*checked, equalDelete),
                           "an equal-key delete cannot inherit disjointness from the previous "
                           "operand");
                     erased->setOperand(2, size.getResult());
-                    check(HostContractAnalysis(*checked, requested(*checked)).proved(),
+                    check(HostContractAnalysis(*checked, mapContractFor(*checked)).proved(),
                           "restoring the live size order and delete key restores its independent "
                           "proof");
                     std::printf(

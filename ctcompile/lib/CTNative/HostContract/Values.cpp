@@ -62,11 +62,16 @@ analyzer::analyzer(mlir::ModuleOp input, const HostContract & request, unsigned 
 }
 
 bool analyzer::step() {
-    if (remaining == 0) {
+    return spend(1);
+}
+
+bool analyzer::spend(uint64_t count) {
+    if (count > remaining) {
         exhausted = true;
+        remaining = 0;
         return false;
     }
-    --remaining;
+    remaining -= static_cast<unsigned>(count);
     return true;
 }
 
@@ -78,16 +83,9 @@ ctjs::FuncOp analyzer::target(mlir::Operation * operation) const {
 ctjs::FuncOp analyzer::callable(mlir::Value value, unsigned depth) {
     if (!value || depth > 64 || !step() || ambiguousFunctions) { return {}; }
     if (auto made = value.getDefiningOp<ctjs::CreateClosureOp>()) {
-        // A numeric index names a function only inside the enclosing closure's
-        // source program. The importer supplies this activation's callee;
-        // arbitrary values cannot establish that program identity.
-        auto scope = made->getParentOfType<ctjs::FuncOp>();
-        if (!scope || scope.getBody().empty() || scope.getBody().front().getNumArguments() < 3 ||
-            made.getEnclosingClosure() != scope.getBody().front().getArgument(2)) {
-            return {};
-        }
-        return made.getFunction() >= 0 ? functions.lookup(static_cast<unsigned>(made.getFunction()))
-                                       : ctjs::FuncOp{};
+        // The importer supplies this activation's callee; arbitrary values
+        // cannot establish that program identity.
+        return closureTarget(made, functions);
     }
     if (auto load = value.getDefiningOp<ctjs::LoadGlobalOp>()) {
         auto & stores = globals[load.getName()];
@@ -228,8 +226,7 @@ std::optional<HostCallableEdge> analyzer::propertyCall(mlir::Operation * operati
         (direct && target(direct) != function)) {
         return {};
     }
-    auto enclosingThis = closure.getEnclosingThis().getDefiningOp<ctjs::ConstantOp>();
-    if (!enclosingThis || !llvm::isa<ctjs::UndefinedAttr>(enclosingThis.getValue())) { return {}; }
+    if (!ctjs::isUndefinedConstant(closure.getEnclosingThis())) { return {}; }
     const auto owner = object(read.getObject());
     if (!owner || object(receiver) != owner) { return {}; }
     std::optional<HostCapturedMap> capture;
@@ -299,12 +296,7 @@ std::optional<HostCallableEdge> analyzer::propertyCall(mlir::Operation * operati
             if (llvm::is_contained(parameters->objectKeys, parameter) &&
                 !entryCategories(actual, capturedResults, operation).known) {
                 element = elementInput(actual);
-                made = actual.getDefiningOp<ctjs::CreateObjectOp>();
-                if (auto load = actual.getDefiningOp<ctjs::LoadGlobalOp>()) {
-                    const auto global = objectGlobalRead(load);
-                    if (!global) { return {}; }
-                    made = global->object;
-                }
+                made = namedObject(actual);
                 if (element) {
                     if (!llvm::is_contained(capture->outerKeyInputs, element) ||
                         !llvm::is_contained(capture->outerKeyParameters, parameter)) {
@@ -420,15 +412,7 @@ PrimitiveAlternatives analyzer::entryCategories(
         return entryCategories(write.getValue(), results, write, depth + 1, dependencies);
     }
     if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(definition)) {
-        switch (binary.getKind()) {
-        case ctjs::BinaryKind::Add:
-        case ctjs::BinaryKind::Sub:
-        case ctjs::BinaryKind::Mul:
-        case ctjs::BinaryKind::Div:
-        case ctjs::BinaryKind::Mod:
-        case ctjs::BinaryKind::Pow: break;
-        default: return {};
-        }
+        if (!ctjs::isArithmetic(binary.getKind())) { return {}; }
         const auto number = mlir::TypeID::get<ctjs::NumberAttr>();
         const auto numeric = [&](mlir::Value operand) {
             auto tag = entryCategories(operand, results, binary, depth + 1, dependencies).tag();

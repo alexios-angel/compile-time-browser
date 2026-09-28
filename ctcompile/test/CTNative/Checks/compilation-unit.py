@@ -64,9 +64,10 @@ under `not`, with FileCheck on the reason):
 
 import argparse
 import re
-import subprocess
 import sys
 from pathlib import Path
+
+from CTNative.harness import CORE_INCLUDE, FLAGS, run
 
 # THE CONVENTION AS A REGEX - the five forms of the value, in one place.
 GRAMMAR = re.compile(
@@ -147,9 +148,6 @@ def main():
     def fail(message):
         sys.exit(f"{name}: {message}")
 
-    def run(command):
-        return subprocess.run(command, capture_output=True, text=True)
-
     work = args.work / f"native-unit-{name}"
     work.mkdir(parents=True, exist_ok=True)
 
@@ -158,10 +156,7 @@ def main():
         exe = args.prebuilt
         print(f"{name}: gating a prebuilt binary, {exe}")
     else:
-        emitted = run([args.translate, "--mlir-to-cpp", args.module])
-        if emitted.returncode != 0:
-            fail(f"the emitter refused {args.module} (exit {emitted.returncode})\n{emitted.stderr}")
-        cpp = emitted.stdout
+        cpp = run([args.translate, "--mlir-to-cpp", args.module]).stdout
         if not cpp:
             fail(f"the emitter produced nothing for {args.module}")
         # A translation unit that includes ctbrowser/ and happens to link is one
@@ -175,40 +170,18 @@ def main():
         exe = str(work / "unit")
         # String numeric conversion/formatting uses public Core. Other fixtures
         # retain their header-only link; both reject Script and boxed AOT symbols.
-        runtime_include = "-I" + str(Path(__file__).resolve().parents[3] / "include")
-        core_headers = Path(__file__).resolve().parents[4] / "ctbrowser/include"
-        core_include = "-I" + str(core_headers)
         libraries = []
         if args.core_build:
             from CTNative.Browser.native_dom import link_options
 
             _, libraries = link_options(
-                argparse.Namespace(build=args.core_build, include=core_headers), core_only=True
+                argparse.Namespace(build=args.core_build, include=Path(CORE_INCLUDE[2:])),
+                core_only=True,
             )
-        compiled = run(
-            [
-                args.cxx,
-                "-std=c++23",
-                runtime_include,
-                core_include,
-                "-O2",
-                "-Wall",
-                "-Wextra",
-                "-Werror",
-            ]
-            + ["-pedantic", "-Wconversion", "-ffp-contract=off", "-o", exe, str(src)]
-            + libraries
-        )
-        if compiled.returncode != 0:
-            fail(
-                f"the emitted C++ does not compile standalone (exit {compiled.returncode})\n"
-                f"{compiled.stdout}{compiled.stderr}"
-            )
+        run([args.cxx, *FLAGS, "-o", exe, str(src), *libraries])
 
     # --- (c) the symbol check, proved load-bearing before it is trusted ------
     control = run([args.nm, "-C", args.vm_linked])
-    if control.returncode != 0:
-        fail(f"{args.nm} failed on the control binary {args.vm_linked}\n{control.stderr}")
     control_count = sum("ctbrowser::script::" in line for line in control.stdout.splitlines())
     if control_count == 0:
         fail(
@@ -217,8 +190,6 @@ def main():
             "demangling or the pattern is wrong, and a pass on the native binary would mean nothing."
         )
     symbols = run([args.nm, "-C", exe])
-    if symbols.returncode != 0:
-        fail(f"{args.nm} failed on {exe}\n{symbols.stderr}")
     if not re.search(r"[ \t]main\n", symbols.stdout):
         fail(
             f"`{args.nm} -C` listed no `main` in {exe} - it did not read the binary\n{symbols.stdout}"
@@ -236,15 +207,11 @@ def main():
 
     # --- (d) run the binary ------------------------------------------------------
     native = run([exe])
-    if native.returncode != 0:
-        fail(f"the native binary exited {native.returncode}\n{native.stdout}{native.stderr}")
 
     # --- (e) the reference: first proved on a probe, then run on the program ----
     probe = work / "probe.js"
     probe.write_text(PROBE)
     probed = run([args.reference, str(probe)])
-    if probed.returncode != 0:
-        fail(f"the reference failed on the probe (exit {probed.returncode})\n{probed.stderr}")
     if probed.stdout.replace("=-nan", "=nan") != PROBE_EXPECTED:
         fail(
             "the reference does not print the convention - on the probe it printed:\n"
@@ -258,10 +225,6 @@ def main():
             f"6 strings, 1 null, 1 undefined, 1 function and 1 other:\n{probed.stderr}"
         )
     reference = run([args.reference, args.js])
-    if reference.returncode != 0:
-        fail(
-            f"the interpreter failed on {args.js} (exit {reference.returncode})\n{reference.stderr}"
-        )
     counts = COUNTS.search(reference.stderr)
     if not counts:
         fail(f"the reference did not report its counts:\n{reference.stderr}")

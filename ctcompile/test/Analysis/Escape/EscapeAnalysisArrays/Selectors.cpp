@@ -97,22 +97,11 @@ void checkOpaqueEntryTransport(mlir::MLIRContext & context) {
     };
     std::size_t budgets = 0;
     const auto check = [&](mlir::ModuleOp module, const contents_row & expected) {
-        checkArrayContents(module, expected);
-        const bool complete = expected.failure == ArrayContentsFailure::None;
-        budgets += checkArrayRetention(module, {.what = expected.what,
-                                                .body = expected.body,
-                                                .discharged = complete ? "x" : "",
-                                                .complete = complete});
+        budgets += checkDischarge(module, expected, "x");
     };
     for (const contents_row & expected : rows) {
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(
-            std::string{kPrologue} + expected.body + "}\n", &context);
-        if (module) {
-            check(*module, expected);
-        } else {
-            fail(row{.what = expected.what, .body = expected.body, .expected = ""},
-                 "the opaque forwarding fixture did not parse");
-        }
+        budgets +=
+            runDischarge(context, expected, "x", "the opaque forwarding fixture did not parse");
     }
 
     // Extra unused entry arguments cost one seed and one opaque entry in the
@@ -214,11 +203,7 @@ void checkSelectorProducers(mlir::MLIRContext & context) {
     const std::string overwrite = "  ctjs.set_property %a[%zero], %zero\n  ctjs.return %a\n";
     const std::string branch =
         "  %flag = ctjs.truthy %boolean\n  cf.cond_br %flag, ^yes, ^no\n^yes:\n";
-    struct selector_row {
-        contents_row contents;
-        const char * discharged = "x";
-    };
-    const std::vector<selector_row> rows = {
+    const std::vector<discharge_row> rows = {
         {.contents = {.what = "source selector producers discharge only after both overwrites",
                       .body =
                           values + compare + boolean + branch + overwrite + "^no:\n" + overwrite,
@@ -316,24 +301,12 @@ void checkSelectorProducers(mlir::MLIRContext & context) {
                       .failure = ArrayContentsFailure::UnsupportedOperation}},
     };
     std::size_t budgets = 0;
-    const auto check = [&](mlir::ModuleOp module, const selector_row & expected) {
-        checkArrayContents(module, expected.contents);
-        const bool complete = expected.contents.failure == ArrayContentsFailure::None;
-        budgets += checkArrayRetention(module, {.what = expected.contents.what,
-                                                .body = expected.contents.body,
-                                                .discharged = complete ? expected.discharged : "",
-                                                .complete = complete});
+    const auto check = [&](mlir::ModuleOp module, const discharge_row & expected) {
+        budgets += checkDischarge(module, expected.contents, expected.discharged);
     };
-    const auto parseAndCheck = [&](const selector_row & expected) {
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(
-            std::string{kPrologue} + expected.contents.body + "}\n", &context);
-        if (module) {
-            check(*module, expected);
-        } else {
-            fail(
-                row{.what = expected.contents.what, .body = expected.contents.body, .expected = ""},
-                "the selector producer fixture did not parse");
-        }
+    const auto parseAndCheck = [&](const discharge_row & expected) {
+        budgets += runDischarge(context, expected.contents, expected.discharged,
+                                "the selector producer fixture did not parse");
     };
     for (const auto & expected : rows) { parseAndCheck(expected); }
     // Inspect every other enum kind, including apparently harmless primitive
@@ -356,7 +329,7 @@ void checkSelectorProducers(mlir::MLIRContext & context) {
 
     // Every additional primitive origin costs its producer visit and its
     // copied entry in the one path snapshot, even when no later use needs it.
-    selector_row wide = rows.front();
+    discharge_row wide = rows.front();
     std::string extras;
     for (unsigned i = 0; i < 32; ++i) {
         extras +=
@@ -383,7 +356,7 @@ void checkSelectorProducers(mlir::MLIRContext & context) {
              "the selector snapshot charge fixture did not parse");
     }
 
-    selector_row mutation = rows.front();
+    discharge_row mutation = rows.front();
     mutation.contents.what = "live selector kinds and uses defeat stale forged completion markers";
     auto module = mlir::parseSourceString<mlir::ModuleOp>(
         std::string{kPrologue} + mutation.contents.body + "}\n", &context);
@@ -456,11 +429,7 @@ void checkLogicalNegation(mlir::MLIRContext & context) {
     const std::string overwrite = "  ctjs.set_property %a[%zero], %zero\n  ctjs.return %a\n";
     const std::string branch =
         "  %flag = ctjs.truthy %negated\n  cf.cond_br %flag, ^yes, ^no\n^yes:\n";
-    struct negation_row {
-        contents_row contents;
-        const char * discharged = "x";
-    };
-    const std::vector<negation_row> rows = {
+    const std::vector<discharge_row> rows = {
         {.contents = {.what = "negation releases a stored child only after both overwrites",
                       .body = values + negate + branch + overwrite + "^no:\n" + overwrite,
                       .arrays = "a:[zero] | a:[zero]",
@@ -546,26 +515,15 @@ void checkLogicalNegation(mlir::MLIRContext & context) {
                       .failure = ArrayContentsFailure::UnknownArray}},
     };
     std::size_t budgets = 0;
-    const auto check = [&](mlir::ModuleOp module, const negation_row & expected) {
-        checkArrayContents(module, expected.contents);
-        const bool complete = expected.contents.failure == ArrayContentsFailure::None;
-        budgets += checkArrayRetention(module, {.what = expected.contents.what,
-                                                .body = expected.contents.body,
-                                                .discharged = complete ? expected.discharged : "",
-                                                .complete = complete});
+    const auto check = [&](mlir::ModuleOp module, const discharge_row & expected) {
+        budgets += checkDischarge(module, expected.contents, expected.discharged);
     };
-    const auto parse = [&](const negation_row & expected) {
-        return mlir::parseSourceString<mlir::ModuleOp>(
-            std::string{kPrologue} + expected.contents.body + "}\n", &context);
+    const auto parse = [&](const discharge_row & expected) {
+        return parseContents(context, expected.contents);
     };
-    const auto parseAndCheck = [&](const negation_row & expected) {
-        if (auto module = parse(expected)) {
-            check(*module, expected);
-        } else {
-            fail(
-                row{.what = expected.contents.what, .body = expected.contents.body, .expected = ""},
-                "the logical negation fixture did not parse");
-        }
+    const auto parseAndCheck = [&](const discharge_row & expected) {
+        budgets += runDischarge(context, expected.contents, expected.discharged,
+                                "the logical negation fixture did not parse");
     };
     for (const auto & expected : rows) { parseAndCheck(expected); }
     // Preserve all five historical controls. TypeOf/Void now have independent
@@ -581,7 +539,7 @@ void checkLogicalNegation(mlir::MLIRContext & context) {
                                     .exit = total ? "zero -> {}" : ""}});
     }
 
-    negation_row wide = rows.front();
+    discharge_row wide = rows.front();
     std::string extras;
     for (unsigned i = 0; i < 32; ++i) {
         extras += "  %extra_" + std::to_string(i) + " = ctjs.unary not %p\n";
@@ -604,7 +562,7 @@ void checkLogicalNegation(mlir::MLIRContext & context) {
              "the logical negation snapshot fixture did not parse");
     }
 
-    negation_row mutation = rows.front();
+    discharge_row mutation = rows.front();
     mutation.contents.what = "live negation edits defeat stale forged completion markers";
     unsigned liveStates = 0;
     if (auto module = parse(mutation)) {
@@ -672,16 +630,12 @@ void checkTotalUnaryProducers(mlir::MLIRContext & context) {
     const std::string overwrite = "  ctjs.set_property %a[%zero], %zero\n  ctjs.return %a\n";
     const std::string branch =
         "  %flag = ctjs.truthy %produced\n  cf.cond_br %flag, ^yes, ^no\n^yes:\n";
-    struct unary_row {
-        contents_row contents;
-        const char * discharged = "x";
-    };
     for (const std::string kind : {"typeof", "void"}) {
         const std::string operation = "  %produced = ctjs.unary " + kind;
         const std::string produce = operation + " %p {storage_test_id = \"produced\"}\n";
         const ctjs::UnaryKind originalKind =
             kind == "typeof" ? ctjs::UnaryKind::TypeOf : ctjs::UnaryKind::Void;
-        const std::vector<unary_row> rows = {
+        const std::vector<discharge_row> rows = {
             {.contents = {.what = "total unary results do not prune either overwrite arm",
                           .body = values + produce + branch + overwrite + "^no:\n" + overwrite,
                           .arrays = "a:[zero] | a:[zero]",
@@ -783,30 +737,17 @@ void checkTotalUnaryProducers(mlir::MLIRContext & context) {
                           .failure = ArrayContentsFailure::UnsupportedOperation}},
         };
         std::size_t budgets = 0;
-        const auto check = [&](mlir::ModuleOp module, const unary_row & expected) {
-            checkArrayContents(module, expected.contents);
-            const bool complete = expected.contents.failure == ArrayContentsFailure::None;
-            budgets +=
-                checkArrayRetention(module, {.what = expected.contents.what,
-                                             .body = expected.contents.body,
-                                             .discharged = complete ? expected.discharged : "",
-                                             .complete = complete});
+        const auto check = [&](mlir::ModuleOp module, const discharge_row & expected) {
+            budgets += checkDischarge(module, expected.contents, expected.discharged);
         };
-        const auto parse = [&](const unary_row & expected) {
-            return mlir::parseSourceString<mlir::ModuleOp>(
-                std::string{kPrologue} + expected.contents.body + "}\n", &context);
+        const auto parse = [&](const discharge_row & expected) {
+            return parseContents(context, expected.contents);
         };
         for (const auto & expected : rows) {
-            if (auto module = parse(expected)) {
-                check(*module, expected);
-            } else {
-                fail(row{.what = expected.contents.what,
-                         .body = expected.contents.body,
-                         .expected = ""},
-                     "the total unary fixture did not parse");
-            }
+            budgets += runDischarge(context, expected.contents, expected.discharged,
+                                    "the total unary fixture did not parse");
         }
-        unary_row wide = rows.front();
+        discharge_row wide = rows.front();
         std::string extras;
         for (unsigned i = 0; i < 32; ++i) {
             extras += "  %extra_" + std::to_string(i) + " = ctjs.unary " + kind + " %p\n";
@@ -831,7 +772,7 @@ void checkTotalUnaryProducers(mlir::MLIRContext & context) {
                  "the total unary snapshot fixture did not parse");
         }
 
-        unary_row mutation = rows.front();
+        discharge_row mutation = rows.front();
         mutation.contents.what = "live total unary edits defeat stale forged completion markers";
         unsigned liveStates = 0;
         if (auto module = parse(mutation)) {

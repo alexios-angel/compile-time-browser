@@ -6,8 +6,7 @@ void checkSavedScalarReads(mlir::MLIRContext & context, const std::string & sour
     using Alternatives = ctcompile::ctnative::PrimitiveAlternatives;
     using Dependencies = std::vector<std::vector<unsigned>>;
     const auto requested = [](mlir::ModuleOp module) {
-        auto contract = contractFor(module);
-        contract.initialIntrinsics = {"Map"};
+        auto contract = mapContractFor(module);
         module.walk([&](ctjs::StoreGlobalOp store) {
             const auto name = store.getName().str();
             if (name != "host" && name != "trace" &&
@@ -83,8 +82,7 @@ void checkSavedScalarReads(mlir::MLIRContext & context, const std::string & sour
                              mlir::TypeID tag = mlir::TypeID::get<ctjs::NumberAttr>(),
                              bool objectObservation = false) {
         ++rows;
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(module), "saved scalar source/prepared fixture parses");
+        auto module = parsed(context, text, "saved scalar source/prepared fixture parses");
         if (!module) { return; }
         const auto contract = requested(*module);
         HostContractAnalysis host(*module, contract);
@@ -354,8 +352,7 @@ void checkSavedScalarReads(mlir::MLIRContext & context, const std::string & sour
                              : booleanOnly  ? boolean
                              : constantOnly ? constant
                                             : source;
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
-        check(static_cast<bool>(module), "saved scalar live-mutation fixture parses");
+        auto module = parsed(context, program, "saved scalar live-mutation fixture parses");
         if (!module) { return; }
         auto contract = requested(*module);
         HostContractAnalysis complete(*module, contract);
@@ -533,8 +530,7 @@ void checkSavedScalarReads(mlir::MLIRContext & context, const std::string & sour
                                                             : "#ctjs.boolean<false>"));
             }
         }
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
-        check(static_cast<bool>(module), "constant-only inaccessible-arm fixture parses");
+        auto module = parsed(context, program, "constant-only inaccessible-arm fixture parses");
         if (!module) { return; }
         mlir::Builder attributes(&context);
         module->walk([&](mlir::Operation * operation) {

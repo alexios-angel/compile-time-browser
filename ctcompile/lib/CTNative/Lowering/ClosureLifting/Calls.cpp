@@ -42,8 +42,7 @@ ctjs::CreateClosureOp closureLifter::closureCalledBy(mlir::Operation * user) {
         // bindLocalFunctions proved these calls before erasing the captured
         // callable. Its target and recorded site are the identity; input annotations
         // or an arbitrary callee value cannot substitute for that proof.
-        auto constant = direct.getCalleeValue().getDefiningOp<ctjs::ConstantOp>();
-        if (!constant || !llvm::isa<ctjs::UndefinedAttr>(constant.getValue())) { return {}; }
+        if (!ctjs::isUndefinedConstant(direct.getCalleeValue())) { return {}; }
         auto found = uniqueClosureByTarget.lookup(direct.getTarget());
         if (!found || !bindingClosures.contains(found.getOperation())) { return {}; }
         if (targetOf(found).getUpvalueCount() == 0) { return found; }
@@ -87,8 +86,6 @@ void closureLifter::census() {
         auto holder = o->getParentOfType<ctjs::FuncOp>();
         if (llvm::isa<ctjs::StoreUpvalueOp>(o)) {
             if (holder) { mutatesUpvalue.insert(holder.getOperation()); }
-        } else if (llvm::isa<ctjs::PassNewTargetOp>(o)) {
-            if (holder) { passesNewTarget.insert(holder.getOperation()); }
         } else if (auto made = llvm::dyn_cast<ctjs::CreateClosureOp>(o)) {
             closures.push_back(made);
         } else if (auto object = llvm::dyn_cast<ctjs::CreateObjectOp>(o)) {

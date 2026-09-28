@@ -2,11 +2,10 @@
 """Check named returned lambdas, owning captures, and concrete callable behavior."""
 
 import argparse
-import os
 from pathlib import Path
 import re
 
-from CTNative.harness import CORE_INCLUDE, RUNTIME_INCLUDE, find_compilers, run
+from CTNative.harness import build_and_run, find_compilers, run
 
 
 def main():
@@ -93,60 +92,15 @@ def main():
             emitted.append((source, expected))
             for index, compiler in enumerate(compilers):
                 binary = (args.work / f"{fixture}-{label}-{index}").resolve()
-                run(
-                    [
-                        compiler,
-                        "-std=c++23",
-                        RUNTIME_INCLUDE,
-                        CORE_INCLUDE,
-                        "-O2",
-                        "-Wall",
-                        "-Wextra",
-                        "-Werror",
-                        "-Wconversion",
-                        "-pedantic",
-                        "-ffp-contract=off",
-                        str(source),
-                        "-o",
-                        str(binary),
-                    ]
-                )
-                assert run([str(binary)]).stdout == expected
+                assert build_and_run(compiler, source, binary).stdout == expected
         assert decisions[0] == decisions[1], decisions
 
     # Clang's address sanitizer catches a borrowed factory frame even when the
     # unsanitized stack happens to keep its old bytes. Long strings additionally
     # exercise heap ownership; leak checks cover std::function/shared_ptr cleanup.
-    environment = dict(
-        os.environ,
-        ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
-        UBSAN_OPTIONS="halt_on_error=1",
-    )
     for source, expected in emitted:
         binary = source.with_suffix(".sanitized").resolve()
-        run(
-            [
-                compilers[1],
-                "-std=c++23",
-                RUNTIME_INCLUDE,
-                CORE_INCLUDE,
-                "-O1",
-                "-g",
-                "-Wall",
-                "-Wextra",
-                "-Werror",
-                "-Wconversion",
-                "-pedantic",
-                "-ffp-contract=off",
-                "-fno-omit-frame-pointer",
-                "-fsanitize=address,undefined",
-                "-fsanitize-address-use-after-scope",
-                str(source),
-                "-o",
-                str(binary),
-            ]
-        )
-        assert run([str(binary)], environment=environment).stdout == expected
+        assert build_and_run(compilers[1], source, binary, sanitize=True).stdout == expected
     print("owning callables: 9 observations agree, plain/deduced, GCC/Clang and ASan/UBSan")
 
 

@@ -1,5 +1,4 @@
 #include "Proof.hpp"
-#include "ctbrowser/style/css/parser.hpp"
 #include "mlir/IR/Verifier.h"
 
 namespace ctcompile::ctnative::dom_source_detail {
@@ -13,12 +12,42 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
     bool selectorFeedsWrite = false;
     ctjs::CreateObjectOp discardedResult;
     llvm::DenseSet<mlir::Operation *> discardedFields;
-    auto abrupt = llvm::dyn_cast_or_null<mlir::scf::ExecuteRegionOp>(call->getNextNode());
-    auto rethrow = abrupt && abrupt.getNoInline() && !abrupt.getNumResults() &&
-                           abrupt.getRegion().hasOneBlock() &&
-                           llvm::hasSingleElement(abrupt.getRegion().front())
-                       ? llvm::dyn_cast<ctjs::ThrowOp>(abrupt.getRegion().front().front())
-                       : ctjs::ThrowOp{};
+    // Missing JavaScript arguments are undefined. The complete helper proof
+    // excludes arguments/new.target observers before inlining.
+    const auto bindArguments = [&](mlir::OpBuilder & at, mlir::IRMapping & mapping) {
+        auto & body = target.getBody().front();
+        mapping.map(body.getArgument(ctjs::arg_callee), callee);
+        mapping.map(body.getArgument(ctjs::arg_receiver), receiver);
+        for (auto [index, formal] :
+             llvm::enumerate(body.getArguments().drop_front(ctjs::implicit_arguments))) {
+            if (!step()) { return false; }
+            mlir::Value actual = index < arguments.size() ? arguments[index] : mlir::Value{};
+            if (!actual) {
+                actual = ctjs::ConstantOp::create(at, call->getLoc(),
+                                                  ctjs::UndefinedAttr::get(call->getContext()));
+                ++operationCount;
+            }
+            mapping.map(formal, actual);
+        }
+        return true;
+    };
+    // Substitute captures at each invocation, including branch-local loads;
+    // never bind a shared body to its first caller.
+    const auto bindCapture = [&](ctjs::LoadUpvalueOp load, mlir::OpBuilder & at,
+                                 mlir::IRMapping & mapping) {
+        auto & capture = captures[static_cast<unsigned>(load.getIndex())];
+        mlir::Value value;
+        if (capture.enclosingIndex >= 0) {
+            value = ctjs::LoadUpvalueOp::create(
+                at, load.getLoc(), load.getType(),
+                function.getBody().front().getArgument(ctjs::arg_callee), capture.enclosingIndex);
+            ++operationCount;
+        } else {
+            value = capture.value();
+        }
+        mapping.map(load.getResult(), value);
+    };
+    auto rethrow = savedThrow(call->getNextNode());
     if (!rethrow || call->getNumResults() != 1 || !call->getResult(0).hasOneUse() ||
         rethrow.getValue() != call->getResult(0)) {
         rethrow = {};
@@ -73,11 +102,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                         invocation.getUnwindBody().isAncestor(operation->getParentRegion()) &&
                         llvm::isa<ctjs::CallOp, ctjs::CallDirectOp, ctjs::CreateClosureOp>(
                             operation);
-                    uint64_t cost =
-                        uint64_t(1) + operation->getNumOperands() + operation->getNumResults();
-                    for (auto & region : operation->getRegions()) {
-                        for (auto & block : region) { cost += 1 + block.getNumArguments(); }
-                    }
+                    const uint64_t cost = operationWork(operation, false);
                     if (cost > remaining) { return mlir::WalkResult::interrupt(); }
                     remaining -= static_cast<unsigned>(cost);
                     copyCost += cost;
@@ -94,21 +119,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                 mlir::OpBuilder at(invocation);
                 mlir::IRMapping mapping;
                 auto & body = target.getBody().front();
-                mapping.map(body.getArgument(ctjs::arg_callee), callee);
-                mapping.map(body.getArgument(ctjs::arg_receiver), receiver);
-                for (auto [index, formal] :
-                     llvm::enumerate(body.getArguments().drop_front(ctjs::implicit_arguments))) {
-                    if (!step()) { return false; }
-                    mlir::Value actual;
-                    if (index < arguments.size()) {
-                        actual = arguments[index];
-                    } else {
-                        actual = ctjs::ConstantOp::create(
-                            at, call->getLoc(), ctjs::UndefinedAttr::get(call->getContext()));
-                        ++operationCount;
-                    }
-                    mapping.map(formal, actual);
-                }
+                if (!bindArguments(at, mapping)) { return false; }
                 auto exit = llvm::cast<ctjs::InvokeExitOp>(invocation.getBody().front().back());
                 const auto emit =
                     [&](auto && self, mlir::Block::iterator cursor,
@@ -121,18 +132,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                             continue;
                         }
                         if (auto load = llvm::dyn_cast<ctjs::LoadUpvalueOp>(operation)) {
-                            auto & capture = captures[static_cast<unsigned>(load.getIndex())];
-                            mlir::Value value;
-                            if (capture.enclosingIndex >= 0) {
-                                value = ctjs::LoadUpvalueOp::create(
-                                    into, load.getLoc(), load.getType(),
-                                    function.getBody().front().getArgument(ctjs::arg_callee),
-                                    capture.enclosingIndex);
-                                ++operationCount;
-                            } else {
-                                value = capture.value();
-                            }
-                            mapping.map(load.getResult(), value);
+                            bindCapture(load, into, mapping);
                         } else if (auto result = llvm::dyn_cast<ctjs::ReturnOp>(operation)) {
                             auto & normal = invocation.getNormalBody().front();
                             normal.getArgument(0).replaceAllUsesWith(
@@ -211,11 +211,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
             }
             if (forwards) {
                 const auto counted = invocation.walk([&](mlir::Operation * operation) {
-                    uint64_t cost =
-                        uint64_t(1) + operation->getNumOperands() + operation->getNumResults();
-                    for (auto & region : operation->getRegions()) {
-                        for (auto & block : region) { cost += 1 + block.getNumArguments(); }
-                    }
+                    const uint64_t cost = operationWork(operation, false);
                     if (cost > remaining / 2) { return mlir::WalkResult::interrupt(); }
                     remaining -= static_cast<unsigned>(cost * 2);
                     return mlir::WalkResult::advance();
@@ -625,18 +621,12 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
             }
             if (selectorFeedsWrite) { consumedSelectors.push_back(selectorLeaf); }
             for (ctjs::CallOp consumed : consumedSelectors) {
-                auto literal = consumed.getArgs()[0].getDefiningOp<ctjs::ConstantOp>();
-                auto selector = literal ? llvm::dyn_cast<ctjs::StringAttr>(literal.getValue())
-                                        : ctjs::StringAttr{};
+                auto selector = ctjs::constantAttr<ctjs::StringAttr>(consumed.getArgs()[0]);
                 if (!selector) { return false; }
                 for (std::size_t i = 0; i < selector.getValue().size(); ++i) {
                     if (!step()) { return false; }
                 }
-                ctbrowser::atom_table atoms;
-                bool invalid = false;
-                const std::string_view text{selector.getValue().data(), selector.getValue().size()};
-                (void)ctbrowser::style::css::parse_selector_text(text, atoms, invalid);
-                if (invalid) { return false; }
+                if (!validSelector(selector.getValue())) { return false; }
             }
             suffixValues.append({method.getResult(), protectedLeaf.getResult(),
                                  discardedResult ? discardedResult.getResult() : mlir::Value{},
@@ -707,23 +697,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
     auto & body = target.getBody().front();
     mlir::OpBuilder at(protectedInvocation ? protectedInvocation.getOperation() : call);
     mlir::IRMapping mapping;
-    mapping.map(body.getArgument(ctjs::arg_callee), callee);
-    mapping.map(body.getArgument(ctjs::arg_receiver), receiver);
-    for (auto [index, formal] :
-         llvm::enumerate(body.getArguments().drop_front(ctjs::implicit_arguments))) {
-        if (!step()) { return false; }
-        mlir::Value actual;
-        if (index < arguments.size()) {
-            actual = arguments[index];
-        } else {
-            // Missing JavaScript arguments are undefined. The complete helper
-            // proof excludes arguments/new.target observers before inlining.
-            actual = ctjs::ConstantOp::create(at, call->getLoc(),
-                                              ctjs::UndefinedAttr::get(call->getContext()));
-            ++operationCount;
-        }
-        mapping.map(formal, actual);
-    }
+    if (!bindArguments(at, mapping)) { return false; }
     const auto cloneBody = [&](auto && self, mlir::Block & source, mlir::OpBuilder & at) -> bool {
         for (mlir::Operation & operation : source) {
             if (!step()) { return false; }
@@ -735,19 +709,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
             if (discardedResult && &operation == discardedResult) { continue; }
             if (discardedFields.contains(&operation)) { continue; }
             if (auto load = llvm::dyn_cast<ctjs::LoadUpvalueOp>(operation)) {
-                // Substitute at each invocation, including branch-local
-                // loads, never bind a shared body to its first caller.
-                auto & capture = captures[static_cast<unsigned>(load.getIndex())];
-                mlir::Value value;
-                if (capture.enclosingIndex >= 0) {
-                    value = ctjs::LoadUpvalueOp::create(at, load.getLoc(), load.getType(),
-                                                        block.getArgument(ctjs::arg_callee),
-                                                        capture.enclosingIndex);
-                    ++operationCount;
-                } else {
-                    value = capture.value();
-                }
-                mapping.map(load.getResult(), value);
+                bindCapture(load, at, mapping);
             } else if (auto result = llvm::dyn_cast<ctjs::ReturnOp>(operation)) {
                 if (protectedInvocation && protectedInvocation.getNumResults() &&
                     result.getValue() != protectedLeaf.getResult()) {
@@ -795,7 +757,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                 }
             } else {
                 if (&operation == protectedLeaf) { at.setInsertionPoint(call); }
-                ctjs::InvokeOp trailingInvocation;
+                mlir::Operation * cloned;
                 // A consumed selector remains an ordered read at this guard.
                 // Its literal syntax was checked above; complete typed reproof
                 // must still exclude receiver failure, coercion and reentry.
@@ -807,38 +769,18 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                     // Each write retains its own valid-name check; matches
                     // retains literal-selector validation before the final write.
                     if (!step() || !step() || !step() || !step()) { return false; }
-                    mlir::OperationState state(operation.getLoc(),
-                                               ctjs::InvokeOp::getOperationName());
-                    for (unsigned i = 0; i != 3; ++i) { state.addRegion(); }
-                    trailingInvocation = llvm::cast<ctjs::InvokeOp>(at.create(state));
-                    auto & called = trailingInvocation.getBody().emplaceBlock();
-                    at.setInsertionPointToEnd(&called);
+                    cloned = emitSuppressedCall(at, operation, mapping);
                     operationCount += 4;
-                }
-                auto * cloned = at.clone(operation, mapping);
-                if (trailingInvocation) {
-                    ctjs::InvokeExitOp::create(at, operation.getLoc(), cloned->getResult(0),
-                                               mlir::ValueRange{});
-                    for (auto * region : {&trailingInvocation.getNormalBody(),
-                                          &trailingInvocation.getUnwindBody()}) {
-                        auto & continuation = region->emplaceBlock();
-                        continuation.addArgument(ctjs::ValueType::get(call->getContext()),
-                                                 operation.getLoc());
-                        mlir::OpBuilder yield = mlir::OpBuilder::atBlockEnd(&continuation);
-                        ctjs::InvokeYieldOp::create(yield, operation.getLoc(), mlir::ValueRange{});
-                    }
-                    at.setInsertionPointAfter(trailingInvocation);
+                } else {
+                    cloned = at.clone(operation, mapping);
                 }
                 for (auto [from, to] : llvm::zip(operation.getResults(), cloned->getResults())) {
                     if (!step()) { return false; }
                     if (inactiveFillers.contains(from)) { inactiveFillers.insert(to); }
                 }
                 if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(operation);
-                    closure &&
-                    (confinedFilterCallback(
-                         closure, functions.lookup(static_cast<unsigned>(closure.getFunction()))) ||
-                     confinedReplacementCallback(closure, functions.lookup(static_cast<unsigned>(
-                                                              closure.getFunction()))))) {
+                    closure && confinedCallback(closure, functions.lookup(static_cast<unsigned>(
+                                                             closure.getFunction())))) {
                     // The original enclosure and unused implicit arguments
                     // were proved before cloning. Preserve this callback in
                     // its source arm with the caller's inert enclosure.
@@ -887,7 +829,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
         const auto payload = rethrow.getValue();
         const auto where = rethrow.getLoc();
         if (!step()) { return false; }
-        abrupt.erase();
+        rethrow->getParentOp()->erase();
         // A result used only by this immediate throw needs no scalar join.
         // Keep each payload and all its producers in their original arm.
         // ponytail: one-result tail branches only; effectful continuations
@@ -912,11 +854,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
             mlir::OpBuilder at(end);
             if (!project) {
                 if (!step() || !step()) { return false; }
-                auto scope = mlir::scf::ExecuteRegionOp::create(at, where, mlir::TypeRange{});
-                scope.setNoInline(true);
-                auto & throwing = scope.getRegion().emplaceBlock();
-                mlir::OpBuilder inside(&throwing, throwing.begin());
-                ctjs::ThrowOp::create(inside, where, value);
+                emitSavedThrow(at, where, value);
                 operationCount += 2;
                 return true;
             }
@@ -1128,8 +1066,7 @@ bool DOMSource::expand(ctjs::FuncOp function, unsigned depth, bool entry, bool d
             if (held) { continue; }
             auto target = functions.lookup(static_cast<unsigned>(closure.getFunction()));
             if (!target) { return refuse("DOM helper closure target is missing"); }
-            if (confinedFilterCallback(closure, target) ||
-                confinedReplacementCallback(closure, target)) {
+            if (confinedCallback(closure, target)) {
                 if (!expand(target, depth + 1)) { return false; }
                 // Preserve both source identities. Complete DOM reproof must
                 // establish the intrinsic method, callback body and every use.

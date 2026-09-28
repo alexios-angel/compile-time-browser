@@ -1,9 +1,7 @@
 // Boxed EmitC values lowering.
 #include "Lowering.h"
-#include "ctcompile/Support/CppLiterals.hpp"
 
 namespace ctcompile::ctjs::emitc_detail {
-using cpp::c_string_literal;
 
 bool lowering::convertValues(mlir::Operation & op, mlir::OpBuilder & build,
                              mlir::IRMapping & mapping, compiled_entry & scope) {
@@ -28,22 +26,7 @@ bool lowering::convertValues(mlir::Operation & op, mlir::OpBuilder & build,
         // `site` IS THE ENTRY'S OWN, which is the function_proto the
         // interpreter keys the same cache by - so a literal shared between
         // a compiled body and an interpreted one is one object, not two.
-        if (auto text = mlir::dyn_cast<StringAttr>(constant.getValue())) {
-            const llvm::StringRef bytes = text.getValue();
-            mapping.map(constant.getResult(),
-                        ec::CallOpaqueOp::create(
-                            build, where, mlir::TypeRange{value}, callee("ct_aot_new_string"),
-                            mlir::ValueRange{
-                                scope.frame, scope.memo_site,
-                                literal(build, where, opaque(build.getContext(), "uint32_t"),
-                                        std::to_string(scope.memo_slots.lookup(&op))),
-                                literal(build, where, pointer_to(build.getContext(), "const char"),
-                                        c_string_literal(bytes)),
-                                literal(build, where, opaque(build.getContext(), "uint32_t"),
-                                        std::to_string(bytes.size()))})
-                            .getResult(0));
-            return true;
-        }
+        //
         // A BIGINT LITERAL IS THE SOURCE TEXT, PARSED AT RUN TIME, and
         // that is deliberate: bigint_from_literal owns `0x1fn`, `0b..n` and
         // the 1.5n-to-0n substitution, and parsing here would be a second
@@ -55,20 +38,18 @@ bool lowering::convertValues(mlir::Operation & op, mlir::OpBuilder & build,
         // with the CONSTANT-POOL index as the slot, and this backend numbers
         // its slots in walk order. Sharing the key lets a compiled body read
         // a slot the interpreter filled with a different literal.
-        if (auto digits = mlir::dyn_cast<BigIntAttr>(constant.getValue())) {
-            const llvm::StringRef text = digits.getText();
+        auto text = mlir::dyn_cast<StringAttr>(constant.getValue());
+        auto digits = mlir::dyn_cast<BigIntAttr>(constant.getValue());
+        if (text || digits) {
+            const mlir::Value slot = literal(build, where, opaque(build.getContext(), "uint32_t"),
+                                             std::to_string(scope.memo_slots.lookup(&op)));
+            const auto [bytes, length] =
+                bytes_and_length(build, where, text ? text.getValue() : digits.getText());
             mapping.map(constant.getResult(),
                         ec::CallOpaqueOp::create(
                             build, where, mlir::TypeRange{value},
-                            callee("ct_aot_new_bigint_literal"),
-                            mlir::ValueRange{
-                                scope.frame, scope.memo_site,
-                                literal(build, where, opaque(build.getContext(), "uint32_t"),
-                                        std::to_string(scope.memo_slots.lookup(&op))),
-                                literal(build, where, pointer_to(build.getContext(), "const char"),
-                                        c_string_literal(text)),
-                                literal(build, where, opaque(build.getContext(), "uint32_t"),
-                                        std::to_string(text.size()))})
+                            callee(text ? "ct_aot_new_string" : "ct_aot_new_bigint_literal"),
+                            mlir::ValueRange{scope.frame, scope.memo_site, slot, bytes, length})
                             .getResult(0));
             return true;
         }
@@ -87,10 +68,7 @@ bool lowering::convertValues(mlir::Operation & op, mlir::OpBuilder & build,
         auto answered =
             ec::CallOpaqueOp::create(build, where, mlir::TypeRange{u32}, callee("ct_aot_truthy"),
                                      mlir::ValueRange{mapping.lookup(truthy.getValue())});
-        auto bit = ec::CmpOp::create(build, where, mlir::IntegerType::get(build.getContext(), 1),
-                                     ec::CmpPredicate::ne, answered.getResult(0),
-                                     literal(build, where, u32, "0"));
-        mapping.map(truthy.getResult(), bit.getResult());
+        mapping.map(truthy.getResult(), nonzero(build, where, answered.getResult(0)));
         return true;
     }
 
@@ -102,24 +80,18 @@ bool lowering::convertValues(mlir::Operation & op, mlir::OpBuilder & build,
     // what OpcodeMapping.hpp exists to prevent - and the opcode is spelled
     // as an ENUMERATOR, so the renumbering Phases 13 and 14 perform becomes
     // a build error in the generated code rather than a different operator.
-    if (auto binary = mlir::dyn_cast<BinaryOp>(op)) {
-        const mlir::Value kind = literal(build, where, opaque(build.getContext(), "uint32_t"),
-                                         opcode_spelling(opcode_for_binary(binary.getKind())));
-        mapping.map(binary.getResult(),
-                    status_call(scope, build, where, callee("ct_aot_binary_op"),
-                                {scope.frame, kind, mapping.lookup(binary.getLhs()),
-                                 mapping.lookup(binary.getRhs())},
-                                scope.value));
-        return true;
-    }
-    if (auto binary = mlir::dyn_cast<BinaryStaticOp>(op)) {
+    if (mlir::isa<BinaryOp, BinaryStaticOp>(op)) {
+        auto binary = mlir::dyn_cast<BinaryOp>(op);
         const mlir::Value kind =
             literal(build, where, opaque(build.getContext(), "uint32_t"),
-                    opcode_spelling(opcode_for_binary_static(binary.getKind())));
-        mapping.map(binary.getResult(),
-                    status_call(scope, build, where, callee("ct_aot_binary_op_static"),
-                                {scope.frame, kind, mapping.lookup(binary.getLhs()),
-                                 mapping.lookup(binary.getRhs())},
+                    opcode_spelling(binary ? opcode_for_binary(binary.getKind())
+                                           : opcode_for_binary_static(
+                                                 mlir::cast<BinaryStaticOp>(op).getKind())));
+        mapping.map(op.getResult(0),
+                    status_call(scope, build, where,
+                                callee(binary ? "ct_aot_binary_op" : "ct_aot_binary_op_static"),
+                                {scope.frame, kind, mapping.lookup(op.getOperand(0)),
+                                 mapping.lookup(op.getOperand(1))},
                                 scope.value));
         return true;
     }
@@ -226,10 +198,8 @@ bool lowering::convertValues(mlir::Operation & op, mlir::OpBuilder & build,
             auto answered = ec::CallOpaqueOp::create(build, where, mlir::TypeRange{u32},
                                                      callee("ct_aot_strict_equals"),
                                                      mlir::ValueRange{lhs, rhs});
-            auto truth = ec::CmpOp::create(build, where, bit, ec::CmpPredicate::ne,
-                                           answered.getResult(0), literal(build, where, u32, "0"));
-            mapping.map(compare.getResult(),
-                        box(build, where, value, "ctc_box_bool", truth.getResult()));
+            mapping.map(compare.getResult(), box(build, where, value, "ctc_box_bool",
+                                                 nonzero(build, where, answered.getResult(0))));
             return true;
         }
         if (compare.getKind() == CompareKind::Eq) {
@@ -237,10 +207,8 @@ bool lowering::convertValues(mlir::Operation & op, mlir::OpBuilder & build,
             // out-parameter is a uint32_t boolean, not a value.
             const mlir::Value answered = status_call(
                 scope, build, where, callee("ct_aot_loose_equals"), {scope.frame, lhs, rhs}, u32);
-            auto truth = ec::CmpOp::create(build, where, bit, ec::CmpPredicate::ne, answered,
-                                           literal(build, where, u32, "0"));
             mapping.map(compare.getResult(),
-                        box(build, where, value, "ctc_box_bool", truth.getResult()));
+                        box(build, where, value, "ctc_box_bool", nonzero(build, where, answered)));
             return true;
         }
 
@@ -293,11 +261,7 @@ bool lowering::convertValues(mlir::Operation & op, mlir::OpBuilder & build,
     // name contains a zero byte is legal JavaScript and strlen would stop
     // at it.
     if (auto global = mlir::dyn_cast<LoadGlobalOp>(op)) {
-        const llvm::StringRef name = global.getName();
-        const mlir::Value text = literal(build, where, pointer_to(build.getContext(), "const char"),
-                                         c_string_literal(name));
-        const mlir::Value length = literal(build, where, opaque(build.getContext(), "uint32_t"),
-                                           std::to_string(name.size()));
+        const auto [text, length] = bytes_and_length(build, where, global.getName());
         if (global.getTypeofLookup()) {
             const mlir::Value loaded =
                 ec::CallOpaqueOp::create(build, where, mlir::TypeRange{value},
@@ -314,15 +278,10 @@ bool lowering::convertValues(mlir::Operation & op, mlir::OpBuilder & build,
         return true;
     }
     if (auto global = mlir::dyn_cast<StoreGlobalOp>(op)) {
-        const llvm::StringRef name = global.getName();
+        const auto [text, length] = bytes_and_length(build, where, global.getName());
         ec::CallOpaqueOp::create(
             build, where, mlir::TypeRange{}, callee("ct_aot_global_set"),
-            mlir::ValueRange{scope.frame,
-                             literal(build, where, pointer_to(build.getContext(), "const char"),
-                                     c_string_literal(name)),
-                             literal(build, where, opaque(build.getContext(), "uint32_t"),
-                                     std::to_string(name.size())),
-                             mapping.lookup(global.getValue())});
+            mlir::ValueRange{scope.frame, text, length, mapping.lookup(global.getValue())});
         return true;
     }
 

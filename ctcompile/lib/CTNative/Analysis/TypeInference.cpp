@@ -52,6 +52,14 @@
 namespace ctcompile::ctnative {
 using ctjs::constantKey;
 
+mlir::Type TypeInference::mapTagType(mlir::MLIRContext * c, llvm::StringRef tag) {
+    if (tag == "bool") { return BoolType::get(c); }
+    if (tag == "number") { return NumType::getDouble(c); }
+    if (tag == "string") { return StrType::get(c, StrEncoding::UTF8); }
+    if (tag == "nullable_string") { return OptType::get(c, StrType::get(c, StrEncoding::UTF8)); }
+    return {};
+}
+
 void TypeValue::print(llvm::raw_ostream & os) const {
     if (type_ == nullptr) {
         os << "<uninitialized>";
@@ -276,15 +284,19 @@ mlir::Type TypeInference::elementTypeOf(mlir::Operation * op, mlir::Value array)
         return element;
     }
     const auto appended = appends_.find(array);
-    if (appended == appends_.end()) { return element; }
-    for (mlir::Value value : appended->second) {
+    return appended == appends_.end() ? element : joinLattices(op, appended->second, element);
+}
+
+mlir::Type TypeInference::joinLattices(mlir::Operation * op, mlir::ValueRange values,
+                                       mlir::Type seed) {
+    for (mlir::Value value : values) {
         const TypeLattice * lattice = getLatticeElementFor(getProgramPointAfter(op), value);
-        // Not yet visited contributes nothing NOW and re-visits this read when
-        // it is; never visited is dead code and never executes.
-        if (lattice->getValue().isUninitialized()) { continue; }
-        element = meet(element, lattice->getValue().getType());
+        // Never visited is dead code and never executes.
+        if (!lattice->getValue().isUninitialized()) {
+            seed = meet(seed, lattice->getValue().getType());
+        }
     }
-    return element;
+    return seed;
 }
 
 // PHASE 59 SLICE 2 STEP 3, THE FIELD HALF. The three conditions and the reason
@@ -346,35 +358,14 @@ mlir::Type TypeInference::cellTypeOf(mlir::Operation * op, mlir::Value cell) {
     // out of `cellStores_`, so this join is over the WRITES alone and a hoisted
     // `var` that is assigned before it is read is `num` rather than `opt<num>`.
     // The set is the input; nothing here has a second opinion about it.
-    mlir::Type held{};
     const auto stored = cellStores_.find(cell);
     if (stored == cellStores_.end()) { return BoxedType::get(op->getContext()); }
-    for (mlir::Value value : stored->second) {
-        const TypeLattice * lattice = getLatticeElementFor(getProgramPointAfter(op), value);
-        // Not yet visited contributes nothing NOW and re-visits this when it
-        // is; never visited is dead code and never executes. `n = n + 1` is
-        // exactly the cycle that needs it - the stored value reads the box.
-        if (lattice->getValue().isUninitialized()) { continue; }
-        held = held == nullptr ? lattice->getValue().getType()
-                               : meet(held, lattice->getValue().getType());
-    }
-    return held;
+    // `n = n + 1` is exactly the cycle a not-yet-visited store needs: the
+    // stored value reads the box. No seed: the join starts absent.
+    return joinLattices(op, stored->second, {});
 }
 
 mlir::Type TypeInference::mapTypeOf(mlir::Operation * op, mlir::Value map) {
-    const auto joined = [&](const auto & index) {
-        mlir::Type type = BottomType::get(op->getContext());
-        const auto found = index.find(nativeMapGroup(map));
-        if (found != index.end()) {
-            for (mlir::Value value : found->second) {
-                const TypeLattice * lattice = getLatticeElementFor(getProgramPointAfter(op), value);
-                if (!lattice->getValue().isUninitialized()) {
-                    type = meet(type, lattice->getValue().getType());
-                }
-            }
-        }
-        return type;
-    };
     mlir::Type key = BottomType::get(op->getContext());
     if (auto found = mapKeys_.find(nativeMapGroup(map)); found != mapKeys_.end()) {
         for (const auto & [value, exact] : found->second) {
@@ -393,7 +384,11 @@ mlir::Type TypeInference::mapTypeOf(mlir::Operation * op, mlir::Value map) {
             }
         }
     }
-    return MapType::get(op->getContext(), key, joined(mapValues_));
+    mlir::Type value = BottomType::get(op->getContext());
+    if (auto found = mapValues_.find(nativeMapGroup(map)); found != mapValues_.end()) {
+        value = joinLattices(op, found->second, value);
+    }
+    return MapType::get(op->getContext(), key, value);
 }
 
 void TypeInference::setToEntryState(TypeLattice * lattice) {
@@ -604,14 +599,9 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
                 // including unvisited writes that depend on this same read.
                 // Seed it immediately: widening first cannot be undone by a
                 // later iteration of the monotone solver.
-                if (auto readType = call->getAttrOfType<mlir::StringAttr>(kNativeMapReadType)) {
-                    const auto tag = readType.getValue();
-                    if (tag == "bool") { mapAnswer = BoolType::get(c); }
-                    if (tag == "number") { mapAnswer = NumType::getDouble(c); }
-                    if (tag == "string") { mapAnswer = StrType::get(c, StrEncoding::UTF8); }
-                    if (tag == "nullable_string") {
-                        mapAnswer = OptType::get(c, StrType::get(c, StrEncoding::UTF8));
-                    }
+                auto readType = call->getAttrOfType<mlir::StringAttr>(kNativeMapReadType);
+                if (auto tagged = readType ? mapTagType(c, readType.getValue()) : mlir::Type{}) {
+                    mapAnswer = tagged;
                 }
             } else if (action == "clear") {
                 mapAnswer = absentType(c);
@@ -724,15 +714,7 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
                     global = {};
                 }
             }
-            for (mlir::Value stored : stores->second) {
-                const TypeLattice * lattice =
-                    getLatticeElementFor(getProgramPointAfter(op), stored);
-                // A store the solver has not reached yet contributes nothing
-                // now and re-visits this load when it does; a store it will
-                // NEVER reach is dead code and never executes.
-                if (lattice->getValue().isUninitialized()) { continue; }
-                global = meet(global, lattice->getValue().getType());
-            }
+            global = joinLattices(op, stores->second, global);
             // A proved initialized load may precede its producer in solver
             // order. Keep it pending until that subscription produces a type;
             // boxed here would permanently absorb the eventual native type.
@@ -758,13 +740,7 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
             const auto stores =
                 identityFieldStores_.find({identityGroup, constantKey(get.getKey())});
             if (stores != identityFieldStores_.end()) {
-                for (mlir::Value stored : stores->second) {
-                    const TypeLattice * lattice =
-                        getLatticeElementFor(getProgramPointAfter(op), stored);
-                    if (!lattice->getValue().isUninitialized()) {
-                        field = meet(field, lattice->getValue().getType());
-                    }
-                }
+                field = joinLattices(op, stores->second, field);
             }
             // With absence proved impossible, stored-value lattices may all
             // still be pending. Subscriptions above revisit this read; boxed
@@ -785,14 +761,7 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
             // can.
             field = fieldIsAssignedBefore(get.getObject(), key, op) ? mlir::Type{} : absentType(c);
             const auto stores = fieldStores_.find({get.getObject(), key});
-            if (stores != fieldStores_.end()) {
-                for (mlir::Value stored : stores->second) {
-                    const TypeLattice * lattice =
-                        getLatticeElementFor(getProgramPointAfter(op), stored);
-                    if (lattice->getValue().isUninitialized()) { continue; }
-                    field = meet(field, lattice->getValue().getType());
-                }
-            }
+            if (stores != fieldStores_.end()) { field = joinLattices(op, stores->second, field); }
             // AN EMPTY JOIN IS "NOT YET", NOT `boxed` - the reason spelled at
             // the carried cell below, and reachable here for the same reason:
             // with the `undefined` seed dropped, every member of this join is a
@@ -837,13 +806,7 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
                     // Unlike the storage schema, this read sees only its exact
                     // current origins. No undefined seed: every path owns this
                     // index. Subscribe to all origins and wait for the first type.
-                    for (mlir::Value value : found->second) {
-                        const auto * lattice =
-                            getLatticeElementFor(getProgramPointAfter(op), value);
-                        if (lattice->getValue().isUninitialized()) { continue; }
-                        const auto type = lattice->getValue().getType();
-                        vector = vector ? meet(vector, type) : type;
-                    }
+                    vector = joinLattices(op, found->second, vector);
                     if (!vector) { return mlir::success(); }
                 } else {
                     vector = elementTypeOf(op, get.getObject());

@@ -3,6 +3,8 @@
 
 from CTNative.Lowering.Objects.class_initialization_inputs import *
 
+from CTNative.harness import native_args, without_intrinsic
+
 # The standalone reference has no console binding; actual conflicts throw there.
 CONFLICT_OBSERVATIONS = {
     "class-map-record-nested-conflict-direct": (594414, 594414),
@@ -356,13 +358,7 @@ def check_record_map_inputs(args, prepared):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    for name in ("translate", "opt", "node", "reference"):
-        parser.add_argument("--" + name, required=True)
-    for name in ("fixtures", "work"):
-        parser.add_argument("--" + name, type=Path, required=True)
-    args = parser.parse_args()
-    args.work.mkdir(parents=True, exist_ok=True)
+    args = native_args(__doc__, "fixtures")
     vendor = Path(__file__).resolve().parents[5] / "ctbrowser/vendor/bootstrap/bootstrap.bundle.js"
     bootstrap = vendor.read_text()
     defaults = (args.fixtures / "static-defaults.js").read_text()
@@ -818,12 +814,7 @@ def main():
                 args,
                 name + "-no-map-identity",
                 structured,
-                dict(
-                    manifest,
-                    initial_intrinsics=[
-                        identity for identity in manifest["initial_intrinsics"] if identity != "Map"
-                    ],
-                ),
+                without_intrinsic(manifest, "Map"),
                 success=False,
             )
             preparation_refusals += 1
@@ -832,12 +823,7 @@ def main():
                 args,
                 name + "-no-object-identity",
                 structured,
-                dict(
-                    manifest,
-                    initial_intrinsics=[
-                        item for item in manifest["initial_intrinsics"] if item != "Object"
-                    ],
-                ),
+                without_intrinsic(manifest, "Object"),
                 success=False,
                 diagnostic="class own-key snapshot needs declared Object identity",
             )
@@ -853,12 +839,7 @@ def main():
                     args,
                     "loop-without-" + identity,
                     structured,
-                    dict(
-                        manifest,
-                        initial_intrinsics=[
-                            item for item in manifest["initial_intrinsics"] if item != identity
-                        ],
-                    ),
+                    without_intrinsic(manifest, identity),
                     success=False,
                     diagnostic="class own-key loop requires original Array iterator identities",
                 )

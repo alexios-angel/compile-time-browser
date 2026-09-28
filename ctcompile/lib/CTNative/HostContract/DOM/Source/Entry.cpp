@@ -128,9 +128,7 @@ bool DOMSource::flattenEntryFactory(ctjs::FuncOp wrapper, ctjs::FuncOp target) {
     auto receiver = indirect ? indirect.getReceiver() : direct.getReceiver();
     auto arguments = indirect ? indirect.getArgs() : direct.getArgs();
     auto closure = callee.getDefiningOp<ctjs::CreateClosureOp>();
-    auto factory = closure && closure.getFunction() >= 0
-                       ? functions.lookup(static_cast<unsigned>(closure.getFunction()))
-                       : ctjs::FuncOp{};
+    auto factory = closureTarget(closure);
     if (!factory || factory == target || factory == wrapper || !closure.getUpvalues().empty() ||
         factory.getUpvalueCount() != 0 ||
         creations.lookup(static_cast<unsigned>(closure.getFunction())) != 1 ||

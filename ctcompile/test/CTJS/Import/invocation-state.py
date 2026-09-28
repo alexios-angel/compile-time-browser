@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
 """Pin importer call snapshots while source throwing calls remain refused."""
 
-import argparse
-from pathlib import Path
 import re
 import struct
 
-from CTNative.harness import run
+from CTNative.harness import native_args, run
 from CTNative.Lowering.Exceptions import exceptions
 
 SSA = re.compile(r"%[\w.$-]+")
@@ -200,15 +198,7 @@ def check_state(text, name, before):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--translate", required=True)
-    parser.add_argument("--opt", required=True)
-    parser.add_argument("--fixtures", type=Path, required=True)
-    parser.add_argument("--work", type=Path, required=True)
-    parser.add_argument("--node", required=True)
-    parser.add_argument("--reference", required=True)
-    args = parser.parse_args()
-    args.work.mkdir(parents=True, exist_ok=True)
+    args = native_args(__doc__, "fixtures")
     node, reference = args.node, args.reference
     for name, (denominator, expected, before) in CASES.items():
         source = args.fixtures / (name + ".js")

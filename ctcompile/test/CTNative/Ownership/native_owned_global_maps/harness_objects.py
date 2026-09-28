@@ -345,8 +345,8 @@ int main() {
     return changed
 
 
-def object_argument_lifetime(args, cpp, name, mode, compiler):
-    source = args.work / f"{name}.{mode}.lifetime.cpp"
+def object_argument_lifetime_source(cpp, name):
+    """`cpp` with the object-key lifetime observer of object-argument case `name`."""
     observer = (
         retained_key_lifetime_cpp
         if name
@@ -362,7 +362,7 @@ def object_argument_lifetime(args, cpp, name, mode, compiler):
             else object_argument_lifetime_cpp
         )
     )
-    source.write_text(
+    return (
         observer(cpp, global_key=True)
         if name == "object_argument_global"
         else (
@@ -393,6 +393,11 @@ def object_argument_lifetime(args, cpp, name, mode, compiler):
             )
         )
     )
+
+
+def object_argument_lifetime(args, cpp, name, mode, compiler):
+    source = args.work / f"{name}.{mode}.lifetime.cpp"
+    source.write_text(object_argument_lifetime_source(cpp, name))
     binary = source.with_suffix(".sanitized").resolve()
     host.run(
         [

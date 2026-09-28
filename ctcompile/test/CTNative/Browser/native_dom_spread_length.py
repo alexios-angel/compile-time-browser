@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
 """Execute confined Bootstrap R.find and NodeList spread/concat counts."""
 
-from pathlib import Path
-
 from CTNative.Browser import native_dom as dom
-from CTNative.harness import find_compilers
+from CTNative.harness import without_intrinsic
 
 FIND = (
     "find: (t, e = document.documentElement) => "
@@ -153,11 +151,10 @@ REFUSALS = {
 
 def main():
     args = dom.parse_args(__doc__)
-    vendor = Path(__file__).resolve().parents[4] / "ctbrowser/vendor/bootstrap/bootstrap.bundle.js"
+    vendor = dom.BOOTSTRAP
     if FIND + "," not in vendor.read_text():
         raise RuntimeError("Bootstrap R.find source pin changed")
-    compilers = find_compilers()
-    compilers[1] = args.clang
+    compilers = args.compilers
     includes, libraries = dom.link_options(args, selectors=True)
     for name, source, checks in (
         ("bootstrap", BOOTSTRAP_SOURCE, BOOTSTRAP_CHECKS),
@@ -165,48 +162,36 @@ def main():
     ):
         ir, contract = dom.prepare(args, name, source, 1, entry_name="spreadLength")
         contract["initial_intrinsics"] = ["Array", "Element", "Function"]
-        for owned in (False, True):
-            manifest = dict(
-                contract, provider="ctbrowser-dom-session-v1" if owned else "ctbrowser-dom-v1"
+        for owned, optimize, manifest in dom.variants(contract):
+            case = f"spread-{name}-{owned}-{optimize}"
+            native = dom.lower(args, ir, manifest, case, optimize=optimize)
+            if '"ctnative::Element.prototype.querySelectorAll.call"' not in native.read_text():
+                raise RuntimeError("spread count lost its public Style selector call")
+            dom.standalone(
+                args,
+                native,
+                case,
+                checks + (OWNED_CHECKS if owned else ""),
+                compilers,
+                includes,
+                libraries,
             )
-            for optimize in (False, True):
-                case = f"spread-{name}-{owned}-{optimize}"
-                native = dom.lower(args, ir, manifest, case, optimize=optimize)
-                if '"ctnative::Element.prototype.querySelectorAll.call"' not in native.read_text():
-                    raise RuntimeError("spread count lost its public Style selector call")
-                dom.standalone(
+            for missing in ("Array", "Element", "Function"):
+                dom.lower(
                     args,
-                    native,
-                    case,
-                    checks + (OWNED_CHECKS if owned else ""),
-                    compilers,
-                    includes,
-                    libraries,
+                    ir,
+                    without_intrinsic(manifest, missing),
+                    f"{case}-missing-{missing}",
+                    optimize=optimize,
+                    success=False,
                 )
-                for missing in ("Array", "Element", "Function"):
-                    dom.lower(
-                        args,
-                        ir,
-                        dict(
-                            manifest,
-                            initial_intrinsics=[
-                                item for item in manifest["initial_intrinsics"] if item != missing
-                            ],
-                        ),
-                        f"{case}-missing-{missing}",
-                        optimize=optimize,
-                        success=False,
-                    )
     for name, body in REFUSALS.items():
         source = (
             "function bad(element) { const nodes=element.querySelectorAll('*'); " + body + " }\n"
         )
         ir, contract = dom.prepare(args, name, source, 1, entry_name="bad")
         contract["initial_intrinsics"] = ["Array", "Element", "Function"]
-        for optimize in (False, True):
-            dom.lower(
-                args, ir, contract, f"refused-{name}-{optimize}", optimize=optimize, success=False
-            )
+        dom.refuse(args, ir, contract, f"refused-{name}")
     print(
         f"DOM spread/concat counts: 32 native executions, {24 + 2 * len(REFUSALS)} refusals; DOM/Core/Style only"
     )

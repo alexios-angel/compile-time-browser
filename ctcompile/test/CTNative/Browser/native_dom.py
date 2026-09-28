@@ -12,9 +12,19 @@ import re
 import shutil
 import subprocess
 
-from CTNative.harness import find_compilers, run
+from CTNative.harness import (
+    CLEANUP,
+    FLAGS,
+    FUNCTION,
+    build_and_run,
+    find_compilers,
+    forge_module,
+    prepare_js,
+    run,
+)
 from CTNative.HostContract.contract import fingerprint
-from Target.Cpp.harness import FLAGS
+
+BOOTSTRAP = Path(__file__).resolve().parents[4] / "ctbrowser/vendor/bootstrap/bootstrap.bundle.js"
 
 ACTION = """function toggle(element) {
   const active = element.classList.toggle('active');
@@ -101,13 +111,8 @@ INVALID_SELECTOR = """function invalidSelector(element) {
   return true;
 }
 """
-FUNCTION = re.compile(r"\bctjs\.func (?:private )?@([^ (]+)\(")
 NATIVE = re.compile(r"\bemitc\.func @([^ (]+)\(")
 VM = re.compile(r"ctbrowser::(?:script|aot)::|\bct_aot_|ctbrowser/(?:script/|aot/aot\.hpp)")
-CLEANUP = (
-    "emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,"
-    "canonicalize,ctnative-prune-dead-stores,canonicalize)"
-)
 
 CLIENT = r"""
 #include <cassert>
@@ -491,7 +496,9 @@ INVALID_SELECTOR_CHECKS = r"""
 """
 
 
-def parse_args(description, *, oracles=False):
+def parse_args(description, *, oracles=False, switches=()):
+    """The Browser drivers' command line; args.compilers is the host pair with
+    --clang (the configured DOM's compiler) in the Clang slot."""
     parser = argparse.ArgumentParser(description=description)
     tools = ("translate", "opt", "clang") + (("node", "reference") if oracles else ())
     for name in tools:
@@ -499,21 +506,32 @@ def parse_args(description, *, oracles=False):
     for name in ("build", "include", "work"):
         parser.add_argument("--" + name, type=Path, required=True)
     parser.add_argument("--nm", default=shutil.which("nm"))
+    for name in switches:
+        parser.add_argument("--" + name, action="store_true")
     args = parser.parse_args()
     args.work = args.work.resolve()
     args.work.mkdir(parents=True, exist_ok=True)
+    args.compilers = find_compilers()
+    args.compilers[1] = args.clang
     return args
+
+
+PROVIDERS = ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1")
+
+
+def variants(contract):
+    """(owned, optimize, manifest): both DOM providers - owned is the session
+    one - under both policies, each with its own copy of `contract`."""
+    for owned, provider in enumerate(PROVIDERS):
+        for optimize in (False, True):
+            yield bool(owned), optimize, dict(contract, provider=provider)
 
 
 def prepare(args, name, source, parameters, *, entry_name=None):
     js = args.work / f"{name}.js"
-    raw = args.work / f"{name}.raw.mlir"
     ir = args.work / f"{name}.mlir"
     js.write_text(source)
-    imported = run([args.translate, "--ctbrowser-js-to-ctjs", str(js), "-o", str(raw)])
-    if "ctjs.skipped" in raw.read_text() or "is not compiled:" in imported.stderr:
-        raise RuntimeError(f"{name}: source was not completely imported")
-    run([args.opt, str(raw), "--ctjs-resolve-globals", "--ctjs-lift-to-scf", "-o", str(ir)])
+    prepare_js(args, js, args.work / f"{name}.raw.mlir", ir, complete=True)
     entries = [symbol for symbol in FUNCTION.findall(ir.read_text()) if symbol != "_script_$0"]
     if entry_name is not None:
         entries = [symbol for symbol in entries if symbol.rsplit("$", 1)[0] == entry_name]
@@ -562,6 +580,16 @@ def lower(args, ir, contract, name, *, optimize=False, success=True, max_steps=N
     elif "error:" not in text:
         raise RuntimeError(f"{name}: missing failure diagnostic\n{text}")
     return text
+
+
+def refuse(args, ir, manifest, label, reason=None):
+    """Lower `ir` under both policies as `label`-False/-True; each must refuse,
+    naming `reason` when one is given."""
+    for optimize in (False, True):
+        name = f"{label}-{optimize}"
+        diagnostic = lower(args, ir, manifest, name, optimize=optimize, success=False)
+        if reason is not None and reason not in diagnostic:
+            raise RuntimeError(f"{name}: the refusal does not name {reason!r}\n{diagnostic}")
 
 
 def link_options(args, *, selectors=False, core_only=False):
@@ -659,30 +687,19 @@ def standalone(
         source.write_text(cpp + client)
         for index, compiler in enumerate(compilers):
             binary = args.work / f"{name}.{mode}.{index}"
-            run([compiler, *FLAGS, *includes, str(source), *libraries, "-o", str(binary)])
-            if VM.search(run([args.nm, "-C", str(binary)]).stdout):
-                raise RuntimeError(f"{name}/{mode}: binary links Script/AOT")
-            if run([str(binary)]).stdout != f"native DOM {name}: passed\n":
+            flags = [*FLAGS, *includes]
+            result = build_and_run(
+                compiler, source, binary, flags=flags, libraries=libraries, nm=args.nm, vm=VM
+            )
+            if result.stdout != f"native DOM {name}: passed\n":
                 raise RuntimeError(f"{name}/{mode}: real DOM observations were not completed")
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--translate", required=True)
-    parser.add_argument("--opt", required=True)
-    parser.add_argument("--clang", help="Clang with the configured DOM's C++23 library support")
-    parser.add_argument("--build", type=Path, required=True)
-    parser.add_argument("--include", type=Path, required=True)
-    parser.add_argument("--work", type=Path, required=True)
-    parser.add_argument("--nm", default=shutil.which("nm"))
-    args = parser.parse_args()
-    args.work = args.work.resolve()
-    args.work.mkdir(parents=True, exist_ok=True)
+    args = parse_args(__doc__)
     if not args.nm:
         raise RuntimeError("native DOM gate requires nm")
-    compilers = find_compilers()
-    if args.clang:
-        compilers[1] = args.clang
+    compilers = args.compilers
     includes, libraries = link_options(args)
     prepared = {}
     entries = (
@@ -760,17 +777,7 @@ def main():
     written = args.work / "raw-written-undefined.mlir"
     written.write_text(text)
     manifest = dict(manifest, module_sha256=fingerprint(args.opt, written))
-    for optimize in (False, True):
-        diagnostic = lower(
-            args,
-            written,
-            manifest,
-            f"raw-written-undefined-{optimize}",
-            optimize=optimize,
-            success=False,
-        )
-        if "DOM" not in diagnostic:
-            raise RuntimeError(f"raw undefined store lost its DOM refusal\n{diagnostic}")
+    refuse(args, written, manifest, "raw-written-undefined", "DOM")
 
     action, contract = prepared["action"]
     raw = run([args.opt, str(action), "--ctnative-lower-to-emitc=optimize=false"]).stdout
@@ -899,24 +906,14 @@ def main():
                 )
     for name, source, reason in refusals:
         ir, manifest = prepare(args, name, source, 1)
-        for optimize in (False, True):
-            diagnostic = lower(
-                args, ir, manifest, f"{name}-{optimize}", optimize=optimize, success=False
-            )
-            if reason not in diagnostic:
-                raise RuntimeError(f"{name}: missing intended proof refusal\n{diagnostic}")
+        refuse(args, ir, manifest, name, reason)
         if name == "unknown-receiver":
             forged = args.work / "forged.mlir"
-            text, count = re.subn(
-                r"\bmodule( attributes)? \{",
-                lambda match: 'module attributes {ctnative.host_proved = true, ctnative.dom_entry = "trusted"'
-                + (", " if match[1] else "} {"),
-                ir.read_text(),
-                count=1,
+            forged.write_text(
+                forge_module(
+                    ir.read_text(), 'ctnative.host_proved = true, ctnative.dom_entry = "trusted"'
+                )
             )
-            if count != 1:
-                raise RuntimeError("forged-evidence control did not add its report attributes")
-            forged.write_text(text)
             fresh = dict(manifest, module_sha256=fingerprint(args.opt, forged))
             lower(args, forged, fresh, "fresh-forged", success=False)
     for name, changed in (

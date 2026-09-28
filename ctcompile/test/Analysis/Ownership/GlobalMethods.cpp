@@ -36,11 +36,6 @@ bool complete(const OwnedGlobalRoots & query, unsigned calls = 1) {
 }
 
 void checkCapturedMap(mlir::MLIRContext & context) {
-    const auto requested = [](mlir::ModuleOp module) {
-        auto contract = contractFor(module);
-        contract.initialIntrinsics = {"Map"};
-        return contract;
-    };
     const auto proved = [](const OwnedGlobalRoots & query, bool prepared) {
         if (!query.proved() || query.roots().size() != 1) { return false; }
         const auto & root = query.roots().front();
@@ -194,10 +189,9 @@ void checkCapturedMap(mlir::MLIRContext & context) {
                              lifted, 2, 1});
     }
     for (const auto & [source, lifted, reads, calls] : specimens) {
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(source, &context);
-        check(static_cast<bool>(module), "captured Map source and prepared fixtures parse");
+        auto module = parsed(context, source, "captured Map source and prepared fixtures parse");
         if (!module) { continue; }
-        const auto contract = requested(*module);
+        const auto contract = mapContractFor(*module);
         HostContractAnalysis host(*module, contract);
         OwnedGlobalRoots query(*module, contract);
         check(hostContractFingerprint(*module) == contract.moduleSha256,
@@ -243,7 +237,7 @@ void checkCapturedMap(mlir::MLIRContext & context) {
             check(!staleActual.proved() && staleActual.reason().contains("fingerprint") &&
                       empty(*module, staleActual),
                   "changing the exact factory actual invalidates the original fingerprint");
-            OwnedGlobalRoots changedActual(*module, requested(*module));
+            OwnedGlobalRoots changedActual(*module, mapContractFor(*module));
             check(!changedActual.proved() && !changedActual.exhausted() &&
                       empty(*module, changedActual),
                   "a fresh fingerprint and forged reports cannot supply a missing factory");
@@ -259,7 +253,7 @@ void checkCapturedMap(mlir::MLIRContext & context) {
                     mismatched.pop_back();
                 }
                 invocation->setOperands(mismatched);
-                OwnedGlobalRoots mismatch(*module, requested(*module));
+                OwnedGlobalRoots mismatch(*module, mapContractFor(*module));
                 check(!mismatch.proved() && !mismatch.exhausted() && empty(*module, mismatch),
                       "missing and extra wrapper actuals cannot supply an exact formal window");
                 invocation->setOperands(operands);
@@ -269,7 +263,7 @@ void checkCapturedMap(mlir::MLIRContext & context) {
             if (unary.getKind() != ctjs::UnaryKind::TypeOf) { return; }
             const auto kind = unary.getKindAttr();
             unary.setKindAttr(ctjs::UnaryKindAttr::get(&context, ctjs::UnaryKind::Plus));
-            OwnedGlobalRoots coercing(*module, requested(*module));
+            OwnedGlobalRoots coercing(*module, mapContractFor(*module));
             check(!coercing.proved() && !coercing.exhausted() && empty(*module, coercing),
                   "non-escaping typeof on an owned root cannot authorize coercing that root");
             unary.setKindAttr(kind);
@@ -282,7 +276,7 @@ void checkCapturedMap(mlir::MLIRContext & context) {
         OwnedGlobalRoots stale(*module, contract);
         check(!stale.proved() && stale.reason().contains("fingerprint") && empty(*module, stale),
               "changed capture source cannot silently refresh its original fingerprint");
-        OwnedGlobalRoots changed(*module, requested(*module));
+        OwnedGlobalRoots changed(*module, mapContractFor(*module));
         check(!changed.proved() && empty(*module, changed),
               "a fresh fingerprint cannot authorize a receiver-observing captured method");
         std::printf("captured Map %s proof (%u reads, %u calls) and all %u incomplete budgets "
@@ -291,11 +285,10 @@ void checkCapturedMap(mlir::MLIRContext & context) {
     }
     const auto refuse = [&](llvm::StringRef source, llvm::StringRef from, llvm::StringRef to,
                             const char * message) {
-        auto module =
-            mlir::parseSourceString<mlir::ModuleOp>(replaced(source.str(), from, to), &context);
-        check(static_cast<bool>(module), "captured Map refusal variant parses");
+        auto module = parsed(context, replaced(source.str(), from, to),
+                             "captured Map refusal variant parses");
         if (!module) { return; }
-        OwnedGlobalRoots result(*module, requested(*module));
+        OwnedGlobalRoots result(*module, mapContractFor(*module));
         check(!result.proved() && !result.exhausted() && empty(*module, result), message);
     };
     for (const auto & source : {browserIndirect, browserPrepared}) {
@@ -426,8 +419,7 @@ int main() {
     context.getOrLoadDialect<ctjs::CTJSDialect>();
     checkCapturedMap(context);
     // checkSharedMap(context) is OwnedGlobalSharedMap.cpp now.
-    auto module = mlir::parseSourceString<mlir::ModuleOp>(fixture, &context);
-    check(static_cast<bool>(module), "owned global method fixture parses");
+    auto module = parsed(context, fixture, "owned global method fixture parses");
     if (!module) { return 1; }
     const auto contract = contractFor(*module);
     HostContractAnalysis host(*module, contract);

@@ -3,14 +3,12 @@
 import hashlib
 import importlib.util
 import json
-import os
 from pathlib import Path
 import re
 
 from CTNative.HostContract.prefix import specialize as specialize_prefix
 
 from .driver_common import (
-    CONSTANT_GLOBAL_NODE,
     SOURCE,
     boundary,
     check_call_preservation,
@@ -19,9 +17,11 @@ from .driver_common import (
     forge_leaf_evidence,
     host,
     methods,
+    observe,
     owned,
 )
 from .driver_recorder import recorder_future_source, recorder_lifetime_cpp
+from .harness_map_results import run_sanitized_lifetime
 
 
 def umd_source():
@@ -105,17 +105,7 @@ def prepare_umd(args):
 
 
 def observe_umd(args, js, values):
-    expected = "".join(f"{key}={value}\n" for key, value in sorted(values.items()))
-    result = host.run([args.node, "-e", CONSTANT_GLOBAL_NODE, str(js), json.dumps(sorted(values))])
-    if result.stdout != expected or result.stderr:
-        raise RuntimeError("browser UMD typed Node observations changed")
-    result = host.run([str(args.reference), str(js)])
-    if (
-        result.stdout != expected
-        or f"({len(values)} number, 0 boolean, 0 string, 0 null, 0 undefined)" not in result.stderr
-    ):
-        raise RuntimeError("browser UMD typed VM observations changed")
-    return expected
+    return observe(args, js.stem, js.read_text(), values)
 
 
 def umd_mutations(text):
@@ -215,31 +205,10 @@ def execute_umd(args, output, name, expected, values, compilers, nm):
             + observer.replace("g_host", "g_globalThis").replace("->slot", "->bootstrap")
         )
         binary = lifetime.with_suffix(".sanitized").resolve()
-        host.run(
-            [
-                compilers[1],
-                *owned.FLAGS,
-                "-O1",
-                "-g",
-                "-fno-omit-frame-pointer",
-                "-fsanitize=address,undefined",
-                "-fsanitize-address-use-after-scope",
-                str(lifetime),
-                "-o",
-                str(binary),
-            ]
-        )
+        result = run_sanitized_lifetime(lifetime, binary, compilers[1])
         if owned.VM.search(host.run([nm, "-C", str(binary)]).stdout):
             raise RuntimeError(f"{name}/{mode}: linked VM symbols in UMD lifetime")
-        result = host.run(
-            [str(binary)],
-            environment=dict(
-                os.environ,
-                ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
-                UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1",
-            ),
-        )
-        if result.stdout != expected * 2 or result.stderr:
+        if result.returncode or result.stdout != expected * 2 or result.stderr:
             raise RuntimeError(f"{name}/{mode}: UMD future/reentry/final-owner lifetime failed")
 
 

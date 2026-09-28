@@ -6,7 +6,7 @@ import re
 
 from CTNative.Browser import native_dom as dom
 from CTNative.HostContract.contract import fingerprint
-from CTNative.harness import find_compilers, run
+from CTNative.harness import build_and_run, forge_module, run
 from Target.Cpp.harness import FLAGS
 
 STATE = """function state() {
@@ -3270,20 +3270,11 @@ def standalone(args, native, name, checks, expected, compilers, includes, librar
         source.write_text(cpp + client)
         for index, compiler in enumerate(compilers):
             binary = args.work / f"{name}.{mode}.{index}"
-            run(
-                [
-                    compiler,
-                    *FLAGS,
-                    *includes,
-                    str(source),
-                    *libraries,
-                    "-o",
-                    str(binary),
-                ]
+            flags = [*FLAGS, *includes]
+            observed = build_and_run(
+                compiler, source, binary, flags=flags, libraries=libraries, nm=args.nm, vm=FORBIDDEN
             )
-            if FORBIDDEN.search(run([args.nm, "-C", str(binary)]).stdout):
-                raise RuntimeError(f"{name}/{mode}: intrinsic binary links DOM/Script/AOT")
-            if run([str(binary)]).stdout != expected:
+            if observed.stdout != expected:
                 raise RuntimeError(f"{name}/{mode}: native Symbol observations differ")
             if name == "absent-description-False" and mode == "explicit" and index == 0:
                 mutant, count = re.subn(r"ctnative::undefined_t\{\}", "ctnative::js_null_t{}", cpp)
@@ -3341,8 +3332,7 @@ def standalone(args, native, name, checks, expected, compilers, includes, librar
 def main():
     args = dom.parse_args(__doc__, oracles=True)
     agreements, differences = oracle(args)
-    compilers = find_compilers()
-    compilers[1] = args.clang
+    compilers = args.compilers
     includes, libraries = dom.link_options(args, core_only=True)
     accepted = {}
     for name, (source, checks, expected) in CASES.items():
@@ -4568,16 +4558,9 @@ def main():
         raise RuntimeError("changed Symbol identity accepted a stale fingerprint")
 
     forged, manifest = prepare(args, "forged", "function bad() { return typeof Symbol.for('x'); }")
-    text, count = re.subn(
-        r"\bmodule( attributes)? \{",
-        lambda match: 'module attributes {ctnative.host_proved = true, ctnative.host_reason = ""'
-        + (", " if match[1] else "} {"),
-        forged.read_text(),
-        count=1,
+    forged.write_text(
+        forge_module(forged.read_text(), 'ctnative.host_proved = true, ctnative.host_reason = ""')
     )
-    if count != 1:
-        raise RuntimeError("forged metadata control was not installed")
-    forged.write_text(text)
     manifest["module_sha256"] = fingerprint(args.opt, forged)
     refuse(forged, manifest, "forged-refused")
     ir, contract = accepted["parameter-state"]

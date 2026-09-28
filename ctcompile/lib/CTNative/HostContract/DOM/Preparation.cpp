@@ -108,23 +108,11 @@ static llvm::Error forwardRecoveredCaptures(ctjs::FuncOp function, unsigned rema
                 return mlir::WalkResult::advance();
             }
             llvm::SmallVector<unsigned> kept;
-            llvm::SmallVector<mlir::Type> types;
             for (auto [i, result] : llvm::enumerate(operation->getResults())) {
-                if (!result.use_empty()) {
-                    kept.push_back(static_cast<unsigned>(i));
-                    types.push_back(result.getType());
-                }
+                if (!result.use_empty()) { kept.push_back(static_cast<unsigned>(i)); }
             }
             if (kept.size() != operation->getNumResults()) {
-                mlir::OperationState state(operation->getLoc(), operation->getName());
-                state.addOperands(operation->getOperands());
-                state.addTypes(types);
-                state.addAttributes(operation->getAttrs());
-                for (auto & region : operation->getRegions()) {
-                    state.addRegion()->takeBody(region);
-                }
-                mlir::OpBuilder at(operation);
-                auto * replacement = at.create(state);
+                auto * replacement = keepResults(operation, kept);
                 for (auto & region : replacement->getRegions()) {
                     if (invocation && &region == &replacement->getRegion(0)) { continue; }
                     auto * yield = region.front().getTerminator();
@@ -132,10 +120,6 @@ static llvm::Error forwardRecoveredCaptures(ctjs::FuncOp function, unsigned rema
                     for (unsigned i : kept) { values.push_back(yield->getOperand(i)); }
                     yield->setOperands(values);
                 }
-                for (auto [i, result] : llvm::enumerate(replacement->getResults())) {
-                    operation->getResult(kept[i]).replaceAllUsesWith(result);
-                }
-                operation->erase();
                 invocation = llvm::dyn_cast<ctjs::InvokeOp>(replacement);
                 changed = true;
             }
@@ -167,10 +151,7 @@ static llvm::Error normalizeIntrinsicGlobals(mlir::ModuleOp module, llvm::String
         remaining -= static_cast<unsigned>(cost);
         return true;
     };
-    const auto undefined = [](mlir::Value value) {
-        auto constant = value.getDefiningOp<ctjs::ConstantOp>();
-        return constant && llvm::isa<ctjs::UndefinedAttr>(constant.getValue());
-    };
+    const auto undefined = ctjs::isUndefinedConstant;
     llvm::DenseMap<unsigned, ctjs::FuncOp> functions;
     ctjs::FuncOp wrapper;
     auto target = module.lookupSymbol<ctjs::FuncOp>(entry);
@@ -273,10 +254,9 @@ static llvm::Error normalizeIntrinsicGlobals(mlir::ModuleOp module, llvm::String
         auto store = declarations.lookup(helper.first());
         // ponytail: one charged complete census per declaration; index global
         // uses if large helper sets exhaust the existing preparation budget.
-        if (uint64_t(2) * sourceSize > remaining) {
+        if (!spend(uint64_t(2) * sourceSize)) {
             return refuse("intrinsic helper declaration work budget exhausted");
         }
-        remaining -= 2 * sourceSize;
         if (!closedDeclaration(store, helper.second, module)) {
             return refuse("intrinsic helper declaration is not closed");
         }
@@ -367,6 +347,42 @@ llvm::Error liftDOMClasses(mlir::ModuleOp module, unsigned maxSteps) {
     return llvm::Error::success();
 }
 
+// Drop the proved inert wrapper and make the initial `undefined` binding a
+// constant. Only the complete source proof authorizes either; no VM lookup or
+// C++ global survives emission.
+static void retireDeclaration(mlir::ModuleOp prepared, const DOMEntryAnalysis & source) {
+    if (auto wrapper = source.wrapper()) {
+        prepared.lookupSymbol<ctjs::FuncOp>(wrapper.getSymName()).erase();
+    }
+    prepared.walk([](ctjs::LoadGlobalOp load) {
+        if (load.getName() != "undefined") { return; }
+        mlir::OpBuilder at(load);
+        auto constant = ctjs::ConstantOp::create(at, load.getLoc(),
+                                                 ctjs::UndefinedAttr::get(load.getContext()));
+        load.getResult().replaceAllUsesWith(constant.getResult());
+        load.erase();
+    });
+}
+
+// Discard supplied native reports, export the entry, and reprove the private
+// clone before it replaces `module` and `contract`.
+static llvm::Error publishPrepared(mlir::ModuleOp module, HostContract & contract,
+                                   mlir::ModuleOp prepared, HostContract transformed,
+                                   unsigned maxSteps, llvm::StringRef stage) {
+    prepared.walk([](mlir::Operation * op) { removeAttrsWithPrefix(op, "ctnative."); });
+    prepared.lookupSymbol<ctjs::FuncOp>(contract.entry).setPublic();
+    transformed.moduleSha256 = hostContractFingerprint(prepared);
+    const DOMEntryAnalysis checked(prepared, transformed, maxSteps);
+    if (!checked.proved()) {
+        return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                       stage + ": " + checked.reason());
+    }
+    module->setAttrs(prepared->getAttrs());
+    module.getBodyRegion().takeBody(prepared.getBodyRegion());
+    contract = std::move(transformed);
+    return llvm::Error::success();
+}
+
 llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsigned maxSteps) {
     const auto refuse = [](const llvm::Twine & reason) {
         return llvm::createStringError(llvm::inconvertibleErrorCode(), reason);
@@ -377,9 +393,9 @@ llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsi
         // complete typed/effect proof follows expansion on a private candidate.
         mlir::OwningOpRef<mlir::ModuleOp> prepared;
         unsigned remaining = maxSteps;
-        const auto spend = [&] {
-            if (!remaining) { return false; }
-            --remaining;
+        const auto spend = [&](uint64_t cost = 1) {
+            if (cost > remaining) { return false; }
+            remaining -= static_cast<unsigned>(cost);
             return true;
         };
         bool helpers = false;
@@ -397,15 +413,8 @@ llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsi
             unsigned sourceSize = 0;
             const auto scanned = module.walk([&](mlir::Operation * operation) {
                 // Reserve source inspection, clone and original fingerprint.
-                uint64_t cost = 3 * (uint64_t(1) + operation->getNumOperands() +
-                                     operation->getNumResults() + operation->getAttrs().size());
-                for (mlir::Region & region : operation->getRegions()) {
-                    for (mlir::Block & block : region) {
-                        cost += 3 * (uint64_t(1) + block.getNumArguments());
-                    }
-                }
-                if (cost > remaining) { return mlir::WalkResult::interrupt(); }
-                remaining -= static_cast<unsigned>(cost);
+                const uint64_t cost = 3 * operationWork(operation, true);
+                if (!spend(cost)) { return mlir::WalkResult::interrupt(); }
                 sourceSize += static_cast<unsigned>(cost / 3);
                 unsupported |= llvm::isa<ctjs::CreateObjectOp, ctjs::SetPropertyOp>(operation);
                 return mlir::WalkResult::advance();
@@ -457,10 +466,9 @@ llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsi
             }
             remaining -= expansionSteps;
             const auto counted = expanded->walk([&](mlir::Operation * operation) {
-                const uint64_t cost = uint64_t(1) + operation->getNumOperands();
-                if (cost > remaining) { return mlir::WalkResult::interrupt(); }
-                remaining -= static_cast<unsigned>(cost);
-                return mlir::WalkResult::advance();
+                return spend(uint64_t(1) + operation->getNumOperands())
+                           ? mlir::WalkResult::advance()
+                           : mlir::WalkResult::interrupt();
             });
             if (counted.wasInterrupted()) {
                 return refuse("native intrinsic helper fingerprint work budget exhausted");
@@ -474,46 +482,17 @@ llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsi
             remaining -= source.steps();
             const auto counted = sourceModule.walk([&](mlir::Operation * operation) {
                 // Reserve the clone, cleanup walks and refreshed fingerprint.
-                uint64_t cost = uint64_t(1) + operation->getNumOperands() +
-                                operation->getNumResults() + operation->getAttrs().size();
-                for (mlir::Region & region : operation->getRegions()) {
-                    for (mlir::Block & block : region) {
-                        cost += uint64_t(1) + block.getNumArguments();
-                    }
-                }
-                cost *= 4;
-                if (cost > remaining) { return mlir::WalkResult::interrupt(); }
-                remaining -= static_cast<unsigned>(cost);
-                return mlir::WalkResult::advance();
+                return spend(4 * operationWork(operation, true)) ? mlir::WalkResult::advance()
+                                                                 : mlir::WalkResult::interrupt();
             });
             if (counted.wasInterrupted()) {
                 return refuse("native intrinsic entry preparation work budget exhausted");
             }
             prepared = sourceModule.clone();
-            if (auto wrapper = source.wrapper()) {
-                prepared->lookupSymbol<ctjs::FuncOp>(wrapper.getSymName()).erase();
-            }
+            retireDeclaration(*prepared, source);
         }
-        prepared->walk([](ctjs::LoadGlobalOp load) {
-            if (load.getName() != "undefined") { return; }
-            mlir::OpBuilder at(load);
-            auto constant = ctjs::ConstantOp::create(at, load.getLoc(),
-                                                     ctjs::UndefinedAttr::get(load.getContext()));
-            load.getResult().replaceAllUsesWith(constant.getResult());
-            load.erase();
-        });
-        prepared->walk([](mlir::Operation * op) { removeAttrsWithPrefix(op, "ctnative."); });
-        prepared->lookupSymbol<ctjs::FuncOp>(contract.entry).setPublic();
-        HostContract transformed = contract;
-        transformed.moduleSha256 = hostContractFingerprint(*prepared);
-        const DOMEntryAnalysis checked(*prepared, transformed, remaining);
-        if (!checked.proved()) {
-            return refuse("native intrinsic entry preparation: " + checked.reason());
-        }
-        module->setAttrs((*prepared)->getAttrs());
-        module.getBodyRegion().takeBody(prepared->getBodyRegion());
-        contract = std::move(transformed);
-        return llvm::Error::success();
+        return publishPrepared(module, contract, *prepared, contract, remaining,
+                               "native intrinsic entry preparation");
     }
     if (contract.moduleSha256 != hostContractFingerprint(module) ||
         module->hasAttr("ctjs.skipped")) {
@@ -668,26 +647,12 @@ llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsi
                 yield->setOperand(static_cast<unsigned>(index), constant.getResult());
             }
         }
-        if (auto wrapper = source.wrapper()) {
-            prepared->lookupSymbol<ctjs::FuncOp>(wrapper.getSymName()).erase();
-        }
         // Make proved callback bodies reachable to sparse dataflow;
         // they still emit as ordinary internal C++ functions.
         for (ctjs::FuncOp callback : source.callbacks()) {
             prepared->lookupSymbol<ctjs::FuncOp>(callback.getSymName()).setPublic();
         }
-        // Only the initialized DOM provider and complete source
-        // proof authorize this binding. Normalize in the private
-        // clone, then reprove it; no VM lookup or C++ global
-        // survives emission.
-        prepared->walk([](ctjs::LoadGlobalOp load) {
-            if (load.getName() != "undefined") { return; }
-            mlir::OpBuilder at(load);
-            auto constant = ctjs::ConstantOp::create(at, load.getLoc(),
-                                                     ctjs::UndefinedAttr::get(load.getContext()));
-            load.getResult().replaceAllUsesWith(constant.getResult());
-            load.erase();
-        });
+        retireDeclaration(*prepared, source);
         // Normalize optional force while the original method
         // proof is available. Token lists omit undefined;
         // Element coerces it to false. The emitter then needs
@@ -700,8 +665,7 @@ llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsi
             }
             auto call = llvm::cast<ctjs::CallOp>(mapping.lookup(original.getOperation()));
             if (call.getArgs().size() != 2) { return; }
-            auto force = call.getArgs()[1].getDefiningOp<ctjs::ConstantOp>();
-            if (!force || !llvm::isa<ctjs::UndefinedAttr>(force.getValue())) { return; }
+            if (!ctjs::isUndefinedConstant(call.getArgs()[1])) { return; }
             if (edge->kind == HostDOMMethod::toggleClass) {
                 call.getArgsMutable().erase(1);
             } else {
@@ -727,35 +691,17 @@ llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsi
             result.getDefiningOp()->erase();
         }
         prepared->walk<mlir::WalkOrder::PostOrder>([](mlir::scf::IfOp branch) {
-            auto condition = branch.getCondition().getDefiningOp<mlir::arith::ConstantIntOp>();
-            if (!condition) { return; }
-            auto & region = condition.value() ? branch.getThenRegion() : branch.getElseRegion();
-            if (region.empty()) {
-                branch.erase();
-                return;
+            if (auto condition =
+                    branch.getCondition().getDefiningOp<mlir::arith::ConstantIntOp>()) {
+                inlineSelectedArm(branch, condition.value() != 0);
             }
-            auto & body = region.front();
-            auto yield = llvm::cast<mlir::scf::YieldOp>(body.getTerminator());
-            branch.replaceAllUsesWith(yield.getOperands());
-            yield.erase();
-            branch->getBlock()->getOperations().splice(branch->getIterator(), body.getOperations());
-            branch.erase();
         });
     }
-    prepared->walk([](mlir::Operation * op) { removeAttrsWithPrefix(op, "ctnative."); });
-    prepared->lookupSymbol<ctjs::FuncOp>(contract.entry).setPublic();
-
     // The complete DOM proof above establishes the replacement's structure.
     // An earlier CFG-lifting failure describes the original handler body only.
     prepared->lookupSymbol<ctjs::FuncOp>(contract.entry)->removeAttr("ctjs.not_structured");
-
-    transformed.moduleSha256 = hostContractFingerprint(*prepared);
-    const DOMEntryAnalysis checked(*prepared, transformed, maxSteps);
-    if (!checked.proved()) { return refuse("native DOM entry preparation: " + checked.reason()); }
-    module->setAttrs((*prepared)->getAttrs());
-    module.getBodyRegion().takeBody(prepared->getBodyRegion());
-    contract = std::move(transformed);
-    return llvm::Error::success();
+    return publishPrepared(module, contract, *prepared, std::move(transformed), maxSteps,
+                           "native DOM entry preparation");
 }
 
 } // namespace ctcompile::ctnative

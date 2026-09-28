@@ -11,6 +11,8 @@ import shutil
 import struct
 import subprocess
 
+from CTNative.Ownership.globals import CONSTANT_GLOBAL_NODE
+
 from .sources import (
     methods,
     owned,
@@ -158,6 +160,67 @@ def comparable_provenance(cpp, input_ir):
     )
 
 
+def check_census(args, ir, name, cases, what, *, branched=False):
+    """A five-function case of `cases()` keeps its exact raw/prepared call census
+    and, when `branched`, both structural arms."""
+    row = cases().get(name)
+    if row is None:
+        return
+    raw = (args.work / f"{name}.raw.mlir").read_text()
+    prepared = ir.read_text()
+    if (
+        len(boundary.FUNCTION.findall(raw)) != 5
+        or len(source_calls(raw)) != row["raw_calls"]
+        or len(source_calls(prepared)) != row["prepared_calls"]
+    ):
+        raise RuntimeError(f"{name}: changed the exact {what} function/call census")
+    if branched and ("scf.if" not in prepared or prepared.count("scf.yield") < 2):
+        raise RuntimeError(f"{name}: lost a structural branch before the {what} proof")
+
+
+def observe(args, name, source, values):
+    """Node and the VM must both print exactly `values` (Numbers, bools, "null" or
+    "undefined") for `source`, with those tags. Returns the printed text."""
+    js = args.work / f"{name}-observed.js"
+    js.write_text(source)
+    expected = "".join(f"{key}={str(value).lower()}\n" for key, value in sorted(values.items()))
+    tags = [
+        (
+            "boolean"
+            if isinstance(value, bool)
+            else value if value in ("null", "undefined") else "number"
+        )
+        for value in values.values()
+    ]
+    counts = ", ".join(
+        f"{tags.count(tag)} {tag}" for tag in ("number", "boolean", "string", "null", "undefined")
+    )
+    result = host.run([args.node, "-e", CONSTANT_GLOBAL_NODE, str(js), json.dumps(sorted(values))])
+    if result.stdout != expected or result.stderr:
+        raise RuntimeError(
+            f"{name}: typed Node observation changed\n{result.stdout}{result.stderr}"
+        )
+    result = host.run([str(args.reference), str(js)])
+    if result.stdout != expected or f"({counts})" not in result.stderr:
+        raise RuntimeError(f"{name}: typed VM observation changed\n{result.stdout}{result.stderr}")
+    return expected
+
+
+def distinguish(args, name, source, old, replacement, expected, names=("trace",)):
+    """Node must fail, or print other than `expected`, once `old` becomes `replacement`."""
+    assert source.count(old) == 1, (name, old)
+    js = args.work / f"{name}-blind.js"
+    js.write_text(source.replace(old, replacement))
+    result = subprocess.run(
+        [args.node, "-e", CONSTANT_GLOBAL_NODE, str(js), json.dumps(sorted(names))],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if not result.returncode and result.stdout == expected:
+        raise RuntimeError(f"{name}: observer cannot distinguish {replacement}")
+
+
 def numeric_reference_output(name, value):
     return scalar_global_output(name, value)
 
@@ -180,26 +243,3 @@ def numeric_node_observer(value):
         )
     )
     return boundary.NODE.replace(predicate, condition)
-
-
-CONSTANT_GLOBAL_NODE = r"""const fs = require('node:fs');
-const vm = require('node:vm');
-const context = vm.createContext({});
-vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
-for (const name of JSON.parse(process.argv[2])) {
-    const value = vm.runInContext(name, context);
-    let text;
-    if (typeof value === 'number') {
-        text = Number.isNaN(value) ? 'nan' : Object.is(value, -0) ? '-0' :
-            value === -Infinity ? '-inf' : String(value);
-    } else if (typeof value === 'string') {
-        text = '"' + encodeURIComponent(value).replace(/[!'()*]/g,
-            c => '%' + c.charCodeAt(0).toString(16).toUpperCase()) + '"';
-    } else if (typeof value === 'boolean' || value === undefined || value === null) {
-        text = String(value);
-    } else {
-        throw new Error(name + ': unexpected scalar tag');
-    }
-    process.stdout.write(name + '=' + text + '\n');
-}
-"""

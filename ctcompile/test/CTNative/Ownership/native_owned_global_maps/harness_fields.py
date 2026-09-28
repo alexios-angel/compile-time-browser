@@ -1,4 +1,3 @@
-from .harness_map_results import run_sanitized_lifetime
 from .harness_objects import (
     instrument_leaf_objects,
 )
@@ -271,15 +270,15 @@ int main() {
 
 
 def string_field_lifetime(args, cpp, name, mode, compiler):
-    source = args.work / f"{name}.{mode}.lifetime.cpp"
-    source.write_text(string_field_lifetime_cpp(cpp))
-    binary = (args.work / f"{name}.{mode}.sanitized").resolve()
-    result = run_sanitized_lifetime(source, binary, compiler)
-    if result.returncode or result.stdout != scalar_global_output(name, STRING_FIELD_LONG) * 2:
-        raise RuntimeError(
-            f"{name}/{mode}: owning String field lifetime failed ({result.returncode})\n"
-            f"{result.stdout}{result.stderr}"
-        )
+    owned.check_lifetime(
+        args,
+        name,
+        mode,
+        compiler,
+        string_field_lifetime_cpp(cpp),
+        scalar_global_output(name, STRING_FIELD_LONG),
+        "owning String field lifetime",
+    )
 
 
 def check_zero_size_calls(cpp, name, mode):

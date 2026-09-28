@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 """Prove imported DOM Data inputs and revalidate their private native storage."""
 
-import argparse
 import json
-from pathlib import Path
 import re
 
 from CTNative.Exports import boundary
 from CTNative.HostContract import contract as host
+from CTNative.harness import FUNCTION, native_args
 
 SOURCE = """function dataEntry(element, other) {
   host = {};
@@ -29,7 +28,6 @@ SOURCE = """function dataEntry(element, other) {
   traceAfter = host.slot.get(element);
 }
 """
-FUNCTION = re.compile(r"\bctjs\.func (?:private )?@([^ (]+)\(")
 OBSERVATIONS = ["traceAfter", "traceBefore", "traceEntered", "traceOther"]
 OBSERVER = """
 var first = {}, second = {};
@@ -125,12 +123,7 @@ def native_storage(args, ir, requested, name, *, proved=True):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    for name in ("translate", "opt", "node", "reference"):
-        parser.add_argument("--" + name, required=True)
-    parser.add_argument("--work", type=Path, required=True)
-    args = parser.parse_args()
-    args.work.mkdir(parents=True, exist_ok=True)
+    args = native_args(__doc__)
     js, ir, requested, count = prepare(args, "inputs", SOURCE)
     if count != 7:
         raise RuntimeError(f"expected seven complete source functions, got {count}")

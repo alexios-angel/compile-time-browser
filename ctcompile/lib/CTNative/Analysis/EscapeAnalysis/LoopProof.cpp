@@ -112,6 +112,12 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
     if (savedLength && !unchanged(bound)) { return unsupported; }
     const auto * guardSite = base ? base.getDefiningOp() : nullptr;
     auto invariantFailure = unsupported;
+    // A charge that does not fit records WorkLimit as the proof's failure.
+    const auto charge = [&] {
+        if (spend()) { return true; }
+        invariantFailure = ArrayContentsFailure::WorkLimit;
+        return false;
+    };
     llvm::SmallDenseSet<std::size_t, 4> guardReloads;
     // The census adds conditional arms only after proving one body visit.
     // Their producers then reuse the same invariant and index proofs below.
@@ -119,22 +125,10 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
     const auto yieldedInputs = [&](mlir::Value operand) -> llvm::SmallVector<mlir::Value, 2> {
         auto branch = operand.getDefiningOp<mlir::scf::IfOp>();
         if (!branch || !bodyBlocks.contains(branch->getBlock())) { return {}; }
-        const auto position = llvm::cast<mlir::OpResult>(operand).getResultNumber();
-        llvm::SmallVector<mlir::Value, 2> inputs;
-        for (mlir::Region & region : branch->getRegions()) {
-            if (!spend()) {
-                invariantFailure = ArrayContentsFailure::WorkLimit;
-                return {};
-            }
-            if (!llvm::hasSingleElement(region) || region.front().empty() ||
-                region.front().getNumArguments() != 0) {
-                return {};
-            }
-            auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(region.front().getTerminator());
-            if (!yield || yield.getNumOperands() != branch.getNumResults()) { return {}; }
-            inputs.push_back(yield.getOperand(position));
-        }
-        return inputs;
+        // One charge per arm.
+        if (!charge() || !charge()) { return {}; }
+        const auto [then, otherwise] = armYields(llvm::cast<mlir::OpResult>(operand));
+        return {then, otherwise};
     };
     const auto sameInput = [](mlir::Value left, mlir::Value right) {
         if (left == right) { return true; }
@@ -178,10 +172,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
     };
     const auto invariant = [&](auto && self, mlir::Value operand,
                                unsigned depth) -> std::optional<ContentsValue> {
-        if (!spend()) {
-            invariantFailure = ArrayContentsFailure::WorkLimit;
-            return std::nullopt;
-        }
+        if (!charge()) { return std::nullopt; }
         if (mlir::Value forwarded = fromHeader(operand)) { operand = forwarded; }
         if (!unchanged(operand)) { return std::nullopt; }
         auto literal = operand.getDefiningOp<ctjs::ConstantOp>();
@@ -234,42 +225,20 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             if (unary.getKind() == ctjs::UnaryKind::BitNot) {
                 boundedNumberComplement(*input, result);
             } else {
-                result.integerNumber = boundedConvertedNumber(*input);
-                if (!result.integerNumber) {
-                    result.negativeIntegerNumber = boundedConvertedNumber(*input, true);
-                }
-                if (unary.getKind() == ctjs::UnaryKind::Neg && result.integerNumber != 0) {
-                    std::swap(result.integerNumber, result.negativeIntegerNumber);
+                if (const auto number = signedConvertedNumber(*input)) {
+                    result.setSigned(unary.getKind() == ctjs::UnaryKind::Neg ? -*number : *number);
                 }
                 boundedNumberUnary(*input, unary.getKind() == ctjs::UnaryKind::Neg, result);
             }
         } else if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(definition);
-                   binary && (binary.getKind() == ctjs::BinaryKind::Add ||
-                              binary.getKind() == ctjs::BinaryKind::Sub ||
-                              binary.getKind() == ctjs::BinaryKind::Mul ||
-                              binary.getKind() == ctjs::BinaryKind::Div ||
-                              binary.getKind() == ctjs::BinaryKind::Mod ||
-                              binary.getKind() == ctjs::BinaryKind::Pow ||
-                              ctjs::isBitwise(binary.getKind()))) {
+                   binary &&
+                   (ctjs::isArithmetic(binary.getKind()) || ctjs::isBitwise(binary.getKind()))) {
             const auto left = self(self, binary.getLhs(), depth + 1);
             const auto right = self(self, binary.getRhs(), depth + 1);
             if (!left || !right) { return std::nullopt; }
-            if (ctjs::isBitwise(binary.getKind())) {
-                // ToNumeric first, which is the identity on the bounded
-                // primitives boundedNumberBitwise alone answers for.
-                boundedNumberBitwise(*left, *right, binary.getKind(), result);
-            } else if (binary.getKind() == ctjs::BinaryKind::Add) {
-                boundedNumberSum(*left, *right, result);
-            } else if (binary.getKind() == ctjs::BinaryKind::Sub) {
-                boundedNumberDifference(*left, *right, result);
-            } else if (binary.getKind() == ctjs::BinaryKind::Mul) {
-                boundedNumberProduct(*left, *right, result);
-            } else if (binary.getKind() == ctjs::BinaryKind::Pow) {
-                boundedNumberPower(*left, *right, result);
-            } else {
-                boundedNumberDivision(*left, *right, binary.getKind() == ctjs::BinaryKind::Mod,
-                                      result);
-            }
+            // A bitwise kind's ToNumeric is the identity on the bounded
+            // primitives boundedNumberBitwise alone answers for.
+            boundedNumberBinary(binary.getKind(), *left, *right, result);
         } else if (auto binary = llvm::dyn_cast<ctjs::BinaryStaticOp>(definition)) {
             const auto left = self(self, binary.getLhs(), depth + 1);
             const auto right = self(self, binary.getRhs(), depth + 1);
@@ -339,8 +308,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         bool mixedShift = false;
     };
     const auto endpointNumber = [](const ContentsValue & endpoint) {
-        return endpoint.integerNumber ? static_cast<std::int64_t>(*endpoint.integerNumber)
-                                      : -static_cast<std::int64_t>(*endpoint.negativeIntegerNumber);
+        return *endpoint.signedNumber();
     };
     const auto boundEndpointPair = [&](IndexRange & range) {
         if (endpointNumber(range.first) > endpointNumber(range.last)) {
@@ -356,9 +324,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                    : 0;
     };
     const auto numberBits = [](const ContentsValue & endpoint) {
-        return endpoint.integerNumber
-                   ? static_cast<std::uint32_t>(*endpoint.integerNumber)
-                   : 0U - static_cast<std::uint32_t>(*endpoint.negativeIntegerNumber);
+        return static_cast<std::uint32_t>(*endpoint.signedNumber());
     };
     const auto convertedLattice = [&](mlir::Value operand, std::size_t period, std::size_t residue,
                                       bool unsignedOutput = false) -> std::optional<IndexRange> {
@@ -376,15 +342,8 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                                       static_cast<std::int64_t>(period);
         for (auto [endpoint, value] :
              {std::pair{&range.first, first}, std::pair{&range.last, last}}) {
-            if (!spend()) {
-                invariantFailure = ArrayContentsFailure::WorkLimit;
-                return std::nullopt;
-            }
-            if (value < 0) {
-                endpoint->negativeIntegerNumber = static_cast<std::size_t>(-value);
-            } else {
-                endpoint->integerNumber = static_cast<std::size_t>(value);
-            }
+            if (!charge()) { return std::nullopt; }
+            endpoint->setSigned(value);
         }
         return range;
     };
@@ -399,10 +358,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
     };
     const auto indexRange = [&](auto && self, mlir::Value operand, unsigned depth,
                                 IndexUse use = IndexUse::Number) -> std::optional<IndexRange> {
-        if (!spend()) {
-            invariantFailure = ArrayContentsFailure::WorkLimit;
-            return std::nullopt;
-        }
+        if (!charge()) { return std::nullopt; }
         if (fromHeader(operand) == index) {
             if (use == IndexUse::ArithmeticOperand) { return std::nullopt; }
             return IndexRange{{index, ContentsKind::NonBigInt, indexBounds.first},
@@ -577,10 +533,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             // for a bitwise consumer. Negation changes their sign and order;
             // both signed zeros remain own key zero.
             for (ContentsValue * endpoint : {&range->first, &range->last}) {
-                if (!spend()) {
-                    invariantFailure = ArrayContentsFailure::WorkLimit;
-                    return std::nullopt;
-                }
+                if (!charge()) { return std::nullopt; }
                 endpoint->original = operand;
                 if (unary.getKind() == ctjs::UnaryKind::BitNot) {
                     ContentsValue result{operand, ContentsKind::NonBigInt};
@@ -624,6 +577,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
               bitOr || bitXor)) {
             return std::nullopt;
         }
+        const ctjs::BinaryKind kind = binary ? binary.getKind() : addition.getKind();
         const bool corresponding =
             subtract && correspondingInputs(binary.getLhs(), binary.getRhs());
         if (invariantFailure == ArrayContentsFailure::WorkLimit) { return std::nullopt; }
@@ -671,22 +625,9 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                 const auto left =
                     self(self, expression->getOperand(0), depth + 1, IndexUse::ArithmeticOperand);
                 if (left) {
-                    if (!spend()) {
-                        invariantFailure = ArrayContentsFailure::WorkLimit;
-                        return std::nullopt;
-                    }
+                    if (!charge()) { return std::nullopt; }
                     ContentsValue result{operand, ContentsKind::NonBigInt};
-                    if (subtract) {
-                        boundedNumberDifference(left->first, *right, result);
-                    } else if (multiply) {
-                        boundedNumberProduct(left->first, *right, result);
-                    } else if (divide || remainder) {
-                        boundedNumberDivision(left->first, *right, remainder, result);
-                    } else if (power) {
-                        boundedNumberPower(left->first, *right, result);
-                    } else {
-                        boundedNumberSum(left->first, *right, result);
-                    }
+                    boundedNumberBinary(kind, left->first, *right, result);
                     if (use == IndexUse::ArithmeticOperand) {
                         if (!result.arithmeticNumber) { return std::nullopt; }
                         return IndexRange{result, result, 1, left->mixedShift || rightMixed};
@@ -729,16 +670,9 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                 refinableEnclosure = true;
                 return std::nullopt;
             }
-            if (!spend()) {
-                invariantFailure = ArrayContentsFailure::WorkLimit;
-                return std::nullopt;
-            }
+            if (!charge()) { return std::nullopt; }
             ContentsValue result{operand, ContentsKind::NonBigInt};
-            if (shift) {
-                boundedNumberBitwise(*offset, range->first, *bitwise, result);
-            } else {
-                boundedNumberDivision(*offset, range->first, remainder, result);
-            }
+            boundedNumberBinary(kind, *offset, range->first, result);
             if (!result.integerNumber && !result.negativeIntegerNumber) { return std::nullopt; }
             return IndexRange{result, result, 1, range->mixedShift};
         }
@@ -839,10 +773,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             power && endpointNumber(range->last) - endpointNumber(range->first) <=
                          static_cast<std::int64_t>(range->stride);
         if (power && !twoPointPower) {
-            if (!spend()) {
-                invariantFailure = ArrayContentsFailure::WorkLimit;
-                return std::nullopt;
-            }
+            if (!charge()) { return std::nullopt; }
             if (offsetOperand == 0 && boundedConvertedNumber(*offset, true) == 1) {
                 ContentsValue result{operand, ContentsKind::NonBigInt};
                 boundedNumberPower(*offset, range->first, result);
@@ -885,26 +816,19 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             if (offsetOperand == 0 || *number == 0) { range->stride = 1; }
         }
         if (remainder) {
-            if (!spend()) {
-                invariantFailure = ArrayContentsFailure::WorkLimit;
-                return std::nullopt;
-            }
+            if (!charge()) { return std::nullopt; }
             auto divisor = boundedConvertedNumber(*offset);
             if (!divisor) { divisor = boundedConvertedNumber(*offset, true); }
             if (!divisor || *divisor == 0) { return std::nullopt; }
+            // Truncating signed division is the magnitude quotient with its sign.
             const auto quotient = [&](const ContentsValue & endpoint) {
-                return endpoint.integerNumber
-                           ? static_cast<std::int64_t>(*endpoint.integerNumber / *divisor)
-                           : -static_cast<std::int64_t>(*endpoint.negativeIntegerNumber / *divisor);
+                return endpointNumber(endpoint) / static_cast<std::int64_t>(*divisor);
             };
             // Between consecutive multiples, remainder is affine, including
             // the central band across zero. Preserve the enclosing lattice.
             if (quotient(range->first) == quotient(range->last)) {
                 for (ContentsValue * endpoint : {&range->first, &range->last}) {
-                    if (!spend()) {
-                        invariantFailure = ArrayContentsFailure::WorkLimit;
-                        return std::nullopt;
-                    }
+                    if (!charge()) { return std::nullopt; }
                     ContentsValue result{operand, ContentsKind::NonBigInt};
                     boundedNumberDivision(*endpoint, *offset, true, result);
                     if (!result.integerNumber && !result.negativeIntegerNumber) {
@@ -922,21 +846,14 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             // Subtracting any multiple of the divisor preserves the dividend's
             // congruence modulo gcd(stride, divisor), including across zero.
             const auto period = static_cast<std::int64_t>(std::gcd(range->stride, *divisor));
-            const auto phase =
-                range->first.integerNumber
-                    ? static_cast<std::int64_t>(*range->first.integerNumber)
-                    : -static_cast<std::int64_t>(*range->first.negativeIntegerNumber);
+            const auto phase = endpointNumber(range->first);
             auto first = -static_cast<std::int64_t>(negative);
             auto last = static_cast<std::int64_t>(positive);
             first += ((phase - first) % period + period) % period;
             last -= ((last - phase) % period + period) % period;
             const auto endpoint = [&](std::int64_t value) {
                 ContentsValue result{operand, ContentsKind::NonBigInt};
-                if (value < 0) {
-                    result.negativeIntegerNumber = static_cast<std::size_t>(-value);
-                } else {
-                    result.integerNumber = static_cast<std::size_t>(value);
-                }
+                result.setSigned(value);
                 return result;
             };
             // Wrapping can leave gaps beyond the gcd lattice. Reuse the
@@ -945,10 +862,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                               true};
         }
         if (bitAnd || bitOr || bitXor) {
-            if (!spend()) {
-                invariantFailure = ArrayContentsFailure::WorkLimit;
-                return std::nullopt;
-            }
+            if (!charge()) { return std::nullopt; }
             const auto bits = boundedConvertedBits(*offset);
             if (!bits) { return std::nullopt; }
             const auto mask = *bits;
@@ -986,10 +900,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                     range->stride = roundedStride;
                 }
                 for (ContentsValue * endpoint : {&range->first, &range->last}) {
-                    if (!spend()) {
-                        invariantFailure = ArrayContentsFailure::WorkLimit;
-                        return std::nullopt;
-                    }
+                    if (!charge()) { return std::nullopt; }
                     ContentsValue result{operand, ContentsKind::NonBigInt};
                     boundedNumberBitwise(*endpoint, *offset, *bitwise, result);
                     if (!result.integerNumber && !result.negativeIntegerNumber) {
@@ -1060,10 +971,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         std::int64_t roundedIntervals = 0;
         bool descending = (subtract || power) && offsetOperand == 0;
         if (shift) {
-            if (!spend()) {
-                invariantFailure = ArrayContentsFailure::WorkLimit;
-                return std::nullopt;
-            }
+            if (!charge()) { return std::nullopt; }
             const auto count = boundedConvertedBits(*offset);
             if (!count) { return std::nullopt; }
             const bool unsignedShift = bitwise == ctjs::BinaryKind::UShr;
@@ -1122,10 +1030,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                 range->stride = range->stride % factor == 0 ? range->stride / factor : 1;
             }
         } else if (divide) {
-            if (!spend()) {
-                invariantFailure = ArrayContentsFailure::WorkLimit;
-                return std::nullopt;
-            }
+            if (!charge()) { return std::nullopt; }
             auto divisor = boundedConvertedNumber(*offset);
             descending = !divisor.has_value();
             if (!divisor) { divisor = boundedConvertedNumber(*offset, true); }
@@ -1149,32 +1054,12 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         // could hide an inexact intermediate. Signed bounded intermediates are
         // allowed; only the final key must be a nonnegative own element.
         for (ContentsValue * endpoint : {&range->first, &range->last}) {
-            if (!spend()) {
-                invariantFailure = ArrayContentsFailure::WorkLimit;
-                return std::nullopt;
-            }
+            if (!charge()) { return std::nullopt; }
             ContentsValue result{operand, ContentsKind::NonBigInt};
-            if (shift) {
-                boundedNumberBitwise(*endpoint, *offset, *bitwise, result);
-            } else if (divide) {
-                boundedNumberDivision(*endpoint, *offset, false, result);
-            } else if (multiply) {
-                boundedNumberProduct(*endpoint, *offset, result);
-            } else if (power) {
-                if (offsetOperand == 0) {
-                    boundedNumberPower(*offset, *endpoint, result);
-                } else {
-                    boundedNumberPower(*endpoint, *offset, result);
-                }
-            } else if (subtract) {
-                if (offsetOperand == 0) {
-                    boundedNumberDifference(*offset, *endpoint, result);
-                } else {
-                    boundedNumberDifference(*endpoint, *offset, result);
-                }
-            } else {
-                boundedNumberSum(*endpoint, *offset, result);
-            }
+            // Only Pow and Sub keep an invariant left operand on the left.
+            const bool swapped = offsetOperand == 0 && (power || subtract);
+            boundedNumberBinary(kind, swapped ? *offset : *endpoint, swapped ? *endpoint : *offset,
+                                result);
             if (!result.integerNumber && !result.negativeIntegerNumber) {
                 // A mixed enclosure may overstate an actual intermediate. Only
                 // subdivision can discharge it; every visited scalar must pass.
@@ -1184,10 +1069,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             *endpoint = result;
         }
         if (multiply && !twoPointProduct) {
-            if (!spend()) {
-                invariantFailure = ArrayContentsFailure::WorkLimit;
-                return std::nullopt;
-            }
+            if (!charge()) { return std::nullopt; }
             if (endpointNumber(range->first) == endpointNumber(range->last)) {
                 // Proven singleton products have no adjacent visit to scale.
                 range->stride = 1;
@@ -1229,10 +1111,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         // lattice. Split only at aligned visits; bounded indices limit depth
         // to 32 and every reproof spends the shared work budget.
         const auto refine = [&](auto && self, std::size_t begin, std::size_t end) -> bool {
-            if (!spend()) {
-                invariantFailure = ArrayContentsFailure::WorkLimit;
-                return false;
-            }
+            if (!charge()) { return false; }
             indexBounds = {begin, end};
             refinableEnclosure = false;
             const auto actual = indexRange(indexRange, key, 0, IndexUse::PropertyKey);

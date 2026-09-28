@@ -1,4 +1,4 @@
-from .harness_map_results import instrument_maps, run_sanitized_lifetime
+from .harness_map_results import instrument_maps
 from .harness_scalar_maps import (
     LEAF_COMPARISON_CASES,
     inline_runtime,
@@ -360,16 +360,15 @@ int main() {
 
 
 def comparison_identity_lifetime(args, cpp, name, mode, compiler):
-    source = args.work / f"{name}.{mode}.lifetime.cpp"
-    source.write_text(comparison_identity_cpp(cpp, name))
-    binary = (args.work / f"{name}.{mode}.sanitized").resolve()
-    result = run_sanitized_lifetime(source, binary, compiler)
-    expected = f"trace={leaf_readback_sources()[name][2]}\n" * 2
-    if result.returncode or result.stdout != expected:
-        raise RuntimeError(
-            f"{name}/{mode}: comparison identity lifetime failure (exit {result.returncode})\n"
-            f"{result.stdout}{result.stderr}"
-        )
+    owned.check_lifetime(
+        args,
+        name,
+        mode,
+        compiler,
+        comparison_identity_cpp(cpp, name),
+        f"trace={leaf_readback_sources()[name][2]}\n",
+        "comparison identity lifetime",
+    )
 
 
 def leaf_readback_lifetime(args, cpp, name, mode, compiler):
@@ -437,15 +436,9 @@ int main() {
     return 0;
 }
 """
-    source = args.work / f"{name}.{mode}.lifetime.cpp"
-    source.write_text(changed)
-    binary = (args.work / f"{name}.{mode}.sanitized").resolve()
-    result = run_sanitized_lifetime(source, binary, compiler)
-    if result.returncode or result.stdout != "trace=2\n" * 2:
-        raise RuntimeError(
-            f"{name}/{mode}: saved leaf readback lifetime failure (exit {result.returncode})\n"
-            f"{result.stdout}{result.stderr}"
-        )
+    owned.check_lifetime(
+        args, name, mode, compiler, changed, "trace=2\n", "saved leaf readback lifetime"
+    )
 
 
 def leaf_object_lifetime(args, cpp, name, mode, compiler):
@@ -522,13 +515,6 @@ int main() {
     return 0;
 }
 """
-    source = args.work / f"{name}.{mode}.lifetime.cpp"
-    source.write_text(changed)
-    binary = (args.work / f"{name}.{mode}.sanitized").resolve()
-    result = run_sanitized_lifetime(source, binary, compiler)
-    if result.returncode or result.stdout != "trace=1\n" * 2:
-        raise RuntimeError(
-            f"{name}/{mode}: leaf Map/callable/object lifetime failure "
-            f"(exit {result.returncode})\n"
-            f"{result.stdout}{result.stderr}"
-        )
+    owned.check_lifetime(
+        args, name, mode, compiler, changed, "trace=1\n", "leaf Map/callable/object lifetime"
+    )

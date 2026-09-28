@@ -1,55 +1,38 @@
+from CTNative.harness import find_compilers
+
 from .driver_common import (
     CONSTANT_GLOBAL_NODE,
     boundary,
     check_call_preservation,
+    check_census,
     contract,
     delete_size_cases,
     delete_size_observer_source,
+    distinguish,
     forge_leaf_evidence,
     host,
     join_size_cases,
     methods,
     mutation_size_cases,
+    observe,
     one_size_cases,
     one_size_observer_source,
     owned,
     re,
-    source_calls,
     shutil,
-    subprocess,
     zero_size_cases,
     zero_size_observer_source,
 )
 
 
 def check_zero_size_census(args, ir, name):
-    if name not in zero_size_cases():
-        return
-    row = zero_size_cases()[name]
-    raw = (args.work / f"{name}.raw.mlir").read_text()
-    if (
-        len(boundary.FUNCTION.findall(raw)) != 5
-        or len(source_calls(raw)) != row["raw_calls"]
-        or len(source_calls(ir.read_text())) != row["prepared_calls"]
-    ):
-        raise RuntimeError(f"{name}: changed exact zero-size function/call census")
+    check_census(args, ir, name, zero_size_cases, "zero-size")
 
 
 def check_zero_size_observations(args, node, reference):
     cases = zero_size_cases()
     for name, row in cases.items():
-        js = args.work / f"{name}-zero-observed.js"
-        js.write_text(row["source"])
-        expected = f'trace={row["expected_trace"]}\n'
-        if host.run([node, "-e", CONSTANT_GLOBAL_NODE, str(js), '["trace"]']).stdout != expected:
-            raise RuntimeError(f"{name}: typed Node zero-size observation changed")
-        if reference:
-            result = host.run([str(reference), str(js)])
-            if (
-                result.stdout != expected
-                or "(1 number, 0 boolean, 0 string, 0 null, 0 undefined)" not in result.stderr
-            ):
-                raise RuntimeError(f"{name}: interpreter lost zero-size Number observation")
+        observe(args, name, row["source"], {"trace": row["expected_trace"]})
     for name, old, replacement in (
         ("local_clear_zero_size_key", "state.clear();", "state.has(key);"),
         ("local_clear_zero_size_key", "state.get(zero)", "state.get(state.size)"),
@@ -69,16 +52,7 @@ def check_zero_size_observations(args, node, reference):
         ),
     ):
         row = cases[name]
-        assert row["source"].count(old) == 1, name
-        js = args.work / f"{name}-zero-blind.js"
-        js.write_text(row["source"].replace(old, replacement))
-        if (
-            host.run([node, "-e", CONSTANT_GLOBAL_NODE, str(js), '["trace"]']).stdout
-            == f'trace={row["expected_trace"]}\n'
-        ):
-            raise RuntimeError(
-                f"{name}: observer cannot distinguish saved/live zero from {replacement}"
-            )
+        distinguish(args, name, row["source"], old, replacement, f'trace={row["expected_trace"]}\n')
     name = "zero_size_saved_lifetime"
     source = cases[name]["source"]
     observed, value = zero_size_observer_source(source)
@@ -145,16 +119,12 @@ def check_exact_size_refusals(args, positives, cases, census):
                     text = methods.census(failed, 5, current, admitted=5)
                     if "ctnative.host_owner_proved = true" not in text:
                         raise RuntimeError(f"{current}: optional field output lost ownership")
-                    compilers = [
-                        shutil.which("g++-13") or shutil.which("g++"),
-                        shutil.which("clang++-18") or shutil.which("clang++"),
-                    ]
                     owned.standalone(
                         args,
                         failed,
                         current,
                         f'trace={row["expected_trace"]}\n',
-                        compilers,
+                        find_compilers(),
                         shutil.which("nm"),
                     )
                     return failed
@@ -219,45 +189,13 @@ def check_exact_size_refusals(args, positives, cases, census):
 
 
 def check_one_size_census(args, ir, name):
-    if name not in one_size_cases():
-        return
-    row = one_size_cases()[name]
-    raw = (args.work / f"{name}.raw.mlir").read_text()
-    if (
-        len(boundary.FUNCTION.findall(raw)) != 5
-        or len(source_calls(raw)) != row["raw_calls"]
-        or len(source_calls(ir.read_text())) != row["prepared_calls"]
-    ):
-        raise RuntimeError(f"{name}: changed exact one-size function/call census")
+    check_census(args, ir, name, one_size_cases, "one-size")
 
 
 def check_one_size_observations(args, node, reference):
     cases = one_size_cases()
-
-    def observe(name, source, value):
-        js = args.work / f"{name}-one-observed.js"
-        js.write_text(source)
-        expected = f"trace={value}\n"
-        if host.run([node, "-e", CONSTANT_GLOBAL_NODE, str(js), '["trace"]']).stdout != expected:
-            raise RuntimeError(f"{name}: typed Node exact-size observation changed")
-        if reference:
-            result = host.run([str(reference), str(js)])
-            if (
-                result.stdout != expected
-                or "(1 number, 0 boolean, 0 string, 0 null, 0 undefined)" not in result.stderr
-            ):
-                raise RuntimeError(f"{name}: interpreter lost exact-size Number observation")
-        return expected
-
-    def distinguish(name, source, old, replacement, expected):
-        assert source.count(old) == 1, name
-        js = args.work / f"{name}-one-blind.js"
-        js.write_text(source.replace(old, replacement))
-        if host.run([node, "-e", CONSTANT_GLOBAL_NODE, str(js), '["trace"]']).stdout == expected:
-            raise RuntimeError(f"{name}: observer cannot distinguish {replacement}")
-
     for name, row in cases.items():
-        observe(name, row["source"], row["expected_trace"])
+        observe(args, name, row["source"], {"trace": row["expected_trace"]})
     for name, old, replacement in (
         ("zero_size_read_after_write", "state.clear();", "state.has(key);"),
         ("size_one_present_field", "{value: 1}", "{value: 2}"),
@@ -269,7 +207,7 @@ def check_one_size_observations(args, node, reference):
         ("size_one_joined_equal_false", "flag ? state.size : 1;", "flag ? state.size : 2;"),
     ):
         row = cases[name]
-        distinguish(name, row["source"], old, replacement, f'trace={row["expected_trace"]}\n')
+        distinguish(args, name, row["source"], old, replacement, f'trace={row["expected_trace"]}\n')
     for name, value, old, replacement in (
         (
             "size_one_repeated_key",
@@ -287,13 +225,13 @@ def check_one_size_observations(args, node, reference):
         ),
     ):
         source = cases[name]["source"] + "trace = host.slot.size();\n"
-        expected = observe(name + "-cardinality", source, value)
-        distinguish(name + "-cardinality", source, old, replacement, expected)
+        expected = observe(args, name + "-cardinality", source, {"trace": value})
+        distinguish(args, name + "-cardinality", source, old, replacement, expected)
 
     name = "size_one_saved_lifetime"
     source = cases[name]["source"]
     observed, value = one_size_observer_source(source)
-    expected = observe(name + "-future", observed, value)
+    expected = observe(args, name + "-future", observed, {"trace": value})
     for index, (old, replacement) in enumerate(
         (
             ("state.get(zero)", "state.get(state.size)"),
@@ -328,20 +266,11 @@ def check_one_size_observations(args, node, reference):
             (typeof b === 'number' && b === {values[2]} ? 4 : 0);
 }})();
 """
-        observe(name + "-future", source, 7)
+        observe(args, name + "-future", source, {"trace": 7})
 
 
 def check_delete_size_census(args, ir, name):
-    if name not in delete_size_cases():
-        return
-    row = delete_size_cases()[name]
-    raw = (args.work / f"{name}.raw.mlir").read_text()
-    if (
-        len(boundary.FUNCTION.findall(raw)) != 5
-        or len(source_calls(raw)) != row["raw_calls"]
-        or len(source_calls(ir.read_text())) != row["prepared_calls"]
-    ):
-        raise RuntimeError(f"{name}: changed exact deletion function/call census")
+    check_census(args, ir, name, delete_size_cases, "deletion")
 
 
 def check_delete_size_refusals(args, positives):
@@ -350,42 +279,8 @@ def check_delete_size_refusals(args, positives):
 
 def check_delete_size_observations(args, node, reference):
     cases = delete_size_cases()
-    observations = mutations = 0
-
-    def observe(name, source, value):
-        nonlocal observations
-        js = args.work / f"{name}-delete-observed.js"
-        js.write_text(source)
-        expected = f"trace={value}\n"
-        if host.run([node, "-e", CONSTANT_GLOBAL_NODE, str(js), '["trace"]']).stdout != expected:
-            raise RuntimeError(f"{name}: typed Node deletion observation changed")
-        if reference:
-            result = host.run([str(reference), str(js)])
-            if (
-                result.stdout != expected
-                or "(1 number, 0 boolean, 0 string, 0 null, 0 undefined)" not in result.stderr
-            ):
-                raise RuntimeError(f"{name}: interpreter lost deletion Number observation")
-        observations += 1
-        return expected
-
-    def distinguish(name, source, old, replacement, expected):
-        nonlocal mutations
-        assert source.count(old) == 1, (name, old)
-        js = args.work / f"{name}-delete-blind-{mutations}.js"
-        js.write_text(source.replace(old, replacement))
-        result = subprocess.run(
-            [node, "-e", CONSTANT_GLOBAL_NODE, str(js), '["trace"]'],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        if not result.returncode and result.stdout == expected:
-            raise RuntimeError(f"{name}: deletion observer cannot distinguish {replacement}")
-        mutations += 1
-
     for name, row in cases.items():
-        observe(name, row["source"], row["expected_trace"])
+        observe(args, name, row["source"], {"trace": row["expected_trace"]})
     for name, old, replacement in (
         ("size_deleted_literal_last", "state.delete(1);", "state.has(1);"),
         ("size_deleted_literal_last", "state.get(zero)", "state.get(state.size)"),
@@ -409,7 +304,7 @@ def check_delete_size_observations(args, node, reference):
         ),
     ):
         row = cases[name]
-        distinguish(name, row["source"], old, replacement, f'trace={row["expected_trace"]}\n')
+        distinguish(args, name, row["source"], old, replacement, f'trace={row["expected_trace"]}\n')
 
     # Future invocations expose possible aliasing that the startup key seven
     # alone cannot establish. Each branch's startup literal remains irrelevant
@@ -429,12 +324,12 @@ def check_delete_size_observations(args, node, reference):
             (typeof b === 'number' && b === {values[2]} ? 4 : 0);
 }})();
 """
-        observe(name + "-future", source, 7)
+        observe(args, name + "-future", source, {"trace": 7})
 
     name = "size_deleted_saved_lifetime"
     source = cases[name]["source"]
     observed, value = delete_size_observer_source(source)
-    expected = observe(name + "-future", observed, value)
+    expected = observe(args, name + "-future", observed, {"trace": value})
     for old, replacement in (
         ("state.get(zero)", "state.get(state.size)"),
         ("const saved = state.get(zero);", "const saved = void 0;"),
@@ -449,8 +344,9 @@ def check_delete_size_observations(args, node, reference):
                 "state.delete(0); state.clear();", "const deleted = state.delete(0); state.clear();"
             ).replace("return saved === item ?", "return deleted && saved === item ?")
             check, _ = delete_size_observer_source(witnessed)
-            observe(name + "-delete-result", check, value)
+            observe(args, name + "-delete-result", check, {"trace": value})
             distinguish(
+                args,
                 name + "-delete-result",
                 check,
                 "const deleted = state.delete(0);",
@@ -459,24 +355,11 @@ def check_delete_size_observations(args, node, reference):
             )
             continue
         assert source.count(old) == 1, (name, old)
-        distinguish(name + "-future", observed, old, replacement, expected)
-    return dict(sources=len(cases), observations=observations, mutations=mutations)
+        distinguish(args, name + "-future", observed, old, replacement, expected)
 
 
 def check_join_size_census(args, ir, name):
-    if name not in join_size_cases():
-        return
-    row = join_size_cases()[name]
-    raw = (args.work / f"{name}.raw.mlir").read_text()
-    prepared = ir.read_text()
-    if (
-        len(boundary.FUNCTION.findall(raw)) != 5
-        or len(source_calls(raw)) != row["raw_calls"]
-        or len(source_calls(prepared)) != row["prepared_calls"]
-    ):
-        raise RuntimeError(f"{name}: changed exact branch-cardinality function/call census")
-    if "scf.if" not in prepared or prepared.count("scf.yield") < 2:
-        raise RuntimeError(f"{name}: lost either structural branch before the cardinality proof")
+    check_census(args, ir, name, join_size_cases, "branch-cardinality", branched=True)
 
 
 def check_join_size_refusals(args, positives):
@@ -485,44 +368,8 @@ def check_join_size_refusals(args, positives):
 
 def check_join_size_observations(args, node, reference):
     cases = join_size_cases()
-    observations = mutations = 0
-
-    def observe(name, source, value):
-        nonlocal observations
-        js = args.work / f"{name}-join-observed.js"
-        js.write_text(source)
-        expected = f"trace={value}\n"
-        if host.run([node, "-e", CONSTANT_GLOBAL_NODE, str(js), '["trace"]']).stdout != expected:
-            raise RuntimeError(f"{name}: typed Node branch-cardinality observation changed")
-        if reference:
-            result = host.run([str(reference), str(js)])
-            if (
-                result.stdout != expected
-                or "(1 number, 0 boolean, 0 string, 0 null, 0 undefined)" not in result.stderr
-            ):
-                raise RuntimeError(
-                    f"{name}: interpreter lost branch-cardinality Number observation"
-                )
-        observations += 1
-        return expected
-
-    def distinguish(name, source, old, replacement, expected):
-        nonlocal mutations
-        assert source.count(old) == 1, (name, old)
-        js = args.work / f"{name}-join-blind-{mutations}.js"
-        js.write_text(source.replace(old, replacement))
-        result = subprocess.run(
-            [node, "-e", CONSTANT_GLOBAL_NODE, str(js), '["trace"]'],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        if not result.returncode and result.stdout == expected:
-            raise RuntimeError(f"{name}: join observer cannot distinguish {replacement}")
-        mutations += 1
-
     for name, row in cases.items():
-        observe(name, row["source"], row["expected_trace"])
+        observe(args, name, row["source"], {"trace": row["expected_trace"]})
     for flag in ("false", "true"):
         name = "joined_delete_disjoint_" + flag
         row = cases[name]
@@ -535,12 +382,12 @@ def check_join_size_observations(args, node, reference):
                 "state.has(2);" if flag == "false" else "state.has(1);",
             ),
         ):
-            distinguish(name, row["source"], old, replacement, "trace=1\n")
+            distinguish(args, name, row["source"], old, replacement, "trace=1\n")
         name = "joined_set_disjoint_" + flag
         row = cases[name]
         key = "9" if flag == "false" else "7"
         distinguish(
-            name, row["source"], f"state.set({key}, item);", f"state.has({key});", "trace=1\n"
+            args, name, row["source"], f"state.set({key}, item);", f"state.has({key});", "trace=1\n"
         )
 
     # Both future flags distinguish unequal cardinality, missing common keys,
@@ -562,38 +409,27 @@ def check_join_size_observations(args, node, reference):
             (typeof b === 'number' && b === {values[1]} ? 2 : 0);
 }})();
 """
-        expected = observe(name + "-future", source, 3)
+        expected = observe(args, name + "-future", source, {"trace": 3})
         if values[0] != values[1]:
-            distinguish(name + "-future", source, "setter(-8, true)", "setter(-8, false)", expected)
+            distinguish(
+                args, name + "-future", source, "setter(-8, true)", "setter(-8, false)", expected
+            )
 
     name = "joined_size_saved_lifetime"
     source = cases[name]["source"]
     observed, value = zero_size_observer_source(source)
-    expected = observe(name + "-future", observed, value)
+    expected = observe(args, name + "-future", observed, {"trace": value})
     for old, replacement in (
         ("state.get(saved)", "state.get(state.size)"),
         ("const leaf = state.get(saved);", "const leaf = void 0;"),
         ("(flag ? 2 : 1)", "(flag ? 1 : 2)"),
         ("state.clear(); state.set(2, item);", "state.has(key); state.set(2, item);"),
     ):
-        distinguish(name + "-future", observed, old, replacement, expected)
-    return dict(sources=len(cases), observations=observations, mutations=mutations)
+        distinguish(args, name + "-future", observed, old, replacement, expected)
 
 
 def check_mutation_size_census(args, ir, name):
-    if name not in mutation_size_cases():
-        return
-    row = mutation_size_cases()[name]
-    raw = (args.work / f"{name}.raw.mlir").read_text()
-    prepared = ir.read_text()
-    if (
-        len(boundary.FUNCTION.findall(raw)) != 5
-        or len(source_calls(raw)) != row["raw_calls"]
-        or len(source_calls(prepared)) != row["prepared_calls"]
-    ):
-        raise RuntimeError(f"{name}: changed the exact after-join mutation function/call census")
-    if "scf.if" not in prepared or prepared.count("scf.yield") < 2:
-        raise RuntimeError(f"{name}: removed a structural arm before the mutation size proof")
+    check_census(args, ir, name, mutation_size_cases, "after-join mutation", branched=True)
 
 
 def check_mutation_size_refusals(args, positives):
@@ -602,42 +438,8 @@ def check_mutation_size_refusals(args, positives):
 
 def check_mutation_size_observations(args, node, reference):
     cases = mutation_size_cases()
-    observations = mutations = 0
-
-    def observe(name, source, value):
-        nonlocal observations
-        js = args.work / f"{name}-mutation-observed.js"
-        js.write_text(source)
-        expected = f"trace={value}\n"
-        if host.run([node, "-e", CONSTANT_GLOBAL_NODE, str(js), '["trace"]']).stdout != expected:
-            raise RuntimeError(f"{name}: typed Node mutation-size observation changed")
-        if reference:
-            result = host.run([str(reference), str(js)])
-            if (
-                result.stdout != expected
-                or "(1 number, 0 boolean, 0 string, 0 null, 0 undefined)" not in result.stderr
-            ):
-                raise RuntimeError(f"{name}: interpreter lost the mutation-size Number observation")
-        observations += 1
-        return expected
-
-    def distinguish(name, source, old, replacement, expected):
-        nonlocal mutations
-        assert source.count(old) == 1, (name, old)
-        js = args.work / f"{name}-mutation-blind-{mutations}.js"
-        js.write_text(source.replace(old, replacement))
-        result = subprocess.run(
-            [node, "-e", CONSTANT_GLOBAL_NODE, str(js), '["trace"]'],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        if not result.returncode and result.stdout == expected:
-            raise RuntimeError(f"{name}: mutation observer cannot distinguish {replacement}")
-        mutations += 1
-
     for name, row in cases.items():
-        observe(name, row["source"], row["expected_trace"])
+        observe(args, name, row["source"], {"trace": row["expected_trace"]})
     for flag in ("false", "true"):
         name = "joined_disjoint_set_" + flag
         source = cases[name]["source"]
@@ -647,9 +449,10 @@ def check_mutation_size_observations(args, node, reference):
             ("{value: 1}", "{value: 2}"),
             ("state.set(2, item); state.set(4, item);", "state.set(6, item); state.set(4, item);"),
         ):
-            distinguish(name, source, old, replacement, "trace=1\n")
+            distinguish(args, name, source, old, replacement, "trace=1\n")
         name = "joined_absent_delete_" + flag
         distinguish(
+            args,
             name,
             cases[name]["source"],
             "state.delete(3);",
@@ -658,6 +461,7 @@ def check_mutation_size_observations(args, node, reference):
         )
         name = "joined_present_overwrite_" + flag
         distinguish(
+            args,
             name,
             cases[name]["source"],
             "state.set(3, item); const saved",
@@ -665,9 +469,12 @@ def check_mutation_size_observations(args, node, reference):
             "trace=1\n",
         )
         name = "joined_present_delete_" + flag
-        distinguish(name, cases[name]["source"], "state.delete(3);", "state.has(3);", "trace=1\n")
+        distinguish(
+            args, name, cases[name]["source"], "state.delete(3);", "state.has(3);", "trace=1\n"
+        )
         name = "joined_saved_before_set_" + flag
         distinguish(
+            args,
             name,
             cases[name]["source"],
             "const saved = state.size; state.set(3, item);",
@@ -698,15 +505,19 @@ def check_mutation_size_observations(args, node, reference):
             (typeof c === 'number' && c === {values[2]} ? 4 : 0);
 }})();
 """
-        expected = observe(name + "-future", source, 7)
+        expected = observe(args, name + "-future", source, {"trace": 7})
         if values[0] != values[1]:
-            distinguish(name + "-future", source, "setter(1, false)", "setter(99, false)", expected)
+            distinguish(
+                args, name + "-future", source, "setter(1, false)", "setter(99, false)", expected
+            )
         if values[1] != values[2]:
-            distinguish(name + "-future", source, "setter(1, true)", "setter(1, false)", expected)
+            distinguish(
+                args, name + "-future", source, "setter(1, true)", "setter(1, false)", expected
+            )
 
     name = "joined_mutation_saved_lifetime"
     observed, value = zero_size_observer_source(cases[name]["source"])
-    expected = observe(name + "-future", observed, value)
+    expected = observe(args, name + "-future", observed, {"trace": value})
     for old, replacement in (
         ("state.get(saved)", "state.get(state.size)"),
         ("const leaf = state.get(saved);", "const leaf = void 0;"),
@@ -717,5 +528,4 @@ def check_mutation_size_observations(args, node, reference):
         ),
         ("state.set(4, item);", "state.has(4);"),
     ):
-        distinguish(name + "-future", observed, old, replacement, expected)
-    return dict(sources=len(cases), observations=observations, mutations=mutations)
+        distinguish(args, name + "-future", observed, old, replacement, expected)

@@ -3,12 +3,18 @@
 
 import argparse
 import json
-import os
 from pathlib import Path
 import re
-import shutil
 
-from CTNative.harness import CORE_INCLUDE, RUNTIME_INCLUDE, find_compilers, run
+from CTNative.harness import (
+    CLEANUP,
+    CORE_INCLUDE,
+    REFUSAL,
+    VM_SYMBOL,
+    build_and_run,
+    native_tools,
+    run,
+)
 from CTNative.Browser.native_dom import link_options
 
 PROGRAMS = {
@@ -116,17 +122,11 @@ CPP_HELPER_CALLS = {
 }
 IMPORT_REFUSALS = ("catch_finally", "nested_catch")
 IMPORT_REASON = "more than one protected region in a function"
-NATIVE_PIPELINE = (
-    "builtin.module(ctnative-lower-to-emitc{optimize=false},"
-    "emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,"
-    "canonicalize,ctnative-prune-dead-stores,canonicalize))"
-)
+NATIVE_PIPELINE = f"builtin.module(ctnative-lower-to-emitc{{optimize=false}},{CLEANUP})"
 DEFAULT_NATIVE_PIPELINE = NATIVE_PIPELINE.replace("{optimize=false}", "")
 
 CTJS_FUNCTION = re.compile(r"^\s*ctjs\.func\b", re.M)
 NATIVE_FUNCTION = re.compile(r"^\s*emitc\.func\b", re.M)
-REFUSAL = re.compile(r'ctnative\.not_native = "((?:[^"\\]|\\.)*)"')
-VM_SYMBOL = re.compile(r"ctbrowser::(?:script|aot)::|\bct_aot_")
 
 
 NODE_ORACLE = r"""
@@ -449,15 +449,6 @@ def generated_helper_limits(fixtures):
     (fixtures / "helper_work_limit.js").write_text(work + suffix)
 
 
-def execution_tools(args):
-    compilers = find_compilers()
-    reference = args.reference
-    nm = shutil.which("nm") or shutil.which("llvm-nm")
-    if not nm or not VM_SYMBOL.search(run([nm, "-C", str(reference)]).stdout):
-        raise RuntimeError("VM symbol detector failed its interpreter positive control")
-    return reference, compilers, nm
-
-
 def standalone(args, module, name, expected, compilers, nm, *, wrong_state=False):
     # Typed Number/String concatenation calls the same public Core as the VM.
     _, libraries = link_options(
@@ -475,18 +466,6 @@ def standalone(args, module, name, expected, compilers, nm, *, wrong_state=False
             str(deduced),
         ]
     )
-    flags = [
-        "-std=c++23",
-        RUNTIME_INCLUDE,
-        CORE_INCLUDE,
-        "-O2",
-        "-Wall",
-        "-Wextra",
-        "-Werror",
-        "-Wconversion",
-        "-pedantic",
-        "-ffp-contract=off",
-    ]
     for mode, ir in [("explicit", module), ("deduced", deduced)]:
         cpp = run([args.translate, "--mlir-to-cpp", str(ir)]).stdout
         if VM_SYMBOL.search(cpp) or re.search(r"#include [<\"]ctbrowser/", cpp):
@@ -513,10 +492,7 @@ def standalone(args, module, name, expected, compilers, nm, *, wrong_state=False
         for index, compiler in enumerate(compilers):
             binary = (args.work / f"{name}.{mode}.{index}").resolve()
             binary.unlink(missing_ok=True)
-            run([compiler, *flags, str(source), *libraries, "-o", str(binary)])
-            if VM_SYMBOL.search(run([nm, "-C", str(binary)]).stdout):
-                raise RuntimeError(f"{name}/{mode}: compiled binary reaches the VM")
-            observed = run([str(binary)]).stdout
+            observed = build_and_run(compiler, source, binary, libraries=libraries, nm=nm).stdout
             compare(observed, expected_text(expected), f"{name}/{mode}/{compiler}")
             if wrong_state:
                 try:
@@ -532,28 +508,10 @@ def standalone(args, module, name, expected, compilers, nm, *, wrong_state=False
                     raise RuntimeError("executed wrong-state binary escaped result checking")
         if name in STRING_LIFETIMES:
             sanitized = (args.work / f"{name}.{mode}.sanitized").resolve()
-            environment = dict(
-                os.environ,
-                ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
-                UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1",
-            )
-            run(
-                [
-                    compilers[1],
-                    *flags,
-                    "-O1",
-                    "-g",
-                    "-fno-omit-frame-pointer",
-                    "-fsanitize=address,undefined",
-                    "-fsanitize-address-use-after-scope",
-                    str(source),
-                    *libraries,
-                    "-o",
-                    str(sanitized),
-                ]
-            )
             compare(
-                run([str(sanitized)], environment=environment).stdout,
+                build_and_run(
+                    compilers[1], source, sanitized, libraries=libraries, sanitize=True
+                ).stdout,
                 expected_text(expected),
                 f"{name}/{mode}/ASan-UBSan",
             )
@@ -600,7 +558,8 @@ def main():
         return
     if not (args.translate and args.opt and args.reference):
         parser.error("--translate, --opt and --reference are required unless --oracle-only")
-    reference, compilers, nm = execution_tools(args)
+    reference = args.reference
+    compilers, nm = native_tools(reference)
     register_flow_controls(args)
     report = []
     for name, (denominator, expected) in PROGRAMS.items():

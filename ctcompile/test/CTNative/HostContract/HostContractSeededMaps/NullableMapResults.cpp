@@ -28,21 +28,6 @@ void checkNullableMapResults(mlir::MLIRContext & context, const std::string & sc
         "    %written = ctjs.call %setter(%state, %entryKey, %value)";
     const auto nullable = replaced(scalar, "    ctjs.return %answer", nullableReturn);
     const auto normalized = replaced(nullable, write, normalize);
-    const auto requested = [](mlir::ModuleOp module) {
-        auto contract = contractFor(module);
-        contract.initialIntrinsics = {"Map"};
-        return contract;
-    };
-    const auto withheld = [](mlir::ModuleOp module, const HostContractAnalysis & result) {
-        bool empty = result.callables().empty();
-        module.walk([&](mlir::Operation * operation) {
-            empty &= !result.callable(operation);
-            if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
-                empty &= !result.property(read);
-            }
-        });
-        return empty;
-    };
     using Alternatives = ctcompile::ctnative::PrimitiveAlternatives;
     constexpr unsigned nullableMask = Alternatives::String | Alternatives::Null;
     const auto edges = [&](mlir::ModuleOp module, const HostContractAnalysis & result,
@@ -103,10 +88,9 @@ void checkNullableMapResults(mlir::MLIRContext & context, const std::string & sc
                              unsigned expectedCalls = 3,
                              unsigned expectedMask = Alternatives::String | Alternatives::Null) {
         ++rows;
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
-        check(static_cast<bool>(module), "source/prepared nullable Map fixture parses");
+        auto module = parsed(context, program, "source/prepared nullable Map fixture parses");
         if (!module) { return; }
-        const auto contract = requested(*module);
+        const auto contract = mapContractFor(*module);
         HostContractAnalysis result(*module, contract);
         check(result.proved() == expected && !result.exhausted() &&
                   (expected || withheld(*module, result)),
@@ -228,10 +212,9 @@ void checkNullableMapResults(mlir::MLIRContext & context, const std::string & sc
             "source-order get-to-put-to-get results close an independently checked Boolean census");
     const auto checkBudgets = [&](const std::string & program, const char * label,
                                   unsigned expectedCalls) {
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
-        check(static_cast<bool>(module), "nullable budget fixture parses");
+        auto module = parsed(context, program, "nullable budget fixture parses");
         if (!module) { return; }
-        auto contract = requested(*module);
+        auto contract = mapContractFor(*module);
         HostContractAnalysis complete(*module, contract);
         const unsigned completion = complete.steps();
         check(complete.proved() && completion < 20000,
@@ -265,14 +248,14 @@ void checkNullableMapResults(mlir::MLIRContext & context, const std::string & sc
                 operation->setAttr("ctnative.map_present", builder.getBoolAttr(true));
             }
         });
-        contract = requested(*module);
+        contract = mapContractFor(*module);
         check(HostContractAnalysis(*module, contract).proved(),
               "forged reports leave a complete nullable proof independently reproducible");
         const auto refusal = [&]() {
             HostContractAnalysis old(*module, contract);
             check(!old.proved() && old.reason().contains("fingerprint") && withheld(*module, old),
                   "live nullable mutation invalidates the previous host fingerprint");
-            HostContractAnalysis fresh(*module, requested(*module));
+            HostContractAnalysis fresh(*module, mapContractFor(*module));
             check(!fresh.proved() && !fresh.exhausted() && withheld(*module, fresh),
                   "a fresh fingerprint and forged markers cannot repair a nullable proof");
         };

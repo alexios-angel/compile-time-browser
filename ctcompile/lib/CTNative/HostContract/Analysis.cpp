@@ -59,6 +59,14 @@ std::optional<HostObjectGlobalRead> analyzer::objectGlobalRead(ctjs::LoadGlobalO
     }
 }
 
+ctjs::CreateObjectOp analyzer::namedObject(mlir::Value value) {
+    if (auto load = value.getDefiningOp<ctjs::LoadGlobalOp>()) {
+        const auto global = objectGlobalRead(load);
+        return global ? global->object : ctjs::CreateObjectOp{};
+    }
+    return value.getDefiningOp<ctjs::CreateObjectOp>();
+}
+
 std::optional<std::vector<HostObjectGlobalRead>> analyzer::objectGlobalReads(
     ctjs::CreateObjectOp made) {
     if (!step()) { return std::nullopt; }
@@ -128,13 +136,7 @@ bool analyzer::capturedMapParameters(
     const llvm::DenseMap<mlir::Value, PrimitiveAlternatives> & results,
     HostMethodParameters & result, HostCapturedMap * capture) {
     const auto checkLeaf = [&](mlir::Value actual, mlir::Operation * operation, bool scalarSource) {
-        auto made = actual.getDefiningOp<ctjs::CreateObjectOp>();
-        std::optional<HostObjectGlobalRead> global;
-        if (auto read = actual.getDefiningOp<ctjs::LoadGlobalOp>()) {
-            global = objectGlobalRead(read);
-            if (!global) { return false; }
-            made = global->object;
-        }
+        auto made = namedObject(actual);
         if (!made || made->getParentOp() != entry || operation->getParentOp() != entry ||
             !dominance.properlyDominates(made.getOperation(), operation) ||
             !dominance.dominates(actual, operation)) {
@@ -142,7 +144,7 @@ bool analyzer::capturedMapParameters(
         }
         llvm::SmallVector<mlir::Value> aliases{made.getResult()};
         llvm::DenseSet<mlir::Operation *> initializations;
-        if (global) {
+        if (actual.getDefiningOp<ctjs::LoadGlobalOp>()) {
             const auto reads = objectGlobalReads(made);
             if (!reads) { return false; }
             for (const HostObjectGlobalRead & edge : *reads) {
@@ -376,11 +378,7 @@ bool analyzer::capturedMapOuterKeys(
                     if (onlyKeys && usedKey) { keyUses.insert(&use); }
                     continue;
                 }
-                auto made = use.get().getDefiningOp<ctjs::CreateObjectOp>();
-                if (auto read = use.get().getDefiningOp<ctjs::LoadGlobalOp>()) {
-                    const auto edge = objectGlobalRead(read);
-                    if (edge) { made = edge->object; }
-                }
+                auto made = namedObject(use.get());
                 if (!made) { continue; }
                 candidates.insert(made);
                 if (onlyKeys && usedKey) { keyUses.insert(&use); }
@@ -472,46 +470,38 @@ std::string analyzer::environmentProblem() {
                   capture.argument.getOperation()}) {
                 if (allowed) { capturedOperations.insert(allowed); }
             }
-            for (ctjs::LoadUpvalueOp load : capture.upvalues) {
-                if (step()) { capturedOperations.insert(load); }
-            }
-            for (ctjs::GetPropertyOp read : capture.reads) {
-                if (step()) { capturedOperations.insert(read); }
-            }
-            for (ctjs::CallOp call : capture.calls) {
-                if (step()) { capturedOperations.insert(call); }
-            }
-            for (ctjs::SetPropertyOp write : capture.leafWrites) {
-                if (step()) { capturedOperations.insert(write); }
-            }
-            for (ctjs::GetPropertyOp read : capture.leafReads) {
-                if (step()) { capturedOperations.insert(read); }
-            }
-            for (mlir::Operation * snapshot : capture.snapshotOperations) {
-                if (step()) { capturedOperations.insert(snapshot); }
-            }
+            // One step per admitted operation. An exhausted budget refuses the
+            // whole analysis, so a partial census is never observed.
+            uint64_t count = capture.upvalues.size() + capture.reads.size() + capture.calls.size() +
+                             capture.leafWrites.size() + capture.leafReads.size() +
+                             capture.snapshotOperations.size() + 2 * capture.childMaps.size();
             for (const auto & callback : capture.scalarCallbacks) {
-                for (mlir::Operation * allowed : callback.operations) {
-                    if (step()) { capturedOperations.insert(allowed); }
-                }
-                for (ctjs::LoadGlobalOp load : callback.loads) {
-                    if (step()) { capturedOperations.insert(load); }
-                }
-                for (ctjs::GetPropertyOp read : callback.reads) {
-                    if (step()) { capturedOperations.insert(read); }
-                }
-                for (mlir::Operation * call : callback.calls) {
-                    if (step()) { capturedOperations.insert(call); }
-                }
+                count += callback.operations.size() + callback.loads.size() +
+                         callback.reads.size() + callback.calls.size();
+                for (const auto & global : callback.globals) { count += global.reads.size(); }
+            }
+            if (!spend(count)) { return; }
+            const auto admit = [&](const auto & range) {
+                capturedOperations.insert(range.begin(), range.end());
+            };
+            admit(capture.upvalues);
+            admit(capture.reads);
+            admit(capture.calls);
+            admit(capture.leafWrites);
+            admit(capture.leafReads);
+            admit(capture.snapshotOperations);
+            for (const auto & callback : capture.scalarCallbacks) {
+                admit(callback.operations);
+                admit(callback.loads);
+                admit(callback.reads);
+                admit(callback.calls);
                 for (const auto & global : callback.globals) {
-                    for (ctjs::LoadGlobalOp read : global.reads) {
-                        if (step()) { mutableScalarReads.insert(read); }
-                    }
+                    mutableScalarReads.insert(global.reads.begin(), global.reads.end());
                 }
             }
             for (ctjs::ConstructOp child : capture.childMaps) {
-                if (step()) { capturedOperations.insert(child); }
-                if (step()) { capturedOperations.insert(child.getCallee().getDefiningOp()); }
+                capturedOperations.insert(child);
+                capturedOperations.insert(child.getCallee().getDefiningOp());
             }
         });
     }
@@ -889,24 +879,20 @@ const HostSlotEdge * HostContractAnalysis::property(ctjs::GetPropertyOp read) co
 }
 
 const HostCallableEdge * HostContractAnalysis::callable(mlir::Operation * call) const {
-    for (const HostCallableEdge & edge : checkedCalls) {
-        if (edge.call == call) { return &edge; }
-    }
-    return nullptr;
+    auto found = llvm::find_if(checkedCalls, [&](const auto & edge) { return edge.call == call; });
+    return found == checkedCalls.end() ? nullptr : &*found;
 }
 
 const HostScalarGlobalRead * HostContractAnalysis::scalarRead(ctjs::LoadGlobalOp read) const {
-    for (const HostScalarGlobalRead & edge : checkedScalarReads) {
-        if (edge.read == read) { return &edge; }
-    }
-    return nullptr;
+    auto found =
+        llvm::find_if(checkedScalarReads, [&](const auto & edge) { return edge.read == read; });
+    return found == checkedScalarReads.end() ? nullptr : &*found;
 }
 
 const HostObjectGlobalRead * HostContractAnalysis::objectRead(ctjs::LoadGlobalOp read) const {
-    for (const HostObjectGlobalRead & edge : checkedObjectReads) {
-        if (edge.read == read) { return &edge; }
-    }
-    return nullptr;
+    auto found =
+        llvm::find_if(checkedObjectReads, [&](const auto & edge) { return edge.read == read; });
+    return found == checkedObjectReads.end() ? nullptr : &*found;
 }
 
 } // namespace ctcompile::ctnative

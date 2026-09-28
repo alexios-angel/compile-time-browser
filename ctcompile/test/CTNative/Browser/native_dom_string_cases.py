@@ -12,7 +12,7 @@ from CTNative.Browser import native_dom as dom
 from CTNative.Browser import native_dom_numbers as numbers
 from CTNative.Browser import native_dom_nullable_uri as nullable_uri
 from CTNative.Browser import native_dom_uri as uri
-from CTNative.harness import find_compilers, run
+from CTNative.harness import build_and_run, find_compilers, run
 from Target.Cpp.harness import FLAGS
 
 READ = """function readAttribute(element) {

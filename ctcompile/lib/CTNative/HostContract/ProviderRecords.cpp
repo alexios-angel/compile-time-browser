@@ -146,19 +146,17 @@ std::string analyzer::localRecordProblem() {
         return mlir::WalkResult::advance();
     });
     if (census.wasInterrupted()) { return reject(); }
-    for (const auto & uses : {mlir::SymbolTable::getSymbolUses(module.getOperation()),
-                              mlir::SymbolTable::getSymbolUses(&module.getBodyRegion())}) {
-        if (!uses) { return reject(); }
-        for (const auto & use : *uses) {
-            if (!step()) { return reject(); }
-            if (constructors.contains(mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
-                    use.getUser(), use.getSymbolRef()))) {
+    if (forEachSymbolUse(
+            module, false, [&] { return step(); },
+            [&](const mlir::SymbolTable::SymbolUse & use, ctjs::FuncOp target) {
                 auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(use.getUser());
-                if (!direct || initializers.lookup(direct.getReceiver()) != direct.getOperation()) {
-                    return reject();
-                }
-            }
-        }
+                return constructors.contains(target) &&
+                               (!direct ||
+                                initializers.lookup(direct.getReceiver()) != direct.getOperation())
+                           ? std::optional(false)
+                           : std::nullopt;
+            })) {
+        return reject();
     }
     // Preparation keeps retired holder/prototype allocations in the source.
     // Only an allocation with no observable use belongs to this local graph.
@@ -206,17 +204,14 @@ std::string analyzer::localRecordProblem() {
             operations.insert(read);
             const auto key = ctjs::constantKey(read.getKey());
             if (key == "size") { continue; }
-            static const llvm::StringMap<unsigned> arities{
-                {"set", 2}, {"get", 1}, {"has", 1}, {"delete", 1}, {"clear", 0}};
-            auto method = key.size() <= 6 ? arities.find(key) : arities.end();
-            if (method == arities.end()) { return reject(); }
+            const auto arity = mapMethodArity(key);
+            if (!arity) { return reject(); }
             for (mlir::OpOperand & selected : read.getResult().getUses()) {
                 if (!step()) { return reject(); }
                 if (llvm::isa<ctjs::RootOp>(selected.getOwner())) { continue; }
                 auto call = llvm::dyn_cast<ctjs::CallOp>(selected.getOwner());
                 if (!call || selected.getOperandNumber() != 0 || call->getParentOp() != entry ||
-                    call.getReceiver() != made.getResult() ||
-                    call.getArgs().size() != method->second ||
+                    call.getReceiver() != made.getResult() || call.getArgs().size() != *arity ||
                     !dominance.properlyDominates(read.getOperation(), call)) {
                     return reject();
                 }
@@ -299,15 +294,7 @@ std::string analyzer::localRecordProblem() {
                     PrimitiveAlternatives::forTag(mlir::TypeID::get<ctjs::BooleanAttr>());
             }
         } else if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(op)) {
-            switch (binary.getKind()) {
-            case ctjs::BinaryKind::Add:
-            case ctjs::BinaryKind::Sub:
-            case ctjs::BinaryKind::Mul:
-            case ctjs::BinaryKind::Div:
-            case ctjs::BinaryKind::Mod:
-            case ctjs::BinaryKind::Pow: break;
-            default: return mlir::WalkResult::advance();
-            }
+            if (!ctjs::isArithmetic(binary.getKind())) { return mlir::WalkResult::advance(); }
             const auto numeric = [&](mlir::Value value) {
                 auto tag = category(value, op).tag();
                 return tag == mlir::TypeID::get<ctjs::NumberAttr>() ||

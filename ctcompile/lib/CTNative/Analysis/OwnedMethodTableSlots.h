@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ctcompile/CTJS/IR/CTJSOps.h"
+#include "ctcompile/CTNative/Analysis/WorkBudget.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
@@ -26,13 +27,13 @@ public:
     [[nodiscard]] llvm::ArrayRef<OwnedMethodTableSlot> slots() const { return checked; }
     [[nodiscard]] const OwnedMethodTableSlot * lookup(ctjs::SetPropertyOp store) const;
     [[nodiscard]] const OwnedMethodTableSlot * lookup(ctjs::GetPropertyOp read) const;
-    [[nodiscard]] bool exhausted() const { return budgetExhausted; }
+    [[nodiscard]] bool exhausted() const { return budget.exhausted; }
 
 private:
     llvm::SmallVector<OwnedMethodTableSlot> checked;
     llvm::DenseMap<mlir::Operation *, unsigned> stores;
     llvm::DenseMap<mlir::Operation *, unsigned> loads;
-    bool budgetExhausted = false;
+    WorkBudget budget;
 };
 
 } // namespace ctcompile::ctnative

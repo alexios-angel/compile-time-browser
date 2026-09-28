@@ -341,13 +341,7 @@ std::optional<liftReport> closureLifter::prepareOwnedGlobalMethodTables(
     }
     if (table.capturedMap) {
         unboxCells(out);
-        llvm::SmallVector<ctjs::CreateCellOp> dead;
-        module.walk([&](ctjs::CreateCellOp cell) {
-            if (cell->hasAttr("ctnative.unboxed") && cell.getResult().use_empty()) {
-                dead.push_back(cell);
-            }
-        });
-        for (ctjs::CreateCellOp cell : dead) { cell.erase(); }
+        eraseUnusedUnboxedCells();
     }
     if (contract.provider == HostContract::Provider::ctbrowserDOMDataSession) {
         // The ordinary constructor guard cannot prove instances retained in

@@ -3,8 +3,6 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "llvm/ADT/APFloat.h"
 
-#include <limits>
-
 namespace ctcompile::ctnative::host_detail {
 namespace {
 
@@ -14,11 +12,6 @@ struct callbackReader {
     HostPrefixProviderCallback proof;
     using environment = prefixAnalysis::environment;
     using completion = prefixAnalysis::completion;
-
-    bool text(llvm::StringRef value) {
-        return value.size() <= std::numeric_limits<unsigned>::max() &&
-               prefix.spend(static_cast<unsigned>(value.size()));
-    }
 
     prefixValue primitive(prefixValue value) {
         if (value.kind != prefixValue::Kind::primitive || !value.literal) { return {}; }
@@ -37,17 +30,21 @@ struct callbackReader {
     }
 
     bool writable(llvm::StringRef name) {
-        if (!text(name) || !ctjs::ordinaryKey(name) || reservedCallbackBinding(name)) {
+        if (!prefix.spendText(name) || !ctjs::ordinaryKey(name) || reservedCallbackBinding(name)) {
             return false;
         }
         for (const auto * names :
              {&prefix.contract.initialIntrinsics, &prefix.contract.realmOwnDataProperties}) {
             for (const auto & reserved : *names) {
-                if (!prefix.step() || !text(reserved) || reserved == name) { return false; }
+                if (!prefix.step() || !prefix.spendText(reserved) || reserved == name) {
+                    return false;
+                }
             }
         }
         for (const auto & root : prefix.contract.roots) {
-            if (!prefix.step() || !text(root.binding) || root.binding == name) { return false; }
+            if (!prefix.step() || !prefix.spendText(root.binding) || root.binding == name) {
+                return false;
+            }
         }
         const auto found = globals.find(name);
         return found != globals.end() &&
@@ -63,7 +60,7 @@ struct callbackReader {
             return primitive(prefixValue::constant(constant.getValue()));
         }
         if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(operation)) {
-            if (!text(load.getName())) { return {}; }
+            if (!prefix.spendText(load.getName())) { return {}; }
             const auto found = globals.find(load.getName());
             return found == globals.end() ? prefixValue{} : primitive(found->second);
         }

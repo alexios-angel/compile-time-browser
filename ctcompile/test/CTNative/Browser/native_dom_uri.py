@@ -192,7 +192,7 @@ def refusal_checks(args, prepared):
         ("uri_entry_replacement", ir, dict(contract, initial_intrinsics=["decodeURIComponent"]))
     )
     for name, ir, contract in cases:
-        for provider in ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1"):
+        for provider in dom.PROVIDERS:
             for optimize in (False, True):
                 diagnostic = dom.lower(
                     args,

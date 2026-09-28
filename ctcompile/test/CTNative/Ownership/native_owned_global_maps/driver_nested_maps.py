@@ -1,5 +1,7 @@
 """driver nested maps: continued from harness_nested_payloads."""
 
+from .driver_common import observe
+from .harness_map_results import run_sanitized_lifetime
 from .harness_nested_payloads import *
 
 
@@ -577,41 +579,12 @@ def check_nested_maps(args, node, reference, compilers, nm):
     cases = nested_map_cases()
     observations = mutations = 0
 
-    def observe(name, source, expected, extra=()):
-        js = args.work / f"{name}-observed.js"
-        js.write_text(source)
-        result = host.run([str(reference), str(js)]) if reference else None
-        values = {"trace": expected, **dict(extra)}
-        expected_text = "".join(
-            f"{key}={str(value).lower()}\n" for key, value in sorted(values.items())
-        )
-        kinds = [
-            (
-                "boolean"
-                if isinstance(value, bool)
-                else value if value in ("null", "undefined") else "number"
-            )
-            for value in values.values()
-        ]
-        types = (
-            "("
-            + ", ".join(
-                f"{kinds.count(tag)} {tag}"
-                for tag in ("number", "boolean", "string", "null", "undefined")
-            )
-            + ")"
-        )
-        if (
-            host.run([node, "-e", CONSTANT_GLOBAL_NODE, str(js), json.dumps(sorted(values))]).stdout
-            != expected_text
-            or result
-            and (result.stdout != expected_text or types not in result.stderr)
-        ):
-            raise RuntimeError(f"{name}: typed source observation changed")
+    def seen(name, source, expected, extra=()):
+        observe(args, name, source, {"trace": expected, **dict(extra)})
 
     for name, row in cases.items():
         extra = row.get("observations", {})
-        observe(name, row["source"], row["expected_trace"], extra)
+        seen(name, row["source"], row["expected_trace"], extra)
         observations += 1 + len(extra)
         if "poison" in row:
             mutation, expected = row["poison"]
@@ -620,23 +593,23 @@ def check_nested_maps(args, node, reference, compilers, nm):
                 "\nhost.slot.set(73); host.slot.poison();\n"
                 "trace = host.slot.get() === " + expected + " ? 1 : 0;\n"
             )
-            observe(name + "-poisoned", row["source"] + observer, 1)
-            observe(name + "-mutation-removed", row["source"].replace(mutation, "") + observer, 0)
+            seen(name + "-poisoned", row["source"] + observer, 1)
+            seen(name + "-mutation-removed", row["source"].replace(mutation, "") + observer, 0)
             observations += 2
             mutations += 1
         if "previous_poison" in row:
             mutation, expected = row["previous_poison"]
             assert row["source"].count(mutation) == 1, (name, mutation)
             observer = "\ntrace = host.slot.get(73) === " + expected + " ? 1 : 0;\n"
-            observe(name + "-poisoned", row["source"] + observer, 1)
-            observe(name + "-mutation-removed", row["source"].replace(mutation, "") + observer, 0)
+            seen(name + "-poisoned", row["source"] + observer, 1)
+            seen(name + "-mutation-removed", row["source"].replace(mutation, "") + observer, 0)
             observations += 2
             mutations += 1
         if not row["admitted"] and not row["previous"] and not row["dynamic"]:
             continue
         observer = caller_payload_observer if row.get("caller_payload") else nested_map_observer
         observed = observer(row["source"], row)
-        observe(name + "-future", observed, 1, extra)
+        seen(name + "-future", observed, 1, extra)
         observations += 1 + len(extra)
         readback = "again.get('value')" if row["repeated"] else "saved.get('value')"
         replacements = [
@@ -835,31 +808,8 @@ def check_nested_maps(args, node, reference, compilers, nm):
                     or host.run([str(binary)]).stdout != expected_output
                 ):
                     raise RuntimeError(f"{name}/{mode}: standalone child lifetime mismatch")
-            binary = source.with_suffix(".sanitized").resolve()
-            host.run(
-                [
-                    compilers[1],
-                    *owned.FLAGS,
-                    "-O1",
-                    "-g",
-                    "-fno-omit-frame-pointer",
-                    "-fsanitize=address,undefined",
-                    "-fsanitize-address-use-after-scope",
-                    str(source),
-                    "-o",
-                    str(binary),
-                ]
-            )
-            result = subprocess.run(
-                [str(binary)],
-                capture_output=True,
-                text=True,
-                timeout=60,
-                env={
-                    **os.environ,
-                    "ASAN_OPTIONS": "detect_stack_use_after_return=1:detect_leaks=1",
-                    "UBSAN_OPTIONS": "halt_on_error=1:print_stacktrace=1",
-                },
+            result = run_sanitized_lifetime(
+                source, source.with_suffix(".sanitized").resolve(), compilers[1]
             )
             if result.returncode or result.stdout != expected_output or result.stderr:
                 raise RuntimeError(

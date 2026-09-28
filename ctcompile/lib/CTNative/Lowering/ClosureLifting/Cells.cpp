@@ -326,9 +326,8 @@ bool closureLifter::isConstantCell(ctjs::CreateCellOp cell) {
 // cannot simply be re-run here.
 // `ctnative.cell_args` ON A CALL, ASKED HERE. admission has the same
 // predicate and is declared below this struct, so this is the one line of
-// it that has to be spelled twice - kept to one line for the reason
-// admissionIsDeclaration is: two copies of a rule drift, two copies of a
-// lookup cannot.
+// it that has to be spelled twice - kept to one line: two copies of a rule
+// drift, two copies of a lookup cannot.
 bool closureLifter::namesACellArgument(mlir::Operation * call, mlir::OpOperand & use) {
     auto listed = call->getAttrOfType<mlir::DenseI32ArrayAttr>("ctnative.cell_args");
     return listed &&
@@ -361,6 +360,16 @@ std::optional<std::string> closureLifter::whyCarriedCellStaysABox(ctjs::CreateCe
 // closure must stay a cell for the unlifted one - which is refused, but
 // whose IR this pass has no business falsifying.
 // The early mode only exposes uncaptured local objects to the receiver census.
+void closureLifter::eraseUnusedUnboxedCells() {
+    llvm::SmallVector<ctjs::CreateCellOp> dead;
+    module.walk([&](ctjs::CreateCellOp cell) {
+        if (cell->hasAttr("ctnative.unboxed") && cell.getResult().use_empty()) {
+            dead.push_back(cell);
+        }
+    });
+    for (ctjs::CreateCellOp cell : dead) { cell.erase(); }
+}
+
 void closureLifter::unboxCells(liftReport & out, bool localObjectsOnly) {
     llvm::SmallVector<ctjs::CreateCellOp> cells;
     module.walk([&](ctjs::CreateCellOp cell) { cells.push_back(cell); });

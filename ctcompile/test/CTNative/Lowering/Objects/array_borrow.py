@@ -1,35 +1,25 @@
 #!/usr/bin/env python3
 """Prove SCF vector borrows preserve entry-owner lifetime and JavaScript identity."""
 
-import argparse
 import hashlib
-import json
-from pathlib import Path
 import re
 
-from CTNative.harness import find_compilers, run
-from Target.Cpp.harness import FLAGS, function_body
+from CTNative.harness import (
+    CLEANUP,
+    FLAGS,
+    build_and_run,
+    find_compilers,
+    native_args,
+    node_globals,
+    run,
+)
+from Target.Cpp.harness import function_body
 
 ORIGINAL_SHA256 = "ac17441800c02afebc9c0f2ca529984c3fd21653ba676eff991ade6028daf490"
-NODE = """const fs = require('fs'), vm = require('vm');
-const scope = {};
-vm.runInNewContext(fs.readFileSync(process.argv[1], 'utf8'), scope);
-for (const name of JSON.parse(process.argv[2])) console.log(name + '=' + scope[name]);
-"""
-CLEANUP = (
-    "emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,"
-    "canonicalize,ctnative-prune-dead-stores,canonicalize)"
-)
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    for name in ("translate", "opt", "node", "reference"):
-        parser.add_argument("--" + name, required=True)
-    for name in ("original", "fixtures", "work"):
-        parser.add_argument("--" + name, type=Path, required=True)
-    args = parser.parse_args()
-    args.work.mkdir(parents=True, exist_ok=True)
+    args = native_args(__doc__, "original", "fixtures")
     original = args.original.read_text().split("//--- alias.js\n", 1)[1]
     if hashlib.sha256(original.encode()).hexdigest() != ORIGINAL_SHA256:
         raise RuntimeError("the preserved 165-byte alias.js source changed")
@@ -70,7 +60,7 @@ def main():
     mutations = 0
     for name, (source, function, observations) in positives.items():
         expected = "".join(f"{key}={value}\n" for key, value in sorted(observations.items()))
-        node = run([args.node, "-e", NODE, str(source), json.dumps(sorted(observations))])
+        node = node_globals(args.node, source, sorted(observations))
         reference = run([args.reference, str(source)])
         if node.stdout != expected or node.stderr or reference.stdout != expected:
             raise RuntimeError(f"{name}: Node/interpreter source observations changed")
@@ -133,9 +123,8 @@ def main():
                 file = args.work / f"{prefix}.{layout}.cpp"
                 file.write_text(cpp)
                 for index, compiler in enumerate(compilers):
-                    binary = args.work / f"{prefix}.{layout}.{index}"
-                    run([compiler, *FLAGS, str(file), "-o", str(binary)])
-                    actual = run([str(binary.resolve())]).stdout
+                    binary = (args.work / f"{prefix}.{layout}.{index}").resolve()
+                    actual = build_and_run(compiler, file, binary).stdout
                     if actual != expected:
                         raise RuntimeError(f"{prefix}/{layout}: {actual!r} != {expected!r}")
                     checked += 1

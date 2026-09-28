@@ -18,6 +18,13 @@ fact join(fact left, const fact & right, bool staticControl) {
 void invalidate(flow & state) {
     for (auto & item : state.heaps) { item.second.dynamic = true; }
 }
+bool clean(const fact & value, const flow & state) {
+    return value.time == BindingTime::Static && !value.nodes.empty() &&
+           llvm::all_of(value.nodes, [&](mlir::Operation * id) {
+               auto found = state.heaps.find(id);
+               return found != state.heaps.end() && !found->second.dynamic;
+           });
+}
 } // namespace binding_time_detail
 
 BindingTimeAnalysis::Impl::fact BindingTimeAnalysis::Impl::memory(mlir::Operation * op,
@@ -26,11 +33,7 @@ BindingTimeAnalysis::Impl::fact BindingTimeAnalysis::Impl::memory(mlir::Operatio
     using kind = fact::kind;
     const auto get = [&](mlir::Value value) { return state.values.lookup(value); };
     const auto clean = [&](const fact & object) {
-        return object.time == BindingTime::Static && !object.nodes.empty() &&
-               llvm::all_of(object.nodes, [&](mlir::Operation * id) {
-                   auto found = state.heaps.find(id);
-                   return found != state.heaps.end() && !found->second.dynamic;
-               });
+        return binding_time_detail::clean(object, state);
     };
     const auto primitive = [] { return fact{kind::primitive, BindingTime::Static, {}, {}}; };
     if (llvm::isa<ctjs::CreateObjectOp>(op) ||
@@ -90,11 +93,7 @@ BindingTimeAnalysis::Impl::fact BindingTimeAnalysis::Impl::memory(mlir::Operatio
             eligible = true;
             return {kind::constructor, BindingTime::Static, {}, {}};
         }
-        if (llvm::all_of(load.getResult().getUses(), [](mlir::OpOperand & use) {
-                return llvm::isa<ctjs::RootOp>(use.getOwner()) ||
-                       (llvm::isa<ctjs::CallDirectOp>(use.getOwner()) &&
-                        use.getOperandNumber() == 2);
-            })) {
+        if (calleeSlotOnly(load, true)) {
             eligible = true;
             return {kind::bookkeeping, BindingTime::Static, {}, {}};
         }

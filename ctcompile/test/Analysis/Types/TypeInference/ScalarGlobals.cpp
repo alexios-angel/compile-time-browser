@@ -88,8 +88,7 @@ void checkSavedScalarGlobalTypes(mlir::MLIRContext & context) {
         ++ctbrowser_test_failures;
     };
     const auto requested = [](mlir::ModuleOp module) {
-        auto contract = fixtures::contractFor(module);
-        contract.initialIntrinsics = {"Map"};
+        auto contract = fixtures::mapContractFor(module);
         contract.observations = {"saved", "alias", "trace"};
         return contract;
     };

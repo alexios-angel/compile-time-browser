@@ -244,12 +244,9 @@ bool classInitialization::clearOwnFieldLoop(ctjs::CallOp snapshot,
             } else if (auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(op)) {
                 auto key =
                     llvm::dyn_cast_if_present<ctjs::StringAttr>(get(write.getKey()).constant);
-                bool own = false;
-                for (auto field : fields) {
-                    if (!step()) { return {}; }
-                    own |= key && field == key.getValue();
+                if (!spend(fields.size()) || !key || !llvm::is_contained(fields, key.getValue())) {
+                    return {};
                 }
-                if (!own) { return {}; }
                 cleared.push_back(key.getValue());
                 continue;
             } else if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(op)) {

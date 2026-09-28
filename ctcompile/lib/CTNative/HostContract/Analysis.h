@@ -1,7 +1,9 @@
 #pragma once
 
 #include "ctcompile/CTNative/Analysis/HostContract.h"
+#include "ctcompile/CTNative/Analysis/NativeMap.h"
 #include "mlir/IR/Dominance.h"
+#include "mlir/IR/SymbolTable.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
@@ -31,6 +33,19 @@ const llvm::StringSet<> & domInitialIntrinsics();
 inline bool reservedCallbackBinding(llvm::StringRef name) {
     static const llvm::StringSet<> names{"globalThis", "undefined", "NaN", "Infinity"};
     return name.size() <= 10 && names.contains(name);
+}
+
+// The source function a closure creates. Its numeric index names a function
+// only inside the enclosing source program, whose callee the closure carries.
+inline ctjs::FuncOp closureTarget(ctjs::CreateClosureOp closure,
+                                  const llvm::DenseMap<unsigned, ctjs::FuncOp> & functions) {
+    auto scope = closure->getParentOfType<ctjs::FuncOp>();
+    if (closure.getFunction() < 0 || !scope || scope.getBody().empty() ||
+        scope.getBody().front().getNumArguments() < 3 ||
+        closure.getEnclosingClosure() != scope.getBody().front().getArgument(ctjs::arg_callee)) {
+        return {};
+    }
+    return functions.lookup(static_cast<unsigned>(closure.getFunction()));
 }
 
 // Invocation shape only: identity does not prove heritage, receiver rebinding,
@@ -114,6 +129,8 @@ struct analyzer {
 
     analyzer(mlir::ModuleOp module, const HostContract & contract, unsigned steps);
     bool step();
+    // `count` steps at once; one that does not fit spends the rest, as `count` steps would.
+    bool spend(uint64_t count);
     mlir::BlockArgument elementInput(mlir::Value value) const;
     ctjs::FuncOp target(mlir::Operation * call) const;
     ctjs::FuncOp callable(mlir::Value value, unsigned depth = 0);
@@ -135,6 +152,8 @@ struct analyzer {
     std::optional<HostScalarGlobalRead> scalarGlobalRead(ctjs::LoadGlobalOp read);
     bool scalarCallbacks(llvm::ArrayRef<HostMethodParameters> family, HostCapturedMap & result);
     std::optional<HostObjectGlobalRead> objectGlobalRead(ctjs::LoadGlobalOp read);
+    // The fresh object a value names: its allocation or a proved global alias's.
+    ctjs::CreateObjectOp namedObject(mlir::Value value);
     std::optional<std::vector<HostObjectGlobalRead>> objectGlobalReads(ctjs::CreateObjectOp made);
     bool capturedMapBody(ctjs::FuncOp function, bool prepared, bool primitiveContents,
                          const HostMethodParameters & parameters, HostCapturedMap & result,
@@ -159,6 +178,27 @@ struct analyzer {
 
 bool isInertEntryDeclaration(ctjs::FuncOp wrapper, ctjs::FuncOp target,
                              llvm::function_ref<bool()> spend);
+
+// Visit each symbol use in `module`'s attributes and body with the function it
+// names (null if none), one `step` each. A value stops the census: `unenumerable`
+// when a use list cannot be built, false when a step fails, else what `visit` returned.
+inline std::optional<bool> forEachSymbolUse(
+    mlir::ModuleOp module, bool unenumerable, llvm::function_ref<bool()> step,
+    llvm::function_ref<std::optional<bool>(const mlir::SymbolTable::SymbolUse &, ctjs::FuncOp)>
+        visit) {
+    for (const auto & uses : {mlir::SymbolTable::getSymbolUses(module.getOperation()),
+                              mlir::SymbolTable::getSymbolUses(&module.getBodyRegion())}) {
+        if (!uses) { return unenumerable; }
+        for (const auto & use : *uses) {
+            if (!step()) { return false; }
+            if (auto stop = visit(use, mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
+                                           use.getUser(), use.getSymbolRef()))) {
+                return stop;
+            }
+        }
+    }
+    return std::nullopt;
+}
 
 std::string initialBindingProblem(mlir::ModuleOp module, const HostContract & contract);
 

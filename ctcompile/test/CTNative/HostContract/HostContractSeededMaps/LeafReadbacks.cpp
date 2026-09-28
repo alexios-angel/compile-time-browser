@@ -3,21 +3,6 @@
 namespace ctcompile::test::host_contract_seeded_maps {
 
 void checkLeafReadbacks(mlir::MLIRContext & context, const std::string & source, bool prepared) {
-    const auto requested = [](mlir::ModuleOp module) {
-        auto contract = contractFor(module);
-        contract.initialIntrinsics = {"Map"};
-        return contract;
-    };
-    const auto withheld = [](mlir::ModuleOp module, const HostContractAnalysis & query) {
-        bool none = query.callables().empty();
-        module.walk([&](mlir::Operation * operation) {
-            none &= !query.callable(operation);
-            if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
-                none &= !query.property(read);
-            }
-        });
-        return none;
-    };
     const std::string write = "    %written = ctjs.call %setter(%state, %entryKey, %value)";
     const std::string field = "    %fieldKey = ctjs.constant #ctjs.string<\"value\">\n"
                               "    %fieldValue = ctjs.constant #ctjs.number<4607182418800017408>\n"
@@ -84,10 +69,9 @@ void checkLeafReadbacks(mlir::MLIRContext & context, const std::string & source,
     };
     const auto variant = [&](const std::string & text, bool expected, const char * message) {
         ++rows;
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(module), "source/prepared leaf readback fixture parses");
+        auto module = parsed(context, text, "source/prepared leaf readback fixture parses");
         if (!module) { return; }
-        const auto contract = requested(*module);
+        const auto contract = mapContractFor(*module);
         HostContractAnalysis query(*module, contract);
         check(query.proved() == expected && !query.exhausted() &&
                   (expected || withheld(*module, query)),
@@ -196,9 +180,8 @@ void checkLeafReadbacks(mlir::MLIRContext & context, const std::string & source,
                                    "      scf.yield\n"
                                    "    }\n"
                                    "    %same =";
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(replaced(same, "    %same =", branch),
-                                                              &context);
-        check(static_cast<bool>(module), "leaf scope mutation fixture parses before mutation");
+        auto module = parsed(context, replaced(same, "    %same =", branch),
+                             "leaf scope mutation fixture parses before mutation");
         if (!module) { continue; }
         mlir::Builder attributes(&context);
         module->walk([&](mlir::Operation * operation) {
@@ -206,7 +189,7 @@ void checkLeafReadbacks(mlir::MLIRContext & context, const std::string & source,
             operation->setAttr("ctnative.map_present", attributes.getBoolAttr(true));
             operation->setAttr("ctnative.object_origin", attributes.getStringAttr("same"));
         });
-        const auto contract = requested(*module);
+        const auto contract = mapContractFor(*module);
         HostContractAnalysis checked(*module, contract);
         check(checked.proved(),
               "valid branch-local object operations retain their owning source proof");
@@ -234,7 +217,7 @@ void checkLeafReadbacks(mlir::MLIRContext & context, const std::string & source,
         HostContractAnalysis stale(*module, contract);
         check(!stale.proved() && stale.reason().contains("fingerprint") && withheld(*module, stale),
               "a cross-scope identity operand invalidates the previous source fingerprint");
-        HostContractAnalysis fresh(*module, requested(*module));
+        HostContractAnalysis fresh(*module, mapContractFor(*module));
         check(!fresh.proved() && !fresh.exhausted() && withheld(*module, fresh),
               "forged origin reports cannot authorize a then-only object outside its SSA scope");
         compared->setOperand(operand, original);
@@ -243,10 +226,9 @@ void checkLeafReadbacks(mlir::MLIRContext & context, const std::string & source,
     }
 
     for (const auto & [text, label] : {std::pair{same, "identity"}, {savedAfter, "saved field"}}) {
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(module), "leaf readback budget fixture parses");
+        auto module = parsed(context, text, "leaf readback budget fixture parses");
         if (!module) { continue; }
-        auto contract = requested(*module);
+        auto contract = mapContractFor(*module);
         HostContractAnalysis query(*module, contract);
         const unsigned completion = query.steps();
         check(query.proved() && completion < 20000,
@@ -271,7 +253,7 @@ void checkLeafReadbacks(mlir::MLIRContext & context, const std::string & source,
             operation->setAttr("ctnative.object_schema", attributes.getStringAttr("leaf"));
             operation->setAttr("ctnative.object_origin", attributes.getStringAttr("same"));
         });
-        contract = requested(*module);
+        contract = mapContractFor(*module);
         check(
             HostContractAnalysis(*module, contract).proved(),
             "forged identity and presence reports leave the positive source independently proved");
@@ -303,7 +285,7 @@ void checkLeafReadbacks(mlir::MLIRContext & context, const std::string & source,
             check(!stale.proved() && stale.reason().contains("fingerprint") &&
                       withheld(*module, stale),
                   "a live readback operand mutation invalidates its previous fingerprint");
-            HostContractAnalysis fresh(*module, requested(*module));
+            HostContractAnalysis fresh(*module, mapContractFor(*module));
             check(!fresh.proved() && !fresh.exhausted() && withheld(*module, fresh),
                   "forged identity/presence facts cannot repair an unsafe fresh readback source");
             operation->setOperand(operand, original);

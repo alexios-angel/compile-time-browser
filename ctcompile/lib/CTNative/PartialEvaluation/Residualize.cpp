@@ -98,15 +98,8 @@ public:
         if (input.tag == value::kind::mapConstructor) { return mapConstructor(location); }
         if (input.tag == value::kind::method) { return method(input.node, input.method, location); }
         if (auto integer = llvm::dyn_cast_or_null<mlir::IntegerType>(type)) {
-            mlir::IntegerAttr attribute;
-            if (auto original = llvm::dyn_cast<mlir::IntegerAttr>(input.constant)) {
-                attribute = mlir::IntegerAttr::get(
-                    integer, original.getValue().zextOrTrunc(integer.getWidth()));
-            } else {
-                attribute = mlir::IntegerAttr::get(
-                    integer, llvm::cast<ctjs::BooleanAttr>(input.constant).getValue());
-            }
-            return mlir::arith::ConstantOp::create(at, location, attribute);
+            return mlir::arith::ConstantOp::create(at, location,
+                                                   integerConstant(integer, input.constant));
         }
         return constant(input.constant, location);
     }

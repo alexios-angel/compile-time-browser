@@ -6,10 +6,10 @@ from dataclasses import dataclass, field
 import json
 from pathlib import Path
 import re
-import subprocess
 from urllib.parse import quote
 
 from CTNative.HostContract.Provider import mutations
+from CTNative.harness import prepare_js
 
 prefix, host = mutations.prefix, mutations.host
 BASE = mutations.OPTIONS
@@ -625,54 +625,19 @@ def controls(args, prepared):
     ):
         raise RuntimeError("forged annotations crossed a write-then-throw callback")
 
-    budget_manifest = args.work / "budget.json"
-    budget_manifest.write_text(json.dumps(manifest))
-    budget_report = args.work / "budget.report.json"
-
-    def run_budget(limit):
-        budget_report.unlink(missing_ok=True)
-        result = subprocess.run(
-            [
-                args.opt,
-                str(original),
-                f"--ctnative-specialize-host-prefix=manifest={budget_manifest} output={budget_report} {CALLBACKS} max-steps={limit}",
-                "-o",
-                "/dev/null",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-        report = json.loads(budget_report.read_text())
-        if not report["valid"]:
-            if (
-                result.returncode != 1
-                or report["reason"] != "host prefix analysis work budget exhausted"
-            ):
-                raise RuntimeError(f"unexpected budget refusal: {result.stderr}")
-            no_facts(report, f"budget {limit}")
-        elif (
-            result.returncode
-            or report["summarized_provider_calls"] != 4
-            or report["runtime_provider_callbacks"] != 2
-        ):
-            raise RuntimeError(f"completed budget lost callback or provider state: {report}")
-        return report["valid"]
-
     # Locate the public completion threshold instead of mirroring an internal
     # step count. The last insufficient limit has attempted snapshots and
     # global writes, yet every usable fact must roll back with the transaction.
-    low, high = 0, 100000
-    if run_budget(low) or not run_budget(high):
-        raise RuntimeError("unexpected initial work-limit bracket")
-    while high - low > 1:
-        middle = (low + high) // 2
-        if run_budget(middle):
-            high = middle
-        else:
-            low = middle
-    if run_budget(high - 1) or not run_budget(high):
-        raise RuntimeError("callback completion boundary is unstable")
+    mutations.budget_threshold(
+        args,
+        original,
+        manifest,
+        CALLBACKS,
+        "budget",
+        no_facts,
+        lambda report: report["summarized_provider_calls"] == 4
+        and report["runtime_provider_callbacks"] == 2,
+    )
 
 
 def main():
@@ -698,13 +663,8 @@ def main():
         if args.oracle_only:
             continue
         evidence[case.name]["interpreter"] = interpreter(reference, folder, case, js)
-        raw, ir = folder / "raw.mlir", folder / "prepared.mlir"
-        host.run([args.translate, "--ctbrowser-js-to-ctjs", str(js), "-o", str(raw)])
-        if "ctjs.skipped" in raw.read_text():
-            raise RuntimeError(f"{case.name}: importer dropped a source function")
-        host.run(
-            [args.opt, str(raw), "--ctjs-resolve-globals", "--ctjs-lift-to-scf", "-o", str(ir)]
-        )
+        ir = folder / "prepared.mlir"
+        prepare_js(args, js, folder / "raw.mlir", ir, complete=True)
         prepared[case.name] = ir
         options = CALLBACKS if case.callback_mode else DIAGNOSTICS
         report, output, _ = mutations.specialize(

@@ -2,7 +2,6 @@
 """Execute native classList methods against the shared DOM token-list core."""
 
 from CTNative.Browser import native_dom as dom
-from CTNative.harness import find_compilers
 
 SOURCE = """function classes(element) {
   const list = element.classList;
@@ -161,41 +160,28 @@ REFUSALS = (
 
 def main():
     args = dom.parse_args(__doc__)
-    compilers = find_compilers()
-    compilers[1] = args.clang
+    compilers = args.compilers
     includes, libraries = dom.link_options(args, selectors=True)
     ir, contract = dom.prepare(args, "classes", SOURCE, 1)
-    for owned in (False, True):
-        manifest = dict(
-            contract, provider="ctbrowser-dom-session-v1" if owned else "ctbrowser-dom-v1"
+    for owned, optimize, manifest in dom.variants(contract):
+        name = f"classes-{owned}-{optimize}"
+        native = dom.lower(args, ir, manifest, name, optimize=optimize)
+        for method in ("contains", "add", "remove"):
+            if f'"ctnative::{method}_class"' not in native.read_text():
+                raise RuntimeError(f"classList.{method} bypassed the public DOM helper")
+        dom.standalone(
+            args,
+            native,
+            name,
+            CHECKS + (OWNED_CHECKS if owned else ""),
+            compilers,
+            includes,
+            libraries,
         )
-        for optimize in (False, True):
-            name = f"classes-{owned}-{optimize}"
-            native = dom.lower(args, ir, manifest, name, optimize=optimize)
-            for method in ("contains", "add", "remove"):
-                if f'"ctnative::{method}_class"' not in native.read_text():
-                    raise RuntimeError(f"classList.{method} bypassed the public DOM helper")
-            dom.standalone(
-                args,
-                native,
-                name,
-                CHECKS + (OWNED_CHECKS if owned else ""),
-                compilers,
-                includes,
-                libraries,
-            )
     for index, body in enumerate(REFUSALS):
         source = f"function bad(element) {{ {body} }}\n"
         refused, manifest = dom.prepare(args, f"refused-{index}", source, 1)
-        for optimize in (False, True):
-            dom.lower(
-                args,
-                refused,
-                manifest,
-                f"refused-{index}-{optimize}",
-                optimize=optimize,
-                success=False,
-            )
+        dom.refuse(args, refused, manifest, f"refused-{index}")
     # Even no-argument writes invalidate saved dataset views. A membership
     # query leaves the same source epoch intact.
     for method in ("add", "remove", "contains"):
@@ -219,14 +205,10 @@ def main():
             if method != "contains" and "crosses a source mutation" not in result:
                 raise RuntimeError(f"classList.{method} refusal did not retain the mutation epoch")
     void_ir, void_contract = dom.prepare(args, "void", VOID_SOURCE, 1)
-    for owned in (False, True):
-        manifest = dict(
-            void_contract, provider="ctbrowser-dom-session-v1" if owned else "ctbrowser-dom-v1"
-        )
-        for optimize in (False, True):
-            name = f"void-{owned}-{optimize}"
-            native = dom.lower(args, void_ir, manifest, name, optimize=optimize)
-            dom.standalone(args, native, name, VOID_CHECKS, compilers, includes, libraries)
+    for owned, optimize, manifest in dom.variants(void_contract):
+        name = f"void-{owned}-{optimize}"
+        native = dom.lower(args, void_ir, manifest, name, optimize=optimize)
+        dom.standalone(args, native, name, VOID_CHECKS, compilers, includes, libraries)
     for budget in (0, 1, 20):
         dom.lower(args, ir, contract, f"budget-{budget}", max_steps=budget, success=False)
     stale = dict(contract, module_sha256="0" * 64)

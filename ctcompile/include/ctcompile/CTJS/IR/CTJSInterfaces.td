@@ -77,20 +77,6 @@ def CTJS_EscapeEffectOpInterface
 // back. The classes are CTJSEscapeEffects.h's.
 class CTJS_EscapeRoute<string name>
     : Resource<"::ctcompile::ctjs::EscapeEffects::" # name>;
-def CTJS_Returned        : CTJS_EscapeRoute<"Returned">;
-def CTJS_Thrown          : CTJS_EscapeRoute<"Thrown">;
-def CTJS_Stored          : CTJS_EscapeRoute<"Stored">;
-def CTJS_StoredGlobal    : CTJS_EscapeRoute<"StoredGlobal">;
-def CTJS_Captured        : CTJS_EscapeRoute<"Captured">;
-def CTJS_Passed          : CTJS_EscapeRoute<"Passed">;
-def CTJS_Converted       : CTJS_EscapeRoute<"Converted">;
-def CTJS_ProtoMutated    : CTJS_EscapeRoute<"ProtoMutated">;
-def CTJS_AccessorDefined : CTJS_EscapeRoute<"AccessorDefined">;
-// The boxed-site reasons, named by a result decorator only.
-def CTJS_Arguments       : CTJS_EscapeRoute<"Arguments">;
-def CTJS_RuntimeArray    : CTJS_EscapeRoute<"RuntimeArray">;
-def CTJS_Phase59         : CTJS_EscapeRoute<"Phase59">;
-def CTJS_NotTracked      : CTJS_EscapeRoute<"NotTracked">;
 
 // THE EFFECTS. Stage 0 and a partial effect, always: the stage/range columns
 // describe memory ordering and mean nothing for an escape.
@@ -102,15 +88,9 @@ class CTJS_EscapeEffect<string effect, Resource where>
 //   Arg<CTJS_ValueType, "", [CTJS_SinkStored]>:$value
 // Variadics decorate the same way and enumerate one instance per element.
 class CTJS_Sink<Resource where> : CTJS_EscapeEffect<"Sink", where>;
-def CTJS_SinkReturned        : CTJS_Sink<CTJS_Returned>;
-def CTJS_SinkThrown          : CTJS_Sink<CTJS_Thrown>;
-def CTJS_SinkStored          : CTJS_Sink<CTJS_Stored>;
-def CTJS_SinkStoredGlobal    : CTJS_Sink<CTJS_StoredGlobal>;
-def CTJS_SinkCaptured        : CTJS_Sink<CTJS_Captured>;
-def CTJS_SinkPassed          : CTJS_Sink<CTJS_Passed>;
-def CTJS_SinkConverted       : CTJS_Sink<CTJS_Converted>;
-def CTJS_SinkProtoMutated    : CTJS_Sink<CTJS_ProtoMutated>;
-def CTJS_SinkAccessorDefined : CTJS_Sink<CTJS_AccessorDefined>;
+foreach route = ["Returned", "Thrown", "Stored", "StoredGlobal", "Captured", "Passed",
+                 "Converted", "ProtoMutated", "AccessorDefined"] in
+  def CTJS_Sink#route : CTJS_Sink<CTJS_EscapeRoute<route>>;
 
 // CARRY: the result may be the operand's object. The analysis also adds an
 // external object to a carried result, because the one carrier today
@@ -119,11 +99,10 @@ def CTJS_Carry : CTJS_EscapeEffect<"Carry", DefaultResource>;
 
 // BOXED-SITE(reason): put on a RESULT, e.g.
 //   Res<CTJS_ValueType, "", [CTJS_BoxedPhase59]>:$result
+// The boxed-site reasons are named by a result decorator only.
 class CTJS_BoxedSite<Resource why> : CTJS_EscapeEffect<"BoxedSite", why>;
-def CTJS_BoxedArguments    : CTJS_BoxedSite<CTJS_Arguments>;
-def CTJS_BoxedRuntimeArray : CTJS_BoxedSite<CTJS_RuntimeArray>;
-def CTJS_BoxedPhase59      : CTJS_BoxedSite<CTJS_Phase59>;
-def CTJS_BoxedNotTracked   : CTJS_BoxedSite<CTJS_NotTracked>;
+foreach route = ["Arguments", "RuntimeArray", "Phase59", "NotTracked"] in
+  def CTJS_Boxed#route : CTJS_BoxedSite<CTJS_EscapeRoute<route>>;
 
 // THE TRAIT FORM, for an operation whose every operand is NEITHER and proved
 // so: it declares the interface with an empty effect list, which is how

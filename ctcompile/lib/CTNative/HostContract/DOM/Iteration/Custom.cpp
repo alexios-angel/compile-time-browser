@@ -4,6 +4,7 @@
 #include "ctbrowser/core/symbol.hpp"
 #include "ctcompile/CTNative/Runtime/String.hpp"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/IR/Verifier.h"
 #include "mlir/Transforms/RegionUtils.h"
 #include "llvm/ADT/APFloat.h"
@@ -30,10 +31,38 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         return load ? load.getName() : llvm::StringRef{};
     };
     const auto undefined = dom_source_detail::DOMSource::undefined;
+    // The value a tuple yield or invoke edge forwards `use` to, or null: an
+    // if/switch or invoke result, or an invoke continuation's argument.
+    const auto forwarded = [](mlir::OpOperand & use) -> mlir::Value {
+        auto * user = use.getOwner();
+        const unsigned index = use.getOperandNumber();
+        if ((llvm::isa<mlir::scf::YieldOp>(user) &&
+             llvm::isa<mlir::scf::IfOp, mlir::scf::IndexSwitchOp>(user->getParentOp())) ||
+            llvm::isa<ctjs::InvokeYieldOp>(user)) {
+            return user->getParentOp()->getResult(index);
+        }
+        auto invocation = llvm::isa<ctjs::InvokeExitOp>(user)
+                              ? llvm::cast<ctjs::InvokeOp>(user->getParentOp())
+                              : ctjs::InvokeOp{};
+        if (!invocation) { return {}; }
+        return (index ? invocation.getUnwindBody() : invocation.getNormalBody())
+            .front()
+            .getArgument(index);
+    };
+    // Whether `closure` is the only creation of its function, within budget.
+    const auto uniqueCreation = [&](ctjs::CreateClosureOp closure) {
+        unsigned count = 0;
+        const auto counted = candidate.walk([&](ctjs::CreateClosureOp other) {
+            if (!spend()) { return mlir::WalkResult::interrupt(); }
+            count += other.getFunction() == closure.getFunction();
+            return mlir::WalkResult::advance();
+        });
+        return !counted.wasInterrupted() && count == 1;
+    };
     bool custom = false, undefinedWritten = false;
     const auto census = candidate.walk([&](mlir::Operation * operation) {
-        for (unsigned i = 0; i <= operation->getNumOperands(); ++i) {
-            if (!spend()) { return mlir::WalkResult::interrupt(); }
+        if (!work.step(uint64_t(1) + operation->getNumOperands())) {
+            return mlir::WalkResult::interrupt();
         }
         if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(operation)) {
             undefinedWritten |= store.getNameAttr() && store.getName() == "undefined";
@@ -81,14 +110,9 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             }
         }
         if (llvm::isa<ctjs::PushHandlerOp>(operation)) { return mlir::WalkResult::interrupt(); }
-        if (auto thrown = llvm::dyn_cast<ctjs::ThrowOp>(operation)) {
-            auto region = llvm::dyn_cast<mlir::scf::ExecuteRegionOp>(thrown->getParentOp());
-            if (!region || !region.getNoInline() || region.getNumResults() ||
-                region->getNumOperands() || !region.getRegion().hasOneBlock() ||
-                region.getRegion().front().getNumArguments() ||
-                !llvm::hasSingleElement(region.getRegion().front())) {
-                return mlir::WalkResult::interrupt();
-            }
+        if (llvm::isa<ctjs::ThrowOp>(operation) &&
+            savedThrow(operation->getParentOp()) != operation) {
+            return mlir::WalkResult::interrupt();
         }
         if (auto invocation = llvm::dyn_cast<ctjs::InvokeOp>(operation)) {
             if (invocation->getNumOperands() || !invocation.getBody().hasOneBlock() ||
@@ -96,14 +120,10 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 !invocation.getUnwindBody().hasOneBlock()) {
                 return mlir::WalkResult::interrupt();
             }
-            auto & body = invocation.getBody().front();
-            auto call = body.empty() ? ctjs::CallOp{} : llvm::dyn_cast<ctjs::CallOp>(body.front());
-            auto exit = body.empty() ? ctjs::InvokeExitOp{}
-                                     : llvm::dyn_cast<ctjs::InvokeExitOp>(body.back());
+            auto call = invokedCall(invocation);
             const auto arity = call ? host_detail::iteratorIntrinsicArity(helper(call)) : 0;
-            if (body.getNumArguments() || !call || !exit || call->getNextNode() != exit || !arity ||
-                !undefined(call.getReceiver()) || call.getArgs().size() != arity ||
-                exit.getNormalResult() != call.getResult() || !call.getResult().hasOneUse()) {
+            if (!call || !arity || !undefined(call.getReceiver()) ||
+                call.getArgs().size() != arity) {
                 return mlir::WalkResult::interrupt();
             }
             if (invocation.getNumResults()) {
@@ -113,11 +133,9 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 if (!invocation->getParentOfType<ctjs::TryOp>()) {
                     return mlir::WalkResult::interrupt();
                 }
-                if (helper(call) == "__ctbrowser_iter_close") {
-                    auto flag = call.getArgs()[1].getDefiningOp<ctjs::ConstantOp>();
-                    if (!flag || !llvm::isa<ctjs::BooleanAttr>(flag.getValue())) {
-                        return mlir::WalkResult::interrupt();
-                    }
+                if (helper(call) == "__ctbrowser_iter_close" &&
+                    !ctjs::constantAttr<ctjs::BooleanAttr>(call.getArgs()[1])) {
+                    return mlir::WalkResult::interrupt();
                 }
                 for (auto * region : {&invocation.getNormalBody(), &invocation.getUnwindBody()}) {
                     for (mlir::Operation & projection : region->front().without_terminator()) {
@@ -132,12 +150,11 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 observedInvocations[invocation] = call;
                 return mlir::WalkResult::advance();
             }
-            if (helper(call) != "__ctbrowser_iter_close" || !exit.getState().empty()) {
+            if (helper(call) != "__ctbrowser_iter_close" ||
+                !llvm::cast<ctjs::InvokeExitOp>(call->getNextNode()).getState().empty()) {
                 return mlir::WalkResult::interrupt();
             }
-            auto flag = call.getArgs()[1].getDefiningOp<ctjs::ConstantOp>();
-            auto boolean =
-                flag ? llvm::dyn_cast<ctjs::BooleanAttr>(flag.getValue()) : ctjs::BooleanAttr{};
+            auto boolean = ctjs::constantAttr<ctjs::BooleanAttr>(call.getArgs()[1]);
             if (!boolean || !boolean.getValue()) { return mlir::WalkResult::interrupt(); }
             for (auto * region : {&invocation.getNormalBody(), &invocation.getUnwindBody()}) {
                 if (!spend()) { return mlir::WalkResult::interrupt(); }
@@ -183,11 +200,11 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         return error("DOM custom iterator holder lacks preceding local allocation");
     }
     const auto exactBoolean = [](mlir::Value condition) -> std::optional<bool> {
-        if (auto constant = condition.getDefiningOp<mlir::arith::ConstantOp>()) {
-            if (auto value = llvm::dyn_cast<mlir::IntegerAttr>(constant.getValue())) {
-                return !value.getValue().isZero();
-            }
-        } else if (auto truthy = condition.getDefiningOp<ctjs::TruthyOp>()) {
+        mlir::IntegerAttr value;
+        if (mlir::matchPattern(condition, mlir::m_Constant(&value))) {
+            return !value.getValue().isZero();
+        }
+        if (auto truthy = condition.getDefiningOp<ctjs::TruthyOp>()) {
             auto constant = truthy.getValue().getDefiningOp<ctjs::ConstantOp>();
             if (constant) {
                 auto value = PrimitiveAlternatives::literal(constant.getValue());
@@ -618,18 +635,9 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                         auto selected = exactBoolean(branch.getCondition());
                         if (!selected) { return mlir::WalkResult::advance(); }
                         auto * predicate = branch.getCondition().getDefiningOp();
-                        auto & region = *selected ? branch.getThenRegion() : branch.getElseRegion();
-                        if (!region.empty()) {
-                            auto & body = region.front();
-                            auto yield = llvm::cast<mlir::scf::YieldOp>(body.getTerminator());
-                            // Verification establishes result count, types and
-                            // dominance; substitute only the selected payload.
-                            branch.replaceAllUsesWith(yield.getOperands());
-                            yield.erase();
-                            branch->getBlock()->getOperations().splice(branch->getIterator(),
-                                                                       body.getOperations());
-                        }
-                        branch.erase();
+                        // Verification establishes result count, types and
+                        // dominance; substitute only the selected payload.
+                        inlineSelectedArm(branch, *selected);
                         changed = true;
                         // Only the unused pure predicate disappears; its input
                         // and every selected operation retain their source order.
@@ -750,7 +758,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         return error("DOM Symbol.iterator must be a closed identity method");
     }
     if (!work.checkBody(identityBody, false, true)) { return error(work.reason); }
-    unsigned identityReturns = 0, creations = 0;
+    unsigned identityReturns = 0;
     for (mlir::Operation & operation : identityBody.getBody().front()) {
         if (!spend()) { return error("DOM custom iterator budget exhausted"); }
         if (auto returned = llvm::dyn_cast<ctjs::ReturnOp>(operation)) {
@@ -764,14 +772,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             return error("DOM Symbol.iterator identity method has additional effects");
         }
     }
-    const auto identities = candidate.walk([&](ctjs::CreateClosureOp closure) {
-        if (!spend()) { return mlir::WalkResult::interrupt(); }
-        creations += closure.getFunction() == identity.getFunction();
-        return mlir::WalkResult::advance();
-    });
-    if (identities.wasInterrupted() || identityReturns != 1 || creations != 1 ||
-        !mlir::SymbolTable::symbolKnownUseEmpty(identityBody, candidate.getOperation()) ||
-        !mlir::SymbolTable::symbolKnownUseEmpty(identityBody, &candidate.getBodyRegion())) {
+    if (!uniqueCreation(identity) || identityReturns != 1 ||
+        !symbolUnused(identityBody, candidate)) {
         return error("DOM iterator identity method is shared or symbolically observed");
     }
     for (mlir::Operation * user : identity->getUsers()) {
@@ -1088,13 +1090,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                          llvm::any_of(indices.asArrayRef(), [](int32_t i) { return i != -1; })))) {
             return error("DOM iterator sibling helper requires an exact local leaf");
         }
-        unsigned count = 0;
-        const auto unique = candidate.walk([&](ctjs::CreateClosureOp other) {
-            if (!spend()) { return mlir::WalkResult::interrupt(); }
-            count += other.getFunction() == closure.getFunction();
-            return mlir::WalkResult::advance();
-        });
-        if (unique.wasInterrupted() || count != 1 || mlir::failed(mlir::verify(body))) {
+        if (!uniqueCreation(closure) || mlir::failed(mlir::verify(body))) {
             return error("DOM iterator sibling helper is shared or malformed");
         }
         // Prove loop-break continuations before the scalar leaf census, as for
@@ -1171,42 +1167,9 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         }
         return true;
     };
-    // Follow every incoming edge, including the zero-trip initializer and the
-    // backedge. A visited set closes transport cycles; only known leaves supply
-    // identities. Never cache a partial traversal of a cycle.
-    const auto transportInputs = [](mlir::Value value,
-                                    llvm::SmallVectorImpl<mlir::Value> & inputs) {
-        if (auto argument = llvm::dyn_cast<mlir::BlockArgument>(value)) {
-            auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(argument.getOwner()->getParentOp());
-            if (!loop) { return false; }
-            auto index = argument.getArgNumber();
-            if (argument.getOwner() == &loop.getBefore().front()) {
-                inputs.push_back(loop.getInits()[index]);
-                inputs.push_back(loop.getAfter().front().getTerminator()->getOperand(index));
-            } else {
-                inputs.push_back(
-                    llvm::cast<mlir::scf::ConditionOp>(loop.getBefore().front().getTerminator())
-                        .getArgs()[index]);
-            }
-            return true;
-        }
-        auto result = llvm::dyn_cast<mlir::OpResult>(value);
-        if (!result) { return false; }
-        if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(result.getOwner())) {
-            for (auto & region : branch->getRegions()) {
-                inputs.push_back(
-                    region.front().getTerminator()->getOperand(result.getResultNumber()));
-            }
-            return true;
-        }
-        if (auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(result.getOwner())) {
-            inputs.push_back(
-                llvm::cast<mlir::scf::ConditionOp>(loop.getBefore().front().getTerminator())
-                    .getArgs()[result.getResultNumber()]);
-            return true;
-        }
-        return false;
-    };
+    // Follow every incoming transportInputs edge, including the zero-trip
+    // initializer and the backedge. A visited set closes transport cycles; only
+    // known leaves supply identities. Never cache a partial traversal of a cycle.
     // Snapshot return provenance before capture erasure. Calls retain their
     // callee and actual dependencies; formal callees are bound per invocation.
     // The graph owns indices only, so no erased SSA definition is consulted.
@@ -1599,10 +1562,9 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     if (!helpers.empty()) {
         // Enumerate both symbol scopes once for the complete family. Charge
         // the source walk before allocating either list, then each visited use.
-        if (work.remaining / 2 < sourceCost) {
+        if (!work.step(2 * uint64_t(sourceCost))) {
             return error("DOM custom iterator budget exhausted");
         }
-        work.remaining -= 2 * sourceCost;
         for (const auto & uses : {mlir::SymbolTable::getSymbolUses(candidate.getOperation()),
                                   mlir::SymbolTable::getSymbolUses(&candidate.getBodyRegion())}) {
             if (!uses) { return error("DOM iterator sibling helper has unknown symbol uses"); }
@@ -1865,15 +1827,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         }
         if (!stateInitials.empty() || thrown) {
             auto closure = store.getValue().getDefiningOp<ctjs::CreateClosureOp>();
-            unsigned count = 0;
-            const auto unique = candidate.walk([&](ctjs::CreateClosureOp other) {
-                if (!spend()) { return mlir::WalkResult::interrupt(); }
-                count += other.getFunction() == closure.getFunction();
-                return mlir::WalkResult::advance();
-            });
-            if (unique.wasInterrupted() || count != 1 || !undefined(closure.getEnclosingThis()) ||
-                !mlir::SymbolTable::symbolKnownUseEmpty(body, candidate.getOperation()) ||
-                !mlir::SymbolTable::symbolKnownUseEmpty(body, &candidate.getBodyRegion())) {
+            if (!uniqueCreation(closure) || !undefined(closure.getEnclosingThis()) ||
+                !symbolUnused(body, candidate)) {
                 return error("DOM iterator state method is shared or symbolically observed");
             }
             for (mlir::Operation * user : closure->getUsers()) {
@@ -2013,20 +1968,13 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 !branch.getThenRegion().isAncestor(call->getParentRegion())) {
                 continue;
             }
-            auto tag = compare.getLhs();
-            auto key = compare.getRhs().getDefiningOp<mlir::arith::ConstantOp>();
-            if (!key) {
-                tag = compare.getRhs();
-                key = compare.getLhs().getDefiningOp<mlir::arith::ConstantOp>();
-            }
+            auto [tag, key] = constantComparison(compare);
             auto cast = tag.getDefiningOp<mlir::arith::IndexCastUIOp>();
-            auto integer =
-                key ? llvm::dyn_cast<mlir::IntegerAttr>(key.getValue()) : mlir::IntegerAttr{};
+            auto integer = exactTag(key, 32);
             // i32 -> index is lossless on either supported index width. No
             // narrowing casts or unknown/truncated tags can select an identity.
             if (!cast || !cast.getIn().getType().isInteger(32) || !tag.getType().isIndex() ||
-                !integer || integer.getValue().isNegative() ||
-                integer.getValue().getActiveBits() > 32) {
+                !integer) {
                 continue;
             }
             bool matched = false;
@@ -2077,21 +2025,11 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                         (llvm::isa<ctjs::RootOp>(observer) && use.getOperandNumber() == 1)) {
                         continue;
                     }
-                    if (auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(observer);
-                        yield && llvm::isa<mlir::scf::IfOp, mlir::scf::IndexSwitchOp>(
-                                     yield->getParentOp())) {
-                        pending.push_back(yield->getParentOp()->getResult(use.getOperandNumber()));
-                        continue;
-                    }
-                    if (auto exit = llvm::dyn_cast<ctjs::InvokeExitOp>(observer);
-                        exit && use.getOperandNumber() > 0) {
-                        auto call = llvm::cast<ctjs::InvokeOp>(exit->getParentOp());
-                        pending.push_back(
-                            call.getUnwindBody().front().getArgument(use.getOperandNumber()));
-                        continue;
-                    }
-                    if (auto yield = llvm::dyn_cast<ctjs::InvokeYieldOp>(observer)) {
-                        pending.push_back(yield->getParentOp()->getResult(use.getOperandNumber()));
+                    // Every transport edge but an invoke's normal payload.
+                    if (auto value = forwarded(use);
+                        value &&
+                        !(llvm::isa<ctjs::InvokeExitOp>(observer) && use.getOperandNumber() == 0)) {
+                        pending.push_back(value);
                         continue;
                     }
                     return error("DOM iterator done field requires truth-only observations");
@@ -2107,9 +2045,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         if (helper(call) == "__ctbrowser_iter_next" && call.getArgs().size() == 1 && !next) {
             next = call;
         } else if (helper(call) == "__ctbrowser_iter_close" && call.getArgs().size() == 2) {
-            auto flag = call.getArgs()[1].getDefiningOp<ctjs::ConstantOp>();
-            auto boolean =
-                flag ? llvm::dyn_cast<ctjs::BooleanAttr>(flag.getValue()) : ctjs::BooleanAttr{};
+            auto boolean = ctjs::constantAttr<ctjs::BooleanAttr>(call.getArgs()[1]);
             const bool protectedClose = protectedCloses.lookup(call->getParentOp()) == call;
             if (!boolean || boolean.getValue() != protectedClose) {
                 return error("DOM iterator abrupt close requires its exact suppression region");
@@ -2187,11 +2123,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                            ? &continuation->front().front()
                            : nullptr;
             }
-            auto terminal = llvm::dyn_cast_or_null<mlir::scf::ExecuteRegionOp>(next);
-            if (!terminal || !terminal.getNoInline() || terminal.getNumResults() ||
-                !terminal.getRegion().hasOneBlock() ||
-                !llvm::hasSingleElement(terminal.getRegion().front()) ||
-                !llvm::isa<ctjs::ThrowOp>(terminal.getRegion().front().front())) {
+            if (!savedThrow(next)) {
                 return error("DOM iterator protected state requires an immediate saved throw");
             }
         }
@@ -2266,20 +2198,13 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             if (selector && compare &&
                 (compare.getPredicate() == mlir::arith::CmpIPredicate::eq ||
                  compare.getPredicate() == mlir::arith::CmpIPredicate::ne)) {
-                auto value = compare.getLhs();
-                auto key = compare.getRhs().getDefiningOp<mlir::arith::ConstantOp>();
-                if (!key) {
-                    value = compare.getRhs();
-                    key = compare.getLhs().getDefiningOp<mlir::arith::ConstantOp>();
-                }
+                auto [value, key] = constantComparison(compare);
                 auto cast = value.getDefiningOp<mlir::arith::IndexCastUIOp>();
                 if (cast && cast.getIn() == selector && value.getType().isIndex()) {
                     value = cast.getIn();
                 }
-                auto integer =
-                    key ? llvm::dyn_cast<mlir::IntegerAttr>(key.getValue()) : mlir::IntegerAttr{};
-                if (value == selector && integer && !integer.getValue().isNegative() &&
-                    integer.getValue().getActiveBits() <= 32) {
+                auto integer = exactTag(key, 32);
+                if (value == selector && integer) {
                     const bool equal =
                         integer.getValue().getZExtValue() == tag.getValue().getZExtValue();
                     selected = equal == (compare.getPredicate() == mlir::arith::CmpIPredicate::eq)
@@ -2329,10 +2254,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             auto unwind =
                 llvm::cast<ctjs::InvokeYieldOp>(observedNext.getUnwindBody().front().back());
             const auto boolean = [&](ctjs::InvokeYieldOp yield) {
-                auto literal =
-                    yield.getValues()[flag.getResultNumber()].getDefiningOp<ctjs::ConstantOp>();
-                return literal ? llvm::dyn_cast<ctjs::BooleanAttr>(literal.getValue())
-                               : ctjs::BooleanAttr{};
+                return ctjs::constantAttr<ctjs::BooleanAttr>(
+                    yield.getValues()[flag.getResultNumber()]);
             };
             auto success = boolean(normal), failure = boolean(unwind);
             if (success && failure && success.getValue() != failure.getValue() &&
@@ -2399,22 +2322,11 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             if (!spend()) { return error("DOM custom iterator budget exhausted"); }
             auto * user = use.getOwner();
             if (llvm::isa<ctjs::RootOp>(user) && use.getOperandNumber() == 1) { continue; }
-            if (auto exit = llvm::dyn_cast<ctjs::InvokeExitOp>(user)) {
-                auto invocation = llvm::cast<ctjs::InvokeOp>(exit->getParentOp());
-                if (observedNext && observedInvocations.contains(invocation)) {
-                    pendingItems.push_back(use.getOperandNumber() == 0
-                                               ? invocation.getNormalBody().front().getArgument(0)
-                                               : invocation.getUnwindBody().front().getArgument(
-                                                     use.getOperandNumber()));
-                    continue;
-                }
-            }
-            if (observedNext &&
-                ((llvm::isa<mlir::scf::YieldOp>(user) &&
-                  llvm::isa<mlir::scf::IfOp, mlir::scf::IndexSwitchOp>(user->getParentOp())) ||
-                 (llvm::isa<ctjs::InvokeYieldOp>(user) &&
-                  observedInvocations.contains(user->getParentOp())))) {
-                pendingItems.push_back(user->getParentOp()->getResult(use.getOperandNumber()));
+            const bool invoke = llvm::isa<ctjs::InvokeExitOp, ctjs::InvokeYieldOp>(user);
+            if (auto value = forwarded(use);
+                value && observedNext &&
+                (!invoke || observedInvocations.contains(user->getParentOp()))) {
+                pendingItems.push_back(value);
                 continue;
             }
             bool guarded = false;
@@ -2494,23 +2406,13 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                     // A proved custom open cannot select the eager-array arm.
                     // Keep its source operations for completion normalization.
                     if (inactive) { continue; }
-                    if (auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(user);
-                        yield && llvm::isa<mlir::scf::IfOp, mlir::scf::IndexSwitchOp>(
-                                     yield->getParentOp())) {
-                        pending.push_back(yield->getParentOp()->getResult(use.getOperandNumber()));
-                        continue;
-                    }
-                    if (auto exit = llvm::dyn_cast<ctjs::InvokeExitOp>(user);
-                        exit && use.getOperandNumber() > 0 &&
-                        observedInvocations.contains(exit->getParentOp())) {
-                        auto invocation = llvm::cast<ctjs::InvokeOp>(exit->getParentOp());
-                        pending.push_back(
-                            invocation.getUnwindBody().front().getArgument(use.getOperandNumber()));
-                        continue;
-                    }
-                    if (llvm::isa<ctjs::InvokeYieldOp>(user) &&
-                        observedInvocations.contains(user->getParentOp())) {
-                        pending.push_back(user->getParentOp()->getResult(use.getOperandNumber()));
+                    // Only observed invocations carry state, never as a normal payload.
+                    const bool invoke = llvm::isa<ctjs::InvokeExitOp, ctjs::InvokeYieldOp>(user);
+                    if (auto value = forwarded(use);
+                        value &&
+                        !(llvm::isa<ctjs::InvokeExitOp>(user) && use.getOperandNumber() == 0) &&
+                        (!invoke || observedInvocations.contains(user->getParentOp()))) {
+                        pending.push_back(value);
                         continue;
                     }
                     if (seed == object.getResult()) {
@@ -2795,12 +2697,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                             if (!called) { return false; }
                             if (observableThrow) {
                                 if (!spend() || !spend()) { return false; }
-                                auto abrupt = mlir::scf::ExecuteRegionOp::create(inside, where,
-                                                                                 mlir::TypeRange{});
-                                abrupt.setNoInline(true);
-                                auto & throwing = abrupt.getRegion().emplaceBlock();
-                                mlir::OpBuilder terminal(&throwing, throwing.begin());
-                                ctjs::ThrowOp::create(terminal, where, called.getResult());
+                                emitSavedThrow(inside, where, called.getResult());
                             }
                         }
                         if (!observableThrow && state.size() > 1) {
@@ -2986,14 +2883,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 values.map(operation.getResults(), copied->getResults());
                 continue;
             }
-            if (auto region = llvm::dyn_cast<mlir::scf::ExecuteRegionOp>(operation)) {
-                if (!region.getNoInline() || region.getNumResults() || region->getNumOperands() ||
-                    !region.getRegion().hasOneBlock() ||
-                    region.getRegion().front().getNumArguments() ||
-                    !llvm::hasSingleElement(region.getRegion().front()) ||
-                    !llvm::isa<ctjs::ThrowOp>(region.getRegion().front().back()) || !spend()) {
-                    return false;
-                }
+            if (llvm::isa<mlir::scf::ExecuteRegionOp>(operation)) {
+                if (!savedThrow(&operation) || !spend()) { return false; }
                 at.clone(operation, values);
                 continue;
             }
@@ -3011,22 +2902,18 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 continue;
             }
             if (auto truth = llvm::dyn_cast<ctjs::TruthyOp>(operation)) {
-                auto constant =
-                    values.lookup(truth.getValue()).template getDefiningOp<ctjs::ConstantOp>();
-                auto flag = constant ? llvm::dyn_cast<ctjs::BooleanAttr>(constant.getValue())
-                                     : ctjs::BooleanAttr{};
-                if (flag) {
+                if (auto flag =
+                        ctjs::constantAttr<ctjs::BooleanAttr>(values.lookup(truth.getValue()))) {
                     auto bit = mlir::arith::ConstantIntOp::create(at, where, flag.getValue(), 1);
                     values.map(truth.getResult(), bit.getResult());
                     continue;
                 }
             }
             if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(operation)) {
-                auto constant = values.lookup(branch.getCondition())
-                                    .template getDefiningOp<mlir::arith::ConstantOp>();
-                auto bit = constant ? llvm::dyn_cast<mlir::IntegerAttr>(constant.getValue())
-                                    : mlir::IntegerAttr{};
-                if (bit && bit.getType().isInteger(1)) {
+                mlir::IntegerAttr bit;
+                if (mlir::matchPattern(values.lookup(branch.getCondition()),
+                                       mlir::m_Constant(&bit)) &&
+                    bit.getType().isInteger(1)) {
                     auto & region = bit.getInt() ? branch.getThenRegion() : branch.getElseRegion();
                     if (!region.hasOneBlock() ||
                         !self(self, region.front(), at, values, state, depth + 1, false)) {
@@ -3173,11 +3060,9 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     entry.getBody().takeBody(rewritten);
     if (retainedCompletions) {
         const auto charged = entry.walk([&](mlir::Operation * operation) {
-            for (unsigned i = 0; i <= operation->getNumOperands() + operation->getNumResults();
-                 ++i) {
-                if (!spend()) { return mlir::WalkResult::interrupt(); }
-            }
-            return mlir::WalkResult::advance();
+            return work.step(uint64_t(1) + operation->getNumOperands() + operation->getNumResults())
+                       ? mlir::WalkResult::advance()
+                       : mlir::WalkResult::interrupt();
         });
         if (charged.wasInterrupted()) { return error("DOM custom iterator budget exhausted"); }
         if (mlir::failed(mlir::verify(entry))) {
@@ -3206,32 +3091,19 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     }
     for (mlir::Operation * operation : tuples) {
         auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(operation);
-        llvm::SmallVector<unsigned> dropped;
-        llvm::SmallVector<mlir::Type> kept;
+        llvm::SmallVector<unsigned> dropped, kept;
         for (auto [index, result] : llvm::enumerate(operation->getResults())) {
             if (!spend()) { return error("DOM custom iterator budget exhausted"); }
-            if (result.use_empty() && (!loop || loop.getAfterArguments()[index].use_empty())) {
-                dropped.push_back(static_cast<unsigned>(index));
-            } else {
-                kept.push_back(result.getType());
-            }
+            const bool unused =
+                result.use_empty() && (!loop || loop.getAfterArguments()[index].use_empty());
+            (unused ? dropped : kept).push_back(static_cast<unsigned>(index));
         }
         if (dropped.empty()) { continue; }
-        for (unsigned i = 0; i < operation->getNumOperands() + operation->getNumResults() +
-                                     operation->getNumRegions() + dropped.size();
-             ++i) {
-            if (!spend()) { return error("DOM custom iterator budget exhausted"); }
+        if (!work.step(uint64_t(operation->getNumOperands()) + operation->getNumResults() +
+                       operation->getNumRegions() + dropped.size())) {
+            return error("DOM custom iterator budget exhausted");
         }
-        mlir::OperationState built(operation->getLoc(), operation->getName());
-        built.addOperands(operation->getOperands());
-        built.addTypes(kept);
-        built.addAttributes(operation->getAttrs());
-        for (auto & region : operation->getRegions()) {
-            auto * target = built.addRegion();
-            target->takeBody(region);
-        }
-        mlir::OpBuilder at(operation);
-        auto * copied = at.create(built);
+        auto * copied = keepResults(operation, kept);
         for (unsigned index : llvm::reverse(dropped)) {
             if (loop) {
                 copied->getRegion(0).front().getTerminator()->eraseOperand(index + 1);
@@ -3242,32 +3114,11 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 }
             }
         }
-        unsigned target = 0, removed = 0;
-        for (auto [index, result] : llvm::enumerate(operation->getResults())) {
-            if (removed < dropped.size() && dropped[removed] == index) {
-                ++removed;
-            } else {
-                result.replaceAllUsesWith(copied->getResult(target++));
-            }
-        }
-        operation->erase();
     }
-    llvm::SmallVector<mlir::Operation *> arithmetic;
     for (auto function : completed) {
-        const auto arithmeticScan = function.walk([&](mlir::Operation * operation) {
-            if (!spend()) { return mlir::WalkResult::interrupt(); }
-            if (llvm::isa<mlir::arith::ConstantOp, mlir::arith::IndexCastUIOp>(operation)) {
-                arithmetic.push_back(operation);
-            }
-            return mlir::WalkResult::advance();
-        });
-        if (arithmeticScan.wasInterrupted()) {
+        if (!work.eraseUnusedArithmetic(function)) {
             return error("DOM custom iterator budget exhausted");
         }
-    }
-    for (mlir::Operation * operation : llvm::reverse(arithmetic)) {
-        if (!spend()) { return error("DOM custom iterator budget exhausted"); }
-        if (operation->use_empty()) { operation->erase(); }
     }
     emittedNext = {};
     emittedDone = {};
@@ -3283,10 +3134,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             auto branch = llvm::dyn_cast<mlir::scf::IfOp>(call->getParentOp());
             auto truth =
                 branch ? branch.getCondition().getDefiningOp<ctjs::TruthyOp>() : ctjs::TruthyOp{};
-            auto literal =
-                truth ? truth.getValue().getDefiningOp<ctjs::ConstantOp>() : ctjs::ConstantOp{};
-            auto done = literal ? llvm::dyn_cast<ctjs::BooleanAttr>(literal.getValue())
-                                : ctjs::BooleanAttr{};
+            auto done = truth ? ctjs::constantAttr<ctjs::BooleanAttr>(truth.getValue())
+                              : ctjs::BooleanAttr{};
             // Completion may expose the constant only after selecting an
             // exit. The generated close guard's empty then arm proves that
             // exhaustion cannot call return or validate its ignored result.
@@ -3359,15 +3208,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 if (!spend()) { return error("DOM custom iterator budget exhausted"); }
                 if (llvm::isa<ctjs::RootOp>(observer)) { continue; }
                 auto call = llvm::dyn_cast<ctjs::CallOp>(observer);
-                auto abrupt =
-                    call ? llvm::dyn_cast_or_null<mlir::scf::ExecuteRegionOp>(call->getNextNode())
-                         : mlir::scf::ExecuteRegionOp{};
-                auto thrown =
-                    abrupt && abrupt.getNoInline() && !abrupt.getNumResults() &&
-                            abrupt.getRegion().hasOneBlock() &&
-                            llvm::hasSingleElement(abrupt.getRegion().front())
-                        ? llvm::dyn_cast<ctjs::ThrowOp>(abrupt.getRegion().front().front())
-                        : ctjs::ThrowOp{};
+                auto thrown = call ? savedThrow(call->getNextNode()) : ctjs::ThrowOp{};
                 const bool propagates = observableThrow && thrown && call->hasOneUse() &&
                                         thrown.getValue() == call.getResult();
                 if (!call || call.getCallee() != read || call.getReceiver() != holder ||

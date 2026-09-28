@@ -2,7 +2,6 @@
 """Check native Element.querySelector against the shared public selector engine."""
 
 from CTNative.Browser import native_dom as dom
-from CTNative.harness import find_compilers
 
 SOURCE = """function query(element, expected) {
   if (element.hasAttribute('data-invalid')) {
@@ -94,21 +93,16 @@ OWNED_CHECKS = r"""
 
 def main():
     args = dom.parse_args(__doc__)
-    compilers = find_compilers()
-    compilers[1] = args.clang
+    compilers = args.compilers
     includes, libraries = dom.link_options(args, selectors=True)
     ir, contract = dom.prepare(args, "query", SOURCE, 2)
-    for owned in (False, True):
-        manifest = dict(
-            contract, provider="ctbrowser-dom-session-v1" if owned else "ctbrowser-dom-v1"
-        )
-        for optimize in (False, True):
-            name = f"query-{owned}-{optimize}"
-            native = dom.lower(args, ir, manifest, name, optimize=optimize)
-            if '"ctnative::Element.prototype.querySelector.call"' not in native.read_text():
-                raise RuntimeError("querySelector bypassed its native method object")
-            checks = CHECKS + (OWNED_CHECKS if owned else "")
-            dom.standalone(args, native, name, checks, compilers, includes, libraries)
+    for owned, optimize, manifest in dom.variants(contract):
+        name = f"query-{owned}-{optimize}"
+        native = dom.lower(args, ir, manifest, name, optimize=optimize)
+        if '"ctnative::Element.prototype.querySelector.call"' not in native.read_text():
+            raise RuntimeError("querySelector bypassed its native method object")
+        checks = CHECKS + (OWNED_CHECKS if owned else "")
+        dom.standalone(args, native, name, checks, compilers, includes, libraries)
     refusals = (
         "return element.querySelector('button').matches(':scope');",
         "return element.querySelector('button');",
@@ -121,15 +115,7 @@ def main():
     for index, body in enumerate(refusals):
         source = f"function bad(element, expected) {{ {body} }}\n"
         refused, manifest = dom.prepare(args, f"refused-{index}", source, 2)
-        for optimize in (False, True):
-            dom.lower(
-                args,
-                refused,
-                manifest,
-                f"refused-{index}-{optimize}",
-                optimize=optimize,
-                success=False,
-            )
+        dom.refuse(args, refused, manifest, f"refused-{index}")
     print("Element.querySelector: 16 native executions, 14 refusals; DOM/Core/Style only")
 
 

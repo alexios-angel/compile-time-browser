@@ -150,23 +150,11 @@ mlir::Value lowering::status_call(compiled_entry & scope, mlir::OpBuilder & buil
 
     llvm::SmallVector<mlir::Value> passed(arguments.begin(), arguments.end());
     passed.push_back(address.getResult());
-    auto answered =
-        ec::CallOpaqueOp::create(build, where, mlir::TypeRange{scope.status}, symbol, passed);
-
-    const mlir::Value ok = literal(build, where, scope.status,
-                                   "static_cast<int32_t>(ctbrowser::aot::ct_aot_status::ok)");
-    auto survived = ec::CmpOp::create(build, where, mlir::IntegerType::get(build.getContext(), 1),
-                                      ec::CmpPredicate::eq, answered.getResult(0), ok);
-
-    mlir::Block * carry_on = continuation_after(scope, build);
-    mlir::cf::CondBranchOp::create(build, where, survived, carry_on, mlir::ValueRange{},
-                                   caught_or_failure(scope, build, where),
-                                   mlir::ValueRange{answered.getResult(0)});
+    status_call_void(scope, build, where, symbol, passed);
 
     // LOADED ONLY ON THE OK PATH, which the ABI requires rather than merely
     // permits: "*out written ONLY on CT_AOT_OK", so on any other status the
     // local still holds whatever it held before the call.
-    build.setInsertionPointToEnd(carry_on);
     return ec::LoadOp::create(build, where, produces, slot.getResult()).getResult();
 }
 

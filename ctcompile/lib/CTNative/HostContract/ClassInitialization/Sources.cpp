@@ -7,9 +7,24 @@
 namespace ctcompile::ctnative::class_detail {
 
 bool classInitialization::step() {
-    if (!remaining) { return refuse("class initialization work budget exhausted"); }
-    --remaining;
+    return spend(1);
+}
+
+bool classInitialization::spend(uint64_t count) {
+    if (count > remaining) {
+        remaining = 0;
+        return refuse("class initialization work budget exhausted");
+    }
+    remaining -= static_cast<unsigned>(count);
     return true;
+}
+
+bool classInitialization::spendWalk(mlir::Operation * root,
+                                    llvm::function_ref<uint64_t(mlir::Operation *)> cost) {
+    WorkBudget budget{remaining};
+    const bool fits = budget.spendWalk(*root, cost);
+    remaining = static_cast<unsigned>(budget.remaining);
+    return fits || refuse("class initialization work budget exhausted");
 }
 
 bool classInitialization::refuse(llvm::StringRef message) {
@@ -17,20 +32,8 @@ bool classInitialization::refuse(llvm::StringRef message) {
     return false;
 }
 
-bool classInitialization::undefined(mlir::Value value) {
-    auto constant = value.getDefiningOp<ctjs::ConstantOp>();
-    return constant && llvm::isa<ctjs::UndefinedAttr>(constant.getValue());
-}
-
 ctjs::FuncOp classInitialization::target(ctjs::CreateClosureOp closure) {
-    if (!closure || closure.getFunction() < 0) { return {}; }
-    // Numeric function indices belong to the enclosing source program.
-    auto scope = closure->getParentOfType<ctjs::FuncOp>();
-    if (!scope || scope.getBody().empty() || scope.getBody().front().getNumArguments() < 3 ||
-        closure.getEnclosingClosure() != scope.getBody().front().getArgument(ctjs::arg_callee)) {
-        return {};
-    }
-    return functions.lookup(static_cast<unsigned>(closure.getFunction()));
+    return closure ? host_detail::closureTarget(closure, functions) : ctjs::FuncOp{};
 }
 
 bool classInitialization::proveCells(ctjs::FuncOp entry) {
@@ -41,15 +44,10 @@ bool classInitialization::proveCells(ctjs::FuncOp entry) {
         if (cells.count(cell.getResult())) { continue; }
         ctjs::CellSetOp first;
         const auto readPosition = [&](mlir::Operation * op) {
-            if (llvm::isa<ctjs::CellGetOp>(op)) {
-                while (op->getBlock() != cell->getBlock() &&
-                       llvm::isa_and_nonnull<mlir::scf::IfOp, mlir::scf::WhileOp,
-                                             mlir::scf::IndexSwitchOp>(op->getParentOp())) {
-                    if (!step()) { break; }
-                    op = op->getParentOp();
-                }
-            }
-            return op;
+            return llvm::isa<ctjs::CellGetOp>(op)
+                       ? positionIn<mlir::scf::IfOp, mlir::scf::WhileOp, mlir::scf::IndexSwitchOp>(
+                             op, cell->getBlock())
+                       : op;
         };
         for (mlir::OpOperand & use : cell.getResult().getUses()) {
             if (!step()) { return false; }
@@ -178,17 +176,14 @@ bool classInitialization::proveMaps() {
             const auto key = ctjs::constantKey(read.getKey());
             mapOperations.insert(read);
             if (key == "size") { continue; }
-            static const llvm::StringMap<unsigned> arities{
-                {"set", 2}, {"get", 1}, {"has", 1}, {"delete", 1}, {"clear", 0}};
-            const auto method = key.size() <= 6 ? arities.find(key) : arities.end();
-            const unsigned arity = method != arities.end() ? method->second : 99U;
-            if (arity == 99U) { return refuse("class captured Map has an unproved member"); }
+            const auto arity = mapMethodArity(key);
+            if (!arity) { return refuse("class captured Map has an unproved member"); }
             for (mlir::OpOperand & selected : read.getResult().getUses()) {
                 if (!step()) { return false; }
                 if (llvm::isa<ctjs::RootOp>(selected.getOwner())) { continue; }
                 auto call = llvm::dyn_cast<ctjs::CallOp>(selected.getOwner());
                 if (!call || selected.getOperandNumber() != 0 ||
-                    call.getReceiver() != read.getObject() || call.getArgs().size() != arity) {
+                    call.getReceiver() != read.getObject() || call.getArgs().size() != *arity) {
                     return refuse("class captured Map method escapes its exact receiver call");
                 }
                 if (key == "set") {
@@ -260,9 +255,7 @@ bool classInitialization::methodCaptures(ctjs::CreateClosureOp method,
     auto fn = target(method);
     const auto constructorValue = constructor ? constructor.getResult() : mlir::Value{};
     if (fn.getUpvalueCount() != static_cast<int64_t>(method.getUpvalues().size()) ||
-        (method.getEnclosingIndicesAttr() &&
-         llvm::any_of(method.getEnclosingIndicesAttr().asArrayRef(),
-                      [](int32_t index) { return index >= 0; }))) {
+        hasOuterCapture(method)) {
         return refuse("class method lacks exact local capture slots");
     }
     for (mlir::Value capture : method.getUpvalues()) {
@@ -365,9 +358,9 @@ bool classInitialization::methodCaptures(ctjs::CreateClosureOp method,
                         helper.getBody().front().getNumArguments()) {
                     return refuse("captured helper escapes its ordinary local call");
                 }
-                for (auto i = call.getArgs().size() + ctjs::implicit_arguments;
-                     i < helper.getBody().front().getNumArguments(); ++i) {
-                    if (!step()) { return false; }
+                if (!spend(helper.getBody().front().getNumArguments() - call.getArgs().size() -
+                           ctjs::implicit_arguments)) {
+                    return false;
                 }
                 helperCalls.insert(call);
                 continue;
@@ -459,9 +452,9 @@ ctjs::CreateClosureOp classInitialization::sourceClosure(mlir::Value value, bool
                 if (publication || localHolder) {
                     const auto parameters = target(closure).getBody().front().getNumArguments() -
                                             ctjs::implicit_arguments;
-                    if (call.getArgs().size() > parameters) { return {}; }
-                    for (auto i = call.getArgs().size(); i < parameters; ++i) {
-                        if (!step()) { return {}; }
+                    if (call.getArgs().size() > parameters ||
+                        !spend(parameters - call.getArgs().size())) {
+                        return {};
                     }
                 }
             }
@@ -506,16 +499,7 @@ ctjs::CreateClosureOp classInitialization::sourceClosure(mlir::Value value, bool
         // Charge the existing declaration proof's operation/use scans once
         // per binding. Its hoisting and closed-callee rules also cover reads
         // in other functions without trusting resolver annotations.
-        auto walked = module.walk([&](mlir::Operation * op) {
-            const uint64_t cost = uint64_t(2) + op->getNumOperands();
-            if (cost > remaining) {
-                refuse("class initialization work budget exhausted");
-                return mlir::WalkResult::interrupt();
-            }
-            remaining -= static_cast<unsigned>(cost);
-            return mlir::WalkResult::advance();
-        });
-        cached->second = !walked.wasInterrupted() && closedDeclaration(store, fn, module);
+        cached->second = spendWalk(module, declarationCost) && closedDeclaration(store, fn, module);
     }
     return cached->second ? closure : ctjs::CreateClosureOp{};
 }
@@ -699,9 +683,8 @@ bool classInitialization::ownFieldSnapshots(
                 }
                 continue;
             }
-            mlir::Value key;
+            const auto key = ctjs::propertyKey(op);
             if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) {
-                key = read.getKey();
                 // The fresh prototype's constructor backedge exists before
                 // any own field. fieldsOnly/staticGetters still prove every
                 // use and exact target; inherited target changes remain refused.
@@ -716,7 +699,6 @@ bool classInitialization::ownFieldSnapshots(
                     }
                 }
             }
-            if (auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(op)) { key = write.getKey(); }
             if (use->getOperandNumber() != 0 || !key ||
                 !hasField(ordered, ctjs::constantKey(key))) {
                 return refuse("class construction method requires an existing own field");
@@ -788,10 +770,7 @@ bool classInitialization::ownFieldSnapshots(
                 llvm::SmallVector<llvm::StringRef> joined;
                 bool live = false;
                 for (auto & region : branch->getRegions()) {
-                    for (auto field : ordered) {
-                        (void)field;
-                        if (!step()) { return false; }
-                    }
+                    if (!spend(ordered.size())) { return false; }
                     auto path = ordered;
                     bool throws = false;
                     if (!region.empty() &&
@@ -876,12 +855,8 @@ bool classInitialization::ownFieldSnapshots(
                 llvm::all_of(key, [](char c) { return c >= '0' && c <= '9'; })) {
                 return refuse("class own-key snapshot requires fixed constructor fields");
             }
-            bool found = false;
-            for (auto field : ordered) {
-                if (!step()) { return false; }
-                found |= field == key;
-            }
-            if (!found) { ordered.push_back(key); }
+            if (!spend(ordered.size())) { return false; }
+            if (!llvm::is_contained(ordered, key)) { ordered.push_back(key); }
         }
         return true;
     };
@@ -920,9 +895,7 @@ bool classInitialization::ownFieldSnapshots(
                     module.getContext(),
                     std::bit_cast<uint64_t>(static_cast<double>(fields.size())));
             } else {
-                auto key = read.getKey().getDefiningOp<ctjs::ConstantOp>();
-                auto number =
-                    key ? llvm::dyn_cast<ctjs::NumberAttr>(key.getValue()) : ctjs::NumberAttr{};
+                auto number = ctjs::constantAttr<ctjs::NumberAttr>(read.getKey());
                 const auto index = number ? number.getDouble() : -1.0;
                 if (!std::isfinite(index) || index < 0 || std::floor(index) != index ||
                     index >= static_cast<double>(fields.size())) {
@@ -955,16 +928,11 @@ bool classInitialization::ownFieldSnapshots(
     }
     // Check the original Object binding, member and all aliases before erasing
     // any snapshot. Other calls/effects remain for the complete module census.
-    const auto counted = module.walk([&](mlir::Operation * op) {
-        const uint64_t cost = uint64_t(2) + 2 * uint64_t(op->getNumOperands());
-        if (cost > remaining) {
-            refuse("class initialization work budget exhausted");
-            return mlir::WalkResult::interrupt();
-        }
-        remaining -= static_cast<unsigned>(cost);
-        return mlir::WalkResult::advance();
-    });
-    if (counted.wasInterrupted()) { return false; }
+    if (!spendWalk(module, [](mlir::Operation * op) {
+            return uint64_t(2) + 2 * uint64_t(op->getNumOperands());
+        })) {
+        return false;
+    }
     if (auto problem = host_detail::initialBindingProblem(module, contract); !problem.empty()) {
         return refuse(problem);
     }
@@ -989,18 +957,8 @@ bool classInitialization::ownFieldSnapshots(
         loads.insert(read.getObject().getDefiningOp());
         eraseRooted(call);
     }
-    for (mlir::Operation * operation : selections) {
-        if (llvm::all_of(operation->getUsers(),
-                         [](mlir::Operation * op) { return llvm::isa<ctjs::RootOp>(op); })) {
-            eraseRooted(operation);
-        }
-    }
-    for (mlir::Operation * operation : loads) {
-        if (llvm::all_of(operation->getUsers(),
-                         [](mlir::Operation * op) { return llvm::isa<ctjs::RootOp>(op); })) {
-            eraseRooted(operation);
-        }
-    }
+    for (mlir::Operation * operation : selections) { eraseIfRooted(operation); }
+    for (mlir::Operation * operation : loads) { eraseIfRooted(operation); }
     // An empty snapshot is a requirement too. Descendants must recheck every
     // inherited body and field write even after its snapshot has been folded.
     snapshotFields[constructor.getResult()] = std::move(fields);
@@ -1059,8 +1017,7 @@ bool classInitialization::retainedMapAliases(mlir::OpOperand & use,
             entries.clear();
             continue;
         }
-        auto key = sourceValue(operation.getArgs().front()).getDefiningOp<ctjs::ConstantOp>();
-        auto text = key ? llvm::dyn_cast<ctjs::StringAttr>(key.getValue()) : ctjs::StringAttr{};
+        auto text = ctjs::constantAttr<ctjs::StringAttr>(sourceValue(operation.getArgs().front()));
         if (!text) { return refuse("class retained Map requires literal string keys"); }
         if (action == "set") {
             auto record = sourceValue(operation.getArgs()[1]).getDefiningOp<ctjs::ConstructOp>();
@@ -1094,14 +1051,8 @@ bool classInitialization::retainedMapReads(
     for (mlir::Value read : reads) {
         for (mlir::OpOperand * selected : sourceUses(read)) {
             if (!step()) { return false; }
-            mlir::Value key;
-            if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(selected->getOwner())) {
-                key = get.getKey();
-            }
-            if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(selected->getOwner())) {
-                key = set.getKey();
-            }
-            if (key && ctjs::constantKey(key) == "constructor") {
+            if (auto key = ctjs::propertyKey(selected->getOwner());
+                key && ctjs::constantKey(key) == "constructor") {
                 return refuse("class retained Map alias requires data field reads");
             }
         }
@@ -1166,9 +1117,7 @@ bool classInitialization::fieldsOnly(mlir::Value object, const llvm::StringSet<>
                 continue;
             }
         }
-        mlir::Value key;
-        if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) { key = read.getKey(); }
-        if (auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(op)) { key = write.getKey(); }
+        const auto key = ctjs::propertyKey(op);
         if (use.getOperandNumber() != 0 || !key || !ctjs::ordinaryKey(key)) {
             return refuse("class receiver escapes or observes a prototype/descriptor");
         }
@@ -1193,6 +1142,13 @@ bool classInitialization::freshFunctionIndex(unsigned & next) {
         if (auto index = functionIndex(function)) { next = std::max(next, *index + 1); }
     }
     return true;
+}
+
+ctjs::FuncOp classInitialization::cloneFunction(ctjs::FuncOp fn, unsigned index) {
+    auto copy = llvm::cast<ctjs::FuncOp>(fn->clone());
+    copy.setSymName((fn.getSymName().rsplit('$').first + "$" + llvm::Twine(index)).str());
+    module.getBody()->push_back(copy);
+    return functions[index] = copy;
 }
 
 bool classInitialization::cloneReceiverMethods(
@@ -1234,10 +1190,7 @@ bool classInitialization::cloneReceiverMethods(
         }
         unsigned index = 0;
         if (!freshFunctionIndex(index)) { return false; }
-        auto copy = llvm::cast<ctjs::FuncOp>(fn->clone());
-        copy.setSymName((fn.getSymName().rsplit('$').first + "$" + llvm::Twine(index)).str());
-        module.getBody()->push_back(copy);
-        functions[index] = copy;
+        cloneFunction(fn, index);
         mlir::OpBuilder at(helper);
         auto made = ctjs::CreateClosureOp::create(
             at, closure.getLoc(), closure.getType(), closure.getEnclosingClosure(),
@@ -1294,11 +1247,7 @@ bool classInitialization::cloneReceiverGetters(
         const bool reached = depends(depends, key, 0);
         if (!reason.empty()) { return false; }
         if (!reached) { continue; }
-        auto copy = llvm::cast<ctjs::FuncOp>(source->clone());
-        copy.setSymName((source.getSymName().rsplit('$').first + "$" + llvm::Twine(next)).str());
-        module.getBody()->push_back(copy);
-        functions[next++] = copy;
-        clones[key] = copy;
+        clones[key] = cloneFunction(source, next++);
     }
     return true;
 }
@@ -1471,9 +1420,7 @@ bool classInitialization::staticGetters(const llvm::StringMap<ctjs::DefineAccess
     // Charge every clone before any mutation, including repeated reads and
     // the transitive expansion copied from already-expanded getter bodies.
     for (const auto & item : llvm::drop_begin(getterReads, firstRead)) {
-        const unsigned cost = getterExpansion.lookup(item.second);
-        if (cost > remaining) { return refuse("class initialization work budget exhausted"); }
-        remaining -= cost;
+        if (!spend(getterExpansion.lookup(item.second))) { return false; }
     }
     return true;
 }

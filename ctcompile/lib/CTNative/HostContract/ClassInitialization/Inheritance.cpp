@@ -3,6 +3,19 @@
 
 namespace ctcompile::ctnative::class_detail {
 
+void classInitialization::forgetRecords(mlir::Region & region) {
+    region.walk([&](mlir::Operation * op) {
+        helperCalls.erase(op);
+        mapOperations.erase(op);
+        if (auto read = llvm::dyn_cast<ctjs::LoadUpvalueOp>(op)) {
+            mapCaptures.erase(read.getResult());
+            holderCaptures.erase(read.getResult());
+            callableCaptures.erase(read);
+            llvm::erase(captureReads, read);
+        }
+    });
+}
+
 bool classInitialization::proveHeritage(const HostContract & contract) {
     llvm::DenseMap<mlir::Value, ctjs::CallOp> completed;
     for (ctjs::CallOp call : calls) {
@@ -106,9 +119,7 @@ bool classInitialization::normalizeSuper(ctjs::CreateClosureOp constructor,
     ctjs::CreateCellOp guard;
     for (auto cell : original.getOps<ctjs::CreateCellOp>()) {
         if (!step() || guard) { return refuse("super requires one private Boolean guard"); }
-        auto value = cell.getInitial().getDefiningOp<ctjs::ConstantOp>();
-        auto bit =
-            value ? llvm::dyn_cast<ctjs::BooleanAttr>(value.getValue()) : ctjs::BooleanAttr{};
+        auto bit = ctjs::constantAttr<ctjs::BooleanAttr>(cell.getInitial());
         if (!bit || bit.getValue()) { return refuse("super guard must begin false"); }
         guard = cell;
     }
@@ -120,16 +131,7 @@ bool classInitialization::normalizeSuper(ctjs::CreateClosureOp constructor,
             return refuse("super guard escapes its private reads and write");
         }
     }
-    auto counted = function.walk([&](mlir::Operation * op) {
-        const uint64_t cost = uint64_t(1) + op->getNumOperands() + op->getNumResults();
-        if (cost > remaining) {
-            refuse("class initialization work budget exhausted");
-            return mlir::WalkResult::interrupt();
-        }
-        remaining -= static_cast<unsigned>(cost);
-        return mlir::WalkResult::advance();
-    });
-    if (counted.wasInterrupted()) { return false; }
+    if (!spendWalk(function, cloneCost)) { return false; }
     mlir::OwningOpRef<ctjs::FuncOp> copy(llvm::cast<ctjs::FuncOp>(function->cloneWithoutRegions()));
     auto * output = new mlir::Block;
     copy->getBody().push_back(output);
@@ -147,16 +149,7 @@ bool classInitialization::normalizeSuper(ctjs::CreateClosureOp constructor,
     llvm::SmallVector<mlir::Value> captures(constructor.getUpvalues());
     llvm::SmallVector<mlir::Operation *> copiedHelperCalls;
     const auto clone = [&](mlir::Operation & op, mlir::IRMapping & values) {
-        const auto counted = op.walk([&](mlir::Operation * source) {
-            const uint64_t cost = uint64_t(1) + source->getNumOperands() + source->getNumResults();
-            if (cost > remaining) {
-                refuse("class initialization work budget exhausted");
-                return mlir::WalkResult::interrupt();
-            }
-            remaining -= static_cast<unsigned>(cost);
-            return mlir::WalkResult::advance();
-        });
-        if (counted.wasInterrupted()) { return false; }
+        if (!spendWalk(&op, cloneCost)) { return false; }
         at.clone(op, values);
         // A base's slot number belongs to its original closure, never the
         // leaf's environment. Carry the proved helper/holder identity with each copy.
@@ -357,9 +350,7 @@ bool classInitialization::normalizeSuper(ctjs::CreateClosureOp constructor,
                 continue;
             }
             if (auto write = llvm::dyn_cast<ctjs::CellSetOp>(op)) {
-                auto value = write.getValue().getDefiningOp<ctjs::ConstantOp>();
-                auto bit = value ? llvm::dyn_cast<ctjs::BooleanAttr>(value.getValue())
-                                 : ctjs::BooleanAttr{};
+                auto bit = ctjs::constantAttr<ctjs::BooleanAttr>(write.getValue());
                 if (phase != 1 || write.getCell() != guard.getResult() || !bit || !bit.getValue()) {
                     return refuse("super guard requires one true write after the base call");
                 }
@@ -368,10 +359,8 @@ bool classInitialization::normalizeSuper(ctjs::CreateClosureOp constructor,
                 continue;
             }
             if (auto truth = llvm::dyn_cast<ctjs::TruthyOp>(op)) {
-                auto value =
-                    mapping.lookupOrDefault(truth.getValue()).getDefiningOp<ctjs::ConstantOp>();
-                auto bit = value ? llvm::dyn_cast<ctjs::BooleanAttr>(value.getValue())
-                                 : ctjs::BooleanAttr{};
+                auto bit = ctjs::constantAttr<ctjs::BooleanAttr>(
+                    mapping.lookupOrDefault(truth.getValue()));
                 if (!bit) {
                     if (phase != 4) { return refuse("super condition is not a proved Boolean"); }
                     if (!clone(op, mapping)) { return false; }
@@ -505,23 +494,11 @@ bool classInitialization::normalizeSuper(ctjs::CreateClosureOp constructor,
     }
     // Base records still describe live source bodies, including bases shared
     // by several leaves. Only the replaced derived body loses its records.
-    llvm::erase_if(captureReads, [&](ctjs::LoadUpvalueOp read) {
-        if (!step()) { return false; }
-        if (read->getParentOfType<ctjs::FuncOp>() != function) { return false; }
-        callableCaptures.erase(read);
-        holderCaptures.erase(read.getResult());
-        return true;
-    });
-    auto removed = function.walk([&](mlir::Operation * op) {
-        if (!step()) { return mlir::WalkResult::interrupt(); }
-        helperCalls.erase(op);
-        mapOperations.erase(op);
-        if (auto read = llvm::dyn_cast<ctjs::LoadUpvalueOp>(op)) {
-            mapCaptures.erase(read.getResult());
-        }
-        return mlir::WalkResult::advance();
-    });
-    if (!reason.empty() || removed.wasInterrupted()) { return false; }
+    if (!spend(captureReads.size()) ||
+        !spendWalk(function, [](mlir::Operation *) { return uint64_t(1); }) || !reason.empty()) {
+        return false;
+    }
+    forgetRecords(function.getBody());
     for (auto [read, helper] : copiedCaptures) {
         if (!step()) { return false; }
         captureReads.push_back(read);
@@ -539,9 +516,7 @@ bool classInitialization::normalizeSuper(ctjs::CreateClosureOp constructor,
         mapOperations.insert(read);
     }
     if (!copiedMaps.empty()) {
-        constructor.getUpvaluesMutable().assign(captures);
-        constructor.removeEnclosingIndicesAttr();
-        function.setUpvalueCount(static_cast<uint32_t>(captures.size()));
+        setCaptures(constructor, function, captures);
         mapClosures.insert(constructor);
         if (!llvm::is_contained(capturedClosures, constructor)) {
             capturedClosures.push_back(constructor);
@@ -596,9 +571,7 @@ bool classInitialization::normalizeSuperMethods(
         // ponytail: expand linear targets at their calls; target CFG/captures
         // need a receiver-preserving direct-call proof in closure lifting.
         for (mlir::Operation & op : body) {
-            const uint64_t cost = uint64_t(1) + op.getNumOperands() + op.getNumResults();
-            if (cost > remaining) { return refuse("class initialization work budget exhausted"); }
-            remaining -= static_cast<unsigned>(cost);
+            if (!spend(cloneCost(&op))) { return false; }
             if (op.getNumRegions() ||
                 llvm::isa<ctjs::CreateClosureOp, ctjs::StoreGlobalOp, ctjs::LoadHomeOp,
                           ctjs::RootOp>(op) ||
@@ -699,16 +672,7 @@ bool classInitialization::foldDecidedArms(ctjs::CreateClosureOp constructor,
         if (!reason.empty()) { return false; }
         if (risky.wasInterrupted()) { continue; }
         // The dropped arm loses its records, as a replaced super body does.
-        dropped.walk([&](mlir::Operation * nested) {
-            helperCalls.erase(nested);
-            mapOperations.erase(nested);
-            if (auto read = llvm::dyn_cast<ctjs::LoadUpvalueOp>(nested)) {
-                mapCaptures.erase(read.getResult());
-                holderCaptures.erase(read.getResult());
-                callableCaptures.erase(read);
-                llvm::erase(captureReads, read);
-            }
-        });
+        forgetRecords(dropped);
         if (kept.empty()) {
             if (branch->getNumResults()) { continue; }
             branch.erase();
@@ -1108,9 +1072,9 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
                     fn.getBody().front().getNumArguments()) {
                 return refuse("static method escapes its exact local call");
             }
-            for (auto i = invocation.getArgs().size() + ctjs::implicit_arguments;
-                 i < fn.getBody().front().getNumArguments(); ++i) {
-                if (!step()) { return false; }
+            if (!spend(fn.getBody().front().getNumArguments() - invocation.getArgs().size() -
+                       ctjs::implicit_arguments)) {
+                return false;
             }
             helperCalls.insert(invocation);
         }

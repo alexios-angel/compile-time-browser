@@ -21,6 +21,9 @@ struct providerDiagnosticState {
     bool initialize();
     prefixValue operation(mlir::Operation * operation, prefixAnalysis::environment & values);
     void mutated() { ++mutation; }
+    // A Map operation's normal result, with the Map or object identity it returns.
+    bool record(mlir::Operation * operation, unsigned map, llvm::StringRef member,
+                prefixValue result);
 
 private:
     struct iterator {
@@ -38,8 +41,6 @@ private:
     llvm::SmallVector<iterator, 0> iterators;
     llvm::SmallVector<snapshot, 0> snapshots;
 
-    bool record(mlir::Operation * operation, unsigned map, llvm::StringRef member,
-                prefixValue result);
     prefixValue global(ctjs::LoadGlobalOp load);
     prefixValue property(ctjs::GetPropertyOp read, prefixAnalysis::environment & values);
     prefixValue call(ctjs::CallOp call, prefixAnalysis::environment & values);

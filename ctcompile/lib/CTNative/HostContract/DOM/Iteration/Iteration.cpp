@@ -1,13 +1,13 @@
 #include "../Snapshot/Bounds.h"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
+#include "ctcompile/CTNative/Analysis/WorkBudget.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/IRMapping.h"
+#include "mlir/IR/Matchers.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/Support/Error.h"
-
-#include <bit>
 
 namespace ctcompile::ctnative {
 
@@ -16,16 +16,14 @@ llvm::Error normalizeDOMElementGuards(mlir::ModuleOp candidate, const HostContra
     const auto error = [](llvm::StringRef text) {
         return llvm::createStringError(llvm::inconvertibleErrorCode(), text);
     };
-    unsigned remaining = maxSteps;
-    const auto spend = [&] { return remaining && (--remaining, true); };
+    WorkBudget budget{maxSteps};
+    const auto spend = [&] { return budget.spend(); };
     // Charge the source census and fingerprint before inspecting the contract.
-    const auto census = candidate.walk([&](mlir::Operation * operation) {
-        for (unsigned i = 0; i <= operation->getNumOperands(); ++i) {
-            if (!spend() || !spend()) { return mlir::WalkResult::interrupt(); }
-        }
-        return mlir::WalkResult::advance();
-    });
-    if (census.wasInterrupted()) { return error("DOM element guard work budget exhausted"); }
+    if (!budget.spendWalk(candidate, [](mlir::Operation * operation) {
+            return 2 * (uint64_t(1) + operation->getNumOperands());
+        })) {
+        return error("DOM element guard work budget exhausted");
+    }
     if (hostContractFingerprint(candidate) != contract.moduleSha256 ||
         candidate->hasAttr("ctjs.skipped")) {
         return error("DOM element guard fingerprint mismatch or incomplete source");
@@ -64,10 +62,9 @@ llvm::Error normalizeDOMElementGuards(mlir::ModuleOp candidate, const HostContra
             compare && compare.getKind() == ctjs::CompareKind::StrictEq) {
             const auto elementAndUndefined = [&](mlir::Value element, mlir::Value other) {
                 auto argument = llvm::dyn_cast<mlir::BlockArgument>(element);
-                auto constant = other.getDefiningOp<ctjs::ConstantOp>();
                 return argument && argument.getOwner() == &entry.getBody().front() &&
-                       argument.getArgNumber() >= ctjs::implicit_arguments && constant &&
-                       llvm::isa<ctjs::UndefinedAttr>(constant.getValue());
+                       argument.getArgNumber() >= ctjs::implicit_arguments &&
+                       ctjs::isUndefinedConstant(other);
             };
             if (elementAndUndefined(compare.getLhs(), compare.getRhs()) ||
                 elementAndUndefined(compare.getRhs(), compare.getLhs())) {
@@ -75,11 +72,10 @@ llvm::Error normalizeDOMElementGuards(mlir::ModuleOp candidate, const HostContra
                 booleans.emplace_back(operation, false);
             } else {
                 const auto undefined = [](mlir::Value value) {
-                    auto constant = value.getDefiningOp<ctjs::ConstantOp>();
                     auto global = value.getDefiningOp<ctjs::LoadGlobalOp>();
                     // The DOM provider fixes this initial binding. Complete
                     // entry reproof still rejects replacement and reentry.
-                    return (constant && llvm::isa<ctjs::UndefinedAttr>(constant.getValue())) ||
+                    return ctjs::isUndefinedConstant(value) ||
                            (global && global.getName() == "undefined");
                 };
                 // Omitted and explicit undefined select their original default arm.
@@ -137,17 +133,7 @@ llvm::Error normalizeDOMElementGuards(mlir::ModuleOp candidate, const HostContra
         query.getResult().replaceAllUsesWith(constant.getResult());
         query.erase();
     }
-    for (auto [branch, selected] : branches) {
-        auto & arm = selected ? branch.getThenRegion() : branch.getElseRegion();
-        auto yield = llvm::cast<mlir::scf::YieldOp>(arm.front().back());
-        for (auto [result, value] : llvm::zip(branch.getResults(), yield.getOperands())) {
-            result.replaceAllUsesWith(value);
-        }
-        auto & contents = arm.front().getOperations();
-        branch->getBlock()->getOperations().splice(branch->getIterator(), contents,
-                                                   contents.begin(), yield->getIterator());
-        branch.erase();
-    }
+    for (auto [branch, selected] : branches) { inlineSelectedArm(branch, selected); }
     return llvm::Error::success();
 }
 
@@ -155,16 +141,16 @@ llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract &
                                   unsigned maxSteps) {
     // Only the private preparation clone is changed. Its complete DOM proof
     // must still reject writes, reentry, escaped snapshots and unknown calls.
-    unsigned remaining = maxSteps;
-    const auto spend = [&] { return remaining && (--remaining, true); };
+    WorkBudget budget{maxSteps};
+    const auto spend = [&] { return budget.spend(); };
     const auto error = [](llvm::StringRef text) {
         return llvm::createStringError(llvm::inconvertibleErrorCode(), text);
     };
     llvm::SmallVector<ctjs::CallOp> opens;
     bool hasLoop = false;
     const auto census = candidate.walk([&](mlir::Operation * operation) {
-        for (unsigned i = 0; i <= operation->getNumOperands(); ++i) {
-            if (!spend()) { return mlir::WalkResult::interrupt(); }
+        if (!budget.spend(uint64_t(1) + operation->getNumOperands())) {
+            return mlir::WalkResult::interrupt();
         }
         if (llvm::isa<mlir::scf::WhileOp>(operation)) {
             auto owner = operation->getParentOfType<ctjs::FuncOp>();
@@ -187,10 +173,7 @@ llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract &
             return error("DOM iteration requires original Array iterator and helper identities");
         }
     }
-    const auto undefined = [](mlir::Value value) {
-        auto constant = value.getDefiningOp<ctjs::ConstantOp>();
-        return constant && llvm::isa<ctjs::UndefinedAttr>(constant.getValue());
-    };
+    const auto undefined = ctjs::isUndefinedConstant;
     auto entry = candidate.lookupSymbol<ctjs::FuncOp>(contract.entry);
     if (!entry || !hasLoop || !entry.getBody().hasOneBlock()) {
         return error("DOM iteration requires a structured source entry");
@@ -301,10 +284,7 @@ llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract &
                     }
                 }
                 if (auto truth = llvm::dyn_cast<ctjs::TruthyOp>(operation)) {
-                    auto constant = truth.getValue().getDefiningOp<ctjs::ConstantOp>();
-                    auto boolean = constant ? llvm::dyn_cast<ctjs::BooleanAttr>(constant.getValue())
-                                            : ctjs::BooleanAttr{};
-                    if (boolean) {
+                    if (auto boolean = ctjs::constantAttr<ctjs::BooleanAttr>(truth.getValue())) {
                         auto value = mlir::arith::ConstantIntOp::create(at, truth.getLoc(),
                                                                         boolean.getValue(), 1);
                         truth.getResult().replaceAllUsesWith(value.getResult());
@@ -314,10 +294,9 @@ llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract &
                     }
                 }
                 if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(operation)) {
-                    auto constant = branch.getCondition().getDefiningOp<mlir::arith::ConstantOp>();
-                    auto boolean = constant ? llvm::dyn_cast<mlir::IntegerAttr>(constant.getValue())
-                                            : mlir::IntegerAttr{};
-                    if (boolean && boolean.getType().isInteger(1)) {
+                    mlir::IntegerAttr boolean;
+                    if (mlir::matchPattern(branch.getCondition(), mlir::m_Constant(&boolean)) &&
+                        boolean.getType().isInteger(1)) {
                         auto & selected =
                             boolean.getInt() ? branch.getThenRegion() : branch.getElseRegion();
                         if (!selected.hasOneBlock() || selected.front().getNumArguments()) {
@@ -338,20 +317,12 @@ llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract &
                                 return mlir::WalkResult::advance();
                             });
                             if (discarded.wasInterrupted()) {
-                                return error(remaining
+                                return error(budget.remaining
                                                  ? "DOM iteration would discard a recorded input"
                                                  : "DOM iteration work budget exhausted");
                             }
                         }
-                        for (auto [result, value] :
-                             llvm::zip(branch.getResults(), yield.getOperands())) {
-                            result.replaceAllUsesWith(value);
-                        }
-                        auto & contents = selected.front().getOperations();
-                        branch->getBlock()->getOperations().splice(branch->getIterator(), contents,
-                                                                   contents.begin(),
-                                                                   yield->getIterator());
-                        branch.erase();
+                        inlineSelectedArm(branch, &selected == &branch.getThenRegion());
                         changed = true;
                         break;
                     }
@@ -369,7 +340,7 @@ llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract &
                             input.lengths.push_back(read);
                             recorded.insert(read);
                         } else if (!hasOwnSnapshotBound(read, iterable.getResult(), spend)) {
-                            return error(remaining
+                            return error(budget.remaining
                                              ? "DOM iterated index requires its own length guard"
                                              : "DOM iteration work budget exhausted");
                         } else {
@@ -388,10 +359,7 @@ llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract &
                     if (load && load.getName() == "__ctbrowser_iter_close" &&
                         undefined(call.getReceiver()) && call.getArgs().size() == 2 &&
                         call.getArgs()[0] == empty.getResult()) {
-                        auto constant = call.getArgs()[1].getDefiningOp<ctjs::ConstantOp>();
-                        auto abrupt = constant
-                                          ? llvm::dyn_cast<ctjs::BooleanAttr>(constant.getValue())
-                                          : ctjs::BooleanAttr{};
+                        auto abrupt = ctjs::constantAttr<ctjs::BooleanAttr>(call.getArgs()[1]);
                         if (!abrupt || abrupt.getValue()) {
                             return error("DOM iterator close requires normal completion");
                         }
@@ -435,28 +403,27 @@ llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract &
     }
     auto transformed = contract;
     const auto fingerprint = [&] {
-        const auto charged = candidate.walk([&](mlir::Operation * operation) {
-            for (unsigned i = 0; i <= operation->getNumOperands(); ++i) {
-                if (!spend()) { return mlir::WalkResult::interrupt(); }
-            }
-            return mlir::WalkResult::advance();
-        });
-        if (charged.wasInterrupted()) { return false; }
+        if (!budget.spendWalk(candidate, [](mlir::Operation * operation) {
+                return uint64_t(1) + operation->getNumOperands();
+            })) {
+            return false;
+        }
         transformed.moduleSha256 = hostContractFingerprint(candidate);
         return true;
     };
     if (!fingerprint()) { return error("DOM iteration work budget exhausted"); }
     mlir::IRMapping mapping;
     unsigned snapshotWork = 0;
-    if (auto failure = normalizeDOMSnapshotLengths(candidate, transformed, remaining, &mapping,
-                                                   &snapshotWork)) {
+    if (auto failure = normalizeDOMSnapshotLengths(candidate, transformed,
+                                                   static_cast<unsigned>(budget.remaining),
+                                                   &mapping, &snapshotWork)) {
         return failure;
     }
-    remaining -= snapshotWork;
+    budget.remaining -= snapshotWork;
     if (!fingerprint()) { return error("DOM iteration work budget exhausted"); }
-    const DOMEntryAnalysis proof(candidate, transformed, remaining);
+    const DOMEntryAnalysis proof(candidate, transformed, static_cast<unsigned>(budget.remaining));
     if (!proof.proved()) { return error(("DOM iterator entry: " + proof.reason()).str()); }
-    remaining -= proof.steps();
+    budget.remaining -= proof.steps();
     llvm::DenseSet<mlir::Operation *> live;
     const auto censusLive = candidate.walk([&](mlir::Operation * operation) {
         if (!spend()) { return mlir::WalkResult::interrupt(); }
@@ -500,29 +467,13 @@ llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract &
             // Only materialization length is capped. Other NodeList aliases
             // still observe the whole collection, including after DOM writes.
             mlir::OpBuilder at(length);
-            auto size = ctjs::GetPropertyOp::create(at, length.getLoc(), length.getType(),
-                                                    length.getObject(), length.getKey());
-            auto cap = ctjs::ConstantOp::create(
-                at, length.getLoc(),
-                ctjs::NumberAttr::get(candidate.getContext(),
-                                      std::bit_cast<uint64_t>(double(1U << 24))));
-            auto less = ctjs::CompareOp::create(at, length.getLoc(), length.getType(),
-                                                ctjs::CompareKind::Lt, size, cap);
-            auto test = ctjs::TruthyOp::create(at, length.getLoc(), at.getI1Type(), less);
-            auto bounded =
-                mlir::scf::IfOp::create(at, length.getLoc(), length->getResultTypes(), test);
-            for (auto [region, value] :
-                 llvm::zip(bounded->getRegions(), llvm::ArrayRef<mlir::Value>{size, cap})) {
-                auto & arm = region.emplaceBlock();
-                mlir::OpBuilder exit(&arm, arm.end());
-                mlir::scf::YieldOp::create(exit, length.getLoc(), value);
-            }
-            length.getResult().replaceAllUsesWith(bounded.getResult(0));
+            length.getResult().replaceAllUsesWith(cappedLength(
+                at, length.getLoc(), length.getType(), length.getObject(), length.getKey()));
             length.erase();
         }
     }
     if (!fingerprint()) { return error("DOM iteration work budget exhausted"); }
-    const DOMEntryAnalysis capped(candidate, transformed, remaining);
+    const DOMEntryAnalysis capped(candidate, transformed, static_cast<unsigned>(budget.remaining));
     if (!capped.proved()) { return error(("DOM iterator capped entry: " + capped.reason()).str()); }
     return llvm::Error::success();
 }

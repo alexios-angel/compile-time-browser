@@ -36,8 +36,7 @@ void checkDOMKeyInputs(mlir::MLIRContext & context, const std::string & source,
     const auto variant = [&](const std::string & text, bool expected, const char * message,
                              unsigned calls = 1, unsigned inputs = 1, unsigned unusedInputs = 0) {
         ++rows;
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(module), "DOM key input fixture parses");
+        auto module = parsed(context, text, "DOM key input fixture parses");
         if (!module) { return; }
         const auto contract = requested(*module);
         HostContractAnalysis host(*module, contract);
@@ -255,8 +254,7 @@ void checkDOMKeyInputs(mlir::MLIRContext & context, const std::string & source,
     const auto localVariant = [&](const std::string & text, bool provider, bool owned,
                                   const char * message) {
         ++recordRows;
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(module), "local record owner fixture parses");
+        auto module = parsed(context, text, "local record owner fixture parses");
         if (!module) { return module; }
         const auto contract = requested(*module);
         HostContractAnalysis host(*module, contract);

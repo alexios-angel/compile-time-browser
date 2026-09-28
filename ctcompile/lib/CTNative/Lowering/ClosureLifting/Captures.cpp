@@ -151,6 +151,28 @@ mlir::Value closureLifter::liftedCapture(ctjs::CreateClosureOp c, unsigned i) {
         "admission and the call-site rewrite have drifted apart");
 }
 
+llvm::SmallVector<mlir::Value> closureLifter::liftedCaptures(ctjs::CreateClosureOp c) {
+    llvm::SmallVector<mlir::Value> values;
+    for (unsigned i = 0; i < static_cast<unsigned>(c.getUpvalues().size()); ++i) {
+        values.push_back(liftedCapture(c, i));
+    }
+    return values;
+}
+
+ctjs::CallDirectOp closureLifter::directCall(mlir::OpBuilder & at, mlir::Location where,
+                                             ctjs::FuncOp target, mlir::Value receiver,
+                                             mlir::Value callee, mlir::Value undefined,
+                                             llvm::ArrayRef<mlir::Value> prefix,
+                                             mlir::ValueRange args, size_t width) {
+    llvm::SmallVector<mlir::Value> arguments(prefix);
+    llvm::append_range(arguments, args);
+    while (arguments.size() < width) { arguments.push_back(undefined); }
+    return ctjs::CallDirectOp::create(at, where, ctjs::ValueType::get(context),
+                                      mlir::FlatSymbolRefAttr::get(target.getSymNameAttr()),
+                                      receiver, undefined, callee, arguments,
+                                      /*arg_attrs=*/nullptr, /*res_attrs=*/nullptr);
+}
+
 // CONDITION 3 OF THE SINGLE-WRITE RULE, AND THE AVAILABILITY OF EVERY OTHER
 // CAPTURE, ASKED AT ONE CALL SITE.
 //
@@ -237,6 +259,22 @@ std::optional<std::string> closureLifter::whyCapturesDoNotReach(ctjs::CreateClos
                 }
             }
         }
+    }
+    return std::nullopt;
+}
+
+std::optional<std::string> closureLifter::whyCallSiteDoesNotLift(mlir::Operation * site,
+                                                                 size_t arguments,
+                                                                 size_t parameters,
+                                                                 llvm::StringRef noun) {
+    if (arguments > parameters) {
+        return (noun + " passes " + std::to_string(arguments) + " argument(s) to " +
+                std::to_string(parameters) + " parameter(s) - the surplus has frame semantics")
+            .str();
+    }
+    auto caller = site->getParentOfType<ctjs::FuncOp>();
+    if (caller && passesNewTarget.contains(caller.getOperation())) {
+        return (noun + " of it sits in a function that passes new.target").str();
     }
     return std::nullopt;
 }
@@ -438,10 +476,7 @@ std::optional<std::string> closureLifter::whyNotLiftable(ctjs::CreateClosureOp c
         // the resolver padded a short call and refused a long one.
         if (auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(user);
             direct && use.getOperandNumber() == 2 && direct.getCallee() == target.getSymName()) {
-            auto caller = direct->getParentOfType<ctjs::FuncOp>();
-            if (caller && passesNewTarget.contains(caller.getOperation())) {
-                return "a call of it sits in a function that passes new.target";
-            }
+            if (auto why = whyCallSiteDoesNotLift(direct, 0, parameters, "a call")) { return why; }
             continue;
         }
         auto call = llvm::dyn_cast<ctjs::CallOp>(user);
@@ -487,25 +522,15 @@ std::optional<std::string> closureLifter::whyNotLiftable(ctjs::CreateClosureOp c
                     "not lower")
                 .str();
         }
-        if (call.getArgs().size() > parameters) {
-            return "a call passes " + std::to_string(call.getArgs().size()) + " argument(s) to " +
-                   std::to_string(parameters) + " parameter(s) - the surplus has frame semantics";
-        }
-        auto caller = call->getParentOfType<ctjs::FuncOp>();
-        if (caller && passesNewTarget.contains(caller.getOperation())) {
-            return "a call of it sits in a function that passes new.target";
+        if (auto why = whyCallSiteDoesNotLift(call, call.getArgs().size(), parameters, "a call")) {
+            return why;
         }
     }
     // AND THE CAPTURED VALUES REACH EVERY ONE OF THOSE SITES. The loop above
     // has just established that every use of the closure value IS a call
     // this rewrite lowers, so its users are exactly the sites lift() will
     // prepend the captures at.
-    for (mlir::Operation * user : c.getResult().getUsers()) {
-        if (const std::optional<std::string> why = whyCapturesDoNotReach(c, user)) { return why; }
-    }
-    if (const std::optional<std::string> escapes = whyOwnClosureEscapes(target)) { return escapes; }
-    // CONDITION 3 is the existing call-graph fixpoint's, not this one's.
-    return whyUpvalueReadsDoNotLift(c, target);
+    return whyLiftTailFails(c, target, c.getResult().getUsers());
 }
 
 } // namespace ctcompile::ctnative::lowering_detail

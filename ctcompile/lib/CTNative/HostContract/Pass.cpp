@@ -6,7 +6,6 @@
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/JSON.h"
-#include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
 
 namespace ctcompile::ctnative {
@@ -31,14 +30,7 @@ struct CTNativeHostContractPass : impl::CTNativeHostContractBase<CTNativeHostCon
             signalPassFailure();
             return;
         }
-        auto buffer = llvm::MemoryBuffer::getFile(manifest);
-        if (!buffer) {
-            mlir::emitError(module.getLoc())
-                << "cannot read host contract: " << buffer.getError().message();
-            signalPassFailure();
-            return;
-        }
-        auto contract = parseHostContract((*buffer)->getBuffer());
+        auto contract = readHostContract(manifest, "cannot read host contract: ");
         if (!contract) {
             mlir::emitError(module.getLoc()) << llvm::toString(contract.takeError());
             signalPassFailure();
@@ -83,12 +75,9 @@ struct CTNativeHostContractPass : impl::CTNativeHostContractBase<CTNativeHostCon
         llvm::DenseSet<mlir::Value> outerKeyInputs;
         for (const auto & edge : analysis.callables()) {
             if (!edge.capturedMap) { continue; }
-            for (ctjs::CreateObjectOp object : edge.capturedMap->outerKeyObjects) {
-                outerKeyObjects.insert(object);
-            }
-            for (mlir::BlockArgument input : edge.capturedMap->outerKeyInputs) {
-                outerKeyInputs.insert(input);
-            }
+            const auto & capture = *edge.capturedMap;
+            outerKeyObjects.insert(capture.outerKeyObjects.begin(), capture.outerKeyObjects.end());
+            outerKeyInputs.insert(capture.outerKeyInputs.begin(), capture.outerKeyInputs.end());
         }
         const auto outerKeyCount = static_cast<std::int64_t>(outerKeyObjects.size());
         module->setAttr("ctnative.host_outer_key_objects",
@@ -108,25 +97,8 @@ struct CTNativeHostContractPass : impl::CTNativeHostContractBase<CTNativeHostCon
                 signalPassFailure();
                 return;
             }
-            llvm::StringRef provider;
-            switch (contract->provider) {
-            case HostContract::Provider::closedSource: provider = "closed-source-v1"; break;
-            case HostContract::Provider::closedSourceSession:
-                provider = "closed-source-session-v1";
-                break;
-            case HostContract::Provider::ctbrowserDOM: provider = "ctbrowser-dom-v1"; break;
-            case HostContract::Provider::ctbrowserDOMSession:
-                provider = "ctbrowser-dom-session-v1";
-                break;
-            case HostContract::Provider::ctbrowserDOMDataSession:
-                provider = "ctbrowser-dom-data-session-v1";
-                break;
-            case HostContract::Provider::ctbrowserIntrinsics:
-                provider = "ctbrowser-intrinsics-v1";
-                break;
-            }
             llvm::json::Object document{
-                {"provider", provider},
+                {"provider", hostProviderName(contract->provider)},
                 {"module_sha256", digest},
                 {"entry", contract->entry},
                 {"proved", analysis.proved()},

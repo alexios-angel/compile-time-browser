@@ -25,59 +25,23 @@ if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
 
   # The driver reads the same file the pipeline compiles, for the reason spelled
   # out over differential.js above.
+  ctcompile_embed_js(launcher.js.inc "${_app_js}")
   set(_app_inc "${CMAKE_CURRENT_BINARY_DIR}/launcher.js.inc")
-  add_custom_command(
-    OUTPUT "${_app_inc}"
-    COMMAND "${CMAKE_COMMAND}" -DSOURCE=${_app_js} -DOUTPUT=${_app_inc}
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/Support/embed-js.cmake"
-    DEPENDS "${_app_js}" "${CMAKE_CURRENT_SOURCE_DIR}/Support/embed-js.cmake"
-    COMMENT "Embedding launcher.js for the launcher driver"
-    VERBATIM)
 
   # THE WHOLE FILE, WITH NOTHING RENAMED. Every other use of
   # compile-js-to-cpp.cmake passes -DENTRIES= a list of functions to rename to
   # fixed symbols, because a driver has to DECLARE what it calls. An application
   # declares nothing: the symbols keep the names the backend gave them, which is
   # what carries each body's function index to the installer.
+  ctcompile_compile_js(launcher.generated.cpp "${_app_js}")
   set(_app_cpp "${CMAKE_CURRENT_BINARY_DIR}/launcher.generated.cpp")
-  add_custom_command(
-    OUTPUT "${_app_cpp}"
-    COMMAND "${CMAKE_COMMAND}"
-            -DTRANSLATE=$<TARGET_FILE:ctjs-translate>
-            -DOPT=$<TARGET_FILE:ctjs-opt>
-            -DMLIR_TRANSLATE=${MLIR_TRANSLATE_EXE}
-            -DSOURCE=${_app_js}
-            "-DENTRIES="
-            -DOUTPUT=${_app_cpp}
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/Support/compile-js-to-cpp.cmake"
-    DEPENDS "${_app_js}" ctjs-translate ctjs-opt
-            "${CMAKE_CURRENT_SOURCE_DIR}/Support/compile-js-to-cpp.cmake"
-    COMMENT "Compiling launcher.js through the EmitC backend"
-    VERBATIM)
 
   # AND THE TABLE THAT INSTALLS THEM, read out of the emitted C++ rather than
   # written down: the symbols that exist in the object file are the definitive
   # list of what this build can install.
+  ctcompile_aot_entry_table(launcher.entries.cpp launcher.generated.cpp ctc_launcher_entries
+                            launcher.js)
   set(_app_table "${CMAKE_CURRENT_BINARY_DIR}/launcher.entries.cpp")
-  add_custom_command(
-    OUTPUT "${_app_table}"
-    COMMAND "${CMAKE_COMMAND}"
-            -DGENERATED=${_app_cpp}
-            -DOUTPUT=${_app_table}
-            -DTABLE=ctc_launcher_entries
-            -DSOURCE_NAME=launcher.js
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/Support/aot-entry-table.cmake"
-    DEPENDS "${_app_cpp}" "${CMAKE_CURRENT_SOURCE_DIR}/Support/aot-entry-table.cmake"
-    COMMENT "Writing the entry table for launcher.js"
-    VERBATIM)
-
-  # Set above beside the first generated file; repeated here only if this block
-  # is ever separated from it, because generated code is not this project's code
-  # and -Werror on it makes an unused parameter a build failure.
-  if(NOT DEFINED CTCOMPILE_GENERATED_WARNINGS)
-    set(CTCOMPILE_GENERATED_WARNINGS
-        "-Wno-unused-parameter;-Wno-unused-variable;-Wno-unused-but-set-variable")
-  endif()
   set_source_files_properties("${_app_cpp}" PROPERTIES
     COMPILE_OPTIONS "${CTCOMPILE_GENERATED_WARNINGS}")
 
@@ -128,34 +92,11 @@ if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
     COMMENT "Extracting invaders.html's script"
     VERBATIM)
 
+  ctcompile_compile_js(invaders.generated.cpp "${_page_js}")
   set(_page_cpp "${CMAKE_CURRENT_BINARY_DIR}/invaders.generated.cpp")
-  add_custom_command(
-    OUTPUT "${_page_cpp}"
-    COMMAND "${CMAKE_COMMAND}"
-            -DTRANSLATE=$<TARGET_FILE:ctjs-translate>
-            -DOPT=$<TARGET_FILE:ctjs-opt>
-            -DMLIR_TRANSLATE=${MLIR_TRANSLATE_EXE}
-            -DSOURCE=${_page_js}
-            "-DENTRIES="
-            -DOUTPUT=${_page_cpp}
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/Support/compile-js-to-cpp.cmake"
-    DEPENDS "${_page_js}" ctjs-translate ctjs-opt
-            "${CMAKE_CURRENT_SOURCE_DIR}/Support/compile-js-to-cpp.cmake"
-    COMMENT "Compiling invaders.html's script through the EmitC backend"
-    VERBATIM)
-
+  ctcompile_aot_entry_table(invaders.entries.cpp invaders.generated.cpp ctc_invaders_entries
+                            invaders.html)
   set(_page_table "${CMAKE_CURRENT_BINARY_DIR}/invaders.entries.cpp")
-  add_custom_command(
-    OUTPUT "${_page_table}"
-    COMMAND "${CMAKE_COMMAND}"
-            -DGENERATED=${_page_cpp}
-            -DOUTPUT=${_page_table}
-            -DTABLE=ctc_invaders_entries
-            -DSOURCE_NAME=invaders.html
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/Support/aot-entry-table.cmake"
-    DEPENDS "${_page_cpp}" "${CMAKE_CURRENT_SOURCE_DIR}/Support/aot-entry-table.cmake"
-    COMMENT "Writing the entry table for invaders.html"
-    VERBATIM)
 
   set_source_files_properties("${_page_cpp}" PROPERTIES
     COMPILE_OPTIONS "${CTCOMPILE_GENERATED_WARNINGS}")
@@ -197,11 +138,7 @@ endif()
 find_package(Boost CONFIG QUIET COMPONENTS json regex)
 
 if(TARGET Boost::json AND TARGET Boost::regex)
-  add_executable(ctcompile-test-stdlib_map)
-  target_link_libraries(ctcompile-test-stdlib_map
-    PRIVATE ctbrowser::script Boost::json Boost::regex)
-  ctcompile_target(ctcompile-test-stdlib_map)
-  add_test(NAME ctcompile_stdlib_map COMMAND ctcompile-test-stdlib_map)
+  ctcompile_unit_test(stdlib_map LIBS ctbrowser::script Boost::json Boost::regex)
 else()
   # SAID OUT LOUD RATHER THAN SKIPPED SILENTLY. A suite that quietly drops a
   # test on a box missing a dependency is the "green build that measured
@@ -232,15 +169,12 @@ endif()
 # point - part 24 §A.2, "Every phase's gate is a comparison against the
 # interpreter."
 if(CTCOMPILE_ENABLE_MLIR)
-  add_executable(ctcompile-test-ctnative-lattice)
   # MLIRAsmParser IS NOT OPTIONAL AND ITS ABSENCE LOOKS LIKE NOTHING. The meet
   # table spells its types the way a .mlir file does and calls mlir::parseType,
   # which lives there and not in MLIRIR: without it every line COMPILES and the
   # link fails on a mangled name that says nothing about parsing.
-  target_link_libraries(ctcompile-test-ctnative-lattice
-    PRIVATE CTNativeDialect MLIRIR MLIRAsmParser ctbrowser::script)
-  ctcompile_target(ctcompile-test-ctnative-lattice)
-  add_test(NAME ctcompile_ctnative_lattice COMMAND ctcompile-test-ctnative-lattice)
+  ctcompile_unit_test(ctnative-lattice
+    LIBS CTNativeDialect MLIRIR MLIRAsmParser ctbrowser::script)
 endif()
 
 # ============================================================================

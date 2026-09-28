@@ -1,13 +1,10 @@
 #!/usr/bin/env python3
 """Execute nested DOM and original Bootstrap for-of through typed snapshots."""
 
-from pathlib import Path
-
 from CTNative.Browser import native_dom as dom
 from CTNative.Browser.native_dom_document import CURRENT_DOCUMENT_CHECKS, INPUT_CHECKS
 from CTNative.Browser.native_dom_element_iteration import INTRINSICS
 from CTNative.Browser.native_dom_spread_length import FIND
-from CTNative.harness import find_compilers
 
 BODY = """  let count = 0;
   const groups = @OUTER@;
@@ -211,59 +208,51 @@ PREVIOUS_REFUSAL = (
 
 def main():
     args = dom.parse_args(__doc__)
-    vendor = Path(__file__).resolve().parents[4] / "ctbrowser/vendor/bootstrap/bootstrap.bundle.js"
+    vendor = dom.BOOTSTRAP
     if FIND + "," not in vendor.read_text():
         raise RuntimeError("Bootstrap R.find source pin changed")
-    compilers = find_compilers()
-    compilers[1] = args.clang
+    compilers = args.compilers
     includes, libraries = dom.link_options(args, selectors=True)
     refusals = executions = 0
     for kind in ("direct", "explicit", "default"):
         ir, contract = dom.prepare(args, kind, source(kind), 2, entry_name="nestedElements")
         contract.update(current_document_parameter=0, initial_intrinsics=INTRINSICS)
-        for owned in (False, True):
-            manifest = dict(
-                contract, provider="ctbrowser-dom-session-v1" if owned else "ctbrowser-dom-v1"
-            )
-            for optimize in (False, True):
-                name = f"nested-iteration-{kind}-{owned}-{optimize}"
-                native = dom.lower(args, ir, manifest, name, optimize=optimize)
-                text = dom.run([args.translate, "--mlir-to-cpp", str(native)]).stdout
-                if "std::vector<ctnative::js_element_t>" not in text or any(
-                    helper in text for helper in INTRINSICS[4:]
-                ):
-                    raise RuntimeError(f"{name}: nested iteration retained the VM protocol")
-                client = (
-                    CURRENT_DOCUMENT_CHECKS
-                    + CHECKS
-                    + INPUT_CHECKS
-                    + (OWNED_CHECKS if owned else "")
-                ).replace("@DEFAULT@", "true" if kind == "default" else "false")
-                dom.standalone(args, native, name, client, compilers, includes, libraries)
-                executions += 2 * len(compilers)
-                controls = [("budget", manifest, 0)]
-                for intrinsic in INTRINSICS[4:] + ["Array", "Element"]:
-                    controls.append(
-                        (
-                            "missing-" + intrinsic,
-                            dict(
-                                manifest,
-                                initial_intrinsics=[i for i in INTRINSICS if i != intrinsic],
-                            ),
-                            None,
-                        )
+        for owned, optimize, manifest in dom.variants(contract):
+            name = f"nested-iteration-{kind}-{owned}-{optimize}"
+            native = dom.lower(args, ir, manifest, name, optimize=optimize)
+            text = dom.run([args.translate, "--mlir-to-cpp", str(native)]).stdout
+            if "std::vector<ctnative::js_element_t>" not in text or any(
+                helper in text for helper in INTRINSICS[4:]
+            ):
+                raise RuntimeError(f"{name}: nested iteration retained the VM protocol")
+            client = (
+                CURRENT_DOCUMENT_CHECKS + CHECKS + INPUT_CHECKS + (OWNED_CHECKS if owned else "")
+            ).replace("@DEFAULT@", "true" if kind == "default" else "false")
+            dom.standalone(args, native, name, client, compilers, includes, libraries)
+            executions += 2 * len(compilers)
+            controls = [("budget", manifest, 0)]
+            for intrinsic in INTRINSICS[4:] + ["Array", "Element"]:
+                controls.append(
+                    (
+                        "missing-" + intrinsic,
+                        dict(
+                            manifest,
+                            initial_intrinsics=[i for i in INTRINSICS if i != intrinsic],
+                        ),
+                        None,
                     )
-                for suffix, bad, budget in controls:
-                    dom.lower(
-                        args,
-                        ir,
-                        bad,
-                        name + "-" + suffix,
-                        optimize=optimize,
-                        max_steps=budget,
-                        success=False,
-                    )
-                    refusals += 1
+                )
+            for suffix, bad, budget in controls:
+                dom.lower(
+                    args,
+                    ir,
+                    bad,
+                    name + "-" + suffix,
+                    optimize=optimize,
+                    max_steps=budget,
+                    success=False,
+                )
+                refusals += 1
     ir, manifest = dom.prepare(
         args,
         "previous-nested-open",
@@ -330,11 +319,8 @@ def main():
     for name, text in bad_sources.items():
         ir, manifest = dom.prepare(args, name, text, 2, entry_name="bad")
         manifest.update(current_document_parameter=0, initial_intrinsics=INTRINSICS)
-        for optimize in (False, True):
-            dom.lower(
-                args, ir, manifest, f"refused-{name}-{optimize}", optimize=optimize, success=False
-            )
-            refusals += 1
+        dom.refuse(args, ir, manifest, f"refused-{name}")
+        refusals += 2
     print(
         f"Nested element for-of: {executions} native executions, 2 previous-source lowering checks, "
         f"{refusals} refusals; DOM/Core/Style only"

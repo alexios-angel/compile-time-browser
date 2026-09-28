@@ -1,4 +1,5 @@
 #include "Proof.hpp"
+#include "mlir/IR/Matchers.h"
 #include "mlir/IR/Verifier.h"
 
 namespace ctcompile::ctnative::dom_source_detail {
@@ -80,9 +81,12 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
         if (!step()) { return false; }
         mapping.map(argument, destination.addArgument(argument.getType(), argument.getLoc()));
     }
-    const auto copyMapping = [&](const mlir::IRMapping & from, mlir::IRMapping & to) {
-        const uint64_t cost =
-            from.getValueMap().size() + from.getOperationMap().size() + from.getBlockMap().size();
+    // Charge each mapped value and operation (and block, unless told not to)
+    // before copying; a charge that does not fit drains the budget.
+    const auto copyMapping = [&](const mlir::IRMapping & from, mlir::IRMapping & to,
+                                 bool blocks = true) {
+        const uint64_t cost = from.getValueMap().size() + from.getOperationMap().size() +
+                              (blocks ? from.getBlockMap().size() : 0);
         if (cost > remaining) {
             remaining = 0;
             return refuse("DOM helper expansion work budget exhausted");
@@ -162,10 +166,9 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                     if (!step()) { return {}; }
                     auto value = values.lookup(operand);
                     if (exiting && index == 0) {
-                        auto literal = value.getDefiningOp<mlir::arith::ConstantOp>();
-                        auto flag = literal ? llvm::dyn_cast<mlir::IntegerAttr>(literal.getValue())
-                                            : mlir::IntegerAttr{};
-                        if (!flag || !flag.getType().isInteger(1)) {
+                        mlir::IntegerAttr flag;
+                        if (!mlir::matchPattern(value, mlir::m_Constant(&flag)) ||
+                            !flag.getType().isInteger(1)) {
                             refuse("DOM helper protected exit requires an exact completion flag");
                             return {};
                         }
@@ -196,9 +199,8 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                     return {};
                 }
                 auto predicate = values.lookup(condition.getCondition());
-                auto constant = predicate.getDefiningOp<mlir::arith::ConstantOp>();
-                auto integer = constant ? llvm::dyn_cast<mlir::IntegerAttr>(constant.getValue())
-                                        : mlir::IntegerAttr{};
+                mlir::IntegerAttr integer;
+                (void)mlir::matchPattern(predicate, mlir::m_Constant(&integer));
                 if (predicate.getDefiningOp<mlir::ub::PoisonOp>()) {
                     refuse("DOM helper completion observes an inactive value");
                     return {};
@@ -215,12 +217,10 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                         return {};
                     }
                     if (integer.getValue().isZero()) {
-                        auto selector = arguments[terminal.exit.selector];
-                        auto tag = selector.getDefiningOp<mlir::arith::ConstantOp>();
-                        auto key = tag ? llvm::dyn_cast<mlir::IntegerAttr>(tag.getValue())
-                                       : mlir::IntegerAttr{};
-                        if (!key || key.getValue().isNegative() ||
-                            key.getValue().getActiveBits() > 63) {
+                        auto key = exactTag(arguments[terminal.exit.selector]
+                                                .getDefiningOp<mlir::arith::ConstantOp>(),
+                                            63);
+                        if (!key) {
                             refuse("DOM helper loop exit selector is not an exact constant");
                             return {};
                         }
@@ -240,10 +240,7 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                             auto [facts, first] = terminal.exit.booleans.try_emplace(selected);
                             for (auto [index, value] : llvm::enumerate(arguments)) {
                                 if (!step()) { return {}; }
-                                auto literal = value.getDefiningOp<ctjs::ConstantOp>();
-                                auto boolean =
-                                    literal ? llvm::dyn_cast<ctjs::BooleanAttr>(literal.getValue())
-                                            : ctjs::BooleanAttr{};
+                                auto boolean = ctjs::constantAttr<ctjs::BooleanAttr>(value);
                                 if (first) {
                                     facts->second.push_back(boolean);
                                 } else if (facts->second[index] != boolean) {
@@ -424,19 +421,10 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                         if (!branch || branch.getCondition() != exit.comparison.getResult()) {
                             return {};
                         }
-                        selectorValue = exit.comparison.getLhs();
-                        auto constant =
-                            exit.comparison.getRhs().getDefiningOp<mlir::arith::ConstantOp>();
-                        if (!constant) {
-                            selectorValue = exit.comparison.getRhs();
-                            constant =
-                                exit.comparison.getLhs().getDefiningOp<mlir::arith::ConstantOp>();
-                        }
-                        auto key = constant ? llvm::dyn_cast<mlir::IntegerAttr>(constant.getValue())
-                                            : mlir::IntegerAttr{};
-                        if (!key || key.getValue().isNegative() ||
-                            key.getValue().getActiveBits() > 63 ||
-                            !dominance.dominates(constant.getResult(), exit.comparison) ||
+                        mlir::arith::ConstantOp constant;
+                        std::tie(selectorValue, constant) = constantComparison(exit.comparison);
+                        auto key = exactTag(constant, 63);
+                        if (!key || !dominance.dominates(constant.getResult(), exit.comparison) ||
                             (!exit.literal && !values.contains(constant.getResult())) ||
                             (exit.literal &&
                              (constant != exit.literal || !constant->hasOneUse()))) {
@@ -555,15 +543,8 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                     at, loop.getLoc(), mlir::TypeRange(before.types).drop_front(), initial);
                 ++operationCount;
                 for (auto [source, target] : llvm::zip(loop->getRegions(), copied->getRegions())) {
-                    for (const auto & item : values.getValueMap()) {
-                        (void)item;
-                        if (!step()) { return {}; }
-                    }
-                    for (const auto & item : values.getOperationMap()) {
-                        (void)item;
-                        if (!step()) { return {}; }
-                    }
-                    mlir::IRMapping path(values);
+                    mlir::IRMapping path;
+                    if (!copyMapping(values, path, false)) { return {}; }
                     auto & output = target.emplaceBlock();
                     const bool isBefore = &source == &loop.getBefore();
                     if (isBefore) {
@@ -622,15 +603,8 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                                                 ? before.exit.arms[index]
                                                 : before.exit.fallback;
                             const auto emitArm = [&](mlir::OpBuilder & nested) -> Results {
-                                for (const auto & item : values.getValueMap()) {
-                                    (void)item;
-                                    if (!step()) { return {}; }
-                                }
-                                for (const auto & item : values.getOperationMap()) {
-                                    (void)item;
-                                    if (!step()) { return {}; }
-                                }
-                                mlir::IRMapping path(values);
+                                mlir::IRMapping path;
+                                if (!copyMapping(values, path, false)) { return {}; }
                                 if (!refineExit(source, path, nested)) { return {}; }
                                 return self(self, source->front(), source->front().begin(), path,
                                             nested, &tail, terminal, depth + index + 1);
@@ -682,15 +656,8 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                              llvm::zip(llvm::ArrayRef<mlir::Region *>{before.exit.arms[0],
                                                                       before.exit.fallback},
                                        branch->getRegions())) {
-                            for (const auto & item : values.getValueMap()) {
-                                (void)item;
-                                if (!step()) { return {}; }
-                            }
-                            for (const auto & item : values.getOperationMap()) {
-                                (void)item;
-                                if (!step()) { return {}; }
-                            }
-                            mlir::IRMapping path(values);
+                            mlir::IRMapping path;
+                            if (!copyMapping(values, path, false)) { return {}; }
                             auto & output = target.emplaceBlock();
                             mlir::OpBuilder nested(&output, output.begin());
                             if (!refineExit(source, path, nested)) { return {}; }
@@ -741,13 +708,8 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                     values.lookupOrDefault(operation.getOperand(0))};
             }
             if (auto abrupt = llvm::dyn_cast<mlir::scf::ExecuteRegionOp>(operation)) {
-                auto & region = abrupt.getRegion();
-                auto thrown = region.hasOneBlock() && llvm::hasSingleElement(region.front())
-                                  ? llvm::dyn_cast<ctjs::ThrowOp>(region.front().front())
-                                  : ctjs::ThrowOp{};
-                if (!depth || !abrupt.getNoInline() || abrupt->getNumOperands() ||
-                    abrupt.getNumResults() || !thrown || region.front().getNumArguments() ||
-                    !step() || !values.contains(thrown.getValue()) ||
+                auto thrown = savedThrow(abrupt);
+                if (!depth || !thrown || !step() || !values.contains(thrown.getValue()) ||
                     !dominance.dominates(thrown.getValue(), thrown) ||
                     values.lookup(thrown.getValue()).getDefiningOp<mlir::ub::PoisonOp>()) {
                     refuse("DOM helper abrupt completion requires one exact saved throw");
@@ -797,10 +759,9 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
             }
             Continuation tail{&body, std::next(cursor), operation.getResults(), continuation};
             if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(operation)) {
-                auto condition = values.lookupOrDefault(branch.getCondition());
-                auto constant = condition.getDefiningOp<mlir::arith::ConstantOp>();
-                auto integer = constant ? llvm::dyn_cast<mlir::IntegerAttr>(constant.getValue())
-                                        : mlir::IntegerAttr{};
+                mlir::IntegerAttr integer;
+                (void)mlir::matchPattern(values.lookupOrDefault(branch.getCondition()),
+                                         mlir::m_Constant(&integer));
                 bool protectedValues =
                     terminal.kind == Terminal::tryExit || terminal.kind == Terminal::tryYield;
                 for (auto type : branch.getResultTypes()) {
@@ -870,15 +831,8 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                 ++operationCount;
                 for (auto [source, target] :
                      llvm::zip(branch->getRegions(), copied->getRegions())) {
-                    for (const auto & item : values.getValueMap()) {
-                        (void)item;
-                        if (!step()) { return {}; }
-                    }
-                    for (const auto & item : values.getOperationMap()) {
-                        (void)item;
-                        if (!step()) { return {}; }
-                    }
-                    mlir::IRMapping path(values);
+                    mlir::IRMapping path;
+                    if (!copyMapping(values, path, false)) { return {}; }
                     target.emplaceBlock();
                     mlir::OpBuilder nested(&target.front(), target.front().begin());
                     if (repeated) {
@@ -915,11 +869,8 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                 if (auto cast = selector.getDefiningOp<mlir::arith::IndexCastUIOp>()) {
                     selector = cast.getIn();
                 }
-                auto constant = selector.getDefiningOp<mlir::arith::ConstantOp>();
-                auto integer = constant ? llvm::dyn_cast<mlir::IntegerAttr>(constant.getValue())
-                                        : mlir::IntegerAttr{};
-                if (!integer || integer.getValue().isNegative() ||
-                    integer.getValue().getActiveBits() > 63) {
+                auto integer = exactTag(selector.getDefiningOp<mlir::arith::ConstantOp>(), 63);
+                if (!integer) {
                     refuse("DOM helper completion selector is not an exact constant");
                     return {};
                 }
@@ -1128,10 +1079,8 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
             if (auto truth = llvm::dyn_cast<ctjs::TruthyOp>(operation);
                 truth &&
                 (terminal.kind == Terminal::tryExit || terminal.kind == Terminal::tryYield)) {
-                auto literal = values.lookup(truth.getValue()).getDefiningOp<ctjs::ConstantOp>();
-                auto flag = literal ? llvm::dyn_cast<ctjs::BooleanAttr>(literal.getValue())
-                                    : ctjs::BooleanAttr{};
-                if (flag) {
+                if (auto flag =
+                        ctjs::constantAttr<ctjs::BooleanAttr>(values.lookup(truth.getValue()))) {
                     auto bit = mlir::arith::ConstantIntOp::create(at, operation.getLoc(),
                                                                   flag.getValue(), 1);
                     values.map(truth.getResult(), bit.getResult());
@@ -1140,11 +1089,10 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                 }
             }
             if (auto truncate = llvm::dyn_cast<mlir::arith::TruncIOp>(operation)) {
-                auto operand = values.lookup(truncate.getIn());
-                auto constant = operand.getDefiningOp<mlir::arith::ConstantOp>();
-                auto integer = constant ? llvm::dyn_cast<mlir::IntegerAttr>(constant.getValue())
-                                        : mlir::IntegerAttr{};
-                if (integer && truncate.getType().isInteger(1)) {
+                mlir::IntegerAttr integer;
+                if (mlir::matchPattern(values.lookup(truncate.getIn()),
+                                       mlir::m_Constant(&integer)) &&
+                    truncate.getType().isInteger(1)) {
                     auto value = mlir::arith::ConstantIntOp::create(
                         at, truncate.getLoc(), integer.getValue()[0] ? 1 : 0, 1);
                     values.map(truncate.getResult(), value.getResult());
@@ -1201,19 +1149,7 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
     }
     // Only inert completion arithmetic is removed. Source effects remain
     // for the unchanged complete DOM/frame proof below.
-    llvm::SmallVector<mlir::Operation *> arithmetic;
-    const auto cleanup = normalized.walk([&](mlir::Operation * operation) {
-        if (!step()) { return mlir::WalkResult::interrupt(); }
-        if (llvm::isa<mlir::arith::ConstantOp, mlir::arith::IndexCastUIOp>(operation)) {
-            arithmetic.push_back(operation);
-        }
-        return mlir::WalkResult::advance();
-    });
-    if (cleanup.wasInterrupted()) { return false; }
-    for (mlir::Operation * operation : llvm::reverse(arithmetic)) {
-        if (!step()) { return false; }
-        if (operation->use_empty()) { operation->erase(); }
-    }
+    if (!eraseUnusedArithmetic(normalized)) { return false; }
     for (mlir::BlockArgument argument : body.getArguments()) {
         if (!step()) { return false; }
         auto found = stringInputs.find(argument);

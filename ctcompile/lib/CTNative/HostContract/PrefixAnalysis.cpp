@@ -3,6 +3,8 @@
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
 #include "mlir/IR/SymbolTable.h"
 
+#include <limits>
+
 namespace ctcompile::ctnative::host_detail {
 
 prefixAnalysis::prefixAnalysis(mlir::ModuleOp module, const HostContract & contract,
@@ -55,18 +57,9 @@ prefixAnalysis::prefixAnalysis(mlir::ModuleOp module, const HostContract & contr
                                                              "Object"};
             reflective |= load.getName().size() <= 8 && reflectiveGlobals.contains(load.getName());
         }
-        mlir::Value propertyKey;
-        if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
-            propertyKey = read.getKey();
-        }
-        if (auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(operation)) {
-            propertyKey = write.getKey();
-        }
-        if (propertyKey) {
-            auto literal = propertyKey.getDefiningOp<ctjs::ConstantOp>();
-            auto text =
-                literal ? llvm::dyn_cast<ctjs::StringAttr>(literal.getValue()) : ctjs::StringAttr{};
-            const bool number = literal && llvm::isa<ctjs::NumberAttr>(literal.getValue());
+        if (auto key = ctjs::propertyKey(operation)) {
+            auto text = ctjs::constantAttr<ctjs::StringAttr>(key);
+            const bool number = static_cast<bool>(ctjs::constantAttr<ctjs::NumberAttr>(key));
             static const llvm::StringSet<> reflectiveProperties{"caller",
                                                                 "callee",
                                                                 "arguments",
@@ -107,14 +100,35 @@ bool prefixAnalysis::step() {
     return spend(1);
 }
 
-bool prefixAnalysis::spend(unsigned count) {
+bool prefixAnalysis::spend(uint64_t count) {
     if (count > remaining) {
         exhausted = true;
         remaining = 0;
         return false;
     }
-    remaining -= count;
+    remaining -= static_cast<unsigned>(count);
     return true;
+}
+
+bool prefixAnalysis::spendText(llvm::StringRef text) {
+    return text.size() <= std::numeric_limits<unsigned>::max() &&
+           spend(static_cast<unsigned>(text.size()));
+}
+
+const HostPrefixCapture * prefixAnalysis::capture(const HostPrefixFactory & factory,
+                                                  prefixValue closure, ctjs::FuncOp function,
+                                                  ctjs::LoadUpvalueOp load) {
+    if (load.getClosure() != function.getBody().front().getArgument(2) || load.getIndex() < 0) {
+        return nullptr;
+    }
+    for (const auto & capture : factory.captures) {
+        if (!step()) { return nullptr; }
+        if (capture.closure == closure.made &&
+            capture.index == static_cast<unsigned>(load.getIndex())) {
+            return &capture;
+        }
+    }
+    return nullptr;
 }
 
 prefixValue prefixAnalysis::stop(mlir::Operation * operation, llvm::StringRef reason) {

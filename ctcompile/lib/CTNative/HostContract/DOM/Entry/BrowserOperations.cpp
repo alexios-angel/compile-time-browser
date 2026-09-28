@@ -1,6 +1,7 @@
 #include "Body.hpp"
 
 #include "llvm/ADT/StringMap.h"
+#include "llvm/ADT/StringSwitch.h"
 
 #include <cmath>
 #include <limits>
@@ -59,10 +60,14 @@ std::optional<double> numericIndexLiteral(mlir::Value value) {
             return negative ? -number : number;
         }
     }
-    auto number =
-        literal ? llvm::dyn_cast<ctjs::NumberAttr>(literal.getValue()) : ctjs::NumberAttr{};
+    auto number = ctjs::constantAttr<ctjs::NumberAttr>(value);
     if (!number || std::isnan(number.getDouble())) { return std::nullopt; }
     return negative ? -number.getDouble() : number.getDouble();
+}
+
+bool emptyString(mlir::Value value) {
+    auto string = ctjs::constantAttr<ctjs::StringAttr>(value);
+    return string && string.getValue().empty();
 }
 
 std::optional<double> stringIndex(mlir::Value value, unsigned arithmeticDepth = 2) {
@@ -185,7 +190,7 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
     if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(operation)) {
         if (documentParameter && load.getName() == "document") {
             values[load.getResult()] = Kind::document;
-            provedDocumentLoads.insert(load);
+            proved.documentLoads.insert(load);
             return true;
         }
         // The DOM provider fixes this initial binding. The complete
@@ -194,39 +199,20 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
             values[load.getResult()] = Kind::undefined;
             return true;
         }
-        if (suppliedSymbol && load.getName() == "Symbol") {
-            values[load.getResult()] = Kind::symbolIntrinsic;
-            provedSymbolIntrinsics.insert(load);
-            return true;
-        }
-        if (suppliedElement && load.getName() == "Element") {
-            values[load.getResult()] = Kind::elementIntrinsic;
-            provedElementIntrinsics.insert(load);
-            return true;
-        }
-        if (suppliedString && suppliedRegExp && load.getName() == "__ctbrowser_regexp") {
-            values[load.getResult()] = Kind::regexpFactory;
-            provedRegExpIntrinsics.push_back(load);
-            return true;
-        }
-        if (suppliedURI && load.getName() == "decodeURIComponent") {
-            values[load.getResult()] = Kind::uriIntrinsic;
-            provedURIIntrinsics.push_back(load);
-            return true;
-        }
-        if (suppliedNumber && load.getName() == "Number") {
-            values[load.getResult()] = Kind::numberIntrinsic;
-            provedNumberIntrinsics.push_back(load);
-            return true;
-        }
-        if (suppliedObject && load.getName() == "Object") {
-            values[load.getResult()] = Kind::objectIntrinsic;
-            provedObjectIntrinsics.push_back(load);
-            return true;
-        }
-        if (suppliedJSON && load.getName() == "JSON") {
-            values[load.getResult()] = Kind::jsonIntrinsic;
-            provedJSONIntrinsics.push_back(load);
+        const auto kind = llvm::StringSwitch<std::optional<Kind>>(load.getName())
+                              .Case("Symbol", Kind::symbolIntrinsic)
+                              .Case("Element", Kind::elementIntrinsic)
+                              .Case("__ctbrowser_regexp", Kind::regexpFactory)
+                              .Case("decodeURIComponent", Kind::uriIntrinsic)
+                              .Case("Number", Kind::numberIntrinsic)
+                              .Case("Object", Kind::objectIntrinsic)
+                              .Case("JSON", Kind::jsonIntrinsic)
+                              .Default(std::nullopt);
+        // The RegExp factory also needs the original String and RegExp.
+        if (kind && supplied(load.getName()) &&
+            (*kind != Kind::regexpFactory || (supplied("String") && supplied("RegExp")))) {
+            values[load.getResult()] = *kind;
+            proved.intrinsics.insert(load);
             return true;
         }
     }
@@ -236,15 +222,15 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
             if (key == "documentElement") {
                 values[read.getResult()] =
                     documentRootPresent ? Kind::element : Kind::nullableElement;
-                provedDocumentRoots.insert(read);
+                proved.documentRoots.insert(read);
                 return true;
             }
             if (key == "querySelector" || key == "querySelectorAll") {
                 const bool all = key == "querySelectorAll";
                 values[read.getResult()] =
                     all ? Kind::documentQuerySelectorAll : Kind::documentQuerySelector;
-                provedMethods.try_emplace(read, all ? HostDOMMethod::documentQuerySelectorAll
-                                                    : HostDOMMethod::documentQuerySelector);
+                proved.methods.try_emplace(read, all ? HostDOMMethod::documentQuerySelectorAll
+                                                     : HostDOMMethod::documentQuerySelector);
                 return true;
             }
         }
@@ -252,25 +238,25 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
         if (hasKind(read.getObject(), Kind::symbolIntrinsic) && key.size() <= 18 &&
             wellKnownSymbols.contains(key)) {
             values[read.getResult()] = Kind::symbol;
-            provedSymbols.try_emplace(read, key);
+            proved.symbols.try_emplace(read, key);
             return true;
         }
-        if (suppliedSymbol && hasKind(read.getObject(), Kind::symbol) && key == "description") {
+        if (supplied("Symbol") && hasKind(read.getObject(), Kind::symbol) && key == "description") {
             values[read.getResult()] = Kind::undefinedString;
-            provedSymbolDescriptions.insert(read);
+            proved.symbolDescriptions.insert(read);
             return true;
         }
-        if (suppliedSymbol && hasKind(read.getObject(), Kind::symbol) &&
+        if (supplied("Symbol") && hasKind(read.getObject(), Kind::symbol) &&
             (key == "toString" || key == "valueOf")) {
             const bool text = key == "toString";
             values[read.getResult()] = text ? Kind::symbolToString : Kind::symbolValueOf;
-            provedMethods.try_emplace(read, text ? HostDOMMethod::symbolToString
-                                                 : HostDOMMethod::symbolValueOf);
+            proved.methods.try_emplace(read, text ? HostDOMMethod::symbolToString
+                                                  : HostDOMMethod::symbolValueOf);
             return true;
         }
         if (hasKind(read.getObject(), Kind::elementIntrinsic) && key == "prototype") {
             values[read.getResult()] = Kind::elementPrototype;
-            provedElementPrototypes.insert(read);
+            proved.elementPrototypes.insert(read);
             return true;
         }
         if (hasKind(read.getObject(), Kind::elementPrototype) && key.size() <= 16) {
@@ -281,17 +267,17 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
                  method->second.second == HostDOMMethod::querySelector ||
                  method->second.second == HostDOMMethod::querySelectorAll)) {
                 values[read.getResult()] = Kind::prototypeSelector;
-                provedMethods.try_emplace(read, method->second.second);
+                proved.methods.try_emplace(read, method->second.second);
                 return true;
             }
         }
-        if (suppliedFunction && hasKind(read.getObject(), Kind::prototypeSelector) &&
+        if (supplied("Function") && hasKind(read.getObject(), Kind::prototypeSelector) &&
             key == "call") {
             auto selector = read.getObject().getDefiningOp<ctjs::GetPropertyOp>();
-            const auto method = provedMethods.find(selector);
-            if (method != provedMethods.end()) {
+            const auto method = proved.methods.find(selector);
+            if (method != proved.methods.end()) {
                 values[read.getResult()] = Kind::selectorCall;
-                provedMethods.try_emplace(read, method->second);
+                proved.methods.try_emplace(read, method->second);
                 return true;
             }
         }
@@ -299,9 +285,9 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
         if ((elements || hasKind(read.getObject(), Kind::stringVector)) && key == "length") {
             values[read.getResult()] = Kind::number;
             if (elements) {
-                provedElementVectorLengths.insert(read);
+                proved.elementVectorLengths.insert(read);
             } else {
-                provedStringVectorLengths.push_back(read);
+                proved.stringVectorLengths.push_back(read);
             }
             return true;
         }
@@ -311,22 +297,7 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
             for (mlir::Operation * parent = read->getParentOp(); parent != function;
                  parent = parent->getParentOp()) {
                 if (!spend()) { return false; }
-                mlir::Value flag, index = read.getKey();
-                if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(parent);
-                    branch && branch.getThenRegion().isAncestor(read->getParentRegion())) {
-                    flag = branch.getCondition();
-                } else if (auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(parent);
-                           loop && loop.getAfter().isAncestor(read->getParentRegion())) {
-                    auto argument = llvm::dyn_cast<mlir::BlockArgument>(index);
-                    if (!argument || argument.getOwner() != &loop.getAfter().front()) { continue; }
-                    auto condition =
-                        llvm::cast<mlir::scf::ConditionOp>(loop.getBefore().front().back());
-                    flag = condition.getCondition();
-                    index = condition.getArgs()[argument.getArgNumber()];
-                }
-                auto truth = flag ? flag.getDefiningOp<ctjs::TruthyOp>() : ctjs::TruthyOp{};
-                auto compare =
-                    truth ? truth.getValue().getDefiningOp<ctjs::CompareOp>() : ctjs::CompareOp{};
+                auto [compare, index] = indexGuard(parent, read);
                 mlir::Value bound = compare ? compare.getRhs() : mlir::Value{};
                 if (auto capped =
                         bound ? bound.getDefiningOp<mlir::scf::IfOp>() : mlir::scf::IfOp{};
@@ -335,13 +306,9 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
                     capped.getThenRegion().front().getOperations().size() == 1 &&
                     capped.getElseRegion().front().getOperations().size() == 1) {
                     if (!spend()) { return false; }
-                    auto test = capped.getCondition().getDefiningOp<ctjs::TruthyOp>();
-                    auto less =
-                        test ? test.getValue().getDefiningOp<ctjs::CompareOp>() : ctjs::CompareOp{};
-                    auto cap =
-                        less ? less.getRhs().getDefiningOp<ctjs::ConstantOp>() : ctjs::ConstantOp{};
-                    auto number =
-                        cap ? llvm::dyn_cast<ctjs::NumberAttr>(cap.getValue()) : ctjs::NumberAttr{};
+                    auto less = truthyComparison(capped.getCondition());
+                    auto number = less ? ctjs::constantAttr<ctjs::NumberAttr>(less.getRhs())
+                                       : ctjs::NumberAttr{};
                     auto yes =
                         llvm::dyn_cast<mlir::scf::YieldOp>(capped.getThenRegion().front().back());
                     auto no =
@@ -360,8 +327,8 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
                 guarded |= compare && compare.getKind() == ctjs::CompareKind::Lt &&
                            compare.getLhs() == index && length &&
                            length.getObject() == read.getObject() &&
-                           (elements ? provedElementVectorLengths.contains(length)
-                                     : llvm::is_contained(provedStringVectorLengths, length));
+                           (elements ? proved.elementVectorLengths.contains(length)
+                                     : llvm::is_contained(proved.stringVectorLengths, length));
             }
             if (guarded) {
                 if (!spend()) { return false; }
@@ -372,39 +339,39 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
                 }
                 if (elements) {
                     values[read.getResult()] = Kind::element;
-                    provedElementVectorIndices.insert(read);
+                    proved.elementVectorIndices.insert(read);
                 } else {
                     values[read.getResult()] = Kind::string;
-                    provedStringVectorIndices.push_back(read);
-                    provedStrings.push_back(read.getResult());
+                    proved.stringVectorIndices.push_back(read);
+                    proved.strings.push_back(read.getResult());
                 }
                 return true;
             }
         }
-        if (suppliedArray && hasKind(read.getObject(), Kind::stringVector) && key == "filter") {
+        if (supplied("Array") && hasKind(read.getObject(), Kind::stringVector) && key == "filter") {
             values[read.getResult()] = Kind::filterStrings;
-            provedMethods.try_emplace(read, HostDOMMethod::filterStrings);
+            proved.methods.try_emplace(read, HostDOMMethod::filterStrings);
             return true;
         }
         // Bound hashing by the longest supported String member.
-        if (suppliedString && hasKind(read.getObject(), Kind::string) && key.size() <= 11) {
+        if (supplied("String") && hasKind(read.getObject(), Kind::string) && key.size() <= 11) {
             if (auto method = stringMethods.find(key); method != stringMethods.end()) {
                 const auto [kind, hostMethod] = method->second;
                 const bool supported =
-                    (kind != Kind::replacePrefix || suppliedRegExp) &&
+                    (kind != Kind::replacePrefix || suppliedRegExp()) &&
                     (kind != Kind::lowercaseUnit || firstUnits.contains(read.getObject()));
                 if (supported) {
                     values[read.getResult()] = kind;
-                    provedMethods.try_emplace(read, hostMethod);
+                    proved.methods.try_emplace(read, hostMethod);
                     return true;
                 }
             }
         }
         if (hasKind(read.getObject(), Kind::element) && key == "dataset" &&
-            llvm::is_contained(provedDatasetElements, read.getObject())) {
+            llvm::is_contained(proved.datasetElements, read.getObject())) {
             values[read.getResult()] = Kind::dataset;
             datasetEpochs[read.getResult()] = mutationEpoch;
-            provedDatasets.push_back(read);
+            proved.datasets.push_back(read);
             return true;
         }
         if (hasKind(read.getObject(), Kind::dataset)) {
@@ -421,29 +388,29 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
                           "element";
                 return false;
             }
-            provedDatasetValues.try_emplace(read, dataset.getObject());
+            proved.datasetValues.try_emplace(read, dataset.getObject());
             values[read.getResult()] = Kind::string;
-            provedStrings.push_back(read.getResult());
+            proved.strings.push_back(read.getResult());
             return true;
         }
         if (hasKind(read.getObject(), Kind::objectIntrinsic) && key == "keys") {
             values[read.getResult()] = Kind::objectKeys;
-            provedMethods.try_emplace(read, HostDOMMethod::datasetKeys);
+            proved.methods.try_emplace(read, HostDOMMethod::datasetKeys);
             return true;
         }
         if (hasKind(read.getObject(), Kind::jsonIntrinsic) && key == "parse") {
             values[read.getResult()] = Kind::jsonParse;
-            provedMethods.try_emplace(read, HostDOMMethod::jsonParse);
+            proved.methods.try_emplace(read, HostDOMMethod::jsonParse);
             return true;
         }
-        if (suppliedNumber && hasKind(read.getObject(), Kind::number) && key == "toString") {
+        if (supplied("Number") && hasKind(read.getObject(), Kind::number) && key == "toString") {
             values[read.getResult()] = Kind::numberToString;
-            provedMethods.try_emplace(read, HostDOMMethod::numberToString);
+            proved.methods.try_emplace(read, HostDOMMethod::numberToString);
             return true;
         }
         if (hasKind(read.getObject(), Kind::element) && key == "classList") {
             values[read.getResult()] = Kind::tokenList;
-            provedTokens.push_back(read);
+            proved.tokenLists.push_back(read);
             return true;
         }
         // Bound hashing by the longest supported member, as literal comparisons
@@ -452,7 +419,7 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
             if (auto method = elementMethods.find(key); method != elementMethods.end()) {
                 const auto [kind, hostMethod] = method->second;
                 values[read.getResult()] = kind;
-                provedMethods.try_emplace(read, hostMethod);
+                proved.methods.try_emplace(read, hostMethod);
                 return true;
             }
         }
@@ -460,7 +427,7 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
             if (auto method = tokenMethods.find(key); method != tokenMethods.end()) {
                 const auto [kind, hostMethod] = method->second;
                 values[read.getResult()] = kind;
-                provedMethods.try_emplace(read, hostMethod);
+                proved.methods.try_emplace(read, hostMethod);
                 return true;
             }
         }
@@ -495,7 +462,7 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
                 return false;
             }
             values[invoke.getResult()] = uppercase ? Kind::uppercaseRegExp : Kind::prefixRegExp;
-            provedPrefixRegExps.push_back(invoke);
+            proved.stringPrefixRegExps.push_back(invoke);
             return true;
         }
         if (hasKind(invoke.getCallee(), Kind::uriIntrinsic)) {
@@ -507,7 +474,7 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
                           "one String and preserved failure continuation";
                 return false;
             }
-            provedCalls.push_back({invoke, HostDOMMethod::decodeURIComponent, arguments[0]});
+            proved.calls.push_back({invoke, HostDOMMethod::decodeURIComponent, arguments[0]});
             values[invoke.getResult()] = Kind::string;
             return true;
         }
@@ -521,7 +488,7 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
                           "String and preserved failure continuation";
                 return false;
             }
-            provedCalls.push_back({invoke, HostDOMMethod::jsonParse, arguments[0]});
+            proved.calls.push_back({invoke, HostDOMMethod::jsonParse, arguments[0]});
             values[invoke.getResult()] = Kind::json;
             return true;
         }
@@ -529,26 +496,24 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
             // No ToPrimitive/ToString hook can run for these exact input kinds.
             // Broader descriptions need their coercion and exception proof.
             if (!hasKind(invoke.getReceiver(), Kind::undefined) || arguments.size() > 1 ||
-                (!arguments.empty() && !hasKind(arguments[0], Kind::string) &&
-                 !hasKind(arguments[0], Kind::undefined))) {
+                (!arguments.empty() && !hasKind(arguments[0], {Kind::string, Kind::undefined}))) {
                 refusal = "Symbol call requires its initial builtin, undefined receiver "
                           "and at most one String/undefined description";
                 return false;
             }
-            provedCalls.push_back({invoke, HostDOMMethod::symbol, {}});
+            proved.calls.push_back({invoke, HostDOMMethod::symbol, {}});
             values[invoke.getResult()] = Kind::symbol;
             return true;
         }
         if (hasKind(invoke.getCallee(), Kind::numberIntrinsic)) {
             if (!hasKind(invoke.getReceiver(), Kind::undefined) || arguments.size() != 1 ||
-                (!hasKind(arguments[0], Kind::string) && !hasKind(arguments[0], Kind::null) &&
-                 !hasKind(arguments[0], Kind::optionalString) &&
-                 !hasKind(arguments[0], Kind::boolean) && !hasKind(arguments[0], Kind::number))) {
+                !hasKind(arguments[0], {Kind::string, Kind::null, Kind::optionalString,
+                                        Kind::boolean, Kind::number})) {
                 refusal = "Number call requires its initial builtin, undefined "
                           "receiver and one String/null/Boolean/Number input";
                 return false;
             }
-            provedCalls.push_back({invoke, HostDOMMethod::number, arguments[0]});
+            proved.calls.push_back({invoke, HostDOMMethod::number, arguments[0]});
             values[invoke.getResult()] = Kind::number;
             return true;
         }
@@ -560,18 +525,17 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
         const bool documentAll = hasKind(invoke.getCallee(), Kind::documentQuerySelectorAll);
         if ((documentAll || hasKind(invoke.getCallee(), Kind::documentQuerySelector)) &&
             arguments.size() == 1 && hasKind(arguments[0], Kind::string)) {
-            provedCalls.push_back({invoke,
-                                   documentAll ? HostDOMMethod::documentQuerySelectorAll
-                                               : HostDOMMethod::documentQuerySelector,
-                                   documentParameter});
+            proved.calls.push_back({invoke,
+                                    documentAll ? HostDOMMethod::documentQuerySelectorAll
+                                                : HostDOMMethod::documentQuerySelector,
+                                    documentParameter});
             values[invoke.getResult()] = documentAll ? Kind::elementVector : Kind::nullableElement;
             return true;
         }
-        if ((hasKind(invoke.getCallee(), Kind::symbolToString) ||
-             hasKind(invoke.getCallee(), Kind::symbolValueOf)) &&
+        if (hasKind(invoke.getCallee(), {Kind::symbolToString, Kind::symbolValueOf}) &&
             arguments.empty()) {
             const bool text = hasKind(invoke.getCallee(), Kind::symbolToString);
-            provedCalls.push_back(
+            proved.calls.push_back(
                 {invoke, text ? HostDOMMethod::symbolToString : HostDOMMethod::symbolValueOf,
                  invoke.getReceiver()});
             values[invoke.getResult()] = text ? Kind::string : Kind::symbol;
@@ -583,22 +547,22 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
             // other uses, and preceding source effects must still run.
             const bool checkedRoot =
                 arguments.size() == 2 && hasKind(arguments[0], Kind::nullableElement) &&
-                provedDocumentRoots.contains(arguments[0].getDefiningOp<ctjs::GetPropertyOp>());
+                proved.documentRoots.contains(arguments[0].getDefiningOp<ctjs::GetPropertyOp>());
             if (arguments.size() != 2 || (!hasKind(arguments[0], Kind::element) && !checkedRoot) ||
                 !hasKind(arguments[1], Kind::string)) {
                 refusal = "DOM prototype selector call requires an explicit Element or checked "
                           "document root and String";
                 return false;
             }
-            const auto kind = provedMethods.find(method)->second;
-            provedCalls.push_back({invoke, kind, arguments[0], {}, true});
+            const auto kind = proved.methods.find(method)->second;
+            proved.calls.push_back({invoke, kind, arguments[0], {}, true});
             values[invoke.getResult()] = kind == HostDOMMethod::querySelectorAll
                                              ? Kind::elementVector
                                              : Kind::nullableElement;
             if (kind == HostDOMMethod::matches) { values[invoke.getResult()] = Kind::boolean; }
             return true;
         }
-        if (hasKind(invoke.getCallee(), Kind::charAt) || hasKind(invoke.getCallee(), Kind::slice)) {
+        if (hasKind(invoke.getCallee(), {Kind::charAt, Kind::slice})) {
             const bool first = hasKind(invoke.getCallee(), Kind::charAt);
             if (arguments.size() > (first ? 1U : 2U)) {
                 refusal = "DOM String indexing permits an optional index and optional slice end";
@@ -616,9 +580,9 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
                     return false;
                 }
             }
-            provedCalls.push_back({invoke,
-                                   first ? HostDOMMethod::stringCharAt : HostDOMMethod::stringSlice,
-                                   invoke.getReceiver()});
+            proved.calls.push_back(
+                {invoke, first ? HostDOMMethod::stringCharAt : HostDOMMethod::stringSlice,
+                 invoke.getReceiver()});
             values[invoke.getResult()] = Kind::string;
             auto literal = arguments.empty() ? ctjs::ConstantOp{}
                                              : arguments.front().getDefiningOp<ctjs::ConstantOp>();
@@ -631,7 +595,7 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
         }
         if (hasKind(invoke.getCallee(), Kind::lowercaseUnit) && arguments.empty()) {
             if (!spend()) { return false; }
-            provedCalls.push_back(
+            proved.calls.push_back(
                 {invoke, HostDOMMethod::stringLowercaseUnit, invoke.getReceiver()});
             loweredFirstUnits[invoke.getResult()] = firstUnits.lookup(invoke.getReceiver());
             values[invoke.getResult()] = Kind::string;
@@ -644,7 +608,7 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
             auto callback = indexedCallbacks.lookup(static_cast<unsigned>(closure.getFunction()));
             // Every callback use is this exact pattern; its argument is
             // one ASCII uppercase unit, never an arbitrary String.
-            provedCalls.push_back(
+            proved.calls.push_back(
                 {invoke, HostDOMMethod::replaceUppercase, invoke.getReceiver(), callback});
             values[invoke.getResult()] = Kind::string;
             return true;
@@ -656,7 +620,7 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
             // Initial String/RegExp/factory identities fix @@replace,
             // exec and flag accessors; the census excludes mutation
             // and reentry, and the literal has no observable state.
-            provedCalls.push_back(
+            proved.calls.push_back(
                 {invoke, HostDOMMethod::removeStringPrefix, invoke.getReceiver()});
             values[invoke.getResult()] = Kind::string;
             auto key = invoke.getReceiver().getDefiningOp<ctjs::GetPropertyOp>();
@@ -686,7 +650,7 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
                 prefixSnapshots.contains(invoke.getReceiver())) {
                 prefixSnapshots.insert(invoke.getResult());
             }
-            provedCalls.push_back(
+            proved.calls.push_back(
                 {invoke, HostDOMMethod::filterStrings, invoke.getReceiver(), callback});
             values[invoke.getResult()] = Kind::stringVector;
             return true;
@@ -704,9 +668,7 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
                     pieces.emplace_back(add.getRhs(), depth + 1);
                     continue;
                 }
-                auto literal = piece.getDefiningOp<ctjs::ConstantOp>();
-                auto text = literal ? llvm::dyn_cast<ctjs::StringAttr>(literal.getValue())
-                                    : ctjs::StringAttr{};
+                auto text = ctjs::constantAttr<ctjs::StringAttr>(piece);
                 if (!text) {
                     refusal = "DOM startsWith requires ASCII literals with at most two "
                               "concatenation levels";
@@ -720,11 +682,9 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
                     }
                 }
             }
-            provedCalls.push_back({invoke, HostDOMMethod::startsWith, invoke.getReceiver()});
+            proved.calls.push_back({invoke, HostDOMMethod::startsWith, invoke.getReceiver()});
             values[invoke.getResult()] = Kind::boolean;
-            auto prefix = arguments[0].getDefiningOp<ctjs::ConstantOp>();
-            auto text =
-                prefix ? llvm::dyn_cast<ctjs::StringAttr>(prefix.getValue()) : ctjs::StringAttr{};
+            auto text = ctjs::constantAttr<ctjs::StringAttr>(arguments[0]);
             // Computed prefixes gain no dataset membership or key-transform authority.
             if (callbackBody && text &&
                 invoke.getReceiver() == block.getArgument(ctjs::implicit_arguments) &&
@@ -743,12 +703,12 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
             if (!spend()) { return false; }
             snapshotOrigins.try_emplace(invoke.getResult(),
                                         DatasetOrigin{dataset.getObject(), mutationEpoch});
-            provedCalls.push_back({invoke, HostDOMMethod::datasetKeys, dataset.getObject()});
+            proved.calls.push_back({invoke, HostDOMMethod::datasetKeys, dataset.getObject()});
             values[invoke.getResult()] = Kind::stringVector;
             return true;
         }
         if (hasKind(invoke.getCallee(), Kind::numberToString) && arguments.empty()) {
-            provedCalls.push_back({invoke, HostDOMMethod::numberToString, invoke.getReceiver()});
+            proved.calls.push_back({invoke, HostDOMMethod::numberToString, invoke.getReceiver()});
             values[invoke.getResult()] = Kind::string;
             return true;
         }
@@ -762,7 +722,7 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
              ((matches || closest || query || queryAll) && hasKind(arguments[0], Kind::string)))) {
             const auto hostMethod =
                 elementMethods.find(ctjs::constantKey(method.getKey()))->second.second;
-            provedCalls.push_back({invoke, hostMethod, invoke.getReceiver()});
+            proved.calls.push_back({invoke, hostMethod, invoke.getReceiver()});
             if (queryAll) {
                 values[invoke.getResult()] = Kind::elementVector;
             } else {
@@ -790,22 +750,20 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
             auto element = invoke.getReceiver().getDefiningOp<ctjs::GetPropertyOp>().getObject();
             const auto hostMethod =
                 tokenMethods.find(ctjs::constantKey(method.getKey()))->second.second;
-            provedCalls.push_back({invoke, hostMethod, element});
+            proved.calls.push_back({invoke, hostMethod, element});
             values[invoke.getResult()] = containsClass ? Kind::boolean : Kind::undefined;
             return true;
         }
-        if ((hasKind(invoke.getCallee(), Kind::toggle) ||
-             hasKind(invoke.getCallee(), Kind::toggleAttribute)) &&
+        if (hasKind(invoke.getCallee(), {Kind::toggle, Kind::toggleAttribute}) &&
             (arguments.size() == 1 ||
-             (arguments.size() == 2 &&
-              (hasKind(arguments[1], Kind::boolean) || hasKind(arguments[1], Kind::undefined)))) &&
+             (arguments.size() == 2 && hasKind(arguments[1], {Kind::boolean, Kind::undefined}))) &&
             hasKind(arguments[0], Kind::string)) {
             ++mutationEpoch;
             const bool classes = hasKind(invoke.getCallee(), Kind::toggle);
             auto element =
                 classes ? invoke.getReceiver().getDefiningOp<ctjs::GetPropertyOp>().getObject()
                         : invoke.getReceiver();
-            provedCalls.push_back(
+            proved.calls.push_back(
                 {invoke, classes ? HostDOMMethod::toggleClass : HostDOMMethod::toggleAttribute,
                  element});
             values[invoke.getResult()] = Kind::boolean;
@@ -813,27 +771,25 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
         }
         if (hasKind(invoke.getCallee(), Kind::getAttribute) && arguments.size() == 1 &&
             hasKind(arguments[0], Kind::string)) {
-            provedCalls.push_back({invoke, HostDOMMethod::getAttribute, invoke.getReceiver()});
+            proved.calls.push_back({invoke, HostDOMMethod::getAttribute, invoke.getReceiver()});
             // Own String or null, with no prototype fallback.
             values[invoke.getResult()] = Kind::optionalString;
             return true;
         }
         if (hasKind(invoke.getCallee(), Kind::hasAttribute) && arguments.size() == 1 &&
             hasKind(arguments[0], Kind::string)) {
-            provedCalls.push_back({invoke, HostDOMMethod::hasAttribute, invoke.getReceiver()});
+            proved.calls.push_back({invoke, HostDOMMethod::hasAttribute, invoke.getReceiver()});
             values[invoke.getResult()] = Kind::boolean;
             return true;
         }
         const bool sets = hasKind(invoke.getCallee(), Kind::attribute);
         if ((sets && arguments.size() == 2 && hasKind(arguments[0], Kind::string) &&
-             (hasKind(arguments[1], Kind::string) || hasKind(arguments[1], Kind::boolean) ||
-              hasKind(arguments[1], Kind::optionalBoolean) || hasKind(arguments[1], Kind::number) ||
-              hasKind(arguments[1], Kind::optionalNumber) ||
-              hasKind(arguments[1], Kind::optionalString))) ||
+             hasKind(arguments[1], {Kind::string, Kind::boolean, Kind::optionalBoolean,
+                                    Kind::number, Kind::optionalNumber, Kind::optionalString})) ||
             (hasKind(invoke.getCallee(), Kind::removeAttribute) && arguments.size() == 1 &&
              hasKind(arguments[0], Kind::string))) {
             ++mutationEpoch;
-            provedCalls.push_back(
+            proved.calls.push_back(
                 {invoke, sets ? HostDOMMethod::setAttribute : HostDOMMethod::removeAttribute,
                  invoke.getReceiver()});
             values[invoke.getResult()] = Kind::undefined;

@@ -59,14 +59,9 @@ bool DOMSource::checkBody(ctjs::FuncOp function, bool entry, bool directReceiver
                     return refuse("DOM helper observes its shadow frame");
                 }
             }
-            if (auto abrupt = llvm::dyn_cast<mlir::scf::ExecuteRegionOp>(operation)) {
-                auto & region = abrupt.getRegion();
-                auto thrown = region.hasOneBlock() && llvm::hasSingleElement(region.front())
-                                  ? llvm::dyn_cast<ctjs::ThrowOp>(region.front().front())
-                                  : ctjs::ThrowOp{};
-                if (!llvm::isa<mlir::scf::IfOp>(body.getParentOp()) || !abrupt.getNoInline() ||
-                    abrupt->getNumOperands() || abrupt.getNumResults() || !thrown ||
-                    region.front().getNumArguments()) {
+            if (llvm::isa<mlir::scf::ExecuteRegionOp>(operation)) {
+                auto thrown = savedThrow(&operation);
+                if (!llvm::isa<mlir::scf::IfOp>(body.getParentOp()) || !thrown) {
                     return refuse("DOM helper abrupt region requires one exact saved throw");
                 }
                 if (!step() || !step()) { return false; }
@@ -171,24 +166,18 @@ bool DOMSource::checkBody(ctjs::FuncOp function, bool entry, bool directReceiver
             auto object = llvm::dyn_cast<ctjs::CreateObjectOp>(operation);
             if (depth) {
                 auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(operation);
-                auto target = closure && closure.getFunction() >= 0
-                                  ? functions.lookup(static_cast<unsigned>(closure.getFunction()))
-                                  : ctjs::FuncOp{};
+                auto target = closureTarget(closure);
                 if ((closure && (!target || closure->getParentOfType<mlir::scf::WhileOp>() ||
-                                 (!confinedFilterCallback(closure, target) &&
-                                  !confinedReplacementCallback(closure, target)))) ||
+                                 !confinedCallback(closure, target))) ||
                     llvm::isa<ctjs::CreateCellOp>(operation) || (object && !dataObject(object))) {
                     return refuse("DOM helper branch contains an unproved local identity");
                 }
             }
             if (directReceiver && !beforeReplacement) {
                 auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(operation);
-                auto target = closure && closure.getFunction() >= 0
-                                  ? functions.lookup(static_cast<unsigned>(closure.getFunction()))
-                                  : ctjs::FuncOp{};
+                auto target = closureTarget(closure);
                 if (llvm::isa<ctjs::LoadUpvalueOp>(operation) ||
-                    (closure && (!target || (!confinedFilterCallback(closure, target) &&
-                                             !confinedReplacementCallback(closure, target))))) {
+                    (closure && (!target || !confinedCallback(closure, target)))) {
                     return refuse("DOM direct helper contains an unproved closure or capture");
                 }
             }
@@ -276,14 +265,8 @@ bool DOMSource::proveUnusedBody(ctjs::FuncOp function, unsigned depth) {
                 }
             }
             auto module = function->getParentOfType<mlir::ModuleOp>();
-            if (remaining / 2 < operationCount) {
-                refuse("DOM helper expansion work budget exhausted");
-                return mlir::WalkResult::interrupt();
-            }
-            remaining -= 2 * operationCount;
-            if (!mlir::SymbolTable::symbolKnownUseEmpty(target, module.getOperation()) ||
-                !mlir::SymbolTable::symbolKnownUseEmpty(target, &module.getBodyRegion()) ||
-                !proveUnusedBody(target, depth + 1)) {
+            if (!step(2 * uint64_t(operationCount))) { return mlir::WalkResult::interrupt(); }
+            if (!symbolUnused(target, module) || !proveUnusedBody(target, depth + 1)) {
                 refuse("unused DOM helper child lacks a complete independent body proof");
                 return mlir::WalkResult::interrupt();
             }

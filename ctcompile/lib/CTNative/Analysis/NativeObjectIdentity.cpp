@@ -2,6 +2,7 @@
 #include "ClosedValueFlow.h"
 #include "NativeObject/Fields.h"
 #include "NativeObject/ValueFlow.h"
+#include "ctcompile/CTNative/Analysis/ClosedCallable.h"
 #include "ctcompile/CTNative/Analysis/NativeClosure.h"
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -59,20 +60,6 @@ bool comparisonObservation(mlir::OpOperand & use) {
     return false;
 }
 
-bool liveMapCall(ctjs::CallOp call) {
-    auto get = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
-    const auto action = nativeMapAction(call);
-    if (!get || get.getObject() != call.getReceiver() || nativeMapGroup(call.getReceiver()) < 0 ||
-        ctjs::constantKey(get.getKey()) != action) {
-        return false;
-    }
-    if (action == "set") { return call.getArgs().size() == 2; }
-    if (action == "get" || action == "has" || action == "delete") {
-        return call.getArgs().size() == 1;
-    }
-    return action == "clear" && call.getArgs().empty();
-}
-
 // Unlike the original Map families, a comparison family need not have any
 // upstream Map proof. Its scalar fields therefore need their own closed
 // property environment. Only live source edges (and already checked standard
@@ -89,23 +76,16 @@ bool comparisonFieldEnvironment(mlir::ModuleOp module, const OwnedGlobalRoots * 
         }
         bool safe = false;
         if (auto call = llvm::dyn_cast<ctjs::CallOp>(op)) {
-            safe = liveMapCall(call);
+            safe = !liveNativeMapAction(call).empty();
         } else if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(op)) {
             safe = closedValueFlow::exactCall(call, call.getTarget());
         } else if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(op)) {
-            auto load = made.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
-            safe = made->hasAttr(kNativeMapSite) && made.getArgs().empty() &&
-                   made.getNewTarget() == made.getCallee() && load && load.getName() == "Map" &&
-                   load->hasAttr(kNativeMapConstructor);
+            safe = made->hasAttr(kNativeMapSite) && plainMapConstruction(made) &&
+                   made.getCallee().getDefiningOp()->hasAttr(kNativeMapConstructor);
         } else if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op)) {
             safe = (globals && globals->proved() && globals->lookup(load)) ||
-                   (load.getName() == "Map" && load->hasAttr(kNativeMapConstructor));
-            if (!safe) {
-                safe = llvm::all_of(load.getResult().getUses(), [](mlir::OpOperand & use) {
-                    return llvm::isa<ctjs::CallDirectOp>(use.getOwner()) &&
-                           use.getOperandNumber() == 2;
-                });
-            }
+                   (load.getName() == "Map" && load->hasAttr(kNativeMapConstructor)) ||
+                   calleeSlotOnly(load);
         } else if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) {
             safe = ordinaryObject(get.getObject()) ||
                    (globals && globals->proved() &&
@@ -116,7 +96,8 @@ bool comparisonFieldEnvironment(mlir::ModuleOp module, const OwnedGlobalRoots * 
                        (get->hasAttr(kNativeMapMethod) && !get.getResult().use_empty() &&
                         llvm::all_of(get.getResult().getUses(), [](mlir::OpOperand & use) {
                             auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
-                            return call && use.getOperandNumber() == 0 && liveMapCall(call);
+                            return call && use.getOperandNumber() == 0 &&
+                                   !liveNativeMapAction(call).empty();
                         }));
             }
         } else if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(op)) {
@@ -124,17 +105,13 @@ bool comparisonFieldEnvironment(mlir::ModuleOp module, const OwnedGlobalRoots * 
                    (globals && globals->proved() && globals->lookup(set));
         } else if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(op)) {
             safe = store.getName() != "Map" && store.getName() != "Object";
-        } else if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(op)) {
-            safe = unary.getKind() == ctjs::UnaryKind::Not ||
-                   unary.getKind() == ctjs::UnaryKind::TypeOf ||
-                   unary.getKind() == ctjs::UnaryKind::Void;
         } else {
-            safe = strictComparison(op) ||
+            safe = ctjs::nonCoercing(op) ||
                    llvm::isa<mlir::ModuleOp, ctjs::FuncOp, ctjs::ConstantOp, ctjs::CreateObjectOp,
                              ctjs::CreateClosureOp, ctjs::LoadUpvalueOp, ctjs::FrameEnterOp,
-                             ctjs::FrameExitOp, ctjs::RootOp, ctjs::TruthyOp, ctjs::FromBoolOp,
-                             ctjs::ReturnOp, mlir::scf::IfOp, mlir::scf::YieldOp,
-                             mlir::arith::ConstantOp, mlir::arith::TruncIOp>(op);
+                             ctjs::FrameExitOp, ctjs::RootOp, ctjs::FromBoolOp, ctjs::ReturnOp,
+                             mlir::scf::IfOp, mlir::scf::YieldOp, mlir::arith::ConstantOp,
+                             mlir::arith::TruncIOp>(op);
         }
         return safe ? mlir::WalkResult::advance() : mlir::WalkResult::interrupt();
     });
@@ -208,12 +185,9 @@ void prepareNativeObjectIdentities(mlir::ModuleOp module, const OwnedGlobalRoots
                     return false;
                 }
             } else if (auto call = member.getDefiningOp<ctjs::CallDirectOp>()) {
-                auto fn = call.getTarget();
-                if (!closedValueFlow::exactCall(call, fn) || flow.returns[fn].empty()) {
-                    return false;
-                }
+                if (!flow.closedResult(call)) { return false; }
             } else if (auto call = member.getDefiningOp<ctjs::CallOp>()) {
-                if (nativeMapAction(call) != "get" || !liveMapCall(call)) { return false; }
+                if (liveNativeMapAction(call) != "get") { return false; }
             } else if (!reads.contains(member.getDefiningOp()) &&
                        !llvm::isa_and_nonnull<mlir::scf::IfOp>(member.getDefiningOp())) {
                 return false;
@@ -258,24 +232,16 @@ void prepareNativeObjectIdentities(mlir::ModuleOp module, const OwnedGlobalRoots
             if (value.getDefiningOp<ctjs::CreateObjectOp>()) {
                 // Fresh allocation, even when another allocation has the same schema.
             } else if (auto arg = llvm::dyn_cast<mlir::BlockArgument>(value)) {
-                auto fn = llvm::dyn_cast<ctjs::FuncOp>(arg.getOwner()->getParentOp());
                 if (llvm::isa<mlir::scf::WhileOp, mlir::scf::ForOp>(
                         arg.getOwner()->getParentOp())) {
                     // Every initial/backedge value was connected above.
-                } else if (!closedValueFlow::closed(fn) ||
-                           arg.getOwner() != &fn.getBody().front() || arg.getArgNumber() < 3 ||
-                           flow.callers[fn].empty()) {
+                } else if (!flow.closedParameter(arg)) {
                     reject("parameter requires a closed function with visible callers");
-                } else {
-                    for (ctjs::CallDirectOp call : flow.callers[fn]) {
-                        if (!closedValueFlow::exactCall(call, fn)) {
-                            reject("parameter has a missing or surplus argument");
-                        }
-                    }
+                } else if (!flow.exactCallers(arg)) {
+                    reject("parameter has a missing or surplus argument");
                 }
             } else if (auto call = value.getDefiningOp<ctjs::CallDirectOp>()) {
-                auto fn = call.getTarget();
-                if (!closedValueFlow::exactCall(call, fn) || flow.returns[fn].empty()) {
+                if (!flow.closedResult(call)) {
                     reject("result requires a closed function with visible returns");
                 }
             } else if (reads.contains(value.getDefiningOp())) {
@@ -316,11 +282,7 @@ void prepareNativeObjectIdentities(mlir::ModuleOp module, const OwnedGlobalRoots
                                     : object_detail::valueObservation(use.getOwner()))) {
                     continue;
                 }
-                if (erasedCapture(use)) { continue; }
-                if (llvm::isa<ctjs::CreateClosureOp>(use.getOwner()) &&
-                    use.getOperandNumber() >= 2 && !environmentTarget(use.getOwner()).empty()) {
-                    continue;
-                }
+                if (closedValueFlow::captured(use)) { continue; }
                 if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
                     call && use.getOperandNumber() >= 3 &&
                     closedValueFlow::exactCall(call, call.getTarget())) {

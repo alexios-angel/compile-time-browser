@@ -57,21 +57,6 @@ void checkNullablePayloadResults(mlir::MLIRContext & context, const std::string 
         source = replaced(source, "    %answer = ctjs.call %getter(%owned, %falseFlag)", consumer);
     }
     source = replaced(source, "    %getter = ctjs.get_property %owned[%key]\n", "");
-    const auto requested = [](mlir::ModuleOp module) {
-        auto contract = contractFor(module);
-        contract.initialIntrinsics = {"Map"};
-        return contract;
-    };
-    const auto withheld = [](mlir::ModuleOp module, const HostContractAnalysis & query) {
-        bool empty = query.callables().empty();
-        module.walk([&](mlir::Operation * operation) {
-            empty &= !query.callable(operation);
-            if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
-                empty &= !query.property(read);
-            }
-        });
-        return empty;
-    };
     const auto edges = [&](mlir::ModuleOp module, const HostContractAnalysis & query,
                            unsigned resultMask) {
         const auto calls = query.callables();
@@ -112,10 +97,9 @@ void checkNullablePayloadResults(mlir::MLIRContext & context, const std::string 
     const auto variant = [&](const std::string & program, bool expected, const char * message,
                              unsigned resultMask = Alternatives::String | Alternatives::Null) {
         ++rows;
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
-        check(static_cast<bool>(module), "source/prepared nullable payload fixture parses");
+        auto module = parsed(context, program, "source/prepared nullable payload fixture parses");
         if (!module) { return; }
-        const auto contract = requested(*module);
+        const auto contract = mapContractFor(*module);
         HostContractAnalysis query(*module, contract);
         check(query.proved() == expected && !query.exhausted() &&
                   (expected || withheld(*module, query)),
@@ -214,10 +198,9 @@ void checkNullablePayloadResults(mlir::MLIRContext & context, const std::string 
     check(rows == 16, "all nullable payload propagation and refusal rows ran");
     for (const auto & [program, label] :
          {std::pair{source, "nullable payload"}, std::pair{conditional, "nullable payload join"}}) {
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
-        check(static_cast<bool>(module), "nullable payload budget fixture parses");
+        auto module = parsed(context, program, "nullable payload budget fixture parses");
         if (!module) { continue; }
-        auto contract = requested(*module);
+        auto contract = mapContractFor(*module);
         HostContractAnalysis complete(*module, contract);
         const unsigned completion = complete.steps();
         check(complete.proved() && completion < 20000,
@@ -246,7 +229,7 @@ void checkNullablePayloadResults(mlir::MLIRContext & context, const std::string 
             operation->setAttr("ctnative.map_present", builder.getBoolAttr(true));
             operation->setAttr("ctnative.map_read_type", builder.getStringAttr("Opt<Str>"));
         });
-        contract = requested(*module);
+        contract = mapContractFor(*module);
         check(HostContractAnalysis(*module, contract).proved(),
               "forged nullable reports leave the live proof independently reproducible");
         const auto mutation = [&](mlir::Operation * operation, unsigned operand,
@@ -257,7 +240,7 @@ void checkNullablePayloadResults(mlir::MLIRContext & context, const std::string 
             check(!stale.proved() && stale.reason().contains("fingerprint") &&
                       withheld(*module, stale),
                   "a live payload mutation invalidates its earlier host fingerprint");
-            HostContractAnalysis fresh(*module, requested(*module));
+            HostContractAnalysis fresh(*module, mapContractFor(*module));
             check(!fresh.proved() && !fresh.exhausted() && withheld(*module, fresh),
                   "fresh forged reports cannot recover unknown nullable payload evidence");
             operation->setOperand(operand, original);

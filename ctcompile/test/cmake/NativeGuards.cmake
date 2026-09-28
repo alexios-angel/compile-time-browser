@@ -9,19 +9,8 @@
 # control for this module is its own C++ plus one object that reaches the
 # interpreter, built here and named on the module's VM-LINKED line.
 if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate)
-  set(_values_module "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Scalars/values.emitc.mlir")
-  set(_values_cpp "${CMAKE_CURRENT_BINARY_DIR}/native-values-fixture.generated.cpp")
-  add_custom_command(
-    OUTPUT "${_values_cpp}"
-    COMMAND $<TARGET_FILE:ctjs-translate> --mlir-to-cpp "${_values_module}" -o "${_values_cpp}"
-    DEPENDS "${_values_module}" ctjs-translate
-    COMMENT "Emitting native-values-fixture.emitc.mlir to C++ for the VM-linked control"
-    VERBATIM)
-  add_executable(ctcompile-test-native-values-vm-linked "${_values_cpp}")
-  target_link_libraries(ctcompile-test-native-values-vm-linked PRIVATE ctbrowser::ctbrowser)
-  target_compile_features(ctcompile-test-native-values-vm-linked PRIVATE cxx_std_23)
-  target_compile_options(ctcompile-test-native-values-vm-linked PRIVATE
-    -O2 -Wall -Wextra -Werror -pedantic -ffp-contract=off)
+  ctcompile_vm_linked_control(native-values
+    "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Scalars/values.emitc.mlir")
 endif()
 
 # ============================================================================
@@ -39,14 +28,10 @@ endif()
 # Source invocation recovery is structural only until native admission and
 # emission consume both completions. Keep its original checks available for rollback.
 if(CTCOMPILE_ENABLE_MLIR)
-  add_executable(ctcompile-test-exception-recovery)
-  target_link_libraries(ctcompile-test-exception-recovery
-    PRIVATE ctcompile::ctnative-lowering ctcompile::ctjs-lowering ctcompile::ctjs-import
+  ctcompile_unit_test(exception-recovery
+    LIBS ctcompile::ctnative-lowering ctcompile::ctjs-lowering ctcompile::ctjs-import
     # Guards.cpp parses its fixtures itself; the lowering library no longer
     # carries MLIRParser for it (its PDL patterns were the only parser user).
-    MLIRParser)
-  ctcompile_target(ctcompile-test-exception-recovery)
-  add_test(NAME ctcompile_exception_recovery
-    COMMAND ctcompile-test-exception-recovery
-      "${CMAKE_CURRENT_SOURCE_DIR}/CTJS/Import/invocation-state.mlir")
+    MLIRParser
+    ARGS "${CMAKE_CURRENT_SOURCE_DIR}/CTJS/Import/invocation-state.mlir")
 endif()

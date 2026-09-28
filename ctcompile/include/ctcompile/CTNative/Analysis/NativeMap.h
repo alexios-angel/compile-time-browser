@@ -3,6 +3,7 @@
 #define CTCOMPILE_CTNATIVE_ANALYSIS_NATIVEMAP_H
 
 #include "ctcompile/CTJS/IR/CTJSOps.h"
+#include "ctcompile/CTNative/Analysis/PrimitiveAlternatives.h"
 #include "mlir/IR/BuiltinOps.h"
 
 #include <cstdint>
@@ -56,12 +57,33 @@ inline std::optional<unsigned> mapMethodArity(llvm::StringRef name) {
         .Default(std::nullopt);
 }
 
+/// The constant method name a call reads from its callee property, or empty.
+inline llvm::StringRef mapMethodName(ctjs::CallOp call) {
+    auto get = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+    return get ? ctjs::constantKey(get.getKey()) : llvm::StringRef{};
+}
+
+/// The proved action of a call that still reads that method from its own
+/// receiver, a Map family member, with the method's exact argument count;
+/// empty otherwise. Rechecks the source edges a stale annotation could skip.
+llvm::StringRef liveNativeMapAction(ctjs::CallOp call);
+
 /// A zero-argument `new Map` whose new.target is its own callee. Lexical only:
 /// whether global `Map` is the standard constructor is the caller's proof.
 inline bool plainMapConstruction(ctjs::ConstructOp made) {
     auto load = made.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
     return load && load.getName() == "Map" && made.getArgs().empty() &&
            made.getNewTarget() == made.getCallee();
+}
+
+/// The Map scalar tag of a proved one-kind primitive set - "bool", "number" or
+/// "string" - or empty. Tags stay semantic: CTJS-only callers run this proof.
+inline llvm::StringRef mapScalarTag(PrimitiveAlternatives alternatives) {
+    const auto tag = alternatives.tag();
+    if (tag == mlir::TypeID::get<ctjs::BooleanAttr>()) { return "bool"; }
+    if (tag == mlir::TypeID::get<ctjs::NumberAttr>()) { return "number"; }
+    if (tag == mlir::TypeID::get<ctjs::StringAttr>()) { return "string"; }
+    return {};
 }
 
 /// A proved keys/values snapshot or its confined standard Array.from copy.

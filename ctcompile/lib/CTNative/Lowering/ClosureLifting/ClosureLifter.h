@@ -568,6 +568,13 @@ struct closureLifter {
     mlir::Value capturedValue(ctjs::CreateClosureOp c, unsigned i);
 
     mlir::Value liftedCapture(ctjs::CreateClosureOp c, unsigned i);
+    llvm::SmallVector<mlir::Value> liftedCaptures(ctjs::CreateClosureOp c);
+    // A ctjs.call_direct of `target` at `at`: `prefix` then `args`, padded
+    // with `undefined` to `width`; its new.target is `undefined` too.
+    ctjs::CallDirectOp directCall(mlir::OpBuilder & at, mlir::Location where, ctjs::FuncOp target,
+                                  mlir::Value receiver, mlir::Value callee, mlir::Value undefined,
+                                  llvm::ArrayRef<mlir::Value> prefix, mlir::ValueRange args,
+                                  size_t width);
 
     std::optional<std::string> whyCapturesDoNotReach(ctjs::CreateClosureOp c, mlir::Operation * at);
 
@@ -584,6 +591,21 @@ struct closureLifter {
 
     std::optional<std::string> whyUpvalueReadsDoNotLift(ctjs::CreateClosureOp c,
                                                         ctjs::FuncOp target);
+
+    // A lift's last questions: captures reach each site, no escape, upvalue reads lift.
+    template <class Sites>
+    std::optional<std::string> whyLiftTailFails(ctjs::CreateClosureOp c, ctjs::FuncOp target,
+                                                Sites && sites) {
+        for (mlir::Operation * site : sites) {
+            if (std::optional<std::string> why = whyCapturesDoNotReach(c, site)) { return why; }
+        }
+        if (std::optional<std::string> escapes = whyOwnClosureEscapes(target)) { return escapes; }
+        return whyUpvalueReadsDoNotLift(c, target);
+    }
+
+    // Surplus arguments or a new.target-passing caller at "a call" or "a `new`".
+    std::optional<std::string> whyCallSiteDoesNotLift(mlir::Operation * site, size_t arguments,
+                                                      size_t parameters, llvm::StringRef noun);
 
     std::optional<std::string> whyNotLiftable(ctjs::CreateClosureOp c);
 
@@ -649,6 +671,10 @@ struct closureLifter {
     bool slotIsACandidate(ctjs::CreateClosureOp c, unsigned j);
 
     bool slotCarriesAnObject(mlir::Operation * callable, unsigned j) const;
+    // A call's operand 2 + j, or a call_direct's 3 + j, whose slot carries an object.
+    bool carriesObjectArgument(mlir::OpOperand & use);
+    // A call whose callee is a constant-key read of its receiver `object`.
+    static bool methodCallOn(ctjs::CallOp call, mlir::Value object);
 
     void argumentCensus();
 
@@ -696,8 +722,6 @@ struct closureLifter {
 
     liftReport run();
 
-    static bool admissionIsDeclaration(ctjs::CreateClosureOp c);
-
     void lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosureOp> made, liftReport & out,
               bool preserveReceiver = false);
 
@@ -706,6 +730,8 @@ struct closureLifter {
     std::optional<std::string> whyCarriedCellStaysABox(ctjs::CreateCellOp cell);
 
     void unboxCells(liftReport & out, bool localObjectsOnly = false);
+    // Erases every unboxed cell nothing reads any more.
+    void eraseUnusedUnboxedCells();
 };
 
 } // namespace ctcompile::ctnative::lowering_detail

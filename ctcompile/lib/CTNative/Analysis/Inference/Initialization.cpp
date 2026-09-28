@@ -20,6 +20,15 @@
 namespace ctcompile::ctnative {
 using ctjs::constantKey;
 
+namespace {
+// `f` on every member of `value`'s group, or on `value` alone outside any group.
+template <class Groups, class F> void forEachMember(const Groups & groups, mlir::Value value, F f) {
+    const auto group = groups.find(value);
+    if (group == groups.end()) { return f(value); }
+    for (mlir::Value member : group->second) { f(member); }
+}
+} // namespace
+
 mlir::LogicalResult TypeInference::initialize(mlir::Operation * top) {
     globalStores_.clear();
     globalsAreDynamic_ = false;
@@ -49,11 +58,7 @@ mlir::LogicalResult TypeInference::initialize(mlir::Operation * top) {
         if (nativeMapKeyAction(action)) {
             mlir::Type exact;
             if (auto proof = call->getAttrOfType<mlir::StringAttr>(kNativeMapKeyType)) {
-                const auto tag = proof.getValue();
-                auto * context = call.getContext();
-                if (tag == "bool") { exact = BoolType::get(context); }
-                if (tag == "number") { exact = NumType::getDouble(context); }
-                if (tag == "string") { exact = StrType::get(context, StrEncoding::UTF8); }
+                exact = mapTagType(call.getContext(), proof.getValue());
             }
             mapKeys_[group].push_back({call.getArgs()[0], exact});
         }
@@ -81,14 +86,9 @@ mlir::LogicalResult TypeInference::initialize(mlir::Operation * top) {
         // a second walk, so the two cannot disagree about which stores exist -
         // they differ only in what they are keyed on, and the header says why.
         fieldStoreSites_[{store.getObject(), key}].push_back(store.getOperation());
-        const auto group = groups.find(store.getObject());
-        if (group == groups.end()) {
-            fieldStores_[{store.getObject(), key}].push_back(store.getValue());
-            return;
-        }
-        for (mlir::Value member : group->second) {
+        forEachMember(groups, store.getObject(), [&](mlir::Value member) {
             fieldStores_[{member, key}].push_back(store.getValue());
-        }
+        });
     });
     top->walk([&](ctjs::GetPropertyOp read) {
         if (nativeObjectFieldGroup(read) >= 0 && queryNativeObjectFieldPresence(read).assigned) {
@@ -97,10 +97,7 @@ mlir::LogicalResult TypeInference::initialize(mlir::Operation * top) {
     });
     if (auto module = llvm::dyn_cast<mlir::ModuleOp>(top)) {
         top->walk([&](ctjs::FuncOp function) {
-            if (function.getBody().empty() || mlir::SymbolTable::getSymbolVisibility(function) !=
-                                                  mlir::SymbolTable::Visibility::Private) {
-                return;
-            }
+            if (function.getBody().empty() || !function.isPrivate()) { return; }
             llvm::SmallVector<mlir::Value> parameters;
             for (mlir::BlockArgument argument : function.getBody().front().getArguments()) {
                 const auto group = groups.find(argument);
@@ -155,20 +152,10 @@ mlir::LogicalResult TypeInference::initialize(mlir::Operation * top) {
             // Numeric closure identities are checked above; symbol uses must
             // also be a complete census of ordinary direct calls. Each slot
             // retains its actual operands, never the receiver schema group.
-            const auto uses = mlir::SymbolTable::getSymbolUses(function, module);
-            if (!uses) { return; }
-            llvm::SmallVector<mlir::Operation *, 2> callers;
-            for (const auto & use : *uses) {
-                auto call = llvm::dyn_cast<ctjs::CallDirectOp>(use.getUser());
-                if (!call || call.getTarget() != function ||
-                    call->getNumOperands() != function.getBody().front().getNumArguments()) {
-                    return;
-                }
-                callers.push_back(call);
-            }
-            if (callers.empty()) { return; }
+            const auto callers = directCallers(function, module);
+            if (!callers || callers->empty()) { return; }
             for (mlir::Value parameter : parameters) {
-                objectParameterCallSites_[parameter] = callers;
+                objectParameterCallSites_[parameter].assign(callers->begin(), callers->end());
             }
         });
     }
@@ -231,25 +218,14 @@ mlir::LogicalResult TypeInference::initialize(mlir::Operation * top) {
         // still "everything this binding can hold", over a set the lift made
         // one element smaller. `kAssignedBeforeRead` says what the lift proved.
         if (cell->hasAttr(kAssignedBeforeRead)) { return; }
-        const auto group = cells.find(cell.getResult());
-        if (group == cells.end()) {
-            cellStores_[cell.getResult()].push_back(cell.getInitial());
-            return;
-        }
-        for (mlir::Value member : group->second) {
+        forEachMember(cells, cell.getResult(), [&](mlir::Value member) {
             cellStores_[member].push_back(cell.getInitial());
-        }
+        });
     });
     top->walk([&](ctjs::CellSetOp store) {
         if (!namesACarriedCell(store.getCell())) { return; }
-        const auto group = cells.find(store.getCell());
-        if (group == cells.end()) {
-            cellStores_[store.getCell()].push_back(store.getValue());
-            return;
-        }
-        for (mlir::Value member : group->second) {
-            cellStores_[member].push_back(store.getValue());
-        }
+        forEachMember(cells, store.getCell(),
+                      [&](mlir::Value member) { cellStores_[member].push_back(store.getValue()); });
     });
     top->walk([&](mlir::Operation * op) {
         if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(op)) {

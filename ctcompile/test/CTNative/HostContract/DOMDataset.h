@@ -41,8 +41,7 @@ module {
   }
 }
 )MLIR";
-    auto module = mlir::parseSourceString<mlir::ModuleOp>(source, &context);
-    check(static_cast<bool>(module), "original dataset filter proof fixture parses");
+    auto module = parsed(context, source, "original dataset filter proof fixture parses");
     if (!module) { return; }
     HostContract contract;
     contract.entry = "filter$0";
@@ -164,8 +163,7 @@ module {
               replaced(lengthSource, "#ctjs.string<\"length\">", "#ctjs.string<\"size\">"),
               replaced(lengthSource, "ctjs.return %length",
                        "ctjs.set_property %answer[%lengthName], %u\n    ctjs.return %length")}) {
-            auto input = mlir::parseSourceString<mlir::ModuleOp>(mutation, &context);
-            check(static_cast<bool>(input), "snapshot length refusal fixture parses");
+            auto input = parsed(context, mutation, "snapshot length refusal fixture parses");
             if (!input) { continue; }
             auto request = contract;
             request.moduleSha256 = hostContractFingerprint(*input);
@@ -188,8 +186,8 @@ module {
         }
     }
     const auto refused = [&](llvm::StringRef from, llvm::StringRef to) {
-        auto input = mlir::parseSourceString<mlir::ModuleOp>(replaced(source, from, to), &context);
-        check(static_cast<bool>(input), "filter source mutation fixture parses");
+        auto input =
+            parsed(context, replaced(source, from, to), "filter source mutation fixture parses");
         if (!input) { return; }
         auto request = contract;
         request.moduleSha256 = hostContractFingerprint(*input);
@@ -294,8 +292,7 @@ module {
   }
 }
 )MLIR";
-    auto module = mlir::parseSourceString<mlir::ModuleOp>(source, &context);
-    check(static_cast<bool>(module), "dataset snapshot fixture parses");
+    auto module = parsed(context, source, "dataset snapshot fixture parses");
     if (!module) { return; }
     HostContract contract;
     contract.provider = HostContract::Provider::ctbrowserDOM;
@@ -403,8 +400,7 @@ module {
         });
         return empty;
     };
-    auto input = mlir::parseSourceString<mlir::ModuleOp>(source, &context);
-    check(static_cast<bool>(input), "anchored prefix source fixture parses");
+    auto input = parsed(context, source, "anchored prefix source fixture parses");
     if (!input) { return; }
     contract.moduleSha256 = hostContractFingerprint(*input);
     for (auto provider :
@@ -471,8 +467,7 @@ module {
              replaced(source, "%regex = ctjs.call",
                       "ctjs.set_property %factory[%methodName], %u\n    %regex = ctjs.call"),
          }) {
-        auto negative = mlir::parseSourceString<mlir::ModuleOp>(changed, &context);
-        check(static_cast<bool>(negative), "prefix refusal fixture parses");
+        auto negative = parsed(context, changed, "prefix refusal fixture parses");
         if (!negative) { continue; }
         auto request = contract;
         request.moduleSha256 = hostContractFingerprint(*negative);

@@ -197,8 +197,7 @@ bool directCalleeUse(mlir::OpOperand & use, ctjs::FuncOp target) {
     // unused implicit slot of another private body. Recheck non-observation
     // structurally; provenance annotations cannot authorize this exception.
     auto body = direct.getTarget();
-    if (!body || body.getBody().empty() || body.getUpvalueCount() != 0 ||
-        mlir::SymbolTable::getSymbolVisibility(body) != mlir::SymbolTable::Visibility::Private) {
+    if (!body || body.getBody().empty() || body.getUpvalueCount() != 0 || !body.isPrivate()) {
         return false;
     }
     auto & entry = body.getBody().front();
@@ -208,12 +207,74 @@ bool directCalleeUse(mlir::OpOperand & use, ctjs::FuncOp target) {
     for (mlir::Operation * user : entry.getArgument(2).getUsers()) {
         if (!llvm::isa<ctjs::RootOp>(user)) { return false; }
     }
-    bool environment = false;
-    body.getBody().walk([&](mlir::Operation * op) {
-        environment |= llvm::isa<ctjs::CreateClosureOp, ctjs::CreateCellOp, ctjs::LoadUpvalueOp,
-                                 ctjs::StoreUpvalueOp, ctjs::CellGetOp, ctjs::CellSetOp>(op);
+    return !usesEnvironment(body);
+}
+
+bool calleeSlotOnly(ctjs::LoadGlobalOp load, bool rooted) {
+    return llvm::all_of(load.getResult().getUses(), [&](mlir::OpOperand & use) {
+        return (rooted && llvm::isa<ctjs::RootOp>(use.getOwner())) ||
+               (llvm::isa<ctjs::CallDirectOp>(use.getOwner()) &&
+                use.getOperandNumber() == ctjs::arg_callee);
     });
-    return !environment;
+}
+
+bool implicitArgumentsRooted(mlir::Block & entry) {
+    for (mlir::BlockArgument argument : entry.getArguments().take_front(ctjs::implicit_arguments)) {
+        if (!llvm::all_of(argument.getUsers(), llvm::IsaPred<ctjs::RootOp>)) { return false; }
+    }
+    return true;
+}
+
+bool usesEnvironment(ctjs::FuncOp function) {
+    bool found = false;
+    function.getBody().walk([&](mlir::Operation * op) {
+        found |= llvm::isa<ctjs::CreateClosureOp, ctjs::CreateCellOp, ctjs::LoadUpvalueOp,
+                           ctjs::StoreUpvalueOp, ctjs::CellGetOp, ctjs::CellSetOp>(op);
+    });
+    return found;
+}
+
+bool hasAlternateCalleeCalls(ctjs::FuncOp function, mlir::ModuleOp module) {
+    const auto index = functionIndex(function);
+    if (!index) { return false; }
+    const auto alternate = [&](mlir::Value value) {
+        return llvm::any_of(value.getUses(), [&](mlir::OpOperand & use) {
+            auto call = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
+            return call && use.getOperandNumber() == 2 && call.getCallee() != function.getSymName();
+        });
+    };
+    bool found = false;
+    module.walk([&](ctjs::CreateClosureOp made) {
+        if (found || made.getFunction() < 0 ||
+            static_cast<unsigned>(made.getFunction()) != *index) {
+            return;
+        }
+        found |= alternate(made.getResult());
+        for (mlir::Operation * user : made.getResult().getUsers()) {
+            auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(user);
+            if (!store) { continue; }
+            module.walk([&](ctjs::LoadGlobalOp load) {
+                if (load.getName() == store.getName()) { found |= alternate(load.getResult()); }
+            });
+        }
+    });
+    return found;
+}
+
+std::optional<llvm::SmallVector<ctjs::CallDirectOp>> directCallers(ctjs::FuncOp function,
+                                                                   mlir::ModuleOp module) {
+    const auto uses = mlir::SymbolTable::getSymbolUses(function, module);
+    if (!uses) { return std::nullopt; }
+    llvm::SmallVector<ctjs::CallDirectOp> calls;
+    for (const auto & use : *uses) {
+        auto call = llvm::dyn_cast<ctjs::CallDirectOp>(use.getUser());
+        if (!call || call.getTarget() != function ||
+            call->getNumOperands() != function.getBody().front().getNumArguments()) {
+            return std::nullopt;
+        }
+        calls.push_back(call);
+    }
+    return calls;
 }
 
 bool closedDeclaration(ctjs::StoreGlobalOp store, ctjs::FuncOp target, mlir::ModuleOp module) {
@@ -229,23 +290,16 @@ bool closedDeclaration(ctjs::StoreGlobalOp store, ctjs::FuncOp target, mlir::Mod
             return false;
         }
     }
-    unsigned stores = 0;
     bool closed = true;
-    module.walk([&](mlir::Operation * op) {
-        if (auto other = llvm::dyn_cast<ctjs::StoreGlobalOp>(op);
-            other && other.getName() == store.getName()) {
-            ++stores;
-        }
-        if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op);
-            load && load.getName() == store.getName()) {
-            for (mlir::OpOperand & use : load.getResult().getUses()) {
-                if (!llvm::isa<ctjs::RootOp>(use.getOwner()) && !directCalleeUse(use, target)) {
-                    closed = false;
-                }
+    module.walk([&](ctjs::LoadGlobalOp load) {
+        if (load.getName() != store.getName()) { return; }
+        for (mlir::OpOperand & use : load.getResult().getUses()) {
+            if (!llvm::isa<ctjs::RootOp>(use.getOwner()) && !directCalleeUse(use, target)) {
+                closed = false;
             }
         }
     });
-    return closed && stores == 1;
+    return closed && ctjs::uniqueGlobalStore(module, store.getName());
 }
 
 std::string closedCallableProblem(ctjs::FuncOp function, mlir::ModuleOp module) {

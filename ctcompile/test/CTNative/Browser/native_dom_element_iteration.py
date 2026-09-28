@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
 """Execute proved element for-of loops through typed public browser snapshots."""
 
-from pathlib import Path
-
 from CTNative.Browser import native_dom as dom
+from CTNative.harness import without_intrinsic
 from CTNative.Browser import native_dom_find_elements as indexed
 from CTNative.Browser.native_dom_document import CURRENT_DOCUMENT_CHECKS, INPUT_CHECKS
-from CTNative.harness import find_compilers
 
 INTRINSICS = [
     "Array",
@@ -65,73 +63,59 @@ REFUSALS = {
 
 def main():
     args = dom.parse_args(__doc__)
-    vendor = Path(__file__).resolve().parents[4] / "ctbrowser/vendor/bootstrap/bootstrap.bundle.js"
+    vendor = dom.BOOTSTRAP
     if indexed.FIND + "," not in vendor.read_text():
         raise RuntimeError("Bootstrap R.find source pin changed")
-    compilers = find_compilers()
-    compilers[1] = args.clang
+    compilers = args.compilers
     includes, libraries = dom.link_options(args, selectors=True)
     refusals = 0
     for kind in ("direct", "explicit", "omitted", "undefined"):
         ir, contract = dom.prepare(args, kind, source(kind), 2, entry_name="findElements")
         contract.update(current_document_parameter=0, initial_intrinsics=INTRINSICS)
-        for owned in (False, True):
-            manifest = dict(
-                contract, provider="ctbrowser-dom-session-v1" if owned else "ctbrowser-dom-v1"
+        for owned, optimize, manifest in dom.variants(contract):
+            name = f"element-iteration-{kind}-{owned}-{optimize}"
+            native = dom.lower(args, ir, manifest, name, optimize=optimize)
+            text = dom.run([args.translate, "--mlir-to-cpp", str(native)]).stdout
+            if "std::vector<ctnative::js_element_t>" not in text or any(
+                helper in text for helper in INTRINSICS[4:]
+            ):
+                raise RuntimeError(f"{name}: iterator protocol survived typed snapshot lowering")
+            client = (
+                CURRENT_DOCUMENT_CHECKS
+                + indexed.CHECKS
+                + INPUT_CHECKS
+                + (indexed.OWNED_CHECKS if owned else "")
             )
-            for optimize in (False, True):
-                name = f"element-iteration-{kind}-{owned}-{optimize}"
-                native = dom.lower(args, ir, manifest, name, optimize=optimize)
-                text = dom.run([args.translate, "--mlir-to-cpp", str(native)]).stdout
-                if "std::vector<ctnative::js_element_t>" not in text or any(
-                    helper in text for helper in INTRINSICS[4:]
-                ):
-                    raise RuntimeError(
-                        f"{name}: iterator protocol survived typed snapshot lowering"
-                    )
-                client = (
-                    CURRENT_DOCUMENT_CHECKS
-                    + indexed.CHECKS
-                    + INPUT_CHECKS
-                    + (indexed.OWNED_CHECKS if owned else "")
-                )
-                client = client.replace(
-                    "@DEFAULT@", "true" if kind in ("omitted", "undefined") else "false"
-                )
-                dom.standalone(args, native, name, client, compilers, includes, libraries)
+            client = client.replace(
+                "@DEFAULT@", "true" if kind in ("omitted", "undefined") else "false"
+            )
+            dom.standalone(args, native, name, client, compilers, includes, libraries)
+            dom.lower(
+                args,
+                ir,
+                manifest,
+                name + "-budget",
+                max_steps=0,
+                optimize=optimize,
+                success=False,
+            )
+            refusals += 1
+            for intrinsic in INTRINSICS[4:] + ["Array", "Element"]:
                 dom.lower(
                     args,
                     ir,
-                    manifest,
-                    name + "-budget",
-                    max_steps=0,
+                    without_intrinsic(manifest, intrinsic),
+                    name + "-missing-" + intrinsic,
                     optimize=optimize,
                     success=False,
                 )
                 refusals += 1
-                for intrinsic in INTRINSICS[4:] + ["Array", "Element"]:
-                    bad = dict(
-                        manifest,
-                        initial_intrinsics=[item for item in INTRINSICS if item != intrinsic],
-                    )
-                    dom.lower(
-                        args,
-                        ir,
-                        bad,
-                        name + "-missing-" + intrinsic,
-                        optimize=optimize,
-                        success=False,
-                    )
-                    refusals += 1
     for name, body in REFUSALS.items():
         text = f"function bad(anchor, expected) {{ const R={{{indexed.FIND}}}; {body} }}\n"
         ir, manifest = dom.prepare(args, name, text, 2, entry_name="bad")
         manifest.update(current_document_parameter=0, initial_intrinsics=INTRINSICS)
-        for optimize in (False, True):
-            dom.lower(
-                args, ir, manifest, f"refused-{name}-{optimize}", optimize=optimize, success=False
-            )
-            refusals += 1
+        dom.refuse(args, ir, manifest, f"refused-{name}")
+        refusals += 2
     print(f"Element for-of: 64 native executions, {refusals} refusals; DOM/Core/Style only")
 
 

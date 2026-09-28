@@ -18,13 +18,6 @@ bool alternatives(mlir::Type type, bool & object) {
     }
     return false;
 }
-
-bool spelling(mlir::Type type, llvm::StringRef name) {
-    if (!type) { return false; }
-    if (auto lvalue = llvm::dyn_cast<ec::LValueType>(type)) { type = lvalue.getValueType(); }
-    auto opaque = llvm::dyn_cast<ec::OpaqueType>(type);
-    return opaque && opaque.getValue() == name;
-}
 } // namespace
 
 bool isObjectValueType(mlir::Type type) {
@@ -40,13 +33,6 @@ bool mapNeedsObjectValues(MapType type) {
 
 bool isObjectCarrier(carrier value) {
     return value == carrier::objectIdentity || value == carrier::objectValue;
-}
-
-bool isObjectValueCarrier(mlir::Type type) {
-    return spelling(type, kObjectValueType);
-}
-bool isIdentityCarrier(mlir::Type type) {
-    return spelling(type, kObjectIdentityType);
 }
 
 bool onlyAbsent(mlir::Type type) {

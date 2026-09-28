@@ -188,14 +188,10 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
         if (domEntry || !llvm::is_contained(contract.initialIntrinsics, "Map")) { continue; }
         for (ctjs::ConstructOp made : scope.getBody().front().getOps<ctjs::ConstructOp>()) {
             if (!step()) { return false; }
-            auto load = made.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
-            if (!load || load.getName() != "Map" || !made.getArgs().empty() ||
-                made.getNewTarget() != made.getCallee()) {
-                continue;
-            }
+            if (!plainMapConstruction(made)) { continue; }
             maps.insert(made.getResult());
             mapOperations.insert(made);
-            mapOperations.insert(load);
+            mapOperations.insert(made.getCallee().getDefiningOp());
         }
     }
     if (!proveHeritage(contract)) { return false; }
@@ -221,14 +217,9 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
         }
     }
     if (!heritage.empty()) {
-        HostContract binding = contract;
-        binding.provider = HostContract::Provider::closedSource;
-        binding.elementParameters.clear();
-        binding.currentDocumentParameter.reset();
-        llvm::erase_if(binding.initialIntrinsics, [](const auto & name) {
-            return !host_detail::classIntrinsicArity(name) && name != "Error";
-        });
-        if (auto problem = host_detail::initialBindingProblem(module, binding); !problem.empty()) {
+        if (auto problem =
+                host_detail::initialBindingProblem(module, classBindingContract(contract));
+            !problem.empty()) {
             return refuse(problem);
         }
     }
@@ -468,10 +459,7 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
             accepted = constructors.contains(
                 target(sourceValue(made.getCallee()).getDefiningOp<ctjs::CreateClosureOp>()));
         }
-        mlir::Value key;
-        if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) { key = read.getKey(); }
-        if (auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(op)) { key = write.getKey(); }
-        if (key) {
+        if (auto key = ctjs::propertyKey(op)) {
             auto constant = key.getDefiningOp<ctjs::ConstantOp>();
             // Literal Number keys cannot name a prototype hook or invoke
             // user coercion. Native field/index representation is separate.
@@ -528,20 +516,18 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
     }
     // Closure references and calls are covered above. Symbol attributes
     // must not retain a getter definition after all its reads are expanded.
-    for (const auto & uses : {mlir::SymbolTable::getSymbolUses(module.getOperation()),
-                              mlir::SymbolTable::getSymbolUses(&module.getBodyRegion())}) {
-        if (!uses) { return refuse("static getter symbol uses could not be enumerated"); }
-        for (const auto & use : *uses) {
-            if (!step()) { return false; }
-            auto target = mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
-                use.getUser(), use.getSymbolRef());
-            if (!target) {
-                return refuse("class initialization has an unresolved symbol reference");
-            }
-            if (getters.contains(target)) {
-                return refuse("static getter has a remaining symbol reference");
-            }
-        }
+    if (auto stop = host_detail::forEachSymbolUse(
+            module, true, [&] { return step(); },
+            [&](const mlir::SymbolTable::SymbolUse &, ctjs::FuncOp target) -> std::optional<bool> {
+                if (!target) {
+                    return refuse("class initialization has an unresolved symbol reference");
+                }
+                if (getters.contains(target)) {
+                    return refuse("static getter has a remaining symbol reference");
+                }
+                return std::nullopt;
+            })) {
+        return *stop ? refuse("static getter symbol uses could not be enumerated") : false;
     }
     // Reject before normalization can replace a method's body and
     // invalidate a nested construction or definition recorded above.
@@ -670,16 +656,10 @@ bool classInitialization::proveDOMMethods(const HostContract & contract) {
         }
         if (hasOriginalCall && provedOriginalCalls) { continue; }
         // Reserve the clone's operation/operand walk before allocating it.
-        auto counted = module.walk([&](mlir::Operation * op) {
-            const uint64_t cost = uint64_t(1) + op->getNumOperands();
-            if (cost > remaining) {
-                refuse("class initialization work budget exhausted");
-                return mlir::WalkResult::interrupt();
-            }
-            remaining -= static_cast<unsigned>(cost);
-            return mlir::WalkResult::advance();
-        });
-        if (counted.wasInterrupted()) { return false; }
+        if (!spendWalk(module,
+                       [](mlir::Operation * op) { return uint64_t(1) + op->getNumOperands(); })) {
+            return false;
+        }
         mlir::IRMapping mapping;
         mlir::OwningOpRef<mlir::ModuleOp> probe(llvm::cast<mlir::ModuleOp>(module->clone(mapping)));
         // Other uncalled methods have their own independent probes. Omit
@@ -722,16 +702,7 @@ bool classInitialization::normalizeMethods() {
         // Charge the private copy before allocating it. All source effect
         // and receiver checks have finished; only structural transport is
         // normalized, with the existing bounded exception machinery.
-        auto walked = function.walk([&](mlir::Operation * op) {
-            const uint64_t cost = uint64_t(1) + op->getNumOperands() + op->getNumResults();
-            if (cost > remaining) {
-                refuse("class initialization work budget exhausted");
-                return mlir::WalkResult::interrupt();
-            }
-            remaining -= static_cast<unsigned>(cost);
-            return mlir::WalkResult::advance();
-        });
-        if (walked.wasInterrupted()) { return false; }
+        if (!spendWalk(function, cloneCost)) { return false; }
         mlir::IRMapping mapping;
         mlir::OwningOpRef<ctjs::FuncOp> copy(llvm::cast<ctjs::FuncOp>(function->clone(mapping)));
         if (auto failed = lowering_detail::normalizeStructuredExits(*copy, remaining)) {
@@ -742,45 +713,30 @@ bool classInitialization::normalizeMethods() {
         }
         // Exit normalization moves branch bodies without replacing their
         // property reads. Expansion must follow the private copy too.
-        for (auto & [read, target] : getterReads) {
-            if (!step()) { return false; }
-            if (auto * mapped = mapping.lookupOrNull(read.getOperation())) {
-                read = llvm::cast<ctjs::GetPropertyOp>(mapped);
-            }
+        uint64_t cost = getterReads.size() + constructorReads.size() + staticMethodReads.size() +
+                        cellReads.size() + cells.size() + inertReceiverClosures.size() +
+                        captureReads.size();
+        for (auto & item : globalHolders) {
+            cost += item.second.reads.size() + item.second.loads.size();
         }
-        for (ctjs::GetPropertyOp & read : constructorReads) {
-            if (!step()) { return false; }
-            if (auto * mapped = mapping.lookupOrNull(read.getOperation())) {
-                read = llvm::cast<ctjs::GetPropertyOp>(mapped);
+        for (auto & item : localHolders) { cost += item.second.reads.size(); }
+        if (!spend(cost)) { return false; }
+        const auto remap = [&](auto & op) {
+            if (auto * mapped = mapping.lookupOrNull(op.getOperation())) {
+                op = llvm::cast<std::remove_reference_t<decltype(op)>>(mapped);
             }
-        }
-        for (auto & [read, target] : staticMethodReads) {
-            (void)target;
-            if (!step()) { return false; }
-            if (auto * mapped = mapping.lookupOrNull(read.getOperation())) {
-                read = llvm::cast<ctjs::GetPropertyOp>(mapped);
-            }
-        }
-        for (ctjs::CellGetOp & read : cellReads) {
-            if (!step()) { return false; }
-            if (auto * mapped = mapping.lookupOrNull(read.getOperation())) {
-                read = llvm::cast<ctjs::CellGetOp>(mapped);
-            }
-        }
+        };
+        for (auto & item : getterReads) { remap(item.first); }
+        for (auto & read : constructorReads) { remap(read); }
+        for (auto & item : staticMethodReads) { remap(item.first); }
+        for (auto & read : cellReads) { remap(read); }
         llvm::MapVector<mlir::Value, mlir::Value> mappedCells;
         for (auto [cell, value] : cells) {
-            if (!step()) { return false; }
             mappedCells[mapping.lookupOrDefault(cell)] = mapping.lookupOrDefault(value);
         }
         cells.swap(mappedCells);
-        for (ctjs::CreateClosureOp & closure : inertReceiverClosures) {
-            if (!step()) { return false; }
-            if (auto * mapped = mapping.lookupOrNull(closure.getOperation())) {
-                closure = llvm::cast<ctjs::CreateClosureOp>(mapped);
-            }
-        }
+        for (auto & closure : inertReceiverClosures) { remap(closure); }
         for (ctjs::LoadUpvalueOp & read : captureReads) {
-            if (!step()) { return false; }
             if (auto * mapped = mapping.lookupOrNull(read.getOperation())) {
                 if (auto helper = callableCaptures.lookup(read)) {
                     callableCaptures.erase(read);
@@ -793,31 +749,12 @@ bool classInitialization::normalizeMethods() {
                 read = llvm::cast<ctjs::LoadUpvalueOp>(mapped);
             }
         }
-        for (auto & [publication, holder] : globalHolders) {
-            (void)publication;
-            for (auto & [read, closure] : holder.reads) {
-                (void)closure;
-                if (!step()) { return false; }
-                if (auto * mapped = mapping.lookupOrNull(read.getOperation())) {
-                    read = llvm::cast<ctjs::GetPropertyOp>(mapped);
-                }
-            }
-            for (ctjs::LoadGlobalOp & load : holder.loads) {
-                if (!step()) { return false; }
-                if (auto * mapped = mapping.lookupOrNull(load.getOperation())) {
-                    load = llvm::cast<ctjs::LoadGlobalOp>(mapped);
-                }
-            }
+        for (auto & item : globalHolders) {
+            for (auto & read : item.second.reads) { remap(read.first); }
+            for (auto & load : item.second.loads) { remap(load); }
         }
-        for (auto & [object, holder] : localHolders) {
-            (void)object;
-            for (auto & [read, closure] : holder.reads) {
-                (void)closure;
-                if (!step()) { return false; }
-                if (auto * mapped = mapping.lookupOrNull(read.getOperation())) {
-                    read = llvm::cast<ctjs::GetPropertyOp>(mapped);
-                }
-            }
+        for (auto & item : localHolders) {
+            for (auto & read : item.second.reads) { remap(read.first); }
         }
         normalizedMethods.emplace_back(function, std::move(copy));
     }

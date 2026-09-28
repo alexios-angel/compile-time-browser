@@ -58,19 +58,13 @@ struct CTNativeSpecializeClassInitializationPass
             return signalPassFailure();
         }
         // Super normalization is speculative; refusal publishes no partial body.
-        unsigned remaining = maxSteps;
-        const auto counted = module.walk([&](mlir::Operation * op) {
-            const uint64_t cost = uint64_t(1) + op->getNumOperands() + op->getNumResults();
-            if (cost > remaining) { return mlir::WalkResult::interrupt(); }
-            remaining -= static_cast<unsigned>(cost);
-            return mlir::WalkResult::advance();
-        });
-        if (counted.wasInterrupted()) {
+        WorkBudget budget{maxSteps};
+        if (!budget.spendWalk(module, class_detail::cloneCost)) {
             module.emitError("class initialization work budget exhausted");
             return signalPassFailure();
         }
         mlir::OwningOpRef<mlir::ModuleOp> candidate(module.clone());
-        classInitialization proof{*candidate, remaining};
+        classInitialization proof{*candidate, static_cast<unsigned>(budget.remaining)};
         if (!proof.prove(*contract)) {
             module.emitError() << proof.reason;
             return signalPassFailure();
@@ -111,14 +105,9 @@ llvm::Error normalizeDOMClasses(mlir::ModuleOp module, HostContract & contract, 
     // contract proves helper and optional Error identity; DOM declarations and
     // parameters are proved later. Referenced throwing getters retain their
     // original bodies and must pass the final typed DOM proof after rewriting.
-    HostContract binding = contract;
-    binding.provider = HostContract::Provider::closedSource;
-    binding.elementParameters.clear();
-    binding.currentDocumentParameter.reset();
-    llvm::erase_if(binding.initialIntrinsics, [](const auto & name) {
-        return !host_detail::classIntrinsicArity(name) && name != "Error";
-    });
-    if (auto problem = host_detail::initialBindingProblem(module, binding); !problem.empty()) {
+    if (auto problem = host_detail::initialBindingProblem(
+            module, class_detail::classBindingContract(contract));
+        !problem.empty()) {
         return refuse(problem);
     }
     if (!proof.normalizeMethods()) { return refuse(proof.reason); }

@@ -73,8 +73,7 @@ void checkObjectKeyArguments(mlir::MLIRContext & context, const std::string & so
     const auto variant = [&](const std::string & text, bool expected, const char * message,
                              unsigned calls = 1, unsigned outerKeys = 1, bool outerFormal = true) {
         ++rows;
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        check(static_cast<bool>(module), "object-key source/prepared fixture parses");
+        auto module = parsed(context, text, "object-key source/prepared fixture parses");
         if (!module) { return; }
         const auto contract = requested(*module);
         HostContractAnalysis host(*module, contract);
@@ -198,8 +197,7 @@ void checkObjectKeyArguments(mlir::MLIRContext & context, const std::string & so
                          "ctjs.call %getter(%owned, %actual, %actual)"),
                 false, "a surplus object argument cannot extend the complete source signature");
     }
-    auto module = mlir::parseSourceString<mlir::ModuleOp>(source, &context);
-    check(static_cast<bool>(module), "object-key budget and live-mutation fixture parses");
+    auto module = parsed(context, source, "object-key budget and live-mutation fixture parses");
     if (!module) { return; }
     const auto contract = requested(*module);
     HostContractAnalysis host(*module, contract);

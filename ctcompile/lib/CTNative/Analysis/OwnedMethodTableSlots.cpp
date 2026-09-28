@@ -15,30 +15,22 @@ struct accesses {
 };
 } // namespace
 
-OwnedMethodTableSlots::OwnedMethodTableSlots(mlir::ModuleOp module, unsigned maxSteps) {
-    unsigned steps = 0;
-    const auto spend = [&](unsigned amount = 1) {
-        if (amount > maxSteps - steps) {
-            budgetExhausted = true;
-            return false;
-        }
-        steps += amount;
-        return true;
-    };
+OwnedMethodTableSlots::OwnedMethodTableSlots(mlir::ModuleOp module, unsigned maxSteps)
+    : budget{maxSteps} {
     llvm::SmallVector<ctjs::CreateObjectOp> owners;
     unsigned operations = 0;
     module.walk([&](mlir::Operation * op) {
-        if (!spend()) { return mlir::WalkResult::interrupt(); }
+        if (!budget.spend()) { return mlir::WalkResult::interrupt(); }
         ++operations;
         if (auto owner = llvm::dyn_cast<ctjs::CreateObjectOp>(op)) { owners.push_back(owner); }
         return mlir::WalkResult::advance();
     });
-    if (budgetExhausted || owners.empty()) { return; }
+    if (budget.exhausted || owners.empty()) { return; }
     // Reuse the existing ordinary-field boundary. Descriptor/prototype changes,
     // dynamic property access and reflective operations anywhere in the source
     // cannot be hidden by keeping the particular owner local. This is not an
     // effect summary for calls: normal callable/Map/native admission still runs.
-    if (!spend(operations) || !object_detail::scalarFieldEnvironment(module)) { return; }
+    if (!budget.spend(operations) || !object_detail::scalarFieldEnvironment(module)) { return; }
 
     mlir::DominanceInfo dominance(module);
     for (ctjs::CreateObjectOp owner : owners) {
@@ -47,7 +39,7 @@ OwnedMethodTableSlots::OwnedMethodTableSlots(mlir::ModuleOp module, unsigned max
         llvm::StringMap<accesses> fields;
         bool confined = true;
         for (mlir::OpOperand & use : owner.getResult().getUses()) {
-            if (!spend()) { break; }
+            if (!budget.spend()) { break; }
             auto * operation = use.getOwner();
             if (operation->getParentOfType<ctjs::FuncOp>() != function) {
                 confined = false;
@@ -67,11 +59,11 @@ OwnedMethodTableSlots::OwnedMethodTableSlots(mlir::ModuleOp module, unsigned max
                 fields[ctjs::constantKey(read.getKey())].reads.push_back(read);
             }
         }
-        if (budgetExhausted) { break; }
+        if (budget.exhausted) { break; }
         if (!confined) { continue; }
         for (auto & field : fields) {
             auto & uses = field.second;
-            if (!spend()) { break; }
+            if (!budget.spend()) { break; }
             if (uses.writes.size() != 1) { continue; }
             auto initialization = uses.writes.front();
             // A source initializer executes once per fresh owner. A store in a
@@ -83,21 +75,21 @@ OwnedMethodTableSlots::OwnedMethodTableSlots(mlir::ModuleOp module, unsigned max
             }
             bool initialized = true;
             for (ctjs::GetPropertyOp read : uses.reads) {
-                if (!spend()) { break; }
+                if (!budget.spend()) { break; }
                 if (!dominance.properlyDominates(initialization.getOperation(),
                                                  read.getOperation())) {
                     initialized = false;
                     break;
                 }
             }
-            if (budgetExhausted) { break; }
+            if (budget.exhausted) { break; }
             if (!initialized) { continue; }
             checked.push_back({owner, initialization, std::move(uses.reads)});
         }
-        if (budgetExhausted) { break; }
+        if (budget.exhausted) { break; }
     }
     // Exhaustion cannot expose a successful prefix of an unfinished census.
-    if (budgetExhausted) {
+    if (budget.exhausted) {
         checked.clear();
         return;
     }

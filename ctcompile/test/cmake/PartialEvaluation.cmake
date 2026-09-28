@@ -1,29 +1,19 @@
 # The ordinary differential pipeline, with opt-in compile-time heap evaluation.
 # Numeric observers receive heap arguments, so they remain runtime functions.
-if(COMMAND ctcompile_add_native_pipeline)
-  ctcompile_add_native_pipeline(object_values
-    "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/object-values.js")
-  ctcompile_add_native_pipeline(object_fields
-    "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Objects/object-fields.js")
-  ctcompile_add_native_pipeline(partial_evaluation
-    "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Optimization/partial-evaluation.js" PARTIAL_EVALUATE)
-  ctcompile_add_native_pipeline(partial_prefix
-    "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Optimization/partial-prefix.js" PARTIAL_EVALUATE)
-  ctcompile_add_native_pipeline(partial_closures
-    "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Optimization/partial-closures.js" PARTIAL_EVALUATE)
-  ctcompile_add_native_pipeline(symbolic
-    "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Optimization/symbolic.js" PRECOMPUTE)
-  ctcompile_add_native_pipeline(deforestation
-    "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Optimization/deforestation.js" DEFOREST)
-  ctcompile_add_native_pipeline(specialization
-    "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Optimization/specialization.js" SPECIALIZE PRECOMPUTE PARTIAL_EVALUATE)
-  ctcompile_add_native_pipeline(reachability
-    "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Optimization/reachability.js" SPECIALIZE PARTIAL_EVALUATE PRUNE_UNREACHABLE)
-  ctcompile_add_native_pipeline(supercompilation
-    "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Optimization/supercompilation.js" SUPERCOMPILE)
-  ctcompile_add_native_pipeline(supercompilation_generalization
-    "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Optimization/supercompilation-generalization.js" SUPERCOMPILE)
-endif()
+ctcompile_native_fixture(object_values Objects/object-values.js)
+ctcompile_native_fixture(object_fields Objects/object-fields.js)
+ctcompile_native_fixture(partial_evaluation Optimization/partial-evaluation.js PARTIAL_EVALUATE)
+ctcompile_native_fixture(partial_prefix Optimization/partial-prefix.js PARTIAL_EVALUATE)
+ctcompile_native_fixture(partial_closures Optimization/partial-closures.js PARTIAL_EVALUATE)
+ctcompile_native_fixture(symbolic Optimization/symbolic.js PRECOMPUTE)
+ctcompile_native_fixture(deforestation Optimization/deforestation.js DEFOREST)
+ctcompile_native_fixture(specialization Optimization/specialization.js
+                         SPECIALIZE PRECOMPUTE PARTIAL_EVALUATE)
+ctcompile_native_fixture(reachability Optimization/reachability.js
+                         SPECIALIZE PARTIAL_EVALUATE PRUNE_UNREACHABLE)
+ctcompile_native_fixture(supercompilation Optimization/supercompilation.js SUPERCOMPILE)
+ctcompile_native_fixture(supercompilation_generalization
+                         Optimization/supercompilation-generalization.js SUPERCOMPILE)
 
 # Native variants retain the original callable value for boxed dispatch. The
 # generic body must still accept tuples used only by those redirected calls.
@@ -31,10 +21,7 @@ if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
   set(_dispatch_js "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Specialization/dispatch.js")
   set(_dispatch_inc "${CMAKE_CURRENT_BINARY_DIR}/specialization-dispatch.js.inc")
   set(_dispatch_cpp "${CMAKE_CURRENT_BINARY_DIR}/specialization-dispatch.generated.cpp")
-  add_custom_command(OUTPUT "${_dispatch_inc}"
-    COMMAND ${CMAKE_COMMAND} -DSOURCE=${_dispatch_js} -DOUTPUT=${_dispatch_inc}
-      -P "${CMAKE_CURRENT_SOURCE_DIR}/Support/embed-js.cmake"
-    DEPENDS "${_dispatch_js}" "${CMAKE_CURRENT_SOURCE_DIR}/Support/embed-js.cmake" VERBATIM)
+  ctcompile_embed_js(specialization-dispatch.js.inc "${_dispatch_js}")
   add_custom_command(OUTPUT "${_dispatch_cpp}"
     COMMAND ${CMAKE_COMMAND}
       -DTRANSLATE=$<TARGET_FILE:ctjs-translate> -DOPT=$<TARGET_FILE:ctjs-opt>

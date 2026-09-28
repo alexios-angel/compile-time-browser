@@ -16,20 +16,6 @@
 namespace ctcompile::ctnative::map_detail {
 namespace {
 
-llvm::StringRef actionOf(ctjs::CallOp call) {
-    auto get = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
-    return get ? ctjs::constantKey(get.getKey()) : llvm::StringRef{};
-}
-
-// This analysis also runs from CTJS-only binding-time and partial-evaluation
-// callers. Keep semantic tags independent of native dialect type storage.
-enum class payloadKind {
-    Unknown,
-    Boolean,
-    Number,
-    String
-};
-
 struct fact {
     mlir::Value instance;
     mlir::Value key;
@@ -154,13 +140,7 @@ struct state {
         }
         return {};
     }
-    payloadKind scalar(mlir::Value value) const {
-        const auto tag = alternatives(value).tag();
-        if (tag == mlir::TypeID::get<ctjs::BooleanAttr>()) { return payloadKind::Boolean; }
-        if (tag == mlir::TypeID::get<ctjs::NumberAttr>()) { return payloadKind::Number; }
-        if (tag == mlir::TypeID::get<ctjs::StringAttr>()) { return payloadKind::String; }
-        return payloadKind::Unknown;
-    }
+    llvm::StringRef scalar(mlir::Value value) const { return mapScalarTag(alternatives(value)); }
 
     bool contains(fact value) const {
         return llvm::any_of(entries, [&](const fact & old) { return old.matches(value); });
@@ -243,7 +223,7 @@ struct presenceAnalysis {
     llvm::DenseMap<mlir::Operation *, effects> summaries;
     llvm::DenseSet<mlir::Operation *> proved;
     llvm::DenseMap<mlir::Operation *, PrimitiveAlternatives> payloads;
-    llvm::DenseMap<mlir::Operation *, payloadKind> writes, keys;
+    llvm::DenseMap<mlir::Operation *, llvm::StringRef> writes, keys;
     llvm::DenseSet<mlir::Operation *> sizes;
     llvm::DenseMap<mlir::Operation *, llvm::SmallVector<fact>> publications;
     llvm::DenseMap<mlir::Operation *, mlir::Value> storedOrigins;
@@ -583,31 +563,19 @@ struct presenceAnalysis {
             // Retain independently proved truthy/falsy alternatives. A later
             // test can refine the exact selected SSA value, while all effects
             // in both structural arms are still visited.
-            auto thenYield = branch.getThenRegion().hasOneBlock()
-                                 ? llvm::dyn_cast<mlir::scf::YieldOp>(
-                                       branch.getThenRegion().front().getTerminator())
-                                 : mlir::scf::YieldOp{};
-            auto elseYield = branch.getElseRegion().hasOneBlock()
-                                 ? llvm::dyn_cast<mlir::scf::YieldOp>(
-                                       branch.getElseRegion().front().getTerminator())
-                                 : mlir::scf::YieldOp{};
-            if (thenYield && elseYield && thenYield.getNumOperands() == branch.getNumResults() &&
-                elseYield.getNumOperands() == branch.getNumResults()) {
-                for (unsigned index = 0; index < branch.getNumResults(); ++index) {
-                    const auto left = thenYield.getOperand(index),
-                               right = elseYield.getOperand(index);
-                    const auto exact = primitiveMapSize(left, thenState.keyEvidence(left));
-                    if (exact && exact == primitiveMapSize(right, elseState.keyEvidence(right))) {
-                        thenState.exactSizes[branch.getResult(index)] = *exact;
-                        elseState.exactSizes[branch.getResult(index)] = *exact;
-                    }
-                    const auto joined =
-                        thenState.alternatives(thenYield.getOperand(index))
-                            .joined(elseState.alternatives(elseYield.getOperand(index)));
-                    if (joined.known) {
-                        thenState.scalars[branch.getResult(index)] = joined;
-                        elseState.scalars[branch.getResult(index)] = joined;
-                    }
+            for (unsigned index = 0; index < branch.getNumResults(); ++index) {
+                const auto left = branch.thenYield().getOperand(index),
+                           right = branch.elseYield().getOperand(index);
+                const auto exact = primitiveMapSize(left, thenState.keyEvidence(left));
+                if (exact && exact == primitiveMapSize(right, elseState.keyEvidence(right))) {
+                    thenState.exactSizes[branch.getResult(index)] = *exact;
+                    elseState.exactSizes[branch.getResult(index)] = *exact;
+                }
+                const auto joined =
+                    thenState.alternatives(left).joined(elseState.alternatives(right));
+                if (joined.known) {
+                    thenState.scalars[branch.getResult(index)] = joined;
+                    elseState.scalars[branch.getResult(index)] = joined;
                 }
             }
             // Derive each arm's cardinality before merging key sets. The
@@ -625,12 +593,7 @@ struct presenceAnalysis {
             // local reads, including a while(has(...)) body's first lookup.
             state before;
             region(loop.getBefore(), before);
-            if (!loop.getBefore().empty()) {
-                if (auto condition = llvm::dyn_cast<mlir::scf::ConditionOp>(
-                        loop.getBefore().front().getTerminator())) {
-                    learn(condition.getCondition(), true, before);
-                }
-            }
+            learn(loop.getConditionOp().getCondition(), true, before);
             region(loop.getAfter(), before);
             current = {};
             return;
@@ -654,11 +617,11 @@ struct presenceAnalysis {
             const auto action = actions.lookup(op);
             if (nativeMapKeyAction(action) && !call.getArgs().empty()) {
                 const auto kind = current.scalar(call.getArgs()[0]);
-                if (kind != payloadKind::Unknown) { keys[op] = kind; }
+                if (!kind.empty()) { keys[op] = kind; }
             }
             if (action == "set") {
                 const auto kind = current.scalar(call.getArgs()[1]);
-                if (kind != payloadKind::Unknown) { writes[op] = kind; }
+                if (!kind.empty()) { writes[op] = kind; }
                 write(current, call);
             } else if (action == "has") {
                 current.scalars[call.getResult()] =
@@ -732,7 +695,7 @@ std::string provePresence(mlir::ModuleOp module, llvm::ArrayRef<ctjs::CallOp> ca
     if (calls.empty()) { return {}; }
     presenceAnalysis analysis(familyOf, snapshotCopies);
     for (ctjs::GetPropertyOp size : sizes) { analysis.sizes.insert(size); }
-    for (ctjs::CallOp call : calls) { analysis.actions[call] = actionOf(call); }
+    for (ctjs::CallOp call : calls) { analysis.actions[call] = mapMethodName(call); }
     analysis.buildSummaries(module);
     analysis.collectPublications(globals);
     const auto run = [&] {
@@ -770,10 +733,7 @@ std::string provePresence(mlir::ModuleOp module, llvm::ArrayRef<ctjs::CallOp> ca
         if (!alternatives.known) { continue; }
         const auto mask = alternatives.truthy | alternatives.falsy;
         using Primitive = PrimitiveAlternatives;
-        llvm::StringRef tag;
-        if (mask == Primitive::Boolean) { tag = "bool"; }
-        if (mask == Primitive::Number) { tag = "number"; }
-        if (mask == Primitive::String) { tag = "string"; }
+        llvm::StringRef tag = mapScalarTag(alternatives);
         if ((mask & Primitive::String) != 0 &&
             (mask & (Primitive::Null | Primitive::Undefined)) != 0 &&
             (mask & ~(Primitive::String | Primitive::Null | Primitive::Undefined)) == 0) {
@@ -786,16 +746,10 @@ std::string provePresence(mlir::ModuleOp module, llvm::ArrayRef<ctjs::CallOp> ca
             read->setAttr(kNativeMapPresent, mlir::UnitAttr::get(read.getContext()));
         }
     }
-    for (const auto & [call, kind] : analysis.keys) {
-        const auto tag = kind == payloadKind::Boolean  ? "bool"
-                         : kind == payloadKind::Number ? "number"
-                                                       : "string";
+    for (const auto & [call, tag] : analysis.keys) {
         call->setAttr(kNativeMapKeyType, mlir::StringAttr::get(call->getContext(), tag));
     }
-    for (const auto & [write, kind] : analysis.writes) {
-        const auto tag = kind == payloadKind::Boolean  ? "bool"
-                         : kind == payloadKind::Number ? "number"
-                                                       : "string";
+    for (const auto & [write, tag] : analysis.writes) {
         write->setAttr(kNativeMapWriteType, mlir::StringAttr::get(write->getContext(), tag));
     }
     for (ctjs::CallOp read : optionalReads) {

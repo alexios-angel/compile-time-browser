@@ -84,8 +84,7 @@ void checkCapturedStringSnapshots(mlir::MLIRContext & context, const std::string
     const auto variant = [&](const std::string & program, bool expected, bool outer = false,
                              bool child = false, bool budgets = false) {
         ++rows;
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
-        check(static_cast<bool>(module), "captured String snapshot fixture parses");
+        auto module = parsed(context, program, "captured String snapshot fixture parses");
         if (!module) { return; }
         const auto contract = requested(*module);
         OwnedGlobalRoots query(*module, contract);
@@ -196,8 +195,7 @@ void checkCapturedStringSnapshots(mlir::MLIRContext & context, const std::string
                                   "    %setKey =");
     unsigned mutations = 0;
     for (const auto & program : {branch, foreign}) {
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
-        check(static_cast<bool>(module), "String snapshot scope controls parse");
+        auto module = parsed(context, program, "String snapshot scope controls parse");
         if (!module) { continue; }
         const auto contract = requested(*module);
         check(OwnedGlobalRoots(*module, contract).proved(),
@@ -296,8 +294,7 @@ void checkCapturedSnapshots(mlir::MLIRContext & context, const std::string & sou
     for (const bool length : {false, true}) {
         const auto program =
             length ? replaced(normal, "ctjs.return %matched", "ctjs.return %lengthMatch") : normal;
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
-        check(static_cast<bool>(module), "captured snapshot fixtures parse");
+        auto module = parsed(context, program, "captured snapshot fixtures parse");
         if (!module) { continue; }
         const auto contract = requested(*module);
         OwnedGlobalRoots query(*module, contract);
@@ -336,8 +333,7 @@ void checkCapturedSnapshots(mlir::MLIRContext & context, const std::string & sou
               "an Array spelling cannot supply its standard identity");
     }
     const auto refuse = [&](const std::string & program, const char * message) {
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
-        check(static_cast<bool>(module), "captured snapshot refusal fixture parses");
+        auto module = parsed(context, program, "captured snapshot refusal fixture parses");
         if (!module) { return; }
         OwnedGlobalRoots query(*module, requested(*module));
         check(!query.proved() && !query.exhausted() && empty(*module, query), message);
@@ -389,8 +385,8 @@ void checkCapturedSnapshots(mlir::MLIRContext & context, const std::string & sou
                        "    ctjs.frame_exit %otherFrame\n"
                        "    ctjs.return %u\n  }\n}\n");
     for (const auto & program : {branch, foreign}) {
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
-        check(static_cast<bool>(module), "snapshot scope controls parse before hostile edits");
+        auto module =
+            parsed(context, program, "snapshot scope controls parse before hostile edits");
         if (!module) { continue; }
         const auto contract = requested(*module);
         check(OwnedGlobalRoots(*module, contract).proved(),
@@ -431,8 +427,7 @@ void checkCapturedSnapshots(mlir::MLIRContext & context, const std::string & sou
 
 void checkScalarCallbacks(mlir::MLIRContext & context, const std::string & source, bool prepared) {
     const auto requested = [](mlir::ModuleOp module) {
-        auto contract = contractFor(module);
-        contract.initialIntrinsics = {"Map"};
+        auto contract = mapContractFor(module);
         contract.observations = {"trace", "traceErrorCount", "traceErrorMessage", "savedCount",
                                  "savedMessage"};
         return contract;
@@ -497,8 +492,7 @@ void checkScalarCallbacks(mlir::MLIRContext & context, const std::string & sourc
     };
     const auto variant = [&](const std::string & program, bool expected) {
         ++rows;
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
-        check(static_cast<bool>(module), "scalar callback source/prepared fixture parses");
+        auto module = parsed(context, program, "scalar callback source/prepared fixture parses");
         if (!module) { return; }
         const auto contract = requested(*module);
         OwnedGlobalRoots query(*module, contract);
