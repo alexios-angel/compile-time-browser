@@ -24,7 +24,7 @@ OBSERVATIONS = {
     "mutable-class-helper": 1,
     "new-target": 7,
     "constructor-argument": 7,
-    "arrow-constructor": 7,
+    "arrow-constructor": None,
 }
 SCALARS = {
     "prototype-written": 2,
@@ -109,14 +109,16 @@ def main():
     for name, expected in observations.items():
         source = args.fixtures / f"{name}.js"
         node_expected = 0 if name == "mutable-class-helper" else expected
-        node = run([args.node, "-e", NODE, str(source)], success=name != "arrow-constructor")
-        reference = run([args.reference, str(source)])
-        if name == "arrow-constructor":
-            if "TypeError" not in node.stderr or node.stdout:
-                raise RuntimeError(f"{name}: Node did not throw TypeError")
+        throws = name == "arrow-constructor"
+        node = run([args.node, "-e", NODE, str(source)], success=not throws)
+        reference = run([args.reference, str(source)], success=not throws)
+        if throws:
+            for oracle, result in (("Node", node), ("interpreter", reference)):
+                if "TypeError" not in result.stderr or result.stdout:
+                    raise RuntimeError(f"{name}: {oracle} did not throw TypeError")
         elif node.stdout != f"a={node_expected}\n" or node.stderr:
             raise RuntimeError(f"{name}: Node observation changed\n{node.stdout}{node.stderr}")
-        if reference.stdout != f"a={expected}\n":
+        elif reference.stdout != f"a={expected}\n":
             raise RuntimeError(
                 f"{name}: interpreter observation changed\n{reference.stdout}{reference.stderr}"
             )

@@ -187,8 +187,8 @@ REFUSALS = {
     "escape": "return R.find('*',anchor);",
     "retained": "anchor.saved=R.find('*',anchor); return true;",
     "identity": "const nodes=R.find('*',anchor); return nodes===nodes;",
-    "unguarded-default": "const nodes=R.find('*'); "
-    "for(let i=0;i<nodes.length;i++) nodes[i].setAttribute('x','y'); return true;",
+    # The default root reaches the selector call checked; other uses stay nullable.
+    "unguarded-root-use": "const nodes=R.find('*'); return document.documentElement.matches('*');",
     "replace-query-all": "Element.prototype.querySelectorAll=anchor; return R.find('*',anchor).length;",
     "replace-call": "Function.prototype.call=anchor; return R.find('*',anchor).length;",
     "replace-concat": "Array.prototype.concat=anchor; return R.find('*',anchor).length;",
@@ -197,6 +197,52 @@ REFUSALS = {
     "node-spreadability": "anchor[Symbol.isConcatSpreadable]=true; return R.find('*',anchor).length;",
     "replace-iterator": "NodeList.prototype[Symbol.iterator]=anchor; return R.find('*',anchor).length;",
 }
+
+# Former refusals the checked document root admits since b4aa79b57. Absent, the
+# selector call throws before any effect, as Element.prototype.querySelectorAll
+# .call(null, '*') does; present, the loop runs. jsdom answers the same.
+UNGUARDED_DEFAULT = {
+    "unguarded-default": (
+        "const nodes=R.find('*'); "
+        "for(let i=0;i<nodes.length;i++) nodes[i].setAttribute('x','y'); return true;",
+        r"""
+        assert(invoke(alias));
+        const auto x = atoms.intern("x");
+        const auto writes = doc.take_writes();
+        assert(writes.size() == 1 && writes[0].node == child && writes[0].name == x);
+        assert(doc.read().attribute_value(child, x) == "y" && !doc.read().has_attribute(button, x));
+""",
+    )
+}
+UNGUARDED_CHECKS = r"""
+        (void)pressed;
+        (void)foreign;
+        style::engine selectors{atoms};
+        const auto invoke = [&](element_ref anchor) {
+            return in_outer_document([&] { return @ENTRY@(anchor, anchor, selectors); });
+        };
+        assert(doc.remove_child(button));
+        (void)doc.take_writes();
+        bool rejected = false;
+        try { (void)invoke(alias); }
+        catch (const std::exception &) { rejected = true; }
+        assert(rejected && doc.take_writes().empty());
+        doc.set_document_element(button);
+        (void)doc.take_writes();
+"""
+
+
+def unguarded_default(args, cases, intrinsics, compilers, includes, libraries):
+    """Execute each admitted default-root body under both policies."""
+    for name, (body, checks) in cases.items():
+        text = f"function bad(anchor, expected) {{ const R={{{FIND}}}; {body} }}\n"
+        ir, manifest = dom.prepare(args, name, text, 2, entry_name="bad")
+        manifest.update(current_document_parameter=0, initial_intrinsics=intrinsics)
+        for optimize in (False, True):
+            label = f"admitted-{name}-{optimize}"
+            native = dom.lower(args, ir, manifest, label, optimize=optimize)
+            client = CURRENT_DOCUMENT_CHECKS + UNGUARDED_CHECKS + checks
+            dom.standalone(args, native, label, client, compilers, includes, libraries)
 
 
 def main():
@@ -269,8 +315,10 @@ def main():
         )
         dom.refuse(args, ir, manifest, f"refused-{name}")
         refusals += 2
+    intrinsics = ["Array", "Element", "Function", "Number"]
+    unguarded_default(args, UNGUARDED_DEFAULT, intrinsics, compilers, includes, libraries)
     print(
-        f"Bootstrap R.find elements: 48 native executions, {refusals} refusals; DOM/Core/Style only"
+        f"Bootstrap R.find elements: 56 native executions, {refusals} refusals; DOM/Core/Style only"
     )
 
 

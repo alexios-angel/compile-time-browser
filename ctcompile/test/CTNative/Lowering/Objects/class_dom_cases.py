@@ -295,13 +295,15 @@ TWO_ELEMENT_CLASSES = {
     "method_transitive_bad_field_after_good",
 }
 CLASS_REFUSALS = {
-    # Instance calls do not supply argument authority to an unused static body.
+    # Instance calls do not supply argument authority to a static body. The
+    # static is called: an unread one is removed before the proof (8b60703a6).
     "class_static_shared_dom_helper": """const get = t => t.getAttribute('x');
   class Button {
     constructor(element) { this.element = element; }
     read() { return get(this.element) === null; }
     static unused(t) { return get(t); }
   }
+  Button.unused(element);
   return new Button(element).read();
 """,
     # Helpers first seen by a static retain the strict source census.
@@ -313,6 +315,7 @@ CLASS_REFUSALS = {
     constructor(element) { this.element = element; }
     read() { return get(this.element) === null; }
   }
+  Utility.unused(element);
   return new Button(element).read();
 """,
     # A static declared later must not inherit the earlier instance's DOM proof.
@@ -324,6 +327,7 @@ CLASS_REFUSALS = {
   }
   class Utility { static unused(t) { return wrap(t); } }
   const utility = new Utility();
+  Utility.unused(element);
   return new Button(element).read();
 """,
     "class_error_read": ERROR_CLASS.replace("  return new Shape", "  Shape.NAME; return new Shape"),

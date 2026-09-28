@@ -155,19 +155,14 @@ def CTNative_StrType : CTNative_Type<"Str", "str"> {
     legal. `std::string` is bytes. `"\u{1F600}".length` is 2 under UTF-16
     and 4 under UTF-8.
 
-    PART 24 SAYS TO DEFAULT TO utf16 AND THAT IS WRONG FOR THIS ENGINE.
-    ctbrowser stores a JS string as UTF-8 bytes and `ctbrowser/docs/script.md`
-    records the gap under "The UTF-16 gap"; `unittests/js/string_basics.cpp`
-    PINS the current answers, including `"\u{1F600}".length` is 4 with
-    "V8: 2" beside it. The differential harness compares a compiled body
-    against THIS interpreter, so a native backend that defaulted to UTF-16
-    would disagree with its own oracle on every non-ASCII `.length`.
-
-    The default therefore lives in exactly one place -
-    `kDefaultStringEncoding` in CTNativeLattice.h - it is `utf8` today, and
-    a test asserts it against what the interpreter actually answers. The day
-    the engine closes its UTF-16 gap, that constant flips and the test says
-    so. See ctcompile/docs/native-divergences.md, entry ND-1.
+    PART 24 SAYS TO DEFAULT TO utf16. ctbrowser stores a JS string as WTF-8
+    and, since 2b710a0d2, counts `.length` and indices in UTF-16 code units
+    over those bytes, as ECMA-262 does. So the default carrier stays utf8 and
+    a utf8 `.length` is `ctnative::string_length`, a code-unit count, not
+    `.size()`. The default lives in exactly one place -
+    `kDefaultStringEncoding` in CTNativeLattice.h - and a test asserts the
+    native count against what the interpreter actually answers. See
+    ctcompile/docs/native-divergences.md, entry ND-1.
 
     THE C++ CARRIER FOLLOWS THE ENCODING, and `cppCarrier()` below is the one
     place that says so. Part 24 Stage 53D Step 4: the reason to move a string
@@ -177,8 +172,8 @@ def CTNative_StrType : CTNative_Type<"Str", "str"> {
     encoding parameter exists to prevent.
 
     `std::u32string` IS NOT AN OPTION HERE and Step 5 says why: a `char32_t`
-    is a code point, so it would answer `1` for `"\u{1F600}".length` -
-    matching neither ECMA-262's 2 nor this engine's 4. It is the right type
+    is a code point, so it would answer `1` for `"\u{1F600}".length`, not
+    the 2 that ECMA-262 and this engine answer. It is the right type
     for iterating a string BY CODE POINT, which is what `for...of` does, and
     that is Phase 57's business rather than this type's.
   }];

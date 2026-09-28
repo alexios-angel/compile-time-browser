@@ -58,27 +58,19 @@ inline constexpr unsigned kMaxVariantAlternatives = 4;
 /// The C++ representation a JavaScript string gets when nothing has proved a
 /// narrower one.
 ///
-/// PART 24 SAYS utf16 HERE AND IT IS WRONG FOR THIS ENGINE. Its Stage 53D
-/// reasons from ECMA-262 - a JS string is a sequence of UTF-16 code units, so
-/// `"\u{1F600}".length` is 2 - and concludes that defaulting to UTF-16 is
-/// "semantics-preserving and boring".
+/// PART 24 SAYS utf16 HERE, reasoning from ECMA-262 - a JS string is a
+/// sequence of UTF-16 code units, so `"\u{1F600}".length` is 2 - and that is
+/// the right ANSWER but not the right CARRIER for this engine.
 ///
-/// It is neither, here. ctbrowser stores a JavaScript string as UTF-8 BYTES.
-/// `ctbrowser/docs/script.md` records the gap under "The UTF-16 gap" and
-/// `ctbrowser/unittests/js/string_basics.cpp` PINS the current answers with
-/// V8's beside them - `"\u{1F600}".length` is 4 here and 2 there. The
-/// differential harness compares a compiled body against THIS interpreter, and
-/// part 24 §A.2 makes that the standard for every phase in the track: "Every
-/// phase's gate is a comparison against the interpreter."
-///
-/// So the semantics-preserving default is the one the engine already has.
-/// Flipping this constant to UTF16 makes `stringLengthPinnedToInterpreter` in
-/// ctcompile/test/Analysis/Types/Lattice.cpp fail, and it fails by asking the real
-/// interpreter rather than by comparing against a number written down here.
-///
-/// The day the engine closes its UTF-16 gap - `string_basics.cpp` calls its
-/// pinned block "the acceptance list for a UTF-16 migration" - this constant is
-/// the whole change on this side.
+/// ctbrowser STORES a JavaScript string as WTF-8 and, since 2b710a0d2, counts
+/// `length` and every index in UTF-16 code units over those bytes
+/// (`ctbrowser/include/ctbrowser/script/utf16.hpp`). The DOM and the native
+/// runtime speak the same bytes, so the carrier stays utf8 (`std::string`) and
+/// a native `.length` is `ctnative::string_length`, the same count - which is
+/// what the ND-1 block of ctcompile/test/Analysis/Types/Lattice.cpp asks the
+/// real interpreter about rather than comparing against a number written here.
+/// Before 2b710a0d2 the engine answered 4 (bytes) and native did the same; see
+/// ctcompile/docs/native-divergences.md, entry ND-1.
 inline constexpr StrEncoding kDefaultStringEncoding = StrEncoding::UTF8;
 
 /// THE meet. The smallest type that is correct for both `a` and `b`.
@@ -110,14 +102,11 @@ inline constexpr StrEncoding kDefaultStringEncoding = StrEncoding::UTF8;
 /// the property Phase 54B's oracle checks against the running interpreter, and
 /// it is why `meet` never returns `num<i32>` for anything but two `i32`s.
 ///
-/// A STRING ENCODING THAT WIDENS CHANGES AN OBSERVABLE ANSWER, and the lattice
-/// cannot prevent it. `str<utf8>` and `str<utf16>` describe the same JavaScript
-/// values - so meeting them at `utf16` is sound as a statement about VALUES -
-/// but `.length`, indexing and `charCodeAt` answer differently in the two. The
-/// obligation therefore falls on Phase 54: on a path where any of those is
-/// observed, a string whose encoding would widen must go to `boxed` instead.
-/// Recorded as an obligation in ctcompile/docs/native-divergences.md rather
-/// than silently assumed.
+/// A STRING ENCODING THAT WIDENS KEEPS ITS OBSERVABLE ANSWERS. `str<utf8>` and
+/// `str<utf16>` describe the same JavaScript values - so meeting them at
+/// `utf16` is sound as a statement about VALUES - and both count `.length` in
+/// UTF-16 code units (utf8 through `ctnative::string_length`). Obligation O-1 in
+/// ctcompile/docs/native-divergences.md records when that was not so.
 mlir::Type meet(mlir::Type a, mlir::Type b);
 
 /// `meet` folded over a range. An empty range is `!ctnative.bottom`, which is

@@ -216,18 +216,20 @@ ctjs.func @guarded_property_call(%receiver: !ctjs.value, %new_target: !ctjs.valu
   ctjs.return %saved
 }
 
-// Closure/object families still take the existing simplification path, which
-// exposes their value identity to the closure and callback analyses.
+// Local allocations keep the importer's register vectors too, as captured
+// helpers do: a local iterator holder's saved slots are what recovery reads on
+// the catch edge (41c9f87de). Simplification would forward the entry value
+// through both handler edges and erase that correspondence.
 // CHECK-LABEL: ctjs.func @guarded_allocation
 // CHECK-SAME: ctjs.not_structured = "{{.*}}side effects{{.*}}"
 // CHECK: %[[OBJECT:[^ ]+]] = ctjs.create_object
-// CHECK-NEXT: cf.br ^[[ALLOC_INSTALL:bb[0-9]+]]
-// CHECK-NEXT: ^[[ALLOC_INSTALL]]:
-// CHECK-NEXT: ctjs.push_handler ^[[NORMAL:bb[0-9]+]] catch ^[[CAUGHT:bb[0-9]+]]
-// CHECK: ^[[NORMAL]]:
-// CHECK: ctjs.return %[[OBJECT]]
-// CHECK: ^[[CAUGHT]]:
-// CHECK: ctjs.return %[[OBJECT]]
+// CHECK-NEXT: cf.br ^[[ALLOC_INSTALL:bb[0-9]+]](%[[OBJECT]] : !ctjs.value)
+// CHECK-NEXT: ^[[ALLOC_INSTALL]](%[[PREFIX:[^:]+]]: !ctjs.value):
+// CHECK-NEXT: ctjs.push_handler ^[[NORMAL:bb[0-9]+]](%[[PREFIX]] : !ctjs.value) catch ^[[CAUGHT:bb[0-9]+]](%[[PREFIX]] : !ctjs.value)
+// CHECK: ^[[NORMAL]](%[[VALUE:[^:]+]]: !ctjs.value):
+// CHECK: ctjs.return %[[VALUE]]
+// CHECK: ^[[CAUGHT]](%[[SAVED:[^:]+]]: !ctjs.value):
+// CHECK: ctjs.return %[[SAVED]]
 ctjs.func @guarded_allocation(%receiver: !ctjs.value, %new_target: !ctjs.value,
                              %callee: !ctjs.value) -> !ctjs.value
     attributes {upvalue_count = 0 : i32} {

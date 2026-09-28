@@ -186,16 +186,6 @@ FIXTURES["normalized_result"] = [
         [("data-bsfoo", "3"), ("data-bs-foo", "1"), ("data-bs__proto__", value)],
     )
 ]
-# Script retains byte-indexed charAt/slice and ASCII casing. Pin its existing
-# divergent results; Node's unmodified source supplies native expectations.
-VM_EXPECTATIONS = {
-    ("normalized_result", 3): 'object:{"Éx":1,"éx":2}',
-    ("normalized_result", 4): 'object:{"éx":2,"Éx":1}',
-    ("normalized_result", 5): 'object:{"İx":1,"i\u0307x":2}',
-    ("normalized_result", 6): 'object:{"i\u0307x":2,"İx":1}',
-    ("normalized_result", 7): 'object:{"𐐀x":42,"Σ":true,"K":false}',
-}
-
 REFUSALS = {
     "dynamic_key": f"const e = {{}}; e[t.getAttribute('key')] = {GET}; return e;",
     "prototype_key": f"const e = {{}}; e['__proto__'] = {GET}; return e;",
@@ -381,13 +371,7 @@ def oracles(args):
     vm = args.work / "assignment-vm.js"
     vm.write_text(source)
     actual = run([args.reference, vm]).stdout
-    fixture_keys = [
-        (name, index) for name, fixtures in FIXTURES.items() for index in range(len(fixtures))
-    ]
-    vm_expected = [VM_EXPECTATIONS.get(key, value) for key, value in zip(fixture_keys, expected)]
-    wanted = "".join(
-        f'{label}="{values.quote(value)}"\n' for label, value in zip(labels, vm_expected)
-    )
+    wanted = "".join(f'{label}="{values.quote(value)}"\n' for label, value in zip(labels, expected))
     assert actual == wanted, (actual, wanted)
     return expected
 

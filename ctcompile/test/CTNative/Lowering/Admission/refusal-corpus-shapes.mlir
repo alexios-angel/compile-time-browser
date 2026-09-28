@@ -90,7 +90,7 @@
 // The original String length source now has a definite native type and carrier.
 // CONSTANT: emitc.func @main()
 // CONSTANT: emitc.func @s_1
-// CONSTANT: call_opaque "std::size"
+// CONSTANT: call_opaque "ctnative::string_length"
 // OBSERVATION: r=2
 
 //--- this.js

@@ -275,9 +275,8 @@ var a = constructor_argument();
 // Adding a prototype property does not make an arrow constructible. Its body
 // never reads lexical this, so the ordinary closure's receiver check cannot
 // substitute for the constructor's constructability check.
-// Node throws TypeError; the interpreter's inline construct opcode instead
-// produces 7 (unlike its checked construct_new helper). Pin that discrepancy
-// until the runtime is fixed, and require a native refusal under both policies.
+// Node and the interpreter both throw TypeError; require a native refusal under
+// both policies.
 function arrow_constructor() {
     var Shape = () => 3;
     Shape.prototype = {kind: 7};

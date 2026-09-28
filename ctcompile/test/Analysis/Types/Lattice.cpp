@@ -39,6 +39,7 @@
 #include <ctcompile/CTNative/IR/CTNativeDialect.h>
 #include <ctcompile/CTNative/IR/CTNativeLattice.h>
 #include <ctcompile/CTNative/IR/CTNativeTypes.h>
+#include <ctcompile/CTNative/Runtime/String.hpp>
 
 #include <ctbrowser/script/builtins.hpp>
 #include <ctbrowser/script/compile.hpp>
@@ -520,13 +521,15 @@ int main() {
               llvm::isa<ctcompile::ctnative::JsonType>(fifth));
     }
 
-    // --- ND-1: the first declared divergence, pinned to the interpreter ------
+    // --- ND-1: `.length`, pinned to the interpreter -----------------------
     //
     // NOTHING HERE IS WRITTEN DOWN TWICE. The fixture hands back the string's
     // BYTES and the engine's answer for `.length`, and the assertions are
-    // between those two and `kDefaultStringEncoding`. A number in this block
-    // would be a constant that could go stale silently, which is the failure
-    // GC/Roots.cpp records at the other end of the pipeline.
+    // between those two, the native runtime's count and `kDefaultStringEncoding`.
+    // A number in this block would be a constant that could go stale silently,
+    // which is the failure GC/Roots.cpp records at the other end of the pipeline.
+    // The engine counts UTF-16 code units over WTF-8 storage since 2b710a0d2,
+    // which closed ND-1: the native carrier stays utf8 and counts units too.
     {
         const std::string fixture = "var S = \"\\uD83D\\uDE00\";\n"
                                     "var L = S.length;\n";
@@ -543,25 +546,22 @@ int main() {
                 const std::string length = cx.to_string(cx.global("L"));
 
                 // THE PIN. Whatever `.length` answers in this engine, the
-                // default C++ representation this backend picks has to answer
-                // the SAME - otherwise every native-compiled `.length` on a
-                // non-ASCII string disagrees with the differential harness's
-                // own oracle. Part 24 says to default to utf16; flip
-                // kDefaultStringEncoding and this line goes red.
-                check("kDefaultStringEncoding answers .length the way the "
+                // native runtime's String length has to answer the SAME -
+                // otherwise every native-compiled `.length` on a non-ASCII
+                // string disagrees with the differential harness's own oracle.
+                check("ctnative::string_length answers .length the way the "
                       "interpreter does",
-                      std::to_string(codeUnitsIn(kDefaultStringEncoding, bytes)) == length);
+                      std::to_string(::ctnative::string_length(bytes)) == length);
 
-                // AND THE DIVERGENCE ITSELF, so that the entry in
-                // docs/native-divergences.md is a tested claim and not a note.
-                // ECMA-262 counts UTF-16 code units and answers 2; this engine
-                // stores UTF-8 bytes and answers 4.
+                // AND WHAT IT ANSWERS: ECMA-262 counts UTF-16 code units and
+                // answers 2, over bytes that number 4, so a byte count is caught.
                 check("ECMA-262's answer for \"\\u{1F600}\".length is 2 code units",
                       codeUnitsIn(StrEncoding::UTF16, bytes) == 2);
-                check("this engine's answer is 4, and the two really do differ",
-                      length == "4" && codeUnitsIn(StrEncoding::UTF16, bytes) !=
-                                           codeUnitsIn(StrEncoding::UTF8, bytes));
-                check("so the default is utf8, which is the engine's own",
+                check("this engine answers in code units, not its stored bytes",
+                      std::to_string(codeUnitsIn(StrEncoding::UTF16, bytes)) == length &&
+                          codeUnitsIn(StrEncoding::UTF16, bytes) !=
+                              codeUnitsIn(StrEncoding::UTF8, bytes));
+                check("so the default is utf8, which is the engine's storage",
                       kDefaultStringEncoding == StrEncoding::UTF8);
             }
         }
@@ -588,9 +588,9 @@ int main() {
               StrViewType::get(&context, StrEncoding::UTF8).cppCarrier() == "std::string_view");
         check("strview<utf16> is carried by std::u16string_view",
               StrViewType::get(&context, StrEncoding::UTF16).cppCarrier() == "std::u16string_view");
-        // AND THE TIE TO THE DIVERGENCE ABOVE. Today the default encoding is
-        // the engine's utf8, so the carrier a fresh string gets is
-        // std::string. When the engine closes its UTF-16 gap and
+        // AND THE TIE TO THE STORAGE ABOVE. The default encoding is the
+        // engine's utf8, so the carrier a fresh string gets is std::string,
+        // whose `.length` is ctnative::string_length rather than size(). If
         // kDefaultStringEncoding flips, THIS line changes with it - which is
         // the point of deriving it rather than writing "std::string" twice.
         check("the default encoding's carrier is std::string while the engine is utf8",
