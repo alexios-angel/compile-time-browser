@@ -135,10 +135,17 @@ void prune_bare_declarations(std::vector<std::unique_ptr<dom_bindings::css_rule_
 // --- the record store -------------------------------------------------------
 
 std::string dom_bindings::rule_css_text(const css_rule_record & rule) const {
-    // A nested declarations rule is its block, and nothing around it.
+    // A nested declarations rule is its block, and nothing around it...
     if (rule.at_name == nested_declarations_name) {
         return style::css::serialize_declaration_block(rule.declarations);
     }
+    // ...and an EMPTY one is not written at all among its parent's children
+    // (CSSOM "serialize a CSS rule": a CSSNestedDeclarations with no
+    // declarations is skipped - nested-declarations-cssom-whitespace).
+    const auto empty_nested_declarations = [this](std::size_t child) {
+        const css_rule_record & one = *css_rule_store_[child];
+        return one.at_name == nested_declarations_name && one.declarations.empty();
+    };
     // A PRELUDE AND A DECLARATION BLOCK. A keyframe's prelude is its keyText and
     // a style rule's is its selector; neither carries an at-keyword.
     if (rule.type == style_rule || rule.type == keyframe_rule) {
@@ -154,7 +161,7 @@ std::string dom_bindings::rule_css_text(const css_rule_record & rule) const {
         std::string out = rule.selector + " {\n";
         if (!block.empty()) { out += "  " + block + "\n"; }
         for (const std::size_t child : rule.children) {
-            if (child >= css_rule_store_.size()) { continue; }
+            if (child >= css_rule_store_.size() || empty_nested_declarations(child)) { continue; }
             out += "  " + rule_css_text(*css_rule_store_[child]) + "\n";
         }
         return out + "}";
@@ -238,7 +245,7 @@ std::string dom_bindings::rule_css_text(const css_rule_record & rule) const {
     }
     out += " {\n";
     for (const std::size_t child : rule.children) {
-        if (child >= css_rule_store_.size()) { continue; }
+        if (child >= css_rule_store_.size() || empty_nested_declarations(child)) { continue; }
         // TWO SPACES BEFORE THE CHILD'S FIRST LINE ONLY: CSSOM appends the
         // serialised child as it is, so a nested group's own lines keep the
         // indentation it gave them and nothing accumulates
@@ -823,6 +830,13 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
                 made.verbatim.clear();
             }
         } else if (at_rule_holds_rules(made.at_name)) {
+            // `@starting-style` takes no prelude at all (CSS Transitions 2
+            // §3.1): `@starting-style div { }` is no rule (starting-style-parsing).
+            if (made.at_name == "starting-style" && !trim(made.prelude, html_whitespace).empty()) {
+                css_rule_store_.pop_back();
+                error = "SyntaxError";
+                return no_index;
+            }
             if (made.at_name == "scope") {
                 // `[(<scope-start>)]? [to (<scope-end>)]?`, CSS Cascade 6 §3:
                 // each a selector list that parses and names no
