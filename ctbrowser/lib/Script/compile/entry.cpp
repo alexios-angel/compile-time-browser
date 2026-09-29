@@ -6,6 +6,8 @@
 // One of the files carved out of a 3,845-line compile.cpp on 2026-08-09.
 // The class is declared whole in compiler_impl.hpp beside this.
 
+#include <boost/scope/scope_exit.hpp>
+
 #include "compiler_impl.hpp"
 #include "early_errors.hpp"
 
@@ -232,6 +234,58 @@ void compiler_impl::compile_program() {
             break;
         }
     }
+    // A DIRECT EVAL IN FUNCTIONS THAT KEEP THEIR EVALS' `var`s ON OBJECTS
+    // (with_scope::eval_vars), handed over as bindings: every name beyond
+    // the eval's own is looked up on them first, innermost first - deepest
+    // name last - and a sloppy eval's `var`s and functions are made on the
+    // innermost, its caller's variable environment (19.2.1.3 steps 16-17
+    // for one that is not the global environment: CreateMutableBinding
+    // (name, true) when it does not have the name - deletable, and undefined
+    // until written), not as globals.
+    std::vector<std::string> eval_vars;
+    for (const std::string & name : eval_outer_names_) {
+        if (name.starts_with(eval_vars_prefix)) { eval_vars.push_back(name); }
+    }
+    std::ranges::sort(eval_vars, [](const std::string & a, const std::string & b) {
+        return a.size() != b.size() ? a.size() < b.size() : a < b;
+    });
+    for (const std::string & name : eval_vars) {
+        with_scopes_.push_back(with_scope{name, 0, 0, true});
+    }
+    if (!eval_vars.empty()) {
+        eval_vars_name_ = eval_vars.back();
+        if (!fn().is_strict) {
+            std::vector<std::string> names = out_.hoisted_vars;
+            for (const std::int32_t s : kids(root)) {
+                if (at(s).kind == vp::nk::func_decl && resolve_upvalue(0, at(s).text) < 0) {
+                    names.emplace_back(at(s).text);
+                }
+            }
+            std::ranges::sort(names);
+            names.erase(std::ranges::unique(names).begin(), names.end());
+            const std::uint32_t mark = reg_mark();
+            const std::uint16_t object = alloc_reg();
+            emit_plain_read(eval_vars_name_, object);
+            for (const std::string & name : names) {
+                const std::uint32_t inner = reg_mark();
+                const std::uint16_t key = alloc_reg();
+                emit_string(key, name);
+                const std::uint16_t has = alloc_reg();
+                proto().emit(instruction{op::has_property, has, key, object});
+                const std::size_t exists = proto().emit(instruction{op::jump_if_true, has});
+                const std::uint16_t nothing = alloc_reg();
+                proto().emit(instruction{op::load_undef, nothing});
+                proto().emit(instruction{op::set_prop, object, name_operand(name), nothing});
+                patch_here(exists);
+                release_to(inner);
+            }
+            release_to(mark);
+            out_.eval_vars_env = true;
+        }
+    }
+    const boost::scope::scope_exit leave_eval_vars{[this, handed = eval_vars.size()]() noexcept {
+        with_scopes_.resize(with_scopes_.size() - handed);
+    }};
     for (const std::int32_t s : kids(root)) {
         if (at(declared_by(s)).kind == vp::nk::func_decl || s == default_declaration) {
             compile_stmt(s);

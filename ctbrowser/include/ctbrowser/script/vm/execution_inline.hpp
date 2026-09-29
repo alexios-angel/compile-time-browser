@@ -409,12 +409,13 @@ inline auto context::refuse(std::string_view what, std::string why) -> void {
 // the name a throw site wrote. A small keyed list rather than seven more
 // enumerators keeps the fallback array - which every property read on a
 // primitive indexes - exactly the size it was.
+// The current realm's, like the prototypes.
 inline auto context::register_error_prototype(std::string kind, object_object * table) -> void {
-    error_prototypes_.emplace_back(std::move(kind), table);
+    current_realm().intrinsics->error_prototypes.emplace_back(std::move(kind), table);
 }
 
 [[nodiscard]] inline auto context::error_prototype(std::string_view kind) const -> object_object * {
-    for (const auto & [name, table] : error_prototypes_) {
+    for (const auto & [name, table] : current_realm().intrinsics->error_prototypes) {
         if (name == kind) { return table; }
     }
     return nullptr;

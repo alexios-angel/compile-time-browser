@@ -356,6 +356,26 @@ void compiler_impl::compile_call_target(const vp::node & n, std::uint16_t target
         patch_here(bound);
         proto().emit(
             instruction{op::get_prop, target, self, name_operand(std::string{callee.text})});
+        // An eval's variable environment is a declarative record, whose
+        // WithBaseObject is undefined (9.1.1.1.10): a callee found on one is
+        // called with no receiver, where a `with`'s object is its own.
+        const std::vector<const with_scope *> scopes = applicable_with_scopes(callee.text);
+        if (std::ranges::all_of(scopes, [](const with_scope * w) { return w->eval_vars; })) {
+            proto().emit(instruction{op::load_undef, self});
+        } else {
+            for (const with_scope * w : scopes) {
+                if (!w->eval_vars) { continue; }
+                const std::uint32_t mark = reg_mark();
+                const std::uint16_t held = alloc_reg();
+                emit_plain_read(w->name, held);
+                const std::uint16_t same = alloc_reg();
+                proto().emit(instruction{op::equal, same, self, held});
+                const std::size_t other = proto().emit(instruction{op::jump_if_false, same});
+                proto().emit(instruction{op::load_undef, self});
+                patch_here(other);
+                release_to(mark);
+            }
+        }
         patch_here(done);
     } else if (call_has_receiver(callee)) {
         compile_expr(callee.a, self);
@@ -436,8 +456,18 @@ bool compiler_impl::compile_param_eval(const vp::node & n, std::uint16_t dst) {
         const std::uint16_t r = alloc_reg();
         emit_string(r, name);
     }
-    proto().emit(
-        instruction{op::call, base, static_cast<std::uint16_t>(1 + param_scope_names_.size())});
+    // And the object this function's evals make their `var`s on
+    // (with_scope::eval_vars): its name, then its cell.
+    std::size_t argc = 1 + param_scope_names_.size();
+    if (const local * held =
+            fn().eval_vars.empty() ? nullptr : find_local_entry(fn(), fn().eval_vars)) {
+        const std::uint16_t name = alloc_reg();
+        emit_string(name, fn().eval_vars);
+        const std::uint16_t cell = alloc_reg();
+        proto().emit(instruction{op::move, cell, held->reg});
+        argc += 2;
+    }
+    proto().emit(instruction{op::call, base, static_cast<std::uint16_t>(argc)});
     proto().emit(instruction{op::move, dst, base});
     release_to(mark);
     return true;
@@ -485,7 +515,12 @@ eval_site compiler_impl::eval_site_here() {
 bool compiler_impl::compile_direct_eval(const vp::node & n, std::uint16_t dst) {
     // AT A PROGRAM'S TOP LEVEL TOO: a block's `let` there is a local of the
     // script frame, which `{ let x; eval('x') }` reads (lex-env-heritage).
-    if (!is_direct_eval_call(n) || !with_scopes_.empty()) { return false; }
+    // Not inside a `with` - a direct eval's own variable environment is no
+    // `with` (with_scope::eval_vars).
+    if (!is_direct_eval_call(n) ||
+        std::ranges::any_of(with_scopes_, [](const with_scope & w) { return !w.eval_vars; })) {
+        return false;
+    }
     const std::size_t level = frames_.size() - 1;
     // `eval` that is a local or an upvalue is somebody else's function.
     if (find_local_entry(fn(), "eval") != nullptr || resolve_upvalue(level, "eval") >= 0) {
@@ -493,7 +528,10 @@ bool compiler_impl::compile_direct_eval(const vp::node & n, std::uint16_t dst) {
     }
     const std::span<const std::int32_t> args = kids(n);
     if (any_spread(args)) { return false; }
-    const auto usable = eval_reachable;
+    const auto usable = [this](std::string_view name) {
+        return eval_reachable(name) ||
+               (name.starts_with("@tdz:") && binding_ready_flag(name.substr(5)) == name);
+    };
     // The first line: the strictness and where the eval is (eval_site).
     const eval_site site = eval_site_here();
     std::string descriptor = site.strict ? "strict" : "sloppy";
@@ -537,11 +575,23 @@ bool compiler_impl::compile_direct_eval(const vp::node & n, std::uint16_t dst) {
         seen.push_back(name);
         handed.push_back(&l);
     }
+    // The object this function's evals make their `var`s on, under its own
+    // name: the eval's program knows it by the prefix (eval_vars_name_).
+    if (!fn().eval_vars.empty()) {
+        if (const local * held = find_local_entry(fn(), fn().eval_vars)) {
+            descriptor += "\nL " + fn().eval_vars;
+            seen.push_back(fn().eval_vars);
+            handed.push_back(held);
+        }
+    }
     for (std::size_t k = level; k-- > 0;) {
         std::vector<std::string> outer;
         for (const auto & [name, positions] : frames_[k].local_index) {
             if (!positions.empty() && usable(name) && !taken(name)) { outer.emplace_back(name); }
         }
+        // ...and the one an enclosing function keeps ITS evals' `var`s on,
+        // which the eval's code resolves names through too.
+        if (!frames_[k].eval_vars.empty()) { outer.push_back(frames_[k].eval_vars); }
         std::ranges::sort(outer);
         for (const std::string & name : outer) {
             if (taken(name)) { continue; }

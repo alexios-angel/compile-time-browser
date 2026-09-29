@@ -820,6 +820,7 @@ void install_symbol(context & cx);
 void install_collections(context & cx);
 void install_errors(context & cx);
 void install_proxy(context & cx);
+void install_shadow_realm(context & cx); // objects/shadow_realm.cpp
 void install_function(context & cx);
 void install_typed_arrays(context & cx);
 void install_dynamic_function(context & cx);

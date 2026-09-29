@@ -35,8 +35,19 @@ void install_builtins(context & cx, std::uint64_t seed) {
     install_globals(cx);
     install_promise(cx);
     install_temporal(cx);
+    install_shadow_realm(cx);
     // Everything above is an intrinsic, and none of it is enumerable.
     cx.mark_globals_builtin();
+}
+
+realm_record & create_intrinsic_realm(context & cx) {
+    realm_record & made = cx.create_empty_realm();
+    // Everything below lands in the new realm: define_global and
+    // set_prototype write the CURRENT realm's table.
+    const context::realm_scope in{cx, made};
+    cx.set_global_this(cx.make_global_object(made));
+    install_builtins(cx);
+    return made;
 }
 
 } // namespace ctbrowser::script

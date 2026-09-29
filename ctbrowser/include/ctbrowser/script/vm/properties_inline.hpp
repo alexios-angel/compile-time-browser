@@ -73,7 +73,11 @@ namespace ctbrowser::script {
 // Object.prototype - and nullptr pads the rest.
 [[nodiscard]] inline auto context::implicit_prototypes(value v) const
     -> std::array<object_object *, 3> {
-    const auto table = [this](proto_kind kind) { return prototype(kind); };
+    // The current realm's, asked once rather than per entry.
+    const auto & prototypes = current_realm().intrinsics->prototypes;
+    const auto table = [&prototypes](proto_kind kind) {
+        return prototypes[static_cast<std::size_t>(kind)];
+    };
     if (v.is_array()) {
         auto * arr = static_cast<array_object *>(v.as_heap());
         if (arr->elements != element_kind::none) {
@@ -105,12 +109,13 @@ namespace ctbrowser::script {
     return {nullptr, nullptr, nullptr};
 }
 
+// THE CURRENT REALM'S - see realm_record::prototypes.
 inline auto context::set_prototype(proto_kind kind, object_object * table) -> void {
-    prototypes_[static_cast<std::size_t>(kind)] = table;
+    current_realm().intrinsics->prototypes[static_cast<std::size_t>(kind)] = table;
 }
 
 [[nodiscard]] inline auto context::prototype(proto_kind kind) const -> object_object * {
-    return prototypes_[static_cast<std::size_t>(kind)];
+    return current_realm().intrinsics->prototypes[static_cast<std::size_t>(kind)];
 }
 
 // 2026-01-01T00:00:00Z

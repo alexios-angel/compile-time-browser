@@ -516,11 +516,15 @@ void install_dynamic_function(context & cx) {
                 if (kept.eval_global && !c.eval_declaration_instantiation(kept)) {
                     return value::undefined();
                 }
-                for (const std::string & name : kept.hoisted_vars) {
-                    if (!c.annex_b_skipped(kept, name)) { c.declare_global_var(name); }
-                }
-                for (const std::string & name : kept.function_names) {
-                    c.declare_global_function(name, true);
+                // ...and from a function that keeps its variable environment
+                // on an object, the program makes them there itself.
+                if (!kept.eval_vars_env) {
+                    for (const std::string & name : kept.hoisted_vars) {
+                        if (!c.annex_b_skipped(kept, name)) { c.declare_global_var(name); }
+                    }
+                    for (const std::string & name : kept.function_names) {
+                        c.declare_global_function(name, true);
+                    }
                 }
                 auto * entry = c.allocate<closure_object>(&kept.functions[0]);
                 entry->owner = &kept;
@@ -561,13 +565,31 @@ void install_dynamic_function(context & cx) {
                 // it always was here.
                 eval_site site;
                 site.in_function = true;
-                program compiled = compiler::compile_for_eval(c.to_string(source), site);
+                // The names of the parameter scope, then - from a sloppy
+                // function - the name and cell of the object its evals make
+                // their `var`s on (the compiler's with_scope::eval_vars).
+                std::vector<std::string> bound_names;
+                std::vector<eval_binding> outer;
+                std::vector<value> cells;
+                for (std::size_t i = 1; i < a.size(); ++i) {
+                    std::string bound = c.to_string(a[i]);
+                    if (bound.starts_with(eval_vars_prefix) && i + 1 < a.size() &&
+                        a[i + 1].is_kind(heap_kind::cell)) {
+                        outer.emplace_back().name = std::move(bound);
+                        cells.push_back(a[++i]);
+                        continue;
+                    }
+                    bound_names.push_back(std::move(bound));
+                }
+                program compiled =
+                    outer.empty()
+                        ? compiler::compile_for_eval(c.to_string(source), site)
+                        : compiler::compile_for_direct_eval(c.to_string(source), outer, site);
                 if (!compiled.ok) {
                     c.throw_error("SyntaxError", compiled.error);
                     return value::undefined();
                 }
-                for (std::size_t i = 1; i < a.size(); ++i) {
-                    const std::string bound = c.to_string(a[i]);
+                for (const std::string & bound : bound_names) {
                     for (const std::string & declared : compiled.hoisted_vars) {
                         if (declared != bound) { continue; }
                         c.throw_error("SyntaxError",
@@ -579,7 +601,14 @@ void install_dynamic_function(context & cx) {
                     }
                 }
                 const program & kept = c.own_program(std::move(compiled));
-                return c.run_nested(kept);
+                // A program handed the object reads it as an upvalue, strict
+                // or not.
+                if (outer.empty()) { return c.run_nested(kept); }
+                auto * entry = c.allocate<closure_object>(&kept.functions[0]);
+                entry->owner = &kept;
+                entry->realm = &c.current_realm();
+                entry->upvalues = std::move(cells);
+                return c.call(value::object(entry), {});
             });
         native->retained.push_back(intrinsic);
         cx.define_global(std::string{param_eval_name}, value::object(native));

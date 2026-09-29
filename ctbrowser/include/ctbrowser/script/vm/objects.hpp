@@ -47,14 +47,30 @@ struct closure_object;
 // the callee's realm becomes the current one). Owned by the context for its
 // whole life - a closure points at the realm it was made in.
 //
-// THE INTRINSICS ARE STILL SHARED: `frame.contentWindow.Array === Array` here,
-// where a browser has two. The binding table starts as a copy of the page's
-// template (see context::create_realm), so a frame sees the same constructors;
-// what it does not see is the page's own `var`s.
+// A FRAME'S INTRINSICS ARE STILL SHARED: `frame.contentWindow.Array === Array`
+// here, where a browser has two. The binding table starts as a copy of the
+// page's template and the intrinsics ARE the page's (see
+// context::create_realm), so a frame sees the same constructors; what it does
+// not see is the page's own `var`s. A ShadowRealm's are its OWN - the builtins
+// installed again inside it (builtins' create_intrinsic_realm).
 // THE MARK OF A MODULE NAMESPACE OBJECT (context::module_namespace): its
 // exports are getters over the cells, which [[GetOwnProperty]] and
 // [[DefineOwnProperty]] answer as the data properties 10.4.6 says they are.
 inline constexpr std::string_view module_namespace_key = CTBROWSER_PRIVATE_KEY("ModuleNamespace");
+
+// How many value kinds have a prototype - context::proto_kind::count_, which
+// vm.hpp checks against this.
+inline constexpr std::size_t realm_prototype_count = 19;
+
+// [[Intrinsics]] (9.3), the part the VM itself reaches for: the prototype of
+// each value kind (context::prototype, indexed by proto_kind), the
+// NativeError prototypes a throw site names (context::error_prototype) and
+// %ThrowTypeError%. Roots, through every realm that holds them (each_root).
+struct realm_intrinsics {
+    std::array<object_object *, realm_prototype_count> prototypes{};
+    std::vector<std::pair<std::string, object_object *>> error_prototypes;
+    value throw_type_error = value::undefined();
+};
 
 struct realm_record {
     string_flat_map<value> globals;
@@ -79,6 +95,11 @@ struct realm_record {
     value global_this = value::undefined();
     // See context::set_undeclared_name_hook.
     std::function<value(std::string_view)> undeclared_name;
+    // Its intrinsics, read through the CURRENT realm - so code running in a
+    // ShadowRealm finds that realm's `[].push`, and an object with no
+    // prototype of its own inherits the current realm's (implicit_prototypes).
+    // A frame's are the page's, SHARED (context::create_realm).
+    std::shared_ptr<realm_intrinsics> intrinsics = std::make_shared<realm_intrinsics>();
 };
 
 // type_record.hpp is included rather than forward-declared because each_root
@@ -427,6 +448,11 @@ inline constexpr std::string_view param_eval_name = "__ctbrowser_param_eval";
 // cells...)` - see compiler_impl::compile_direct_eval. The source is compiled
 // with the caller's bindings as its entry function's upvalues.
 inline constexpr std::string_view direct_eval_name = "__ctbrowser_direct_eval";
+// THE HIDDEN LOCAL a sloppy function whose own body calls `eval(` keeps its
+// evals' `var`s on (compiler_impl::with_scope::eval_vars), this prefix and
+// how many such objects enclose it: handed to a direct eval as a binding of
+// that name, and to param_eval_name as a name and a cell.
+inline constexpr std::string_view eval_vars_prefix = "@evalvars:";
 // `delete o.k` / `delete o[k]` (13.5.1.2): `(obj, key, strict, super)` is
 // ToObject(obj).[[Delete]](ToPropertyKey(key)) with its ANSWER - the opcodes
 // delete_prop/delete_index produce none - a TypeError for a null or undefined

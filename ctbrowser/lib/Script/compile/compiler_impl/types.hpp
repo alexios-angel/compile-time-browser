@@ -22,7 +22,7 @@ struct local {
     // dead zone whenever it runs (the scope is entered once per run, the
     // declaration always after such a read), so compile_ident throws
     // there statically. A read from a nested function is not decided
-    // here - that needs a runtime check this engine does not make.
+    // here - forward-captured block lexicals use ready_flag below.
     std::uint32_t initialized_at = 0;
     // WHERE THIS LOCAL'S ENTRY IN `function_proto::locals` IS, or none when
     // the debug tables are off. The compiler's `locals` is a STACK that
@@ -41,6 +41,8 @@ struct local {
     // may not redeclare (see eval_binding). Not a parameter, a `var`, a
     // function or a catch parameter (B.3.4 lets a var share that name).
     bool lexical = false;
+    // Hidden boxed boolean for a forward-captured block lexical.
+    std::string ready_flag{};
 };
 
 struct interval {
@@ -95,6 +97,10 @@ struct frame {
     // 13.3.7.1 / 9.2.1.2. Empty for every other function. An arrow inside
     // the constructor asks its nearest non-arrow frame (derived_flag()).
     std::string derived_flag;
+    // A SLOPPY FUNCTION WHOSE OWN BODY CALLS `eval(`: the hidden boxed local
+    // holding the object its direct evals' `var`s are made on (see
+    // compiler_impl::with_scope::eval_vars). Empty for every other function.
+    std::string eval_vars;
     // A FUNCTION WITH A [[HomeObject]] - a method, an accessor, a constructor
     // or a class's field initialiser (field_initializer) - which is what a
     // direct eval in it may say `super.x` in (see compiler_impl::eval_site_here).
@@ -133,6 +139,7 @@ struct reference {
     // A NAME THAT RESOLVED TO AN IMMUTABLE BINDING: emit_store refuses the
     // write (the `with` object, when one binds the name, still takes it).
     immutability readonly = immutability::none;
+    std::string ready_flag;
 };
 
 } // namespace ctbrowser::script::detail::compiler_types

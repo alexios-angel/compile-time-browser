@@ -39,7 +39,9 @@ void install_proxy(context & cx) {
                           "Cannot create proxy with a non-object as target or handler");
             return value::undefined();
         }
-        return value::object(c.allocate<proxy_object>(a[0], a[1]));
+        auto * made = c.allocate<proxy_object>(a[0], a[1]);
+        made->constructor = is_constructor(a[0]);
+        return value::object(made);
     };
     auto * proxy_ctor =
         cx.allocate<native_object>("Proxy", [proxy_create](context & c, std::span<value> a) {

@@ -112,5 +112,38 @@ int main() {
     js_expect("(function(){ class C { x = eval('arguments'); } try { new C(); } catch (e) {"
               " return e.constructor.name; } return 'none'; })()",
               "SyntaxError");
+    // A NEW `var` OR FUNCTION IS THE CALLER'S FUNCTION'S (19.2.1.3 steps
+    // 16-17), not a global: the rest of the body and its closures see it,
+    // the global never does, and a `delete` removes it.
+    js_expect("(function(){ eval('var fresh = 1; function made() { return 2; }');"
+              " return fresh + made() + ',' + typeof globalThis.fresh + ','"
+              " + (() => typeof made)(); })()",
+              "3,undefined,function");
+    js_expect("(function(){ eval('var gone = 1; delete gone;'); return typeof gone; })()",
+              "undefined");
+    js_expect("(function(){ eval('{ function blk() {} }'); return typeof blk + ','"
+              " + typeof globalThis.blk; })()",
+              "function,undefined");
+    // A call of one has no `this` of the environment's.
+    js_expect("(function(){ eval('function who() { return this === undefined ||"
+              " this === globalThis; }'); return who(); })()",
+              "true");
+    // ...and one made by an eval in a parameter default is the body's.
+    js_expect("((p = eval('var fromParam = 5')) => fromParam)()", "5");
+    // An eval in a function inside it sees them too, and makes its own there.
+    js_expect("(function(){ eval('var outer = 1'); return (function(){"
+              " eval('var inner = outer + 1'); return eval('inner + outer'); })()"
+              " + ',' + typeof inner; })()",
+              "3,undefined");
+    // Found through a `with` around the call, one is still called with no
+    // receiver of the environment's, where the with's object is its own.
+    js_expect("(function(o){ eval('function who() { return this; }'); with (o) {"
+              " return [who() === globalThis, own() === o].join(); } })"
+              "({ own() { return this; } })",
+              "true,true");
+    // Strict code in a default reads through the object, and makes nothing on it.
+    js_expect("(function(a = eval('\"use strict\"; var q = 1; typeof zz + q')) { return a +"
+              " ',' + typeof q; })()",
+              "undefined1,undefined");
     REPORT("direct_eval");
 }

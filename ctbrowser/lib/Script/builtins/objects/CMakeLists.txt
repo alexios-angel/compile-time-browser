@@ -6,4 +6,5 @@ target_sources(ctbrowser-script PRIVATE
   object.cpp
   operations.cpp
   proxy.cpp
+  shadow_realm.cpp
 )

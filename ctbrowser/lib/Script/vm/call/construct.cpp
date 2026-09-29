@@ -42,7 +42,8 @@ bool is_constructor(value v) {
         return p == nullptr || !(p->is_arrow || p->is_generator || p->is_async);
     }
     if (v.is_kind(heap_kind::proxy)) {
-        return is_constructor(static_cast<const proxy_object *>(v.as_heap())->target);
+        const auto * p = static_cast<const proxy_object *>(v.as_heap());
+        return p->constructor || is_constructor(p->target);
     }
     return false;
 }

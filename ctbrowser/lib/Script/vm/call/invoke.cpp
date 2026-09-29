@@ -138,7 +138,7 @@ value context::invoke(value callable, std::span<const value> args, value this_va
     // calling one agree, from `.call`/`.apply` and from op::call alike.
     if (callable.is_kind(heap_kind::proxy)) {
         auto * p = static_cast<proxy_object *>(callable.as_heap());
-        if (!p->target.is_callable()) { return value::undefined(); }
+        if (!p->callable) { return value::undefined(); }
         const rooted keep_callable{*this, callable};
         const value new_target = std::exchange(pending_new_target_, value::undefined());
         const rooted keep_new_target{*this, new_target};
@@ -667,7 +667,8 @@ value context::call_spread(value callee, value arg_array, value receiver) {
 }
 
 value context::throw_type_error() {
-    if (!throw_type_error_.is_undefined()) { return throw_type_error_; }
+    value & held = current_realm().intrinsics->throw_type_error;
+    if (!held.is_undefined()) { return held; }
     auto * made = allocate<native_object>("", [](context & c, std::span<value>) {
         c.throw_error("TypeError", "'caller', 'callee', and 'arguments' properties may not be "
                                    "accessed on strict mode functions or the arguments objects "
@@ -680,8 +681,8 @@ value context::throw_type_error() {
     made->define("length", value::number(0), attr_none);
     made->define("name", string(""), attr_none);
     made->extensible = false;
-    throw_type_error_ = value::object(made);
-    return throw_type_error_;
+    held = value::object(made);
+    return held;
 }
 
 value context::make_arguments_object(call_frame & fr, const value * slots, std::uint32_t argc) {

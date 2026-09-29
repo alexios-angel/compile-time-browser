@@ -153,6 +153,14 @@ void compiler_impl::compile_function_decl(std::int32_t idx) {
     const auto write_script_var = [&] {
         if (const int up = resolve_upvalue(0, n.text); up >= 0) {
             proto().emit(instruction{op::set_upvalue, static_cast<std::uint16_t>(up), r});
+        } else if (!eval_vars_name_.empty()) {
+            // ...or of its caller's function's variable environment
+            // (with_scope::eval_vars), where compile_program made it.
+            const std::uint32_t object_mark = reg_mark();
+            const std::uint16_t object = alloc_reg();
+            emit_plain_read(eval_vars_name_, object);
+            proto().emit(instruction{op::set_prop, object, name_operand(std::string{n.text}), r});
+            release_to(object_mark);
         } else {
             proto().emit(
                 instruction::with_bx(op::set_global, r, name_operand(std::string{n.text})));
@@ -297,6 +305,29 @@ std::uint32_t compiler_impl::compile_function_body(std::int32_t idx, std::string
         arguments_slot = declare_local("arguments");
         proto().emit(instruction{op::make_arguments, arguments_slot});
         arguments_boxed = fn().locals.back().boxed;
+    }
+    // THE OBJECT A SLOPPY DIRECT EVAL'S `var`s ARE MADE ON (with_scope::
+    // eval_vars), before the defaults - an eval may be in one - and after the
+    // parameters and `arguments`, which it must not shift. Null-prototyped,
+    // so `toString` is nobody's binding here: `undefined` is the explicit
+    // null of object_object::prototype. Its `locals_mark` is 0 - the eval
+    // may not shadow a binding of this function's own, so none is looked up
+    // on it. Named by how many such objects enclose it, which no two on one
+    // scope chain share (compile_program orders the ones it is handed so).
+    if (!strict && own_direct_eval(idx)) {
+        const auto depth =
+            std::ranges::count_if(with_scopes_, [](const with_scope & w) { return w.eval_vars; });
+        fn().eval_vars = std::string{eval_vars_prefix} + std::to_string(depth);
+        const std::uint16_t held = declare_local(fn().eval_vars);
+        fn().locals.back().boxed = true;
+        proto().emit(instruction{op::new_object, held});
+        const std::uint32_t mark = reg_mark();
+        const std::uint16_t none = alloc_reg();
+        proto().emit(instruction{op::load_undef, none});
+        proto().emit(instruction{op::set_proto, held, none});
+        release_to(mark);
+        proto().emit(instruction{op::new_cell, held});
+        with_scopes_.push_back(with_scope{fn().eval_vars, frames_.size() - 1, 0, true});
     }
     // A captured PARAMETER needs boxing too, and it arrives already holding
     // its value - so box in place, after the arguments land and BEFORE the
@@ -495,6 +526,7 @@ std::uint32_t compiler_impl::compile_function_body(std::int32_t idx, std::string
         ++expected;
     }
     out_.functions[index].length = expected;
+    if (!fn().eval_vars.empty()) { with_scopes_.pop_back(); }
     pop_scope();
     frames_.pop_back();
     in_chain_ = saved_in_chain;
