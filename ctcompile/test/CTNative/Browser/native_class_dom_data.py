@@ -1089,6 +1089,74 @@ def published_element_fields(args):
     )
 
 
+def published_field_registration(args):
+    original = (
+        published_source(True)
+        .replace("this.n = n;", "this.n = n; this.element = key;")
+        .replace('e.set(key, "bs.item", this)', 'e.set(this.element, "bs.item", this)')
+    )
+    retained = (
+        original.replace("host.slot.get(element)", "host.slot.get(savedFirst.element)")
+        .replace("host.slot.remove(element)", "host.slot.remove(savedFirst.element)")
+        .replace("host.slot.set(element, result)", "host.slot.set(savedFirst.element, result)")
+    )
+    executions = refusals = 0
+    for label, text in (("constructor", original), ("retained", retained)):
+        name = "class-field-registration-" + label
+        published_observation(args, name, text, 59112)
+        ir, contract = published_prepare(args, name, text)
+        prepared = classes.prepare(args, name, ir, contract, success=True)
+        checked = dict(contract, module_sha256=host.fingerprint(args.opt, prepared))
+        published_provider(args, name, prepared, checked)
+        for optimize in (False, True):
+            native = dom.lower(args, prepared, checked, f"{name}-{optimize}", optimize=optimize)
+            executions += check_record_executable(args, f"{name}-{optimize}", native, 59112)
+        if label == "constructor":
+            for suffix, request, options in (
+                ("no-input", dict(contract, element_parameters=[]), ""),
+                ("no-map", dict(contract, initial_intrinsics=["__ctbrowser_class_defined"]), ""),
+                ("budget", contract, "max-steps=0"),
+                ("small-budget", contract, "max-steps=100"),
+            ):
+                classes.prepare(args, name + suffix, ir, request, success=False, options=options)
+                refusals += 1
+    registration = 'e.set(this.element, "bs.item", this)'
+    controls = {
+        "read-before-store": original.replace("this.element = key;", "").replace(
+            registration, 'e.set(this.element, (this.element = key, "bs.item"), this)'
+        ),
+        "repeated-field": original.replace(
+            "this.element = key;", "this.element = key; this.element = {};"
+        ),
+        "receiver-alias": original.replace(
+            registration, '((alias) => e.set(alias.element, "bs.item", alias))(this)'
+        ),
+        "receiver-escape": original.replace(registration, "unknown(this); " + registration),
+        "read-observer": original.replace(registration, "this.element.nodeType; " + registration),
+        "parameter-observer": original.replace(registration, "key.nodeType; " + registration),
+        "second-field": original.replace(
+            "this.element = key;", "this.element = key; this.other = key;"
+        ),
+        "replacement": original.replace(registration + ";", registration + "; return {};"),
+        "mixed-actual": original.replace("new Item(7, element)", "new Item(7, {})"),
+        "accessor": original.replace(
+            "    const first =",
+            "    Object.defineProperty(Item.prototype, 'element', {set(value) {}});\n    const first =",
+        ),
+        "retained-write": retained.replace("savedFirst.n = 5;", "savedFirst.element = {};"),
+    }
+    for label, text in controls.items():
+        if text == original or text == retained:
+            raise RuntimeError(f"{label}: field-registration control did not change its source")
+        name = "class-field-registration-refused-" + label
+        ir, contract = published_prepare(args, name, text)
+        classes.prepare(args, name, ir, contract, success=False)
+        refusals += 1
+    print(
+        f"class field registration: two Node/VM sources, two provider proofs, {executions} native executions, {refusals} refusals"
+    )
+
+
 def published_records(args):
     original = record_source()
     snapshot = original.replace(
@@ -1272,6 +1340,7 @@ def main():
     published_class_fields(args)
     published_constructor_fields(args)
     published_element_fields(args)
+    published_field_registration(args)
     if args.class_families_only:
         return
     original = source()

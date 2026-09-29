@@ -308,12 +308,49 @@ bool classInitialization::sinkCapturedPublication(
         setCaptures(constructor, function, {});
         return true;
     }
+    ctjs::GetPropertyOp keyRead;
+    ctjs::SetPropertyOp keyWrite;
+    if (domData) { keyRead = invocation.getArgs().front().getDefiningOp<ctjs::GetPropertyOp>(); }
+    if (keyRead) {
+        const auto self = body.getArgument(ctjs::arg_receiver);
+        if (keyRead.getObject() != self || !ctjs::ordinaryKey(keyRead.getKey()) ||
+            keyRead->getBlock() != &body || !keyRead->isBeforeInBlock(invocation)) {
+            return true;
+        }
+        for (mlir::OpOperand & use : keyRead.getResult().getUses()) {
+            if (!step()) { return false; }
+            if (!llvm::isa<ctjs::RootOp>(use.getOwner()) &&
+                (use.getOwner() != invocation || use.getOperandNumber() != 2)) {
+                return true;
+            }
+        }
+        // A fresh receiver's own field supplies the key only after its unique
+        // store. Keep the store and actual for the complete element-field proof.
+        for (mlir::OpOperand & use : self.getUses()) {
+            if (!step()) { return false; }
+            auto * op = use.getOwner();
+            if (llvm::isa<ctjs::RootOp>(op) || (op == keyRead && use.getOperandNumber() == 0) ||
+                (op == invocation && use.getOperandNumber() == 4)) {
+                continue;
+            }
+            auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(op);
+            if (!write || use.getOperandNumber() != 0 || !ctjs::ordinaryKey(write.getKey()) ||
+                write->getBlock() != &body) {
+                return true;
+            }
+            if (ctjs::constantKey(write.getKey()) == ctjs::constantKey(keyRead.getKey())) {
+                if (keyWrite || !write->isBeforeInBlock(keyRead)) { return true; }
+                keyWrite = write;
+            }
+        }
+        if (!keyWrite || !llvm::isa<mlir::BlockArgument>(keyWrite.getValue())) { return true; }
+    }
     llvm::SmallVector<mlir::Value> keys;
     llvm::SmallSetVector<unsigned, 2> keyParameters;
     for (ctjs::ConstructOp made : instances) {
         for (auto [position, original] : llvm::enumerate(invocation.getArgs().take_front(2))) {
             if (!step()) { return false; }
-            auto argument = original;
+            auto argument = position == 0 && keyWrite ? keyWrite.getValue() : original;
             auto parameter = llvm::dyn_cast<mlir::BlockArgument>(argument);
             if (parameter) {
                 if (parameter.getOwner() != &body ||
@@ -337,12 +374,16 @@ bool classInitialization::sinkCapturedPublication(
                 if (!fresh && !declaredElementInput(contract, scope, input)) { return true; }
                 for (mlir::OpOperand & use : parameter.getUses()) {
                     if (!step()) { return false; }
+                    auto * consumer =
+                        keyWrite ? keyWrite.getOperation() : invocation.getOperation();
                     if (!llvm::isa<ctjs::RootOp>(use.getOwner()) &&
-                        (use.getOwner() != invocation || use.getOperandNumber() != 2)) {
+                        (use.getOwner() != consumer || use.getOperandNumber() != 2)) {
                         return true;
                     }
                 }
-                keyParameters.insert(parameter.getArgNumber() - ctjs::implicit_arguments);
+                if (!keyWrite) {
+                    keyParameters.insert(parameter.getArgNumber() - ctjs::implicit_arguments);
+                }
             }
             keys.push_back(argument);
         }
@@ -387,6 +428,7 @@ bool classInitialization::sinkCapturedPublication(
                              mlir::ValueRange{first, second, made.getResult()});
     }
     eraseRooted(invocation);
+    if (keyRead) { eraseRooted(keyRead); }
     if (selection) { eraseRooted(selection); }
     eraseRooted(captured);
     setCaptures(constructor, function, {});
