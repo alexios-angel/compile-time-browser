@@ -9,6 +9,18 @@
 
 namespace ctbrowser::shell {
 
+// A window's six BarProps (HTML 7.2.2.4), its own objects over the shared
+// BarProp.prototype - the page's window's here, a frame's in
+// install_frame_realm.
+void install_bar_props(context & cx, script::object_object & window, value prototype) {
+    for (const char * name :
+         {"locationbar", "menubar", "personalbar", "scrollbars", "statusbar", "toolbar"}) {
+        auto * bar = cx.allocate<script::object_object>();
+        bar->prototype = prototype;
+        window.set(name, value::object(bar));
+    }
+}
+
 value dom_bindings::make_blob(context & cx, value bytes, std::string_view type) {
     auto * blob = cx.allocate<script::object_object>();
     if (blob_prototype_.is_object()) { blob->prototype = blob_prototype_; }
@@ -29,6 +41,31 @@ void dom_bindings::install_window(context & cx) {
     install_window_listeners(cx, *window);
     install_post_message(cx, *window);
     install_window_open(cx, *window); // window.open(), bindings/frames.cpp
+    // THE INTERFACE OBJECTS OF THE WINDOW'S OWN MEMBERS - Storage, Navigator,
+    // BarProp, Location (HTML 12.2.1, 8.9.1, 7.2.2.4, 7.2.4) - so each of those
+    // objects is an instance of its interface: `localStorage instanceof
+    // Storage`, and a frame's `navigator` keeps its prototype through
+    // document.open() (no-new-global.window.js). None is constructible. Their
+    // members stay own properties of the instances - Location's are
+    // [LegacyUnforgeable], which is where WebIDL puts them anyway.
+    const auto illegal = [](context & c, std::span<value>) {
+        c.throw_error("TypeError", "Illegal constructor");
+        return value::undefined();
+    };
+    const value storage_proto = value::object(make_interface(cx, "Storage", illegal).proto);
+    const value navigator_proto = value::object(make_interface(cx, "Navigator", illegal).proto);
+    static_cast<script::object_object *>(location_.as_heap())->prototype =
+        value::object(make_interface(cx, "Location", illegal).proto);
+    // `locationbar` and its five siblings: a BarProp each, `visible` true -
+    // this is not a popup (7.2.2.4).
+    {
+        auto * bar_prop = make_interface(cx, "BarProp", illegal).proto;
+        bar_prop->define_accessor(
+            "visible",
+            native(cx, "visible", [](context &, std::span<value>) { return value::boolean(true); }),
+            value::undefined(), script::attr_enumerable | script::attr_configurable);
+        install_bar_props(cx, *window, value::object(bar_prop));
+    }
     // `localStorage`, IN MEMORY AND FOR THIS PAGE ONLY. 38 uses in p5.js, which
     // reads it before it draws anything.
     //
@@ -40,6 +77,7 @@ void dom_bindings::install_window(context & cx) {
     // the durability.
     const auto storage = [&](const char * name) {
         auto * store = cx.allocate<script::object_object>();
+        store->prototype = storage_proto;
         auto * items = cx.allocate<script::object_object>();
         const value backing = value::object(items);
         store->set("__items", backing);
@@ -471,6 +509,7 @@ void dom_bindings::install_window(context & cx) {
     // and a page taking a Chrome-only path here would be worse served by a lie.
     {
         auto * navigator = cx.allocate<script::object_object>();
+        navigator->prototype = navigator_proto;
         navigator->set("userAgent", cx.string("Mozilla/5.0 (compatible; ctbrowser)"));
         navigator->set("appVersion", cx.string("5.0 (compatible; ctbrowser)"));
         navigator->set("platform", cx.string("ctbrowser"));
