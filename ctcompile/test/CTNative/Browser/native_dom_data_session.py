@@ -15,20 +15,15 @@ _spec = importlib.util.spec_from_file_location(
 source = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(source)
 
-CLIENT = r"""
+CLIENT = (
+    r"""
 #include <cassert>
 #include <iostream>
 #include <memory>
 #include <type_traits>
-
-int main() {
-    using namespace ctbrowser;
-    using session_type = @OWNER@;
-    static_assert(!std::is_copy_constructible_v<session_type>);
-    static_assert(!std::is_copy_assignable_v<session_type>);
-    static_assert(!std::is_move_constructible_v<session_type>);
-    static_assert(!std::is_move_assignable_v<session_type>);
-    for (int lifetime = 0; lifetime < 16; ++lifetime) {
+"""
+    + dom.SESSION_PREAMBLE
+    + r"""
         session_type session, second;
         auto & doc = session.document();
         auto & other = second.document();
@@ -115,6 +110,7 @@ int main() {
     std::cout << "DOM Data passed\n";
 }
 """
+)
 
 
 def main():

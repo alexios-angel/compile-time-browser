@@ -49,13 +49,7 @@ def source(kind):
     return text + body.replace("@OUTER@", outer).replace("@INNER@", inner) + "}\n"
 
 
-CHECKS = r"""
-        (void)pressed;
-        style::engine selectors{atoms};
-        const auto invoke = [&](element_ref anchor, element_ref expected,
-                                style::engine & engine) {
-            return in_outer_document([&] { return @ENTRY@(anchor, expected, engine); });
-        };
+CHECKS = dom.SELECTOR_CHECKS_PREAMBLE.replace("@ARGUMENTS@", "anchor, expected") + r"""
         const auto position = atoms.intern("data-index");
         const auto hovered = atoms.intern("data-hovered");
         const auto same = atoms.intern("data-same");

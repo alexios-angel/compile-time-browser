@@ -16,20 +16,15 @@ QUERIES = """function queries(first, second) {
   return second.matches('button:hover');
 }
 """
-CLIENT = r"""
+CLIENT = (
+    r"""
 #include <cassert>
 #include <iostream>
 #include <memory>
 #include <type_traits>
-
-int main() {
-    using namespace ctbrowser;
-    using session_type = @OWNER@;
-    static_assert(!std::is_copy_constructible_v<session_type>);
-    static_assert(!std::is_copy_assignable_v<session_type>);
-    static_assert(!std::is_move_constructible_v<session_type>);
-    static_assert(!std::is_move_assignable_v<session_type>);
-    for (int lifetime = 0; lifetime < 16; ++lifetime) {
+"""
+    + dom.SESSION_PREAMBLE
+    + r"""
         session_type session, foreign_session;
         auto & doc = session.document();
         auto & atoms = doc.atoms();
@@ -85,6 +80,7 @@ int main() {
     std::cout << "owned DOM passed\n";
 }
 """
+)
 ACTION_CHECKS = r"""
         const auto classes = atoms.intern("class"), pressed = atoms.intern("aria-pressed");
         for (bool active : {true, false}) {

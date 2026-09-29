@@ -81,20 +81,15 @@ def record_source():
     )
 
 
-RECORD_CLIENT = r"""
+RECORD_CLIENT = (
+    r"""
 #include <array>
 #include <cassert>
 #include <iostream>
 #include <type_traits>
-
-int main() {
-    using namespace ctbrowser;
-    using session_type = @OWNER@;
-    static_assert(!std::is_copy_constructible_v<session_type>);
-    static_assert(!std::is_copy_assignable_v<session_type>);
-    static_assert(!std::is_move_constructible_v<session_type>);
-    static_assert(!std::is_move_assignable_v<session_type>);
-    for (int lifetime = 0; lifetime < 16; ++lifetime) {
+"""
+    + dom.SESSION_PREAMBLE
+    + r"""
         session_type session, second;
         auto & doc = session.document();
         auto & other = second.document();
@@ -151,6 +146,7 @@ int main() {
     std::cout << "DOM record Data passed\n";
 }
 """
+)
 
 
 def check_record_executable(
