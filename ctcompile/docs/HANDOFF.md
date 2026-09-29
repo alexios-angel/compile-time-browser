@@ -22,6 +22,59 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## DOM records built before their Map, and element-keyed records, 2026-09-29 UTC
+
+**Landed: `6d49cd0b0`, `bc70c33d8`** (branch `claude-ctcompile`, merged as `07fab7146`),
+following `b4c9be687` (scalar-field records in DOM-entry Maps, integrated by Codex
+as `5a1f69869`). Claude compiler worker (`claude-ctcompile`).
+
+**Records before their Map (`6d49cd0b0`).** After class initialization flattens
+the complete vendor Data holder, the component record is created before the
+surviving child `new Map()`. Record detection required an already typed Map; it
+now recognizes the `set` of a syntactic plain `new Map()` construction, whose
+constructor identity is still proved when visited, and the `set` must still be
+its proved method. Measured with Codex's then-unlanded Publication.cpp provider
+widening applied as scratch: all four `/tmp/codex-dom-publication/probe.py`
+sources - direct, snapshot, data and data-snapshot, the last two with the
+complete vendor Data holder - lowered natively; without the widening they
+refused class-side. `native-dom-records.test` gained a `late-map` source.
+
+**Element keys (`bc70c33d8`).** `NativeMap::proveRecords` required literal String
+keys and `nativeMapRecordOrigin` compared keys with `constantKey`, which is empty
+for every non-literal key - so all such keys compared equal (unreachable while
+literal keys were required). Both now share one exact-origin scan keyed by
+identity: literal Strings compare by text, any other key only as the same SSA
+value and may equal any other key. A read answers the latest `set` of the same
+key unless a later `set` through a possibly equal key makes it ambiguous
+(`native record Map read may answer a record stored under an equal key`) or a
+delete through one may have removed it (`... requires present reads`). Literal-key
+Maps get byte-identical answers. EmitC spells the record Map's inferred key type
+(`mapKeySpelling`) instead of a hard-coded `std::string`, so an element-keyed
+record Map is `map_storage<ctbrowser::element_ref, ctn_n *>`.
+
+**Measured, devbox `projects/ct-ctc-tests`, focused:** `native-dom-records.test` now has five sources (literal,
+class instance with a method, element-keyed, record-before-Map, three fields):
+Node and the VM agree, **80 native executions** (both DOM providers, optimization
+off/on, GCC/Clang) and **71 refusals** over 14 bad sources, including the new
+`ambiguous` (literal and element keys) and `maybe-deleted` (delete through an
+element key) sources. (The `b4c9be687`/`6d49cd0b0` commit messages undercount
+that test; at those commits it had 48 then 64 executions with 61 then 64
+refusals.) On the same build `native-class-dom-{map,static}`, all 20
+`CTNative/Lowering/Maps` and `class-{terminal-publication,publication-captures,
+captured-map-helpers}` passed 25/25. Merged with `3e9817b30`: records,
+`native-dom-publication`, `native-class-dom-{map,static}`, 20 Maps and
+`class-publication-captures` 25/25. Merged with `9ff4af6e9` (landed tree identical to the checked `59d431849`): the same selection plus `native-class-dom-data` 26/26. Devbox sources hash-identical;
+whole-repo `tools/format.sh --check` (pinned clang-format) and `git diff --check`
+clean. Not run: full lit/CTest, WPT, test262, sanitizers. Scripts and logs:
+`/tmp/claude-ctc/classmap/` (`rec6.sh`-`rec10.sh`, `pubprobe*.py`).
+
+**Next:** nullable record reads - Data's `get` answers `t.has(e) && t.get(e).get(i)
+|| null`, and `getOrCreateInstance` branches on it - need a record-or-null carrier
+(a nullable borrowed pointer) under truthiness guards; records that outlive the
+entry call (session-owned Data); and Codex's class-side element-field
+registration (`this._element = el; e.set(el, DATA_KEY, this)` refuses
+`class receiver escapes or observes a prototype/descriptor` in ordinary DOM mode).
+
 ## Fixed element fields in Map-retained DOM records, 2026-09-29 UTC
 
 **Landed: `3e03cfc49`.** Ordinary DOM and DOM session class preparation now reuse
