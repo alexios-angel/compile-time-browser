@@ -42,8 +42,11 @@ bool isNativeMapRecordStore(mlir::OpOperand & use);
 /// and every instance use. No runtime assumption or boxed fallback is added.
 /// `hostTyped` names the operations a complete host proof has typed: none
 /// rebinds or inspects the standard Map, writes a prototype or runs script.
+/// `hostRecord` names fresh payloads that proof typed as scalar-field records:
+/// they select stack-owned record storage like a lifted receiver does.
 void prepareNativeMaps(mlir::ModuleOp module, const OwnedGlobalRoots * globals = nullptr,
-                       llvm::function_ref<bool(mlir::Operation *)> hostTyped = nullptr);
+                       llvm::function_ref<bool(mlir::Operation *)> hostTyped = nullptr,
+                       llvm::function_ref<bool(ctjs::CreateObjectOp)> hostRecord = nullptr);
 
 /// The operation performed by a proved call or size read, or empty.
 llvm::StringRef nativeMapAction(mlir::Operation * op);

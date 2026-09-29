@@ -85,6 +85,31 @@ var a = probe();
         .replace("new Item(7, 1)", "new Item(7, 0)"),
         expected,
     )
+    for name in ("holder", "direct", "else"):
+        text, expected = programs["guarded-" + name]
+        programs["helper-guarded-" + name] = (
+            text.replace("  class Item", "  const gate = flag => flag;\n  class Item").replace(
+                "if (enabled)", "if (gate(enabled))"
+            ),
+            expected,
+        )
+    text, expected = programs["helper-guarded-holder"]
+    programs["helper-guarded-padded"] = (
+        text.replace("flag => flag", "(flag, absent) => absent ? false : flag"),
+        expected,
+    )
+    for name in ("guarded-holder", "guarded-direct", "guarded-else", "helper-guarded-holder"):
+        text, expected = programs[name]
+        implicit = name == "guarded-else"
+        leaf = (
+            "" if implicit else "constructor(n, enabled) { super(n, enabled); this.tag = n + 1; }"
+        )
+        programs["inherited-" + name] = (
+            text.replace("class Item {", "class Base {").replace(
+                "  const first", f"  class Item extends Base {{ {leaf} }}\n  const first"
+            ),
+            expected + (0 if implicit else 1),
+        )
     return programs
 
 
@@ -199,6 +224,58 @@ def main():
         "captured-constructor": guarded.replace(
             "  const first", "  const make = () => new Item(9, false);\n  const first"
         ).replace("  return saved.n", "  make();\n  return saved.n"),
+    }
+    for name, text in bad.items():
+        assert text != guarded
+        _, ir, manifest = prepared_source(args, name, text)
+        classes.prepare(args, name, ir, manifest, success=False)
+        refusals += 1
+    inherited = sources()["inherited-guarded-holder"][0]
+    bad = {
+        "mixed-guards": inherited.replace("new Item(7, 1)", "new Item(7, false)"),
+        "unknown-guard": inherited.replace("if (enabled)", "if (unknown(enabled))"),
+        "second-leaf": inherited.replace(
+            "  const first", "  class Other extends Base {}\n  const first"
+        ),
+        "constructed-base": inherited.replace("new Item(2, true)", "new Base(2, true)"),
+        "leaf-capture": inherited.replace("this.tag = n + 1", "this.tag = add(n)"),
+        "leaf-observer": inherited.replace("this.tag = n + 1", "this.tag = this.count()"),
+        "leaf-replacement": inherited.replace("this.tag = n + 1;", "return {};"),
+        "base-arm-observer": inherited.replace(publication, publication + " this.count();"),
+        "base-after-arm-observer": inherited.replace("this); } }", "this); } this.count(); }"),
+        "hidden-base-caller": inherited.replace(
+            "  const first", "  const make = () => new Base(9, false);\n  const first"
+        ).replace("  return saved.n", "  make();\n  return saved.n"),
+        "hidden-leaf-caller": inherited.replace(
+            "  const first", "  const make = () => new Item(9, false);\n  const first"
+        ).replace("  return saved.n", "  make();\n  return saved.n"),
+        "dropped-class-setup": inherited.replace(
+            "this); } }", "this); } else { __ctbrowser_class_defined(undefined); } }"
+        ),
+    }
+    for name, text in bad.items():
+        assert text != inherited
+        _, ir, manifest = prepared_source(args, "inherited-guarded-" + name, text)
+        classes.prepare(args, "inherited-guarded-" + name, ir, manifest, success=False)
+        refusals += 1
+    guarded = sources()["helper-guarded-holder"][0]
+    bad = {
+        "mixed-helper-guards": guarded.replace("new Item(7, 1)", "new Item(7, false)"),
+        "changing-guard-helper": guarded.replace("const gate", "let gate").replace(
+            "  const first", "  gate = flag => false;\n  const first"
+        ),
+        "effectful-guard-helper": guarded.replace("flag => flag", "flag => unknown(flag)"),
+        "captured-guard-helper": guarded.replace("flag => flag", "flag => add(flag)"),
+        "ambient-undefined-helper": guarded.replace(
+            "flag => flag", "(flag, absent) => absent === undefined ? flag : false"
+        ),
+        "receiver-guard-helper": guarded.replace("flag => flag", "function(flag) { return this; }"),
+        "retained-guard-helper": guarded.replace(
+            "flag => flag", "flag => flag || unknown(flag)"
+        ).replace("  const first", "  gate(false);\n  const first"),
+        "helper-dropped-class-setup": guarded.replace(
+            "this); } }", "this); } else { __ctbrowser_class_defined(undefined); } }"
+        ),
     }
     for name, text in bad.items():
         assert text != guarded

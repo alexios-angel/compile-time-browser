@@ -312,6 +312,8 @@ public:
         llvm::DenseMap<ctjs::GetPropertyOp, HostDOMMethod> methods;
         std::vector<HostDOMCall> calls;
         std::vector<ctjs::CreateObjectOp> jsonObjects;
+        // Scalar-field records a local Map stores; they keep their identity.
+        std::vector<ctjs::CreateObjectOp> records;
         std::vector<ctjs::CopyPropsOp> jsonCopies;
         std::vector<ctjs::SetPropertyOp> jsonAssignments, snapshotAssignments;
     };
@@ -383,6 +385,8 @@ public:
     [[nodiscard]] bool jsonAssignment(ctjs::SetPropertyOp operation) const;
     // Sole writer over unique direct snapshot keys; only final own data is observed.
     [[nodiscard]] bool jsonSnapshotAssignment(ctjs::SetPropertyOp operation) const;
+    // A fresh scalar-field record stored as a local Map payload.
+    [[nodiscard]] bool recordObject(ctjs::CreateObjectOp operation) const;
     // Typed browser calls and invocations, initial intrinsic and document
     // reads: none rebinds a standard constructor, writes a prototype or
     // reenters script.

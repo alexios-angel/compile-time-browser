@@ -75,6 +75,11 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
             }
             continue;
         }
+        // Maps and their records first: a stored record is not JSON data.
+        if (const auto handled = mapOperation(operation)) {
+            if (!*handled) { return false; }
+            continue;
+        }
         if (auto object = llvm::dyn_cast<ctjs::CreateObjectOp>(operation)) {
             values[object.getResult()] = Kind::jsonAggregate;
             proved.jsonObjects.push_back(object);
@@ -233,10 +238,6 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
             values[closure.getResult()] = replacement ? Kind::replacementCallback : Kind::callback;
             proved.closures.emplace_back(closure, callback);
             usedCallbacks.insert(callback);
-            continue;
-        }
-        if (const auto handled = mapOperation(operation)) {
-            if (!*handled) { return false; }
             continue;
         }
         if (const auto handled = browserOperation(operation)) {
