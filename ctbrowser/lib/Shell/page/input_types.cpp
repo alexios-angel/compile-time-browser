@@ -75,32 +75,6 @@ using ctbrowser::trim;
 }
 
 // --- the calendar, proleptic Gregorian, days from 1970-01-01 ----------------------
-[[nodiscard]] static long long days_from_civil(long long y, unsigned m, unsigned d) {
-    y -= m <= 2;
-    const long long era = (y >= 0 ? y : y - 399) / 400;
-    const auto yoe = static_cast<unsigned long long>(y - era * 400);
-    const unsigned mp = m > 2 ? m - 3 : m + 9;
-    const unsigned long long doy = (153ull * mp + 2) / 5 + d - 1;
-    const unsigned long long doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    return era * 146097 + static_cast<long long>(doe) - 719468;
-}
-struct civil {
-    long long year;
-    unsigned month;
-    unsigned day;
-};
-[[nodiscard]] static civil civil_from_days(long long z) {
-    z += 719468;
-    const long long era = (z >= 0 ? z : z - 146096) / 146097;
-    const auto doe = static_cast<unsigned long long>(z - era * 146097);
-    const unsigned long long yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    const long long y = static_cast<long long>(yoe) + era * 400;
-    const unsigned long long doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    const unsigned long long mp = (5 * doy + 2) / 153;
-    const auto d = static_cast<unsigned>(doy - (153 * mp + 2) / 5 + 1);
-    const auto m = static_cast<unsigned>(mp < 10 ? mp + 3 : mp - 9);
-    return {y + (m <= 2), m, d};
-}
 [[nodiscard]] static unsigned days_in_month(long long y, unsigned m) {
     static constexpr unsigned lengths[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
     const bool leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
@@ -149,8 +123,7 @@ constexpr double ms_per_day = 86400000.0;
     if (!digits(text, at, 2, d) || d < 1 || d > days_in_month(y, static_cast<unsigned>(m))) {
         return std::nullopt;
     }
-    return static_cast<double>(
-               days_from_civil(y, static_cast<unsigned>(m), static_cast<unsigned>(d))) *
+    return static_cast<double>(days_from_civil(y, static_cast<int>(m), static_cast<int>(d))) *
            ms_per_day;
 }
 [[nodiscard]] static std::optional<double> parse_time_ms(std::string_view text, std::size_t & at) {
@@ -246,7 +219,7 @@ constexpr double ms_per_day = 86400000.0;
 // time value range (8.64e15 ms either side of the epoch) or before year 1.
 [[nodiscard]] static std::string date_text(double ms) {
     if (std::fabs(ms) > 8.64e15) { return {}; }
-    const civil when = civil_from_days(static_cast<long long>(std::floor(ms / ms_per_day)));
+    const civil_date when = civil_from_days(static_cast<long long>(std::floor(ms / ms_per_day)));
     if (when.year < 1) { return {}; }
     std::string year = std::to_string(when.year);
     while (year.size() < 4) { year.insert(0, "0"); }
@@ -327,10 +300,10 @@ constexpr double ms_per_day = 86400000.0;
         mo += 12;
         --y;
     }
-    return static_cast<double>(days_from_civil(y, static_cast<unsigned>(mo + 1), 1)) * ms_per_day;
+    return static_cast<double>(days_from_civil(y, static_cast<int>(mo + 1), 1)) * ms_per_day;
 }
 [[nodiscard]] double ms_to_month_index(double ms) {
-    const civil when = civil_from_days(static_cast<long long>(std::floor(ms / ms_per_day)));
+    const civil_date when = civil_from_days(static_cast<long long>(std::floor(ms / ms_per_day)));
     return static_cast<double>((when.year - 1970) * 12 + (when.month - 1));
 }
 // The step scale factor and the default step, HTML 4.10.5.1, in the type's

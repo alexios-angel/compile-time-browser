@@ -248,6 +248,40 @@ inline void join_surrogates(std::string & text) {
 // isolated unit, so contextual Final_Sigma cannot apply. Not whole-text casing.
 [[nodiscard]] std::u16string unicode_lowercase_unit(char16_t unit);
 
+// --- the proleptic Gregorian calendar ---------------------------------------
+
+// Days since 1970-01-01 of y/m/d (month 1-12), and back: Hinnant's algorithms
+// on 64-bit integers, floor division throughout. NOT <chrono>, whose
+// std::chrono::year stops at +-32767, nor Boost.Date_Time's 1400-9999: a JS
+// time value reaches year +-273790 and Temporal further. Date, Temporal and
+// the date input types each had a copy.
+struct civil_date {
+    std::int64_t year;
+    int month;
+    int day;
+};
+[[nodiscard]] constexpr std::int64_t days_from_civil(std::int64_t y, int m, int d) noexcept {
+    y -= m <= 2 ? 1 : 0;
+    const std::int64_t era = (y >= 0 ? y : y - 399) / 400;
+    const std::int64_t yoe = y - era * 400;
+    const std::int64_t doy = (153 * (m > 2 ? m - 3 : m + 9) + 2) / 5 + d - 1;
+    const std::int64_t doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    return era * 146097 + doe - 719468;
+}
+[[nodiscard]] constexpr civil_date civil_from_days(std::int64_t z) noexcept {
+    z += 719468;
+    const std::int64_t era = (z >= 0 ? z : z - 146096) / 146097;
+    const std::int64_t doe = z - era * 146097;
+    const std::int64_t yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    const std::int64_t doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    const std::int64_t mp = (5 * doy + 2) / 153;
+    const int m = static_cast<int>(mp < 10 ? mp + 3 : mp - 9);
+    return {yoe + era * 400 + (m <= 2 ? 1 : 0), m, static_cast<int>(doy - (153 * mp + 2) / 5 + 1)};
+}
+static_assert(days_from_civil(1970, 1, 1) == 0 && days_from_civil(2000, 3, 1) == 11017 &&
+              days_from_civil(-271821, 4, 19) == -100000001 &&
+              civil_from_days(-100000001).year == -271821 && civil_from_days(-1).day == 31);
+
 // --- base64 ---------------------------------------------------------------
 
 // Bytes, not text: the result is a "binary string" of 0-255, which is what

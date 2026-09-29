@@ -43,30 +43,6 @@ constexpr std::string_view invalid_date_slot = "__ms";
     return std::trunc(t) + 0.0; // -0 becomes +0
 }
 
-// Days since the epoch <-> y/m/d, proleptic Gregorian, on 64-bit integers
-// (Hinnant's algorithms). NOT <chrono>: std::chrono::year stops at +-32767,
-// and a time value reaches year +-273790.
-[[nodiscard]] long long days_from_civil(long long y, int m, int d) {
-    y -= m <= 2;
-    const long long era = (y >= 0 ? y : y - 399) / 400;
-    const long long yoe = y - era * 400;
-    const long long doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
-    const long long doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    return era * 146097 + doe - 719468;
-}
-void civil_from_days(long long z, long long & y, int & m, int & d) {
-    z += 719468;
-    const long long era = (z >= 0 ? z : z - 146096) / 146097;
-    const long long doe = z - era * 146097;
-    const long long yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    y = yoe + era * 400;
-    const long long doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    const long long mp = (5 * doy + 2) / 153;
-    d = static_cast<int>(doy - (153 * mp + 2) / 5 + 1);
-    m = static_cast<int>(mp < 10 ? mp + 3 : mp - 9);
-    y += m <= 2;
-}
-
 // 21.4.1.28 MakeDay / 21.4.1.29 MakeTime / 21.4.1.30 MakeDate, on doubles: an
 // out-of-range month or day normalises (`new Date(2024, 12, 1)` is 1 January
 // 2025), a non-finite part is NaN.
@@ -89,7 +65,7 @@ void civil_from_days(long long z, long long & y, int & m, int & d) {
     // day count is offset; days_from_civil's arithmetic stays in range there.
     if (std::fabs(ym) > 1099511627776.0) { return std::nan(""); }
     const double days =
-        static_cast<double>(days_from_civil(static_cast<long long>(ym), mn + 1, 1)) +
+        static_cast<double>(days_from_civil(static_cast<std::int64_t>(ym), mn + 1, 1)) +
         std::trunc(day) - 1.0;
     if (!std::isfinite(days)) { return std::nan(""); }
     const double tv = days * ms_per_day + time;
@@ -103,12 +79,10 @@ struct fields {
     fields out{};
     const double days = std::floor(t / ms_per_day);
     const double rest = t - days * ms_per_day;
-    long long y = 0;
-    int m = 0, d = 0;
-    civil_from_days(static_cast<long long>(days), y, m, d);
-    out.year = static_cast<double>(y);
-    out.month = m - 1;
-    out.day = d;
+    const civil_date civil = civil_from_days(static_cast<std::int64_t>(days));
+    out.year = static_cast<double>(civil.year);
+    out.month = civil.month - 1;
+    out.day = civil.day;
     out.hour = std::floor(rest / 3600000.0);
     out.minute = std::fmod(std::floor(rest / 60000.0), 60.0);
     out.second = std::fmod(std::floor(rest / 1000.0), 60.0);

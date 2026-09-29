@@ -4,6 +4,8 @@
 
 #include "core.hpp"
 
+#include <ctbrowser/core/algorithms.hpp>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -23,17 +25,6 @@ template <class T> [[nodiscard]] constexpr T floor_mod(T a, T b) noexcept {
 }
 template <class T> [[nodiscard]] constexpr T abs_of(T v) noexcept {
     return v < 0 ? -v : v;
-}
-
-// Days since 1970-01-01 of a proleptic Gregorian y/m/d (Hinnant), and back.
-[[nodiscard]] constexpr std::int64_t days_from_civil(std::int64_t y, int m, int d) noexcept {
-    y -= m <= 2 ? 1 : 0;
-    const std::int64_t era = floor_div<std::int64_t>(y, 400);
-    const std::int64_t yoe = y - era * 400;
-    const std::int64_t mp = m > 2 ? m - 3 : m + 9;
-    const std::int64_t doy = (153 * mp + 2) / 5 + d - 1;
-    const std::int64_t doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    return era * 146097 + doe - 719468;
 }
 
 // A double that is an integer, to i128 - the caller has bounded it.
@@ -263,15 +254,8 @@ std::int64_t epoch_days(const iso_date & date) noexcept {
 }
 
 iso_date epoch_days_to_iso_date(std::int64_t z) noexcept {
-    z += 719468;
-    const std::int64_t era = floor_div<std::int64_t>(z, 146097);
-    const std::int64_t doe = z - era * 146097;
-    const std::int64_t yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    const std::int64_t doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    const std::int64_t mp = (5 * doy + 2) / 153;
-    const int d = static_cast<int>(doy - (153 * mp + 2) / 5 + 1);
-    const int m = static_cast<int>(mp < 10 ? mp + 3 : mp - 9);
-    return iso_date{yoe + era * 400 + (m <= 2 ? 1 : 0), m, d};
+    const civil_date civil = civil_from_days(z);
+    return iso_date{civil.year, civil.month, civil.day};
 }
 
 bool is_valid_iso_date(std::int64_t year, std::int64_t month, std::int64_t day) noexcept {
