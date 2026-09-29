@@ -354,8 +354,6 @@ std::string_view browser::cursor_at(float x, float y) {
 }
 
 bool browser::text_input(std::string_view text) {
-    control_state * control = editable_focus();
-    if (control == nullptr) { return false; }
     if (text.empty()) { return false; }
     // KEYPRESS FIRST, at what has focus - the body when nothing does, where a
     // page listens for typing it handles itself - and a cancelled one keeps
@@ -363,6 +361,8 @@ bool browser::text_input(std::string_view text) {
     if (bindings_ && bindings_->dispatch_keypress(focused_ ? focused_ : body_node(), text)) {
         return true;
     }
+    control_state * control = editable_focus();
+    if (control == nullptr) { return false; }
     // This path is for PRINTABLE text; a control character is a KEY, and one
     // arriving here would be inserted literally - a Tab dropped into the very
     // field Tab is supposed to leave. SDL never sends one, so this is a guard

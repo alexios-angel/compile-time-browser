@@ -832,6 +832,9 @@ private:
     [[nodiscard]] int layout_viewport_width() const noexcept;
     node_id hovered_;
     node_id pressed_;
+    // Whether the page cancelled that press - then it moved no selection and
+    // gives nothing focus.
+    bool press_cancelled_ = false;
     dirty dirty_ = dirty::everything;
     bool author_sheet_loaded_ = false;
     // What the author sheet was built from, so a restyle can tell whether the
@@ -844,6 +847,3 @@ private:
 
 #include "browser/access_inline.hpp"
 #include "browser/geometry_inline.hpp"
-    // Whether the page cancelled that press - then it moved no selection and
-    // gives nothing focus.
-    bool press_cancelled_ = false;
