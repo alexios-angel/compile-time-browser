@@ -23,6 +23,7 @@ _SPEC = importlib.util.spec_from_file_location(
 _SOURCE = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_SOURCE)
 ProbeError = _SOURCE.ProbeError
+run = _SOURCE.run
 
 BROWSER = "var globalThis = {};\n"
 MAP_COUNTER = """var NativeMap = Map;
@@ -276,15 +277,6 @@ for (const row of manifest) {
 }
 process.stdout.write(JSON.stringify({node: process.version, observations}, null, 2) + '\n');
 """
-
-
-def run(command: list[str]) -> subprocess.CompletedProcess:
-    result = subprocess.run(command, capture_output=True, text=True, timeout=120)
-    if result.returncode:
-        raise ProbeError(
-            f"command failed ({result.returncode}): {command[0]}\n{result.stdout}{result.stderr}"
-        )
-    return result
 
 
 def check(args: argparse.Namespace) -> None:
