@@ -332,15 +332,12 @@ bool enters_arrow(const census & world, mlir::Value callee) {
 // window). A marked value handed to such a body is reachable there through a
 // computed key, so a body holding one is not a known callee at all.
 bool reads_raw_arguments(FuncOp function) {
-    bool reads = false;
-    function.walk([&](mlir::Operation * op) {
-        if (mlir::isa<MakeArgumentsOp, GatherRestOp>(op)) {
-            reads = true;
-            return mlir::WalkResult::interrupt();
-        }
-        return mlir::WalkResult::advance();
-    });
-    return reads;
+    return function
+        .walk([](mlir::Operation * op) {
+            return mlir::isa<MakeArgumentsOp, GatherRestOp>(op) ? mlir::WalkResult::interrupt()
+                                                                : mlir::WalkResult::advance();
+        })
+        .wasInterrupted();
 }
 
 // PADDING A SHORT CALL IS VISIBLE TO `arguments`, AND IS THE ONE THING THE PAD
