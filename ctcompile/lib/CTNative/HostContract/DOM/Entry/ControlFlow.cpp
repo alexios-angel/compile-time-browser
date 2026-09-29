@@ -264,7 +264,8 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
                     kind != Kind::number && kind != Kind::optionalNumber && kind != Kind::string &&
                     kind != Kind::null && kind != Kind::optionalString && kind != Kind::undefined &&
                     kind != Kind::json && kind != Kind::jsonAggregate && kind != Kind::symbol &&
-                    kind != Kind::undefinedString && kind != Kind::element) {
+                    kind != Kind::undefinedString && kind != Kind::element &&
+                    kind != Kind::mapPayload) {
                     refusal = "DOM entry branch cannot carry a borrowed or callable value";
                     return false;
                 }
@@ -276,6 +277,17 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
                     continue;
                 }
                 if (joined[index] == kind) { continue; }
+                // A Map read joined with another primitive is still a
+                // primitive or undefined; native inference picks its carrier.
+                const auto primitive = [](Kind k) {
+                    return k == Kind::mapPayload || k == Kind::boolean || k == Kind::number ||
+                           k == Kind::string || k == Kind::null || k == Kind::undefined;
+                };
+                if ((joined[index] == Kind::mapPayload || kind == Kind::mapPayload) &&
+                    primitive(joined[index]) && primitive(kind)) {
+                    joined[index] = Kind::mapPayload;
+                    continue;
+                }
                 const auto booleanOrNull = [](Kind k) {
                     return k == Kind::boolean || k == Kind::null || k == Kind::optionalBoolean;
                 };

@@ -1088,9 +1088,35 @@ refuses refuses the entry. The generated code keys
 identity without dereferencing either; equal node bits in another document are
 another key.
 
-`native-dom-map.test` executes four entries under both DOM providers, both
+One level of nesting is Bootstrap's Data shape:
+
+```javascript
+function register(element) {
+  const data = new Map();
+  data.has(element) || data.set(element, new Map());
+  const instances = data.get(element);
+  if (!instances.has('bs.button') && 0 === instances.size) { instances.set('bs.button', 1); }
+  element.classList.add('registered');
+  return data.has(element) && data.get(element).get('bs.button') || null;
+}
+```
+
+A Map any of whose `set` calls (through fluent aliases too) stores a
+`new Map()` is a parent: every one of its payloads must then be a fresh child
+constructed for that one `set`, so no child is stored twice, and its `get`
+results are children under the same confinement. A child's own payloads stay
+primitive; a third level refuses. `prepareNativeMaps` proves the child reads
+present: its presence facts now survive a typed browser call or invocation,
+which cannot reach a confined Map, where an unknown call still erases them
+(`provePresence` takes the same `hostTyped` predicate, `nullptr` elsewhere). A
+`get` result joined in a branch with a Boolean, Number, String, `null` or
+`undefined` is still such a primitive, and native inference picks the carrier
+(`ctnative::nullable_scalar` above).
+
+`native-dom-map.test` executes six entries under both DOM providers, both
 optimization policies, both printing layouts and GCC/Clang against the real
-DOM, with shape, undeclared-constructor, rebinding and work-budget refusals.
+DOM, with shape, undeclared-constructor, rebinding, child (unguarded, returned,
+shared, mixed, third-level) and work-budget refusals.
 Data storage that outlives a call is the owned Data session below. Class
 entries still refuse Map construction in the class-initialization proof, and a
 Map key whose inferred type has no carrier (an element mixed with a String, for

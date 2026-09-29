@@ -231,10 +231,13 @@ struct presenceAnalysis {
     llvm::DenseMap<mlir::Value, fact> retainedEntries;
     llvm::function_ref<mlir::Value(mlir::Value)> familyOf;
     const llvm::DenseSet<mlir::Operation *> & snapshotCopies;
+    llvm::function_ref<bool(mlir::Operation *)> hostTyped;
 
     presenceAnalysis(llvm::function_ref<mlir::Value(mlir::Value)> family,
-                     const llvm::DenseSet<mlir::Operation *> & copies)
-        : familyOf(family), snapshotCopies(copies) {}
+                     const llvm::DenseSet<mlir::Operation *> & copies,
+                     llvm::function_ref<bool(mlir::Operation *)> typed)
+        : familyOf(family), snapshotCopies(copies), hostTyped(typed) {}
+    bool effectFree(mlir::Operation * op) const { return hostTyped && hostTyped(op); }
 
     // Only fluent set and a definite get of an exact stored origin prove
     // runtime identity. Closed parameter/return edges share only a schema.
@@ -272,7 +275,7 @@ struct presenceAnalysis {
                         out.erased.insert(familyOf(call.getReceiver()));
                     } else if (action == "set") {
                         out.written.insert(familyOf(call.getReceiver()));
-                    } else if (action.empty()) {
+                    } else if (action.empty() && !effectFree(op)) {
                         out.unknown = true;
                     }
                 } else if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(op)) {
@@ -605,6 +608,15 @@ struct presenceAnalysis {
             return;
         }
         if (op->getNumRegions() != 0) {
+            // A typed host invocation keeps facts only while no Map
+            // operation hides in its call or continuations.
+            if (effectFree(op) && !op->walk([&](mlir::Operation * inner) {
+                                         return actions.contains(inner) || sizes.contains(inner)
+                                                    ? mlir::WalkResult::interrupt()
+                                                    : mlir::WalkResult::advance();
+                                     }).wasInterrupted()) {
+                return;
+            }
             for (mlir::Region & nested : op->getRegions()) {
                 state isolated;
                 region(nested, isolated);
@@ -666,7 +678,7 @@ struct presenceAnalysis {
                 invalidate(current, erase, instance);
                 current.possibleKeys[instance] = {};
                 current.currentSizes[instance] = 0;
-            } else if (action.empty()) {
+            } else if (action.empty() && !effectFree(op)) {
                 current = {};
             }
         } else if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(op)) {
@@ -691,9 +703,10 @@ std::string provePresence(mlir::ModuleOp module, llvm::ArrayRef<ctjs::CallOp> ca
                           const llvm::DenseSet<mlir::Operation *> & snapshotCopies,
                           llvm::function_ref<mlir::Value(mlir::Value)> familyOf,
                           const llvm::DenseMap<mlir::Value, PrimitiveAlternatives> & parameters,
-                          const OwnedGlobalRoots * globals) {
+                          const OwnedGlobalRoots * globals,
+                          llvm::function_ref<bool(mlir::Operation *)> hostTyped) {
     if (calls.empty()) { return {}; }
-    presenceAnalysis analysis(familyOf, snapshotCopies);
+    presenceAnalysis analysis(familyOf, snapshotCopies, hostTyped);
     for (ctjs::GetPropertyOp size : sizes) { analysis.sizes.insert(size); }
     for (ctjs::CallOp call : calls) { analysis.actions[call] = mapMethodName(call); }
     analysis.buildSummaries(module);

@@ -86,7 +86,8 @@ enum class Kind {
     mapIntrinsic, // The initial standard Map constructor.
     map,          // A local instance, used only through mapMethod calls and size.
     mapMethod,    // Its set/get/has/delete/clear, called on that same instance.
-    mapPayload    // A get result: a stored Number/String/Boolean or undefined.
+    mapPayload    // A get result - a stored Number/String/Boolean or undefined - or one
+                  // joined with another primitive in a branch.
 };
 
 // Scalars whose truth test runs no conversion hook.
@@ -139,6 +140,8 @@ struct Body {
     llvm::DenseMap<mlir::Value, bool> constantBooleans{};
     llvm::DenseMap<mlir::Value, std::size_t> activeRefinements{};
     bool documentRootPresent = false;
+    // Every fluent alias of a local Map whose payloads are fresh child Maps.
+    llvm::DenseSet<mlir::Value> mapParents{};
     llvm::DenseSet<mlir::Block *> nonReturning{};
 
     bool supplied(llvm::StringRef name) const { return intrinsics.contains(name); }

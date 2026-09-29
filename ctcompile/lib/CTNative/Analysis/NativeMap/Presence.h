@@ -21,6 +21,8 @@ namespace ctcompile::ctnative::map_detail {
 // snapshotCopies is the caller's live proof set, never input annotations.
 // Required reads must all be present. Optional primitive reads retain their
 // nullable result unless this same independent analysis proves presence.
+// A hostTyped operation is a complete host proof's browser operation: it
+// cannot reach a local Map, so it keeps every fact an unknown call erases.
 std::string provePresence(mlir::ModuleOp module, llvm::ArrayRef<ctjs::CallOp> calls,
                           llvm::ArrayRef<ctjs::GetPropertyOp> sizes,
                           llvm::ArrayRef<ctjs::CallOp> reads,
@@ -29,6 +31,7 @@ std::string provePresence(mlir::ModuleOp module, llvm::ArrayRef<ctjs::CallOp> ca
                           const llvm::DenseSet<mlir::Operation *> & snapshotCopies,
                           llvm::function_ref<mlir::Value(mlir::Value)> familyOf,
                           const llvm::DenseMap<mlir::Value, PrimitiveAlternatives> & parameters,
-                          const OwnedGlobalRoots * globals);
+                          const OwnedGlobalRoots * globals,
+                          llvm::function_ref<bool(mlir::Operation *)> hostTyped = nullptr);
 
 } // namespace ctcompile::ctnative::map_detail

@@ -106,17 +106,69 @@ FLAGS_CHECKS = r"""
         assert(doc.take_writes().empty());
 """
 
+# Bootstrap Data's shape: element keys own child Maps of instance keys. The
+# child reads after the browser call keep their presence proof.
+REGISTER = """function register(element, other) {
+  const data = new Map();
+  data.has(element) || data.set(element, new Map());
+  data.has(other) || data.set(other, new Map());
+  const instances = data.get(element);
+  if (!instances.has('bs.button') && 0 === instances.size) { instances.set('bs.button', 1); }
+  element.classList.add('registered');
+  data.get(other).set('bs.button', 2);
+  return data.has(element) && data.get(element).get('bs.button') || null;
+}
+"""
+REGISTER_CHECKS = r"""
+        (void)pressed;
+        const element_ref other{&doc, child};
+        const auto same = @ENTRY@(element, alias);
+        static_assert(std::is_same_v<decltype(same), const ctnative::nullable_scalar>);
+        assert(same.tag == ctnative::nullable_scalar::kind::number && same.value == 2);
+        const auto distinct = @ENTRY@(element, other);
+        assert(distinct.tag == ctnative::nullable_scalar::kind::number && distinct.value == 1);
+        const auto across = @ENTRY@(alias, foreign);
+        assert(across.tag == ctnative::nullable_scalar::kind::number && across.value == 1);
+        assert(doc.read().attribute_value(button, classes) == "btn registered");
+        (void)doc.take_writes();
+"""
+
+UNREGISTER = """function unregister(element) {
+  const data = new Map();
+  data.set(element, new Map());
+  const instances = data.get(element);
+  instances.set('bs.button', 1);
+  instances.delete('bs.button');
+  0 === instances.size && data.delete(element);
+  return data.has(element);
+}
+"""
+UNREGISTER_CHECKS = r"""
+        (void)classes;
+        (void)pressed;
+        (void)alias;
+        assert(!@ENTRY@(element));
+        assert(!@ENTRY@(foreign));
+        assert(doc.take_writes().empty());
+"""
+
 ENTRIES = (
     ("keys", KEYS, 2, KEYS_CHECKS),
     ("payloads", PAYLOADS, 2, PAYLOADS_CHECKS),
     ("counts", COUNTS, 2, COUNTS_CHECKS),
     ("flags", FLAGS_SOURCE, 1, FLAGS_CHECKS),
+    ("register", REGISTER, 2, REGISTER_CHECKS),
+    ("unregister", UNREGISTER, 1, UNREGISTER_CHECKS),
 )
 
 REFUSALS = (
     ("returned", "return new Map();", "DOM entry return must be a scalar"),
     ("stored", "saved = new Map(); return true;", "DOM"),
-    ("map-key", "const m = new Map(); m.set(m, 1); return true;", "DOM Map key requires"),
+    (
+        "map-key",
+        "const m = new Map(); m.set(m, 1); return true;",
+        "DOM Map key requires",
+    ),
     (
         "element-payload",
         "const m = new Map(); m.set(element, element); return true;",
@@ -153,6 +205,31 @@ REFUSALS = (
         "DOM",
     ),
     ("size-call", "const m = new Map(); return m.size() === 0;", "DOM"),
+    (
+        "child-unguarded",
+        "const m = new Map(); m.set(element, new Map()); m.clear(); return m.get(element).size === 0;",
+        "native DOM Map: nested native Map get requires presence",
+    ),
+    (
+        "child-returned",
+        "const m = new Map(); m.set(element, new Map()); return m.get(element);",
+        "DOM entry return must be a scalar",
+    ),
+    (
+        "child-shared",
+        "const c = new Map(); const m = new Map(); m.set(element, c); m.set(element, c); return true;",
+        "DOM parent Map payload requires one fresh child Map",
+    ),
+    (
+        "child-mixed",
+        "const m = new Map(); m.set(element, new Map()); m.set(element, 1); return true;",
+        "DOM parent Map payload requires one fresh child Map",
+    ),
+    (
+        "depth-three",
+        "const m = new Map(); m.set(element, new Map()); m.get(element).set('k', new Map()); return true;",
+        "DOM Map payload requires a Number, String or Boolean",
+    ),
 )
 
 
@@ -211,12 +288,25 @@ def main():
         refusals += 2
         if label == "keys":
             for budget in (0, 1, 20):
-                dom.lower(args, ir, declared, f"budget-{budget}", max_steps=budget, success=False)
+                dom.lower(
+                    args,
+                    ir,
+                    declared,
+                    f"budget-{budget}",
+                    max_steps=budget,
+                    success=False,
+                )
                 refusals += 1
     for label, body, reason in REFUSALS:
         source = f"function bad(element) {{ {body} }}\n"
         ir, contract = dom.prepare(args, f"refused-{label}", source, 1, entry_name="bad")
-        dom.refuse(args, ir, dict(contract, initial_intrinsics=["Map"]), f"refused-{label}", reason)
+        dom.refuse(
+            args,
+            ir,
+            dict(contract, initial_intrinsics=["Map"]),
+            f"refused-{label}",
+            reason,
+        )
         refusals += 2
     # A declaration may not replace the declared constructor.
     source = "var Map = 0;\n" + FLAGS_SOURCE

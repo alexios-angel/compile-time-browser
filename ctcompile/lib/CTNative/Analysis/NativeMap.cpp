@@ -378,7 +378,8 @@ std::string collect(plan & out, closedValueFlow & graph,
 std::string provePayloads(mlir::ModuleOp module, llvm::ArrayRef<plan> plans,
                           closedValueFlow & graph, llvm::DenseMap<mlir::Value, unsigned> & families,
                           const llvm::DenseSet<mlir::Operation *> & snapshotCopies,
-                          const OwnedGlobalRoots * globals) {
+                          const OwnedGlobalRoots * globals,
+                          llvm::function_ref<bool(mlir::Operation *)> hostTyped) {
     llvm::SmallVector<llvm::SmallVector<unsigned>, 4> children(plans.size());
     for (auto [index, candidate] : llvm::enumerate(plans)) {
         for (ctjs::CallOp call : candidate.calls) {
@@ -508,7 +509,7 @@ std::string provePayloads(mlir::ModuleOp module, llvm::ArrayRef<plan> plans,
     }
     return map_detail::provePresence(
         module, calls, sizes, reads, optionalReads, typedReads, snapshotCopies,
-        [&](mlir::Value value) { return graph.find(value); }, parameters, globals);
+        [&](mlir::Value value) { return graph.find(value); }, parameters, globals, hostTyped);
 }
 
 } // namespace
@@ -616,7 +617,7 @@ void prepareNativeMaps(mlir::ModuleOp module, const OwnedGlobalRoots * globals,
     // Presence may preserve membership across a snapshot copy only after its
     // live builtin, iterator-use and whole-module identity proofs succeed.
     if (reason.empty()) {
-        reason = provePayloads(module, plans, graph, families, copies.calls, globals);
+        reason = provePayloads(module, plans, graph, families, copies.calls, globals, hostTyped);
     }
     for (plan & candidate : plans) {
         if (reason.empty()) { reason = proveRecords(candidate); }
