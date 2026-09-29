@@ -152,6 +152,16 @@ std::int32_t aot_bridge::set_index(aot::ct_aot_frame * f, std::uint64_t obj, std
     return check(f);
 }
 
+// ct_aot_define_data. A literal's own property through the member
+// VM_CASE(define_data) calls: DEFINED, so there is no strict-mode arm.
+std::int32_t aot_bridge::define_data(aot::ct_aot_frame * f, std::uint64_t obj, std::uint64_t key,
+                                     std::uint64_t v) {
+    context & cx = *frame_of(f).ctx;
+    cx.define_data_property(value::from_bits(obj), value::from_bits(key), value::from_bits(v),
+                            true);
+    return check(f);
+}
+
 // ct_aot_get_proto and ct_aot_set_proto, through the shared members the
 // rows themselves named. Both all-zero: the link is a plain field, so
 // nothing allocates, nothing throws and no accessor can run.
@@ -399,6 +409,11 @@ std::int32_t ct_aot_set_index(ct_aot_frame * fr, std::uint64_t obj, std::uint64_
                               std::uint64_t v, ct_aot_ic * site) {
     (void)site;
     return script::aot_bridge::set_index(fr, obj, key, v);
+}
+
+std::int32_t ct_aot_define_data(ct_aot_frame * fr, std::uint64_t obj, std::uint64_t key,
+                                std::uint64_t v) {
+    return script::aot_bridge::define_data(fr, obj, key, v);
 }
 
 std::uint64_t ct_aot_cell_get(std::uint64_t cell) {

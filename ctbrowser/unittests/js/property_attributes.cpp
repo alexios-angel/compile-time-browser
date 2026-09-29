@@ -129,6 +129,17 @@ int main() {
         return hits + ':' + objects.map(function(o) { return Object.hasOwn(o, 'x'); }).join();
     })())",
               "0:true,true,true,true,true");
+    // op::define_data, not a call of a global: a page that binds the old
+    // helper's name keeps working literals.
+    js_expect(R"((function(){
+        var saved = globalThis.__ctbrowser_define_own, key = 'b';
+        globalThis.__ctbrowser_define_own = function() { throw 1; };
+        try {
+            var o = {a: 1, [key]: 2, 'c': 3};
+            return [o.a, o.b, o.c].join();
+        } finally { globalThis.__ctbrowser_define_own = saved; }
+    })())",
+              "1,2,3");
     js_expect("(function(){var hits=0;var o={set x(v){hits++;},x:2};"
               "var d=Object.getOwnPropertyDescriptor(o,'x');"
               "return [hits,d.value,d.writable,d.enumerable,d.configurable].join();})()",

@@ -553,6 +553,9 @@ public:
     // silence (Reflect.defineProperty answers false).
     [[nodiscard]] bool define_own_property(value target, const std::string & name,
                                            const property_descriptor & wanted);
+    // CreateDataPropertyOrThrow (7.3.7): a writable, configurable data property,
+    // DEFINED whatever the chain holds; a rejection is the TypeError.
+    void define_data_property(value target, value key, value v, bool enumerable);
 
     // [[Delete]]. False when the property exists and is not configurable, which
     // is what makes Object.freeze and Object.seal observable. Sloppy-mode

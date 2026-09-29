@@ -126,6 +126,13 @@ bool lowering::convertRuntime(mlir::Operation & op, mlir::OpBuilder & build,
     // throws, or a proxy trap - so the branch this emits is built and never
     // taken. The write itself is covered; the edge is not.
     if (auto write = mlir::dyn_cast<SetPropertyOp>(op)) {
+        // A LITERAL'S DEFINITION (op::define_data) is not an assignment.
+        if (write->hasAttr(defineOwnMarker)) {
+            status_call_void(scope, build, where, callee("ct_aot_define_data"),
+                             {scope.frame, mapping.lookup(write.getObject()),
+                              mapping.lookup(write.getKey()), mapping.lookup(write.getValue())});
+            return true;
+        }
         status_call_void(
             scope, build, where, callee("ct_aot_set_index"),
             {scope.frame, mapping.lookup(write.getObject()), mapping.lookup(write.getKey()),

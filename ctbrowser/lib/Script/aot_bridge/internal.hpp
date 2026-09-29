@@ -234,6 +234,8 @@ struct aot_bridge {
                                     std::uint32_t slot, const char * utf8, std::uint32_t len);
     static std::int32_t set_index(aot::ct_aot_frame * f, std::uint64_t obj, std::uint64_t key,
                                   std::uint64_t v);
+    static std::int32_t define_data(aot::ct_aot_frame * f, std::uint64_t obj, std::uint64_t key,
+                                    std::uint64_t v);
     static std::uint64_t get_proto(aot::ct_aot_frame * f, std::uint64_t target);
     static void set_proto(aot::ct_aot_frame * f, std::uint64_t target, std::uint64_t proto);
     static std::uint64_t new_bigint_literal(aot::ct_aot_frame * f, const aot::ct_aot_site * site,

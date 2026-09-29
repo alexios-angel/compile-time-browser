@@ -502,6 +502,18 @@ CT_OPCODE(/* name */ define_setter, /* a_kind */ reg, /* b_kind */ nidx, /* c_ki
           /* may_suspend */ 0, /* resumable */ 0,
           /* impl */ "inline (shared block with define_getter)")
 
+/* writes_a is FALSE - a is the object literal, b its key (already a string or
+ * symbol) and c the value. CreateDataPropertyOrThrow, NOT [[Set]]: a setter
+ * or read-only property up the chain does not intercept it, and "__proto__"
+ * is an ordinary own key. compile_object emits it only onto the object its
+ * own new_object made, so the target is never the global object. The member
+ * is general, though: a proxy target's defineProperty trap runs user code,
+ * and a rejection (a non-extensible target) is a catchable TypeError. */
+CT_OPCODE(/* name */ define_data, /* a_kind */ reg, /* b_kind */ reg, /* c_kind */ reg, /* writes_a */ 0,
+          /* allocates */ 1, /* may_throw */ 1, /* may_reenter */ 1, /* is_safepoint */ 1,
+          /* may_suspend */ 0, /* resumable */ 0,
+          /* impl */ "vm/objects/descriptors.cpp:define_data_property")
+
 /* may_throw is only the allocation ceiling's raise, NOT catchable by a JS
  * try/catch, so an AOT backend needs an abort edge here, not an exception
  * edge. */

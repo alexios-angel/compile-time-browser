@@ -32,6 +32,13 @@ inline constexpr unsigned arg_new_target = 1;
 inline constexpr unsigned arg_callee = 2;
 inline constexpr unsigned implicit_arguments = 3;
 
+// An object literal's own data property is op::define_data - DEFINED
+// (CreateDataPropertyOrThrow), not assigned - and the importer makes it the
+// ctjs.set_property every native proof already reads, carrying this marker.
+// The boxed backend lowers a marked store to ct_aot_define_data: assignment
+// would run an inherited setter and set the prototype for "__proto__".
+inline constexpr llvm::StringLiteral defineOwnMarker = "ctjs.define_own";
+
 // The function index the importer put after the last `$` of the symbol - the
 // only link between a `ctjs.create_closure`'s `$function` attribute and the
 // `ctjs.func` it names. Every tier reads it this way.

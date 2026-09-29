@@ -172,6 +172,51 @@ int main() {
             ctbrowser::aot::ct_aot_leave(frame);
         }
     }
+
+    // ct_aot_define_data DEFINES, as op::define_data does: an inherited setter
+    // does not run, and a non-extensible target is a catchable TypeError.
+    {
+        context cx;
+        ctbrowser::script::install_builtins(cx);
+        const auto fixture = ctbrowser::script::compiler::compile(
+            "var hits = 0, child = Object.create({set x(v) { hits++; }}),"
+            " closed = Object.preventExtensions({});");
+        check(cx.run(fixture).ok, "definition fixture runs");
+        const auto * site =
+            reinterpret_cast<const ctbrowser::aot::ct_aot_site *>(&fixture.functions[0]);
+        alignas(std::max_align_t) unsigned char storage[CT_AOT_FRAME_BYTES];
+        auto * frame =
+            ctbrowser::aot::ct_aot_enter(reinterpret_cast<ctbrowser::aot::ct_aot_ctx *>(&cx), site,
+                                         1u, value::undefined().bits(), storage);
+        check(frame != nullptr, "definition frame enters");
+        if (frame == nullptr) { return 1; }
+        const value child = cx.global("child");
+        auto status = static_cast<ctbrowser::aot::ct_aot_status>(ctbrowser::aot::ct_aot_define_data(
+            frame, child.bits(), cx.string("x").bits(), value::number(7).bits()));
+        check(status == ctbrowser::aot::ct_aot_status::ok, "define_data succeeds");
+        check(cx.global("hits").as_number() == 0.0, "the inherited setter does not run");
+        context::property_descriptor own;
+        check(cx.own_property(child, "x", own) && own.is_data() && own.writable && own.enumerable &&
+                  own.configurable && own.held.as_number() == 7.0,
+              "an own writable, enumerable, configurable data property");
+        ctbrowser::aot::ct_aot_handler_push(frame, 9u, 0u);
+        status = static_cast<ctbrowser::aot::ct_aot_status>(ctbrowser::aot::ct_aot_define_data(
+            frame, cx.global("closed").bits(), cx.string("y").bits(), value::number(1).bits()));
+        check(status == ctbrowser::aot::ct_aot_status::caught,
+              "a non-extensible target is catchable");
+        if (status == ctbrowser::aot::ct_aot_status::caught) {
+            std::uint64_t thrown = value::undefined().bits();
+            check(ctbrowser::aot::ct_aot_catch_land(frame, &thrown) == 9u,
+                  "definition reaches its catch pad");
+            check(cx.to_string(cx.lookup_property(value::from_bits(thrown), "name")) == "TypeError",
+                  "definition throws TypeError");
+        } else if (status != ctbrowser::aot::ct_aot_status::unwound) {
+            ctbrowser::aot::ct_aot_handler_pop(frame);
+        }
+        if (status != ctbrowser::aot::ct_aot_status::unwound) {
+            ctbrowser::aot::ct_aot_leave(frame);
+        }
+    }
     context ctx;
     ctbrowser::script::install_builtins(ctx);
 

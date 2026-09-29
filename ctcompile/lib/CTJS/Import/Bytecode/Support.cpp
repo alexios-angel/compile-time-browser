@@ -156,6 +156,9 @@ static_assert(std::size(opcode_may_suspend) == opcode_count,
         case op::delete_index:
         case op::copy_props:
         case op::set_proto: writes_a_computed_key = true; break;
+        // A LITERAL'S OWN PROPERTY, defined only on the object compile_object's
+        // own new_object made - never the global object, so it binds nothing.
+        case op::define_data: break;
         case op::dyn_import:
             refuse("a refused body loads a module this compile cannot see, and its top level "
                    "can store any global");
