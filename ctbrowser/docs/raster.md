@@ -159,4 +159,3 @@ The golden is gated on `CTBROWSER_WITH_IMAGE` in `examples/CMakeLists.txt`,
 exactly as the SVG one is gated on plutosvg: without the dependency the page
 lays out identically and draws nothing, and comparing then fails for the wrong
 reason.
-
