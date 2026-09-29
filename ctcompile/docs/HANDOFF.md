@@ -22,6 +22,65 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Static factories: `new this` in a static body, 2026-09-29 UTC
+
+**Landed: `0b2e9976c`** (branch `claude-ctcompile`, merged as `d2b29663e`).
+Claude compiler worker (`claude-ctcompile`), the first rung of Bootstrap's
+`U.getOrCreateInstance(el)` path; Codex keeps publication and own-key snapshots.
+
+A class constructed only through a static factory refused
+`class setup needs its exact fresh prototype, constructor and home` (no instance
+in the entry block), and an inherited `static create(el) { return new this(el); }`
+refused `static method receiver requires an exact own getter read`.
+`classInitialization::expandStaticFactories` (`ClassInitialization/StaticFactories.cpp`,
+called after `proveHeritage` and before `dropUnreadStatics`) now clones an exact
+local `C.k(args)` - a read of `k` on C in C's setup block after its setup call,
+called once with C as receiver - at the call site with C for `this` and the
+formals bound to the actuals, padded with `undefined`. `k` must resolve to C's
+single own static slot write before setup, or, when C writes no `k` and defines
+no `k` accessor, to its proved heritage base's. The body must be one
+capture-free block of constants, reads, calls, constructions, roots and frame
+operations, with no `new.target` or callee use, whose receiver only constructs
+(`new this(...)`), is read, or receives a call through such a read; a body that
+forwards through `this.make(el)` expands in the next round (at most eight).
+`new this(el)` becomes the ordinary local `new C(el)` every later proof handles,
+`dropUnreadStatics` retires the now-unread definition, and `examine` still
+proves every class, slot and use.
+
+`native-class-dom-static.test` runs own, inherited, chained and padded factories
+(Node and the VM agree) as **64 native executions** - both DOM providers,
+optimization off/on, GCC/Clang - with **40 refusals**: conditional
+(`this.find(el) || new this(el)`), reassigned, detached, computed, `new.target`,
+receiver-as-argument and shadowing-accessor sources, undeclared manifests and a
+zero budget. The generated entries have no Script symbols; the instance is
+scalar-replaced into the DOM calls.
+
+**Measured, devbox `projects/ct-ctc-tests`, focused:** `ctjs-opt ctjs-translate
+ctcompile-test-native-reference` build; lit `native-class-dom-{static,map,alias,data}`
+and `class-{instanceof,terminal-publication,captured-map-helpers}` 7/7; the
+`class_initialization.py` subset of the 87 `static*`/`bootstrap*` fixtures (of
+902) 84/87 both with the change and on a clean `4a8580978` build - the same
+three **pre-existing** failures: `static-call-ambient` (expects a preparation
+refusal, but `dropUnreadStatics` drops the never-read static) and
+`static-name`/`static-length` (the native reference now prints one function
+global skipped). After merging `a2dfeeb73`: build 3/3 and lit
+`native-class-dom-{static,map}`, `class-{publication-captures,terminal-publication}`
+4/4. Devbox sources hash-identical; whole-repo `tools/format.sh --check` (pinned
+clang-format, 1194/158/116) and `git diff --check` clean. Not run: the full
+`class-initialization.mlir` case, full lit/CTest, WPT, test262, sanitizers.
+Scripts and logs: `/tmp/claude-ctc/classmap/` (`check5.sh`, `subset.sh`,
+`static_subset.py`, `new.sh`, `combined.sh`).
+
+**Next on this path:** Bootstrap's factory is conditional -
+`return this.getInstance(t) || new this(t, ...)` - so the construction sits in
+an `scf.if` arm, which both the class proof and ClosureLifting's same-block rule
+refuse; `getInstance` captures Data and the element helper `a`, so captured
+static bodies need their capture census moved to the call site. The unchanged
+W/B/U/Data probe frontier is Codex's (`class own-key snapshot constructor
+observes its receiver` with `Map` declared). Claude's next DOM-side piece is the
+record payload proof Codex traced above (`DOM/Source/Entry.cpp::dataObject`,
+`DOM/Entry/Body.cpp`, `DOM/Entry/Maps.cpp`, reusing `NativeMap::proveRecords`).
+
 ## Inherited constructor prefix captures and Data registration, 2026-09-29 UTC
 
 **Landed: `a2dfeeb73`**. The existing terminal Data publication proof now carries
