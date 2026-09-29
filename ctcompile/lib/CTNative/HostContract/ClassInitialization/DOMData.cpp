@@ -4,6 +4,156 @@
 
 namespace ctcompile::ctnative::class_detail {
 
+bool classInitialization::forwardDOMDataFields(const HostContract & contract) {
+    auto entry = module.lookupSymbol<ctjs::FuncOp>(contract.entry);
+    // ponytail: fixed fields on method-free local records. Mutated fields,
+    // inheritance and method receivers need a wider read-time identity proof.
+    for (auto function : module.getOps<ctjs::FuncOp>()) {
+        if (!step()) { return false; }
+        if (!constructors.contains(function) || !llvm::hasSingleElement(function.getBody())) {
+            continue;
+        }
+        llvm::SmallVector<ctjs::ConstructOp> instances;
+        bool local = true;
+        const auto scanned = module.walk([&](ctjs::ConstructOp made) {
+            if (!step()) { return mlir::WalkResult::interrupt(); }
+            auto closure = sourceValue(made.getCallee()).getDefiningOp<ctjs::CreateClosureOp>();
+            if (target(closure) != function) { return mlir::WalkResult::advance(); }
+            local &= made->getParentOp() == entry && !baseClasses.contains(closure.getResult()) &&
+                     !heritage.contains(closure.getResult());
+            for (auto [instance, definition] : methodProbes) {
+                (void)definition;
+                if (!step()) { return mlir::WalkResult::interrupt(); }
+                local &= instance != made;
+            }
+            instances.push_back(made);
+            return mlir::WalkResult::advance();
+        });
+        if (scanned.wasInterrupted()) { return false; }
+        if (!local || instances.empty()) { continue; }
+        auto & body = function.getBody().front();
+        const auto self = body.getArgument(ctjs::arg_receiver);
+        for (auto write : llvm::make_early_inc_range(body.getOps<ctjs::SetPropertyOp>())) {
+            if (!step()) { return false; }
+            auto parameter = llvm::dyn_cast<mlir::BlockArgument>(write.getValue());
+            if (write.getObject() != self || !ctjs::ordinaryKey(write.getKey()) || !parameter ||
+                parameter.getOwner() != &body ||
+                parameter.getArgNumber() < ctjs::implicit_arguments) {
+                continue;
+            }
+            const auto index = parameter.getArgNumber() - ctjs::implicit_arguments;
+            const auto key = ctjs::constantKey(write.getKey());
+            bool fixed = true;
+            for (mlir::OpOperand & use : parameter.getUses()) {
+                if (!step()) { return false; }
+                fixed &= llvm::isa<ctjs::RootOp>(use.getOwner()) ||
+                         (use.getOwner() == write && use.getOperandNumber() == 2);
+            }
+            for (mlir::OpOperand & use : self.getUses()) {
+                if (!step()) { return false; }
+                if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
+                auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(use.getOwner());
+                fixed &= store && use.getOperandNumber() == 0 &&
+                         ctjs::ordinaryKey(store.getKey()) &&
+                         (store == write || ctjs::constantKey(store.getKey()) != key);
+            }
+            llvm::MapVector<mlir::Operation *, mlir::Value> reads;
+            for (ctjs::ConstructOp made : instances) {
+                if (!step()) { return false; }
+                auto actual = index < made.getArgs().size() ? sourceValue(made.getArgs()[index])
+                                                            : mlir::Value{};
+                if (!declaredElementInput(contract, entry,
+                                          llvm::dyn_cast_if_present<mlir::BlockArgument>(actual))) {
+                    fixed = false;
+                    break;
+                }
+                llvm::SmallVector<mlir::Value> aliases{made.getResult()};
+                for (auto [alias, owner] : retainedRecordOrigins) {
+                    if (!step()) { return false; }
+                    if (owner == made.getResult()) { aliases.push_back(alias); }
+                }
+                for (mlir::Value alias : aliases) {
+                    for (mlir::OpOperand * use : sourceUses(alias)) {
+                        if (!step()) { return false; }
+                        auto * op = use->getOwner();
+                        if (op->getParentOfType<ctjs::FuncOp>() != entry ||
+                            (op->getBlock() == made->getBlock()
+                                 ? !made->isBeforeInBlock(op)
+                                 : !llvm::isa<ctjs::GetPropertyOp>(op))) {
+                            fixed = false;
+                            continue;
+                        }
+                        if (llvm::isa<ctjs::RootOp>(op)) { continue; }
+                        auto call = llvm::dyn_cast<ctjs::CallOp>(op);
+                        if (call && use->getOperandNumber() == 3 && mapOperations.contains(call) &&
+                            ctjs::constantKey(
+                                call.getCallee().getDefiningOp<ctjs::GetPropertyOp>().getKey()) ==
+                                "set") {
+                            continue;
+                        }
+                        const auto selected = ctjs::propertyKey(op);
+                        if (use->getOperandNumber() != 0 || !selected ||
+                            !ctjs::ordinaryKey(selected)) {
+                            fixed = false;
+                        } else if (ctjs::constantKey(selected) == key) {
+                            if (llvm::isa<ctjs::GetPropertyOp>(op)) {
+                                reads[op] = actual;
+                            } else {
+                                fixed = false;
+                            }
+                        }
+                    }
+                }
+            }
+            if (!fixed) { continue; }
+            // Only the field disappears, never its record or retained aliases.
+            // The exposed element uses still owe the complete Map-key census.
+            for (auto [op, actual] : reads) {
+                if (!step()) { return false; }
+                auto read = llvm::cast<ctjs::GetPropertyOp>(op);
+                for (auto & [cell, initial] : cells) {
+                    (void)cell;
+                    if (!step()) { return false; }
+                    if (initial == read.getResult()) { initial = actual; }
+                }
+                read.getResult().replaceAllUsesWith(actual);
+                read.erase();
+            }
+            write.erase();
+            for (ctjs::ConstructOp made : instances) {
+                if (!step()) { return false; }
+                mlir::OpBuilder at(made);
+                auto absent = ctjs::ConstantOp::create(
+                    at, made.getLoc(), ctjs::UndefinedAttr::get(module.getContext()));
+                made.getArgsMutable()[index].set(absent);
+            }
+        }
+    }
+    // The provider requires direct input uses. Retire only already-proved
+    // immutable entry cells with no capture or other transport observer.
+    for (auto [cell, initial] : llvm::make_early_inc_range(cells)) {
+        if (!step()) { return false; }
+        auto actual = sourceValue(initial);
+        if (cell.getDefiningOp()->getParentOp() != entry ||
+            !declaredElementInput(contract, entry,
+                                  llvm::dyn_cast_if_present<mlir::BlockArgument>(actual))) {
+            continue;
+        }
+        bool local = true;
+        for (mlir::Operation * user : cell.getUsers()) {
+            if (!step()) { return false; }
+            local &= cellOperations.contains(user);
+        }
+        if (!local) { continue; }
+        for (ctjs::CellGetOp read : cellReads) {
+            if (!step()) { return false; }
+            if (read.getCell() == cell) { read.getResult().replaceAllUsesWith(actual); }
+        }
+        retireCell(cell);
+    }
+    return reason.empty();
+}
+
 bool classInitialization::proveDOMDataScalars(host_detail::analyzer & analysis) {
     auto entry = analysis.entry;
     llvm::DenseMap<mlir::Value, mlir::Value> origins;

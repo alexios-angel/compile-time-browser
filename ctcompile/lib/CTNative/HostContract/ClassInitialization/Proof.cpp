@@ -543,7 +543,7 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
     }
     if (!proveMaps()) { return false; }
     if (contract.provider == HostContract::Provider::ctbrowserDOMDataSession) {
-        if (!proveDOMDataFamily(contract)) { return false; }
+        if (!forwardDOMDataFields(contract) || !proveDOMDataFamily(contract)) { return false; }
     }
     // Every invocation the census below admits is a recorded call. A helper
     // or holder slot called in the source whose calls all sit in bodies that
