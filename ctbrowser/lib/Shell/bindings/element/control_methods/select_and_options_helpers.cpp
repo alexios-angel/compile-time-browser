@@ -62,10 +62,11 @@ std::vector<bool> control_helpers::selected_flags(context & c, const read_txn & 
     // never has two, however it got them (a `multiple` removed afterwards
     // included) - and a select nothing has touched, whose insertions the
     // parser made, selects its first enabled option at display size 1. So
-    // does one whose list CHANGED with nothing selected: its slots are
-    // forgotten, and it is a select nothing has chosen in again - removing
-    // the selected option selects the first that is left, and an option
-    // put back ahead of that one is the first again.
+    // does one whose list CHANGED with nothing selected - the selectedness
+    // setting algorithm runs on every insertion and removal - so removing
+    // the selected option selects the first that is left. The options'
+    // own selectedness and dirtiness are left as they are: an option put
+    // back selected is selected again by its insertion (form_writes.cpp).
     std::size_t count = 0;
     std::size_t last = options.size();
     for (std::size_t i = 0; i < options.size(); ++i) {
@@ -74,18 +75,23 @@ std::vector<bool> control_helpers::selected_flags(context & c, const read_txn & 
             last = i;
         }
     }
+    // WHAT THE ALGORITHM CHOSE IS THE OPTIONS' SELECTEDNESS NOW, written to
+    // their slots rather than only answered: it is state the options keep, so
+    // one moved out of the select afterwards is still selected
+    // (moveBefore/select-option-optgroup.html) and an option inserted
+    // selected is compared against it (form_writes.cpp).
     if (count > 1) {
-        for (std::size_t i = 0; i < options.size(); ++i) { flags[i] = i == last; }
-    } else if (count == 0 && (!any_slot || changed) && helpers.display_size(txn, b, select) == 1) {
-        if (changed) {
-            for (const node_id option : options) {
-                helpers.erase_slot(c, b, option, selected_slot);
-                helpers.erase_slot(c, b, option, dirty_slot);
+        for (std::size_t i = 0; i < options.size(); ++i) {
+            if (flags[i] && i != last) {
+                helpers.set_slot(c, b, options[i], selected_slot, value::boolean(false));
             }
+            flags[i] = i == last;
         }
+    } else if (count == 0 && (!any_slot || changed) && helpers.display_size(txn, b, select) == 1) {
         for (std::size_t i = 0; i < options.size(); ++i) {
             if (!helpers.is_disabled(txn, b, options[i])) {
                 flags[i] = true;
+                helpers.set_slot(c, b, options[i], selected_slot, value::boolean(true));
                 break;
             }
         }
