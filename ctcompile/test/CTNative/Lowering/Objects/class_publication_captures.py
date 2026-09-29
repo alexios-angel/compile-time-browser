@@ -69,6 +69,35 @@ var a = probe();
             ),
             expected + (0 if implicit else 1),
         )
+    for name in ("holder", "direct"):
+        text, expected = programs[name]
+        programs["guarded-" + name] = (
+            text.replace("constructor(n) {", "constructor(n, enabled) { if (enabled) {")
+            .replace("this); }", "this); } }")
+            .replace("new Item(2)", "new Item(2, true)")
+            .replace("new Item(7)", "new Item(7, 1)"),
+            expected,
+        )
+    text, expected = programs["guarded-holder"]
+    programs["guarded-else"] = (
+        text.replace("if (enabled) {", "if (enabled) {} else {")
+        .replace("new Item(2, true)", "new Item(2, false)")
+        .replace("new Item(7, 1)", "new Item(7, 0)"),
+        expected,
+    )
+    for name in ("holder", "direct", "else"):
+        text, expected = programs["guarded-" + name]
+        programs["helper-guarded-" + name] = (
+            text.replace("  class Item", "  const gate = flag => flag;\n  class Item").replace(
+                "if (enabled)", "if (gate(enabled))"
+            ),
+            expected,
+        )
+    text, expected = programs["helper-guarded-holder"]
+    programs["helper-guarded-padded"] = (
+        text.replace("flag => flag", "(flag, absent) => absent ? false : flag"),
+        expected,
+    )
     return programs
 
 
@@ -163,6 +192,55 @@ def main():
         assert text != inherited
         _, ir, manifest = prepared_source(args, "inherited-" + name, text)
         classes.prepare(args, "inherited-" + name, ir, manifest, success=False)
+        refusals += 1
+    guarded = sources()["guarded-holder"][0]
+    bad = {
+        "mixed-guards": guarded.replace("new Item(7, 1)", "new Item(7, false)"),
+        "unknown-guard": guarded.replace("if (enabled)", "if (unknown(enabled))"),
+        "guard-helper": guarded.replace("if (enabled)", "if (add(enabled))"),
+        "guarded-suffix": guarded.replace(publication, publication + " this.count();"),
+        "guarded-replacement": guarded.replace(publication, publication + " return {};"),
+        "dropped-class-setup": guarded.replace(
+            "this); } }", "this); } else { __ctbrowser_class_defined(undefined); } }"
+        ),
+        "false-only": guarded.replace("new Item(2, true)", "new Item(2, false)")
+        .replace("new Item(7, 1)", "new Item(7, 0)")
+        .replace(
+            "return saved.n * 100 + current.n * 10 + saved.count();",
+            "return (saved === null ? 10 : 0) + (current === null ? 1 : 0);",
+        ),
+        "captured-constructor": guarded.replace(
+            "  const first", "  const make = () => new Item(9, false);\n  const first"
+        ).replace("  return saved.n", "  make();\n  return saved.n"),
+    }
+    for name, text in bad.items():
+        assert text != guarded
+        _, ir, manifest = prepared_source(args, name, text)
+        classes.prepare(args, name, ir, manifest, success=False)
+        refusals += 1
+    guarded = sources()["helper-guarded-holder"][0]
+    bad = {
+        "mixed-helper-guards": guarded.replace("new Item(7, 1)", "new Item(7, false)"),
+        "changing-guard-helper": guarded.replace("const gate", "let gate").replace(
+            "  const first", "  gate = flag => false;\n  const first"
+        ),
+        "effectful-guard-helper": guarded.replace("flag => flag", "flag => unknown(flag)"),
+        "captured-guard-helper": guarded.replace("flag => flag", "flag => add(flag)"),
+        "ambient-undefined-helper": guarded.replace(
+            "flag => flag", "(flag, absent) => absent === undefined ? flag : false"
+        ),
+        "receiver-guard-helper": guarded.replace("flag => flag", "function(flag) { return this; }"),
+        "retained-guard-helper": guarded.replace(
+            "flag => flag", "flag => flag || unknown(flag)"
+        ).replace("  const first", "  gate(false);\n  const first"),
+        "helper-dropped-class-setup": guarded.replace(
+            "this); } }", "this); } else { __ctbrowser_class_defined(undefined); } }"
+        ),
+    }
+    for name, text in bad.items():
+        assert text != guarded
+        _, ir, manifest = prepared_source(args, name, text)
+        classes.prepare(args, name, ir, manifest, success=False)
         refusals += 1
     print(f"Constructor publication captures: {executions} native executions, {refusals} refusals")
 

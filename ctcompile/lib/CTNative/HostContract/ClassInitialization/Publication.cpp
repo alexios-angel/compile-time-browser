@@ -160,6 +160,45 @@ bool classInitialization::sinkCapturedPublication(
         !constructor->isBeforeInBlock(setup) || hasOuterCapture(constructor)) {
         return true;
     }
+    llvm::SmallVector<ctjs::ConstructOp> instances;
+    for (mlir::OpOperand * use : sourceUses(constructor.getResult())) {
+        if (!step()) { return false; }
+        auto * op = use->getOwner();
+        if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(op)) {
+            if (use->getOperandNumber() >= 2 ||
+                sourceValue(made.getCallee()) != constructor.getResult() ||
+                sourceValue(made.getNewTarget()) != constructor.getResult() ||
+                made->getBlock() != setup->getBlock() || !setup->isBeforeInBlock(made)) {
+                return true;
+            }
+            if (use->getOperandNumber() == 0) { instances.push_back(made); }
+        } else if (heritageUse(*use, constructor.getResult())) {
+            continue;
+        } else if (op != setup && !llvm::isa<ctjs::RootOp, ctjs::SetPropertyOp, ctjs::GetPropertyOp,
+                                             ctjs::DefineAccessorOp, ctjs::InstanceOfOp>(op)) {
+            // Ordinary calls and unproved heritage retain the original body.
+            return true;
+        }
+    }
+    const bool isBase = baseClasses.contains(constructor.getResult());
+    if (isBase && (!instances.empty() || heritage.contains(constructor.getResult()))) {
+        return true;
+    }
+    if (!isBase && instances.empty()) { return true; }
+    // sourceUses omits capture transport. A hidden caller must retain the
+    // original constructor until a complete callable proof can account for it.
+    for (auto [alias, initial] : cells) {
+        if (!step()) { return false; }
+        if (sourceValue(initial) != constructor.getResult()) { continue; }
+        for (mlir::Operation * user : alias.getUsers()) {
+            if (!step()) { return false; }
+            if (!cellOperations.contains(user)) { return true; }
+        }
+    }
+    if (auto stop = publicationSymbolObserver(*this, function)) { return *stop; }
+    // Uniform actuals can put a guarded registration in the entry block.
+    // Reuse the constructor proof before inspecting the selected capture.
+    if (!foldDecidedArms(constructor, instances)) { return false; }
     auto & body = function.getBody().front();
     ctjs::LoadUpvalueOp captured;
     // Select the registration's capture from its receiver argument. Other
@@ -257,45 +296,9 @@ bool classInitialization::sinkCapturedPublication(
     }
     auto returned = llvm::dyn_cast<ctjs::ReturnOp>(body.getTerminator());
     if (!returned || !undefined(returned.getValue())) { return true; }
-    llvm::SmallVector<ctjs::ConstructOp> instances;
-    for (mlir::OpOperand * use : sourceUses(constructor.getResult())) {
-        if (!step()) { return false; }
-        auto * op = use->getOwner();
-        if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(op)) {
-            if (use->getOperandNumber() >= 2 ||
-                sourceValue(made.getCallee()) != constructor.getResult() ||
-                sourceValue(made.getNewTarget()) != constructor.getResult() ||
-                made->getBlock() != setup->getBlock() || !setup->isBeforeInBlock(made)) {
-                return true;
-            }
-            if (use->getOperandNumber() == 0) { instances.push_back(made); }
-        } else if (heritageUse(*use, constructor.getResult())) {
-            continue;
-        } else if (op != setup && !llvm::isa<ctjs::RootOp, ctjs::SetPropertyOp, ctjs::GetPropertyOp,
-                                             ctjs::DefineAccessorOp, ctjs::InstanceOfOp>(op)) {
-            // Ordinary calls and unproved heritage retain the original body.
-            return true;
-        }
-    }
-    const bool isBase = baseClasses.contains(constructor.getResult());
-    if (isBase && (!instances.empty() || heritage.contains(constructor.getResult()))) {
-        return true;
-    }
-    if (!isBase && instances.empty()) { return true; }
     if (!publicationSuffix(invocation, instances, normalizedSuper.contains(function))) {
         return reason.empty();
     }
-    // sourceUses omits capture transport. A hidden caller must retain the
-    // original constructor until a complete callable proof can account for it.
-    for (auto [alias, initial] : cells) {
-        if (!step()) { return false; }
-        if (sourceValue(initial) != constructor.getResult()) { continue; }
-        for (mlir::Operation * user : alias.getUsers()) {
-            if (!step()) { return false; }
-            if (!cellOperations.contains(user)) { return true; }
-        }
-    }
-    if (auto stop = publicationSymbolObserver(*this, function)) { return *stop; }
     if (!spend(8 + constructor.getUpvalues().size() + retainedLoads.size())) { return false; }
     llvm::SmallVector<mlir::Value> retained(constructor.getUpvalues());
     retained.erase(retained.begin() + captureIndex);

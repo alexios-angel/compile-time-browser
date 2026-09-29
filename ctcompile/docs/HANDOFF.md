@@ -22,6 +22,126 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Local helper guards before Data registration, 2026-09-29 UTC
+
+**Landed: `264fe89a7`**. Captured constructor registration now resolves an exact
+capture-free local guard helper before the later capture census. The lookup
+requires the constructor's original capture slot, its proved fixed cell and a
+preceding local closure with matching zero upvalues and bounded call arity.
+The existing evaluator proves a pure executed path with known actuals and one
+branch outcome across every construction. The original closure, cell and load
+remain for the complete class/capture census; no callable registry is populated
+early. Data registration, terminal suffix and Map ownership proofs are unchanged.
+
+Four new source programs cover the complete vendor Data holder, direct
+registration, a false `else` guard and a padded missing helper argument. The first
+three refuse unchanged on the previous compiler at the own-key snapshot receiver
+check. The initial padded fixture referenced an undeclared `undefined` global;
+its refusal is retained, and the positive fixture now tests the missing value
+through truthiness. Saved records remain readable after Map deletion and
+replacement.
+Changing helpers, unknown effects, helper captures, receiver dependence,
+retained unsafe helper calls and dropped class-setup calls remain diagnostics.
+The independent read-only audit found no must-fix. No browser API, provider
+authority or native storage representation changed.
+
+**Measured, devbox only:** `tools/remote-build.sh ctjs-opt ctjs-translate
+ctcompile-test-native-reference` passed its three-step affected rebuild; the
+final fixture-only sync needed no rebuild. The exact lit selection
+`^ctcompile :: CTNative/Lowering/Objects/class-publication-captures[.]test$`
+passed **1/1**, with **120 native executions and 50 refusals**. Five existing
+constructor controls passed **16 native executions and three refusals**; two
+DOM Data field-registration sources passed **16 native executions, two provider
+proofs and 15 refusals**. Final totals: **152 native executions, 68 candidate
+refusals and 22 sources checked against Node and the VM (44 oracle runs)**.
+GCC and pinned Clang cover optimization off/on and explicit/deduced printing.
+Concrete stack-record Map, generated-source and `nm` no-Script gates pass.
+Both tested file hashes match the implementation commit. `tools/format.sh
+--check` passed (1194 C++, 159 Python, 116 web files), and `git diff --check` passed.
+
+The final build, lit, controls, frontier and collection used one held devbox
+lock. The preceding worker's timed-out batch left its custom-iteration process
+alive during this session; cleanup was requested in the shared journal.
+The recorded lit wall time of 100.74 s is therefore not an isolated timing
+measurement. Behavioral checks and source hashes passed.
+
+Exact wrappers in `/tmp/codex-helper-publication/`: `baseline.sh`, `check.sh`,
+`controls.sh` and `collect.sh`, run under `flock /tmp/ctbrowser-devbox-build.lock`.
+Scripts, logs, source hashes, audit and generated artifacts are preserved at
+`/home/alex/.ctbrowser-auto/codex/ctcompile/artifacts/2026-09-29-helper-publication/`.
+Full lit/CTest, broad corpus/native matrices, WPT/test262, Windows and sanitizers
+were not run; nothing was pushed.
+
+**Next native/Bootstrap boundary:** the unchanged W/B/U/Data source with `Map`
+declared still refuses `native DOM class: class own-key snapshot constructor
+observes its receiver`; without Map, it refuses the Data capture (`fn$3 /
+ctjs.construct` in this run). Full Bootstrap has not executed natively.
+Ordinary DOM record payload ownership remains Claude's separate worktree lane;
+publication must still compose with that proof. Inherited guards, helper
+captures, `_element` borrowing and computed `this.constructor.DATA_KEY` remain.
+
+Read-only next-step trace: for one unconstructed base and one capture-free leaf,
+`normalizeSuper` already preserves a base guard on a forwarded formal. Restore
+all cloned capture loads, including nested ones, then let the recursive leaf
+proof flatten the guard and check the complete suffix before retiring the base
+publication. Literal `super(n, true)` conditions and multiple nested guards
+remain separate matcher gaps. `next-inherited-guards.md` in the artifact
+directory records the exact seam and refusal cases; this is not new support.
+
+## Guarded constructor Data registration, 2026-09-29 UTC
+
+**Landed: `42636fb8d`**. Captured Data publication now reuses
+`foldDecidedArms` before inspecting the registration. Exact local constructions,
+raw capture-cell users and symbolic callers are checked first. A guard directly
+on a formal can select the same arm at every construction; the existing capture,
+terminal-suffix and complete Data/Map ownership proofs then run unchanged.
+Three new sources cover the intact vendor Data holder, a direct helper and an
+`else` registration, with distinct literals having the same truthiness. Saved
+records remain readable after deletion and replacement. Mixed/unknown/helper
+guards, hidden constructor callers, observable suffixes and replacement returns
+remain diagnostics. False-only registration retains its conservative refusal.
+
+The shared branch guard also protects precollected class-initialization calls,
+which exist before the later setup registry. The initial early-fold candidate
+crashed (`-11`) when a dropped arm contained `__ctbrowser_class_defined(undefined)`;
+the final regression requires status 1, a diagnostic and no partial IR.
+A read-only re-review found no remaining must-fix. No provider authority, browser
+API or native storage representation changed.
+
+**Measured, devbox only:** affected builds used `tools/remote-build.sh ctjs-opt
+ctjs-translate ctcompile-test-native-reference` (13 dependency steps initially,
+three for the guard). The exact lit selection
+`^ctcompile :: CTNative/Lowering/Objects/class-publication-captures[.]test$`
+passed **1/1 in 69.91 s**, covering **88 native executions and 38 refusals**.
+Five existing constructor controls passed **16 native executions and three
+refusals**; two DOM Data field-registration sources passed **16 native executions,
+two provider proofs and 15 refusals**. Totals: **120 native executions, 56 candidate
+refusals and 18 sources checked against Node and the VM (36 oracle runs)**.
+The two new truthy sources refuse unchanged on the previous compiler.
+GCC and pinned Clang cover optimization off/on and explicit/deduced printing;
+concrete stack-record Map, generated-source and `nm` no-Script gates pass.
+After a formatting-only wrap, the final three-step rebuild and exact setup
+diagnostic check passed. All three tested file hashes match the commit.
+`tools/format.sh --check` passed (1194 C++, 159 Python, 116 web files),
+and `git diff --check` passed.
+
+Exact wrappers in `/tmp/codex-guard-publication/`: `baseline.sh`, `check.sh`,
+`setup-probe.sh`, `controls.sh`, `finish.sh` and `collect.sh`, run under
+`flock /tmp/ctbrowser-devbox-build.lock`. Scripts, logs, source hashes, audit and
+generated artifacts are preserved at
+`/home/alex/.ctbrowser-auto/codex/ctcompile/artifacts/2026-09-29-guarded-publication/`.
+Full lit/CTest, broad corpus/native matrices, WPT/test262, Windows and sanitizers
+were not run; nothing was pushed.
+
+**Next native/Bootstrap boundary:** the unchanged W/B/U/Data source with `Map`
+declared still refuses `native DOM class: class own-key snapshot constructor
+observes its receiver`; without Map, it refuses the Data capture (`fn$4 /
+ctjs.construct` in this run). Full Bootstrap has not executed natively.
+Ordinary DOM record payload ownership is Claude's separate lane. Publication
+still needs composition with that proof, inherited/helper-produced guards,
+`_element` borrowing and computed `this.constructor.DATA_KEY`. This increment
+proves direct-formal guards only; it does not widen either DOM provider.
+
 ## Static factories: `new this` in a static body, 2026-09-29 UTC
 
 **Landed: `0b2e9976c`** (branch `claude-ctcompile`, merged as `d2b29663e`).
