@@ -22,6 +22,54 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Object literals define through op::define_data, 2026-09-29 UTC
+
+Claude browser worker (`claude-ctbrowser`), resuming an interrupted Sonnet
+iteration on the user's request: make ctcompile read the object literals the
+`codex-ctbrowser` merge `b67016d91` changed.
+
+**The regression.** `b67016d91` made `{k: v}` CreateDataPropertyOrThrow by
+calling the global `__ctbrowser_define_own` per data member. A call of a global
+a page can replace is an escape, so 44 of the 366 focused lit cases refused.
+Sonnet's canonicalization in `--ctjs-resolve-globals` (turn a proven call back
+into a store, gated on clause 5) recovered 39 and was NOT landed: the five
+HostContract controls that call `globalThis.foreign()` make clause 5 refuse the
+whole module, and nothing can prove the global unreplaced there.
+
+**Landed** (branch `claude-ctbrowser`):
+
+- `f82d7bdf0` `op::define_data`: the VM, `ct_aot_define_data` and the
+  `define_own_name` native share `context::define_data_property`;
+  `compile_object` emits it for every data member (class fields and `__home`
+  still call the helper, as before `b67016d91`). The importer makes it the
+  `ctjs.set_property` every native proof reads, marked `ctjs.define_own`
+  (`defineOwnMarker`, CTJSOps.h); the boxed tier lowers the mark to
+  `ct_aot_define_data`, and the clause-6 summary ignores it (its target is
+  always the literal's own `new_object`). Test: `CTJS/Import/literal-definitions.mlir`.
+- `b36806ab6` `refusal-default-arm.mlir`: `k in o` now calls
+  `__ctbrowser_in_object` and `__ctbrowser_to_property_key` first (7a9fb5dd6),
+  so its case pins that host boundary, as `d1203d79a` did for `delete`.
+- `caba774df` the differential `in` arm: `"x" in 5` is a TypeError since
+  7a9fb5dd6, and its uncaught throw failed the 30 arms driven after it (the
+  commit message says 23 - that count was read off truncated output).
+
+**Checked** on the devbox, focused, each job re-syncing this tree inside its
+lock hold: the lit selection above minus `class-initialization.mlir` 0 failures;
+that harness narrowed to its 104 literal-bearing fixtures PASS (280 native
+executions); 83 CTests (the ctbrowser VM/AOT tests, `ctcompile_{inventories,
+importer_coverage,program_image,differential,module_differential,
+escape_oracle_aot*,specialization_boxed_dispatch}`, every `native_claims_*` and
+`bootstrap_*`) PASS, claimed bootstrap 19 / p5 39 / phaser 45 / fixture 9;
+test262 `test/language/expressions/object` 1167/1170 with the PASS set of Codex's
+iteration 15. Not run: the full lit suite and the whole
+`class-initialization.mlir`, full CTest, WPT.
+
+**Next boundary.** The three remaining `expressions/object` test262 failures are
+Codex's recorded ones (rest excluding keys before descriptors; durable method
+kind for `name-invoke-ctor`/`name-prototype-prop`). Class fields still reach
+`__ctbrowser_define_own` through a replaceable global; moving them to
+`define_data` changes the class-initialization shapes and wants that harness.
+
 ## Uncalled helpers, the outage landing gated and the pre-existing failures, 2026-09-28 UTC (afternoon)
 
 Claude compiler worker (`claude-ctcompile`), sole agent in the repository by the
