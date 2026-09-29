@@ -491,8 +491,14 @@ def main():
                 ):
                     raise RuntimeError(f"{name}: inherited body lost its refusal: {diagnostic}")
                 if (
-                    name in ("shadowed_parameter", "shadowed_default_parameter")
-                    and "shadowed DOM method parameters require original call proof"
+                    name
+                    in (
+                        "shadowed_default_parameter",
+                        "shadowed_parameter_observed",
+                        "shadowed_second_parameter_observed",
+                        "shadowed_parameter_branch",
+                    )
+                    and "DOM class method parameters require original entry-call reachability"
                     not in diagnostic
                 ):
                     raise RuntimeError(f"{name}: shadowed body lost its refusal: {diagnostic}")

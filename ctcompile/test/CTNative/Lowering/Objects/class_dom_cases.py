@@ -1257,7 +1257,6 @@ SHADOWED_REFUSALS = {
     "shadowed_bad_dispatch": SHADOWED_CASES["class_shadowed_dispatch"][0].replace(
         "return this.read();", "this.element = {}; return this.read();"
     ),
-    "shadowed_parameter": SHADOWED_CLASS.replace("    read()", "    read(key)"),
     "shadowed_default_parameter": SHADOWED_CLASS.replace("    read()", "    read(key = 'x')"),
     "shadowed_bad_instance": SHADOWED_CASES["class_shadowed_instances"][0].replace(
         "new Button(other)", "new Button({})"
@@ -1349,6 +1348,91 @@ SHADOW_HELPER_REFUSALS = {
         "return get(this.element) === null;", "return get;"
     ),
 }
+UNUSED_FORMAL_CASES = {
+    # Exact former refusal; the key has no source observer.
+    "class_shadowed_parameter": (SHADOWED_CLASS.replace("    read()", "    read(key)"), "1111"),
+    "class_shadowed_parameters": (
+        SHADOWED_CLASS.replace("    read()", "    read(first, second)"),
+        "1111",
+    ),
+    "class_shadowed_parameter_write": (
+        SHADOWED_CASES["class_shadowed_write"][0].replace("    read()", "    read(unused)"),
+        "1111",
+    ),
+    "class_shadowed_parameter_helper": (
+        SHADOWED_HELPER.replace("    read()", "    read(unused)"),
+        "1111",
+    ),
+    "class_unused_parameter": (
+        ELEMENT_CLASS.replace(
+            "    press()",
+            "    unused(ignored) { this.element.getAttribute('x'); }\n    press()",
+        ),
+        "1000",
+    ),
+    "class_inherited_unused_parameter": (
+        INHERITED_CLASS.replace(
+            "    read()",
+            "    unused(ignored) { this.element.getAttribute('x'); }\n    read()",
+        ),
+        "1000",
+    ),
+    "class_called_unused_parameter_effect": (
+        ELEMENT_CLASS.replace("    press()", "    press(ignored)").replace(
+            "  return new Button(element).press();",
+            "  const button = new Button(element);\n"
+            "  const saved = button.press(element.setAttribute('argument', 'kept'));\n"
+            "  return saved && element.getAttribute('argument') === 'kept';",
+        ),
+        "1000",
+    ),
+}
+UNUSED_FORMAL_REFUSALS = {
+    "shadowed_parameter_observed": SHADOWED_CLASS.replace("    read()", "    read(key)").replace(
+        "getAttribute('x')", "getAttribute(key)"
+    ),
+    "shadowed_second_parameter_observed": SHADOWED_CLASS.replace(
+        "    read()", "    read(ignored, key)"
+    ).replace("getAttribute('x')", "getAttribute(key)"),
+    "shadowed_parameter_branch": SHADOWED_CLASS.replace("    read()", "    read(key)").replace(
+        "return this.element.getAttribute('x') === null;",
+        "if (key) { this.element.setAttribute('x', 'changed'); } return true;",
+    ),
+    "shadowed_parameter_default_effect": SHADOWED_CLASS.replace(
+        "    read()", "    read(ignored = ambient())"
+    ),
+    "shadowed_parameter_arguments": SHADOWED_CLASS.replace(
+        "    read()", "    read(ignored)"
+    ).replace("getAttribute('x')", "getAttribute(arguments[0])"),
+    "shadowed_parameter_rest": SHADOWED_CLASS.replace(
+        "    read()", "    read(ignored, ...rest)"
+    ).replace("getAttribute('x')", "getAttribute(rest[0])"),
+    "shadowed_parameter_unknown_dom": UNUSED_FORMAL_CASES["class_shadowed_parameter"][0].replace(
+        "getAttribute('x')", "unknown()"
+    ),
+    "shadowed_parameter_bad_instance": UNUSED_FORMAL_CASES["class_shadowed_parameter"][0].replace(
+        "new Button(element)", "new Button({})"
+    ),
+    "called_unused_parameter_bad_effect": UNUSED_FORMAL_CASES[
+        "class_called_unused_parameter_effect"
+    ][0].replace("element.setAttribute('argument', 'kept')", "element.unknown()"),
+}
+SHADOWED_CASES.update(
+    {
+        name: case
+        for name, case in UNUSED_FORMAL_CASES.items()
+        if name not in ("class_unused_parameter", "class_called_unused_parameter_effect")
+    }
+)
+CLASS_CASES.update(UNUSED_FORMAL_CASES)
+SHADOWED_REFUSALS.update(
+    {
+        name: body
+        for name, body in UNUSED_FORMAL_REFUSALS.items()
+        if name != "called_unused_parameter_bad_effect"
+    }
+)
+CLASS_REFUSALS.update(UNUSED_FORMAL_REFUSALS)
 SHADOWED_CASES.update(SHADOW_HELPER_CASES)
 SHADOWED_REFUSALS.update(SHADOW_HELPER_REFUSALS)
 INHERITED_CASES.update(SHADOWED_CASES)

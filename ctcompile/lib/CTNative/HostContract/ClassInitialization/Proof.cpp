@@ -980,10 +980,17 @@ bool classInitialization::proveDOMMethods(const HostContract & contract) {
     for (auto [made, definition] : methodProbes) {
         if (!step()) { return false; }
         auto fn = target(definition.getValue().getDefiningOp<ctjs::CreateClosureOp>());
-        const bool hasParameters =
-            fn.getBody().front().getNumArguments() != ctjs::implicit_arguments;
+        bool observesParameters = false;
+        for (auto parameter :
+             fn.getBody().front().getArguments().drop_front(ctjs::implicit_arguments)) {
+            if (!step()) { return false; }
+            for (mlir::Operation * user : parameter.getUsers()) {
+                if (!step()) { return false; }
+                observesParameters |= !llvm::isa<ctjs::RootOp>(user);
+            }
+        }
         const bool hasOriginalCall = calledFromEntry(made, fn);
-        if (hasParameters && !hasOriginalCall) {
+        if (observesParameters && !hasOriginalCall) {
             return refuse("DOM class method parameters require original entry-call "
                           "reachability for each instance");
         }
@@ -999,8 +1006,9 @@ bool classInitialization::proveDOMMethods(const HostContract & contract) {
         // them only from this proof copy so the existing lift sees exactly
         // the method under test and all original reachable method calls.
         if (!omitUnused(*probe, &mapping, definition)) { return false; }
-        // Existing calls prove their complete bodies together. Only an
-        // uncalled zero-argument method needs a synthetic invocation.
+        // Existing calls prove their complete bodies and actual effects together.
+        // Uncalled bodies that ignore every parameter need only one probe;
+        // the ordinary lift supplies undefined for their unused formal slots.
         if (!hasOriginalCall) {
             auto instance = llvm::cast<ctjs::ConstructOp>(mapping.lookup(made.getOperation()));
             mlir::OpBuilder at(instance);

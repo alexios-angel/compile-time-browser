@@ -1234,12 +1234,9 @@ bool classInitialization::cloneReceiverMethods(
         if (!step()) { return false; }
         auto closure = definition.getValue().getDefiningOp<ctjs::CreateClosureOp>();
         auto fn = target(closure);
-        // No source call selects a shadowed slot. Inventing actual arguments
-        // would grant its body authority that the original program lacks.
-        if (proofOnly &&
-            (!fn || fn.getBody().front().getNumArguments() != ctjs::implicit_arguments)) {
-            return refuse("shadowed DOM method parameters require original call proof");
-        }
+        // Parameter observations are checked with all other method probes;
+        // an unused formal supplies no argument or type authority.
+        if (!fn) { return refuse("inherited method lacks a source body"); }
         bool reads = perLeaf;
         if (fn) {
             const auto receiver = fn.getBody().front().getArgument(ctjs::arg_receiver);
