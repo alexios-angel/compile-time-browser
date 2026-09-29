@@ -80,6 +80,28 @@ void test_typing_fires_beforeinput_input_and_change() {
     CHECK_EQ(seen(page), std::string{"seen=change:-:-:false:false"});
 }
 
+// css/selectors/focus-visible-script-focus-004.html, input-whitespace.html: a
+// typed character fires `keypress` first - at the body when nothing has focus
+// - and a cancelled one keeps the character out of the field.
+void test_typing_fires_keypress_first() {
+    browser page{browser_options{400, 300}};
+    page.load_html(page_source);
+    page.frame();
+    (void)page.run_script("document.addEventListener('keypress', e => seen.push('keypress:' +"
+                          "  e.key + ':' + e.charCode + ':' + e.target.localName));");
+    (void)page.handle(input_event::typed("a"));
+    CHECK_EQ(seen(page), std::string{"seen=keypress:a:97:body"});
+    (void)page.run_script("const t = document.getElementById('t'); t.focus();"
+                          "t.addEventListener('keypress', e => { if (e.key === 'q') {"
+                          "  e.preventDefault(); } });");
+    (void)page.handle(input_event::typed("q"));
+    (void)page.handle(input_event::typed("z"));
+    (void)page.run_script("seen.push('value=' + document.getElementById('t').value);");
+    CHECK_EQ(seen(page), std::string{"seen=keypress:q:113:input keypress:z:122:input "
+                                     "beforeinput:insertText:z:true:true "
+                                     "input:insertText:z:false:true value=z"});
+}
+
 // input-change-event-properties.html's "<select> pressing down arrow".
 void test_select_arrow_keys_fire_input_and_change() {
     browser page{browser_options{400, 300}};
@@ -161,6 +183,7 @@ int main() {
     test_the_keyboard_clicks_a_focused_control();
     test_typing_fires_beforeinput_input_and_change();
     test_select_arrow_keys_fire_input_and_change();
+    test_typing_fires_keypress_first();
     test_a_control_disabled_by_its_keydown_is_not_pressed();
     REPORT("input_events_typing");
 }

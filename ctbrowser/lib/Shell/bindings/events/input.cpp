@@ -269,6 +269,29 @@ bool dom_bindings::dispatch_key(std::string_view type, node_id target, const inp
     return dispatch_event(type, target, event);
 }
 
+// KEYPRESS, UI Events' legacy event for a key that produces a character
+// value: after its keydown and before the text's `beforeinput`, at the same
+// target, and cancelling it keeps the character out. `key` is the character
+// itself and keyCode, charCode and which its code point - what every browser
+// reports for one; `code` is not known by the time the text arrives.
+bool dom_bindings::dispatch_keypress(node_id target, std::string_view character) {
+    if (cx_ == nullptr || character.empty()) { return false; }
+    value event = make_event(*cx_, "keypress", target);
+    const context::rooted keep{*cx_, event};
+    auto * object = static_cast<script::object_object *>(event.as_heap());
+    std::size_t at = 0;
+    const value point = value::number(static_cast<double>(decode_utf8(character, at)));
+    object->set("key", cx_->string(std::string{character}));
+    object->set("code", cx_->string(std::string{}));
+    for (const char * flag : {"shiftKey", "ctrlKey", "altKey", "metaKey", "repeat"}) {
+        object->set(flag, value::boolean(false));
+    }
+    object->set("keyCode", point);
+    object->set("charCode", point);
+    object->set("which", point);
+    return dispatch_event("keypress", target, event);
+}
+
 // A `wheel` EVENT, which the page never used to get at all.
 //
 // The notch went straight to the scroller: `handle` scrolled the document and

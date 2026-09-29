@@ -56,6 +56,7 @@ public:
     bool dispatch(std::string_view type, node_id target);
 
     bool dispatch_key(std::string_view type, node_id target, const input_event & input);
+    bool dispatch_keypress(node_id target, std::string_view character); // events/input.cpp
     // USER ACTIVATION (HTML 6.4.3), window/activation.cpp: a trusted
     // activation-triggering input event notifies; transient activation lasts a
     // few seconds after it, sticky activation for good; consuming ends the
