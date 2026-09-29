@@ -9,9 +9,9 @@
 // arm that produces the largest share of DISTINCT reasons was the one nothing
 // pinned.
 //
-// THREE DEFAULT-ARM OPERATIONS AND THE DELETE HOST BOUNDARY. Three pin the
-// SHAPE - operation name in backticks, then the fixed tail - which is what a
-// rewrite would break. They are chosen from four different JavaScript
+// TWO DEFAULT-ARM OPERATIONS AND TWO HOST BOUNDARIES, `delete` and `in`. Two
+// pin the SHAPE - operation name in backticks, then the fixed tail - which is
+// what a rewrite would break. They are chosen from four different JavaScript
 // constructs so that a change to any one importer path leaves the others.
 //
 // THE ARM IS NOT LIMITED TO ctjs OPERATIONS, and that is deliberate: anything
@@ -56,7 +56,12 @@
 
 // --- `k in o` ---------------------------------------------------------------
 //
-// IN: ctnative.not_native = "`ctjs.has_property` is not native yet"
+// The frontend checks both operands through opaque helpers before
+// ctjs.has_property (13.10.1: the object first, then ToPropertyKey), so, like
+// delete, the function stops at the first host call rather than the default arm.
+// IN-LABEL: ctjs.func private @has$1
+// IN-SAME: ctnative.not_native =
+// IN: ctjs.load_global "__ctbrowser_in_object"
 
 //--- deleted.js
 function deleted(n) { delete n.x; return 1; }
