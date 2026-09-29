@@ -111,12 +111,8 @@ bool prefixAnalysis::identitySafeRegion(mlir::Region & region,
             if (!thrown.getValue().getDefiningOp<ctjs::ConstantOp>()) { return false; }
             continue;
         }
-        if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(operation)) {
-            if (unary.getKind() != ctjs::UnaryKind::TypeOf &&
-                unary.getKind() != ctjs::UnaryKind::Not &&
-                unary.getKind() != ctjs::UnaryKind::Void) {
-                return false;
-            }
+        if (llvm::isa<ctjs::UnaryOp>(operation)) {
+            if (!ctjs::nonCoercing(&operation)) { return false; }
             continue;
         }
         if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(operation)) {

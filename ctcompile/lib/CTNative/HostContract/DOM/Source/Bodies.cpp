@@ -277,16 +277,7 @@ bool DOMSource::proveUnusedBody(ctjs::FuncOp function, unsigned depth) {
                 operation)) {
             return mlir::WalkResult::advance();
         }
-        if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(operation);
-            unary &&
-            (unary.getKind() == ctjs::UnaryKind::TypeOf ||
-             unary.getKind() == ctjs::UnaryKind::Not || unary.getKind() == ctjs::UnaryKind::Void)) {
-            return mlir::WalkResult::advance();
-        }
-        if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(operation);
-            compare && compare.getKind() == ctjs::CompareKind::StrictEq) {
-            return mlir::WalkResult::advance();
-        }
+        if (ctjs::nonCoercing(operation)) { return mlir::WalkResult::advance(); }
         refuse(("unused DOM helper body contains an unproved operation: " + function.getSymName() +
                 " / " + operation->getName().getStringRef())
                    .str());

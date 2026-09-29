@@ -597,10 +597,8 @@ std::string analyzer::environmentProblem() {
             }
             return;
         }
-        if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(operation)) {
-            if (unary.getKind() != ctjs::UnaryKind::TypeOf &&
-                unary.getKind() != ctjs::UnaryKind::Not &&
-                unary.getKind() != ctjs::UnaryKind::Void) {
+        if (llvm::isa<ctjs::UnaryOp>(operation)) {
+            if (!ctjs::nonCoercing(operation)) {
                 reject("unproved conversion behavior is unsupported");
             }
             return;
