@@ -349,6 +349,16 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
     });
     if (walked.wasInterrupted()) { return false; }
     if (calls.empty()) { return refuse("source has no class initialization calls"); }
+    if (domEntry && llvm::is_contained(contract.initialIntrinsics, "Map")) {
+        // Map normalization may erase an owner or an unreachable arm. Prove
+        // the original binding and every use before consuming either one.
+        if (!spendWalk(module, declarationCost)) { return false; }
+        auto binding = classBindingContract(contract);
+        binding.initialIntrinsics.push_back("Map");
+        if (auto problem = host_detail::initialBindingProblem(module, binding); !problem.empty()) {
+            return refuse(problem);
+        }
+    }
     if (llvm::is_contained(contract.initialIntrinsics, "Error")) {
         walked = module.walk([&](ctjs::ConstructOp made) -> mlir::WalkResult {
             if (!step()) { return mlir::WalkResult::interrupt(); }
@@ -380,7 +390,7 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
     for (ctjs::CallOp call : calls) {
         auto scope = call->getParentOfType<ctjs::FuncOp>();
         if (!proveCells(scope)) { return false; }
-        if (domEntry || !llvm::is_contained(contract.initialIntrinsics, "Map")) { continue; }
+        if (!llvm::is_contained(contract.initialIntrinsics, "Map")) { continue; }
         for (ctjs::ConstructOp made : scope.getBody().front().getOps<ctjs::ConstructOp>()) {
             if (!step()) { return false; }
             if (!plainMapConstruction(made)) { continue; }

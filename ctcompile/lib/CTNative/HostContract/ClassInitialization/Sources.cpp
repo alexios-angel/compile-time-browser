@@ -265,12 +265,13 @@ bool classInitialization::methodCaptures(ctjs::CreateClosureOp method,
         auto value = sourceValue(cells.lookup(capture));
         if (value == constructorValue) { continue; }
         if (maps.contains(value)) {
-            if (domEntry || value.getDefiningOp()->getBlock() != method->getBlock() ||
+            if (value.getDefiningOp()->getBlock() != method->getBlock() ||
                 !value.getDefiningOp()->isBeforeInBlock(method)) {
                 return refuse("class Map capture requires ordered local initialization");
             }
             mapCells.insert(capture);
             mapClosures.insert(method);
+            needsDOMMethodProof |= domEntry;
             continue;
         }
         if (auto object = value.getDefiningOp<ctjs::CreateObjectOp>(); constructor && object) {

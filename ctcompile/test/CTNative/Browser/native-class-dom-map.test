@@ -1,0 +1,2 @@
+# Prove local Map captures and every original class body before native DOM emission.
+# RUN: python3 %S/native_class_dom_map.py --translate ctjs-translate --opt ctjs-opt --node %node --reference %native_reference --clang %dom_clang --build %build --include %{monorepo}/ctbrowser/include --nm %nm --work %t

@@ -6,7 +6,8 @@ namespace {
 
 // Replace a call with a direct call of `function`: undefined receiver, new.target
 // and callee, its arguments padded with undefined, then `extra` as the last formals.
-void callDirect(mlir::Operation * call, ctjs::FuncOp function, mlir::ValueRange extra = {}) {
+ctjs::CallDirectOp callDirect(mlir::Operation * call, ctjs::FuncOp function,
+                              mlir::ValueRange extra = {}) {
     mlir::OpBuilder at(call);
     auto absent =
         ctjs::ConstantOp::create(at, call->getLoc(), ctjs::UndefinedAttr::get(call->getContext()));
@@ -23,6 +24,7 @@ void callDirect(mlir::Operation * call, ctjs::FuncOp function, mlir::ValueRange 
                                    absent, absent, arguments, nullptr, nullptr);
     call->getResult(0).replaceAllUsesWith(replacement.getResult());
     call->erase();
+    return replacement;
 }
 
 } // namespace
@@ -236,7 +238,16 @@ bool classInitialization::transportHelperMaps() {
                 maps.push_back(available[caller].lookup(map));
             }
         }
-        callDirect(op, function, maps);
+        // This replacement already discards the proved inert callee. Do not
+        // retain its old call pointer for the later DOM helper rewrite.
+        if (!spend(inertCalleeCalls.size() + cells.size())) { return false; }
+        llvm::erase(inertCalleeCalls, op);
+        const auto previous = op->getResult(0);
+        auto replacement = callDirect(op, function, maps);
+        for (auto & [cell, initial] : cells) {
+            (void)cell;
+            if (initial == previous) { initial = replacement.getResult(); }
+        }
     }
     return reason.empty();
 }
