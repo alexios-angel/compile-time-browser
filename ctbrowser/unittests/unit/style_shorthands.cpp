@@ -405,8 +405,8 @@ void test_native_and_cssom_expansion_contracts() {
     css::declaration_block flex;
     css::set_declaration(flex, "flex", "1", false);
     const auto native_flex = css::expand_cascaded_shorthand("flex", "1");
-    check(native_flex[2].second == "0%" && css::declaration_value(flex, "flex-basis") == "0px",
-          "the two callers preserve their existing omitted-basis policy");
+    check(native_flex[2].second == "0%" && css::declaration_value(flex, "flex-basis") == "0%",
+          "the two callers agree on flex's omitted basis, 0%");
     const auto legacy_flex = css::expand_cascaded_shorthand("flex", "1 20px 30px");
     check(legacy_flex[1].second == "1" && legacy_flex[2].second == "30px" &&
               !css::set_declaration(flex, "flex", "1 20px 30px", false),

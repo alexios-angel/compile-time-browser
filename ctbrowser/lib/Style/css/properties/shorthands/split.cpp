@@ -81,8 +81,11 @@ split split_bar(const expansion & e, std::span<const std::string_view> parts,
 }
 
 // `flex`, whose omitted parts are NOT the longhands' initial values:
-// `flex: 1` is `1 1 0`, Flexbox 1 §7.1.1 - the omitted basis is the length 0
-// (`0px` serialised), not `0%`: cssom/flex-serialization asks for `0 1 0px`.
+// `flex: 1` is `1 1 0%` - the omitted basis is the zero every engine writes as
+// `0%` (css-flexbox flex-valid, flex-computed, flex-shorthand) and the one the
+// cascade has always expanded it to (properties/cascade.cpp), so `el.style.flex
+// = "1"` lays out as the same rule would. cssom/flex-serialization's older
+// `0 1 0px` is the one expectation this leaves unmet.
 split split_flex(std::span<const std::string_view> parts, std::vector<std::string> & out) {
     const auto parse = [](std::string_view name,
                           std::string_view part) -> std::optional<std::string> {
@@ -91,7 +94,7 @@ split split_flex(std::span<const std::string_view> parts, std::vector<std::strin
         return valid ? std::optional{std::move(text)} : std::nullopt;
     };
     auto values = detail::expand_flex<std::string>(
-        parts, "0px", [parse](std::string_view part) { return parse("flex-grow", part); },
+        parts, "0%", [parse](std::string_view part) { return parse("flex-grow", part); },
         [parse](std::string_view part) { return parse("flex-basis", part); });
     if (!values) { return split::invalid; }
     out = {(*values)[0], (*values)[1], (*values)[2]};
