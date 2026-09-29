@@ -30,10 +30,10 @@ element_facts engine::facts_of(const read_txn & txn, node_id id) const {
     if (!id_attr.empty()) { f.id = atoms_->intern(id_attr); }
     split_classes(txn.attribute_value(id, class_name()), f.classes);
     f.states = state_of(id);
-    // `:focus-visible` is `:focus` here (selector.hpp says why), and
     // `:focus-within` asks whether the focused element - there is at most a
     // handful of elements with any state at all - is this one or under it.
-    if ((f.states & state_focus) != 0) { f.states |= state_focus_visible | state_focus_within; }
+    // (`:focus-visible` is a bit of its own, set by the shell.)
+    if ((f.states & state_focus) != 0) { f.states |= state_focus_within; }
     for (const auto & [key, bits] : (states_source_ ? states_source_ : this)->states_) {
         if ((bits & state_focus) == 0 || (f.states & state_focus_within) != 0) { continue; }
         const node_id focused{static_cast<std::uint32_t>(key >> 32),
