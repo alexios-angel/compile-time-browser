@@ -46,13 +46,17 @@ void tab(browser & page, bool shift = false) {
 // focus() on an element with no tabindex that nothing makes focusable does
 // nothing - body.focus() above all, which testdriver's send_keys runs before
 // every key - while tabindex=-1 is focusable and the document element's focus
-// is the viewport's.
+// is the viewport's. Nothing focused is the body, while the page is still
+// parsing too (shadow-dom/focus/focus-click-on-shadow-host.html).
 void test_only_a_focusable_area_takes_focus() {
     browser page{browser_options{400, 300}};
     page.load_html(
         "<!doctype html><body><input id=field><div id=plain>plain</div>"
         "<div id=minus tabindex=-1>minus</div><div id=gone tabindex=0 style='display:none'>x</div>"
-        "<div id=hid tabindex=0 hidden>h</div></body>");
+        "<div id=hid tabindex=0 hidden>h</div>"
+        "<script>console.log('parsing=' + (document.activeElement === document.body))</script>"
+        "</body>");
+    CHECK_EQ(logged(page, "parsing="), std::string{"parsing=true"});
     page.frame();
     (void)page.run_script("field.focus(); document.body.focus(); plain.focus(); gone.focus();"
                           "hid.focus();");

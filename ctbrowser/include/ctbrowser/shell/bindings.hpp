@@ -871,8 +871,6 @@ private:
                                              std::string_view interface_name = "HTMLCollection");
     [[nodiscard]] std::vector<node_id> query(std::string_view selector, node_id within = node_id{},
                                              bool * invalid = nullptr, bool first_only = false);
-    // The document's own live properties - title and activeElement.
-    void refresh_document();
 
     document * doc_;
     atom_table * atoms_;

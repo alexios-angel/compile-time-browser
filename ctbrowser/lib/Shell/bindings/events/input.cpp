@@ -53,12 +53,9 @@ bool dom_bindings::refresh_wrappers() {
     // box metrics and reflected attributes are accessors; walking the whole
     // table before each dispatch and layout was quadratic in a page that
     // makes elements as it goes (the interpolation harness makes one per
-    // subtest). The two things that can be stale are the interface chain of
-    // a wrapper made before EventTarget existed, which is linked once, and
-    // the document's live properties - activeElement and title would go
-    // stale the moment focus moved.
+    // subtest). The one thing that can be stale is the interface chain of a
+    // wrapper made before EventTarget existed, which is linked once.
     ensure_dom_interfaces(*cx_);
-    refresh_document();
     return std::exchange(wrote_to_control_, false);
 }
 
@@ -69,7 +66,6 @@ bool dom_bindings::refresh_wrappers() {
 // snapshot, and this one changes on every click.
 void dom_bindings::observe_focus(node_id id) {
     focused_ = id;
-    refresh_document();
     place_caret_on_focus(id); // an editing host gets a caret - see selection.cpp
 }
 
