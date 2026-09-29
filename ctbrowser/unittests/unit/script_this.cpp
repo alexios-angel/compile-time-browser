@@ -11,6 +11,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 
 using ctbrowser::script::compiler;
 using ctbrowser::script::context;
@@ -182,6 +183,56 @@ void test_entry_paths(bool compiled) {
     check(compiled_entries == (compiled ? 3u : 0u), "every intended compiled entry was exercised");
 }
 
+void test_call_paths(bool compiled) {
+    program definitions = compiler::compile(R"(
+        var observedReceiver;
+        function ordinary() { observedReceiver = this; }
+        function strictReceiver() { 'use strict'; observedReceiver = this; }
+        var lexical = () => { observedReceiver = this; };
+        globalThis = undefined;
+    )");
+    if (compiled) {
+        for (std::size_t i = 1; i < definitions.functions.size(); ++i) {
+            definitions.functions[i].aot_entry = &sample_script_receiver;
+        }
+    }
+    context cx;
+    ctbrowser::script::install_builtins(cx);
+    cx.set_realm_template(cx.globals());
+    check(cx.run(definitions).ok, "receiver functions are installed");
+    const value explicit_receiver = cx.make_object();
+    cx.define_global("explicitReceiver", explicit_receiver);
+    compiled_entries = 0;
+    for (const auto & [source, expected] :
+         {std::pair{"ordinary();", cx.global_this()},
+          std::pair{"ordinary.call(null);", cx.global_this()},
+          std::pair{"ordinary.call(explicitReceiver);", explicit_receiver},
+          std::pair{"strictReceiver();", value::undefined()},
+          std::pair{"strictReceiver.call(null);", value::null()},
+          std::pair{"lexical.call(null);", cx.global_this()}}) {
+        const program call = compiler::compile(source);
+        check(cx.run(call).ok && cx.global("observedReceiver").strict_equals(expected), source);
+    }
+    auto & other = cx.create_realm();
+    other.global_this = cx.make_global_object(other);
+    other.globals[std::string{"globalThis"}] = other.global_this;
+    value foreign = value::undefined();
+    {
+        const context::realm_scope in_other{cx, other};
+        check(cx.run(definitions).ok, "foreign receiver functions are installed");
+        foreign = cx.global("ordinary");
+    }
+    cx.define_global("foreign", foreign);
+    const program foreign_call = compiler::compile("foreign();");
+    check(cx.run(foreign_call).ok, "a foreign function is called from the main realm");
+    {
+        const context::realm_scope in_other{cx, other};
+        check(cx.global("observedReceiver").strict_equals(other.global_this),
+              "an ordinary call uses its callee's realm, not its caller's");
+    }
+    check(compiled_entries == (compiled ? 7u : 0u), "every intended compiled call was exercised");
+}
+
 } // namespace
 
 int main() {
@@ -189,5 +240,7 @@ int main() {
     test_later_turn_and_collection();
     test_entry_paths(false);
     test_entry_paths(true);
+    test_call_paths(false);
+    test_call_paths(true);
     return ctbrowser_test_failures == 0 ? 0 : 1;
 }

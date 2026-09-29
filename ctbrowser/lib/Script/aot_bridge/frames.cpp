@@ -131,7 +131,13 @@ std::uint64_t aot_bridge::this_value(aot::ct_aot_frame * f) {
     const aot_frame_storage & held = frame_of(f);
     const context & cx = *held.ctx;
     if (held.frame_index >= cx.frames_.size()) { return value::undefined().bits(); }
-    return context::effective_this(cx.frames_[held.frame_index]).bits();
+    const auto & record = cx.frames_[held.frame_index];
+    const value receiver = context::effective_this(record);
+    // OrdinaryCallBindThis (10.2.1.2), as in the VM's load_this handler.
+    if (!record.proto->is_strict && !record.proto->is_arrow && receiver.is_nullish()) {
+        return record.realm->global_this.bits();
+    }
+    return receiver.bits();
 }
 
 // ct_aot_callee. VM_CASE(load_callee) is
