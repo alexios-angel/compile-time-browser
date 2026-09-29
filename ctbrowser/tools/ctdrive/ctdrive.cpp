@@ -449,6 +449,12 @@ int main(int argc, char ** argv) {
     // browser is blinking to its own clock anyway - nothing is learned by
     // asking a reader to reconcile the two.
     options.caret_blink_ms = 0;
+    // A COMMAND IS NOT AN EVENT. The loop polls the socket once per turn, and
+    // an idle page's turn waited out the default quarter second - every round
+    // trip of run-wpt.py's did, so each testdriver action cost about a second
+    // and a test that Tabs twenty times timed out in the driver, not the
+    // engine (shadow-dom/focus-navigation/focus-navigation-slots.html).
+    options.idle_wait_ms = 2;
 
     for (int i = 1; i < argc; ++i) {
         const std::string_view arg{argv[i]};
