@@ -62,6 +62,40 @@ CASES["saved-conditional"] = DIRECT.replace(
     "return a === 8 && b === 9;",
     "return (b !== 9 && saved.n === 0) || (b === 9 && saved.n === 8);",
 )
+ELEMENT_FIELD = (
+    DIRECT.replace("constructor(n)", "constructor(n, target)")
+    .replace("this.n = n;", "this.n = n; this._element = target;")
+    .replace("read() { return this.n; }", "")
+    .replace("new Item(7)", "new Item(7, element)")
+    .replace("new Item(9)", "new Item(9, element)")
+    .replace("current.read()", "current.n")
+)
+CASES["element-field"] = ELEMENT_FIELD.replace(
+    "element.setAttribute('x', 'done')", "first._element.setAttribute('x', 'done')"
+)
+CASES["element-alias"] = ELEMENT_FIELD.replace(
+    "element.setAttribute('x', 'done')", "saved._element.setAttribute('x', 'done')"
+).replace(
+    "return a === 8 && b === 9;",
+    "return a === 8 && b === 9 && saved._element === element && current._element === element;",
+)
+CASES["element-pair"] = (
+    CASES["element-alias"]
+    .replace("new Item(9, element)", "new Item(9, other)")
+    .replace("current._element === element", "current._element === other")
+    .replace("  const a", "  current._element.setAttribute('y', 'current');\n  const a")
+)
+ELEMENT_PAIR_CHECKS = r"""
+        (void)classes;
+        (void)pressed;
+        assert(@ENTRY@(element, foreign));
+        assert(doc.read().attribute_value(button, atoms.intern("x")) == "done");
+        assert(!doc.read().has_attribute(button, atoms.intern("y")));
+        assert(foreign_doc.read().attribute_value(other_button, foreign_atoms.intern("y")) == "current");
+        assert(@ENTRY@(alias, element));
+        assert(doc.read().attribute_value(button, atoms.intern("y")) == "current");
+        (void)doc.take_writes();
+"""
 
 BAD = {
     "indirect-set": DIRECT.replace("state.set('x', this)", "state.set.call(state, 'x', this)"),
@@ -107,6 +141,33 @@ for name, statement in {
 }.items():
     BAD[name] = DIRECT.replace("return a === 8 && b === 9;", statement)
 
+for name, before, after in (
+    ("write", "saved.n = 8;", "saved.n = 8; saved._element = element;"),
+    ("nested-write", "saved.n = 8;", "saved.n = 8; if (first.n === 8) saved._element = null;"),
+    ("repeated-store", "this._element = target;", "this._element = target; this._element = null;"),
+    ("missing-actual", "new Item(7, element)", "new Item(7)"),
+    ("mixed-actual", "new Item(7, element)", "new Item(7, {})"),
+    ("replacement", "state.set('x', this);", "state.set('x', this); return {};"),
+    ("parameter-observer", "this._element = target;", "this._element = target; target.nodeType;"),
+    ("escape", "return a === 8 && b === 9;", "return saved;"),
+    ("capture", "return a === 8 && b === 9;", "return () => saved._element;"),
+    ("coercion", "return a === 8 && b === 9;", "return +saved._element;"),
+    (
+        "method",
+        "state.set('x', this); }",
+        "state.set('x', this); } unused() { return this._element; }",
+    ),
+):
+    BAD["element-" + name] = CASES["element-field"].replace(before, after)
+BAD["element-inheritance"] = (
+    CASES["element-field"]
+    .replace("class Item", "class Base")
+    .replace(
+        "  const first",
+        "  class Item extends Base { constructor(n, target) { super(n, target); } }\n  const first",
+    )
+)
+
 
 def main():
     args = dom.parse_args(__doc__, oracles=True)
@@ -114,12 +175,15 @@ def main():
     executions = refusals = 0
     for name, body in CASES.items():
         text = source(body)
+        inputs = 2 if name == "element-pair" else 1
+        if inputs == 2:
+            text = text.replace("probe(element)", "probe(element, other)")
         oracle = args.work / f"{name}.oracle.js"
-        oracle.write_text(text + f"var result = probe({ELEMENT});\n")
+        oracle.write_text(text + f"var result = probe({', '.join([ELEMENT] * inputs)});\n")
         assert run([args.reference, str(oracle)]).stdout == "result=true\n", name
         oracle.write_text(oracle.read_text() + "console.log('result=' + result);\n")
         assert run([args.node, str(oracle)]).stdout == "result=true\n", name
-        ir, contract = dom.prepare(args, name, text, 1, entry_name="probe", generic=True)
+        ir, contract = dom.prepare(args, name, text, inputs, entry_name="probe", generic=True)
         declared = dict(contract, initial_intrinsics=INTRINSICS)
         for owned, optimize, manifest in dom.variants(declared):
             label = f"{name}-{owned}-{optimize}"
@@ -127,7 +191,8 @@ def main():
             cpp = run([args.translate, "--mlir-to-cpp", str(native)]).stdout
             assert re.search(r"map_storage<std::string, ctn_\w+ \*>", cpp), label
             assert "shared_ptr<ctn_" not in cpp, label
-            dom.standalone(args, native, label, CHECKS, args.compilers, includes, libraries)
+            checks = ELEMENT_PAIR_CHECKS if inputs == 2 else CHECKS
+            dom.standalone(args, native, label, checks, args.compilers, includes, libraries)
             executions += 4
         for missing in ("Map", "__ctbrowser_class_defined") + (
             ("Object",) if name == "snapshot" else ()
@@ -142,6 +207,18 @@ def main():
                     ir,
                     manifest,
                     f"{name}-missing-{missing}-{owned}-{optimize}",
+                    optimize=optimize,
+                    success=False,
+                    max_steps=1000000,
+                )
+                refusals += 1
+        if name.startswith("element-"):
+            for owned, optimize, manifest in dom.variants(dict(declared, element_parameters=[])):
+                dom.lower(
+                    args,
+                    ir,
+                    manifest,
+                    f"{name}-no-input-{owned}-{optimize}",
                     optimize=optimize,
                     success=False,
                     max_steps=1000000,
