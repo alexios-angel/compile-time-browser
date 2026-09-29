@@ -162,16 +162,16 @@ void dom_bindings::install_webgl_methods(context & cx, script::object_object * o
     };
 
     set_method(cx, *obj, "createBuffer", [gl, handle](context & c, std::span<value>) {
-        return handle(c, gl->create_buffer(), "buffer");
+        return handle(c, gl->device().create_buffer(), "buffer");
     });
     set_method(cx, *obj, "createTexture", [gl, handle](context & c, std::span<value>) {
-        return handle(c, gl->create_texture(), "texture");
+        return handle(c, gl->device().create_texture(), "texture");
     });
     set_method(cx, *obj, "createProgram", [gl, handle](context & c, std::span<value>) {
-        return handle(c, gl->create_program(), "program");
+        return handle(c, gl->device().create_program(), "program");
     });
     set_method(cx, *obj, "createShader", [gl, handle](context & c, std::span<value> a) {
-        return handle(c, gl->create_shader(enum_at(a, 0)), "shader");
+        return handle(c, gl->device().create_shader(int_enum_at(a, 0)), "shader");
     });
     // THE ENTRY POINT NAMES THE KIND, and the kind has to travel with the
     // handle. This loop already knew which of the six it was writing and threw
@@ -192,13 +192,14 @@ void dom_bindings::install_webgl_methods(context & cx, script::object_object * o
         {"deleteRenderbuffer", object_kind::renderbuffer}};
     for (const auto & [name, kind] : deleters) {
         set_method(cx, *obj, name, [gl, kind = kind](context & c, std::span<value> a) {
-            gl->delete_object(kind, id_of(c, a.empty() ? value::undefined() : a[0]));
+            gl->device().delete_object(kind, id_of(c, a.empty() ? value::undefined() : a[0]));
             return value::undefined();
         });
     }
 
     set_method(cx, *obj, "bindBuffer", [gl](context & c, std::span<value> a) {
-        gl->bind_buffer(enum_at(a, 0), id_of(c, a.size() > 1 ? a[1] : value::undefined()));
+        gl->device().bind_buffer(int_enum_at(a, 0),
+                                 id_of(c, a.size() > 1 ? a[1] : value::undefined()));
         return value::undefined();
     });
     set_method(cx, *obj, "bufferSubData", [gl](context & c, std::span<value> a) {
@@ -235,16 +236,16 @@ void dom_bindings::install_webgl_methods(context & cx, script::object_object * o
         const std::uint32_t which = enum_at(a, 1);
         if (which == gl_enum::compile_status) {
             return value::boolean(
-                gl->shader_compiled(id_of(c, a.empty() ? value::undefined() : a[0])));
+                gl->device().shader_compiled(id_of(c, a.empty() ? value::undefined() : a[0])));
         }
         return value::boolean(true);
     });
     set_method(cx, *obj, "getShaderInfoLog", [gl](context & c, std::span<value> a) {
-        return c.string(gl->shader_log(id_of(c, a.empty() ? value::undefined() : a[0])));
+        return c.string(gl->device().shader_log(id_of(c, a.empty() ? value::undefined() : a[0])));
     });
     set_method(cx, *obj, "attachShader", [gl](context & c, std::span<value> a) {
-        gl->attach_shader(id_of(c, a.empty() ? value::undefined() : a[0]),
-                          id_of(c, a.size() > 1 ? a[1] : value::undefined()));
+        gl->device().attach_shader(id_of(c, a.empty() ? value::undefined() : a[0]),
+                                   id_of(c, a.size() > 1 ? a[1] : value::undefined()));
         return value::undefined();
     });
     set_method(cx, *obj, "detachShader",
@@ -257,7 +258,7 @@ void dom_bindings::install_webgl_methods(context & cx, script::object_object * o
         const std::uint32_t which = enum_at(a, 1);
         const std::uint32_t program = id_of(c, a.empty() ? value::undefined() : a[0]);
         if (which == gl_enum::link_status || which == 0x8B83) {
-            return value::boolean(gl->program_linked(program));
+            return value::boolean(gl->device().program_linked(program));
         }
         // ACTIVE_UNIFORMS and ACTIVE_ATTRIBUTES. These used to fall through to
         // the zero below, which is the shape of wrong answer this engine keeps
@@ -307,20 +308,20 @@ void dom_bindings::install_webgl_methods(context & cx, script::object_object * o
     set_method(cx, *obj, "ctbrowserShaderError",
                [gl](context & c, std::span<value>) { return c.string(gl->shader_error()); });
     set_method(cx, *obj, "getProgramInfoLog", [gl](context & c, std::span<value> a) {
-        return c.string(gl->program_log(id_of(c, a.empty() ? value::undefined() : a[0])));
+        return c.string(gl->device().program_log(id_of(c, a.empty() ? value::undefined() : a[0])));
     });
     set_method(cx, *obj, "validateProgram",
                [](context &, std::span<value>) { return value::undefined(); });
     set_method(cx, *obj, "useProgram", [gl](context & c, std::span<value> a) {
-        gl->use_program(id_of(c, a.empty() ? value::undefined() : a[0]));
+        gl->device().use_program(id_of(c, a.empty() ? value::undefined() : a[0]));
         return value::undefined();
     });
 
     // --- attributes
     set_method(cx, *obj, "getAttribLocation", [gl](context & c, std::span<value> a) {
         return value::number(
-            gl->attribute_location(id_of(c, a.empty() ? value::undefined() : a[0]),
-                                   a.size() > 1 ? c.to_string(a[1]) : std::string{}));
+            gl->device().attribute_location(id_of(c, a.empty() ? value::undefined() : a[0]),
+                                            a.size() > 1 ? c.to_string(a[1]) : std::string{}));
     });
     set_method(cx, *obj, "bindAttribLocation", [](context &, std::span<value>) {
         // Locations are assigned at link time in declaration order here, so this
@@ -429,30 +430,30 @@ void dom_bindings::install_webgl_methods(context & cx, script::object_object * o
         return value::undefined();
     });
     set_method(cx, *obj, "enable", [gl](context &, std::span<value> a) {
-        gl->set_enabled(enum_at(a, 0), true);
+        gl->device().set_capability(int_enum_at(a, 0), true);
         return value::undefined();
     });
     set_method(cx, *obj, "disable", [gl](context &, std::span<value> a) {
-        gl->set_enabled(enum_at(a, 0), false);
+        gl->device().set_capability(int_enum_at(a, 0), false);
         return value::undefined();
     });
     set_method(cx, *obj, "depthFunc", [gl](context &, std::span<value> a) {
-        gl->depth_func(enum_at(a, 0));
+        gl->device().depth_func(int_enum_at(a, 0));
         return value::undefined();
     });
     set_method(cx, *obj, "depthMask", [gl](context &, std::span<value> a) {
-        gl->depth_mask(!a.empty() && context::truthy(a[0]));
+        gl->device().depth_mask(!a.empty() && context::truthy(a[0]));
         return value::undefined();
     });
     set_method(cx, *obj, "blendFunc", [gl](context &, std::span<value> a) {
-        gl->blend_func(enum_at(a, 0), enum_at(a, 1));
+        gl->device().blend_func(int_enum_at(a, 0), int_enum_at(a, 1));
         return value::undefined();
     });
     set_method(cx, *obj, "blendFuncSeparate", [gl](context &, std::span<value> a) {
         // The RGB pair only: this rasteriser blends alpha with the same factors,
         // which is what softgl.hpp's blend state can express. A page separating
         // them gets the colour pair applied to both.
-        gl->blend_func(enum_at(a, 0), enum_at(a, 1));
+        gl->device().blend_func(int_enum_at(a, 0), int_enum_at(a, 1));
         return value::undefined();
     });
     // ACCEPTED AND IGNORED. Two different reasons live in this list and it is
@@ -482,44 +483,46 @@ void dom_bindings::install_webgl_methods(context & cx, script::object_object * o
         set_method(cx, *obj, name, [](context &, std::span<value>) { return value::undefined(); });
     }
     set_method(cx, *obj, "cullFace", [gl](context &, std::span<value> a) {
-        gl->cull_face(enum_at(a, 0));
+        gl->device().cull_face(int_enum_at(a, 0));
         return value::undefined();
     });
     set_method(cx, *obj, "frontFace", [gl](context &, std::span<value> a) {
-        gl->front_face(enum_at(a, 0));
+        gl->device().front_face(int_enum_at(a, 0));
         return value::undefined();
     });
     set_method(cx, *obj, "clearColor", [gl](context &, std::span<value> a) {
-        gl->clear_color(static_cast<float>(number_at(a, 0)), static_cast<float>(number_at(a, 1)),
-                        static_cast<float>(number_at(a, 2)), static_cast<float>(number_at(a, 3)));
+        gl->device().clear_color(
+            static_cast<float>(number_at(a, 0)), static_cast<float>(number_at(a, 1)),
+            static_cast<float>(number_at(a, 2)), static_cast<float>(number_at(a, 3)));
         return value::undefined();
     });
     set_method(cx, *obj, "clearDepth", [gl](context &, std::span<value> a) {
-        gl->clear_depth(static_cast<float>(number_at(a, 0)));
+        gl->device().clear_depth(static_cast<float>(number_at(a, 0)));
         return value::undefined();
     });
     set_method(cx, *obj, "clearStencil",
                [](context &, std::span<value>) { return value::undefined(); });
     set_method(cx, *obj, "clear", touches([gl](context &, std::span<value> a) {
-                   gl->clear(enum_at(a, 0));
+                   gl->device().clear_buffers(enum_at(a, 0));
                    return value::undefined();
                }));
 
     // --- textures
     set_method(cx, *obj, "bindTexture", [gl](context & c, std::span<value> a) {
-        gl->bind_texture(enum_at(a, 0), id_of(c, a.size() > 1 ? a[1] : value::undefined()));
+        gl->device().bind_texture(int_enum_at(a, 0),
+                                  id_of(c, a.size() > 1 ? a[1] : value::undefined()));
         return value::undefined();
     });
     set_method(cx, *obj, "activeTexture", [gl](context &, std::span<value> a) {
-        gl->active_texture(enum_at(a, 0));
+        gl->device().active_texture(int_enum_at(a, 0));
         return value::undefined();
     });
     set_method(cx, *obj, "texParameteri", [gl](context &, std::span<value> a) {
-        gl->texture_parameter(enum_at(a, 0), enum_at(a, 1), enum_at(a, 2));
+        gl->device().texture_parameter(int_enum_at(a, 0), int_enum_at(a, 1), int_enum_at(a, 2));
         return value::undefined();
     });
     set_method(cx, *obj, "texParameterf", [gl](context &, std::span<value> a) {
-        gl->texture_parameter(enum_at(a, 0), enum_at(a, 1), enum_at(a, 2));
+        gl->device().texture_parameter(int_enum_at(a, 0), int_enum_at(a, 1), int_enum_at(a, 2));
         return value::undefined();
     });
     set_method(cx, *obj, "texImage2D", [this, gl](context & c, std::span<value> a) {

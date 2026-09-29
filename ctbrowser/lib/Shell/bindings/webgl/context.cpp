@@ -54,7 +54,7 @@ value dom_bindings::webgl_context_object(context & cx, node_id id, int version) 
         // halfway through its first frame - which is what nine render tests
         // reported as "Unable to create VAO" the moment the software fallback
         // was removed.
-        if (!made->ok()) {
+        if (!made->device().ok()) {
             made.reset();
             return value::null();
         }

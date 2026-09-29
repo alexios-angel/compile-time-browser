@@ -43,6 +43,11 @@ namespace ctbrowser::shell::detail {
     return to_index(number_at(args, i));
 }
 
+// The same, as the `int` raster::gl::device takes a GL enum as.
+[[nodiscard]] inline int int_enum_at(std::span<value> args, std::size_t i) {
+    return static_cast<int>(enum_at(args, i));
+}
+
 [[nodiscard]] inline int int_at(std::span<value> args, std::size_t i) {
     const double d = number_at(args, i);
     if (std::isnan(d)) { return 0; }

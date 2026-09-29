@@ -281,7 +281,7 @@ public:
     // THE BINDINGS SPELL THESE AS webgl_context::active_variable, and that is
     // the right name from a caller's point of view - they are what a context
     // reports. They live outside the class so the header's readers meet them
-    // before the 64 methods rather than inside them.
+    // before the methods rather than inside them.
     using active_variable = shell::active_variable;
     using vertex_attribute = shell::vertex_attribute;
     using uniform_value = shell::uniform_value;
@@ -289,8 +289,7 @@ public:
     // THE CANVAS OWNS THE BITMAP, not this. A page's canvas already has a
     // surface the painter composites; borrowing it means `present()` writes
     // where the compositor already looks, with no second copy to keep in step.
-    webgl_context(paint::bitmap * surface, int width, int height,
-                  raster::gl::driver which = raster::gl::driver::fastest);
+    webgl_context(paint::bitmap * surface, int width, int height);
 
     // A CANVAS THAT CHANGED SIZE. The device is recreated, because a GL surface
     // has a fixed size and a context whose drawing buffer no longer matches the
@@ -298,12 +297,9 @@ public:
     // something is drawn near an edge.
     void resize(paint::bitmap * surface, int width, int height);
 
-    [[nodiscard]] bool ok() const;
-
-    // --- context and surface -------------------------------------------------
-
-    [[nodiscard]] int width() const;
-    [[nodiscard]] int height() const;
+    // THE DEVICE ITSELF, for every call that is a plain translation: this class
+    // keeps only the methods that validate, record an error or trace.
+    [[nodiscard]] raster::gl::device & device() { return device_; }
 
     // The canvas bitmap, which is what the painter composites. Reading the
     // device into it is `present()`, and it is deliberately NOT done per draw:
@@ -320,29 +316,15 @@ public:
 
     void viewport(int x, int y, int width, int height);
     void scissor(int x, int y, int width, int height);
-    void clear(std::uint32_t mask);
-    void clear_color(float red, float green, float blue, float alpha);
-    void clear_depth(float depth);
-    void set_enabled(std::uint32_t capability, bool on);
 
     // --- shaders and programs ------------------------------------------------
 
-    [[nodiscard]] std::uint32_t create_shader(std::uint32_t kind);
     void shader_source(std::uint32_t shader, std::string_view source);
     void compile_shader(std::uint32_t shader);
-    [[nodiscard]] bool shader_compiled(std::uint32_t shader) const;
-    [[nodiscard]] std::string shader_log(std::uint32_t shader) const;
-
-    [[nodiscard]] std::uint32_t create_program();
-    void attach_shader(std::uint32_t program, std::uint32_t shader);
     void link_program(std::uint32_t program);
-    [[nodiscard]] bool program_linked(std::uint32_t program) const;
-    [[nodiscard]] std::string program_log(std::uint32_t program) const;
-    void use_program(std::uint32_t program);
 
     [[nodiscard]] std::vector<active_variable> active_attributes(std::uint32_t program) const;
     [[nodiscard]] std::vector<active_variable> active_uniforms(std::uint32_t program) const;
-    [[nodiscard]] int attribute_location(std::uint32_t program, std::string_view name) const;
 
     [[nodiscard]] int get_uniform_block_index(std::uint32_t program, std::string_view name) const;
     void uniform_block_binding(std::uint32_t program, std::uint32_t index, std::uint32_t binding);
@@ -353,13 +335,10 @@ public:
 
     // --- buffers, attributes and vertex arrays --------------------------------
 
-    [[nodiscard]] std::uint32_t create_buffer();
-    void bind_buffer(std::uint32_t target, std::uint32_t buffer);
     void buffer_data(std::uint32_t target, std::span<const std::byte> bytes, std::uint32_t usage);
     void buffer_data(std::uint32_t target, int size, std::uint32_t usage);
     void buffer_sub_data(std::uint32_t target, int offset, std::span<const std::byte> bytes);
     void bind_buffer_base(std::uint32_t target, std::uint32_t index, std::uint32_t buffer);
-    void delete_object(raster::gl::device::object_kind kind, std::uint32_t name);
 
     void enable_attribute(int location, bool on);
     void attribute_pointer(int location, int size, std::uint32_t type, bool normalised, int stride,
@@ -371,47 +350,22 @@ public:
     // answer would be a guess wearing the shape of a fact.
     [[nodiscard]] const vertex_attribute * attribute_at(int location) const;
 
-    [[nodiscard]] std::uint32_t create_vertex_array();
-    void bind_vertex_array(std::uint32_t array);
-    void delete_vertex_array(std::uint32_t array);
-    [[nodiscard]] bool is_vertex_array(std::uint32_t array) const;
-    [[nodiscard]] std::uint32_t bound_vertex_array() const;
-
     // --- textures and framebuffers --------------------------------------------
 
-    [[nodiscard]] std::uint32_t create_texture();
-    void bind_texture(std::uint32_t target, std::uint32_t texture);
-    void active_texture(std::uint32_t unit);
     void texture_image(std::uint32_t target, int width, int height,
                        std::span<const std::byte> rgba);
     // A DECODED IMAGE, straight from the canvas layer. `texImage2D` with an
     // <img> or a <canvas> is the common case and the bitmap is already ARGB, so
     // the swap happens once here rather than in every caller.
     void texture_from_bitmap(std::uint32_t target, const paint::bitmap & image);
-    void texture_parameter(std::uint32_t target, std::uint32_t name, std::uint32_t value);
 
-    void bind_framebuffer(std::uint32_t framebuffer);
-    void framebuffer_texture(std::uint32_t attachment, std::uint32_t texture);
-    [[nodiscard]] std::uint32_t framebuffer_status() const;
-    [[nodiscard]] std::uint32_t create_framebuffer();
-    [[nodiscard]] std::uint32_t create_renderbuffer();
-    void bind_renderbuffer(std::uint32_t renderbuffer);
-    void renderbuffer_storage(std::uint32_t format, int width, int height);
-    void framebuffer_renderbuffer(std::uint32_t attachment, std::uint32_t renderbuffer);
-
-    // --- draws and pipeline state ---------------------------------------------
+    // --- draws -----------------------------------------------------------------
 
     void draw_arrays(std::uint32_t mode, int first, int count);
     void draw_elements(std::uint32_t mode, int count, std::uint32_t type, int offset);
     void draw_arrays_instanced(std::uint32_t mode, int first, int count, int instances);
     void draw_elements_instanced(std::uint32_t mode, int count, std::uint32_t type, int offset,
                                  int instances);
-
-    void cull_face(std::uint32_t which);
-    void front_face(std::uint32_t which);
-    void depth_func(std::uint32_t how);
-    void depth_mask(bool on);
-    void blend_func(std::uint32_t source, std::uint32_t destination);
 
     // --- the error contract, which is NOT the thing being deleted ------------
     //
@@ -420,11 +374,6 @@ public:
     // read `getError`, and a report can list what this engine declined. Keeping
     // it is deliberate.
     [[nodiscard]] std::uint32_t take_error();
-    // One integer cap, asked of GL. See raster::gl::device::limit.
-    [[nodiscard]] int limit(std::uint32_t name) const;
-    // WHAT IS ACTUALLY DRAWING, for getParameter(RENDERER) - the string a
-    // page prints into a bug report, so it has to be the driver's own.
-    [[nodiscard]] std::string renderer() const;
     void refuse(std::string_view call);
     [[nodiscard]] const std::vector<std::string> & refused() const;
     [[nodiscard]] const std::string & shader_error() const;

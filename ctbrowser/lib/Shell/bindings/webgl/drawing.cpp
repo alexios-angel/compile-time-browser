@@ -76,23 +76,23 @@ void dom_bindings::install_webgl_draw_methods(context & cx, script::object_objec
 
     if (webgl2) {
         set_method(cx, *obj, "createVertexArray", [gl](context &, std::span<value>) {
-            return value::number(gl->create_vertex_array());
+            return value::number(gl->device().create_vertex_array());
         });
         set_method(cx, *obj, "bindVertexArray", [gl](context &, std::span<value> a) {
-            gl->bind_vertex_array(
+            gl->device().bind_vertex_array(
                 a.empty() || !a[0].is_number() ? 0U : static_cast<std::uint32_t>(a[0].as_number()));
             return value::undefined();
         });
         set_method(cx, *obj, "deleteVertexArray", [gl](context &, std::span<value> a) {
             if (!a.empty() && a[0].is_number()) {
-                gl->delete_vertex_array(static_cast<std::uint32_t>(a[0].as_number()));
+                gl->device().delete_vertex_array(static_cast<std::uint32_t>(a[0].as_number()));
             }
             return value::undefined();
         });
         set_method(cx, *obj, "isVertexArray", [gl](context &, std::span<value> a) {
             return value::boolean(
                 !a.empty() && a[0].is_number() &&
-                gl->is_vertex_array(static_cast<std::uint32_t>(a[0].as_number())));
+                gl->device().is_vertex_array(static_cast<std::uint32_t>(a[0].as_number())));
         });
         set_method(cx, *obj, "vertexAttribDivisor", [gl](context &, std::span<value> a) {
             gl->attribute_divisor(
@@ -220,83 +220,86 @@ void dom_bindings::install_webgl_draw_methods(context & cx, script::object_objec
     // --- reading back
     set_method(cx, *obj, "getError",
                [gl](context &, std::span<value>) { return value::number(gl->take_error()); });
-    set_method(
-        cx, *obj, "getParameter", [width, height, webgl2, gl](context & c, std::span<value> a) {
-            switch (enum_at(a, 0)) {
-            // WHICH VERTEX ARRAY IS BOUND. A page checks this to save and restore
-            // the binding around its own work, and zero - the default array - has
-            // to read as null rather than 0, because that is what a page tests.
-            case 0x85B5:
-                return gl->bound_vertex_array() == 0 ? value::null()
-                                                     : value::number(gl->bound_vertex_array());
-            // p5 READS BOTH OF THESE to decide what it is talking to, so they
-            // have to say 2.0 / 3.00 on a WebGL 2 context rather than being
-            // decoration.
-            case gl_enum::version:
-                return c.string(webgl2 ? "WebGL 2.0 (ctbrowser)" : "WebGL 1.0 (ctbrowser)");
-            case gl_enum::shading_language_version:
-                return c.string(webgl2 ? "WebGL GLSL ES 3.00" : "WebGL GLSL ES 1.0");
-            case gl_enum::vendor: return c.string("ctbrowser");
-            // WHAT IS ACTUALLY DRAWING. This said "ctbrowser software rasteriser",
-            // which stopped being true when the software rasteriser was deleted -
-            // and RENDERER is the string a page prints into a bug report, so a
-            // wrong one costs somebody else the afternoon. SwiftShader and an Intel
-            // Arc are the same code path and very different numbers.
-            case gl_enum::renderer: return c.string(gl->renderer());
-            case 0x0D3A: { // MAX_VIEWPORT_DIMS
-                const value out = c.make_array();
-                auto * items = static_cast<script::array_object *>(out.as_heap());
-                items->items.push_back(value::number(width));
-                items->items.push_back(value::number(height));
-                return out;
-            }
-            default: break;
-            }
+    set_method(cx, *obj, "getParameter",
+               [width, height, webgl2, gl](context & c, std::span<value> a) {
+                   switch (enum_at(a, 0)) {
+                   // WHICH VERTEX ARRAY IS BOUND. A page checks this to save and restore
+                   // the binding around its own work, and zero - the default array - has
+                   // to read as null rather than 0, because that is what a page tests.
+                   case 0x85B5:
+                       return gl->device().bound_vertex_array() == 0
+                                  ? value::null()
+                                  : value::number(gl->device().bound_vertex_array());
+                   // p5 READS BOTH OF THESE to decide what it is talking to, so they
+                   // have to say 2.0 / 3.00 on a WebGL 2 context rather than being
+                   // decoration.
+                   case gl_enum::version:
+                       return c.string(webgl2 ? "WebGL 2.0 (ctbrowser)" : "WebGL 1.0 (ctbrowser)");
+                   case gl_enum::shading_language_version:
+                       return c.string(webgl2 ? "WebGL GLSL ES 3.00" : "WebGL GLSL ES 1.0");
+                   case gl_enum::vendor: return c.string("ctbrowser");
+                   // WHAT IS ACTUALLY DRAWING. This said "ctbrowser software rasteriser",
+                   // which stopped being true when the software rasteriser was deleted -
+                   // and RENDERER is the string a page prints into a bug report, so a
+                   // wrong one costs somebody else the afternoon. SwiftShader and an Intel
+                   // Arc are the same code path and very different numbers.
+                   case gl_enum::renderer: return c.string(gl->device().renderer());
+                   case 0x0D3A: { // MAX_VIEWPORT_DIMS
+                       const value out = c.make_array();
+                       auto * items = static_cast<script::array_object *>(out.as_heap());
+                       items->items.push_back(value::number(width));
+                       items->items.push_back(value::number(height));
+                       return out;
+                   }
+                   default: break;
+                   }
 
-            // ASKED OF GL, from a list of the enums that ARE plain integers.
-            //
-            // This was a hardcoded table ending in `default: return 0`, so ten caps
-            // Babylon reads - MAX_VARYING_VECTORS, MAX_DRAW_BUFFERS, MAX_SAMPLES,
-            // MAX_COMBINED_TEXTURE_IMAGE_UNITS and the rest - came back ZERO. A
-            // page sizes buffers and picks shader permutations from those numbers,
-            // and zero is a plausible-looking answer rather than a missing one:
-            // Babylon's PBR path disables a feature when maxVaryingVectors <= 8,
-            // and it was reading 0.
-            //
-            // A LIST rather than forwarding anything: most GL parameters are not
-            // integers, and glGetIntegerv on a boolean, a float or an unknown enum
-            // is either wrong or an INVALID_ENUM this layer would then have to
-            // swallow out of the page's error queue. An enum that is not here
-            // answers null, which is what WebGL says for one it does not recognise.
-            static constexpr std::uint32_t integer_parameters[] = {
-                0x0D33, // MAX_TEXTURE_SIZE
-                0x8869, // MAX_VERTEX_ATTRIBS
-                0x8872, // MAX_TEXTURE_IMAGE_UNITS
-                0x8B4C, // MAX_VERTEX_TEXTURE_IMAGE_UNITS
-                0x8B4D, // MAX_COMBINED_TEXTURE_IMAGE_UNITS
-                0x8DFB, // MAX_VERTEX_UNIFORM_VECTORS
-                0x8DFC, // MAX_VARYING_VECTORS
-                0x8DFD, // MAX_FRAGMENT_UNIFORM_VECTORS
-                0x851C, // MAX_CUBE_MAP_TEXTURE_SIZE
-                0x84E8, // MAX_RENDERBUFFER_SIZE
-                0x8073, // MAX_3D_TEXTURE_SIZE
-                0x88FF, // MAX_ARRAY_TEXTURE_LAYERS
-                0x8824, // MAX_DRAW_BUFFERS
-                0x8D57, // MAX_SAMPLES
-                0x8A2F, // MAX_UNIFORM_BUFFER_BINDINGS
-                0x8A30, // MAX_UNIFORM_BLOCK_SIZE
-                0x8A34, // UNIFORM_BUFFER_OFFSET_ALIGNMENT
-                0x8B49, // MAX_FRAGMENT_UNIFORM_COMPONENTS
-                0x8B4A, // MAX_VERTEX_UNIFORM_COMPONENTS
-                0x8CDF, // MAX_COLOR_ATTACHMENTS
-                0x84E2, // MAX_TEXTURE_UNITS
-            };
-            const std::uint32_t asked = enum_at(a, 0);
-            for (const std::uint32_t known : integer_parameters) {
-                if (known == asked) { return value::number(gl->limit(asked)); }
-            }
-            return value::null();
-        });
+                   // ASKED OF GL, from a list of the enums that ARE plain integers.
+                   //
+                   // This was a hardcoded table ending in `default: return 0`, so ten caps
+                   // Babylon reads - MAX_VARYING_VECTORS, MAX_DRAW_BUFFERS, MAX_SAMPLES,
+                   // MAX_COMBINED_TEXTURE_IMAGE_UNITS and the rest - came back ZERO. A
+                   // page sizes buffers and picks shader permutations from those numbers,
+                   // and zero is a plausible-looking answer rather than a missing one:
+                   // Babylon's PBR path disables a feature when maxVaryingVectors <= 8,
+                   // and it was reading 0.
+                   //
+                   // A LIST rather than forwarding anything: most GL parameters are not
+                   // integers, and glGetIntegerv on a boolean, a float or an unknown enum
+                   // is either wrong or an INVALID_ENUM this layer would then have to
+                   // swallow out of the page's error queue. An enum that is not here
+                   // answers null, which is what WebGL says for one it does not recognise.
+                   static constexpr std::uint32_t integer_parameters[] = {
+                       0x0D33, // MAX_TEXTURE_SIZE
+                       0x8869, // MAX_VERTEX_ATTRIBS
+                       0x8872, // MAX_TEXTURE_IMAGE_UNITS
+                       0x8B4C, // MAX_VERTEX_TEXTURE_IMAGE_UNITS
+                       0x8B4D, // MAX_COMBINED_TEXTURE_IMAGE_UNITS
+                       0x8DFB, // MAX_VERTEX_UNIFORM_VECTORS
+                       0x8DFC, // MAX_VARYING_VECTORS
+                       0x8DFD, // MAX_FRAGMENT_UNIFORM_VECTORS
+                       0x851C, // MAX_CUBE_MAP_TEXTURE_SIZE
+                       0x84E8, // MAX_RENDERBUFFER_SIZE
+                       0x8073, // MAX_3D_TEXTURE_SIZE
+                       0x88FF, // MAX_ARRAY_TEXTURE_LAYERS
+                       0x8824, // MAX_DRAW_BUFFERS
+                       0x8D57, // MAX_SAMPLES
+                       0x8A2F, // MAX_UNIFORM_BUFFER_BINDINGS
+                       0x8A30, // MAX_UNIFORM_BLOCK_SIZE
+                       0x8A34, // UNIFORM_BUFFER_OFFSET_ALIGNMENT
+                       0x8B49, // MAX_FRAGMENT_UNIFORM_COMPONENTS
+                       0x8B4A, // MAX_VERTEX_UNIFORM_COMPONENTS
+                       0x8CDF, // MAX_COLOR_ATTACHMENTS
+                       0x84E2, // MAX_TEXTURE_UNITS
+                   };
+                   const std::uint32_t asked = enum_at(a, 0);
+                   for (const std::uint32_t known : integer_parameters) {
+                       if (known == asked) {
+                           return value::number(gl->device().limit(static_cast<int>(asked)));
+                       }
+                   }
+                   return value::null();
+               });
     // --- the extensions, which are the WebGL 1 spelling of WebGL 2 ----------
     //
     // ONE IMPLEMENTATION, TWO NAMES. `createVertexArrayOES` here and
@@ -335,28 +338,30 @@ void dom_bindings::install_webgl_draw_methods(context & cx, script::object_objec
         if (name == "OES_vertex_array_object") {
             return make("vao", [gl](auto add) {
                 add("createVertexArrayOES", [gl](context & inner, std::span<value>) {
-                    return value::number(gl->create_vertex_array());
+                    return value::number(gl->device().create_vertex_array());
                     (void)inner;
                 });
                 add("bindVertexArrayOES", [gl](context & inner, std::span<value> args) {
-                    gl->bind_vertex_array(args.empty() || !args[0].is_number()
-                                              ? 0U
-                                              : static_cast<std::uint32_t>(args[0].as_number()));
+                    gl->device().bind_vertex_array(
+                        args.empty() || !args[0].is_number()
+                            ? 0U
+                            : static_cast<std::uint32_t>(args[0].as_number()));
                     (void)inner;
                     return value::undefined();
                 });
                 add("deleteVertexArrayOES", [gl](context & inner, std::span<value> args) {
                     if (!args.empty() && args[0].is_number()) {
-                        gl->delete_vertex_array(static_cast<std::uint32_t>(args[0].as_number()));
+                        gl->device().delete_vertex_array(
+                            static_cast<std::uint32_t>(args[0].as_number()));
                     }
                     (void)inner;
                     return value::undefined();
                 });
                 add("isVertexArrayOES", [gl](context & inner, std::span<value> args) {
                     (void)inner;
-                    return value::boolean(
-                        !args.empty() && args[0].is_number() &&
-                        gl->is_vertex_array(static_cast<std::uint32_t>(args[0].as_number())));
+                    return value::boolean(!args.empty() && args[0].is_number() &&
+                                          gl->device().is_vertex_array(
+                                              static_cast<std::uint32_t>(args[0].as_number())));
                 });
             });
         }
@@ -451,7 +456,7 @@ void dom_bindings::install_webgl_draw_methods(context & cx, script::object_objec
             for (int column = 0; column < w; ++column) {
                 // GL READS BOTTOM-UP: row 0 of the result is the BOTTOM row of
                 // the surface, which is the same origin flip the viewport has.
-                const int sy = gl->height() - 1 - (y + row);
+                const int sy = gl->device().height() - 1 - (y + row);
                 const std::uint32_t texel =
                     (sy < 0 || sy >= from->height) ? 0 : from->at(x + column, sy);
                 for (const std::uint32_t shift : {16u, 8u, 0u, 24u}) { // RGBA out
@@ -473,10 +478,10 @@ void dom_bindings::install_webgl_draw_methods(context & cx, script::object_objec
     // target, widening the collision the kind-less delete_object was deleting
     // through.
     set_method(cx, *obj, "createFramebuffer", [gl, handle](context & c, std::span<value>) {
-        return handle(c, gl->create_framebuffer(), "framebuffer");
+        return handle(c, gl->device().create_framebuffer(), "framebuffer");
     });
     set_method(cx, *obj, "createRenderbuffer", [gl, handle](context & c, std::span<value>) {
-        return handle(c, gl->create_renderbuffer(), "renderbuffer");
+        return handle(c, gl->device().create_renderbuffer(), "renderbuffer");
     });
     // THROUGH id_of, NOT as_number. A framebuffer arrives as a WRAPPED OBJECT
     // like every other GL object, so reading it as a number saw `undefined` and
@@ -485,7 +490,7 @@ void dom_bindings::install_webgl_draw_methods(context & cx, script::object_objec
     // invisible while framebufferTexture2D was a no-op, and became an
     // INVALID_OPERATION the moment that stopped being one.
     set_method(cx, *obj, "bindFramebuffer", [gl](context & c, std::span<value> a) {
-        gl->bind_framebuffer(id_of(c, a.size() > 1 ? a[1] : value::undefined()));
+        gl->device().bind_framebuffer(id_of(c, a.size() > 1 ? a[1] : value::undefined()));
         return value::undefined();
     });
     // `framebufferTexture2D(target, attachment, textarget, texture, level)` -
@@ -493,7 +498,8 @@ void dom_bindings::install_webgl_draw_methods(context & cx, script::object_objec
     // render target was an empty texture and the scene went to the canvas
     // instead; see webgl_context::bind_framebuffer.
     set_method(cx, *obj, "framebufferTexture2D", [gl](context & c, std::span<value> a) {
-        gl->framebuffer_texture(enum_at(a, 1), id_of(c, a.size() > 3 ? a[3] : value::undefined()));
+        gl->device().framebuffer_texture(int_enum_at(a, 1),
+                                         id_of(c, a.size() > 3 ? a[3] : value::undefined()));
         return value::undefined();
     });
     // A RENDER TARGET USUALLY WANTS DEPTH, and these three were no-ops - so an
@@ -501,16 +507,16 @@ void dom_bindings::install_webgl_draw_methods(context & cx, script::object_objec
     // passed the depth test in arrival order. Babylon's post-processes render
     // the scene into exactly such a target.
     set_method(cx, *obj, "bindRenderbuffer", [gl](context & c, std::span<value> a) {
-        gl->bind_renderbuffer(id_of(c, a.size() > 1 ? a[1] : value::undefined()));
+        gl->device().bind_renderbuffer(id_of(c, a.size() > 1 ? a[1] : value::undefined()));
         return value::undefined();
     });
     set_method(cx, *obj, "renderbufferStorage", [gl](context &, std::span<value> a) {
-        gl->renderbuffer_storage(enum_at(a, 1), int_at(a, 2), int_at(a, 3));
+        gl->device().renderbuffer_storage(int_enum_at(a, 1), int_at(a, 2), int_at(a, 3));
         return value::undefined();
     });
     set_method(cx, *obj, "framebufferRenderbuffer", [gl](context & c, std::span<value> a) {
-        gl->framebuffer_renderbuffer(enum_at(a, 1),
-                                     id_of(c, a.size() > 3 ? a[3] : value::undefined()));
+        gl->device().framebuffer_renderbuffer(int_enum_at(a, 1),
+                                              id_of(c, a.size() > 3 ? a[3] : value::undefined()));
         return value::undefined();
     });
     // STILL NOT IMPLEMENTED, and now they say so rather than returning quietly.
@@ -527,7 +533,7 @@ void dom_bindings::install_webgl_draw_methods(context & cx, script::object_objec
     // render target is usable, and would have been told yes about a target that
     // had nothing attached.
     set_method(cx, *obj, "checkFramebufferStatus", [gl](context &, std::span<value>) {
-        return value::number(gl->framebuffer_status());
+        return value::number(gl->device().framebuffer_status());
     });
 }
 
