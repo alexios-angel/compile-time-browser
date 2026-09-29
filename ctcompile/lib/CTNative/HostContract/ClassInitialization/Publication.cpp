@@ -147,7 +147,9 @@ bool classInitialization::sinkCapturedPublication(
     // ponytail: terminal registration, or one unconstructed base with one leaf.
     // Shared/deeper families and observable suffixes need a wider publication proof.
     const bool domData = contract.provider == HostContract::Provider::ctbrowserDOMDataSession;
-    if ((!domData && contract.provider != HostContract::Provider::closedSource) ||
+    const bool dom = contract.provider == HostContract::Provider::ctbrowserDOM ||
+                     contract.provider == HostContract::Provider::ctbrowserDOMSession;
+    if ((!domData && !dom && contract.provider != HostContract::Provider::closedSource) ||
         setup.getArgs().size() != 1) {
         return true;
     }
@@ -216,7 +218,7 @@ bool classInitialization::sinkCapturedPublication(
         captured = load;
     }
     if (!captured || captured.getClosure() != body.getArgument(ctjs::arg_callee) ||
-        captured->getBlock() != &body) {
+        (!isBase && captured->getBlock() != &body)) {
         return true;
     }
     const auto captureIndex = captured.getIndex();
@@ -236,7 +238,8 @@ bool classInitialization::sinkCapturedPublication(
         auto load = llvm::dyn_cast<ctjs::LoadUpvalueOp>(use.getOwner());
         if (!load || load.getIndex() < 0 ||
             static_cast<size_t>(load.getIndex()) >= constructor.getUpvalues().size() ||
-            load->getBlock() != &body || (load.getIndex() == captureIndex && load != captured)) {
+            (!isBase && load->getBlock() != &body) ||
+            (load.getIndex() == captureIndex && load != captured)) {
             return true;
         }
         if (load != captured) { retainedLoads.push_back(load); }
@@ -258,9 +261,10 @@ bool classInitialization::sinkCapturedPublication(
         if (!call || invocation || use.getOperandNumber() != (holder ? 1u : 0u)) { return true; }
         invocation = call;
     }
-    if (!invocation || invocation->getBlock() != &body || invocation.getArgs().size() != 3 ||
+    if (!invocation || (!isBase && invocation->getBlock() != &body) ||
+        invocation.getArgs().size() != 3 ||
         invocation.getArgs().back() != body.getArgument(ctjs::arg_receiver) ||
-        (holder ? !selection || selection->getBlock() != &body ||
+        (holder ? !selection || (!isBase && selection->getBlock() != &body) ||
                       invocation.getCallee() != selection.getResult()
                 : !undefined(invocation.getReceiver()))) {
         return true;
@@ -296,7 +300,9 @@ bool classInitialization::sinkCapturedPublication(
     }
     auto returned = llvm::dyn_cast<ctjs::ReturnOp>(body.getTerminator());
     if (!returned || !undefined(returned.getValue())) { return true; }
-    if (!publicationSuffix(invocation, instances, normalizedSuper.contains(function))) {
+    // A base guard still depends on super's actuals. The sole leaf must flatten
+    // it and prove the entire suffix, including work after the arm and super.
+    if (!isBase && !publicationSuffix(invocation, instances, normalizedSuper.contains(function))) {
         return reason.empty();
     }
     if (!spend(8 + constructor.getUpvalues().size() + retainedLoads.size())) { return false; }
@@ -325,18 +331,21 @@ bool classInitialization::sinkCapturedPublication(
         if (!leafSetup || !normalizeSuper(leaf, constructor, contract)) { return false; }
         auto leafFunction = target(leaf);
         bool copied = false;
-        for (auto load : leafFunction.getBody().front().getOps<ctjs::LoadUpvalueOp>()) {
-            if (!step()) { return false; }
+        const auto restored = leafFunction.walk([&](ctjs::LoadUpvalueOp load) {
+            if (!step()) { return mlir::WalkResult::interrupt(); }
             if (load.getIndex() < 0 ||
                 static_cast<size_t>(load.getIndex()) >= constructor.getUpvalues().size() ||
                 !undefined(load.getClosure())) {
-                return refuse("inherited registration requires its original captures");
+                refuse("inherited registration requires its original captures");
+                return mlir::WalkResult::interrupt();
             }
             copied |= load.getIndex() == captureIndex;
             // Before the class census, super substitutes the base callee with
             // undefined. Restore every original cell in the capture-free leaf.
             load->setOperand(0, leafFunction.getBody().front().getArgument(ctjs::arg_callee));
-        }
+            return mlir::WalkResult::advance();
+        });
+        if (restored.wasInterrupted()) { return false; }
         if (!copied) { return refuse("inherited registration lost its original capture"); }
         setCaptures(leaf, leafFunction, constructor.getUpvalues());
         normalizedSuper.insert(leafFunction);
@@ -836,7 +845,9 @@ bool classInitialization::sinkConstructorPublication(ctjs::CreateClosureOp const
     // publication needs exception/reentry and complete family observer proofs.
     auto function = target(constructor);
     const bool isBase = baseClasses.contains(constructor.getResult());
-    if (contract.provider != HostContract::Provider::closedSource ||
+    const bool dom = contract.provider == HostContract::Provider::ctbrowserDOM ||
+                     contract.provider == HostContract::Provider::ctbrowserDOMSession;
+    if ((!dom && contract.provider != HostContract::Provider::closedSource) ||
         (instances.empty() && !isBase) || !function.getBody().hasOneBlock() ||
         constructor.getUpvalues().size() != 1) {
         return true;
@@ -938,7 +949,12 @@ bool classInitialization::sinkConstructorPublication(ctjs::CreateClosureOp const
     // call would bypass that census and must keep the original constructor.
     if (auto stop = publicationSymbolObserver(*this, function)) { return *stop; }
     if (!proveMaps()) { return false; }
-    if (auto problem = host_detail::initialBindingProblem(module, contract); !problem.empty()) {
+    auto binding = dom ? classBindingContract(contract) : contract;
+    if (dom) {
+        if (!spendWalk(module, declarationCost)) { return false; }
+        binding.initialIntrinsics.push_back("Map");
+    }
+    if (auto problem = host_detail::initialBindingProblem(module, binding); !problem.empty()) {
         return refuse(problem);
     }
     if (isBase) {
