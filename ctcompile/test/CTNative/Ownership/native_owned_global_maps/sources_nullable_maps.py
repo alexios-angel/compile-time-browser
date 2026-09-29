@@ -1,17 +1,4 @@
-from .sources_scalar_maps import (
-    CALL_RESULT,
-    PARAMETER,
-    SEEDED_RESULT,
-    SOURCE,
-    STRING_RESULT,
-    joined_result_sources,
-    key_fact_sources,
-    mixed_result_sources,
-    parameter_sources,
-    payload_result_sources,
-    shortcircuit_sources,
-    size_result_sources,
-)
+from .sources_scalar_maps import *
 
 
 def nullable_result_sources():

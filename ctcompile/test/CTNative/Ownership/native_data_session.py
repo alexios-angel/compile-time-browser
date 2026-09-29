@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 """Compile the pinned Bootstrap Data probe with methods attached to their owner."""
 
-import argparse
 import json
 from pathlib import Path
 import re
 import sys
 
-from CTNative.harness import run_sanitized
+from CTNative.harness import native_args, native_tools, run_sanitized
 from CTNative.Ownership.native_owned_global_maps.driver_common import (
     comparable_provenance,
     forge_leaf_evidence,
@@ -32,7 +31,8 @@ def configure(args, ir, name, values):
 
 
 def main():
-    args, compilers, nm = owned.setup(argparse.ArgumentParser(description=__doc__))
+    args = native_args(__doc__)
+    compilers, nm = native_tools(args.reference)
     js, _, subject, values = prepare_umd(args)
     expected = observe_umd(args, js, values)
     source, _, _ = umd_source()

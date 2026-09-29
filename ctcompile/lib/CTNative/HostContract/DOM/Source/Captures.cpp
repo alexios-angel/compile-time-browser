@@ -1,6 +1,23 @@
 #include "Proof.hpp"
 
 namespace ctcompile::ctnative::dom_source_detail {
+namespace {
+// Whether `op`'s enclosing operation orders it: an scf.if/while or ctjs.try
+// arm, an invocation's normal or unwind continuation, or - with
+// `protectedCall` - a call in the invocation's protected body.
+bool orderedByParent(mlir::Operation * op, bool protectedCall) {
+    auto * parent = op->getParentOp();
+    if (llvm::isa_and_nonnull<mlir::scf::IfOp, mlir::scf::WhileOp, ctjs::TryOp>(parent)) {
+        return true;
+    }
+    auto invocation = llvm::dyn_cast_or_null<ctjs::InvokeOp>(parent);
+    auto * region = op->getParentRegion();
+    return invocation &&
+           (region == &invocation.getNormalBody() || region == &invocation.getUnwindBody() ||
+            (protectedCall && region == &invocation.getBody() &&
+             llvm::isa<ctjs::CallOp, ctjs::CallDirectOp>(op)));
+}
+} // namespace
 
 bool DOMSource::refuse(llvm::StringRef message) {
     if (reason.empty()) { reason = message.str(); }
@@ -26,18 +43,7 @@ bool DOMSource::precedesInStructuredBody(mlir::Operation * definition, mlir::Ope
     // Only ordering is proved here; capture, lifetime and effect checks remain
     // with the callers. A capture assignment must precede the whole enclosure.
     while (use->getBlock() != definition->getBlock()) {
-        if (!step()) { return false; }
-        auto invocation = llvm::dyn_cast_or_null<ctjs::InvokeOp>(use->getParentOp());
-        const bool protectedCall = invocation && use->getParentRegion() == &invocation.getBody() &&
-                                   llvm::isa<ctjs::CallOp, ctjs::CallDirectOp>(use);
-        const bool continuation =
-            invocation && (use->getParentRegion() == &invocation.getNormalBody() ||
-                           use->getParentRegion() == &invocation.getUnwindBody());
-        if (!protectedCall && !continuation &&
-            !llvm::isa_and_nonnull<mlir::scf::IfOp, mlir::scf::WhileOp, ctjs::TryOp>(
-                use->getParentOp())) {
-            return false;
-        }
+        if (!step() || !orderedByParent(use, /*protectedCall=*/true)) { return false; }
         use = use->getParentOp();
     }
     return use->getBlock() == definition->getBlock() && definition->isBeforeInBlock(use);
@@ -119,23 +125,22 @@ bool DOMSource::bindConstantArguments(ctjs::CreateClosureOp closure, ctjs::FuncO
         auto module = target->getParentOfType<mlir::ModuleOp>();
         if (!target.isPrivate() || creations.lookup(*functionIndex(target)) != 0) { return true; }
         if (!step(2 * uint64_t(operationCount))) { return false; }
-        for (const auto & uses : {mlir::SymbolTable::getSymbolUses(module.getOperation()),
-                                  mlir::SymbolTable::getSymbolUses(&module.getBodyRegion())}) {
-            if (!uses) { return true; }
-            for (const auto & use : *uses) {
-                if (!step()) { return false; }
-                if (mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
-                        use.getUser(), use.getSymbolRef()) != target) {
-                    continue;
-                }
-                auto call = llvm::dyn_cast<ctjs::CallDirectOp>(use.getUser());
-                if (!call || call.getTarget() != target || !undefined(call.getCalleeValue()) ||
-                    !undefined(call.getNewTarget()) ||
-                    call.getArgs().size() + ctjs::implicit_arguments != body.getNumArguments()) {
-                    return true;
-                }
-                invocations.push_back(call.getArgs());
-            }
+        if (auto stop = host_detail::forEachSymbolUse(
+                module, true, [&] { return step(); },
+                [&](const mlir::SymbolTable::SymbolUse & use,
+                    ctjs::FuncOp callee) -> std::optional<bool> {
+                    if (callee != target) { return std::nullopt; }
+                    auto call = llvm::dyn_cast<ctjs::CallDirectOp>(use.getUser());
+                    if (!call || call.getTarget() != target || !undefined(call.getCalleeValue()) ||
+                        !undefined(call.getNewTarget()) ||
+                        call.getArgs().size() + ctjs::implicit_arguments !=
+                            body.getNumArguments()) {
+                        return true;
+                    }
+                    invocations.push_back(call.getArgs());
+                    return std::nullopt;
+                })) {
+            return *stop;
         }
     }
     llvm::SmallVector<llvm::SmallVector<ctjs::StringAttr>> inputs(body.getNumArguments());
@@ -414,19 +419,10 @@ bool DOMSource::resolveCell(ctjs::CreateCellOp cell) {
             // Immutable reads may follow either outcome of a protected call.
             // Initialization must precede the entire enclosing operation;
             // writes, cell transport and callable scheduling stay unchanged.
-            while (position->getBlock() != cell->getBlock()) {
-                auto * parent = position->getParentOp();
-                auto invocation = llvm::dyn_cast_or_null<ctjs::InvokeOp>(parent);
-                const bool continuation =
-                    invocation && (position->getParentRegion() == &invocation.getNormalBody() ||
-                                   position->getParentRegion() == &invocation.getUnwindBody());
-                if (!continuation &&
-                    !llvm::isa_and_nonnull<mlir::scf::IfOp, mlir::scf::WhileOp, ctjs::TryOp>(
-                        parent)) {
-                    break;
-                }
+            while (position->getBlock() != cell->getBlock() &&
+                   orderedByParent(position, /*protectedCall=*/false)) {
                 if (!step()) { return false; }
-                position = parent;
+                position = position->getParentOp();
             }
         }
         if (position->getBlock() != cell->getBlock() || !cell->isBeforeInBlock(position)) {

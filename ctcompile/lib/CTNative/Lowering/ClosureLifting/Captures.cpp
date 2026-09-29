@@ -335,12 +335,7 @@ std::optional<std::string> closureLifter::whyCapturesDoNotLift(ctjs::CreateClosu
 // value can be called through that value by something this IR cannot see,
 // and the claim would be false.
 std::optional<std::string> closureLifter::whyOwnClosureEscapes(ctjs::FuncOp target) {
-    for (mlir::OpOperand & use : target.getBody().front().getArgument(2).getUses()) {
-        mlir::Operation * user = use.getOwner();
-        if (use.getOperandNumber() == 0 &&
-            llvm::isa<ctjs::CreateClosureOp, ctjs::LoadUpvalueOp, ctjs::StoreUpvalueOp>(user)) {
-            continue;
-        }
+    if (mlir::Operation * user = ctjs::ownClosureEscape(target)) {
         return ("its target's own closure escapes into `" + user->getName().getStringRef() +
                 "`, so a call of it may come from somewhere this rewrite cannot see")
             .str();

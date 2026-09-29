@@ -26,15 +26,13 @@ bool closureLifter::holdsAFunction(ctjs::CreateCellOp cell) {
 // question ResolveGlobals asks (`reads_raw_arguments`), asked here because
 // this step writes call sites of its own.
 bool closureLifter::readsRawArguments(ctjs::FuncOp target) {
-    bool reads = false;
-    target.walk([&](mlir::Operation * o) {
-        if (llvm::isa<ctjs::MakeArgumentsOp, ctjs::GatherRestOp>(o)) {
-            reads = true;
-            return mlir::WalkResult::interrupt();
-        }
-        return mlir::WalkResult::advance();
-    });
-    return reads;
+    return target
+        .walk([](mlir::Operation * o) {
+            return llvm::isa<ctjs::MakeArgumentsOp, ctjs::GatherRestOp>(o)
+                       ? mlir::WalkResult::interrupt()
+                       : mlir::WalkResult::advance();
+        })
+        .wasInterrupted();
 }
 
 // CONDITION 4, ASKED OF ONE READ. `read` is the value the binding was read

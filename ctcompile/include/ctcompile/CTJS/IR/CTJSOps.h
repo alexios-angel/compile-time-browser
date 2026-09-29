@@ -116,6 +116,19 @@ inline bool nonCoercing(mlir::Operation * op) {
     return llvm::isa<TruthyOp>(op) || (compare && compare.getKind() == CompareKind::StrictEq);
 }
 
+// The first user of `function`'s own closure (its callee argument) that is not
+// a nested closure's enclosing operand or an upvalue access through it, or
+// null when it feeds nothing else. The entry block must exist.
+inline mlir::Operation * ownClosureEscape(FuncOp function) {
+    for (mlir::OpOperand & use : function.getBody().front().getArgument(arg_callee).getUses()) {
+        if (use.getOperandNumber() != 0 ||
+            !llvm::isa<CreateClosureOp, LoadUpvalueOp, StoreUpvalueOp>(use.getOwner())) {
+            return use.getOwner();
+        }
+    }
+    return nullptr;
+}
+
 // The one ctjs.func under `scope` with function index `index`, or null when
 // none or several have it.
 inline FuncOp uniqueFunction(mlir::Operation * scope, unsigned index) {

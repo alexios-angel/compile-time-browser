@@ -5,11 +5,8 @@ import argparse
 from pathlib import Path
 import re
 
-from CTNative.harness import REFUSAL, build_and_run, native_tools, prepare_js, run
-
-CTJS_FUNCTION = re.compile(r"^\s*ctjs\.func\b", re.M)
-NATIVE_FUNCTION = re.compile(r"^\s*emitc\.func\b", re.M)
-VM_SYMBOL = re.compile(r"ctbrowser::(?:script|aot)::")
+from CTNative.Exports.boundary import FUNCTION as CTJS_FUNCTION, NATIVE as NATIVE_FUNCTION
+from CTNative.harness import REFUSAL, VM_SYMBOL, build_and_run, native_tools, prepare_js, run
 
 
 def prepare(args, source, name):

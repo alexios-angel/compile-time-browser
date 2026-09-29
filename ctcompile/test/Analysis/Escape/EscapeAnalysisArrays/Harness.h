@@ -81,5 +81,8 @@ void checkBigIntComparison(mlir::MLIRContext & context, ctjs::CompareKind produc
 void checkArrayFrames(mlir::MLIRContext & context);
 void checkArrayConditionals(mlir::MLIRContext & context);
 void checkContainerSwitches(mlir::MLIRContext & context);
+void checkDenseArrayLength(mlir::MLIRContext & context);
+void checkArrayInduction(mlir::MLIRContext & context);
+void checkStructuredContents(mlir::MLIRContext & context);
 
 } // namespace ctcompile::test::escape::arrays

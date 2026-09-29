@@ -29,6 +29,7 @@
 // a public class implementing the seven CFGToSCFInterface methods against the
 // SCF dialect, and `mlir::transformCFGToSCF` is a public function. This pass is
 // the walk they are missing and nothing more.
+#include "Globals/RegisterFlow.h"
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
 #include "ctcompile/CTJS/IR/CTJSOps.h"
 #include "ctcompile/CTJS/Transforms/Passes.h"
@@ -46,6 +47,7 @@
 #include "mlir/Transforms/RegionUtils.h"
 #include "llvm/ADT/DenseSet.h"
 
+#include <limits>
 #include <memory>
 
 namespace ctcompile::ctjs {
@@ -158,21 +160,11 @@ unsigned dropSelfCarriedArguments(mlir::RewriterBase & rewriter, mlir::Region & 
 // Whether a catch reads what was thrown. The importer copies the landing's
 // value into the register vector whether or not anything reads that register,
 // so follow it through successor operands to a use that is not another copy.
+// No step budget, as the hand-rolled walk had none; running out would count as a read.
 bool observesThrown(CatchLandOp landing) {
-    llvm::SmallVector<mlir::Value> work{landing.getThrown()};
-    llvm::DenseSet<mlir::Value> seen;
-    while (!work.empty()) {
-        const mlir::Value value = work.pop_back_val();
-        if (!seen.insert(value).second) { continue; }
-        for (mlir::OpOperand & use : value.getUses()) {
-            auto branch = llvm::dyn_cast<mlir::BranchOpInterface>(use.getOwner());
-            const auto copy =
-                branch ? branch.getSuccessorBlockArgument(use.getOperandNumber()) : std::nullopt;
-            if (!copy) { return true; }
-            work.push_back(*copy);
-        }
-    }
-    return false;
+    const auto uses =
+        globals_detail::registerFlowUses(landing.getThrown(), std::numeric_limits<unsigned>::max());
+    return !uses || !uses->empty();
 }
 
 // WhileMoveIfDown replaces all uses while visiting condition operands. A

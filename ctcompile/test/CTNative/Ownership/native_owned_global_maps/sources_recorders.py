@@ -6,20 +6,9 @@ import os
 import re
 import subprocess
 
-from .driver_common import (
-    CONSTANT_GLOBAL_NODE,
-    boundary,
-    check_call_preservation,
-    comparable_provenance,
-    contract,
-    forge_leaf_evidence,
-    host,
-    methods,
-    owned,
-    source_calls,
-)
+from CTNative.Ownership.globals import CONSTANT_GLOBAL_NODE
 
-from .harness_objects import instrument_leaf_objects
+from .harness import *
 
 # Keep the measured full Data subject, recorder and factory byte-for-byte.
 EXACT_DATA = """var traceErrorCount = 0; var traceErrorMessage = 0;

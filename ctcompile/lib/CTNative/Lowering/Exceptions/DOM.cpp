@@ -546,23 +546,9 @@ struct DOMAttributeProof {
                    numberValue(unary.getOperand(), depth + 1);
         }
         const auto numericBinary = [&](auto binary) {
-            switch (binary.getKind()) {
-            case ctjs::BinaryKind::Add:
-            case ctjs::BinaryKind::Sub:
-            case ctjs::BinaryKind::Mul:
-            case ctjs::BinaryKind::Div:
-            case ctjs::BinaryKind::Mod:
-            case ctjs::BinaryKind::Pow:
-            case ctjs::BinaryKind::Shl:
-            case ctjs::BinaryKind::Shr:
-            case ctjs::BinaryKind::UShr:
-            case ctjs::BinaryKind::BitAnd:
-            case ctjs::BinaryKind::BitOr:
-            case ctjs::BinaryKind::BitXor:
-                return numberValue(binary.getLhs(), depth + 1) &&
-                       numberValue(binary.getRhs(), depth + 1);
-            default: return false;
-            }
+            return (ctjs::isArithmetic(binary.getKind()) || ctjs::isBitwise(binary.getKind())) &&
+                   numberValue(binary.getLhs(), depth + 1) &&
+                   numberValue(binary.getRhs(), depth + 1);
         };
         if (auto binary = value.getDefiningOp<ctjs::BinaryOp>()) { return numericBinary(binary); }
         if (auto binary = value.getDefiningOp<ctjs::BinaryStaticOp>()) {

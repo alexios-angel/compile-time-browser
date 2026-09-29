@@ -1,17 +1,4 @@
-from .harness_map_results import instrument_maps
-from .harness_scalar_maps import (
-    LEAF_COMPARISON_CASES,
-    inline_runtime,
-    LEAF_OBJECT_FIELDS,
-    host,
-    leaf_object_sources,
-    leaf_readback_sources,
-    object_argument_cases,
-    os,
-    owned,
-    re,
-    subprocess,
-)
+from .harness_scalar_maps import *
 
 
 def leaf_object_observer_source(source, name):

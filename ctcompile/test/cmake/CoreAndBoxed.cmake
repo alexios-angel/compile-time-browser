@@ -97,10 +97,7 @@ ctcompile_unit_test(manifest LIBS ctcompile::support)
 # feeds them to the real ctrun.
 ctcompile_unit_test(app_bundle LIBS ctbrowser::ctbrowser ARGS ${CMAKE_CURRENT_BINARY_DIR})
 
-# AND THE WHOLE THING, THE WAY SOMEONE USES IT - a directory in, an executable
-# out, started from somewhere else entirely, and the four refusals - is
-# Packaging/roundtrip.test, which runs ctcompile-test-app_bundle itself for the
-# two bundles the launcher must refuse.
+# The whole thing, directory in and executable out: Packaging/roundtrip.test.
 
 # mlir-translate is LLVM's, and it is part of the backend rather than a
 # convenience: it is the stage that turns EmitC into C++.

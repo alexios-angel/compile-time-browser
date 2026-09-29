@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Check live exported getter ownership through standalone native execution."""
 
-import argparse
 from pathlib import Path
 import re
 import struct
 from urllib.parse import unquote_to_bytes
 
+from CTNative.harness import native_args, native_tools
 from CTNative.Ownership import globals as owned
 
 boundary = owned.boundary
@@ -293,7 +293,8 @@ def forge_reports(text):
 
 
 def main():
-    args, compilers, nm = owned.setup(argparse.ArgumentParser(description=__doc__))
+    args = native_args(__doc__)
+    compilers, nm = native_tools(args.reference)
     node, reference = args.node, args.reference
 
     saved = {}

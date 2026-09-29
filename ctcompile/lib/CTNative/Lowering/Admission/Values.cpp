@@ -1,5 +1,6 @@
 // Admission/Values.cpp - native lowering implementation.
 #include "Admission.h"
+#include "ctcompile/Support/CppLiterals.hpp"
 
 namespace ctcompile::ctnative::lowering_detail {
 
@@ -129,9 +130,8 @@ bool admission::namesASharedCell(mlir::Value v) {
 }
 
 bool admission::isCIdentifier(llvm::StringRef key) {
-    if (key.empty() || std::isdigit(static_cast<unsigned char>(key.front()))) { return false; }
-    return llvm::all_of(
-        key, [](char ch) { return std::isalnum(static_cast<unsigned char>(ch)) || ch == '_'; });
+    if (key.empty() || (key.front() >= '0' && key.front() <= '9')) { return false; }
+    return llvm::all_of(key, cpp::is_identifier_char);
 }
 
 // A KEY THAT IS A C IDENTIFIER AND STILL CANNOT BE A FIELD NAME. Field
