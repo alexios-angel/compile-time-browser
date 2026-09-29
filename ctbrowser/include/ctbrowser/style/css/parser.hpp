@@ -31,6 +31,14 @@ namespace ctbrowser::style::css {
 [[nodiscard]] std::string decode_stylesheet(std::string_view bytes, std::string_view protocol,
                                             std::string_view environment);
 
+// THE `@scope` PRELUDE an `@import ... scope(<argument>)` STANDS FOR, CSS
+// Cascade 6 §2.2: the argument is `<scope-start> | <scope-boundaries>`, so a
+// bare start selector is the parenthesised one - `scope(.a)` is `@scope (.a)`
+// - while `(.a) to (.b)` and `to (.b)` are boundaries already, and nothing at
+// all is the implicit scope. Read as tokens: `scope(toolbar)` names an
+// element, not `to`.
+[[nodiscard]] std::string import_scope_prelude(std::string_view argument);
+
 // A `style="..."` attribute: a declaration list with no selector and no braces.
 //
 // Its own entry point rather than wrapping the text in `*{...}` for the sheet

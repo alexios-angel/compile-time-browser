@@ -26,7 +26,7 @@ template <typename T>
 }
 
 // Flex's assignment/defaulting grammar; callers retain their own numeric and
-// basis validation and the existing 0px (CSSOM) / 0% (cascade) omitted basis.
+// basis validation, and name the omitted basis - `0%` for both today.
 template <typename T, typename Number, typename Basis>
 [[nodiscard]] std::optional<std::array<T, 3>> expand_flex(std::span<const std::string_view> parts,
                                                           std::string_view omitted_basis,

@@ -50,6 +50,24 @@ bool supports_selector(std::string_view text) {
     return !invalid && parsed.selectors.size() == 1;
 }
 
+std::string import_scope_prelude(std::string_view argument) {
+    const std::string text{trim(argument, html_whitespace)};
+    const token_stream s = tokenize(text);
+    std::vector<const css_token *> significant;
+    for (const css_token & t : s.tokens) {
+        if (t.type == token_type::eof || significant.size() == 2) { break; }
+        if (t.type != token_type::whitespace) { significant.push_back(&t); }
+    }
+    const auto is = [&](std::size_t i, token_type type) {
+        return i < significant.size() && significant[i]->type == type;
+    };
+    const bool boundaries =
+        is(0, token_type::open_paren) ||
+        (is(0, token_type::ident) && ascii_iequals(s.text_of(*significant[0]), "to") &&
+         is(1, token_type::open_paren));
+    return text.empty() || boundaries ? text : "(" + text + ")";
+}
+
 stylesheet parse_declaration_list(std::string_view css, atom_table & atoms) {
     parser p{css, atoms};
     return p.take_declaration_list();

@@ -97,6 +97,10 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::animated_values(
                 }
             }
         }
+        // THE CUSTOM PROPERTIES FIRST: a `var()` in another property's
+        // keyframe reads what they animate to (the lookup below).
+        std::ranges::stable_partition(properties,
+                                      [](const std::string & p) { return p.starts_with("--"); });
         // What `currentcolor` means on this element, for every property but
         // `color` itself (whose currentcolor is the parent's).
         const std::string current_color{trim(underlying("color"), html_whitespace)};
@@ -138,10 +142,36 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::animated_values(
             for (const animation_keyframe & k : e.keyframes) {
                 for (const auto & [name, text] : k.values) {
                     if (name != property) { continue; }
+                    std::string_view value = text;
+                    // A `var()` IN A KEYFRAME is substituted on the element it
+                    // animates, from its custom properties - their animated
+                    // values where an animation sets them, as the element's
+                    // own declaration would see them (CSS Variables 1 §2.3,
+                    // variable-animation-substitute-*) - and one invalid at
+                    // computed-value time is `unset` (§3.1), resolved below.
+                    std::string substituted;
+                    if (style::css::may_have_var(value)) {
+                        const style::css::custom_lookup custom =
+                            [&](atom name) -> std::optional<std::string_view> {
+                            const std::string_view wanted = atoms_->text(name);
+                            const auto animated = std::ranges::find_if(
+                                out, [&](const auto & entry) { return entry.first == wanted; });
+                            const std::string_view held = animated != out.end()
+                                                              ? std::string_view{animated->second}
+                                                              : underlying(wanted);
+                            if (held.empty() || held == style::guaranteed_invalid) {
+                                return std::nullopt;
+                            }
+                            return held;
+                        };
+                        std::optional<std::string> done =
+                            style::css::substitute_var(value, custom, *atoms_);
+                        substituted = done ? std::move(*done) : std::string{"unset"};
+                        value = substituted;
+                    }
                     // A CSS-wide keyword in a keyframe is its computed value
                     // (CSS Animations 1 §3): `initial` is the table's, as is
                     // `unset` for a property that does not inherit.
-                    std::string_view value = text;
                     if (ascii_iequals(value, "inherit") ||
                         (ascii_iequals(value, "unset") && known != nullptr && known->inherited)) {
                         if (!inherited) {
@@ -319,6 +349,14 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::animated_values(
                 }
                 single = stop == start;
             }
+            // AN UNREGISTERED CUSTOM PROPERTY IS A TOKEN STREAM, and animates
+            // discretely (CSS Properties and Values API 1 §2.4): `blue` to
+            // `green` flips at the midpoint rather than becoming a colour
+            // (variable-animation-from-to).
+            const bool discrete =
+                property.starts_with("--") &&
+                (selector_engine_ == nullptr ||
+                 selector_engine_->registration_of(atoms_->intern(property)) == nullptr);
             std::string text;
             if (single) {
                 text = composited(points[start]);
@@ -327,8 +365,10 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::animated_values(
                 const double distance = (progress - points[start].offset) / span;
                 const style::easing keyframe_easing =
                     style::parse_easing(points[start].easing).value_or(style::easing{});
-                text = interpolate_value(as, composited(points[start]), composited(points[stop]),
-                                         keyframe_easing(distance, false), own);
+                const double eased = keyframe_easing(distance, false);
+                text = discrete ? composited(points[eased < 0.5 ? start : stop])
+                                : interpolate_value(as, composited(points[start]),
+                                                    composited(points[stop]), eased, own);
             }
             if (seen == out.end()) {
                 out.emplace_back(property, std::move(text));

@@ -57,6 +57,9 @@ void engine::clear_origin(std::uint8_t origin) {
     for (const auto & [key, rules] : index_.by_class) { scan(rules); }
     for (const auto & [key, rules] : index_.by_tag) { scan(rules); }
     scan(index_.universal);
+    // ...or an `@keyframes` of another origin, which is ranked by its layer too.
+    std::erase_if(keyframes_, [origin](const keyframes_rule & k) { return k.origin == origin; });
+    for (const keyframes_rule & k : keyframes_) { layered = layered || k.layer != 0; }
     if (!layered) {
         layer_names_.assign(1, std::string{});
         layer_rank_.assign(1, 0xFFFFFFFFu);
@@ -73,7 +76,6 @@ void engine::clear_origin(std::uint8_t origin) {
     if (!contained) { containers_.assign(1, css::container_condition{}); }
     // A sheet's @function rules go with its other rules; a registration does not.
     erase_if(functions_, [origin](const auto & entry) { return entry.second.origin == origin; });
-    std::erase_if(keyframes_, [origin](const keyframes_rule & k) { return k.origin == origin; });
     // The @font-face list is not indexed by origin and is not cleared: a face is
     // a resource the browser has already been asked to load, and unloading one
     // because a rule was edited is a different question from unsaying the rule.
@@ -370,7 +372,6 @@ void engine::add_sheet(std::string_view css, std::uint8_t origin) {
     for (std::size_t i = condition_base; i < conditions_.size(); ++i) {
         condition_truth_[i] = condition_holds(i);
     }
-    file_keyframes(sheet, origin, condition_base);
 
     // THE SHEET'S LAYERS, merged into the engine's by NAME: `@layer a` in two
     // sheets is one layer, first declared where it first appeared. An
@@ -400,6 +401,8 @@ void engine::add_sheet(std::string_view css, std::uint8_t origin) {
         layer_map[i + 1] = static_cast<std::uint16_t>(found - layer_names_.begin());
     }
     if (!sheet.layers.empty()) { rerank_layers(); }
+    // ...ITS `@keyframes`, each in the engine's layer its block sat in.
+    file_keyframes(sheet, origin, condition_base, layer_map);
     // ...AND ITS SCOPES, appended: a scope belongs to its sheet.
     std::vector<std::uint16_t> scope_map(sheet.scopes.size() + 1, 0);
     for (std::size_t i = 0; i < sheet.scopes.size(); ++i) {
@@ -408,6 +411,7 @@ void engine::add_sheet(std::string_view css, std::uint8_t origin) {
         made.parent = scope_map[s.parent];
         made.roots.assign(sheet.roots_of(s).begin(), sheet.roots_of(s).end());
         made.limits.assign(sheet.limits_of(s).begin(), sheet.limits_of(s).end());
+        made.implicit_root = s.implicit_root;
         scopes_.push_back(std::move(made));
         scope_map[i + 1] = static_cast<std::uint16_t>(scopes_.size() - 1);
     }
@@ -502,7 +506,9 @@ bool engine::scope_root_for(const read_txn & txn, const ancestor_filter & ancest
     // subject that matches one ends the candidacy.
     const auto is_root = [&](const scope_entry & e, std::size_t d, std::size_t outer) {
         scope_ = outer == none ? node_id{} : levels_[outer][path_[outer]].node;
-        bool any = false;
+        // An implicit scope's root is one element, named by its key.
+        bool any = e.roots.empty() && e.implicit_root != 0 &&
+                   key_of(levels_[d][path_[d]].node) == e.implicit_root;
         for (const compiled_selector & sel : e.roots) {
             if (matches_from(txn, ancestors, sel, d, path_[d])) {
                 any = true;
@@ -521,7 +527,8 @@ bool engine::scope_root_for(const read_txn & txn, const ancestor_filter & ancest
     // Every root depth of scope `at` that holds the subject, nearest first
     // under each root of the enclosing scope. An implicit scope - `@scope { }`
     // with no prelude - is rooted at the sheet's owner node's parent, which
-    // this engine is not told; it has no roots here and matches nothing.
+    // the shell names by key (css::scope_block); one it did not name has no
+    // root and matches nothing.
     using visitor = std::function<void(std::size_t)>;
     const auto each_root = [&](auto && self, std::uint16_t at, const visitor & f) -> void {
         if (at == 0) {
@@ -529,7 +536,7 @@ bool engine::scope_root_for(const read_txn & txn, const ancestor_filter & ancest
             return;
         }
         const scope_entry & e = scopes_[at];
-        if (e.roots.empty()) { return; }
+        if (e.roots.empty() && e.implicit_root == 0) { return; }
         self(self, e.parent, visitor{[&](std::size_t outer) {
                  for (std::size_t d = depth + 1; d-- > (outer == none ? 0 : outer);) {
                      if (is_root(e, d, outer)) { f(d); }

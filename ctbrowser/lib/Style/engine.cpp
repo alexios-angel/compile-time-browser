@@ -280,6 +280,14 @@ std::string_view engine::pragma_language(const read_txn & txn) const {
 
 bool engine::language_matches(std::string_view range, std::string_view lang) {
     if (lang.empty() || range.empty()) { return false; }
+    // A SUBTAG IS AT MOST EIGHT CHARACTERS (BCP 47 §2.1): `fr-ninechars` is
+    // no language tag, and a range matches none of it
+    // (lang-singleton-subtag-matching).
+    for (std::size_t at = 0; at <= lang.size();) {
+        const std::string_view subtag = next_subtag(lang, at);
+        if (subtag.size() > 8) { return false; }
+        if (subtag.empty()) { break; }
+    }
     std::size_t ri = 0;
     std::size_t li = 0;
     const std::string_view first_range = next_subtag(range, ri);

@@ -44,6 +44,10 @@ std::string expand_imports(const asset_registry & assets, std::string css, std::
         // media list gate them. Innermost first, so the layer is what the
         // conditions wrap.
         if (each.layered) { text = "@layer " + each.layer + " {\n" + text + "\n}"; }
+        // `scope(...)` scopes the rules as the `@scope` block it stands for
+        // (CSS Cascade 6 §2.2) - an empty one the implicit scope, rooted where
+        // the importing sheet's is (collect_author_styles' `scope_root`).
+        if (each.scoped) { text = "@scope " + each.scope + " {\n" + text + "\n}"; }
         if (!each.supports.empty()) {
             // Parenthesised whichever form was written: `supports(display:
             // flex)` takes a bare declaration where `@supports` wants a group.
@@ -275,6 +279,16 @@ std::string browser::collect_author_styles(document & doc, dom_bindings * bindin
     // parse_value call - so two author-origin add_sheet calls would tie on
     // source order and resolve by whichever the sort happened to see first.
     std::string css;
+    // AN IMPLICIT `@scope` IS ROOTED AT THE OWNER NODE'S PARENT (CSS Cascade 6
+    // §2.1), and a concatenated sheet has lost its owner - so the root is
+    // written in ahead of each sheet that says `@scope` at all, as the private
+    // statement the sheet parser reads (css::scope_block). Every other sheet's
+    // text is exactly the author's.
+    const auto scope_root = [&](node_id owner, std::string_view text) -> std::string {
+        if (ascii_lower_copy(text).find("@scope") == std::string::npos) { return {}; }
+        return "@" + std::string{ctbrowser::style::css::scope_root_at_rule} + " " +
+               std::to_string(ctbrowser::style::engine::key_of(txn.parent(owner))) + ";\n";
+    };
     const auto walk = [&](auto && self, node_id at) -> void {
         // HTML ONLY, for both. An SVG carries its own <style>, scoped to the
         // graphic, and it interns to the same atom - so without the namespace
@@ -297,8 +311,10 @@ std::string browser::collect_author_styles(document & doc, dom_bindings * bindin
                     std::string text;
                     for (const node_id child : txn.children(at)) { text += txn.text(child); }
                     std::vector<std::string> chain;
-                    css += gated(
-                        at, expand_imports(assets_, std::move(text), {}, chain, doc.encoding()));
+                    std::string sheet =
+                        expand_imports(assets_, std::move(text), {}, chain, doc.encoding());
+                    css += scope_root(at, sheet);
+                    css += gated(at, std::move(sheet));
                     css += '\n';
                 }
                 // HTML "update a style block" ends by firing `load` at the
@@ -325,8 +341,10 @@ std::string browser::collect_author_styles(document & doc, dom_bindings * bindin
                         {reinterpret_cast<const char *>(bytes.data()), bytes.size()}, {},
                         doc.encoding());
                     std::vector<std::string> chain{href};
-                    css += gated(
-                        at, expand_imports(assets_, std::move(text), href, chain, doc.encoding()));
+                    std::string sheet =
+                        expand_imports(assets_, std::move(text), href, chain, doc.encoding());
+                    css += scope_root(at, sheet);
+                    css += gated(at, std::move(sheet));
                     css += '\n';
                 }
                 // `load` once the sheet applies, `error` when there is nothing
