@@ -165,7 +165,14 @@ bool closureLifter::retainedByLocalMap(mlir::OpOperand & use,
                        : ctjs::CallOp{};
         };
         for (mlir::OpOperand & aliasUse : alias.getUses()) {
-            if (work-- == 0 || aliasUse.getOwner()->getBlock() != map->getBlock()) { return false; }
+            auto * user = aliasUse.getOwner();
+            // A nested field read borrows the same entry-frame owner. Verified
+            // SSA dominates the read; final admission proves the field carrier.
+            // Writes, method calls and Map operations stay entry-local.
+            if (work-- == 0 || user->getParentOfType<ctjs::FuncOp>() != function ||
+                (user->getBlock() != map->getBlock() && !llvm::isa<ctjs::GetPropertyOp>(user))) {
+                return false;
+            }
             if (auto call = llvm::dyn_cast<ctjs::CallOp>(aliasUse.getOwner());
                 call && aliasUse.getOperandNumber() == 1 &&
                 methodCall(call.getCallee().getDefiningOp<ctjs::GetPropertyOp>()) == call) {

@@ -56,10 +56,14 @@ CASES["inherited"] = INHERITED_METHOD.replace(
     "return a === 8 && b === 9 && current.extra === 10;",
     "const extra = current.extra;\n  return a === 8 && b === 9 && extra === 10;",
 )
+CASES["inherited-conditional"] = INHERITED_METHOD
+CASES["inherited-fields"] = INHERITED_FIELDS
+CASES["saved-conditional"] = DIRECT.replace(
+    "return a === 8 && b === 9;",
+    "return (b !== 9 && saved.n === 0) || (b === 9 && saved.n === 8);",
+)
 
 BAD = {
-    "inherited-method": INHERITED_METHOD,
-    "inherited-fields": INHERITED_FIELDS,
     "indirect-set": DIRECT.replace("state.set('x', this)", "state.set.call(state, 'x', this)"),
     "host-alias": DIRECT.replace(
         "element.setAttribute('x', 'done')", "element.setAttribute('x', saved)"
@@ -89,6 +93,19 @@ BAD = {
     .replace("  const first", "  register = () => {};\n  const first"),
     "snapshot-field-change": CASES["snapshot"].replace("saved.n = 8;", "saved.extra = 8;"),
 }
+for name, statement in {
+    "nested-write": "if (b === 9) { saved.n = 8; } return a === 8 && b === 9;",
+    "nested-method": "return a === 8 && current.read() === 9;",
+    "nested-detached-method": "if (b === 9) { const method = current.read; return method(); } return false;",
+    "nested-map-read": "return a === 8 && state.get('x').n === 9;",
+    "nested-missing-field": "return a === 8 && current.missing === 9;",
+    "nested-prototype": "return a === 8 && current.__proto__ === 9;",
+    "nested-dynamic-field": "return a === 8 && current[element.getAttribute('key')] === 9;",
+    "nested-alias-return": "if (b === 9) { return saved; } return current;",
+    "captured-alias": "return () => saved.n;",
+    "nested-host-alias": "if (b === 9) { element.setAttribute('x', saved); } return true;",
+}.items():
+    BAD[name] = DIRECT.replace("return a === 8 && b === 9;", statement)
 
 
 def main():
