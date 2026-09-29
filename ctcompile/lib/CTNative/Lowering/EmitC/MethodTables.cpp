@@ -73,13 +73,8 @@ void lowering::censusStoredCallable(ctjs::CreateClosureOp made, bool namedLambda
     }
     const auto lambdaName = callableLocal("ctn_", "lambda", 0, occupied);
     const auto name = cIdentifier(target);
-    std::string alias =
-        "namespace ctnative {\nusing ctn_env_" + name + " = std::function<" + result + "(";
-    for (auto [i, type] : llvm::enumerate(params)) {
-        if (i) { alias += ", "; }
-        alias += type;
-    }
-    environments.push_back(alias + ")>;\n}\n");
+    environments.push_back("namespace ctnative {\nusing ctn_env_" + name + " = std::function<" +
+                           result + "(" + llvm::join(params, ", ") + ")>;\n}\n");
     if (namedLambda) {
         // Keep the body as IR until the final printer. Canonicalization,
         // deduction, const/constexpr analysis and source names must apply to
@@ -101,36 +96,22 @@ void lowering::censusStoredCallable(ctjs::CreateClosureOp made, bool namedLambda
                  attributes.getNamedAttr("parameters", strings(paramNames))}));
         return;
     }
-    std::string builder = "// ctcompile: stored callable " + target.str() + ", " +
-                          siteOfFunction(fn) + "\ninline ctnative::ctn_env_" + name + " ctn_bind_" +
-                          name + "(";
+    llvm::SmallVector<std::string> bound, moved, typed, forwarded(captureNames);
     for (auto [i, capture] : llvm::enumerate(made.getUpvalues())) {
-        if (i) { builder += ", "; }
-        builder += callableTypeSpelling(typeOf(capture)) + " " + captureNames[i];
+        bound.push_back(callableTypeSpelling(typeOf(capture)) + " " + captureNames[i]);
     }
-    builder += ") {\n  return [";
-    if (!domDataSession.empty()) { builder += "this"; }
-    for (size_t i = 0; i < captures; ++i) {
-        if (i || !domDataSession.empty()) { builder += ", "; }
-        const auto & slot = captureNames[i];
-        builder += slot + " = std::move(" + slot + ")";
+    if (!domDataSession.empty()) { moved.push_back("this"); }
+    for (const auto & slot : captureNames) { moved.push_back(slot + " = std::move(" + slot + ")"); }
+    for (auto [type, param] : llvm::zip_equal(params, paramNames)) {
+        typed.push_back(type + " " + param);
     }
-    builder += "](";
-    for (auto [i, type] : llvm::enumerate(params)) {
-        if (i) { builder += ", "; }
-        builder += type + " " + paramNames[i];
-    }
-    builder += ") -> " + result + " {\n    return " + names.lookup(target) + "(";
-    for (size_t i = 0; i < captures; ++i) {
-        if (i) { builder += ", "; }
-        builder += captureNames[i];
-    }
-    for (size_t i = 0; i < params.size(); ++i) {
-        if (captures || i) { builder += ", "; }
-        builder += paramNames[i];
-    }
-    builder += ");\n  };\n";
-    callableBuilders.push_back(builder + "}\n");
+    forwarded.append(paramNames);
+    callableBuilders.push_back(
+        "// ctcompile: stored callable " + target.str() + ", " + siteOfFunction(fn) +
+        "\ninline ctnative::ctn_env_" + name + " ctn_bind_" + name + "(" + llvm::join(bound, ", ") +
+        ") {\n  return [" + llvm::join(moved, ", ") + "](" + llvm::join(typed, ", ") + ") -> " +
+        result + " {\n    return " + names.lookup(target) + "(" + llvm::join(forwarded, ", ") +
+        ");\n  };\n}\n");
 }
 
 bool lowering::censusSession(const OwnedGlobalRoots & roots,
@@ -256,17 +237,21 @@ void lowering::censusMethodTables(llvm::ArrayRef<ctjs::FuncOp> accepted) {
                 auto function = module.lookupSymbol<ctjs::FuncOp>(target);
                 const auto captures = sessionTargets.lookup(target);
                 const auto result = callableTypeSpelling(joinedReturnType(function));
-                std::string parameters, arguments;
+                const bool memberMap = sessionMapTargets.contains(target);
+                llvm::SmallVector<std::string> typed, forwarded;
+                for (unsigned index = 0; index < captures; ++index) {
+                    forwarded.push_back(memberMap ? "&captured_map"
+                                                  : "std::get<" + std::to_string(index) +
+                                                        ">(capture_" + key + ")");
+                }
                 for (auto [index, argument] : llvm::enumerate(
                          function.getBody().front().getArguments().drop_front(3 + captures))) {
-                    if (index) { parameters += ", "; }
-                    const auto name = "arg" + std::to_string(index);
-                    parameters += callableTypeSpelling(typeOf(argument)) + " " + name;
-                    if (!arguments.empty()) { arguments += ", "; }
-                    arguments += name;
+                    forwarded.push_back("arg" + std::to_string(index));
+                    typed.push_back(callableTypeSpelling(typeOf(argument)) + " " +
+                                    forwarded.back());
                 }
+                const std::string parameters = llvm::join(typed, ", ");
                 const std::string provenance = target + ", " + siteOfFunction(function);
-                const bool memberMap = sessionMapTargets.contains(target);
                 if (!memberMap) {
                     definition += "private:\n  " + environment + " capture_" + key +
                                   ";\npublic:\n  // ctcompile: initialize capture for " + target +
@@ -274,18 +259,11 @@ void lowering::censusMethodTables(llvm::ArrayRef<ctjs::FuncOp> accepted) {
                                   " value) { capture_" + key + " = std::move(value); }\n";
                 }
                 definition += "  " + result + " m_" + key + "(" + parameters + ");\n";
-                std::string body = "// ctcompile: session method " + provenance + "\ninline " +
-                                   result + " ctnative::method_" + cIdentifier(site) + "::m_" +
-                                   key + "(" + parameters + ") {\n  return " +
-                                   names.lookup(target) + "(";
-                for (unsigned index = 0; index < captures; ++index) {
-                    if (index) { body += ", "; }
-                    body += memberMap
-                                ? "&captured_map"
-                                : "std::get<" + std::to_string(index) + ">(capture_" + key + ")";
-                }
-                if (captures && !arguments.empty()) { body += ", "; }
-                callableBuilders.push_back(body + arguments + ");\n}\n");
+                callableBuilders.push_back("// ctcompile: session method " + provenance +
+                                           "\ninline " + result + " ctnative::method_" +
+                                           cIdentifier(site) + "::m_" + key + "(" + parameters +
+                                           ") {\n  return " + names.lookup(target) + "(" +
+                                           llvm::join(forwarded, ", ") + ");\n}\n");
             }
             methodTables.push_back(definition + "};\n}\n");
         });

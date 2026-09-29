@@ -28,13 +28,11 @@ std::string lowering::spelled(mlir::Type type) {
 std::string lowering::spelling(const siteShape & site) const {
     const family & f = families[site.family];
     if (!f.varies.any()) { return f.name; }
-    std::string out = f.name + "<";
-    for (unsigned i = 0, written = 0; i < f.fields.size(); ++i) {
-        if (!f.varies[i]) { continue; }
-        if (written++ != 0) { out += ", "; }
-        out += spelled(site.types[i]);
+    llvm::SmallVector<std::string> arguments;
+    for (unsigned i = 0; i < f.fields.size(); ++i) {
+        if (f.varies[i]) { arguments.push_back(spelled(site.types[i])); }
     }
-    return out + ">";
+    return f.name + "<" + llvm::join(arguments, ", ") + ">";
 }
 
 mlir::Type lowering::classType(const siteShape & site) {
@@ -298,10 +296,7 @@ void lowering::nameFamilies() {
 std::string lowering::provenanceOf(const family & f) const {
     std::string out = "object literal at ";
     const size_t shown = std::min<size_t>(3, f.where.size());
-    for (size_t i = 0; i < shown; ++i) {
-        if (i != 0) { out += ", "; }
-        out += f.where[i];
-    }
+    out += llvm::join(llvm::ArrayRef(f.where).take_front(shown), ", ");
     if (f.where.size() > shown) {
         out += " and " + std::to_string(f.where.size() - shown) + " more";
     }
