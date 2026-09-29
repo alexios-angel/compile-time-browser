@@ -2,6 +2,7 @@ target_sources(ctbrowser-shell PRIVATE
   collections_and_labels.cpp
   data_transfer.cpp
   focus_and_canvas.cpp
+  form_writes.cpp
   form_data_and_submission.cpp
   helpers.hpp
   legacy_objects.cpp

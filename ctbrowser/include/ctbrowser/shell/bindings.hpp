@@ -968,6 +968,7 @@ private:
     void deactivate_event_handler(path_step at, std::string_view type);
     [[nodiscard]] bool has_handler_listener(path_step at, std::string_view type) const;
     void settle_attribute_writes(const std::vector<document::write_note> & writes);
+    void settle_form_writes(const std::vector<document::write_note> & writes); // control_methods
     [[nodiscard]] value compile_handler_attribute(context & cx, value self,
                                                   const std::string & name);
 

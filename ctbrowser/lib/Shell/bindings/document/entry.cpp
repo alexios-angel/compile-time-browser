@@ -337,6 +337,7 @@ void dom_bindings::mutated() {
         doc_ == nullptr ? std::vector<document::write_note>{} : doc_->take_writes();
     record_mutations(writes);
     settle_attribute_writes(writes);
+    settle_form_writes(writes);
     settle_live_ranges(writes);
     signal_slot_changes(writes);
     // A "replace all" note is for the mutation it preceded and no other.

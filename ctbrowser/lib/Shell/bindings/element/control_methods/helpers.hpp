@@ -78,12 +78,21 @@ struct control_helpers {
     void children_replaced(dom_bindings * b, node_id id) const;
     static void plain(script::object_object &);
     std::vector<node_id> options_of(const read_txn & txn, dom_bindings * b, node_id select) const;
+    // An option's "nearest ancestor select" (HTML 4.10.10), or none.
+    node_id select_of(const read_txn & txn, node_id option) const;
     std::string option_value(const read_txn & txn, dom_bindings * b, node_id option) const;
     bool option_selected(context & c, const read_txn & txn, dom_bindings * b, node_id option) const;
     bool is_multiple(const read_txn & txn, dom_bindings * b, node_id select) const;
     long long display_size(const read_txn & txn, dom_bindings * b, node_id select) const;
     std::vector<bool> selected_flags(context & c, const read_txn & txn, dom_bindings * b,
                                      node_id select, std::vector<node_id> & options) const;
+    // The selected option's value written to the store, so the paint and the
+    // submission agree with the model.
+    void sync_store(context & c, const read_txn & txn, dom_bindings * b, node_id select,
+                    const std::vector<node_id> & options, const std::vector<bool> & flags) const;
+    // "Ask for a reset" (HTML 4.10.7): the selectedness setting algorithm on
+    // `select`, then the store.
+    void ask_for_reset(context & c, dom_bindings * b, node_id select) const;
     std::optional<double> to_number(const read_txn & txn, dom_bindings * b, node_id id,
                                     std::string_view text) const;
     std::optional<double> step_of(const read_txn & txn, dom_bindings * b, node_id id) const;

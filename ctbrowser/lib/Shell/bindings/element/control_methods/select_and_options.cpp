@@ -19,25 +19,10 @@ void dom_bindings::install_control_select_options(context & cx) {
     // HTML 4.10.7 "list of options" - the store's walk, so the value the
     // chrome paints and the options this model selects agree.
 
-    // An option's "nearest ancestor select" (HTML 4.10.10): up from its parent,
-    // and none through a datalist, an hr or another option, nor through a
-    // second optgroup - the nestings the list of options leaves out, so an
-    // option outside the list has no select to be indexed in or to take a
-    // form from.
+    // An option's "nearest ancestor select" (HTML 4.10.10) -
+    // control_helpers::select_of, which form_writes.cpp asks too.
     const auto select_of = [helpers](const read_txn & txn, node_id option) {
-        bool in_optgroup = false;
-        for (node_id up = txn.parent(option); up; up = txn.parent(up)) {
-            if (helpers.is(txn, up, "datalist") || helpers.is(txn, up, "hr") ||
-                helpers.is(txn, up, "option")) {
-                return node_id{};
-            }
-            if (helpers.is(txn, up, "optgroup")) {
-                if (in_optgroup) { return node_id{}; }
-                in_optgroup = true;
-            }
-            if (helpers.is(txn, up, "select")) { return up; }
-        }
-        return node_id{};
+        return helpers.select_of(txn, option);
     };
 
     // The display size: the `size` attribute, else 4 for multiple and 1
@@ -48,59 +33,16 @@ void dom_bindings::install_control_select_options(context & cx) {
     // wrote; a store value that differs from it was written by the chrome or
     // the shadowing `value` setter since, and is read back into the slots.
 
-    // Write the selected option's value to the store, so the paint and the
-    // submission agree with the model.
+    // The store written from the model, and "ask for a reset" -
+    // control_helpers::sync_store and ask_for_reset, which the attribute change
+    // steps (form_writes.cpp) run too.
     const auto sync_store = [helpers](context & c, const read_txn & txn, dom_bindings * b,
                                       node_id select, const std::vector<node_id> & options,
                                       const std::vector<bool> & flags) {
-        std::string first;
-        for (std::size_t i = 0; i < options.size(); ++i) {
-            if (flags[i]) {
-                first = helpers.option_value(txn, b, options[i]);
-                break;
-            }
-        }
-        control_state & held = b->forms_->state_of(txn, *b->atoms_, select);
-        held.value = first;
-        helpers.set_slot(c, b, select, "__syncedValue", c.string(first));
-        b->wrote_to_control_ = true;
+        helpers.sync_store(c, txn, b, select, options, flags);
     };
-    // "Ask for a reset", HTML 4.10.7: a single select with several selected
-    // keeps the last; a display-size-1 single select with none selects the
-    // first option that is not disabled.
-    const auto ask_for_reset = [helpers, sync_store](context & c, dom_bindings * b,
-                                                     node_id select) {
-        const auto txn = b->doc_->read();
-        if (!txn.contains(select)) { return; }
-        std::vector<node_id> options;
-        std::vector<bool> flags = helpers.selected_flags(c, txn, b, select, options);
-        if (helpers.is_multiple(txn, b, select)) {
-            sync_store(c, txn, b, select, options, flags);
-            return;
-        }
-        std::size_t count = 0;
-        std::size_t last = options.size();
-        for (std::size_t i = 0; i < options.size(); ++i) {
-            if (flags[i]) {
-                ++count;
-                last = i;
-            }
-        }
-        if (count > 1) {
-            for (std::size_t i = 0; i < options.size(); ++i) {
-                flags[i] = i == last;
-                helpers.set_slot(c, b, options[i], selected_slot, value::boolean(flags[i]));
-            }
-        } else if (count == 0 && helpers.display_size(txn, b, select) == 1) {
-            for (std::size_t i = 0; i < options.size(); ++i) {
-                if (!helpers.is_disabled(txn, b, options[i])) {
-                    flags[i] = true;
-                    helpers.set_slot(c, b, options[i], selected_slot, value::boolean(true));
-                    break;
-                }
-            }
-        }
-        sync_store(c, txn, b, select, options, flags);
+    const auto ask_for_reset = [helpers](context & c, dom_bindings * b, node_id select) {
+        helpers.ask_for_reset(c, b, select);
     };
     const auto set_selected = [helpers, select_of, ask_for_reset](context & c, dom_bindings * b,
                                                                   node_id option, bool on,
@@ -207,8 +149,9 @@ void dom_bindings::install_control_select_options(context & cx) {
         }
         if (element == before) { return; }
         (void)b->insert_node(parent, element, before);
-        // The option insertion steps run the selectedness setting algorithm:
-        // a selected option arriving beside a selected one keeps the LAST.
+        // The insertion steps have run (form_writes.cpp: a selected option
+        // arriving is the one selected); the selectedness setting algorithm
+        // then selects the first enabled option of a select left with none.
         ask_for_reset(c, b, select);
     };
 
@@ -232,15 +175,18 @@ void dom_bindings::install_control_select_options(context & cx) {
                 if (default_selected) {
                     (void)doc_->set_attribute(id, atoms_->intern("selected"), "");
                 }
-                // Step 5: the selectedness IS `selected` - false when it is
+                // The attribute's change steps first (form_writes.cpp: a clean
+                // option's selectedness follows it), THEN the constructor's
+                // own step: the selectedness IS `selected` - false when it is
                 // absent, even with defaultSelected - and the dirtiness is
-                // left alone. Held in the slot only where it differs from
-                // what the attribute alone would say.
+                // left alone.
+                // Held in the slot only where it differs from what the
+                // attribute alone would say.
+                mutated();
                 if (const bool selected = context::truthy(arg(a, 3));
                     selected != default_selected) {
                     helpers.set_slot(c, this, id, selected_slot, value::boolean(selected));
                 }
-                mutated();
                 return made;
             });
         if (const value proto_value = interface_prototype("HTMLOptionElement");
