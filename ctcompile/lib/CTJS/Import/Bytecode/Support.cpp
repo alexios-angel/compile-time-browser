@@ -1,4 +1,10 @@
 #include "Importer.h"
+#include "OperatorTables.h"
+
+#include "llvm/ADT/BitVector.h"
+
+#include <initializer_list>
+#include <string_view>
 
 namespace ctcompile::js::bytecode_detail {
 
@@ -33,6 +39,36 @@ static_assert(std::size(opcode_may_suspend) == opcode_count,
     return index < std::size(opcode_may_suspend) && opcode_may_suspend[index];
 }
 
+// WHICH OF a, b AND c NAME A REGISTER, and whether a is written, from the same
+// .def columns - for the globals summary, which follows the global object
+// through registers and reads every register operand of an operation it does
+// not list.
+enum class operand {
+    reg,
+    kidx,
+    sidx,
+    nidx,
+    fidx,
+    jump,
+    count,
+    bx_hi,
+    unused
+};
+struct operand_row {
+    operand a, b, c;
+    bool writes_a;
+};
+#define CT_OPCODE(name_, a_kind_, b_kind_, c_kind_, writes_a_, allocates_, may_throw_,             \
+                  may_reenter_, is_safepoint_, may_suspend_, resumable_, impl_)                    \
+    {operand::a_kind_, operand::b_kind_, operand::c_kind_, (writes_a_) != 0},
+constexpr operand_row opcode_operands[] = {
+#include <ctbrowser/script/bytecode_opcodes.def>
+};
+#undef CT_OPCODE
+
+static_assert(std::size(opcode_operands) == opcode_count,
+              "the importer's operand table and `enum class op` disagree");
+
 // WHAT A DROPPED BODY CAN STILL DO TO THE GLOBALS TABLE - Phase 62 1/2-A.
 //
 // A refused function is not a function that does not run. It runs in the
@@ -64,7 +100,9 @@ static_assert(std::size(opcode_may_suspend) == opcode_count,
 //     `proto.names[in.b]` of the op::set_prop that writes it, which is as
 //     static as a set_global's. So those names join `stores` and the body stays
 //     bounded. A write through a COMPUTED key is the one that cannot be named,
-//     and it is opaque.
+//     and it is opaque - and so is handing the object on, as an argument, a
+//     stored value or a return: the parameter it arrives at is in the IR, the
+//     call that fills it is not.
 //
 // EVERY TEST IS ON AN OPERAND, and two earlier versions of this were not. The
 // first asked whether the NAME OR STRING POOLS mentioned `constructor`,
@@ -98,12 +136,141 @@ static_assert(std::size(opcode_may_suspend) == opcode_count,
         refuse("a refused body names an index outside its own name pool, so what it stores "
                "cannot be read back");
     };
+    const auto named = [&](std::uint32_t index, std::initializer_list<std::string_view> names) {
+        const std::string * name = name_at(index);
+        return name != nullptr && llvm::is_contained(names, std::string_view{*name});
+    };
 
-    bool reads_global_object = false;
-    bool writes_a_computed_key = false;
-    std::vector<std::string> through_the_global_object;
+    // WHICH REGISTERS MAY HOLD THE GLOBAL OBJECT BEFORE EACH INSTRUCTION:
+    // `this`, one of the host's names for it, a self-alias read off one that
+    // does (the list hands_back_the_global_object() keeps for the pass), or a
+    // copy. A forward dataflow over the bytecode's own edges, because the
+    // compiler reuses a statement's temporaries - `this.f = g; yield 0;` puts
+    // the 0 where `this` was. A handler can be entered from anywhere in its
+    // region, so it is given every state.
+    const std::size_t length = proto.code.size();
+    std::vector<llvm::BitVector> holds(length, llvm::BitVector(proto.frame_size));
+    const auto transfer = [&](std::size_t at) {
+        const instruction & in = proto.code[at];
+        const llvm::BitVector & before = holds[at];
+        llvm::BitVector after = before;
+        const auto held = [&](std::uint32_t slot) { return slot < before.size() && before[slot]; };
+        const auto set = [&](std::uint32_t slot, bool value) {
+            if (slot < after.size()) { after[slot] = value; }
+        };
+        switch (in.code) {
+        case op::load_this: set(in.a, true); break;
+        case op::get_global:
+        case op::get_global_typeof:
+            set(in.a, named(in.bx(), {"globalThis", "window", "self"}));
+            break;
+        case op::move:
+        case op::get_index: set(in.a, held(in.b)); break;
+        case op::get_prop:
+            set(in.a, held(in.b) &&
+                          named(in.c, {"window", "globalThis", "self", "parent", "top", "frames"}));
+            break;
+        default:
+            if (opcode_operands[static_cast<std::size_t>(in.code)].writes_a) { set(in.a, false); }
+            break;
+        }
+        return after;
+    };
+    std::vector<std::size_t> handlers;
+    for (std::size_t at = 0; at < length; ++at) {
+        const std::int64_t target = jump_target(at, proto.code[at]);
+        if (proto.code[at].code == op::push_handler && target >= 0 &&
+            static_cast<std::size_t>(target) < length) {
+            handlers.push_back(static_cast<std::size_t>(target));
+        }
+    }
+    for (bool grew = true; grew;) {
+        grew = false;
+        const auto flow = [&](std::int64_t to, const llvm::BitVector & state) {
+            if (to < 0 || static_cast<std::size_t>(to) >= length) { return; }
+            llvm::BitVector & into = holds[static_cast<std::size_t>(to)];
+            if (state.test(into)) {
+                into |= state;
+                grew = true;
+            }
+        };
+        llvm::BitVector anywhere(proto.frame_size);
+        for (std::size_t at = 0; at < length; ++at) {
+            const llvm::BitVector after = transfer(at);
+            anywhere |= after;
+            const op code = proto.code[at].code;
+            if (is_jump(code)) { flow(jump_target(at, proto.code[at]), after); }
+            if (falls_through(code)) { flow(static_cast<std::int64_t>(at) + 1, after); }
+        }
+        for (const std::size_t handler : handlers) {
+            flow(static_cast<std::int64_t>(handler), anywhere);
+        }
+    }
 
-    for (const instruction & in : proto.code) {
+    // AND WHERE IT GOES FROM HERE. A body the pass never imported can hand the
+    // object to a function the pass did import - as an argument, a stored
+    // value, a return, a yield or a throw - and nothing in the IR marks the
+    // parameter it arrives at. Read through, compared, converted or written
+    // through by name, it stays here; any other register use hands it on.
+    const auto hands_on = [&](const instruction & in, const llvm::BitVector & before) {
+        const auto held = [&](std::uint32_t slot) { return slot < before.size() && before[slot]; };
+        const auto window = [&](std::uint32_t first, std::uint32_t count) {
+            for (std::uint32_t slot = first; slot <= first + count; ++slot) {
+                if (held(slot)) { return true; }
+            }
+            return false;
+        };
+        // A PRIMITIVE COMES OUT of every operator the importer lowers to
+        // ctjs.binary, ctjs.compare or ctjs.unary - the IR walk's rule too.
+        const auto lowers_through = [&](const auto & rows) {
+            return llvm::any_of(rows, [&](const auto & row) { return row.code == in.code; });
+        };
+        if (lowers_through(binary_rows) || lowers_through(compare_rows) ||
+            lowers_through(unary_rows)) {
+            return false;
+        }
+        switch (in.code) {
+        case op::move:
+        case op::get_prop:
+        case op::get_index:
+        case op::get_proto:
+        case op::own_keys:
+        case op::has_property:
+        case op::instance_of:
+        case op::jump_if_false:
+        case op::jump_if_true:
+        case op::jump_if_not_nullish:
+        case op::jump_if_defined:
+        case op::delete_prop:
+        case op::delete_index: return false;
+        // WRITTEN THROUGH, which the summary reads by name; the VALUE written
+        // is what would leave.
+        case op::set_prop:
+        case op::set_index:
+        case op::define_data:
+        case op::define_getter:
+        case op::define_setter: return held(in.c);
+        // THE CALLEE OR RECEIVER IN a, THE ARGUMENTS ABOVE IT.
+        case op::call:
+        case op::call_method:
+        case op::construct: return window(in.a, in.b);
+        case op::call_computed:
+        case op::call_receiver: return window(in.a, in.b) || held(in.c);
+        // a READ AND WRITTEN IN PLACE: boxed into a cell, wrapped in a
+        // promise, exported.
+        case op::new_cell:
+        case op::wrap_promise:
+        case op::bind_export: return held(in.a);
+        default: break;
+        }
+        const operand_row & row = opcode_operands[static_cast<std::size_t>(in.code)];
+        return (row.a == operand::reg && !row.writes_a && held(in.a)) ||
+               (row.b == operand::reg && held(in.b)) || (row.c == operand::reg && held(in.c));
+    };
+
+    for (std::size_t at = 0; at < length; ++at) {
+        const instruction & in = proto.code[at];
+        const bool through = in.a < holds[at].size() && holds[at][in.a];
         switch (in.code) {
         case op::set_global: {
             const std::string * name = name_at(in.bx());
@@ -124,15 +291,9 @@ static_assert(std::size(opcode_may_suspend) == opcode_count,
             if (*name == "Function" || *name == "eval") {
                 refuse("a refused body reads `" + *name +
                        "`, and the program it compiles can store any global");
-            } else if (*name == "globalThis" || *name == "window" || *name == "self") {
-                reads_global_object = true;
             }
             break;
         }
-        // AND WITHOUT A NAME. A sloppy body called with a nullish receiver has
-        // the global object as `this`, and the pass cannot see who calls a
-        // body it never imported.
-        case op::load_this: reads_global_object = true; break;
         case op::get_prop: {
             const std::string * name = name_at(in.c);
             if (name != nullptr && *name == "constructor") {
@@ -141,8 +302,8 @@ static_assert(std::size(opcode_may_suspend) == opcode_count,
             }
             break;
         }
-        // THE NAMED WRITES, whose target is as static as a set_global's. They
-        // matter only if this body also holds the global object.
+        // THE NAMED WRITES THROUGH IT, whose target is as static as a
+        // set_global's.
         case op::set_prop:
         case op::define_getter:
         case op::define_setter:
@@ -152,33 +313,28 @@ static_assert(std::size(opcode_may_suspend) == opcode_count,
                 missing();
                 break;
             }
-            through_the_global_object.push_back(*name);
+            if (through) { out.stores.push_back(*name); }
             break;
         }
-        // AND THE WRITES WHOSE TARGET IS NOT. `o[k] = v`, `delete o[k]`,
-        // `{...o}` and a prototype swap all name nothing this can read.
+        // AND THE WRITES WHOSE KEY IS NOT. `o[k] = v` and `delete o[k]` name
+        // nothing this can read.
         case op::set_index:
         case op::delete_index:
-        case op::copy_props:
-        case op::set_proto: writes_a_computed_key = true; break;
-        // A LITERAL'S OWN PROPERTY, defined only on the object compile_object's
-        // own new_object made - never the global object, so it binds nothing.
-        case op::define_data: break;
+            if (through) {
+                refuse("a refused body holds the global object and writes a property this pass "
+                       "cannot name, which in a spec-conformant engine binds a global");
+            }
+            break;
         case op::dyn_import:
             refuse("a refused body loads a module this compile cannot see, and its top level "
                    "can store any global");
             break;
         default: break;
         }
-    }
-
-    if (reads_global_object) {
-        if (writes_a_computed_key) {
-            refuse("a refused body holds the global object and writes a property this pass "
-                   "cannot name, which in a spec-conformant engine binds a global");
-        } else {
-            out.stores.insert(out.stores.end(), through_the_global_object.begin(),
-                              through_the_global_object.end());
+        if (hands_on(in, holds[at])) {
+            refuse("a refused body holds the global object and hands it on (" +
+                   std::string{ctjs::opcode_name(in.code)} +
+                   "), where this summary cannot follow it");
         }
     }
 

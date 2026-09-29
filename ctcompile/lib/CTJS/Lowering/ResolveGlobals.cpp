@@ -510,6 +510,20 @@ std::optional<std::string> dynamic_global_writes(
     if (FuncOp top = world.top; top && has_entry(top)) {
         mark(top.getBody().front().getArgument(0), watched::global_object);
     }
+    // AND A BODY NO OPERATION HERE CREATES is created inside one the importer
+    // refused, whose `this` the summary already takes for the global object:
+    // an arrow there inherits it, and a function there is called from code
+    // this pass cannot see.
+    llvm::DenseSet<std::uint32_t> created;
+    module.walk([&](CreateClosureOp made) {
+        created.insert(static_cast<std::uint32_t>(made.getFunction()));
+    });
+    for (const auto & [index, entered] : world.by_index) {
+        if (FuncOp function = entered;
+            index != 0 && !created.contains(index) && has_entry(function)) {
+            mark(function.getBody().front().getArgument(0), watched::receiver);
+        }
+    }
 
     module.walk([&](mlir::Operation * op) {
         if (reason) { return mlir::WalkResult::interrupt(); }

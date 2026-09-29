@@ -76,6 +76,8 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/this-returned.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=THISRETURNED
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/this-field.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=THISFIELD
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/this-refused.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=THISREFUSED
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/this-handed.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=THISHANDED
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/this-inherited.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=THISINHERITED
 
 // --- THE POSITIVE CASE: the MVP program ---------------------------------------
 //
@@ -610,6 +612,21 @@
 // THISREFUSED-SAME: stores = ["f"]
 // THISREFUSED-NOT: call_direct @f$
 
+// AND HANDED ON FROM THERE, where no IR marks the parameter it arrives at:
+// `helper(this)` in a generator writes `f` through `o`. The summary follows
+// the object through the body's registers and refuses the body opaque.
+//
+// THISHANDED: ctjs.globals = [
+// THISHANDED-SAME: {name = "f", reason = "a refused body holds the global object and hands it on (call), where this summary cannot follow it", resolved = "none", stores = 1 : i32}
+// THISHANDED-NOT: call_direct
+
+// AN ARROW A REFUSED BODY CREATES inherits that body's `this`. No
+// create_closure in the module builds it, so its receiver is watched.
+//
+// THISINHERITED: ctjs.globals = [
+// THISINHERITED-SAME: {name = "f", reason = "written through a receiver that may be the global object (ctjs.set_property at {{[^)]*}}), which binds this name", resolved = "none", stores = 1 : i32}
+// THISINHERITED-NOT: call_direct @f$
+
 //--- closed.js
 function add(a, b) { return a + b; }
 function twice(x) { return add(x, x); }
@@ -864,5 +881,18 @@ var z = add(1, 2);
 //--- this-refused.js
 function f() { return 1; }
 function* g() { this.f = function () { return 2; }; yield 0; }
+g().next();
+var r = f();
+
+//--- this-handed.js
+function f() { return 1; }
+function helper(o) { o.f = function () { return 2; }; }
+function* g() { helper(this); yield 0; }
+g().next();
+var r = f();
+
+//--- this-inherited.js
+function f() { return 1; }
+function* g() { var set = () => { this.f = function () { return 2; }; }; set(); yield 0; }
 g().next();
 var r = f();
