@@ -2,6 +2,8 @@
 
 #include <optional>
 
+#include <ctbrowser/aot/aot.hpp>
+
 #include "vm/objects.hpp"
 
 namespace ctbrowser::script {
@@ -834,6 +836,11 @@ private:
     // (key_value) - which may be a private name's key and must stay one.
     [[nodiscard]] value minted_string(std::string s);
 
+    // THE AOT ABI's ROWS, each body written once in its extern "C" definition
+    // under lib/Script/aot_bridge/, and aot_bridge, the reads they share.
+#define CT_AOT_HELPER(name, ret, params, may_throw, may_reenter, is_safepoint)                     \
+    friend decltype(aot::name) aot::name;
+#include <ctbrowser/aot/aot_helpers.def>
     friend struct aot_bridge;
     friend class executing_as;
     // THE SIGNATURE MUST MATCH EXACTLY or this friends a different overload and

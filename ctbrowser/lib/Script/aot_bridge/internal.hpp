@@ -35,13 +35,13 @@
 // three rows and reporting the fourth as broken is worth more than four bodies
 // one of which quietly does something other than its row says.
 //
-// SPLIT ON 2026-09-08. This file was aot_bridge.cpp, 1,586 lines, with every
-// member of `struct aot_bridge` defined in-class. It is the declaration now;
-// the bodies live in frames.cpp, operators.cpp, properties.cpp and calls.cpp
-// beside this, each next to the extern "C" row that calls it. Private to
-// lib/Script/aot_bridge/: NOT installed and in no file set. `aot_bridge` is a
-// friend of `context` (vm.hpp), which is why it is a struct rather than four
-// files of free functions.
+// SPLIT ON 2026-09-08, and the bodies moved INTO the rows on 2026-09-29. This
+// file was aot_bridge.cpp, 1,586 lines, with every body a member of
+// `struct aot_bridge` and every extern "C" row a one-line forward to it. Each
+// row now holds its own body in frames.cpp, operators.cpp, properties.cpp or
+// calls.cpp: `context` (vm.hpp) befriends every row by expanding
+// aot_helpers.def, so a row may touch the private state its body needs.
+// Private to lib/Script/aot_bridge/: NOT installed and in no file set.
 
 #include <ctbrowser/aot/aot.hpp>
 #include <ctbrowser/core/containers.hpp>
@@ -124,6 +124,9 @@ struct aot_name_record {
     std::size_t hash;
 };
 
+// THE READS EVERY ROW SHARES, in-class so that each row's call to them
+// inlines. A struct because it is a friend of `context` (vm.hpp): three of
+// them read its private frame stack.
 struct aot_bridge {
     static context & ctx_of(aot::ct_aot_ctx * c) { return *reinterpret_cast<context *>(c); }
 
@@ -175,119 +178,11 @@ struct aot_bridge {
         }
         return static_cast<std::int32_t>(aot::ct_aot_status::ok);
     }
-
-    // ---- Defined in frames.cpp. ----
-    static aot::ct_aot_frame * enter(aot::ct_aot_ctx * c, const aot::ct_aot_site * site,
-                                     std::uint32_t reg_count, std::uint64_t receiver,
-                                     void * storage);
-    static std::uint64_t this_value(aot::ct_aot_frame * f);
-    static std::uint64_t callee(aot::ct_aot_frame * f);
-    static void pass_new_target(aot::ct_aot_frame * f);
-    static std::uint64_t new_target(aot::ct_aot_frame * f);
-    static std::uint64_t home(aot::ct_aot_frame * f);
-    static std::uint64_t upvalue_cell(aot::ct_aot_frame * f, std::uint32_t index);
-    static std::uint64_t make_arguments(aot::ct_aot_frame * f, const std::uint64_t * slots,
-                                        std::uint32_t argc);
-    static std::uint64_t gather_rest(aot::ct_aot_frame * f, const std::uint64_t * slots,
-                                     std::uint32_t argc, std::uint32_t from);
-    static std::uint64_t * args(aot::ct_aot_frame * f);
-    static std::uint32_t argc(aot::ct_aot_frame * f);
-    static std::uint64_t * slots(aot::ct_aot_frame * f);
-    static void leave(aot::ct_aot_frame * f, value result = value::undefined(),
-                      bool observe_return = false);
-    static void handler_push(aot::ct_aot_frame * f, std::uint32_t pad, std::uint32_t slot);
-    static void handler_pop(aot::ct_aot_frame * f);
-    static std::int32_t throw_value(aot::ct_aot_frame * f, std::uint64_t thrown);
-    static std::uint32_t catch_land(aot::ct_aot_frame * f, std::uint64_t * out_thrown);
-    static std::int32_t call(aot::ct_aot_frame * f, std::uint64_t callee, std::uint64_t receiver,
-                             const std::uint64_t * argv, std::uint32_t argc, std::uint64_t key,
-                             const aot::ct_aot_site * site, std::uint64_t * out);
-
-    // ---- Defined in operators.cpp. ----
-    static std::int32_t binary_op_static(aot::ct_aot_frame * f, std::uint32_t op_kind,
-                                         std::uint64_t lhs, std::uint64_t rhs, std::uint64_t * out);
-    static std::int32_t binary_op(aot::ct_aot_frame * f, std::uint32_t op_kind, std::uint64_t lhs,
-                                  std::uint64_t rhs, std::uint64_t * out);
-    static std::uint32_t failed(aot::ct_aot_frame * f);
-    static std::int32_t loose_equals(aot::ct_aot_frame * f, std::uint64_t a, std::uint64_t b,
-                                     std::uint32_t * out);
-    static std::int32_t compare(aot::ct_aot_frame * f, std::uint64_t lhs, std::uint64_t rhs,
-                                std::int32_t * out_ordering);
-    static std::int32_t to_number(aot::ct_aot_frame * f, std::uint64_t v, double * out);
-    static std::uint32_t instance_of(aot::ct_aot_frame * f, std::uint64_t target,
-                                     std::uint64_t ctor);
-    static std::int32_t negate(aot::ct_aot_frame * f, std::uint64_t v, std::uint64_t * out);
-    static std::int32_t bit_not(aot::ct_aot_frame * f, std::uint64_t v, std::uint64_t * out);
-
-    // ---- Defined in properties.cpp. ----
-    static std::uint64_t cell_new(aot::ct_aot_frame * f, std::uint64_t init);
-    static std::uint64_t new_object(aot::ct_aot_frame * f);
-    static std::uint64_t new_array(aot::ct_aot_frame * f, std::uint32_t reserve_hint);
-    static std::int32_t iterable_values(aot::ct_aot_frame * f, std::uint64_t source,
-                                        std::uint64_t * out);
-    static std::int32_t has_property(aot::ct_aot_frame * f, std::uint64_t target, std::uint64_t key,
-                                     std::uint32_t * out);
-    static std::int32_t delete_index(aot::ct_aot_frame * f, std::uint64_t target,
-                                     std::uint64_t key);
-    static void append(aot::ct_aot_frame * f, std::uint64_t array, std::uint64_t v);
-    static std::uint64_t new_string(aot::ct_aot_frame * f, const aot::ct_aot_site * site,
-                                    std::uint32_t slot, const char * utf8, std::uint32_t len);
-    static std::int32_t set_index(aot::ct_aot_frame * f, std::uint64_t obj, std::uint64_t key,
-                                  std::uint64_t v);
-    static std::int32_t define_data(aot::ct_aot_frame * f, std::uint64_t obj, std::uint64_t key,
-                                    std::uint64_t v);
-    static std::uint64_t get_proto(aot::ct_aot_frame * f, std::uint64_t target);
-    static void set_proto(aot::ct_aot_frame * f, std::uint64_t target, std::uint64_t proto);
-    static std::uint64_t new_bigint_literal(aot::ct_aot_frame * f, const aot::ct_aot_site * site,
-                                            std::uint32_t slot, const char * text,
-                                            std::uint32_t len);
-    static void delete_prop(aot::ct_aot_frame * f, std::uint64_t target,
-                            const aot_name_record * name);
-    static std::uint64_t own_keys(aot::ct_aot_frame * f, std::uint64_t source);
-    static void define_accessor(aot::ct_aot_frame * f, std::uint64_t target,
-                                const aot_name_record * name, std::uint64_t getter,
-                                std::uint64_t setter);
-    static void copy_props(aot::ct_aot_frame * f, std::uint64_t target, std::uint64_t source);
-    static std::uint64_t cell_get(std::uint64_t cell);
-    static void cell_set(std::uint64_t cell, std::uint64_t v);
-    static std::int32_t global_get(aot::ct_aot_frame * f, const char * name, std::uint32_t name_len,
-                                   std::uint64_t * out);
-    static std::uint64_t global_get_soft(aot::ct_aot_frame * f, const char * name,
-                                         std::uint32_t name_len);
-    static void global_set(aot::ct_aot_frame * f, const char * name, std::uint32_t name_len,
-                           std::uint64_t v);
-    static std::int32_t get_index(aot::ct_aot_frame * f, std::uint64_t obj, std::uint64_t key,
-                                  std::uint64_t * out);
-    static const aot_name_record * intern(const char * utf8, std::uint32_t len);
-    static std::int32_t get_prop(aot::ct_aot_frame * f, std::uint64_t obj,
-                                 const aot_name_record * name, std::uint64_t * out);
-    static std::int32_t set_prop(aot::ct_aot_frame * f, std::uint64_t obj,
-                                 const aot_name_record * name, std::uint64_t v);
-
-    // ---- Defined in calls.cpp. ----
-    static std::int32_t construct(aot::ct_aot_frame * f, std::uint64_t callee,
-                                  const std::uint64_t * argv, std::uint32_t argc,
-                                  const aot::ct_aot_site * site, std::uint64_t * out);
-    static std::uint64_t make_closure(aot::ct_aot_frame * f, std::uint64_t enclosing_closure,
-                                      std::uint32_t function_index,
-                                      const std::uint64_t * local_upvalues,
-                                      std::uint32_t upvalue_count, std::uint64_t enclosing_this);
-    static std::uint64_t wrap_promise(aot::ct_aot_frame * f, std::uint64_t v);
-    static std::int32_t call_spread(aot::ct_aot_frame * f, std::uint64_t callee,
-                                    std::uint64_t arg_array, std::uint64_t receiver,
-                                    const aot::ct_aot_site * site, std::uint64_t * out);
-    static std::int32_t construct_spread(aot::ct_aot_frame * f, std::uint64_t callee,
-                                         std::uint64_t arg_array, const aot::ct_aot_site * site,
-                                         std::uint64_t * out);
-    static std::uint64_t module_import_cell(aot::ct_aot_frame * f, const char * specifier,
-                                            std::uint32_t specifier_len, const char * export_name,
-                                            std::uint32_t export_name_len);
-    static std::int32_t module_export_cell(aot::ct_aot_frame * f, const char * name,
-                                           std::uint32_t name_len, std::uint64_t * out);
-    static std::uint64_t module_namespace(aot::ct_aot_frame * f, const char * specifier,
-                                          std::uint32_t specifier_len);
-    static std::int32_t dynamic_import(aot::ct_aot_frame * f, std::uint64_t specifier,
-                                       std::uint64_t * out);
 };
 
 } // namespace ctbrowser::script
+
+// THE ROWS ARE DEFINED WHERE aot.hpp DECLARES THEM, against script's types.
+namespace ctbrowser::aot {
+using namespace script;
+} // namespace ctbrowser::aot
