@@ -395,7 +395,7 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
                             }
                             return c.string("");
                         }
-                        return c.string(forms_->state_of(read, *atoms_, id).value);
+                        return c.string(control_helpers{this}.value_of(read, this, id));
                     })),
                 value::object(cx.allocate<script::native_object>("value", [this,
                                                                            id](context & c,

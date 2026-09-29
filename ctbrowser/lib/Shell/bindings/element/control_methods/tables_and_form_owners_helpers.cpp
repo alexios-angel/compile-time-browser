@@ -130,7 +130,10 @@ std::string control_helpers::input_type(const read_txn & txn, dom_bindings * b, 
 }
 
 std::string control_helpers::value_of(const read_txn & txn, dom_bindings * b, node_id id) const {
-    return b->forms_->state_of(txn, *b->atoms_, id).value;
+    // The store holds what the control SHOWS; a number control's value is
+    // what the user agent made of it (input_types::number_value_of_input).
+    const control_state & held = b->forms_->state_of(txn, *b->atoms_, id);
+    return held.type == "number" ? input_types::number_value_of_input(held.value) : held.value;
 }
 
 node_id control_helpers::tree_top(const read_txn & txn, dom_bindings * b, node_id id) const {

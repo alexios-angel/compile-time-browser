@@ -625,4 +625,14 @@ std::string autocomplete_idl_value(std::string_view attribute, bool has_attribut
     return index == 0 ? out : std::string{};
 }
 
+std::string number_value_of_input(std::string_view typed) {
+    double number = 0;
+    if (parse_float(typed, number, false)) { return std::string{typed}; }
+    if (typed.size() > 1 && typed.back() == '.' &&
+        parse_float(typed.substr(0, typed.size() - 1), number, false)) {
+        return type_number_to_text("number", number);
+    }
+    return {};
+}
+
 } // namespace ctbrowser::shell::input_types
