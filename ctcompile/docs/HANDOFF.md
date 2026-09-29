@@ -22,6 +22,53 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Fixed DOM class own-field snapshots, 2026-09-29 UTC
+
+**Landed: `b7bec2456`.** The earlier literal-definition/AOT-this thread was
+already committed through `c8b4ef2df`; this resumes the native Bootstrap
+frontier from the element-facts handoff.
+
+`ownFieldSnapshots` now applies its existing ordered-field, receiver-use and
+construction-time checks to `ctbrowser-dom-v1` and `ctbrowser-dom-session-v1`.
+Its closed-source binding projection retains `Object`, `Array` and the iterator
+helpers consumed by snapshot/null-clear folding. The complete typed DOM body
+proof still follows. Inherited DOM methods and DOM Data-session snapshots retain
+their separate gates; no browser/runtime code or ownership carrier changed.
+
+Four new original-source cases cover ordered length/index reads, a fixed-field
+update after a snapshot, Bootstrap's null-clearing loop, and its exact element
+helpers followed by a snapshot. Nine source controls cover added/aliased/unused
+fields, deletion, escaped snapshots, premature constructor reads and replaced
+Object/Array/iterator identities.
+
+**Measured, devbox only:** baseline `probe.py` refused at the old provider
+gate; `tools/remote-build.sh ctjs-opt ctjs-translate
+ctcompile-test-native-reference` passed before and after the change (final
+build 3/3). The existing `class_dom.py` harness, narrowed by `subset.py` to
+seven positives and sixteen refusal sources, passed **28 Node/interpreter
+observations, eight combined native executables and 174 refusal checks**.
+Both DOM providers, both optimization settings and explicit/deduced printing
+ran with GCC and the pinned Clang. The executables passed the existing
+`nm -C` no-script/AOT-symbol check. `tools/format.sh --check` passed
+(1180 C++, 155 Python, 116 web files), as did `git diff --check`.
+
+Exact wrappers, selected cases, logs, source/tool hashes and generated C++/IR:
+`/home/alex/.ctbrowser-auto/codex/ctcompile/artifacts/2026-09-29-dom-snapshots/`.
+`check.sh` and `frontier.sh` were run under
+`/tmp/ctbrowser-devbox-build.lock`. The initial post-edit connection failure
+was recovered with `server.sh start` and `allow-ip`; it produced no test result.
+No CTest, full lit, WPT/test262, broad corpus/native matrix, Windows or sanitizer
+run was made.
+
+**Next measured Bootstrap boundary:** `frontier.py` extracts the original
+W/B/U/Data and element helpers from the vendor source and enters with
+`new U(element, null)`. With Object/Array/iterator and heritage identities
+declared, it now refuses **`inherited DOM methods require per-leaf body proof`**,
+past the previous own-key snapshot provider gate. Generic MLIR remains necessary
+for this probe. Bootstrap has not executed natively; inherited method proofs,
+the DOM Data Map path and real Manipulator/EventHandler helpers remain.
+
+
 ## Object literals define through op::define_data, 2026-09-29 UTC
 
 Claude browser worker (`claude-ctbrowser`), resuming an interrupted Sonnet
