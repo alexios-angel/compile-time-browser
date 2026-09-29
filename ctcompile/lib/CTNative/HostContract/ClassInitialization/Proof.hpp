@@ -265,6 +265,7 @@ struct classInitialization {
 
     bool prove(const HostContract & contract, bool domEntry = false);
     bool proveDOMDataFamily(const HostContract & contract);
+    bool forwardDOMDataFields(const HostContract & contract);
     bool proveDOMDataScalars(host_detail::analyzer & analysis);
 
     bool proveDOMMethods(const HostContract & contract);

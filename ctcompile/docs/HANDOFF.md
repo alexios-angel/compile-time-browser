@@ -22,46 +22,53 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
-## Interrupted Astra recovery, 2026-09-29 UTC
+## Recovered DOM Data element fields, 2026-09-29 UTC
 
-**Implementation pending; no new native measurement.** The previous Astra
-iteration left four uncommitted files on `ctcompile-v1` at `6ffb9f353`:
-`HostContract/ClassInitialization/{DOMData.cpp,Proof.cpp,Proof.hpp}` under
-`ctcompile/lib/CTNative/`, and
-`ctcompile/test/CTNative/Browser/native_class_dom_data.py`.
-The recovered change forwards fixed element fields of method-free local class
-records to their declared entry inputs after the existing class/Map alias
-census. The provider and final ownership proofs remain required. Constructor
-registration through `this.element`, inheritance, methods and mutable element
-fields are outside this change.
+**Landed: `3151d223d`**, completing the interrupted Astra patch recorded in
+`0ef7d3c1f`. Fixed element fields on method-free local class records now forward
+to their owner-specific declared entry inputs after the complete class and
+retained-Map alias census. The record and Map owners remain; only unobserved
+field storage and proved immutable entry-cell transport disappear. Captures,
+changing cells, field mutations, inheritance and methods retain their separate
+proof requirements. The DOM Data provider and final ownership proofs still run.
 
-Local `tools/format.sh --check` passed (1180 C++, 155 Python, 116 web files),
-Python syntax parsing passed, and `git diff --check` passed. Devbox validation
-could not start: `ssh -o ConnectTimeout=5 devbox true` failed with
-`Permission denied (publickey)` after the reboot; the restarted
-`~/.ssh/build-agent.sock` agent has no identity loaded. The user must unlock
-the key locally. No build or native execution is claimed for this patch, and
-its implementation must not be committed as verified yet.
+Recovery exposed two restrictions in the draft. An unrelated scalar field read
+inside an entry branch prevented all element-field forwarding; read-only field
+accesses now use the existing scalar proof's entry scope rule. A saved field
+value remained in an immutable local cell that the provider could not treat as
+an input; the existing `retireCell` cleanup now removes that proved transport
+before the input census. The original retained, direct and saved-key sources
+remain unchanged. Nested field writes and changing saved-key cells have explicit
+refusal cases.
 
-Resume with `flock /tmp/ctbrowser-devbox-build.lock bash
-/tmp/codex-recover-dom-data/check.sh`. The wrapper uses explicit targets
-`ctjs-opt ctjs-translate ctcompile-test-native-reference`, then the new
-`published_element_fields` cases, one existing scalar-record control, and the
-unchanged authentic W/B/U/Data frontier probe. It retains GCC/Clang, both
-printing policies, optimization off/on and the existing no-Script-symbol
-gates. Full lit/CTest, WPT/test262, broad corpus/native matrices, Windows and
-sanitizers have not run. The patch, hashes and exact scripts are preserved at
-`/home/alex/.ctbrowser-auto/codex/ctcompile/artifacts/2026-09-29-dom-data-recovery/`;
-restore the scripts to `/tmp/codex-recover-dom-data/` if another reboot removes
-them.
+**Measured, devbox only:** `tools/remote-build.sh ctjs-opt ctjs-translate
+ctcompile-test-native-reference` passed (initial build 18/18 steps, final rebuild
+3/3). The focused `published_element_fields` cases plus one existing scalar
+control passed **32 native executions, four provider proofs, eight Node/VM
+source runs and 19 refusal checks**. GCC and pinned Clang cover optimization
+off/on and explicit/deduced printing. The generated-source and `nm` gates found
+no Script symbols. All four tested source/test hashes match the committed files.
+`tools/format.sh --check` passed (1180 C++, 155 Python, 116 web files), and
+`git diff --check` passed.
 
-The older unmerged `codex-*` branch tips match complete trees already in the
-integration history; do not merge those obsolete histories again. The live
-browser worker owns the separate `codex-ctbrowser` recovery branch. Claude's
-previous ResolveGlobals changes are already integrated as `92e761983`; its
-new DOM/Map final-lowering work remains in `wt/claude-ctcompile`. The next
-measured Bootstrap boundary remains the captured Data Map refusal documented
-below until the pending focused run establishes a new result.
+The exact successful command was `flock /tmp/ctbrowser-devbox-build.lock bash
+/tmp/codex-recover-dom-data/check.sh`, with output in `check-cells.log`.
+The lock covered build, focused checks, the authentic Bootstrap probe and
+artifact copy. Scripts, failed and successful logs, patches, hashes, generated
+C++/IR/manifests and the frontier diagnostic are preserved at
+`/home/alex/.ctbrowser-auto/codex/ctcompile/artifacts/2026-09-29-dom-data-recovery/`.
+Full lit/CTest, WPT/test262, broad corpus/native matrices, Windows and sanitizers
+were not run; nothing was pushed.
+
+**Next measured Bootstrap boundary:** the unchanged W/B/U/Data probe still
+refuses `class method capture is not its constructor or an inert sibling helper`,
+currently **`fn$4 / ctjs.construct`**. Composing ordinary DOM classes with the
+captured Data Map/session owner remains separate work, including constructor
+registration through `this.element`, method receivers and both final consumers.
+Full Bootstrap has not executed natively. The old unmerged `codex-*` branch tips
+match complete trees already in integration history; do not remerge those
+obsolete histories. Separate browser and ordinary DOM/Map recovery remains with
+their existing workers/worktrees.
 
 ## The global object as `this` in the closed world, 2026-09-29 UTC
 
