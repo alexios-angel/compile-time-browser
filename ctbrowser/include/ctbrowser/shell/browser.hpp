@@ -294,6 +294,11 @@ public:
     // reason a scroll does not invalidate them.
     [[nodiscard]] node_id hit_test(float x, float y) const;
 
+    // A FINGER, from a driver - there is no touchscreen in the app layer yet:
+    // `phase` is "start", "move" or "end". Touch Events and the touch pointer's
+    // Pointer Events, and a drag nobody cancelled scrolls (browser/input.cpp).
+    bool touch(std::string_view phase, float x, float y);
+
     // --- frames ----------------------------------------------------------
 
     // Run whatever this frame needs and composite. Cheap when nothing is dirty,
@@ -640,6 +645,17 @@ private:
     bool edit_key(control_state & control, const input_event & event);
 
     bool edited(bool changed);
+    // The same, telling the page WHAT the edit was (Input Events' inputType
+    // and data) - the `beforeinput` before it is before_edit's.
+    bool edited(bool changed, std::string_view input_type, std::optional<std::string_view> data);
+    // `beforeinput` for an edit about to happen: true when a listener
+    // cancelled it, or when the field it was aimed at is no longer focused.
+    bool before_edit(std::string_view input_type, std::optional<std::string_view> data);
+    // A focused <select>'s arrow keys (browser/chrome.cpp).
+    bool select_key(const input_event & event);
+    // `change` on blur is owed only for a value the user edited since focus.
+    bool edited_since_focus_ = false;
+    std::string value_at_focus_;
     bool moved(bool changed);
 
     // What clicking a control does once no listener has cancelled it.
@@ -703,6 +719,20 @@ private:
     // that has to keep aiming at the pointer needs it remembered.
     point pointer_;
     bool have_pointer_ = false;
+    // The wheel event transaction's target and when its last notch came.
+    node_id wheel_target_;
+    double wheel_last_ms_ = 0;
+    // The element the finger went down on, and where it is now.
+    node_id touch_target_;
+    point touch_at_;
+    // Whether this finger's drag has started panning - its pointer was
+    // cancelled then (Pointer Events' "suppress a pointer").
+    bool touch_panning_ = false;
+    // The checkbox, radio or button a held Space made :active.
+    node_id space_active_;
+    // The ELEMENT under a viewport point - a text run's hit is its parent's -
+    // or the body over nothing: what a wheel or a finger is aimed at.
+    [[nodiscard]] node_id element_at(float x, float y);
     // When the next auto-scroll step falls due, on caret_clock_ms_'s scale.
     double autoscroll_due_ms_ = 0;
     std::function<void(const std::string &)> alert_hook_;

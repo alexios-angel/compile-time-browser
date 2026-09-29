@@ -247,9 +247,13 @@ void browser::clipboard_verb(std::string_view verb) {
     }
     if (verb == "Paste") {
         const std::string text = clipboard_read_ ? clipboard_read_() : clipboard_;
-        if (!text.empty()) {
-            forms_.insert_text(*control, text);
-            (void)edited(true);
+        // `beforeinput` first, as for typing - and the control asked for
+        // again after it, for the reason above.
+        if (!text.empty() && !before_edit("insertFromPaste", text)) {
+            if (control_state * live = editable_focus(); live != nullptr) {
+                forms_.insert_text(*live, text);
+                (void)edited(true, "insertFromPaste", text);
+            }
         }
         return;
     }
@@ -257,9 +261,11 @@ void browser::clipboard_verb(std::string_view verb) {
     if (selected.empty()) { return; }
     clipboard_ = selected;
     if (clipboard_write_) { clipboard_write_(selected); }
-    if (verb == "Cut") {
-        (void)form_store::delete_selection(*control);
-        (void)edited(true);
+    if (verb == "Cut" && !before_edit("deleteByCut", std::nullopt)) {
+        if (control_state * live = editable_focus(); live != nullptr) {
+            (void)form_store::delete_selection(*live);
+            (void)edited(true, "deleteByCut", std::nullopt);
+        }
     }
 }
 

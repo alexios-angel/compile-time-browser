@@ -70,6 +70,21 @@ public:
 
     bool dispatch_mouse(std::string_view type, node_id target, const input_event & input);
     bool dispatch_wheel(node_id target, const input_event & input);
+    bool dispatch_touch(std::string_view phase, node_id target, float x, float y,
+                        bool pointer = true);
+    // While a finger is down its scrolls' scrollends wait for the lift (events/input.cpp).
+    void hold_scrollend(bool hold);
+    std::optional<std::vector<node_id>> held_scrollend_;
+    bool wheel_scroll(node_id from, float dx, float dy); // events/input.cpp
+    void select_by_user(node_id anchor, std::size_t anchor_byte, node_id focus,
+                        std::size_t focus_byte); // events/input.cpp
+    bool dispatch_input(std::string_view type, node_id target,
+                        std::optional<std::string_view> input_type,
+                        std::optional<std::string_view> data); // events/input.cpp
+    // The computed role, or accessible name, of the element `getter(slot)` returns in
+    // the page - testdriver's get_computed_role/label (page/accessibility.cpp).
+    std::optional<std::string> computed_accessibility(std::string_view getter, double slot,
+                                                      bool label);
 
     bool dispatch_event(std::string_view type, node_id target, value event);
 
@@ -1026,6 +1041,7 @@ public:
 
     void set_viewport_scroll_hooks(std::function<point()> get, std::function<void(point)> set);
     void queue_scroll_event(node_id target);
+    void fire_scrollend(context & cx, std::span<const node_id> scrolled);
     void report_media_query_changes();
 
     void flush_layout();

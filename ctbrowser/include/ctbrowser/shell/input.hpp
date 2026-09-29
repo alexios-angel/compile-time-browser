@@ -50,6 +50,7 @@ struct input_event {
     // Trailing, with a default, so every existing aggregate initialiser above
     // keeps compiling.
     bool has_pointer = false;
+    float wheel_x = 0; // notches, positive = to the right (SDL's sign, DOM deltaX's)
 
     [[nodiscard]] static input_event mouse_move_to(float x, float y) {
         return input_event{input_kind::mouse_move, x, y, 0, {}, 0};
