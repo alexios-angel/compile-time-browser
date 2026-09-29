@@ -998,10 +998,11 @@ bool classInitialization::foldDecidedArms(ctjs::CreateClosureOp constructor,
             if (!step() ||
                 llvm::isa<ctjs::ConstructOp, ctjs::CreateClosureOp, ctjs::CreateCellOp,
                           ctjs::CellSetOp, ctjs::StoreGlobalOp, ctjs::DefineAccessorOp>(nested) ||
-                setup.contains(nested) || retainedSetup.contains(nested) ||
-                errorOperations.contains(nested) || cellOperations.contains(nested) ||
-                domDataOperations.contains(nested) || methodCalls.contains(nested) ||
-                instanceOfResults.contains(nested) || deferredPublications.contains(nested)) {
+                llvm::is_contained(calls, nested) || setup.contains(nested) ||
+                retainedSetup.contains(nested) || errorOperations.contains(nested) ||
+                cellOperations.contains(nested) || domDataOperations.contains(nested) ||
+                methodCalls.contains(nested) || instanceOfResults.contains(nested) ||
+                deferredPublications.contains(nested)) {
                 return mlir::WalkResult::interrupt();
             }
             return mlir::WalkResult::advance();
