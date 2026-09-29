@@ -34,6 +34,7 @@ std::string with_widget(std::string_view source, bool serializable) {
         cx.set_serializable_interface("Widget",
                                       {std::string{CTBROWSER_PRIVATE_KEY("WidgetState")}, "size"});
     }
+    cx.set_gc_stress(true);
     const program & compiled = cx.own_program(compiler::compile(source));
     const run_result ran = cx.run(compiled);
     return ran.ok ? cx.to_string(ran.returned) : "THREW " + ran.error;
@@ -92,6 +93,15 @@ int main() {
                   "var c = structuredClone(w);"
                   "return Object.keys(c).join() + ',' + ('extra' in c) + ',' + ('fn' in c);",
                   true, "size,false,false");
+    // The global binding is configurable; the registered interface survives
+    // deletion or replacement, including collections during the clone.
+    for (const std::string change : {"delete globalThis.Widget;", "Widget = function () {};"}) {
+        expect_widget("var w = new Widget();" + change +
+                          "var c = structuredClone(w);"
+                          "return (Object.getPrototypeOf(c) === Object.getPrototypeOf(w)) +"
+                          " ',' + c.size;",
+                      true, "true,3");
+    }
     // An object on a prototype the page made is not a platform object at all.
     expect_widget("class Plain {} var c = structuredClone(new Plain());"
                   "return Object.getPrototypeOf(c) === Object.prototype;",

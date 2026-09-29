@@ -50,12 +50,14 @@ realm_record & context::create_realm() {
     realm_record & made = *realms_.back();
     made.globals = realm_template_;
     made.builtin = realm_template_builtin_;
+    made.platform_prototypes = realm_template_platform_prototypes_;
     return made;
 }
 
 void context::set_realm_template(const string_flat_map<value> & globals) {
     realm_template_ = globals;
     realm_template_builtin_ = current_realm().builtin;
+    realm_template_platform_prototypes_ = current_realm().platform_prototypes;
 }
 
 // A bare VM has a global object too. Like Shell's Window view, this proxy

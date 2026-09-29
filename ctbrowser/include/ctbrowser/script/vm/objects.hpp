@@ -76,6 +76,9 @@ struct realm_record {
     // assignment or a member of the Window itself, { writable, enumerable,
     // configurable }. A `delete` forgets the mark with the binding.
     string_flat_map<bool> builtin;
+    // Host interface identity survives deleting or replacing its global.
+    // structuredClone reads these registered prototypes, never page bindings.
+    string_flat_map<value> platform_prototypes;
     value global_this = value::undefined();
     // See context::set_undeclared_name_hook.
     std::function<value(std::string_view)> undeclared_name;

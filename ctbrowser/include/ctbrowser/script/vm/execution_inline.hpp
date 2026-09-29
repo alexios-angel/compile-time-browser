@@ -65,6 +65,10 @@ inline auto context::define_global(std::string name, value v) -> void {
 
 inline auto context::define_builtin_global(std::string name, value v) -> void {
     realm_record & realm = current_realm();
+    if (!is_intrinsic_name(name) && v.is_callable()) {
+        const value prototype = lookup_property(v, "prototype");
+        if (prototype.is_object()) { realm.platform_prototypes[name] = prototype; }
+    }
     realm.builtin[name] = true;
     realm.globals[std::move(name)] = v;
 }
@@ -74,6 +78,7 @@ inline auto context::mark_globals_builtin() -> void {
     for (const auto & [name, held] : realm.globals) {
         realm.builtin[name] = true;
         intrinsic_names_[name] = true;
+        realm.platform_prototypes.erase(name);
     }
 }
 

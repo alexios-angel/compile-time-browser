@@ -1034,6 +1034,7 @@ private:
     // See set_realm_template.
     string_flat_map<value> realm_template_;
     string_flat_map<bool> realm_template_builtin_;
+    string_flat_map<value> realm_template_platform_prototypes_;
     string_flat_map<bool> intrinsic_names_; // see mark_globals_builtin
     // See set_serializable_interface.
     string_flat_map<std::vector<std::string>> serializable_interfaces_;
