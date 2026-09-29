@@ -201,6 +201,20 @@ private:
         return k > 0;
     }
 
+    // ONE <compound-selector>, the argument of `:host()` and `::slotted()`:
+    // parsed for validity only - neither is matched here - with a combinator a
+    // syntax error at any depth (compound_only_).
+    [[nodiscard]] bool compound_argument(std::span<const component_value> inner) {
+        const std::size_t before = sheet_->selectors.size();
+        selector_parser nested{*sheet_, *atoms_};
+        nested.nesting_ = nesting_;
+        nested.in_argument_ = true;
+        nested.compound_only_ = true;
+        const std::uint32_t count = nested.run(inner);
+        sheet_->selectors.resize(before);
+        return !nested.invalid() && count == 1;
+    }
+
     [[nodiscard]] bool parse_functional(std::string_view name, const component_value & fn,
                                         building & into, bool & invalid) {
         pseudo_ref ref;
@@ -339,6 +353,14 @@ private:
             if (!single_ident_argument(fn, argument)) { invalid = true; }
             return false;
         }
+        // `:host(<compound-selector>)` and `:host-context()` (CSS Scoping 1
+        // §3.2.1): real and unmatchable here, like `:state()` - and a syntax
+        // error unless the argument is ONE compound: `:host(:not(.a .b))`
+        // (parse-not). See compound_argument.
+        if (ascii_iequals(name, "host") || ascii_iequals(name, "host-context")) {
+            if (!compound_argument(inner)) { invalid = true; }
+            return false;
+        }
         if (!is_not && !is_is && !is_where && !is_has) { return false; }
         ref.kind = is_not ? pseudo_kind::not_ : is_where ? pseudo_kind::where_ : pseudo_kind::is_;
         ref.relative = is_has;
@@ -363,6 +385,7 @@ private:
                 one.nesting_ = nesting_;
                 one.in_argument_ = true;
                 one.in_has_ = in_has_ || relative_;
+                one.compound_only_ = compound_only_;
                 const std::uint32_t n = one.run(inner.subspan(at, end - at));
                 if (!one.invalid() && n == 1) {
                     ref.args.push_back(std::move(sheet_->selectors[before]));
@@ -378,8 +401,16 @@ private:
             }
             if (dropped) { into.part.dropped = true; }
             if (ref.args.empty()) {
-                invalid = invalid || !sheet_->forgiving;
-                return false;
+                if (!sheet_->forgiving) {
+                    invalid = true;
+                    return false;
+                }
+                // NOTHING LEFT IS STILL A SELECTOR, one that matches nothing -
+                // and that is KNOWN, unlike an argument this engine cannot
+                // represent: `:not(:is(svg|div))` matches every element
+                // (is-where-not). The empty list says so to the matcher.
+                into.part.pseudos.push_back(std::move(ref));
+                return true;
             }
         } else {
             // The nested list's own syntax errors are this selector's: `:not(>)` is not
@@ -389,6 +420,9 @@ private:
             nested.in_has_ = in_has_ || relative_;
             nested.nesting_ = nesting_;
             nested.in_argument_ = true;
+            // A `:has()`'s argument is relative, anchored by a combinator of
+            // its own, so it is not held to a compound.
+            nested.compound_only_ = compound_only_ && !is_has;
             const std::uint32_t count = nested.run(inner);
             invalid = invalid || nested.invalid();
             // `:is(&.a)` contains the nesting selector, and `:not(:scope)` names
@@ -510,7 +544,7 @@ private:
         bool button_pe = false;
 
         const auto start_compound = [&] {
-            if (!compounds.empty() && after_pe) { dead = invalid_ = true; }
+            if (!compounds.empty() && (after_pe || compound_only_)) { dead = invalid_ = true; }
             after_pe = false;
             last_pe.clear();
             view_transition_pe = false;
@@ -831,8 +865,16 @@ private:
                         // author's bytes are the only record.
                         std::string argument;
                         // A PART OF A PSEUDO-ELEMENT is no part at all:
-                        // `::details-content::part(a)` is invalid.
-                        if (after_pe && ascii_iequals(name, "part")) {
+                        // `::details-content::part(a)` is invalid - nor is
+                        // one slotted into it: `::column::slotted(*)`.
+                        if (after_pe && ascii_iequals_any(name, {"part", "slotted"})) {
+                            dead = invalid_ = true;
+                            continue;
+                        }
+                        // `::slotted(<compound-selector>)`: `::slotted(0)` is
+                        // no selector (parse-slotted).
+                        if (ascii_iequals(name, "slotted") &&
+                            !compound_argument(sheet_->children_of(next))) {
                             dead = invalid_ = true;
                             continue;
                         }
@@ -901,6 +943,18 @@ private:
                             dead = true;
                             continue;
                         }
+                        // ...and CSS Multicol 2's column: `::before::column`,
+                        // and its scroll marker, `::column::scroll-marker`.
+                        // Nothing here generates either box.
+                        const bool column_of =
+                            (ascii_iequals(name, "column") &&
+                             (last_pe == "before" || last_pe == "after")) ||
+                            (ascii_iequals(name, "scroll-marker") && last_pe == "column");
+                        if (column_of) {
+                            last_pe = ascii_lower_copy(name);
+                            dead = lossy = true;
+                            continue;
+                        }
                         if (!ascii_iequals_any(last_pe,
                                                {"part", "slotted", "picker", "details-content"})) {
                             dead = invalid_ = true;
@@ -926,17 +980,25 @@ private:
                 }
                 // A HIGHLIGHT PSEUDO-ELEMENT takes no pseudo-class after it at
                 // all (CSS Pseudo 4 §3.6): `::selection:hover` is no selector.
-                const bool highlight_pe =
-                    ascii_iequals_any(last_pe, {"selection", "target-text", "spelling-error",
-                                                "grammar-error", "search-text", "highlight"});
+                // ...and nor does the view transition tree's root, a column or a
+                // slotted element (pseudo-elements-invalid, column-pseudo-invalid,
+                // parse-slotted).
+                const bool highlight_pe = ascii_iequals_any(
+                    last_pe, {"selection", "target-text", "spelling-error", "grammar-error",
+                              "search-text", "highlight", "view-transition", "column", "slotted"});
                 if (after_pe &&
                     (highlight_pe ||
                      !(view_transition_pe ? ascii_iequals(name, "only-child")
-                       : part_pe ? structural_bit_of(name) == 0
-                                 : ascii_iequals_any(name, {"hover", "active", "focus",
-                                                            "focus-visible", "focus-within"}) ||
-                                       (button_pe &&
-                                        ascii_iequals_any(name, {"enabled", "disabled"}))))) {
+                       // Not about the TREE: `:disabled` and `:checked` are
+                       // bits here too, and a part takes both (parse-part).
+                       : part_pe
+                           ? !ascii_iequals_any(name, {"root", "empty", "first-child", "last-child",
+                                                       "only-child", "first-of-type",
+                                                       "last-of-type", "only-of-type"})
+                           : ascii_iequals_any(name, {"hover", "active", "focus", "focus-visible",
+                                                      "focus-within"}) ||
+                                 (button_pe &&
+                                  ascii_iequals_any(name, {"enabled", "disabled"}))))) {
                     dead = invalid_ = true;
                     continue;
                 }
@@ -1046,6 +1108,11 @@ private:
     // Parsing the argument of `:not()`, `:is()`, `:where()` or `:has()`, where
     // a pseudo-element cannot be (Selectors 4 §3.6.3): it is a syntax error.
     bool in_argument_ = false;
+    // Parsing a <compound-selector> - the argument of `:host()` or
+    // `::slotted()` - where a combinator is a syntax error at any depth: a
+    // `:not()` of one fails, an `:is()` forgives by dropping it
+    // (parse-not, parse-is-where; csswg-drafts#5093).
+    bool compound_only_ = false;
     const nesting_context * nesting_ = nullptr;
     // Per alternative: whether it wrote `&`, and whether it names the scoping
     // root (`:scope`, or `&` where that is what `&` means).

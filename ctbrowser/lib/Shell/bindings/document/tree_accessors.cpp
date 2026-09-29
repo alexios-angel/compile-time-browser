@@ -14,9 +14,9 @@ using namespace detail;
 // `document.title`, `document.body` and the eight collections HTML 3.1.5 hangs
 // off the Document. All of them are ACCESSORS and none of them is a property
 // refreshed on the tick, for one reason: every test in this group writes and
-// then reads back in the same statement. `refresh_document` runs when the
-// wrappers are pushed, which is at least a frame later, so a data property
-// answers a read with the value from before the write that provoked it - and
+// then reads back in the same statement. A data property pushed with the
+// wrappers, which is at least a frame later, answers a read with the value
+// from before the write that provoked it - and
 // `document.title = "x"; assert_equals(document.title, "x")` is the entire
 // shape of html/dom's nine title tests.
 void dom_bindings::install_tree_accessors(context & cx, script::object_object & doc) {
@@ -120,6 +120,31 @@ void dom_bindings::install_tree_accessors(context & cx, script::object_object & 
             mutated();
             return value::undefined();
         });
+    // `document.activeElement`, HTML 6.6.3: the focused element RETARGETED
+    // AGAINST THE DOCUMENT - a focus inside a shadow tree answers with the
+    // outermost host, and what is inside a closed tree never leaks out this
+    // way - else the body, else the document element. It was a property
+    // refreshed on the tick, and read null all through parsing: the first
+    // line of shadow-dom/focus/*, `assert_equals(document.activeElement,
+    // document.body)`, failed before anything had been clicked.
+    define_getter(cx, doc, "activeElement", [this](context & c, std::span<value>) {
+        node_id active = focused_ && is_connected(focused_) ? focused_ : node_id{};
+        node_id root;
+        {
+            const auto txn = doc_->read();
+            for (int guard = 0; active && guard < 64; ++guard) {
+                const shadow_tree * tree = shadow_tree_of(root_of_tree(txn, active, false));
+                if (tree == nullptr) { break; }
+                active = tree->host;
+            }
+            if (txn.kind(txn.root()).value_or(node_kind::document) == node_kind::element) {
+                root = txn.root();
+            }
+        }
+        if (!active) { active = body_element(); }
+        if (!active) { active = root; }
+        return active ? wrap(c, active) : value::null();
+    });
 
     // `document.dir`, HTML 3.2.6.4: the html element's `dir`, limited to the
     // three known values on the way out and written verbatim on the way in -

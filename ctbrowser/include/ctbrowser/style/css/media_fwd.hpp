@@ -73,6 +73,12 @@ struct media_feature {
         grid,
         scan,
         color_index,
+        // ...and the windowing ones of the Additional Windowing Controls and
+        // Manifest Incubations explainers: a normal, resizable browser window
+        // with no navigation controls of its own.
+        display_state,
+        resizable,
+        navigation_controls,
     };
     // What kind of value the feature takes, which decides whether a value is
     // VALID for it - `(width: foo)` and `(orientation: 0)` parse but are

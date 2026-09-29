@@ -206,8 +206,21 @@ bool browser::set_state(node_id at, std::uint32_t bit, bool on) {
     if (!at) { return false; }
     const auto txn = doc_->read();
     bool changed = false;
-    for (node_id n = at; n; n = txn.parent(n)) {
+    // :hover and :active hold for the element and its ancestors; :focus for
+    // the focused element alone - :focus-within is its ancestors' - and for
+    // every shadow host whose tree holds it (HTML 6.6.4, "has the focus");
+    // :focus-visible for the focused element and nothing else.
+    const auto next = [&](node_id n) {
+        return bit == state_focus           ? host_of(txn, n)
+               : bit == state_focus_visible ? node_id{}
+                                            : txn.parent(n);
+    };
+    for (node_id n = at; n; n = next(n)) {
         if (styles_->set_state(n, bit, on)) { changed = true; }
+    }
+    // Nothing is :focus-visible without :focus, whoever takes the focus away.
+    if (bit == state_focus && !on && styles_->set_state(at, state_focus_visible, false)) {
+        changed = true;
     }
     // Conservative, and knowingly so: any state change re-resolves the whole
     // cascade and re-lays-out. Most hovers only change a colour, and a real
@@ -264,9 +277,51 @@ bool browser::handle_popup_press(const input_event & event) {
             // The option's VALUE, not its label - that is what a form sends
             // and what `select.value` reads.
             forms_.state_of(txn, atoms_, select).value = option_value_at(txn, select, index);
-            bindings_->dispatch("change", select);
+            // HTML's select: `input` (bubbling, composed) and then `change`
+            // (bubbling), neither cancelable.
+            (void)bindings_->dispatch_input("input", select, std::nullopt, std::nullopt);
+            (void)bindings_->dispatch_input("change", select, std::nullopt, std::nullopt);
         }
     }
+    return true;
+}
+
+// A FOCUSED <select>'s ARROW KEYS pick the next or the previous option
+// without opening the popup - the keyboard half of HTML's "the user agent
+// should allow the user to pick an option" - and a pick that changed the
+// value fires `input` then `change`, as one from the popup does. A listbox
+// (`multiple`) keeps its arrows for the page.
+bool browser::select_key(const input_event & event) {
+    if (!focused_ || select_open_ || (event.key != "ArrowDown" && event.key != "ArrowUp")) {
+        return false;
+    }
+    const node_id select = focused_;
+    {
+        const auto txn = doc_->read();
+        if (kind_of(txn, select) != control_kind::select ||
+            txn.has_attribute(select, atoms_.intern_lower("multiple"))) {
+            return false;
+        }
+        const atom option_tag = atoms_.intern_lower("option");
+        std::vector<std::string> values;
+        for (const node_id child : txn.children(select)) {
+            if (txn.tag(child).value_or(atom{}) == option_tag) {
+                values.push_back(form_store::option_value(txn, atoms_, child));
+            }
+        }
+        if (values.empty()) { return true; }
+        control_state & state = forms_.state_of(txn, atoms_, select);
+        const auto at = std::ranges::find(values, state.value);
+        const std::size_t now =
+            at == values.end() ? 0 : static_cast<std::size_t>(at - values.begin());
+        const std::size_t next = event.key == "ArrowDown" ? std::min(now + 1, values.size() - 1)
+                                                          : (now == 0 ? 0 : now - 1);
+        if (next == now) { return true; }
+        state.value = values[next];
+    }
+    mark(dirty::paint);
+    (void)bindings_->dispatch_input("input", select, std::nullopt, std::nullopt);
+    (void)bindings_->dispatch_input("change", select, std::nullopt, std::nullopt);
     return true;
 }
 

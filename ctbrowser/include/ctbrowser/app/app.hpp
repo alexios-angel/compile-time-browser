@@ -1,4 +1,5 @@
 #pragma once
+#include <algorithm>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -68,6 +69,12 @@ struct app_options {
     // `CTBROWSER_MAX_FPS` sets it from the environment.
     int max_fps = 60;
     double fixed_dt = 0; // >0: pretend every frame took exactly this long
+    // How long an idle application blocks before looking around anyway. Not
+    // forever: a wait that never times out would need every source of change
+    // to be an SDL event, and the browser has its own clock. A driver whose
+    // commands arrive on a socket - no event at all - wants this short:
+    // `CTBROWSER_IDLE_WAIT_MS` sets it from the environment.
+    int idle_wait_ms = 250;
 
     // Half the caret's blink period, in milliseconds; 0 holds it solid.
     // Chrome's 500 by default, which is what a person wants and what a
@@ -197,6 +204,7 @@ struct app_options {
 //   CTBROWSER_DOC_ROOT     -> document_root, what a leading `/` in a
 //                             resource name resolves against
 //   CTBROWSER_MAX_FPS      -> max_fps, the redraw cap (0 = uncapped)
+//   CTBROWSER_IDLE_WAIT_MS -> idle_wait_ms, the longest an idle loop blocks
 //
 // This is what lets an example BE a ctest without the example containing any
 // test scaffolding.
@@ -219,6 +227,9 @@ inline void apply_environment(app_options & options) {
     // and this is a property of the corpus rather than of the driver.
     if (const char * root = std::getenv("CTBROWSER_DOC_ROOT")) { options.document_root = root; }
     if (const char * fps = std::getenv("CTBROWSER_MAX_FPS")) { options.max_fps = std::atoi(fps); }
+    if (const char * wait = std::getenv("CTBROWSER_IDLE_WAIT_MS")) {
+        options.idle_wait_ms = std::max(1, std::atoi(wait));
+    }
     // A bounded run has to be reproducible, or comparing its screenshot is a
     // coin flip.
     if (options.max_frames > 0 && options.fixed_dt <= 0) { options.fixed_dt = 1.0 / 60.0; }

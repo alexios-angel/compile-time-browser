@@ -952,7 +952,6 @@ void dom_bindings::install_document(context & cx) {
             doc->set(name, cx.string("about:blank"));
         }
     }
-    refresh_document();
 }
 
 } // namespace ctbrowser::shell

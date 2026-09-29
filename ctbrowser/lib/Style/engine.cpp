@@ -30,10 +30,10 @@ element_facts engine::facts_of(const read_txn & txn, node_id id) const {
     if (!id_attr.empty()) { f.id = atoms_->intern(id_attr); }
     split_classes(txn.attribute_value(id, class_name()), f.classes);
     f.states = state_of(id);
-    // `:focus-visible` is `:focus` here (selector.hpp says why), and
     // `:focus-within` asks whether the focused element - there is at most a
     // handful of elements with any state at all - is this one or under it.
-    if ((f.states & state_focus) != 0) { f.states |= state_focus_visible | state_focus_within; }
+    // (`:focus-visible` is a bit of its own, set by the shell.)
+    if ((f.states & state_focus) != 0) { f.states |= state_focus_within; }
     for (const auto & [key, bits] : (states_source_ ? states_source_ : this)->states_) {
         if ((bits & state_focus) == 0 || (f.states & state_focus_within) != 0) { continue; }
         const node_id focused{static_cast<std::uint32_t>(key >> 32),
@@ -280,6 +280,14 @@ std::string_view engine::pragma_language(const read_txn & txn) const {
 
 bool engine::language_matches(std::string_view range, std::string_view lang) {
     if (lang.empty() || range.empty()) { return false; }
+    // A SUBTAG IS AT MOST EIGHT CHARACTERS (BCP 47 §2.1): `fr-ninechars` is
+    // no language tag, and a range matches none of it
+    // (lang-singleton-subtag-matching).
+    for (std::size_t at = 0; at <= lang.size();) {
+        const std::string_view subtag = next_subtag(lang, at);
+        if (subtag.size() > 8) { return false; }
+        if (subtag.empty()) { break; }
+    }
     std::size_t ri = 0;
     std::size_t li = 0;
     const std::string_view first_range = next_subtag(range, ri);

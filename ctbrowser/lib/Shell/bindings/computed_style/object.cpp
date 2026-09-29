@@ -39,6 +39,13 @@ struct computed_cache {
     std::uint64_t restyles = 0; // dom_bindings::restyle_stamp()
 };
 
+// Where the read-only declaration keeps its answer to one of
+// CSSStyleDeclaration's members - see the end of computed_style_object. The
+// prototype's members read the same keys (stylesheets/prototypes/declarations.cpp).
+[[nodiscard]] std::string computed_member_key(std::string_view member) {
+    return std::string{script::private_key_prefix} + "computed-member:" + std::string{member};
+}
+
 // DOES `getComputedStyle`'s SECOND ARGUMENT NAME A PSEUDO-ELEMENT?
 //
 // CSSOM §5.1 asks the question in exactly this order, and the order is the
@@ -149,7 +156,7 @@ value dom_bindings::computed_style_object(context & cx, node_id id, atom pseudo)
                "computed:" + std::string{pseudo ? atoms_->text(pseudo) : std::string_view{}};
         if (const value * cached = wrapper->find(slot); cached != nullptr && cached->is_object()) {
             auto * made = static_cast<script::object_object *>(cached->as_heap());
-            const value * length = made->find("length");
+            const value * length = made->find(computed_member_key("length"));
             const bool rendered =
                 styles_ != nullptr && styles_->find(style::engine::key_of(id)) != styles_->end();
             if (length != nullptr && (context::to_number(*length) != 0 || !rendered)) {
@@ -302,12 +309,10 @@ value dom_bindings::computed_style_object(context & cx, node_id id, atom pseudo)
         held->define_accessor(style::css::idl_name_of(css), get, refuse);
     }
 
-    // THE INDEXED GETTER AND `length`, CSSOM §6.7 - as DATA properties, which is
-    // also what makes the object ITERABLE. `[...style]` and `for (const p of
-    // style)` go through context::iterable_values, and that recognises anything
-    // carrying a numeric `length` beside indexed properties; there is no
-    // Symbol.iterator dispatch in this VM to hook instead. serialize-all-longhands
-    // and getComputedStyle-property-order both spread one.
+    // THE INDEXED PROPERTIES, CSSOM §6.7 - as DATA properties, below the
+    // `length` the prototype answers from this object's private count; the
+    // interface's @@iterator walks the two (stylesheets/prototypes/helpers.cpp).
+    // serialize-all-longhands and getComputedStyle-property-order both spread one.
     //
     // THE SUPPORTED LONGHANDS, in the lexicographic order computed_style_entries
     // put them in - and none of the shorthands or custom properties that follow
@@ -318,14 +323,17 @@ value dom_bindings::computed_style_object(context & cx, node_id id, atom pseudo)
     // supported longhands cannot change under a page; what can is whether the
     // element is in the document at all, so a declaration taken for a detached
     // element keeps `length === 0` after the element is appended. Making the
-    // index list live too would mean an accessor per index and a `length` that
-    // is not a data property, and `context::iterable_values` finds the object
-    // iterable by reading exactly that data property.
+    // index list live too would mean an accessor per index.
     std::vector<std::string> indexed;
     for (const auto & [name, text] : cached->entries) {
         const style::css::property_syntax * known = style::css::find_property(name);
         if (known != nullptr && !known->shorthand) { indexed.push_back(name); }
     }
+    // ...THE VENDOR-PREFIXED ONES LAST, each run still in order: CSSOM's
+    // "lexicographical order" sorts `-webkit-` after the standard names
+    // (getComputedStyle-property-order), where a plain sort puts `-` first.
+    std::ranges::stable_partition(indexed,
+                                  [](const std::string & name) { return !name.starts_with('-'); });
     // ...AND THE CUSTOM PROPERTIES AFTER THEM, every one the element has a
     // value for (cssstyledeclaration-custom-properties, -registered-...).
     for (const auto & [name, text] : cached->entries) {
@@ -334,52 +342,74 @@ value dom_bindings::computed_style_object(context & cx, node_id id, atom pseudo)
     for (std::size_t i = 0; i < indexed.size(); ++i) {
         held->set(std::to_string(i), cx.string(indexed[i]));
     }
-    held->set("length", value::number(static_cast<double>(indexed.size())));
 
+    // CSSStyleDeclaration's OWN MEMBERS - `length`, `cssText`, `item()`,
+    // `getPropertyValue()` and the rest - are WebIDL attributes and operations,
+    // so they live on its prototype and a computed style INHERITS them
+    // (cssom/idlharness: "must inherit property"). What is here is only this
+    // declaration's answer to each, under private keys the prototype's members
+    // hand a computed receiver's call to
+    // (stylesheets/prototypes/declarations.cpp spells the same keys).
+    const auto member = [&](std::string_view name, value answer_value) {
+        held->define(computed_member_key(name), answer_value, script::attr_none);
+    };
+    const auto native = [&](std::string_view name,
+                            std::function<value(context &, std::span<value>)> fn) {
+        return value::object(cx.allocate<script::native_object>(std::string{name}, std::move(fn)));
+    };
+    member("length", value::number(static_cast<double>(indexed.size())));
     // THE SPELLING THE DUMP USES, and the only one both engines agree on. It
     // takes a CSS name and accepts the IDL one too, because a page holding
     // `backgroundColor` should not have to hyphenate it itself. Live, like the
     // accessors: css-style-declaration-modifications edits a stylesheet rule and
     // reads the computed value back through this.
-    set_method(cx, *held, "getPropertyValue",
-               [refresh, answer](context & c, std::span<value> args) {
-                   if (args.empty()) { return c.string(std::string{}); }
-                   const std::string asked = style::css::css_name_of(c.to_string(args[0]));
-                   refresh(c);
-                   return c.string(answer(asked));
-               });
+    member("getPropertyValue",
+           native("getPropertyValue", [refresh, answer](context & c, std::span<value> args) {
+               if (args.empty()) { return c.string(std::string{}); }
+               const std::string asked = style::css::css_name_of(c.to_string(args[0]));
+               refresh(c);
+               return c.string(answer(asked));
+           }));
     // Always empty. Importance is a cascade INPUT, and by the time a value is
     // computed the question has been settled; this engine does not keep which
     // declaration won past resolve().
-    set_method(cx, *held, "getPropertyPriority",
-               [](context & c, std::span<value>) { return c.string(""); });
-    set_method(cx, *held, "item", [indexed](context & c, std::span<value> args) {
-        if (args.empty()) { return c.string(std::string{}); }
-        const double i = context::to_number(args[0]);
-        if (!(i >= 0) || static_cast<std::size_t>(i) >= indexed.size()) { return c.string(""); }
-        return c.string(indexed[static_cast<std::size_t>(i)]);
-    });
+    member("getPropertyPriority", native("getPropertyPriority", [](context & c, std::span<value>) {
+               return c.string("");
+           }));
+    member("item", native("item", [indexed](context & c, std::span<value> args) {
+               if (args.empty()) { return c.string(std::string{}); }
+               const double i = context::to_number(args[0]);
+               if (!(i >= 0) || static_cast<std::size_t>(i) >= indexed.size()) {
+                   return c.string("");
+               }
+               return c.string(indexed[static_cast<std::size_t>(i)]);
+           }));
     const auto refuse_method = [this](context & c, std::span<value>) {
         throw_dom_exception(c, "NoModificationAllowedError",
                             "a computed style declaration is read-only");
         return value::undefined();
     };
-    set_method(cx, *held, "setProperty", refuse_method);
-    set_method(cx, *held, "removeProperty", refuse_method);
+    member("setProperty", native("setProperty", refuse_method));
+    member("removeProperty", native("removeProperty", refuse_method));
     // Empty rather than reconstructed - which is also what the specification
     // says: a computed style's cssText getter returns the empty string, because
     // serialising one means deciding how to rebuild every shorthand and engines,
     // including Chrome across its own versions, disagree there. Which is exactly
-    // why the compared property set is longhands only. An ACCESSOR so that the
-    // setter can refuse: `cs.cssText = "color: blue"` is the first of
-    // computed-style-001's three read-only assertions.
-    held->define_accessor(
-        "cssText",
-        value::object(cx.allocate<script::native_object>(
-            "cssText", [](context & c, std::span<value>) { return c.string(std::string{}); })),
-        refuse);
-    // A computed style belongs to no rule.
-    held->set("parentRule", value::null());
+    // why the compared property set is longhands only. The SETTER refuses:
+    // `cs.cssText = "color: blue"` is the first of computed-style-001's three
+    // read-only assertions.
+    member("cssText", native("cssText", [](context & c, std::span<value>) {
+               return c.string(std::string{});
+           }));
+    member("cssText=", refuse);
+    // ...AND THE PROTOTYPE THAT CARRIES THEM, CSSStyleProperties.prototype, so
+    // `getComputedStyle(el) instanceof CSSStyleDeclaration` and `[...style]`
+    // runs the interface's own iterator.
+    if (script::object_object * internals = cssom_internals(cx)) {
+        if (const value * proto = internals->find("CSSStyleProperties.prototype")) {
+            held->prototype = *proto;
+        }
+    }
     return value::object(held);
 }
 

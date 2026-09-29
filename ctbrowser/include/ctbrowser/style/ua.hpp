@@ -101,6 +101,10 @@ inline constexpr std::string_view ua_css = R"(
 
     head, style, script, title, meta, link, template, datalist, param, source,
     track, area, base, noscript { display: none }
+    /* HTML's rendering section, 15.3.1: a `hidden` element is not rendered -
+       `until-found` hides by content-visibility instead, and an <embed> keeps
+       its box. */
+    [hidden]:not([hidden=until-found i]):not(embed) { display: none }
 )";
 
 // The chrome palette, in 0xAARRGGBB - the Firefox values, painted by

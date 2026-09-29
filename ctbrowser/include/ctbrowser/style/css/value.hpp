@@ -105,13 +105,24 @@ struct raw_rule {
 // scope, whose root is the parent of the sheet's owner node. Nesting is a
 // parent index, as a condition's is: a rule in an inner scope must also sit
 // inside the outer one.
+//
+// THE IMPLICIT ROOT IS AN ELEMENT, not a selector: `implicit_root` is the
+// engine key of the owner node's parent, which the text itself cannot say -
+// the author's sheets reach the cascade concatenated, so whoever concatenates
+// them writes `@-ctbrowser-scope-root <key>;` before each sheet that has an
+// `@scope`, and every root-less scope after it takes that key. Zero is none.
 struct scope_block {
     std::uint32_t parent = 0;
     std::uint32_t first_root = 0;
     std::uint32_t root_count = 0;
     std::uint32_t first_limit = 0;
     std::uint32_t limit_count = 0;
+    std::uint64_t implicit_root = 0;
 };
+
+// The private statement that names an implicit scope's root - see
+// scope_block. Not CSS: nothing but the concatenating shell writes it.
+inline constexpr std::string_view scope_root_at_rule = "-ctbrowser-scope-root";
 
 // @font-face, the one at-rule whose product the cascade does not touch: it is a
 // resource list, so it is collected rather than matched.
@@ -159,6 +170,11 @@ struct import_statement {
     bool layered = false;
     // `supports(<condition>)`'s argument, verbatim, or empty.
     std::string supports;
+    // `scope(...)` (CSS Cascade 6 §2.2): the `@scope` prelude the imported
+    // rules are wrapped in - `(.a) to (.b)`, or empty for `scope()`, the
+    // implicit scope. `scoped` says the call was there at all.
+    std::string scope;
+    bool scoped = false;
     std::size_t begin = 0; // the byte span of the whole statement in the input,
     std::size_t end = 0;   // `@import` through its `;` inclusive
 };

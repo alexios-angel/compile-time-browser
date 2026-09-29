@@ -320,9 +320,9 @@ void test_element_state_pseudos() {
     }
 }
 
-// `:focus-within` is `:focus` on the element or on anything under it, and
-// `:focus-visible` is `:focus` here - both derived from the one bit the shell
-// sets, so a focus change restyles them together.
+// `:focus-within` is `:focus` on the element or on anything under it, derived
+// from the one bit; `:focus-visible` is a bit of its own the shell sets with
+// the focus when the heuristic says to show it (browser/focus.cpp).
 void test_focus_within_and_visible() {
     fixture f;
     (void)parse_html(f.doc, "<div id=outer><div id=inner><input id=i></div></div><p id=p></p>");
@@ -330,6 +330,9 @@ void test_focus_within_and_visible() {
     // :focus-within too, and `p` would inherit their colour.
     f.styles.add_sheet(":focus-within { z-index: 1 } :focus-visible { z-index: 2 }", 1);
     (void)f.styles.set_state(f.find_id("i"), engine::state_focus, true);
+    f.resolved = f.styles.resolve_all(f.doc.read());
+    expect_value(f, f.find_id("i"), "z-index", "1", ":focus alone is not :focus-visible");
+    (void)f.styles.set_state(f.find_id("i"), style::state_focus_visible, true);
     f.resolved = f.styles.resolve_all(f.doc.read());
     expect_value(f, f.find_id("i"), "z-index", "2", ":focus-visible on the focused element");
     expect_value(f, f.find_id("inner"), "z-index", "1", "its parent");
