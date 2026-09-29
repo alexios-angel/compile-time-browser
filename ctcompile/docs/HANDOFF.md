@@ -22,6 +22,68 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Inherited constructor prefix captures and Data registration, 2026-09-29 UTC
+
+**Landed: `a2dfeeb73`**. The existing terminal Data publication proof now carries
+additional base-constructor captures through `super()` normalization. It restores
+the original capture order in the sole capture-free leaf, removes only Data's
+slot from both constructors and checks their remaining environments agree.
+Prefix helpers still pass the complete class/callable proof. Shared or deeper
+families, constructed bases, captured leaves and observable suffixes remain
+refused. No browser API, provider authority or native storage changed.
+
+Four new inherited programs retain the complete vendor Data holder or direct
+registration helper, with Data captured first, middle or last. They cover
+implicit forwarding and explicit `super()` with a numeric field suffix; saved
+records still survive deletion and replacement. All four unchanged sources
+refuse on the prior compiler at `class own-key snapshot constructor observes
+its receiver`.
+
+**Measured, devbox only:** `tools/remote-build.sh ctjs-opt ctjs-translate
+ctcompile-test-native-reference` passed **3/3 affected rebuild steps**.
+The exact lit selection `^ctcompile :: CTNative/Lowering/Objects/class-publication-captures[.]test$`
+passed **1/1 in 51.16 s**, covering **64 native executions and 27 refusals**.
+Five existing constructor controls passed **16 native executions and three
+refusals**; two DOM Data constructor-field sources passed **16 native executions,
+two provider proofs and 15 refusals**. Totals: **96 native executions, 45 candidate
+refusals and 15 source programs checked against Node and the VM (30 oracle runs)**,
+plus the four old-compiler refusals.
+GCC and pinned Clang cover optimization off/on and explicit/deduced printing;
+the generated-source, concrete stack-record Map and `nm` no-Script gates pass.
+Both tested file hashes match the commit.
+`tools/format.sh --check` passed (1193 C++, 158 Python, 116 web files), and
+`git diff --check` passed. A separate read-only audit found no must-fix issue.
+
+Exact wrappers in `/tmp/codex-inherited-captures/`: `baseline.sh`, `check.sh`,
+then `controls.sh` and `collect.sh`, each executed under
+`flock /tmp/ctbrowser-devbox-build.lock`. Scripts, logs, generated artifacts and
+hashes are preserved at
+`/home/alex/.ctbrowser-auto/codex/ctcompile/artifacts/2026-09-29-inherited-captures/`.
+Full lit/CTest, broad corpus/native matrices, WPT/test262, Windows and sanitizers
+were not run; nothing was pushed.
+
+**Next native/Bootstrap boundary:** the unchanged W/B/U/Data source with `Map`
+declared still refuses `native DOM class: class own-key snapshot constructor
+observes its receiver`. Without that declaration it retains the Data Map capture
+refusal.
+Ordinary DOM registration still needs native record payload ownership and
+constructor publication/snapshot composition. Full B additionally needs its
+inherited and guarded constructor, element-field and computed `DATA_KEY`
+proofs. Claude's static-factory work remains separate. Full Bootstrap has not
+executed natively.
+
+Read-only follow-up: `DOM/Source/Entry.cpp::dataObject` rejects record
+receiver/Map uses, sending them to `resolveMethods`' callable-holder proof.
+`DOM/Entry/Body.cpp` currently classifies fresh objects as JSON; record identity
+must survive that stage before `DOM/Entry/Maps.cpp` can admit record payloads.
+Reuse `Analysis/NativeMap.cpp::proveRecords`' enclosing stack owners and borrowed
+addresses, preserving the receiver evidence it requires. These are unimplemented
+proof gaps, not newly admitted DOM behavior.
+The smallest next witness is a scalar-field record Map with literal String
+keys and registration outside the constructor; element keys and `_element`
+borrowing remain separate. The read-only `next-dom-record-proof.md` in the
+artifact directory records the exact seams and proposed refusal cases.
+
 ## Constructor prefix captures beside Data registration, 2026-09-29 UTC
 
 **Landed: `306959c26`**. Terminal Data registration now preserves other constructor
