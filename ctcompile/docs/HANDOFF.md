@@ -22,6 +22,66 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Constructor prefix captures beside Data registration, 2026-09-29 UTC
+
+**Landed: `306959c26`**. Terminal Data registration now preserves other constructor
+captures. The proof selects the exact registration capture from its `this`
+argument, removes only that slot and renumbers remaining upvalue loads. Prefix
+helpers, cells and their uses still face the complete class/callable proof.
+The existing suffix, receiver, Map ownership and complete Data helper checks
+remain; inherited publication still requires the existing sole-capture base.
+No browser API, provider authority or native storage representation changed.
+
+Four source programs execute: the complete vendor Data holder with its capture
+last, first or between two prefix helpers, and a direct registration helper.
+Their own-field snapshots and saved record reads survive Map deletion and
+replacement. Results are **381**, or **761** for the two-helper source, agreeing
+with Node and the VM. The unchanged prior publication implementation refuses
+all four. Unknown or changing helpers, receiver escapes, suffix observers,
+replacement returns, repeated registration, owner captures and replaced Map
+identities remain diagnostics.
+
+**Measured, devbox only:** `tools/remote-build.sh ctjs-opt ctjs-translate
+ctcompile-test-native-reference` passed, with the final rebuild **3/3**.
+The exact lit selection `^ctcompile :: CTNative/Lowering/Objects/class-publication-captures[.]test$` passed **1/1 in 25.77 s**, covering **32 native
+executions and 15 refusals**. Six existing constructor publication controls
+passed **24 native executions and three refusals**; two existing DOM Data
+constructor-field sources passed **16 native executions, two provider proofs
+and 15 refusals**. Final focused totals: **72 native executions, 12 source
+programs checked against Node and the VM (24 oracle runs), and 33 refusals**.
+GCC and pinned Clang cover optimization off/on and explicit/deduced printing.
+The new generated-source, concrete stack-record Map and `nm` gates pass.
+All three tested file hashes match the commit. `tools/format.sh --check` passed
+(1193 C++, 158 Python, 116 web files), and `git diff --check` passed.
+
+Exact wrappers, each under `flock /tmp/ctbrowser-devbox-build.lock`, are
+`/tmp/codex-dom-publication/captures-check.sh`, `final.sh`, `remaining.sh`,
+`finish.sh` and `collect.sh`. `final.sh` passed the new lit and vendor control,
+then its temporary inherited selector hit the known custom MLIR parser issue
+with grouped switch operands; `remaining.sh` used the established generic
+assembly flag and ran only the remaining controls. `finish.sh` passed its
+checks, then its archive step ran before the queued frontier existed;
+`collect.sh` completed evidence collection without repeating tests. The earlier draft also
+contained an unrelated unused arrow helper; its removal affected only the new
+test fixture, preserving all vendor Data code. Scripts, logs, source hashes,
+native output and probe diagnostics are preserved at
+`/home/alex/.ctbrowser-auto/codex/ctcompile/artifacts/2026-09-29-dom-publication/`.
+Full lit/CTest, broad corpus/native matrices, WPT/test262, Windows and sanitizers
+were not run; nothing was pushed.
+
+**Next native/Bootstrap boundary:** the unchanged W/B/U/Data source with `Map`
+declared still refuses `native DOM class: class own-key snapshot constructor
+observes its receiver`. Ordinary DOM registration also needs native record
+payload support: a separately measured, unlanded provider-widening probe moves
+direct and complete Data constructors to `native DOM source: DOM helper object
+requires unique own callable slots`. Its patch and four sources are archived;
+do not treat that probe as native support. Compose the DOM record/Map owner
+proof with registration before widening providers. Full B additionally needs
+the inherited constructor, element-field key and computed `DATA_KEY` proofs.
+Claude's independent static-factory lane owns its current claims. Full
+Bootstrap has not executed natively.
+
+
 ## Local Map captures in native DOM classes, 2026-09-29 UTC
 
 **Landed: `34990750b`**, on the DOM/Map prerequisites merged as `e94534338`.

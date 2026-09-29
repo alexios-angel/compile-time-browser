@@ -153,13 +153,35 @@ bool classInitialization::sinkCapturedPublication(
     }
     auto constructor = setup.getArgs().front().getDefiningOp<ctjs::CreateClosureOp>();
     auto function = target(constructor);
-    if (!function || constructor.getUpvalues().size() != 1 || function.getUpvalueCount() != 1 ||
+    if (!function || constructor.getUpvalues().empty() ||
+        constructor.getUpvalues().size() != function.getUpvalueCount() ||
         !function.getBody().hasOneBlock() || !undefined(constructor.getEnclosingThis()) ||
         earlyCaptures.contains(constructor) || constructor->getBlock() != setup->getBlock() ||
         !constructor->isBeforeInBlock(setup) || hasOuterCapture(constructor)) {
         return true;
     }
-    auto cell = constructor.getUpvalues().front();
+    auto & body = function.getBody().front();
+    ctjs::LoadUpvalueOp captured;
+    // Select the registration's capture from its receiver argument. Other
+    // captures stay in place for the complete constructor/helper census.
+    for (mlir::OpOperand & use : body.getArgument(ctjs::arg_receiver).getUses()) {
+        if (!step()) { return false; }
+        auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
+        if (!call || use.getOperandNumber() != 4 || call.getArgs().size() != 3) { continue; }
+        auto load = call.getReceiver().getDefiningOp<ctjs::LoadUpvalueOp>();
+        if (!load) { load = call.getCallee().getDefiningOp<ctjs::LoadUpvalueOp>(); }
+        if (!load || captured || load.getIndex() < 0 ||
+            static_cast<size_t>(load.getIndex()) >= constructor.getUpvalues().size()) {
+            return true;
+        }
+        captured = load;
+    }
+    if (!captured || captured.getClosure() != body.getArgument(ctjs::arg_callee) ||
+        captured->getBlock() != &body) {
+        return true;
+    }
+    const auto captureIndex = captured.getIndex();
+    auto cell = constructor.getUpvalues()[captureIndex];
     if (!cells.contains(cell)) { return true; }
     auto source = sourceValue(cells.lookup(cell));
     auto helper = source.getDefiningOp<ctjs::CreateClosureOp>();
@@ -168,16 +190,19 @@ bool classInitialization::sinkCapturedPublication(
         !source.getDefiningOp()->isBeforeInBlock(constructor)) {
         return true;
     }
-    auto & body = function.getBody().front();
-    ctjs::LoadUpvalueOp captured;
+    llvm::SmallVector<ctjs::LoadUpvalueOp> retainedLoads;
     for (mlir::OpOperand & use : body.getArgument(ctjs::arg_callee).getUses()) {
         if (!step()) { return false; }
         if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
         auto load = llvm::dyn_cast<ctjs::LoadUpvalueOp>(use.getOwner());
-        if (!load || captured || load.getIndex() != 0 || load->getBlock() != &body) { return true; }
-        captured = load;
+        if (!load || load.getIndex() < 0 ||
+            static_cast<size_t>(load.getIndex()) >= constructor.getUpvalues().size() ||
+            load->getBlock() != &body || (load.getIndex() == captureIndex && load != captured)) {
+            return true;
+        }
+        if (load != captured) { retainedLoads.push_back(load); }
     }
-    if (!captured || !body.getArgument(ctjs::arg_new_target).use_empty()) { return true; }
+    if (!body.getArgument(ctjs::arg_new_target).use_empty()) { return true; }
     ctjs::GetPropertyOp selection;
     ctjs::CallOp invocation;
     for (mlir::OpOperand & use : captured.getResult().getUses()) {
@@ -271,6 +296,19 @@ bool classInitialization::sinkCapturedPublication(
         }
     }
     if (auto stop = publicationSymbolObserver(*this, function)) { return *stop; }
+    if (!spend(8 + constructor.getUpvalues().size() + retainedLoads.size())) { return false; }
+    llvm::SmallVector<mlir::Value> retained(constructor.getUpvalues());
+    retained.erase(retained.begin() + captureIndex);
+    const auto retirePublication = [&](ctjs::GetPropertyOp keyRead = {}) {
+        eraseRooted(invocation);
+        if (keyRead) { eraseRooted(keyRead); }
+        if (selection) { eraseRooted(selection); }
+        eraseRooted(captured);
+        for (auto load : retainedLoads) {
+            if (load.getIndex() > captureIndex) { load.setIndex(load.getIndex() - 1); }
+        }
+        setCaptures(constructor, function, retained);
+    };
     if (isBase) {
         ctjs::CreateClosureOp leaf;
         ctjs::CallOp leafSetup;
@@ -283,29 +321,27 @@ bool classInitialization::sinkCapturedPublication(
         }
         if (!leafSetup || !normalizeSuper(leaf, constructor, contract)) { return false; }
         auto leafFunction = target(leaf);
-        ctjs::LoadUpvalueOp copied;
+        bool copied = false;
         for (auto load : leafFunction.getBody().front().getOps<ctjs::LoadUpvalueOp>()) {
             if (!step()) { return false; }
-            if (copied || load.getIndex() != 0) {
-                return refuse("inherited registration requires its sole original capture");
+            if (load.getIndex() < 0 ||
+                static_cast<size_t>(load.getIndex()) >= constructor.getUpvalues().size() ||
+                !undefined(load.getClosure())) {
+                return refuse("inherited registration requires its original captures");
             }
-            copied = load;
+            copied |= load.getIndex() == captureIndex;
+            // Before the class census, super substitutes the base callee with
+            // undefined. Restore every original cell in the capture-free leaf.
+            load->setOperand(0, leafFunction.getBody().front().getArgument(ctjs::arg_callee));
         }
         if (!copied) { return refuse("inherited registration lost its original capture"); }
-        // No capture records exist before the class census. Super substituted
-        // the base callee with undefined; restore this exact cell in the leaf.
-        copied->setOperand(0, leafFunction.getBody().front().getArgument(ctjs::arg_callee));
-        leaf.getUpvaluesMutable().assign(cell);
-        leafFunction.setUpvalueCount(1);
+        setCaptures(leaf, leafFunction, constructor.getUpvalues());
         normalizedSuper.insert(leafFunction);
         if (!sinkCapturedPublication(leafSetup, contract, requiredHelpers) ||
-            !leaf.getUpvalues().empty()) {
+            !llvm::equal(leaf.getUpvalues(), retained)) {
             return refuse("inherited registration lacks a completed leaf publication proof");
         }
-        eraseRooted(invocation);
-        if (selection) { eraseRooted(selection); }
-        eraseRooted(captured);
-        setCaptures(constructor, function, {});
+        retirePublication();
         return true;
     }
     ctjs::GetPropertyOp keyRead;
@@ -390,8 +426,7 @@ bool classInitialization::sinkCapturedPublication(
     }
     // Precharge the new calls, constants, selection and rooted cleanup. The
     // outer pass owns a disposable candidate if any later proof refuses.
-    if (!spend((uint64_t(24) + 4 * keyParameters.size()) * instances.size() + 8) ||
-        !reason.empty()) {
+    if (!spend((uint64_t(24) + 4 * keyParameters.size()) * instances.size()) || !reason.empty()) {
         return false;
     }
     for (auto [index, made] : llvm::enumerate(instances)) {
@@ -427,11 +462,7 @@ bool classInitialization::sinkCapturedPublication(
         ctjs::CallOp::create(at, invocation.getLoc(), invocation.getType(), callee, receiver,
                              mlir::ValueRange{first, second, made.getResult()});
     }
-    eraseRooted(invocation);
-    if (keyRead) { eraseRooted(keyRead); }
-    if (selection) { eraseRooted(selection); }
-    eraseRooted(captured);
-    setCaptures(constructor, function, {});
+    retirePublication(keyRead);
     // The helper body is unchanged and must pass the existing Map-only
     // expansion. Generic helper admission cannot discharge this obligation.
     requiredHelpers.push_back(*functionIndex(helperFunction));

@@ -1,0 +1,171 @@
+"""Keep constructor prefix captures when sinking terminal Data registration."""
+
+from CTNative.Browser import native_dom as dom
+from CTNative.harness import prepare_js, run
+from CTNative.HostContract import contract as host
+from CTNative.Lowering.Objects import class_initialization as classes
+
+
+def sources():
+    vendor = dom.BOOTSTRAP.read_text()
+    data = (
+        vendor[
+            vendor.index("    const t = new Map,") : vendor.index('        i = "transitionend",')
+        ]
+        .rstrip()
+        .removesuffix(",")
+        + ";\n"
+    )
+    source = "function probe() {\n" + data + """
+  const add = n => n + 1;
+  const twice = n => n * 2;
+  class Item {
+    constructor(n) { this.n = add(n); e.set("element", "bs.item", this); }
+    count() { return Object.getOwnPropertyNames(this).length; }
+  }
+  const first = new Item(2);
+  const saved = e.get("element", "bs.item");
+  e.remove("element", "bs.item");
+  const second = new Item(7);
+  const current = e.get("element", "bs.item");
+  e.remove("element", "bs.item");
+  return saved.n * 100 + current.n * 10 + saved.count();
+}
+var a = probe();
+"""
+    single = source.replace("  const twice = n => n * 2;\n", "")
+    programs = {
+        "holder": (single, 381),
+        "holder-first": (
+            single.replace("this.n = add(n)", "const data = e; this.n = add(n)").replace(
+                'e.set("element",', 'data.set("element",'
+            ),
+            381,
+        ),
+        "two-helpers": (
+            source.replace(
+                "this.n = add(n)", "const value = add(n); const data = e; this.n = twice(value)"
+            ).replace('e.set("element",', 'data.set("element",'),
+            761,
+        ),
+        "direct": (
+            single.replace(
+                data,
+                "const t = new Map();\n"
+                "const save = (key, slot, value) => { t.set(key, value); };\n",
+            )
+            .replace("e.set(", "save(")
+            .replace('e.get("element", "bs.item")', 't.get("element")')
+            .replace('e.remove("element", "bs.item")', 't.delete("element")'),
+            381,
+        ),
+    }
+    for name, (text, expected) in list(programs.items()):
+        implicit = name == "holder-first"
+        leaf = "" if implicit else "constructor(n) { super(n); this.tag = n + 1; }"
+        programs["inherited-" + name] = (
+            text.replace("class Item {", "class Base {").replace(
+                "  const first", f"  class Item extends Base {{ {leaf} }}\n  const first"
+            ),
+            expected + (0 if implicit else 1),
+        )
+    return programs
+
+
+def prepared_source(args, name, text):
+    js = args.work / (name + ".js")
+    ir = args.work / (name + ".mlir")
+    js.write_text(text)
+    prepare_js(
+        args, js, args.work / (name + ".raw.mlir"), ir, "--mlir-print-op-generic", complete=True
+    )
+    manifest = dict(
+        host.manifest(args.opt, ir),
+        initial_intrinsics=["__ctbrowser_class_defined", "Map", "Object"],
+    )
+    if "extends" in text:
+        manifest["initial_intrinsics"] += [
+            "__ctbrowser_class_heritage",
+            "__ctbrowser_bind_this",
+            "__ctbrowser_init_fields",
+            "__ctbrowser_super_get",
+        ]
+    return js, ir, manifest
+
+
+def main():
+    args = dom.parse_args(__doc__, oracles=True)
+    executions = refusals = 0
+    for label, (text, expected) in sources().items():
+        name = "class-map-record-publication-captures-" + label
+        js, ir, manifest = prepared_source(args, name, text)
+        assert run([args.node, "-e", classes.NODE, str(js)]).stdout == f"a={expected}\n"
+        assert run([args.reference, str(js)]).stdout == f"a={expected}\n"
+        prepared = classes.prepare(args, name, ir, manifest, success=True)
+        for optimize in (False, True):
+            native = args.work / f"{name}-{optimize}.native.mlir"
+            run(
+                [
+                    args.opt,
+                    str(prepared),
+                    f"--ctnative-lower-to-emitc=optimize={str(optimize).lower()}",
+                    "-o",
+                    str(native),
+                ]
+            )
+            executions += classes.check_executable(args, name + str(optimize), native, expected)
+            for layout in ("explicit", "deduced"):
+                for index in range(len(args.compilers)):
+                    binary = args.work / f"{name}{optimize}.{layout}.{index}"
+                    assert "ctbrowser::script" not in run([args.nm, "-C", str(binary)]).stdout
+        classes.prepare(args, name + "-budget", ir, manifest, success=False, options="max-steps=0")
+        refusals += 1
+    original = sources()["holder"][0]
+    publication = 'e.set("element", "bs.item", this);'
+    bad = {
+        "changing-helper": original.replace("const add", "let add").replace(
+            "  const first", "  add = n => n + 2;\n  const first"
+        ),
+        "unknown-helper": original.replace("n => n + 1", "n => unknown(n)"),
+        "receiver-helper": original.replace("add(n)", "add(this)"),
+        "suffix-helper": original.replace(publication, publication + " add(n);"),
+        "suffix-observer": original.replace(publication, publication + " this.count();"),
+        "replacement": original.replace(publication, publication + " return {};"),
+        "second-registration": original.replace(publication, publication + publication),
+        "captured-owner": original.replace("this.n = add(n)", "this.n = t.size + add(n)"),
+        "binding-write": original.replace("function probe() {", "function probe() { Map = 0;"),
+        "prototype-write": original.replace(
+            "function probe() {", "function probe() { Map.prototype.set = () => {};"
+        ),
+        "retained-invalid-helper": original.replace("n => n + 1", "n => n.constructor"),
+    }
+    for name, text in bad.items():
+        assert text != original
+        _, ir, manifest = prepared_source(args, name, text)
+        classes.prepare(args, name, ir, manifest, success=False)
+        refusals += 1
+    inherited = sources()["inherited-holder"][0]
+    bad = {
+        "second-leaf": inherited.replace(
+            "  const first", "  class Other extends Base {}\n  const first"
+        ),
+        "constructed-base": inherited.replace("new Item(2)", "new Base(2)"),
+        "leaf-capture": inherited.replace("this.tag = n + 1", "this.tag = add(n)"),
+        "leaf-observer": inherited.replace("this.tag = n + 1", "this.tag = this.count()"),
+        "leaf-replacement": inherited.replace("this.tag = n + 1;", "return {};"),
+        "deeper-family": inherited.replace(
+            "class Item extends Base", "class Middle extends Base {}\n  class Item extends Middle"
+        ),
+        "unknown-prefix": inherited.replace("n => n + 1", "n => unknown(n)"),
+        "base-suffix-observer": inherited.replace(publication, publication + " this.count();"),
+    }
+    for name, text in bad.items():
+        assert text != inherited
+        _, ir, manifest = prepared_source(args, "inherited-" + name, text)
+        classes.prepare(args, "inherited-" + name, ir, manifest, success=False)
+        refusals += 1
+    print(f"Constructor publication captures: {executions} native executions, {refusals} refusals")
+
+
+if __name__ == "__main__":
+    main()
