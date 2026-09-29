@@ -4,184 +4,19 @@
 # net/ where bytes come from, image/ the codecs (each behind a two-function
 # header, none of them SDL) and page/ what a PAGE can do. Every subdirectory's
 # internal.hpp is private to it; bindings/names.hpp is the one header two of
-# them share. Every source is listed here, subdirectory-prefixed: one
-# CMakeLists per subsystem.
+# them share.
 add_library(ctbrowser-shell)
 target_sources(ctbrowser-shell PUBLIC FILE_SET HEADERS BASE_DIRS "${CTBROWSER_INCLUDE_DIR}")
 target_sources(ctbrowser-shell PRIVATE
   app_bundle.cpp
   embedded_fonts.cpp
-  bindings/abort.cpp
-  bindings/animation_effects.cpp
-  bindings/animations.cpp
-  bindings/canvas.cpp
-  bindings/canvas_path2d.cpp
-  bindings/css.cpp
-  bindings/custom_element_reactions.cpp
-  bindings/custom_elements.cpp
-  bindings/domparsing.cpp
-  bindings/element_internals.cpp
-  bindings/exceptions.cpp
-  bindings/frames.cpp
-  bindings/image_data.hpp
-  bindings/media_queries.cpp
-  bindings/mutation.cpp
-  bindings/names.hpp
-  bindings/performance.cpp
-  bindings/promise_rejections.cpp
-  bindings/resources.cpp
-  bindings/selection.cpp
-  bindings/shadow_dom.cpp
-  bindings/xhr.cpp
-  bindings/animations/css.cpp
-  bindings/animations/helpers.hpp
-  bindings/computed_style/entries.cpp
-  bindings/computed_style/geometry.hpp
-  bindings/computed_style/internal.hpp
-  bindings/computed_style/object.cpp
-  bindings/computed_style/serialize.cpp
-  bindings/document/as_node.cpp
-  bindings/document/collections.cpp
-  bindings/document/entry.cpp
-  bindings/document/geometry.cpp
-  bindings/document/install.cpp
-  bindings/document/internal.hpp
-  bindings/document/live_properties.cpp
-  bindings/document/named_access.cpp
-  bindings/document/range.cpp
-  bindings/document/second_document.cpp
-  bindings/document/traversal.cpp
-  bindings/document/tree_accessors.cpp
-  bindings/document/tree_ops.cpp
-  bindings/document/write.cpp
-  bindings/document/range/helpers.hpp
-  bindings/document/range/live.cpp
-  bindings/element/attributes.cpp
-  bindings/element/autocomplete.cpp
-  bindings/element/character_data.cpp
-  bindings/element/child_views.cpp
-  bindings/element/control_methods.cpp
-  bindings/element/dataset.cpp
-  bindings/element/declarations.cpp
-  bindings/element/geometry_views.cpp
-  bindings/element/hyperlink.cpp
-  bindings/element/interfaces.cpp
-  bindings/element/internal.hpp
-  bindings/element/methods.cpp
-  bindings/element/namespace_methods.cpp
-  bindings/element/node_methods.cpp
-  bindings/element/pre_insert.cpp
-  bindings/element/reflection.cpp
-  bindings/element/reflection_rows.cpp
-  bindings/element/rendered_text.cpp
-  bindings/element/shadow.cpp
-  bindings/element/style_views.cpp
-  bindings/element/view_geometry.hpp
-  bindings/element/views.cpp
-  bindings/element/wrapper.cpp
-  bindings/element/control_methods/collections_and_labels.cpp
-  bindings/element/control_methods/data_transfer.cpp
-  bindings/element/control_methods/focus_and_canvas.cpp
-  bindings/element/control_methods/form_writes.cpp
-  bindings/element/control_methods/form_data_and_submission.cpp
-  bindings/element/control_methods/helpers.hpp
-  bindings/element/control_methods/legacy_objects.cpp
-  bindings/element/control_methods/numbers_and_validation.cpp
-  bindings/element/control_methods/numbers_and_validation_helpers.cpp
-  bindings/element/control_methods/pickers.cpp
-  bindings/element/control_methods/select_and_options.cpp
-  bindings/element/control_methods/select_and_options_helpers.cpp
-  bindings/element/control_methods/tables_and_form_owners.cpp
-  bindings/element/control_methods/tables_and_form_owners_helpers.cpp
-  bindings/element/control_methods/text_encoding.cpp
-  bindings/element/control_methods/text_selection.cpp
-  bindings/events/dispatch.cpp
-  bindings/events/handler_attributes.cpp
-  bindings/events/handler_names.hpp
-  bindings/events/input.cpp
-  bindings/events/interfaces.cpp
-  bindings/events/internal.hpp
-  bindings/events/listeners.cpp
-  bindings/stylesheets/internal.hpp
-  bindings/stylesheets/objects.cpp
-  bindings/stylesheets/prototypes.cpp
-  bindings/stylesheets/rules.cpp
-  bindings/stylesheets/serialize.cpp
-  bindings/stylesheets/sheets.cpp
-  bindings/stylesheets/source.cpp
-  bindings/stylesheets/prototypes/collections.cpp
-  bindings/stylesheets/prototypes/declarations.cpp
-  bindings/stylesheets/prototypes/helpers.cpp
-  bindings/stylesheets/prototypes/helpers.hpp
-  bindings/stylesheets/prototypes/rules.cpp
-  bindings/webgl/constants.cpp
-  bindings/webgl/context.cpp
-  bindings/webgl/drawing.cpp
-  bindings/webgl/internal.hpp
-  bindings/webgl/objects.cpp
-  bindings/window/activation.cpp
-  bindings/window/callbacks.cpp
-  bindings/window/encoding.cpp
-  bindings/window/history.cpp
-  bindings/window/image_bitmap.cpp
-  bindings/window/internal.hpp
-  bindings/window/messaging.cpp
-  bindings/window/scrolling.cpp
-  bindings/window/url.cpp
-  bindings/window/window.cpp
-  browser/actions.cpp
-  browser/chrome.cpp
-  browser/focus.cpp
-  browser/frame.cpp
-  browser/input.cpp
-  browser/internal.hpp
-  browser/lifecycle.cpp
-  browser/nested.cpp
-  browser/resources.cpp
-  browser/scripts.cpp
-  browser/selection.cpp
-  browser/styles.cpp
-  image/jpeg.cpp
-  image/png.cpp
-  net/idna_table.inc
-  net/net.cpp
-  net/nfc_table.inc
-  net/url.cpp
-  net/url_encoding.cpp
-  net/url_internal.hpp
-  net/url_parser.cpp
-  net/url_unicode.cpp
-  net/idna_table/bidi_ranges-01.inc
-  net/idna_table/combining_mark_ranges-01.inc
-  net/idna_table/idna_mappings-01.inc
-  net/idna_table/idna_mappings-02.inc
-  net/idna_table/idna_ranges-01.inc
-  net/idna_table/idna_ranges-02.inc
-  net/idna_table/idna_ranges-03.inc
-  net/idna_table/idna_ranges-04.inc
-  net/idna_table/idna_ranges-05.inc
-  net/idna_table/idna_ranges-06.inc
-  net/idna_table/idna_ranges-07.inc
-  net/idna_table/idna_ranges-08.inc
-  net/idna_table/idna_ranges-09.inc
-  net/idna_table/idna_ranges-10.inc
-  net/idna_table/joining_ranges-01.inc
-  net/idna_table/virama_ranges-01.inc
-  net/nfc_table/ccc_ranges-01.inc
-  net/nfc_table/compose_pairs-01.inc
-  net/nfc_table/compose_pairs-02.inc
-  net/nfc_table/nfd_data-01.inc
-  net/nfc_table/nfd_table-01.inc
-  net/nfc_table/nfd_table-02.inc
-  net/nfc_table/nfd_table-03.inc
-  page/accessibility.cpp
-  page/canvas.cpp
-  page/canvas_path.cpp
-  page/forms.cpp
-  page/input_types.cpp
-  page/svg_cache.cpp
-  page/webgl.cpp
 )
+
+add_subdirectory(bindings)
+add_subdirectory(browser)
+add_subdirectory(image)
+add_subdirectory(net)
+add_subdirectory(page)
 
 target_compile_features(ctbrowser-shell PUBLIC cxx_std_23)
 ctbrowser_target(ctbrowser-shell)
