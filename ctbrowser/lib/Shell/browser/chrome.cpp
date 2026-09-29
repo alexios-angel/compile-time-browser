@@ -264,9 +264,51 @@ bool browser::handle_popup_press(const input_event & event) {
             // The option's VALUE, not its label - that is what a form sends
             // and what `select.value` reads.
             forms_.state_of(txn, atoms_, select).value = option_value_at(txn, select, index);
-            bindings_->dispatch("change", select);
+            // HTML's select: `input` (bubbling, composed) and then `change`
+            // (bubbling), neither cancelable.
+            (void)bindings_->dispatch_input("input", select, std::nullopt, std::nullopt);
+            (void)bindings_->dispatch_input("change", select, std::nullopt, std::nullopt);
         }
     }
+    return true;
+}
+
+// A FOCUSED <select>'s ARROW KEYS pick the next or the previous option
+// without opening the popup - the keyboard half of HTML's "the user agent
+// should allow the user to pick an option" - and a pick that changed the
+// value fires `input` then `change`, as one from the popup does. A listbox
+// (`multiple`) keeps its arrows for the page.
+bool browser::select_key(const input_event & event) {
+    if (!focused_ || select_open_ || (event.key != "ArrowDown" && event.key != "ArrowUp")) {
+        return false;
+    }
+    const node_id select = focused_;
+    {
+        const auto txn = doc_->read();
+        if (kind_of(txn, select) != control_kind::select ||
+            txn.has_attribute(select, atoms_.intern_lower("multiple"))) {
+            return false;
+        }
+        const atom option_tag = atoms_.intern_lower("option");
+        std::vector<std::string> values;
+        for (const node_id child : txn.children(select)) {
+            if (txn.tag(child).value_or(atom{}) == option_tag) {
+                values.push_back(form_store::option_value(txn, atoms_, child));
+            }
+        }
+        if (values.empty()) { return true; }
+        control_state & state = forms_.state_of(txn, atoms_, select);
+        const auto at = std::ranges::find(values, state.value);
+        const std::size_t now =
+            at == values.end() ? 0 : static_cast<std::size_t>(at - values.begin());
+        const std::size_t next = event.key == "ArrowDown" ? std::min(now + 1, values.size() - 1)
+                                                          : (now == 0 ? 0 : now - 1);
+        if (next == now) { return true; }
+        state.value = values[next];
+    }
+    mark(dirty::paint);
+    (void)bindings_->dispatch_input("input", select, std::nullopt, std::nullopt);
+    (void)bindings_->dispatch_input("change", select, std::nullopt, std::nullopt);
     return true;
 }
 

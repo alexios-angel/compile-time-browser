@@ -10,6 +10,42 @@ namespace ctbrowser::shell {
 
 using namespace detail;
 
+namespace {
+
+// The realm's `name` interface's prototype, on an engine-made event - the way
+// a FocusEvent gets its own. A page that replaced the global keeps the
+// Event.prototype it had.
+void adopt_interface(context & cx, script::object_object & object, std::string_view name) {
+    if (!cx.has_global(name)) { return; }
+    const value ctor = cx.global(name);
+    if (!ctor.is_object_like()) { return; }
+    if (const value proto = cx.lookup_property(ctor, "prototype"); proto.is_object()) {
+        object.prototype = proto;
+    }
+}
+
+// Whether any listener of these types on the path is NOT passive - the one
+// question the cancelability of a wheel or touch event turns on.
+[[nodiscard]] bool blocking_listener(const std::vector<binding_detail::listener> & listeners,
+                                     const std::vector<binding_detail::path_step> & path,
+                                     std::initializer_list<std::string_view> types) {
+    return std::ranges::any_of(path, [&](const binding_detail::path_step & step) {
+        return std::ranges::any_of(listeners, [&](const binding_detail::listener & l) {
+            if (l.spent || l.passive || l.on != step.on) { return false; }
+            if (l.on == binding_detail::listen_on::node && l.target != step.node) { return false; }
+            return std::ranges::find(types, std::string_view{l.type}) != types.end();
+        });
+    });
+}
+
+// The first step of an input event's path: the node, or the Document for none.
+[[nodiscard]] binding_detail::path_step step_at(node_id target) {
+    return target ? binding_detail::path_step{target, binding_detail::listen_on::node}
+                  : binding_detail::path_step{node_id{}, binding_detail::listen_on::document};
+}
+
+} // namespace
+
 bool dom_bindings::refresh_wrappers() {
     if (cx_ == nullptr) { return false; }
     // NOT EVERY WRAPPER, EVERY FRAME. What refresh_element writes - tagName,
@@ -251,17 +287,25 @@ bool dom_bindings::dispatch_key(std::string_view type, node_id target, const inp
 // libraries divide by it: Babylon's default wheelPrecision is 3, so a notch at
 // 100 moves the camera about 33 units - which is why the number matters rather
 // than being a scale nobody sees.
+//
+// A WheelEvent, composed (UI Events 3.1: every mouse event a user agent
+// dispatches is), and CANCELABLE ONLY WHEN SOMETHING COULD CANCEL IT - UI
+// Events' "cancelability of wheel events": a user agent "should generate only
+// uncancelable wheel events when it observes that there are no non-passive
+// listeners for the event". The four passive-by-default targets make that the
+// common case, and non-cancelable-when-passive/ asserts both halves for each.
+// `mousewheel` counts, because a trusted `wheel` nobody listened for at a step
+// reaches its `mousewheel` listeners there (legacy_event_type_of).
 bool dom_bindings::dispatch_wheel(node_id target, const input_event & input) {
     if (cx_ == nullptr) { return false; }
-    value event = make_event(*cx_, "wheel", target);
+    value event = make_mouse_event(*cx_, "wheel", target, input, false);
+    const context::rooted keep{*cx_, event};
     auto * object = static_cast<script::object_object *>(event.as_heap());
-    object->set("clientX", value::number(input.x));
-    object->set("clientY", value::number(input.y));
-    object->set("pageX", value::number(input.x));
-    object->set("pageY", value::number(input.y));
-    object->set("offsetX", value::number(input.x));
-    object->set("offsetY", value::number(input.y));
-    object->set("deltaX", value::number(0));
+    adopt_interface(*cx_, *object, "WheelEvent");
+    object->set("cancelable",
+                value::boolean(blocking_listener(
+                    listeners_, propagation_path(step_at(target), true), {"wheel", "mousewheel"})));
+    object->set("deltaX", value::number(input.wheel_x * 100.0));
     object->set("deltaY", value::number(-input.wheel_y * 100.0));
     object->set("deltaZ", value::number(0));
     object->set("deltaMode", value::number(0)); // 0 = pixels
@@ -269,10 +313,254 @@ bool dom_bindings::dispatch_wheel(node_id target, const input_event & input) {
     // reads `wheelDelta` and it is the OPPOSITE sign again by definition, so a
     // library falling back to it inverts unless both are right.
     object->set("wheelDelta", value::number(input.wheel_y * 120.0));
-    object->set("shiftKey", value::boolean(input.shift));
-    object->set("ctrlKey", value::boolean(input.ctrl));
+    object->set("wheelDeltaX", value::number(-input.wheel_x * 120.0));
+    object->set("wheelDeltaY", value::number(input.wheel_y * 120.0));
     object->set("buttons", value::number(0));
     return dispatch_event("wheel", target, event);
+}
+
+// A FINGER (Touch Events 1, and the `touch` pointer of Pointer Events 3),
+// dispatched the way a mouse's press is: the pointer event first, then the
+// touch event, both composed. One finger, so identifier 0 and every list holds
+// the one Touch - except `touches` and `targetTouches` at `touchend`, which
+// hold what is STILL on the surface, and that is nothing.
+//
+// `target` is where the touch STARTED, for all three: a Touch keeps the
+// element it began on for its whole life, however far the finger travels -
+// which is what lets a drag that leaves its element still be that element's.
+//
+// touchstart and touchmove are cancelable only when a non-passive listener on
+// the path could cancel them, for the reason the wheel is (non-cancelable-
+// when-passive/'s twenty touch files); touchend always is.
+//
+// `pointer` false is a finger whose pointer was CANCELLED when its drag began
+// to pan: Pointer Events stops sending that pointer's events, and the touch
+// events go on. Phase "cancel" is that moment - the `pointercancel` alone,
+// bubbling and not cancelable.
+bool dom_bindings::dispatch_touch(std::string_view phase, node_id target, float x, float y,
+                                  bool pointer) {
+    if (cx_ == nullptr) { return false; }
+    context & cx = *cx_;
+    const bool start = phase == "start";
+    const bool end = phase == "end";
+    const bool cancel = phase == "cancel";
+    const std::string pointer_type = start    ? "pointerdown"
+                                     : end    ? "pointerup"
+                                     : cancel ? "pointercancel"
+                                              : "pointermove";
+    const std::string touch_type = start ? "touchstart" : end ? "touchend" : "touchmove";
+    // Activation-triggering (HTML 6.4.3) is the LIFT for a finger: a non-mouse
+    // pointerup, and touchend.
+    if (end) { notify_activation(); }
+
+    if (pointer || cancel) {
+        const input_event at = input_event::mouse_move_to(x, y);
+        const value made = make_mouse_event(cx, pointer_type, target, at, true);
+        const context::rooted keep{cx, made};
+        auto * object = static_cast<script::object_object *>(made.as_heap());
+        object->set("pointerId", value::number(2)); // the mouse is 1
+        object->set("pointerType", cx.string("touch"));
+        object->set("buttons", value::number(end || cancel ? 0 : 1));
+        object->set("pressure", value::number(end || cancel ? 0 : 0.5));
+        object->set("width", value::number(1));
+        object->set("height", value::number(1));
+        if (cancel) { object->set("cancelable", value::boolean(false)); }
+        (void)dispatch_event(pointer_type, target, made);
+    }
+    if (cancel) { return false; }
+
+    value event = make_event(cx, touch_type, target);
+    const context::rooted keep_event{cx, event};
+    auto * object = static_cast<script::object_object *>(event.as_heap());
+    adopt_interface(cx, *object, "TouchEvent");
+    object->set("composed", value::boolean(true));
+    object->set(
+        "cancelable",
+        value::boolean(end || blocking_listener(listeners_, propagation_path(step_at(target), true),
+                                                {std::string_view{touch_type}})));
+    object->set("detail", value::number(0));
+    object->set("view", window_view_.is_heap() ? window_view_ : window_);
+    for (const char * key : {"altKey", "metaKey", "ctrlKey", "shiftKey"}) {
+        object->set(key, value::boolean(false));
+    }
+
+    const value touch = cx.make_object();
+    const context::rooted keep_touch{cx, touch};
+    auto * finger = static_cast<script::object_object *>(touch.as_heap());
+    adopt_interface(cx, *finger, "Touch");
+    const point scroll = viewport_scroll();
+    finger->set("identifier", value::number(0));
+    finger->set("target", wrap(cx, target));
+    finger->set("clientX", value::number(x));
+    finger->set("clientY", value::number(y));
+    finger->set("pageX", value::number(x + scroll.x));
+    finger->set("pageY", value::number(y + scroll.y));
+    finger->set("screenX", value::number(x));
+    finger->set("screenY", value::number(y));
+    for (const char * key : {"radiusX", "radiusY"}) { finger->set(key, value::number(1)); }
+    finger->set("rotationAngle", value::number(0));
+    finger->set("force", value::number(end ? 0 : 0.5));
+    finger->set("altitudeAngle", value::number(std::numbers::pi / 2));
+    finger->set("azimuthAngle", value::number(0));
+    finger->set("touchType", cx.string("direct"));
+
+    // A TouchList: TouchList.prototype, the Touch at "0", and a read-only length.
+    const auto list = [&](bool holds) {
+        const value made = cx.make_object();
+        const context::rooted keep_list{cx, made};
+        auto * held = static_cast<script::object_object *>(made.as_heap());
+        adopt_interface(cx, *held, "TouchList");
+        if (holds) { held->set("0", touch); }
+        held->define("length", value::number(holds ? 1 : 0), script::attr_builtin);
+        return made;
+    };
+    object->set("touches", list(!end));
+    object->set("targetTouches", list(!end));
+    object->set("changedTouches", list(true));
+    return dispatch_event(touch_type, target, event);
+}
+
+// A USER'S EDIT, told to the page (Input Events 2, HTML 4.10.5.5):
+//   * `beforeinput` before the value changes - an InputEvent, composed and
+//     CANCELABLE, and cancelling it keeps the edit out;
+//   * `input` after it - the same InputEvent, not cancelable;
+//   * a control's `input` with no inputType (a <select>'s) - a plain Event,
+//     bubbling and composed;
+//   * `change` once the edit is committed - a plain Event that bubbles and
+//     neither cancels nor composes.
+// `data` is the text inserted, null for a deletion. Answers whether a listener
+// cancelled it.
+bool dom_bindings::dispatch_input(std::string_view type, node_id target,
+                                  std::optional<std::string_view> input_type,
+                                  std::optional<std::string_view> data) {
+    if (cx_ == nullptr || !target) { return false; }
+    context & cx = *cx_;
+    value event = make_event(cx, type, target);
+    const context::rooted keep{cx, event};
+    auto * object = static_cast<script::object_object *>(event.as_heap());
+    object->set("cancelable", value::boolean(type == "beforeinput"));
+    object->set("composed", value::boolean(type != "change"));
+    if (input_type && type != "change") {
+        adopt_interface(cx, *object, "InputEvent");
+        object->set("detail", value::number(0));
+        object->set("view", window_view_.is_heap() ? window_view_ : window_);
+        object->set("inputType", cx.string(std::string{*input_type}));
+        object->set("data", data ? cx.string(std::string{*data}) : value::null());
+        object->set("isComposing", value::boolean(false));
+        object->set("dataTransfer", value::null());
+    }
+    return dispatch_event(type, target, event);
+}
+
+// THE USER'S SELECTION IS THE PAGE'S SELECTION. A press on text collapses
+// `getSelection()` there, and a drag extends it - through the Selection's own
+// script surface (`collapse`, `setBaseAndExtent`), so its validity rules, its
+// direction and its selectionchange are the API's and not restated here. A
+// click leaves a DIRECTIONLESS collapsed selection, which is why the collapsed
+// case is `collapse` rather than a setBaseAndExtent to the same point.
+//
+// The positions arrive as UTF-8 byte offsets into a text node, as the painted
+// selection keeps them, and leave as the DOM's UTF-16 offsets.
+void dom_bindings::select_by_user(node_id anchor, std::size_t anchor_byte, node_id focus,
+                                  std::size_t focus_byte) {
+    if (cx_ == nullptr || doc_ == nullptr || !anchor || !focus) { return; }
+    context & cx = *cx_;
+    const auto in_realm = enter_realm(cx);
+    const auto utf16 = [&](node_id id, std::size_t byte) {
+        const auto txn = doc_->read();
+        const std::string_view text = txn.text(id);
+        double units = 0;
+        for (std::size_t i = 0; i < std::min(byte, text.size()); ++i) {
+            const auto b = static_cast<unsigned char>(text[i]);
+            if ((b & 0xC0u) != 0x80u) { units += b >= 0xF0u ? 2 : 1; }
+        }
+        return units;
+    };
+    script::object_object * window = window_object();
+    if (window == nullptr) { return; }
+    const value get = cx.lookup_property(value::object(window), "getSelection");
+    if (!get.is_callable()) { return; }
+    const value selection = cx.call(get, std::span<const value>{}, value::object(window));
+    const context::rooted keep_selection{cx, selection};
+    const bool collapsed = anchor == focus && anchor_byte == focus_byte;
+    const value method =
+        selection.is_object()
+            ? cx.lookup_property(selection, collapsed ? "collapse" : "setBaseAndExtent")
+            : value::undefined();
+    if (method.is_callable()) {
+        std::array<value, 4> args{wrap(cx, anchor), value::number(utf16(anchor, anchor_byte)),
+                                  wrap(cx, focus), value::number(utf16(focus, focus_byte))};
+        const context::rooted_values keep_args{cx, args};
+        (void)cx.call(method, std::span<const value>{args.data(), collapsed ? 2u : 4u}, selection);
+    }
+    if (cx.failed()) { (void)cx.take_error(); }
+}
+
+void dom_bindings::hold_scrollend(bool hold) {
+    if (hold) {
+        if (!held_scrollend_) { held_scrollend_.emplace(); }
+        return;
+    }
+    if (!held_scrollend_) { return; }
+    const std::vector<node_id> due = std::move(*held_scrollend_);
+    held_scrollend_.reset();
+    if (cx_ != nullptr && !due.empty()) { fire_scrollend(*cx_, due); }
+}
+
+// Where a wheel notch or a touch drag goes once no listener kept it: the
+// nearest SCROLL CONTAINER on the flat-tree path from the target that can still
+// move that way - which is scroll chaining, CSSOM View's "scroll an element" on
+// the first box that has room - and the VIEWPORT when none can, which is the
+// caller's to scroll. The root element and the body stand for the viewport and
+// end the walk. Answers whether an element took it.
+bool dom_bindings::wheel_scroll(node_id from, float dx, float dy) {
+    if (doc_ == nullptr || !from || (dx == 0 && dy == 0)) { return false; }
+    flush_layout();
+    const node_id root = doc_->read().root();
+    const node_id body = body_element();
+    for (const path_step & step : propagation_path(step_at(from), true)) {
+        if (step.on != listen_on::node) { break; }
+        if (step.node == root || step.node == body) { return false; }
+        const located at = locate(step.node);
+        if (at.f == nullptr || at.f->box == nullptr || !at.f->box->scroll_container) { continue; }
+        const rect area = layout::scrolling_area_of(*at.f);
+        const rect padding = layout::padding_box_of(*at.f);
+        const point now = scroll_offset_of(step.node);
+        const bool room_x = (dx > 0 && now.x < area.width - padding.width) || (dx < 0 && now.x > 0);
+        const bool room_y =
+            (dy > 0 && now.y < area.height - padding.height) || (dy < 0 && now.y > 0);
+        if (!room_x && !room_y) { continue; }
+        scroll_element_to(step.node, now.x + dx, now.y + dy);
+        return true;
+    }
+    return false;
+}
+
+// CSSOM View §13.1 "run the scroll steps", steps 4-5: after the `scroll`
+// events, a `scrollend` at every target whose scroll COMPLETED - and an instant
+// scroll, which is every scroll this engine makes, completes as it happens, so
+// the targets are exactly the ones that just heard `scroll`. At a Document it
+// bubbles, to the window; at an element it does not. Neither is cancelable.
+//
+// A USER'S scroll completes when the user stops (CSSOM View: "if scrolling was
+// done by a user input, wait until the user input is done"), so while a finger
+// is down the targets are held, once each, and fired when it lifts.
+void dom_bindings::fire_scrollend(context & cx, std::span<const node_id> scrolled) {
+    if (held_scrollend_) {
+        for (const node_id at : scrolled) {
+            if (std::ranges::find(*held_scrollend_, at) == held_scrollend_->end()) {
+                held_scrollend_->push_back(at);
+            }
+        }
+        return;
+    }
+    for (const node_id at : scrolled) {
+        const value event = make_event(cx, "scrollend", at);
+        auto * object = static_cast<script::object_object *>(event.as_heap());
+        object->set("bubbles", value::boolean(!at));
+        object->set("cancelable", value::boolean(false));
+        (void)dispatch_event("scrollend", at, event);
+    }
 }
 
 value dom_bindings::make_mouse_event(context & cx, std::string_view type, node_id target,
