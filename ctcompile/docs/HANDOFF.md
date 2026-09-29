@@ -22,6 +22,47 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Interrupted Astra recovery, 2026-09-29 UTC
+
+**Implementation pending; no new native measurement.** The previous Astra
+iteration left four uncommitted files on `ctcompile-v1` at `6ffb9f353`:
+`HostContract/ClassInitialization/{DOMData.cpp,Proof.cpp,Proof.hpp}` under
+`ctcompile/lib/CTNative/`, and
+`ctcompile/test/CTNative/Browser/native_class_dom_data.py`.
+The recovered change forwards fixed element fields of method-free local class
+records to their declared entry inputs after the existing class/Map alias
+census. The provider and final ownership proofs remain required. Constructor
+registration through `this.element`, inheritance, methods and mutable element
+fields are outside this change.
+
+Local `tools/format.sh --check` passed (1180 C++, 155 Python, 116 web files),
+Python syntax parsing passed, and `git diff --check` passed. Devbox validation
+could not start: `ssh -o ConnectTimeout=5 devbox true` failed with
+`Permission denied (publickey)` after the reboot; the restarted
+`~/.ssh/build-agent.sock` agent has no identity loaded. The user must unlock
+the key locally. No build or native execution is claimed for this patch, and
+its implementation must not be committed as verified yet.
+
+Resume with `flock /tmp/ctbrowser-devbox-build.lock bash
+/tmp/codex-recover-dom-data/check.sh`. The wrapper uses explicit targets
+`ctjs-opt ctjs-translate ctcompile-test-native-reference`, then the new
+`published_element_fields` cases, one existing scalar-record control, and the
+unchanged authentic W/B/U/Data frontier probe. It retains GCC/Clang, both
+printing policies, optimization off/on and the existing no-Script-symbol
+gates. Full lit/CTest, WPT/test262, broad corpus/native matrices, Windows and
+sanitizers have not run. The patch, hashes and exact scripts are preserved at
+`/home/alex/.ctbrowser-auto/codex/ctcompile/artifacts/2026-09-29-dom-data-recovery/`;
+restore the scripts to `/tmp/codex-recover-dom-data/` if another reboot removes
+them.
+
+The older unmerged `codex-*` branch tips match complete trees already in the
+integration history; do not merge those obsolete histories again. The live
+browser worker owns the separate `codex-ctbrowser` recovery branch. Claude's
+previous ResolveGlobals changes are already integrated as `92e761983`; its
+new DOM/Map final-lowering work remains in `wt/claude-ctcompile`. The next
+measured Bootstrap boundary remains the captured Data Map refusal documented
+below until the pending focused run establishes a new result.
+
 ## The global object as `this` in the closed world, 2026-09-29 UTC
 
 **Landed: `998a49159`, `30259e727`** (branch `claude-ctcompile`, merged as `92e761983`).
