@@ -212,6 +212,28 @@ void test_scope() {
     expect_value(h, t.children(t.children(ha)[0])[0], "color", "green", "nested scope");
     expect_value(h, t.children(ha)[1], "color", "", "outside the inner scope");
     expect_value(h, ha, "z-index", "3", "& in @scope is the root");
+
+    // The IMPLICIT scope: rooted at the element the shell names ahead of the
+    // sheet (css::scope_block), and at nothing when none is named.
+    fixture k;
+    (void)parse_html(k.doc, "<div><p>1</p></div><section><p>2</p></section>");
+    const node_id root = k.find("div");
+    k.styles.add_sheet("@scope { p { color: green } :scope { z-index: 4 } }", 1);
+    k.styles.add_sheet("@-ctbrowser-scope-root " + std::to_string(engine::key_of(root)) +
+                           "; @scope { p { color: blue } :scope { z-index: 5 } }",
+                       1);
+    k.resolved = k.styles.resolve_all(k.doc.read());
+    const auto kt = k.doc.read();
+    expect_value(k, kt.children(root)[0], "color", "blue", "inside the implicit root");
+    expect_value(k, root, "z-index", "5", ":scope is the implicit root");
+    CHECK(k.value_of(kt.children(k.find("section"))[0], "color").empty()); // outside it
+
+    // `@import ... scope(<argument>)` as the `@scope` prelude it stands for.
+    CHECK_EQ(css::import_scope_prelude(" .a "), std::string{"(.a)"});
+    CHECK_EQ(css::import_scope_prelude("toolbar"), std::string{"(toolbar)"});
+    CHECK_EQ(css::import_scope_prelude("(.a) to (.b)"), std::string{"(.a) to (.b)"});
+    CHECK_EQ(css::import_scope_prelude("to (.b)"), std::string{"to (.b)"});
+    CHECK(css::import_scope_prelude("").empty());
 }
 
 // `@container`: a style query needs no layout; a size query asks the hook

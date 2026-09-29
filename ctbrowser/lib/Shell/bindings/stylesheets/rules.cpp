@@ -594,8 +594,10 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
                 if (part.empty()) { break; }
                 const bool layer =
                     ascii_iequals(part, "layer") || ascii_iequals(part.substr(0, 6), "layer(");
-                if (!layer && !ascii_iequals(part.substr(0, 9), "supports(")) { break; }
-                if (!well_formed(part)) { break; }
+                // `scope()` (CSS Cascade 6 §2.2) may be empty: the implicit scope.
+                const bool scope = ascii_iequals(part.substr(0, 6), "scope(") && part.back() == ')';
+                if (!layer && !scope && !ascii_iequals(part.substr(0, 9), "supports(")) { break; }
+                if (!scope && !well_formed(part)) { break; }
                 if (!extra.empty()) { extra += ' '; }
                 extra += collapse_whitespace(part, html_whitespace);
                 after = probe;

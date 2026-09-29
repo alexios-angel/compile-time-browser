@@ -1,5 +1,7 @@
 #include "internal.hpp"
 
+#include <charconv>
+
 namespace ctbrowser::style::css::parser_detail {
 
 [[nodiscard]] bool parser::layer_name_of(std::span<const component_value> run,
@@ -153,9 +155,10 @@ void parser::at_rule_block_of(std::string_view name, std::span<const component_v
     case at_kind::function: {
         // Collected like @font-face, prelude included, and only at the top
         // level: one inside a conditional group is discarded as before -
-        // except an `@container`, whose condition is per element and which
-        // defines what it holds regardless of it (container-inner-at-rules).
-        if (nesting_ != 1 && (container_ == 0 || condition_ != 0 || scope_ != 0)) { return; }
+        // except an `@container` or an `@scope`, whose condition is per
+        // element and which define what they hold regardless of it
+        // (container-inner-at-rules, scope-name-defining-rules).
+        if (nesting_ != 1 && ((container_ == 0 && scope_ == 0) || condition_ != 0)) { return; }
         at_rule_block r;
         r.prelude_first = static_cast<std::uint32_t>(sheet_.values.size());
         r.prelude_count = static_cast<std::uint32_t>(prelude.size());
@@ -185,7 +188,9 @@ void parser::scope_block_of(std::span<const component_value> prelude,
     const nesting_context * start_context =
         scope_ != 0 || context_.in_scope || !context_.parent.empty() ? &outer : nullptr;
     bool invalid = false;
-    if (!run.empty() && run.front().kind == cv_kind::block && run.front().open == '(') {
+    const bool has_start =
+        !run.empty() && run.front().kind == cv_kind::block && run.front().open == '(';
+    if (has_start) {
         made.first_root = static_cast<std::uint32_t>(sheet_.selectors.size());
         made.root_count = parse_selector_list(sheet_, sheet_.children_of(run.front()), *atoms_,
                                               &invalid, start_context);
@@ -208,6 +213,8 @@ void parser::scope_block_of(std::span<const component_value> prelude,
     // `@scope ()`, `@scope to ()`, a selector that is not one: the rule is
     // invalid and its block applies nothing.
     if (invalid) { return; }
+    // No `<scope-start>` at all is the IMPLICIT scope, rooted where the shell said.
+    if (!has_start) { made.implicit_root = scope_owner_; }
     sheet_.scopes.push_back(made);
     const std::uint32_t saved_scope = scope_;
     scope_ = static_cast<std::uint32_t>(sheet_.scopes.size());
@@ -257,6 +264,18 @@ void parser::consume_at_rule() {
             leading_ = false;
         } else if (kind == at_kind::layer) {
             if (ended) { layer_statement(prelude); }
+        } else if (ascii_iequals(name, scope_root_at_rule)) {
+            // The shell's word on which element an implicit `@scope` after it
+            // is rooted at (scope_block). It closes nothing: the leading run
+            // of `@import`s and `@namespace`s is the sheet's, after it.
+            scope_owner_ = 0;
+            for (const component_value & v : prelude) {
+                if (v.kind != cv_kind::token || sheet_.tokens[v.token].type != token_type::number) {
+                    continue;
+                }
+                const std::string_view digits = text(sheet_.tokens[v.token]);
+                (void)std::from_chars(digits.data(), digits.data() + digits.size(), scope_owner_);
+            }
         } else if (!ascii_iequals(name, "charset")) {
             leading_ = false;
         }

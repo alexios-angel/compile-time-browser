@@ -915,6 +915,8 @@ private:
         std::uint16_t parent = 0;
         std::vector<compiled_selector> roots;
         std::vector<compiled_selector> limits;
+        // An implicit scope's root, by element key (css::scope_block); 0 none.
+        std::uint64_t implicit_root = 0;
     };
     std::vector<scope_entry> scopes_{scope_entry{}};
     // THE CONTAINER CONDITIONS, entry 0 none, and the size hook - see

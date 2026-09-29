@@ -198,6 +198,13 @@ private:
                 made.layer = std::move(name);
                 ++k;
             } else if (prelude[k].kind == cv_kind::function &&
+                       ascii_iequals(text(word), "scope(")) {
+                // `scope([<scope-start> | <scope-boundaries>])`, CSS Cascade 6
+                // §2.2, as the `@scope` prelude it stands for.
+                made.scoped = true;
+                made.scope = import_scope_prelude(text_of_run(sheet_.children_of(prelude[k])));
+                ++k;
+            } else if (prelude[k].kind == cv_kind::function &&
                        ascii_iequals(text(word), "supports(")) {
                 made.supports = text_of_run(sheet_.children_of(prelude[k]));
                 // `supports()` with nothing in it is no condition, and like
@@ -843,6 +850,9 @@ private:
     // `:where(:scope)` selector its bare declarations file under.
     std::uint32_t scope_ = 0;
     std::uint32_t scope_root_selector_ = 0;
+    // The element an implicit `@scope` is rooted at, as the last
+    // `@-ctbrowser-scope-root` said (scope_block).
+    std::uint64_t scope_owner_ = 0;
     // The `@container` a rule sits inside, 0 for none.
     std::uint32_t container_ = 0;
     // The enclosing style rule, for nesting - see block_context.
