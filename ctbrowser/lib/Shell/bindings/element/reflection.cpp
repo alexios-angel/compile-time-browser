@@ -3,7 +3,7 @@
 
 #include "internal.hpp"
 
-#include <charconv>
+#include <ctbrowser/shell/page/input_types.hpp>
 
 namespace ctbrowser::shell {
 
@@ -579,44 +579,10 @@ constexpr double_row double_rows[] = {
     {"HTMLMeterElement", "optimum", 0.0, false},
 };
 
-// THE RULES FOR PARSING FLOATING-POINT NUMBER VALUES, HTML 2.4.4.3, as a
-// syntax check that hands the matched text to from_chars: HTML whitespace,
-// a sign, digits or a fraction, an optional fraction, an optional exponent
-// with its own sign - and anything after that is ignored rather than fatal.
+// THE RULES FOR PARSING FLOATING-POINT NUMBER VALUES, HTML 2.4.4.3: the lenient
+// parse the number controls use, with -0 read as 0.
 [[nodiscard]] bool parse_html_float(std::string_view text, double & out) {
-    std::size_t at = 0;
-    while (at < text.size() && html_whitespace.find(text[at]) != std::string_view::npos) { ++at; }
-    std::string canonical;
-    if (at < text.size() && (text[at] == '-' || text[at] == '+')) {
-        if (text[at] == '-') { canonical += '-'; }
-        ++at;
-    }
-    const auto digit = [&](std::size_t i) {
-        return i < text.size() && text[i] >= '0' && text[i] <= '9';
-    };
-    if (!digit(at) && !(at < text.size() && text[at] == '.' && digit(at + 1))) { return false; }
-    if (!digit(at)) { canonical += '0'; }
-    while (digit(at)) { canonical += text[at++]; }
-    if (at < text.size() && text[at] == '.') {
-        ++at;
-        canonical += '.';
-        if (!digit(at)) { canonical += '0'; }
-        while (digit(at)) { canonical += text[at++]; }
-    }
-    if (at < text.size() && (text[at] == 'e' || text[at] == 'E')) {
-        std::size_t look = at + 1;
-        std::string exponent = "e";
-        if (look < text.size() && (text[look] == '-' || text[look] == '+')) {
-            if (text[look] == '-') { exponent += '-'; }
-            ++look;
-        }
-        if (digit(look)) {
-            while (digit(look)) { exponent += text[look++]; }
-            canonical += exponent;
-        }
-    }
-    const auto result = std::from_chars(canonical.data(), canonical.data() + canonical.size(), out);
-    if (result.ec != std::errc{} || !std::isfinite(out)) { return false; }
+    if (!input_types::parse_float(text, out, true)) { return false; }
     if (out == 0) { out = 0; } // -0 is 0, as the specification's algorithm yields
     return true;
 }
