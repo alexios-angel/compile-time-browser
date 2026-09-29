@@ -627,6 +627,77 @@ ELEMENT_ARM_REFUSALS = {
     ),
 }
 CLASS_REFUSALS.update({name: body for name, (body, _) in ELEMENT_ARM_REFUSALS.items()})
+SNAPSHOT_CLASS = """class Shape {
+    constructor(element) { this.element = element; this.x = 'ready'; }
+    read() {
+      const keys = Object.getOwnPropertyNames(this);
+      return keys.length === 2 && keys[0] === 'element'
+          && this.element.getAttribute(keys[1]) === null;
+    }
+  }
+  const shape = new Shape(element);
+"""
+SNAPSHOT_CASES = {
+    "class_own_keys": (SNAPSHOT_CLASS + "  return shape.read();\n", "1000"),
+    "class_own_keys_entry": (
+        CLASS + """  const keys = Object.getOwnPropertyNames(shape);
+  shape.key = 'marker';
+  return keys.length === 1 && keys[0] === 'key' && shape.read() === 'marker'
+      && element.getAttribute('x') === null;
+""",
+        "1000",
+    ),
+    "class_own_keys_clear": (
+        SNAPSHOT_CLASS.replace(
+            "    read() {",
+            "    dispose() { for (const key of Object.getOwnPropertyNames(this)) this[key] = null; }\n"
+            "    read() {",
+        )
+        + """  const saved = shape.read();
+  shape.dispose();
+  return saved && shape.element === null && shape.x === null;
+""",
+        "1000",
+    ),
+    "class_element_arm_snapshot": (
+        ELEMENT_ARM.replace(
+            "    read() { return",
+            "    read() { const keys = Object.getOwnPropertyNames(this);\n"
+            "      return keys.length === 1 && keys[0] === 'element' &&",
+        )
+        + "  return new Button(element).read();\n",
+        "1000",
+    ),
+}
+ELEMENT_ARM_CASES["class_element_arm_snapshot"] = SNAPSHOT_CASES["class_element_arm_snapshot"]
+SNAPSHOT_REFUSALS = {
+    "own_keys_added": SNAPSHOT_CLASS + "  shape.extra = 1; return shape.read();\n",
+    "own_keys_alias_added": SNAPSHOT_CLASS
+    + "  const alias = shape; alias.extra = 1; return shape.read();\n",
+    "own_keys_unused_write": SNAPSHOT_CLASS.replace(
+        "    read() {", "    change() { this.extra = 1; }\n    read() {"
+    )
+    + "  return shape.read();\n",
+    "own_keys_deleted": SNAPSHOT_CLASS + "  delete shape.x; return shape.read();\n",
+    "own_keys_replaced_intrinsic": SNAPSHOT_CLASS
+    + "  Object.getOwnPropertyNames = () => []; return shape.read();\n",
+    "own_keys_escaped_snapshot": SNAPSHOT_CLASS.replace(
+        "      return keys.length", "      foreign(keys);\n      return keys.length"
+    )
+    + "  return shape.read();\n",
+    "own_keys_partial_constructor": SNAPSHOT_CLASS.replace(
+        "this.x = 'ready';", "this.read(); this.x = 'ready';"
+    )
+    + "  return shape.read();\n",
+    "own_keys_clear_iterator_replaced": SNAPSHOT_CASES["class_own_keys_clear"][0].replace(
+        "  shape.dispose();", "  __ctbrowser_for_of_open = x => x; shape.dispose();"
+    ),
+    "own_keys_clear_array_replaced": SNAPSHOT_CASES["class_own_keys_clear"][0].replace(
+        "  shape.dispose();", "  Array.prototype[Symbol.iterator] = () => null; shape.dispose();"
+    ),
+}
+CLASS_CASES.update(SNAPSHOT_CASES)
+CLASS_REFUSALS.update(SNAPSHOT_REFUSALS)
 NUMBER_CLASS = """class Shape {
     constructor(element) { this.element = element; }
     read() { return Number(this.element.getAttribute('x')).toString() === '0'; }

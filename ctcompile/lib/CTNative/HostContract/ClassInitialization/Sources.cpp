@@ -634,7 +634,9 @@ bool classInitialization::ownFieldSnapshots(
     if (!llvm::is_contained(contract.initialIntrinsics, "Object")) {
         return refuse("class own-key snapshot needs declared Object identity");
     }
-    if (contract.provider != HostContract::Provider::closedSource) {
+    const bool dom = contract.provider == HostContract::Provider::ctbrowserDOM ||
+                     contract.provider == HostContract::Provider::ctbrowserDOMSession;
+    if (contract.provider != HostContract::Provider::closedSource && !dom) {
         return refuse("class own-key snapshot requires fixed constructor fields");
     }
     // A base whose only constructions are its leaves' super calls (exact
@@ -960,7 +962,17 @@ bool classInitialization::ownFieldSnapshots(
         })) {
         return false;
     }
-    if (auto problem = host_detail::initialBindingProblem(module, contract); !problem.empty()) {
+    auto binding = dom ? classBindingContract(contract) : contract;
+    if (dom) {
+        // Recheck every intrinsic consumed by the snapshot and its optional
+        // clearing loop. DOM values still owe the complete typed body proof.
+        for (const auto & name : contract.initialIntrinsics) {
+            if (name == "Object" || name == "Array" || host_detail::iteratorIntrinsicArity(name)) {
+                binding.initialIntrinsics.push_back(name);
+            }
+        }
+    }
+    if (auto problem = host_detail::initialBindingProblem(module, binding); !problem.empty()) {
         return refuse(problem);
     }
     for (auto [result, value] : replacements) {

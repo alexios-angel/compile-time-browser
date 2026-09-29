@@ -378,8 +378,25 @@ def main():
                 + (["Number"] if name in NUMBER_CASES or name in NUMBER_REFUSALS else [])
                 + (["JSON", "decodeURIComponent"] if name in M_CASES or name in M_REFUSALS else [])
                 + (["__ctbrowser_regexp"] if name in F_CASES or name in F_REFUSALS else [])
-                + (["Object"] if name == "element_arm_prototype" else []),
+                + (
+                    ["Object"]
+                    if name == "element_arm_prototype"
+                    or name in SNAPSHOT_CASES
+                    or name in SNAPSHOT_REFUSALS
+                    else []
+                ),
             )
+            if name in (
+                "class_own_keys_clear",
+                "own_keys_clear_iterator_replaced",
+                "own_keys_clear_array_replaced",
+            ):
+                request["initial_intrinsics"] += [
+                    "Array",
+                    "__ctbrowser_for_of_open",
+                    "__ctbrowser_iter_next",
+                    "__ctbrowser_iter_close",
+                ]
             if (
                 name in UTF16_CASES
                 or name in UTF16_REFUSALS
@@ -443,6 +460,20 @@ def main():
                 refusals += 1
                 continue
             prepared.append((name, owned, ir, request))
+            if name in SNAPSHOT_CASES:
+                dom.lower(
+                    args,
+                    ir,
+                    dict(
+                        request,
+                        initial_intrinsics=[
+                            i for i in request["initial_intrinsics"] if i != "Object"
+                        ],
+                    ),
+                    f"{name}-{owned}-undeclared-object",
+                    success=False,
+                )
+                refusals += 1
             # Preserve the original optional-Error requests as successful lowerings.
             dom.lower(
                 args,
@@ -474,6 +505,7 @@ def main():
                 or name in F_CASES
                 or name in FILTER_CASES
                 or name in UTF16_CASES
+                or name == "class_own_keys_clear"
             )
             dom.lower(
                 args,
