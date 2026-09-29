@@ -32,6 +32,13 @@ CASES = {
     .replace("@MAKE7@", "new Item(7)")
     .replace("@MAKE9@", "new Item(9)")
     .replace("@READ@", "current.read()"),
+    # The record may be built before its Map, as class publication leaves it.
+    "late-map": """const first = {n: 7};
+  const state = new Map();
+  state.set('x', first);
+  const current = state.get('x');
+  element.setAttribute('x', 'done');
+  return current.n === 7 && first.n === 7;""",
     "fields": """const state = new Map();
   const first = {label: 'done', count: 1, on: true};
   state.set('a', first);

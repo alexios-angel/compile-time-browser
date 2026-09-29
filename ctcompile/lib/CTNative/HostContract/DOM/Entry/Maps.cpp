@@ -158,16 +158,21 @@ std::optional<bool> Body::recordOperation(mlir::Operation & operation) {
                                                                                 : llvm::StringRef{};
     };
     if (auto object = llvm::dyn_cast<ctjs::CreateObjectOp>(operation)) {
-        // The `set` of a local Map, called on that Map, storing this object.
+        // The `set` of a local `new Map()`, called on that Map, storing this
+        // object. The Map may be built after the record; visiting it proves
+        // its constructor, and the `set` itself must be its proved method.
         const auto stored = [&](mlir::OpOperand & use) {
             auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
             auto method = call ? call.getCallee().getDefiningOp<ctjs::GetPropertyOp>()
                                : ctjs::GetPropertyOp{};
+            auto made =
+                call ? call.getReceiver().getDefiningOp<ctjs::ConstructOp>() : ctjs::ConstructOp{};
+            auto map =
+                made ? made.getCallee().getDefiningOp<ctjs::LoadGlobalOp>() : ctjs::LoadGlobalOp{};
             return method && use.getOperandNumber() == 3 && call.getArgs().size() == 2 &&
                            method.getObject() == call.getReceiver() &&
-                           ctjs::constantKey(method.getKey()) == "set" &&
-                           hasKind(call.getReceiver(), Kind::map) &&
-                           call.getReceiver().getDefiningOp<ctjs::ConstructOp>()
+                           ctjs::constantKey(method.getKey()) == "set" && map &&
+                           map.getName() == "Map" && plainMapConstruction(made)
                        ? call.getReceiver()
                        : mlir::Value{};
         };
