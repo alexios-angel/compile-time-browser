@@ -44,7 +44,7 @@ value dom_bindings::webgl_context_object(context & cx, node_id id, int version) 
             const_cast<paint::bitmap *>(surface->surface().get()), width, height);
         // THERE IS NO BACKEND TO CHOOSE ANY MORE. The software rasteriser is
         // gone, so a context is an ANGLE context or it is nothing - see
-        // docs/plans/webgl-rewrite.md. What used to be `use_angle()` is now the
+        // docs/history/webgl-rewrite.md. What used to be `use_angle()` is now the
         // only path, and `driver::deterministic` is the runtime switch that
         // replaces it.
         //
@@ -54,7 +54,7 @@ value dom_bindings::webgl_context_object(context & cx, node_id id, int version) 
         // halfway through its first frame - which is what nine render tests
         // reported as "Unable to create VAO" the moment the software fallback
         // was removed.
-        if (!made->ok()) {
+        if (!made->device().ok()) {
             made.reset();
             return value::null();
         }

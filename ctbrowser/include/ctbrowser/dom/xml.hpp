@@ -77,6 +77,11 @@ inline constexpr std::string_view mathml_namespace = "http://www.w3.org/1998/Mat
 inline constexpr std::string_view xml_namespace = "http://www.w3.org/XML/1998/namespace";
 inline constexpr std::string_view xmlns_namespace = "http://www.w3.org/2000/xmlns/";
 
+// XML 1.0's S production: space, tab, CR, LF - HTML's whitespace minus the form
+// feed. core/algorithms.hpp takes the set as a parameter for exactly this reason:
+// HTML, JavaScript and XML each have their own, and unifying them would be a bug.
+inline constexpr std::string_view xml_whitespace = " \t\r\n";
+
 struct xml_parse_result {
     parse_result tree;
     // Empty when the document is well-formed. XML has no recovery, so a

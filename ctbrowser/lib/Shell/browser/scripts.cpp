@@ -484,7 +484,7 @@ void browser::load_module(const std::string & source, const std::string & specif
 //
 // PATHS, NOT URLS, DELIBERATELY. These are asset-registry keys: nothing here
 // fetches, so there is no base URL to resolve against yet. When the loader does
-// fetch, this becomes real URL resolution - and `docs/plans/ada-url.md` is about
+// fetch, this becomes real URL resolution - and `docs/history/ada-url.md` is about
 // which standard that should be by. Bare and absolute specifiers pass through
 // untouched: a bare one is an import map's business, which is not built.
 namespace {

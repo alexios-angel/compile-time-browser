@@ -281,9 +281,7 @@ brew ships 1.90 on both machines.
 
 Measured, then fixed. A clean the engine build was **143.7 s wall / 237.9 s CPU**; it is
 now **116.7 s / 221 s**, and the parts a user waits on moved most:
-`tests` 221 s → 127 s, `examples` 138 s → 36 s. A bare
-`import ctbrowser;` with an empty `main` costs **0.89 s**, so the umbrella is
-cheap — a consumer pays for what it USES.
+`tests` 221 s → 127 s, `examples` 138 s → 36 s.
 
 Three things did it:
 
@@ -301,7 +299,7 @@ Three things did it:
    `<SDL3/SDL.h>` made `ctbrowser.app.pcm` 26 MB — for headers whose types
    neither module exposes. Moving them into the implementation units took
    net.pcm to 3.7 MB. Put Boost/SDL/FreeType includes in a `.cpp`, never in a
-   `.cppm` interface, unless the type is genuinely in the public API.
+   public header, unless the type is genuinely in the public API.
 
 **Inlining across the library boundary** is `-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON`,
 CMake's own knob (the `CTBROWSER_LTO` alias for it was removed 2026-09-10).

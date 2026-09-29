@@ -195,7 +195,6 @@ private:
     // rule that keeps `?a=1&copy=2` a query string.
     void character_reference(std::string & out, bool in_attribute);
     [[nodiscard]] static char32_t numeric_reference_code(std::uint32_t code);
-    [[nodiscard]] static std::string encode_utf8(char32_t code);
 
     // Read past the end of a truncated view: the token being built needs more
     // input than there is yet. Set by the states, read once by next().

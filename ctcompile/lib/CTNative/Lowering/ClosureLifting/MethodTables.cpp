@@ -1,13 +1,11 @@
 #include "../../Analysis/ClosedValueFlow.h"
 #include "ClosureLifter.h"
+#include "ctcompile/Support/CppLiterals.hpp"
 
 namespace ctcompile::ctnative::lowering_detail {
 namespace {
 bool fieldKey(llvm::StringRef key) {
-    return !key.empty() && key != "__proto__" && llvm::all_of(key, [](char c) {
-        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
-               c == '_';
-    });
+    return !key.empty() && key != "__proto__" && llvm::all_of(key, cpp::is_identifier_char);
 }
 } // namespace
 

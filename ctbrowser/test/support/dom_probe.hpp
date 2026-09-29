@@ -48,6 +48,22 @@ inline void is_in(const std::string & html, const std::string & expression,
     if (got != expected) { std::printf("    %s\n", expression.c_str()); }
 }
 
+// A page's alerts, `;`-joined, from a FRESH page with `html` loaded. A script
+// fault is appended as `|error:` rather than swallowed: a test whose page threw
+// halfway through would otherwise report a short list and blame the feature.
+// Eight DOM tests carried this before it moved here.
+[[nodiscard]] inline std::string said(std::string_view html) {
+    ctbrowser::browser page{ctbrowser::browser_options{200, 100}};
+    page.load_html(html);
+    std::string out;
+    for (const std::string & one : page.alerts()) {
+        if (!out.empty()) { out += ';'; }
+        out += one;
+    }
+    if (!page.script_error().empty()) { out += "|error:" + page.script_error(); }
+    return out;
+}
+
 // The first element whose `id` attribute is `want`, in document order.
 [[nodiscard]] inline ctbrowser::node_id find_id(ctbrowser::browser & page, std::string_view want) {
     const auto txn = page.doc().read();

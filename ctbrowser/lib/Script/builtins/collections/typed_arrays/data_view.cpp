@@ -18,32 +18,18 @@ namespace ctbrowser::script::builtins_detail {
 
 namespace {
 
-enum class view_type : std::uint8_t {
-    i8,
-    u8,
-    i16,
-    u16,
-    i32,
-    u32,
-    f16,
-    f32,
-    f64,
-    big_i64,
-    big_u64
-};
-
+// Each getX/setX pair, by the element kind it reads and writes.
 struct type_spec {
     const char * name;
-    view_type type;
-    std::size_t width;
+    element_kind kind;
 };
 constexpr type_spec types[] = {
-    {"Int8", view_type::i8, 1},           {"Uint8", view_type::u8, 1},
-    {"Int16", view_type::i16, 2},         {"Uint16", view_type::u16, 2},
-    {"Int32", view_type::i32, 4},         {"Uint32", view_type::u32, 4},
-    {"Float16", view_type::f16, 2},       {"Float32", view_type::f32, 4},
-    {"Float64", view_type::f64, 8},       {"BigInt64", view_type::big_i64, 8},
-    {"BigUint64", view_type::big_u64, 8},
+    {"Int8", element_kind::i8},           {"Uint8", element_kind::u8},
+    {"Int16", element_kind::i16},         {"Uint16", element_kind::u16},
+    {"Int32", element_kind::i32},         {"Uint32", element_kind::u32},
+    {"Float16", element_kind::f16},       {"Float32", element_kind::f32},
+    {"Float64", element_kind::f64},       {"BigInt64", element_kind::big_i64},
+    {"BigUint64", element_kind::big_u64},
 };
 
 // --- the slots -----------------------------------------------------------------
@@ -92,80 +78,6 @@ struct view_state {
     return v.length ? *v.length : v.store->items.size() - v.offset;
 }
 
-[[nodiscard]] std::uint64_t read_raw(const array_object * store, std::size_t at, std::size_t width,
-                                     bool little) {
-    std::uint64_t raw = 0;
-    for (std::size_t b = 0; b < width; ++b) {
-        const std::size_t i = little ? at + b : at + width - 1 - b;
-        const value each = i < store->items.size() ? store->items[i] : value::number(0);
-        raw |= static_cast<std::uint64_t>(
-                   static_cast<std::uint8_t>(each.is_number() ? each.as_number() : 0))
-               << (8 * b);
-    }
-    return raw;
-}
-
-void write_raw(array_object * store, std::size_t at, std::size_t width, bool little,
-               std::uint64_t raw) {
-    for (std::size_t b = 0; b < width; ++b) {
-        const std::size_t i = little ? at + b : at + width - 1 - b;
-        if (i < store->items.size()) {
-            store->items[i] = value::number(static_cast<double>((raw >> (8 * b)) & 0xFF));
-        }
-    }
-}
-
-[[nodiscard]] bool is_bigint_type(view_type t) {
-    return t == view_type::big_i64 || t == view_type::big_u64;
-}
-
-[[nodiscard]] value raw_to_value(context & cx, view_type t, std::uint64_t raw) {
-    switch (t) {
-    case view_type::i8: return value::number(static_cast<std::int8_t>(raw));
-    case view_type::u8: return value::number(static_cast<std::uint8_t>(raw));
-    case view_type::i16: return value::number(static_cast<std::int16_t>(raw));
-    case view_type::u16: return value::number(static_cast<std::uint16_t>(raw));
-    case view_type::i32: return value::number(static_cast<std::int32_t>(raw));
-    case view_type::u32: return value::number(static_cast<std::uint32_t>(raw));
-    case view_type::f16: return value::number(half_to_double(static_cast<std::uint16_t>(raw)));
-    case view_type::f32: {
-        const double d = std::bit_cast<float>(static_cast<std::uint32_t>(raw));
-        return value::number(std::isnan(d) ? canonical_nan() : d);
-    }
-    case view_type::f64: {
-        const double d = std::bit_cast<double>(raw);
-        return value::number(std::isnan(d) ? canonical_nan() : d);
-    }
-    case view_type::big_i64:
-        return value::object(cx.allocate<bigint_object>(bigint{static_cast<std::int64_t>(raw)}));
-    case view_type::big_u64: return value::object(cx.allocate<bigint_object>(bigint{raw}));
-    }
-    return value::undefined();
-}
-
-[[nodiscard]] std::uint64_t number_to_raw(view_type t, double v) {
-    switch (t) {
-    case view_type::f16: return double_to_half(v);
-    case view_type::f32: return std::bit_cast<std::uint32_t>(static_cast<float>(v));
-    case view_type::f64: return std::bit_cast<std::uint64_t>(v);
-    case view_type::i8:
-    case view_type::u8:
-        return static_cast<std::uint64_t>(
-            static_cast<std::int64_t>(coerce_element(element_kind::u8, v)));
-    case view_type::i16:
-    case view_type::u16:
-        return static_cast<std::uint64_t>(
-            static_cast<std::int64_t>(coerce_element(element_kind::u16, v)));
-    case view_type::i32:
-    case view_type::u32:
-        return static_cast<std::uint64_t>(
-            static_cast<std::int64_t>(coerce_element(element_kind::u32, v)));
-    case view_type::big_i64:
-    case view_type::big_u64: break;
-    }
-    return 0;
-}
-
 // GetViewValue (25.3.1.5).
 [[nodiscard]] value get_view_value(context & c, std::span<value> a, const type_spec & t) {
     view_state v;
@@ -178,12 +90,19 @@ void write_raw(array_object * store, std::size_t at, std::size_t width, bool lit
         return value::undefined();
     }
     const std::size_t size = view_byte_length(v);
-    if (index + static_cast<double>(t.width) > static_cast<double>(size)) {
+    const std::size_t width = bytes_per_element(t.kind);
+    if (index + static_cast<double>(width) > static_cast<double>(size)) {
         c.throw_error("RangeError", "Offset is outside the bounds of the DataView");
         return value::undefined();
     }
-    return raw_to_value(
-        c, t.type, read_raw(v.store, v.offset + static_cast<std::size_t>(index), t.width, little));
+    const std::uint64_t raw =
+        store_raw(*v.store, v.offset + static_cast<std::size_t>(index), width, little);
+    switch (t.kind) {
+    case element_kind::big_i64:
+        return value::object(c.allocate<bigint_object>(bigint{static_cast<std::int64_t>(raw)}));
+    case element_kind::big_u64: return value::object(c.allocate<bigint_object>(bigint{raw}));
+    default: return value::number(element_from_raw(t.kind, raw));
+    }
 }
 
 // SetViewValue (25.3.1.6): the index, THEN the value's conversion, THEN the
@@ -198,7 +117,7 @@ void write_raw(array_object * store, std::size_t at, std::size_t width, bool lit
     double index = 0;
     if (!to_index(c, arg_at(a, 0), index)) { return value::undefined(); }
     std::uint64_t raw = 0;
-    if (is_bigint_type(t.type)) {
+    if (is_bigint_kind(t.kind)) {
         bigint n;
         if (!to_bigint(c, arg_at(a, 1), n)) { return value::undefined(); }
         raw = bigint_to_uint64_wrap(n);
@@ -206,7 +125,7 @@ void write_raw(array_object * store, std::size_t at, std::size_t width, bool lit
         if (!numeric_arg(c, arg_at(a, 1))) { return value::undefined(); }
         const double n = c.to_number_value(arg_at(a, 1));
         if (c.throw_pending()) { return value::undefined(); }
-        raw = number_to_raw(t.type, n);
+        raw = element_to_raw(t.kind, n);
     }
     const bool little = context::truthy(arg_at(a, 2));
     if (view_out_of_bounds(v)) {
@@ -214,11 +133,12 @@ void write_raw(array_object * store, std::size_t at, std::size_t width, bool lit
         return value::undefined();
     }
     const std::size_t size = view_byte_length(v);
-    if (index + static_cast<double>(t.width) > static_cast<double>(size)) {
+    const std::size_t width = bytes_per_element(t.kind);
+    if (index + static_cast<double>(width) > static_cast<double>(size)) {
         c.throw_error("RangeError", "Offset is outside the bounds of the DataView");
         return value::undefined();
     }
-    write_raw(v.store, v.offset + static_cast<std::size_t>(index), t.width, little, raw);
+    store_set_raw(*v.store, v.offset + static_cast<std::size_t>(index), width, raw, little);
     return value::undefined();
 }
 

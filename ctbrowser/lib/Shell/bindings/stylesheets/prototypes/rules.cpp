@@ -97,7 +97,7 @@ void dom_bindings::install_stylesheet_rules(context & cx, script::object_object 
             const std::vector<style::css::namespace_declaration> namespaces =
                 sheet_namespaces(rule->sheet);
             // A NESTED rule's text is parsed as one - `&` and an implicit `&`.
-            const std::size_t self = slot_index(as_object(c.current_this()), rule_key);
+            const std::size_t self = slot_index(object_of(c.current_this()), rule_key);
             const std::vector<style::compiled_selector> placeholder(1);
             const style::css::nesting_context nesting{placeholder, false};
             const bool nested = nested_in_style(css_rule_store_, self);
@@ -126,7 +126,7 @@ void dom_bindings::install_stylesheet_rules(context & cx, script::object_object 
     define_getter(
         cx, *grouping_proto, "cssRules",
         [this](context & c, std::span<value>) {
-            script::object_object * self = as_object(c.current_this());
+            script::object_object * self = object_of(c.current_this());
             const css_rule_record * rule = receiver_rule(c);
             if (self == nullptr || rule == nullptr) { return value::undefined(); }
             if (const value * held = self->find(rules_key)) {
@@ -165,7 +165,7 @@ void dom_bindings::install_stylesheet_rules(context & cx, script::object_object 
                 throw_dom_exception(c, "IndexSizeError", "the index is past the end of the rule");
                 return value::undefined();
             }
-            const std::size_t self = slot_index(as_object(c.current_this()), rule_key);
+            const std::size_t self = slot_index(object_of(c.current_this()), rule_key);
             std::string error;
             const std::size_t made = parse_one_rule(rule->sheet, text, error);
             if (made == no_index) {
@@ -244,7 +244,7 @@ void dom_bindings::install_stylesheet_rules(context & cx, script::object_object 
     define_getter(
         cx, *media_rule_proto, "media",
         [this](context & c, std::span<value>) {
-            script::object_object * self = as_object(c.current_this());
+            script::object_object * self = object_of(c.current_this());
             if (self == nullptr || receiver_rule(c) == nullptr) { return value::undefined(); }
             return media_list_object(c, *self);
         },
@@ -428,7 +428,7 @@ void dom_bindings::install_stylesheet_rules(context & cx, script::object_object 
     define_getter(
         cx, *import_proto, "media",
         [this](context & c, std::span<value>) {
-            script::object_object * self = as_object(c.current_this());
+            script::object_object * self = object_of(c.current_this());
             if (self == nullptr || receiver_rule(c) == nullptr) { return value::undefined(); }
             return media_list_object(c, *self);
         },

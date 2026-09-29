@@ -4,7 +4,6 @@
 import argparse
 from dataclasses import dataclass, field
 import json
-from pathlib import Path
 import re
 
 from CTNative.HostContract.Provider import diagnostics
@@ -552,13 +551,7 @@ def interpreter(reference, folder, case, js):
 
 
 def contract(opt, ir):
-    observations = sorted(set(re.findall(r'ctjs.store_global "(trace\d+)"', ir.read_text())))
-    return dict(
-        host.manifest(opt, ir, undefined=("undefined",)),
-        observations=observations + ["callCount"],
-        initial_intrinsics=["Map", "Array"],
-        realm_global_this=True,
-    )
+    return mutations.contract(opt, ir, ("callCount",), ("Map", "Array"))
 
 
 def no_facts(report, label):
@@ -792,22 +785,13 @@ def controls(args, prepared):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--translate")
-    parser.add_argument("--opt")
-    parser.add_argument("--node", required=True)
-    parser.add_argument("--reference", type=Path)
-    parser.add_argument("--oracle-only", action="store_true")
     parser.add_argument(
         "--case",
         action="append",
         choices=[case.name for case in cases()],
         help="run a named source case without the cross-case controls",
     )
-    parser.add_argument("--work", type=Path, required=True)
-    args = parser.parse_args()
-    if not args.oracle_only and not (args.translate and args.opt and args.reference):
-        parser.error("compiler checks require --translate, --opt and --reference")
-    args.work.mkdir(parents=True, exist_ok=True)
+    args = diagnostics.parse_args(parser)
     node, reference = args.node, args.reference
     evidence, prepared = {}, {}
     selected = [case for case in cases() if args.case is None or case.name in args.case]

@@ -149,6 +149,25 @@ int main() {
 }
 """
 
+# The head every selector CHECKS template shares; @ARGUMENTS@ is the entry's arguments.
+SELECTOR_CHECKS_PREAMBLE = r"""
+        (void)pressed;
+        style::engine selectors{atoms};
+        const auto invoke = [&](element_ref anchor, element_ref expected,
+                                style::engine & engine) {
+            return in_outer_document([&] { return @ENTRY@(@ARGUMENTS@, engine); });
+        };"""
+# An owned session is neither copyable nor movable, and runs 16 lifetimes.
+SESSION_PREAMBLE = r"""
+int main() {
+    using namespace ctbrowser;
+    using session_type = @OWNER@;
+    static_assert(!std::is_copy_constructible_v<session_type>);
+    static_assert(!std::is_copy_assignable_v<session_type>);
+    static_assert(!std::is_move_constructible_v<session_type>);
+    static_assert(!std::is_move_assignable_v<session_type>);
+    for (int lifetime = 0; lifetime < 16; ++lifetime) {"""
+
 ACTION_CHECKS = r"""
         for (const bool active : {true, false}) {
             assert(static_cast<bool>(@ENTRY@(alias)) == active);

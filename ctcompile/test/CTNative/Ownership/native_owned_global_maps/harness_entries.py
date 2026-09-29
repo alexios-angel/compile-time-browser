@@ -1,22 +1,4 @@
-from .harness_objects import (
-    instrument_leaf_objects,
-)
-from .harness_scalar_maps import (
-    STRING_GLOBAL_LONG,
-    constant_global_sources,
-    host,
-    leaf_absence_cases,
-    leaf_absence_sources,
-    leaf_clear_cases,
-    leaf_clear_sources,
-    numeric_entry_sources,
-    os,
-    owned,
-    re,
-    scalar_global_output,
-    scalar_global_sources,
-    subprocess,
-)
+from .harness_objects import *
 
 LEAF_ABSENCE_LIFETIMES = ("local_absence_saved_undefined", "local_absence_distinct_branches_false")
 

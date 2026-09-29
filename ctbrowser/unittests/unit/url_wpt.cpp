@@ -196,7 +196,7 @@ void test_the_setters_corpus() {
     CHECK(passed == total);
 }
 
-// --- the rows docs/plans/ada-url.md measured, now pinned ----------------------------
+// --- the rows docs/history/ada-url.md measured, now pinned --------------------------
 
 void test_the_eight_rows_that_differed_from_a_browser() {
     CHECK(resolve("http://example.com/", "http://example.com:80/a") == "http://example.com/a");

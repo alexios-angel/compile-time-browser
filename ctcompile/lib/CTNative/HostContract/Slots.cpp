@@ -142,17 +142,7 @@ HostSlotReport analyzer::slot(const HostRootRequest & request, llvm::StringRef k
                 call && use.getOperandNumber() >= 3 && exactCall(call)) {
                 continue;
             }
-            if (llvm::isa<ctjs::RootOp, ctjs::TruthyOp>(operation)) { continue; }
-            if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(operation);
-                unary && (unary.getKind() == ctjs::UnaryKind::TypeOf ||
-                          unary.getKind() == ctjs::UnaryKind::Not ||
-                          unary.getKind() == ctjs::UnaryKind::Void)) {
-                continue;
-            }
-            if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(operation);
-                compare && compare.getKind() == ctjs::CompareKind::StrictEq) {
-                continue;
-            }
+            if (llvm::isa<ctjs::RootOp>(operation) || ctjs::nonCoercing(operation)) { continue; }
             if (auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(operation)) {
                 auto branch = llvm::dyn_cast<mlir::scf::IfOp>(yield->getParentOp());
                 if (branch && object(branch.getResult(use.getOperandNumber())) == result.owner) {

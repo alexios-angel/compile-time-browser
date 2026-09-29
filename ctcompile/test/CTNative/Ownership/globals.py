@@ -1,17 +1,15 @@
 #!/usr/bin/env python3
 """Check live ordinary global ownership, standalone output and source refusals."""
 
-import argparse
 import json
-from pathlib import Path
 import re
-import shutil
 
 from CTNative.harness import (
     CLEANUP,
     CONSTANT_GLOBAL_NODE,
     VM_SYMBOL as VM,
-    find_compilers,
+    native_args,
+    native_tools,
     run_sanitized,
     threshold,
 )
@@ -114,22 +112,9 @@ int main() {
             check_lifetime(args, name, mode, compilers[1], changed, expected)
 
 
-def setup(parser):
-    """Every Ownership driver's command line, both compilers, and nm with its VM control."""
-    for name in ("translate", "opt", "node", "reference"):
-        parser.add_argument("--" + name, required=True)
-    parser.add_argument("--work", type=Path, required=True)
-    args = parser.parse_args()
-    args.work.mkdir(parents=True, exist_ok=True)
-    compilers = find_compilers()
-    nm = shutil.which("nm") or shutil.which("llvm-nm")
-    if not nm or not VM.search(host.run([nm, "-C", str(args.reference)]).stdout):
-        raise RuntimeError("need nm and a working VM-symbol positive control")
-    return args, compilers, nm
-
-
 def main():
-    args, compilers, nm = setup(argparse.ArgumentParser(description=__doc__))
+    args = native_args(__doc__)
+    compilers, nm = native_tools(args.reference)
     node, reference = args.node, args.reference
     positives = {
         "ordinary": ("var host = {}; host.slot = 42; var trace = host.slot;", "host", 42),

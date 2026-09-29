@@ -60,6 +60,20 @@ using ctbrowser::script::value;
     return i < args.size() ? args[i] : value::undefined();
 }
 
+// A value's object, or null when it is not one.
+[[nodiscard]] inline script::object_object * object_of(value v) {
+    return v.is_object() ? static_cast<script::object_object *>(v.as_heap()) : nullptr;
+}
+// `this` as an object, or a TypeError "Illegal invocation" and null.
+[[nodiscard]] inline script::object_object * self_object(context & c) {
+    const value self = c.current_this();
+    if (!self.is_object()) {
+        c.throw_error("TypeError", "Illegal invocation");
+        return nullptr;
+    }
+    return static_cast<script::object_object *>(self.as_heap());
+}
+
 // Installing natives. One function object, and the two ways the bindings hang
 // one on an object: as a data property (`attrs` is what `define` takes, and
 // `attr_default` means a plain `set`, which keeps an existing property's
@@ -105,6 +119,40 @@ void set_operation(context & cx, Obj & obj, const std::string & name, unsigned r
         });
     made->define("length", value::number(required), script::attr_configurable);
     obj.set(name, value::object(made));
+}
+
+// The constructor of an interface a page cannot construct.
+inline value illegal_constructor(context & c, std::span<value>) {
+    c.throw_error("TypeError", "Illegal constructor");
+    return value::undefined();
+}
+
+// An interface's constructor and prototype, wired the WebIDL way: `prototype`
+// on the constructor, `constructor` and `@@toStringTag` on the prototype, and
+// the constructor a global. `construct` may be empty and set afterwards, when
+// it needs the constructor itself (TextEncoder's `new` check). `base` is the
+// prototype's own prototype. `length` is the constructor's number of required
+// arguments (WebIDL 3.7.1); nullopt defines none, as the geometry, canvas and
+// fetch interfaces never have.
+struct interface_pair {
+    script::native_object * ctor;
+    script::object_object * proto;
+};
+[[nodiscard]] inline interface_pair make_interface(context & cx, const char * name,
+                                                   script::native_fn construct = {},
+                                                   value base = {},
+                                                   std::optional<unsigned> length = 0u) {
+    auto * proto = cx.allocate<script::object_object>();
+    if (base.is_object()) { proto->prototype = base; }
+    // Rooted until the global holds it: allocating the constructor can collect.
+    const context::rooted keep{cx, value::object(proto)};
+    auto * ctor = cx.allocate<script::native_object>(name, std::move(construct));
+    if (length) { ctor->define("length", value::number(*length), script::attr_configurable); }
+    ctor->define("prototype", value::object(proto), script::attr_none);
+    proto->define("constructor", value::object(ctor), script::attr_builtin);
+    proto->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string(name), script::attr_configurable);
+    cx.define_builtin_global(name, value::object(ctor));
+    return {ctor, proto};
 }
 
 // WebIDL DICTIONARY MEMBERS - an event's init, observe()'s options, an

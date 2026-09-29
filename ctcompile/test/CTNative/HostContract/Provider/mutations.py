@@ -524,14 +524,15 @@ def literalize_keys(text):
     return text[: match.start()] + body + text[match.end() :]
 
 
-def contract(opt, ir):
+def contract(opt, ir, extra_observations=(), intrinsics=("Map",)):
     observations = sorted(set(re.findall(r'ctjs.store_global "(trace\d+)"', ir.read_text())))
+    observations += extra_observations
     if not observations:
         raise RuntimeError("fixture has no declared source observations")
     return dict(
         host.manifest(opt, ir, undefined=("undefined",)),
         observations=observations,
-        initial_intrinsics=["Map"],
+        initial_intrinsics=list(intrinsics),
         realm_global_this=True,
     )
 

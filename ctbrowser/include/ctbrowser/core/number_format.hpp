@@ -29,7 +29,11 @@ namespace ctbrowser {
 [[nodiscard]] std::string number_to_precision(double value, int digits);
 
 // The StringToNumber/StringToBigInt whitespace set, returned as a borrowed view.
-[[nodiscard]] std::string_view trim_js_space(std::string_view text);
+// It is TrimString's set too (22.1.3.32.1): `start` and `end` pick the ends,
+// for trimStart, trimEnd and parseInt. A malformed or overlong byte is never a
+// space, and U+180E stopped being one in Unicode 6.3 (test262 trim/u180e.js).
+[[nodiscard]] std::string_view trim_js_space(std::string_view text, bool start = true,
+                                             bool end = true);
 
 // ToNumber applied to a string (7.1.4.1). The WHOLE string must be a numeric
 // literal - trailing garbage is NaN, not a prefix, which is what separates this

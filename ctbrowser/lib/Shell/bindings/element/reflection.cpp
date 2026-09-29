@@ -3,7 +3,7 @@
 
 #include "internal.hpp"
 
-#include <charconv>
+#include <ctbrowser/shell/page/input_types.hpp>
 
 namespace ctbrowser::shell {
 
@@ -61,28 +61,9 @@ namespace detail {
 
 namespace {
 
-[[nodiscard]] long long to_int32(double x) {
-    const long long unsigned_value = to_uint32(x);
-    return unsigned_value >= 2147483648LL ? unsigned_value - 4294967296LL : unsigned_value;
-}
-
 constexpr long long max_int32 = 2147483647;
 
 } // namespace
-
-namespace detail {
-
-// ToUint32 and ToInt32 (ECMA-262 7.1.6/7.1.7), which is what WebIDL's
-// `unsigned long` and `long` do to whatever a page assigns. `el.tabIndex = 1e30`
-// wraps; it does not clamp and it does not throw.
-[[nodiscard]] long long to_uint32(double x) {
-    if (!std::isfinite(x)) { return 0; }
-    double wrapped = std::fmod(std::trunc(x), 4294967296.0);
-    if (wrapped < 0) { wrapped += 4294967296.0; }
-    return static_cast<long long>(wrapped);
-}
-
-} // namespace detail
 
 // One reflected attribute's getter: read the content attribute, apply the rule
 // its type names. A receiver that does not resolve to an element - a wrapper for
@@ -269,10 +250,13 @@ value dom_bindings::reflected_set(context & cx, const void * row_ptr, std::span<
     default: break;
     }
     const double given = arg_number(args, 0);
+    // ToInt32 and ToUint32 (ECMA-262 7.1.6/7.1.7), which is what WebIDL's `long`
+    // and `unsigned long` do to whatever a page assigns: `el.tabIndex = 1e30`
+    // wraps; it does not clamp and it does not throw.
     long long number =
         row.type == reflect_type::signed_long || row.type == reflect_type::limited_long
-            ? to_int32(given)
-            : to_uint32(given);
+            ? static_cast<long long>(number_to_int32(given))
+            : number_to_uint32(given);
     switch (row.type) {
     case reflect_type::limited_long:
         // "On setting, if the value is negative, the user agent must fire an
@@ -579,44 +563,10 @@ constexpr double_row double_rows[] = {
     {"HTMLMeterElement", "optimum", 0.0, false},
 };
 
-// THE RULES FOR PARSING FLOATING-POINT NUMBER VALUES, HTML 2.4.4.3, as a
-// syntax check that hands the matched text to from_chars: HTML whitespace,
-// a sign, digits or a fraction, an optional fraction, an optional exponent
-// with its own sign - and anything after that is ignored rather than fatal.
+// THE RULES FOR PARSING FLOATING-POINT NUMBER VALUES, HTML 2.4.4.3: the lenient
+// parse the number controls use, with -0 read as 0.
 [[nodiscard]] bool parse_html_float(std::string_view text, double & out) {
-    std::size_t at = 0;
-    while (at < text.size() && html_whitespace.find(text[at]) != std::string_view::npos) { ++at; }
-    std::string canonical;
-    if (at < text.size() && (text[at] == '-' || text[at] == '+')) {
-        if (text[at] == '-') { canonical += '-'; }
-        ++at;
-    }
-    const auto digit = [&](std::size_t i) {
-        return i < text.size() && text[i] >= '0' && text[i] <= '9';
-    };
-    if (!digit(at) && !(at < text.size() && text[at] == '.' && digit(at + 1))) { return false; }
-    if (!digit(at)) { canonical += '0'; }
-    while (digit(at)) { canonical += text[at++]; }
-    if (at < text.size() && text[at] == '.') {
-        ++at;
-        canonical += '.';
-        if (!digit(at)) { canonical += '0'; }
-        while (digit(at)) { canonical += text[at++]; }
-    }
-    if (at < text.size() && (text[at] == 'e' || text[at] == 'E')) {
-        std::size_t look = at + 1;
-        std::string exponent = "e";
-        if (look < text.size() && (text[look] == '-' || text[look] == '+')) {
-            if (text[look] == '-') { exponent += '-'; }
-            ++look;
-        }
-        if (digit(look)) {
-            while (digit(look)) { exponent += text[look++]; }
-            canonical += exponent;
-        }
-    }
-    const auto result = std::from_chars(canonical.data(), canonical.data() + canonical.size(), out);
-    if (result.ec != std::errc{} || !std::isfinite(out)) { return false; }
+    if (!input_types::parse_float(text, out, true)) { return false; }
     if (out == 0) { out = 0; } // -0 is 0, as the specification's algorithm yields
     return true;
 }

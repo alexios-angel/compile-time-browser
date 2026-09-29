@@ -6,7 +6,7 @@ The Ponytail audit scanned owned browser/compiler/tool sources, excluding vendor
 generated data and historical documents. Three agents supplied independent
 design/review/test drafts; root integrated and checked them after service limits.
 Repository C++23 and Black conventions remain authoritative; no tooling migration
-or dependency was added. Gate details and continuation state are in [HANDOFF](HANDOFF.md).
+or dependency was added. Gate details and continuation state are in [HANDOFF](../HANDOFF.md).
 
 ## Findings and disposition
 
@@ -76,8 +76,8 @@ would save about one line in program-image reads; defer that to related work.
 
 ## Ranked complexity cuts — proposals only
 
-- shrink: Merge duplicate Number/String `map_values` bodies into one `<K, V>` pointer helper and one shared-pointer forwarder; retain owning snapshots and update the pinned helper spelling. About -10 lines. **Done 2026-09-15**, when the helper text became [Runtime/ctnative.hpp](../include/ctcompile/CTNative/Runtime/ctnative.hpp).
-- shrink: Replace three one-use cleanup structs with existing `boost::scope::scope_exit` and `noexcept` lambdas, preserving scope and unwind behavior. About -7 lines including includes. [classes.cpp](../../ctbrowser/lib/Script/compile/classes.cpp#L135), [frames.cpp](../../ctbrowser/lib/Script/compile/frames.cpp#L382), [functions.cpp](../../ctbrowser/lib/Script/compile/early_errors/functions.cpp#L195).
-- stdlib: Replace the JSON control-byte `snprintf` buffer with existing `std::format("\\u{:04x}", c)`; keep the byte-preserving escape loop and remove unused includes. About -5 lines. [Manifest.cpp](../lib/Support/Manifest.cpp#L41).
+- shrink: Merge duplicate Number/String `map_values` bodies into one `<K, V>` pointer helper and one shared-pointer forwarder; retain owning snapshots and update the pinned helper spelling. About -10 lines. **Done 2026-09-15**, when the helper text became [Runtime/ctnative.hpp](../../include/ctcompile/CTNative/Runtime/ctnative.hpp).
+- shrink: Replace three one-use cleanup structs with existing `boost::scope::scope_exit` and `noexcept` lambdas, preserving scope and unwind behavior. About -7 lines including includes. [classes.cpp](../../../ctbrowser/lib/Script/compile/classes.cpp#L135), [frames.cpp](../../../ctbrowser/lib/Script/compile/frames.cpp#L382), [functions.cpp](../../../ctbrowser/lib/Script/compile/early_errors/functions.cpp#L195).
+- stdlib: Replace the JSON control-byte `snprintf` buffer with existing `std::format("\\u{:04x}", c)`; keep the byte-preserving escape loop and remove unused includes. About -5 lines. [Manifest.cpp](../../lib/Support/Manifest.cpp#L41).
 
 net: -22 lines, -0 deps possible.

@@ -147,8 +147,8 @@ var traceOtherAfterReinsert = {api}.get(other, "bs.alert");
     )
 
 
-def run(command: list[str]) -> subprocess.CompletedProcess:
-    result = subprocess.run(command, capture_output=True, text=True, timeout=120)
+def run(command: list[str], text: str | None = None) -> subprocess.CompletedProcess:
+    result = subprocess.run(command, input=text, capture_output=True, text=True, timeout=120)
     if result.returncode:
         raise ProbeError(
             f"command failed ({result.returncode}): {command[0]}\n{result.stdout}{result.stderr}"

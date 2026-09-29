@@ -72,12 +72,6 @@ enum entry_field : std::size_t {
     return from.path == to.path && from.query == to.query;
 }
 
-// WebIDL `long`: ToInt32.
-[[nodiscard]] long long to_int32(double x) {
-    const long long bits = detail::to_uint32(x);
-    return bits >= 2147483648LL ? bits - 4294967296LL : bits;
-}
-
 } // namespace
 
 void dom_bindings::install_history(context & cx, script::object_object & window) {
@@ -277,7 +271,7 @@ void dom_bindings::install_history(context & cx, script::object_object & window)
         (void)top->add_timer(value::object(task), 0, false);
     };
     set_operation(cx, proto, "go", 0, [go](context & c, std::span<value> a) {
-        const long long delta = to_int32(context::to_number(arg(a, 0)));
+        const long long delta = number_to_int32(context::to_number(arg(a, 0)));
         if (!c.throw_pending()) { go(c, "go", delta); }
         return value::undefined();
     });

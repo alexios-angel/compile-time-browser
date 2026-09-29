@@ -18,13 +18,6 @@ namespace ctbrowser::paint {
 
 using ctbrowser::color;
 
-// The optional-returning shape its callers want, over the shared decoder.
-[[nodiscard]] constexpr std::optional<std::uint8_t> hex_digit(char c) noexcept {
-    const int value = hex_value(c);
-    if (value < 0) { return std::nullopt; }
-    return static_cast<std::uint8_t>(value);
-}
-
 // The CSS named colours a real page actually uses. This is deliberately not
 // the full 148-entry table: the long tail is generated data that belongs with
 // the UA stylesheet port, and a partial list that says so beats a partial list
@@ -74,9 +67,9 @@ using ctbrowser::color;
             return std::nullopt;
         }
         for (std::size_t i = 0; i < digits.size(); ++i) {
-            const auto d = hex_digit(digits[i]);
-            if (!d) { return std::nullopt; }
-            v[i] = *d;
+            const int d = hex_value(digits[i]);
+            if (d < 0) { return std::nullopt; }
+            v[i] = static_cast<std::uint8_t>(d);
         }
         if (digits.size() <= 4) { // shorthand: each digit is doubled
             const std::uint8_t a = digits.size() == 4 ? static_cast<std::uint8_t>(v[3] * 17) : 255;

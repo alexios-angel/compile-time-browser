@@ -11,10 +11,7 @@ if(TARGET ctcompile-test-escape-analysis-arrays)
     BigIntStrings.cpp
     ControlFlow.cpp
     Harness.h
-    Induction.h
-    Length.h
     PrimitiveBinary.h
-    Structured.h
   )
 endif()
 

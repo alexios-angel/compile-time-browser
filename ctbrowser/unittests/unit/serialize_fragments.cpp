@@ -17,29 +17,20 @@
 #include <ctbrowser/style/style.hpp>
 
 #include "check.hpp"
+#include "dom_probe.hpp"
 #include <string>
 #include <string_view>
 
 using namespace ctbrowser;
 using ctbrowser::shell::browser;
 using ctbrowser::shell::browser_options;
+using ctbrowser_test::said;
 
 namespace {
 
-[[nodiscard]] std::string said(std::string_view body_script) {
-    browser page{browser_options{200, 100}};
-    page.load_html("<!DOCTYPE html><body>" + std::string{body_script});
-    std::string out;
-    for (const std::string & one : page.alerts()) {
-        if (!out.empty()) { out += ';'; }
-        out += one;
-    }
-    if (!page.script_error().empty()) { out += "|error:" + page.script_error(); }
-    return out;
-}
-
 void test_html_fragment_serialisation() {
-    CHECK_EQ(said("<script>"
+    CHECK_EQ(said("<!DOCTYPE html><body>"
+                  "<script>"
                   "var k = document.createElement('keygen');"
                   "k.appendChild(document.createElement('a'));"
                   "var s = document.createElement('script');"
@@ -58,7 +49,8 @@ void test_html_fragment_serialisation() {
 
 void test_template_contents_travel_and_serialise() {
     CHECK_EQ(
-        said("<div id=d></div><script>"
+        said("<!DOCTYPE html><body>"
+             "<div id=d></div><script>"
              "d.innerHTML = '<template id=t><table><tr><td>x</template>';"
              "var t = document.getElementById('t');"
              "alert([t.childNodes.length, t.content.childNodes.length,"
@@ -72,7 +64,8 @@ void test_template_contents_travel_and_serialise() {
 }
 
 void test_xml_document_serialises_as_xml() {
-    CHECK_EQ(said("<script>"
+    CHECK_EQ(said("<!DOCTYPE html><body>"
+                  "<script>"
                   "var doc = document.implementation.createDocument(null, '');"
                   "var ns = 'http://www.w3.org/1999/xhtml';"
                   "var a = doc.createElementNS(ns, 'a');"

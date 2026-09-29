@@ -259,7 +259,7 @@ constexpr labelled encoding_labels[] = {
 // The prescan's own whitespace and the tag-name break set are the tokenizer's
 // five plus, for attribute names, `/`.
 [[nodiscard]] bool prescan_space(char c) {
-    return c == '\t' || c == '\n' || c == '\f' || c == '\r' || c == ' ';
+    return html_whitespace.contains(c);
 }
 
 // "Get an attribute" from a byte position, HTML 13.2.3.3: the (lowercased)
@@ -291,7 +291,7 @@ struct prescan_attribute {
             break;
         }
         if (c == '/' || c == '>') { return true; }
-        out.name.push_back(c >= 'A' && c <= 'Z' ? static_cast<char>(c + 32) : c);
+        out.name.push_back(ascii_lower(c));
         ++at;
     }
     // The value.
@@ -303,13 +303,12 @@ struct prescan_attribute {
             if (at >= bytes.size()) { return false; }
             const char c = bytes[at++];
             if (c == quote) { return true; }
-            out.value.push_back(c >= 'A' && c <= 'Z' ? static_cast<char>(c + 32) : c);
+            out.value.push_back(ascii_lower(c));
         }
     }
     if (bytes[at] == '>') { return true; }
     for (;;) {
-        out.value.push_back(bytes[at] >= 'A' && bytes[at] <= 'Z' ? static_cast<char>(bytes[at] + 32)
-                                                                 : bytes[at]);
+        out.value.push_back(ascii_lower(bytes[at]));
         ++at;
         if (at >= bytes.size()) { return false; }
         if (prescan_space(bytes[at]) || bytes[at] == '>') { return true; }

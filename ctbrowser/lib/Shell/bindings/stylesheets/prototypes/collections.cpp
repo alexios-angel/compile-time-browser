@@ -112,7 +112,7 @@ void dom_bindings::install_stylesheet_collections(context & cx, script::object_o
     set_method(
         cx, *list_proto, "item",
         [this](context & c, std::span<value> a) {
-            if (script::object_object * self = as_object(c.current_this())) {
+            if (script::object_object * self = object_of(c.current_this())) {
                 resync_sheet_list(c, *self);
             }
             return collection_item(c, a);
@@ -201,7 +201,7 @@ void dom_bindings::install_stylesheet_collections(context & cx, script::object_o
     define_getter(
         cx, *base_proto, "media",
         [this](context & c, std::span<value>) {
-            script::object_object * self = as_object(c.current_this());
+            script::object_object * self = object_of(c.current_this());
             if (self == nullptr || receiver_sheet(c) == nullptr) { return value::undefined(); }
             return media_list_object(c, *self);
         },
@@ -280,7 +280,7 @@ void dom_bindings::install_stylesheet_collections(context & cx, script::object_o
             // [SameObject]: `sheet.cssRules === sheet.cssRules` and
             // `sheet.cssRules === sheet.rules` are both asserted, so the list is
             // built once and REFRESHED rather than rebuilt.
-            script::object_object * self = as_object(c.current_this());
+            script::object_object * self = object_of(c.current_this());
             const css_sheet_record * sheet = receiver_sheet(c);
             if (self == nullptr || sheet == nullptr || origin_dirty(c)) {
                 return value::undefined();
@@ -329,7 +329,7 @@ void dom_bindings::install_stylesheet_collections(context & cx, script::object_o
             const auto at = static_cast<std::size_t>(asked);
             std::string error;
             const std::size_t made = parse_one_rule(
-                static_cast<std::size_t>(slot_index(as_object(c.current_this()), sheet_key)), text,
+                static_cast<std::size_t>(slot_index(object_of(c.current_this()), sheet_key)), text,
                 error);
             if (made == no_index) {
                 throw_dom_exception(c, error.empty() ? std::string{"SyntaxError"} : error,
@@ -471,7 +471,7 @@ void dom_bindings::install_stylesheet_collections(context & cx, script::object_o
     const auto replace_rules = [this](context & c, std::span<value> args) -> bool {
         css_sheet_record * sheet = receiver_sheet(c);
         if (sheet == nullptr || !sheet->constructed) { return false; }
-        const std::size_t at = slot_index(as_object(c.current_this()), sheet_key);
+        const std::size_t at = slot_index(object_of(c.current_this()), sheet_key);
         parse_sheet_rules(at, args.empty() ? std::string{} : c.to_string(args[0]));
         refresh_cached_rules(c, sheet->rules);
         style_sheets_changed();

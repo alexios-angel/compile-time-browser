@@ -17,9 +17,8 @@ constexpr std::uint32_t gl_invalid_value = 0x0501;
 
 } // namespace
 
-webgl_context::webgl_context(paint::bitmap * surface, int width, int height,
-                             raster::gl::driver which)
-    : device_{width, height, which}, surface_{surface} {}
+webgl_context::webgl_context(paint::bitmap * surface, int width, int height)
+    : device_{width, height}, surface_{surface} {}
 
 void webgl_context::resize(paint::bitmap * surface, int width, int height) {
     surface_ = surface;
@@ -39,18 +38,6 @@ void webgl_context::resize(paint::bitmap * surface, int width, int height) {
     // the context it was handed. The first draw then reported test=0 and
     // func=GL_LESS, and the sphere drew over the box instead of behind it.
     device_.resize(width, height);
-}
-
-bool webgl_context::ok() const {
-    return device_.ok();
-}
-
-int webgl_context::width() const {
-    return device_.width();
-}
-
-int webgl_context::height() const {
-    return device_.height();
 }
 
 paint::bitmap * webgl_context::surface() {
@@ -90,39 +77,11 @@ void webgl_context::scissor(int x, int y, int width, int height) {
     device_.scissor(x, y, width, height);
 }
 
-void webgl_context::clear(std::uint32_t mask) {
-    device_.clear_buffers(mask);
-}
-
-void webgl_context::clear_color(float red, float green, float blue, float alpha) {
-    device_.clear_color(red, green, blue, alpha);
-}
-
-void webgl_context::clear_depth(float depth) {
-    device_.clear_depth(depth);
-}
-
-std::string webgl_context::renderer() const {
-    return device_.renderer();
-}
-
-int webgl_context::limit(std::uint32_t name) const {
-    return device_.limit(static_cast<int>(name));
-}
-
-void webgl_context::set_enabled(std::uint32_t capability, bool on) {
-    device_.set_capability(static_cast<int>(capability), on);
-}
-
 // --- shaders and programs ---------------------------------------------------
 //
 // Each of these is a translation and a return. Nothing is remembered: which
 // program is linked, what a shader's source was and what a program declares are
 // all questions GL answers, and a cached answer is the thing that drifts.
-
-std::uint32_t webgl_context::create_shader(std::uint32_t kind) {
-    return device_.create_shader(static_cast<int>(kind));
-}
 
 void webgl_context::shader_source(std::uint32_t shader, std::string_view source) {
     // THE PAGE'S BYTES, UNTOUCHED. A browser prepends nothing to a shader, and
@@ -171,37 +130,9 @@ void webgl_context::compile_shader(std::uint32_t shader) {
     if (!device_.shader_compiled(shader)) { shader_error_ = device_.shader_log(shader); }
 }
 
-bool webgl_context::shader_compiled(std::uint32_t shader) const {
-    return device_.shader_compiled(shader);
-}
-
-std::string webgl_context::shader_log(std::uint32_t shader) const {
-    return device_.shader_log(shader);
-}
-
-std::uint32_t webgl_context::create_program() {
-    return device_.create_program();
-}
-
-void webgl_context::attach_shader(std::uint32_t program, std::uint32_t shader) {
-    device_.attach_shader(program, shader);
-}
-
 void webgl_context::link_program(std::uint32_t program) {
     device_.link_program(program);
     if (!device_.program_linked(program)) { shader_error_ = device_.program_log(program); }
-}
-
-bool webgl_context::program_linked(std::uint32_t program) const {
-    return device_.program_linked(program);
-}
-
-std::string webgl_context::program_log(std::uint32_t program) const {
-    return device_.program_log(program);
-}
-
-void webgl_context::use_program(std::uint32_t program) {
-    device_.use_program(program);
 }
 
 namespace {
@@ -222,10 +153,6 @@ std::vector<active_variable> webgl_context::active_attributes(std::uint32_t prog
 
 std::vector<active_variable> webgl_context::active_uniforms(std::uint32_t program) const {
     return as_variables(device_.active_uniforms(program));
-}
-
-int webgl_context::attribute_location(std::uint32_t program, std::string_view name) const {
-    return device_.attribute_location(program, std::string{name});
 }
 
 int webgl_context::get_uniform_block_index(std::uint32_t program, std::string_view name) const {
@@ -267,14 +194,6 @@ void webgl_context::set_uniform(std::string_view name, const uniform_value & val
 }
 
 // --- buffers, attributes and vertex arrays ----------------------------------
-
-std::uint32_t webgl_context::create_buffer() {
-    return device_.create_buffer();
-}
-
-void webgl_context::bind_buffer(std::uint32_t target, std::uint32_t buffer) {
-    device_.bind_buffer(static_cast<int>(target), buffer);
-}
 
 void webgl_context::buffer_data(std::uint32_t target, std::span<const std::byte> bytes,
                                 std::uint32_t usage) {
@@ -325,10 +244,6 @@ void webgl_context::bind_buffer_base(std::uint32_t target, std::uint32_t index,
     device_.bind_buffer_base(static_cast<int>(target), index, buffer);
 }
 
-void webgl_context::delete_object(raster::gl::device::object_kind kind, std::uint32_t name) {
-    device_.delete_object(kind, name);
-}
-
 void webgl_context::enable_attribute(int location, bool on) {
     if (location < 0) { return; }
     device_.enable_attribute(static_cast<unsigned>(location), on);
@@ -357,39 +272,7 @@ const vertex_attribute * webgl_context::attribute_at(int location) const {
     return &scratch_;
 }
 
-std::uint32_t webgl_context::create_vertex_array() {
-    return device_.create_vertex_array();
-}
-
-void webgl_context::bind_vertex_array(std::uint32_t array) {
-    device_.bind_vertex_array(array);
-}
-
-void webgl_context::delete_vertex_array(std::uint32_t array) {
-    device_.delete_vertex_array(array);
-}
-
-bool webgl_context::is_vertex_array(std::uint32_t array) const {
-    return device_.is_vertex_array(array);
-}
-
-std::uint32_t webgl_context::bound_vertex_array() const {
-    return device_.bound_vertex_array();
-}
-
 // --- textures and framebuffers ----------------------------------------------
-
-std::uint32_t webgl_context::create_texture() {
-    return device_.create_texture();
-}
-
-void webgl_context::bind_texture(std::uint32_t target, std::uint32_t texture) {
-    device_.bind_texture(static_cast<int>(target), texture);
-}
-
-void webgl_context::active_texture(std::uint32_t unit) {
-    device_.active_texture(static_cast<int>(unit));
-}
 
 void webgl_context::texture_image(std::uint32_t target, int width, int height,
                                   std::span<const std::byte> rgba) {
@@ -427,48 +310,7 @@ void webgl_context::texture_from_bitmap(std::uint32_t target, const paint::bitma
     device_.texture_image(static_cast<int>(target), image.width, image.height, rgba.data());
 }
 
-void webgl_context::texture_parameter(std::uint32_t target, std::uint32_t name,
-                                      std::uint32_t value) {
-    device_.texture_parameter(static_cast<int>(target), static_cast<int>(name),
-                              static_cast<int>(value));
-}
-
-void webgl_context::bind_framebuffer(std::uint32_t framebuffer) {
-    device_.bind_framebuffer(framebuffer);
-}
-
-void webgl_context::framebuffer_texture(std::uint32_t attachment, std::uint32_t texture) {
-    device_.framebuffer_texture(static_cast<int>(attachment), texture);
-}
-
-std::uint32_t webgl_context::framebuffer_status() const {
-    return device_.framebuffer_status();
-}
-
-// FROM THE RIGHT NAMESPACE. Both of these used to be minted by glGenBuffers,
-// which is a different GL namespace entirely - so a "framebuffer" was a buffer
-// name, and the two classes handed out colliding integers.
-std::uint32_t webgl_context::create_framebuffer() {
-    return device_.create_framebuffer();
-}
-
-std::uint32_t webgl_context::create_renderbuffer() {
-    return device_.create_renderbuffer();
-}
-
-void webgl_context::bind_renderbuffer(std::uint32_t renderbuffer) {
-    device_.bind_renderbuffer(renderbuffer);
-}
-
-void webgl_context::renderbuffer_storage(std::uint32_t format, int width, int height) {
-    device_.renderbuffer_storage(static_cast<int>(format), width, height);
-}
-
-void webgl_context::framebuffer_renderbuffer(std::uint32_t attachment, std::uint32_t renderbuffer) {
-    device_.framebuffer_renderbuffer(static_cast<int>(attachment), renderbuffer);
-}
-
-// --- draws and pipeline state -----------------------------------------------
+// --- draws -------------------------------------------------------------------
 //
 // NO READBACK HERE. The context this replaces read the whole surface after every
 // draw; `present()` does it once per frame.
@@ -506,26 +348,6 @@ void webgl_context::draw_elements_instanced(std::uint32_t mode, int count, std::
     }
     device_.draw_elements_instanced(static_cast<int>(mode), count, static_cast<int>(type),
                                     static_cast<std::size_t>(offset), instances);
-}
-
-void webgl_context::cull_face(std::uint32_t which) {
-    device_.cull_face(static_cast<int>(which));
-}
-
-void webgl_context::front_face(std::uint32_t which) {
-    device_.front_face(static_cast<int>(which));
-}
-
-void webgl_context::depth_func(std::uint32_t how) {
-    device_.depth_func(static_cast<int>(how));
-}
-
-void webgl_context::depth_mask(bool on) {
-    device_.depth_mask(on);
-}
-
-void webgl_context::blend_func(std::uint32_t source, std::uint32_t destination) {
-    device_.blend_func(static_cast<int>(source), static_cast<int>(destination));
 }
 
 std::uint32_t webgl_context::take_error() {

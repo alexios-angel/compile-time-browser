@@ -8,6 +8,7 @@
 #include <ctbrowser.hpp>
 
 #include "check.hpp"
+#include "dom_probe.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -20,20 +21,9 @@ using namespace ctbrowser;
 using ctbrowser::shell::asset_registry;
 using ctbrowser::shell::browser;
 using ctbrowser::shell::decode_bmp;
+using ctbrowser_test::find_id;
 
 namespace {
-
-[[nodiscard]] node_id find_id(browser & page, std::string_view want) {
-    const auto txn = page.doc().read();
-    const atom key = page.atoms().intern("id");
-    node_id found{};
-    const auto walk = [&](auto && self, node_id at) -> void {
-        if (!found && txn.attribute_value(at, key) == want) { found = at; }
-        for (const node_id c : txn.children(at)) { self(self, c); }
-    };
-    walk(walk, txn.root());
-    return found;
-}
 
 // The laid-out box of the first element with this tag.
 [[nodiscard]] rect box_of_tag(browser & page, std::string_view tag) {

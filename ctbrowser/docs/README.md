@@ -17,7 +17,7 @@ something lives.**
 | [`test262.md`](test262.md) | **the official ECMAScript conformance suite, and what it measures**: the harness decision, the pinned corpus, `$262`, the negative proofs, and the baseline per area with its date |
 | [`shell.md`](shell.md) | the application API, form controls, editing, input, navigation, resources — anything a page can do |
 | [`style-layout.md`](style-layout.md) | the cascade and the `style` attribute; tables, generated content, whitespace collapsing |
-| [`raster.md`](raster.md) | fonts, glyph rasterisation, the font8x8 fallback, SVG, PNG/JPEG. **Its last section is marked as describing deleted code** |
+| [`raster.md`](raster.md) | fonts, glyph rasterisation, the font8x8 fallback, SVG, PNG/JPEG |
 | [`wpt.md`](wpt.md) | **web-platform-tests — the suite every browser is measured against, pointed at this one.** The pinned corpus, the results hook, the per-directory baseline with its date, the expectations file, and the five gaps WPT found in the engine on its way in |
 
 ## Plans — work that is not finished
@@ -25,12 +25,9 @@ something lives.**
 | | |
 |---|---|
 | [`plans/bootstrap.md`](plans/bootstrap.md) | **Bootstrap 5.3.8 at Chrome parity, and the CSS front end rewritten to get there.** The harness measures (S0 done); 7,820 of 30,288 compared values differ today. **Start here for anything CSS** |
-| [`plans/webgl-rewrite.md`](plans/webgl-rewrite.md) | **the WebGL stack rebuilt on ANGLE.** Ratchet 9/10, one rung left. **Start here for anything WebGL** |
-| [`plans/angle.md`](plans/angle.md) | **ANGLE as the WebGL back end** — stop implementing GLES and call the one Chrome ships. Stage 0 is DONE on both platforms: 192 M frag/s on Linux, 332 M on Windows, against the interpreter's 1.03 M, and both render the identical pixel |
 | [`plans/babylon.md`](plans/babylon.md) | **Babylon.js, from "renders a box" to functional** — the twelve-rung ladder, measured one feature at a time. Reads 10/12 |
 | [`plans/modules.md`](plans/modules.md) | **ES modules — running ordinary JavaScript with nothing shimmed.** Reads 8/9; rung 9 is Babylon's ES build, which is not vendored |
 | [`plans/wpt-next.md`](plans/wpt-next.md) | **WPT: the next round, as briefs** - four agent branches waiting to merge, what is open at the tip, and the four disjoint briefs (animations, the value grammar, layout, the cascade) sized by the widened corpus |
-| [`plans/ada-url.md`](plans/ada-url.md) | **this engine parses URLs by the wrong standard** — `shell/net/url.cpp` is RFC 3986 where browsers are WHATWG. 8 of 15 measured cases differ. Read before touching `shell/net/url` |
 
 ## History — done, superseded, or deliberately stale
 
@@ -41,6 +38,9 @@ against redoing work that was already tried and rejected.
 
 | | |
 |---|---|
+| [`history/webgl-rewrite.md`](history/webgl-rewrite.md) | **the WebGL stack rebuilt on ANGLE, and the code that exists.** DONE, ratchet 10/10. **Start here for anything WebGL** |
+| [`history/angle.md`](history/angle.md) | ANGLE as the WebGL back end. DONE; kept for stage 0: 192 M frag/s on Linux, 332 M on Windows, against the interpreter's 1.03 M, and both render the identical pixel |
+| [`history/ada-url.md`](history/ada-url.md) | why the URL parser is WHATWG's and not RFC 3986's: 8 of 15 measured cases differed. DONE 2026-09-16, as `shell/net/url.cpp` rather than ada |
 | [`history/webgl.md`](history/webgl.md) | the original one-front-end/two-back-ends design. **Describes ~8,500 deleted lines.** Kept for the interpreter's measured ceiling and the libshaderc answer |
 | [`history/webgl2.md`](history/webgl2.md) | WebGL 2: the subset p5.js actually uses, scoped by measurement. Stages 0–5 done |
 | [`history/gpu-shaders.md`](history/gpu-shaders.md) | running page shaders on the GPU with libshaderc. **Superseded by ANGLE**; kept for why patching glslang was the real cost |

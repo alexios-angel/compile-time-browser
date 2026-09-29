@@ -1,6 +1,8 @@
 #include <ctbrowser/dom/dataset.hpp>
 #include <ctbrowser/dom/element.hpp>
 
+#include <ctbrowser/core/algorithms.hpp>
+
 namespace ctbrowser {
 
 // `data-foo-bar` -> `fooBar`. HTML's dataset mangling in the direction that
@@ -43,7 +45,7 @@ dataset_fault dataset_attribute_of(std::string_view idl, std::string & out) {
         }
         if (idl[i] >= 'A' && idl[i] <= 'Z') {
             out.push_back('-');
-            out.push_back(static_cast<char>(idl[i] - 'A' + 'a'));
+            out.push_back(ascii_lower(idl[i]));
             continue;
         }
         out.push_back(idl[i]);

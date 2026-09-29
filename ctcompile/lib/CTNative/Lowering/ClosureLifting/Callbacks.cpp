@@ -22,11 +22,7 @@ void closureLifter::specializeCallbacks(liftReport & out) {
         const auto refuse = [&](llvm::StringRef reason) {
             wrapper->setAttr("ctnative.callback_refusal", mlir::StringAttr::get(context, reason));
         };
-        bool rawArguments = false;
-        wrapper.walk([&](mlir::Operation * operation) {
-            rawArguments |= llvm::isa<ctjs::MakeArgumentsOp, ctjs::GatherRestOp>(operation);
-        });
-        if (rawArguments) {
+        if (readsRawArguments(wrapper)) {
             refuse("the wrapper reads its raw argument window");
             continue;
         }
@@ -105,11 +101,7 @@ void closureLifter::specializeCallbacks(liftReport & out) {
             }
             const unsigned arity =
                 callback.getBody().front().getNumArguments() - ctjs::implicit_arguments;
-            bool callbackReadsArguments = false;
-            callback.walk([&](mlir::Operation * operation) {
-                callbackReadsArguments |=
-                    llvm::isa<ctjs::MakeArgumentsOp, ctjs::GatherRestOp>(operation);
-            });
+            const bool callbackReadsArguments = readsRawArguments(callback);
             mlir::BlockArgument argument = entry.getArgument(parameter);
             llvm::SmallVector<closureCall> calls;
             bool callOnly = !argument.use_empty();

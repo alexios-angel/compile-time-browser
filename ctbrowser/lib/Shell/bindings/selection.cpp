@@ -69,15 +69,6 @@ constexpr std::string_view document_slot = "__document";
 // Where a frame's window keeps its selection once one is asked for.
 constexpr std::string_view window_selection_key = CTBROWSER_SYMBOL_KEY("sym:ctbrowser:selection");
 
-[[nodiscard]] script::object_object * self_object(context & c) {
-    const value self = c.current_this();
-    if (!self.is_object()) {
-        c.throw_error("TypeError", "Illegal invocation");
-        return nullptr;
-    }
-    return static_cast<script::object_object *>(self.as_heap());
-}
-
 [[nodiscard]] value held_slot(script::object_object * self, std::string_view name) {
     const value * held = self->find(name);
     return held == nullptr ? value::undefined() : *held;
@@ -797,11 +788,7 @@ void dom_bindings::install_selection(context & cx) {
     proto->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string("Selection"),
                   script::attr_configurable);
 
-    auto * ctor =
-        cx.allocate<script::native_object>("Selection", [](context & c, std::span<value>) {
-            c.throw_error("TypeError", "Illegal constructor");
-            return value::undefined();
-        });
+    auto * ctor = cx.allocate<script::native_object>("Selection", illegal_constructor);
     ctor->define("prototype", proto_value, script::attr_none);
     proto->define("constructor", value::object(ctor), script::attr_builtin);
     cx.define_builtin_global("Selection", value::object(ctor));

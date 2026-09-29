@@ -101,7 +101,7 @@ void dom_bindings::install_character_data(context & cx) {
                                      double offset_arg, double count_arg,
                                      const std::string & with) {
         const auto length = static_cast<unsigned long long>(text.size());
-        const auto offset = static_cast<unsigned long long>(to_uint32(offset_arg));
+        const auto offset = static_cast<unsigned long long>(number_to_uint32(offset_arg));
         if (offset > length) {
             throw_dom_exception(c, "IndexSizeError",
                                 std::string{where} + ": offset " + std::to_string(offset) +
@@ -109,7 +109,7 @@ void dom_bindings::install_character_data(context & cx) {
                                     " code units");
             return false;
         }
-        auto count = static_cast<unsigned long long>(to_uint32(count_arg));
+        auto count = static_cast<unsigned long long>(number_to_uint32(count_arg));
         if (count > length - offset) { count = length - offset; }
         const std::u16string added = wtf8_to_utf16(with);
         std::u16string made = text.substr(0, static_cast<std::size_t>(offset));
@@ -150,8 +150,9 @@ void dom_bindings::install_character_data(context & cx) {
             // CONVERTED FIRST, THEN THE NODE IS READ. WebIDL converts a call's
             // arguments before the operation runs, and a page can tell: a `toString`
             // on an argument may edit the very node this is about to measure.
-            const auto offset = static_cast<unsigned long long>(to_uint32(c.to_number_value(a[0])));
-            auto count = static_cast<unsigned long long>(to_uint32(c.to_number_value(a[1])));
+            const auto offset =
+                static_cast<unsigned long long>(number_to_uint32(c.to_number_value(a[0])));
+            auto count = static_cast<unsigned long long>(number_to_uint32(c.to_number_value(a[1])));
             dom_bindings * self = nullptr;
             node_id id;
             std::u16string text;
@@ -260,7 +261,7 @@ void dom_bindings::install_character_data(context & cx) {
         cx, *text_proto, "splitText",
         [this, data_of](context & c, std::span<value> a) {
             const auto offset =
-                static_cast<unsigned long long>(to_uint32(c.to_number_value(arg(a, 0))));
+                static_cast<unsigned long long>(number_to_uint32(c.to_number_value(arg(a, 0))));
             dom_bindings * self = nullptr;
             node_id id;
             std::u16string text;

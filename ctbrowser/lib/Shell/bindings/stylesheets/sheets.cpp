@@ -165,10 +165,10 @@ std::string dom_bindings::author_style_text() {
     // Read from the ARRAY rather than from a mirror kept beside it, because the
     // page owns that array and a mirror updated only on assignment would be a
     // second answer to what has been adopted.
-    if (script::object_object * internals = as_object(cssom_internals_)) {
+    if (script::object_object * internals = object_of(cssom_internals_)) {
         if (const value * held = internals->find("adopted"); held != nullptr && held->is_array()) {
             for (const value each : static_cast<script::array_object *>(held->as_heap())->items) {
-                emit_rooted(slot_index(as_object(each), sheet_key));
+                emit_rooted(slot_index(object_of(each), sheet_key));
             }
         }
     }
@@ -188,12 +188,12 @@ void dom_bindings::style_sheets_changed() {
 // --- the document's sheets, re-derived --------------------------------------
 
 script::object_object * dom_bindings::cssom_internals(context & cx) {
-    if (script::object_object * held = as_object(cssom_internals_)) { return held; }
+    if (script::object_object * held = object_of(cssom_internals_)) { return held; }
     script::object_object * doc = document_object();
     if (doc == nullptr) { return nullptr; }
     if (const value * found = doc->find(internals_key)) {
         cssom_internals_ = *found;
-        return as_object(cssom_internals_);
+        return object_of(cssom_internals_);
     }
     cssom_internals_ = cx.make_object();
     // ON THE DOCUMENT, non-configurable, and that is what roots it. Everything
@@ -217,7 +217,7 @@ script::object_object * dom_bindings::cssom_internals(context & cx) {
         const auto in_frame = enter_realm(cx);
         install_style_sheets(cx);
     }
-    return as_object(cssom_internals_);
+    return object_of(cssom_internals_);
 }
 
 // `document.styleSheets`: LIVE, THROUGH A PROXY. The target under
@@ -235,7 +235,7 @@ value dom_bindings::style_sheet_list(context & cx) {
     if (internals == nullptr) { return value::undefined(); }
     if (const value * found = internals->find("list_view")) { return *found; }
     const value target = cx.make_object();
-    if (script::object_object * obj = as_object(target)) {
+    if (script::object_object * obj = object_of(target)) {
         if (const value * proto = internals->find("StyleSheetList.prototype")) {
             obj->prototype = *proto;
         }
@@ -299,11 +299,11 @@ namespace {
                                   std::string_view table, std::size_t index,
                                   const std::function<value()> & make) {
     script::object_object * held = nullptr;
-    if (const value * found = internals.find(table)) { held = as_object(*found); }
+    if (const value * found = internals.find(table)) { held = object_of(*found); }
     if (held == nullptr) {
         const value made = cx.make_object();
         internals.set(std::string{table}, made);
-        held = as_object(made);
+        held = object_of(made);
         if (held == nullptr) { return value::undefined(); }
     }
     const std::string key = std::to_string(index);
@@ -332,7 +332,7 @@ void dom_bindings::sync_style_sheets(context & cx) {
     (void)style_sheet_list(cx);
     script::object_object * internals = cssom_internals(cx);
     const value * target = internals != nullptr ? internals->find("list") : nullptr;
-    script::object_object * list_obj = target != nullptr ? as_object(*target) : nullptr;
+    script::object_object * list_obj = target != nullptr ? object_of(*target) : nullptr;
     if (list_obj == nullptr) { return; }
     const node_id root = doc_->read().root();
     sync_sheet_list(cx, root, *list_obj, &css_document_sheets_);
@@ -528,7 +528,7 @@ void dom_bindings::install_style_sheets(context & cx) {
                     const bool index =
                         !key.empty() && key.find_first_not_of("0123456789") == std::string::npos;
                     if (index) {
-                        const std::size_t at = slot_index(as_object(args[2]), sheet_key);
+                        const std::size_t at = slot_index(object_of(args[2]), sheet_key);
                         if (!args[2].is_object() || at == no_index) {
                             cx2.throw_error("TypeError", "adoptedStyleSheets takes CSSStyleSheets");
                             return value::boolean(false);
@@ -589,7 +589,7 @@ value dom_bindings::adopted_sheets_array(context & cx, std::span<value> args) {
     if (from.is_array()) {
         auto * given = static_cast<script::array_object *>(from.as_heap());
         for (const value each : given->items) {
-            const std::size_t at = slot_index(as_object(each), sheet_key);
+            const std::size_t at = slot_index(object_of(each), sheet_key);
             // "Only sheets constructed in this document may be adopted", which
             // is the one check this can make and the one `adoptedstylesheets-*`
             // asserts.

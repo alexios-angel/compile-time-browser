@@ -12,14 +12,14 @@ using namespace detail;
 // re-derived from the tree on every read exactly as the document's is.
 value dom_bindings::shadow_sheet_list(context & cx, node_id root) {
     if (!root || shadow_tree_of(root) == nullptr) { return value::undefined(); }
-    script::object_object * wrapper = as_object(wrap(cx, root));
+    script::object_object * wrapper = object_of(wrap(cx, root));
     if (wrapper == nullptr) { return value::undefined(); }
     value list = value::undefined();
     if (const value * held = wrapper->find(rules_key)) {
         list = *held;
     } else {
         list = cx.make_object();
-        script::object_object * obj = as_object(list);
+        script::object_object * obj = object_of(list);
         if (obj == nullptr) { return value::undefined(); }
         if (script::object_object * internals = cssom_internals(cx)) {
             if (const value * proto = internals->find("StyleSheetList.prototype")) {
@@ -30,7 +30,7 @@ value dom_bindings::shadow_sheet_list(context & cx, node_id root) {
         obj->define(tree_key, value::object(wrapper), script::attr_none);
         wrapper->define(rules_key, list, script::attr_none);
     }
-    if (script::object_object * obj = as_object(list)) { sync_sheet_list(cx, root, *obj, nullptr); }
+    if (script::object_object * obj = object_of(list)) { sync_sheet_list(cx, root, *obj, nullptr); }
     return list;
 }
 
@@ -59,12 +59,12 @@ value dom_bindings::sheet_object_of(context & cx, node_id owner) {
 // --- the objects ------------------------------------------------------------
 
 dom_bindings::css_sheet_record * dom_bindings::receiver_sheet(context & cx) {
-    const std::size_t at = slot_index(as_object(cx.current_this()), sheet_key);
+    const std::size_t at = slot_index(object_of(cx.current_this()), sheet_key);
     return at < css_sheets_.size() ? css_sheets_[at].get() : nullptr;
 }
 
 dom_bindings::css_rule_record * dom_bindings::receiver_rule(context & cx) {
-    const std::size_t at = slot_index(as_object(cx.current_this()), rule_key);
+    const std::size_t at = slot_index(object_of(cx.current_this()), rule_key);
     return at < css_rule_store_.size() ? css_rule_store_[at].get() : nullptr;
 }
 
@@ -86,7 +86,7 @@ value dom_bindings::media_list_object(context & cx, script::object_object & owne
         return *held;
     }
     const value list = cx.make_object();
-    script::object_object * obj = as_object(list);
+    script::object_object * obj = object_of(list);
     if (obj == nullptr) { return list; }
     if (script::object_object * internals = cssom_internals(cx)) {
         if (const value * proto = internals->find("MediaList.prototype")) {
@@ -109,7 +109,7 @@ value dom_bindings::media_list_object(context & cx, script::object_object & owne
 }
 
 void dom_bindings::refresh_media_list(context & cx, value list) {
-    script::object_object * obj = as_object(list);
+    script::object_object * obj = object_of(list);
     if (obj == nullptr) { return; }
     const std::vector<std::string> * queries = nullptr;
     {
@@ -130,7 +130,7 @@ void dom_bindings::refresh_media_list(context & cx, value list) {
 
 value dom_bindings::make_rule_list(context & cx, std::span<const std::size_t> rules) {
     const value list = cx.make_object();
-    script::object_object * obj = as_object(list);
+    script::object_object * obj = object_of(list);
     if (obj == nullptr) { return list; }
     if (script::object_object * internals = cssom_internals(cx)) {
         if (const value * proto = internals->find("CSSRuleList.prototype")) {
@@ -143,7 +143,7 @@ value dom_bindings::make_rule_list(context & cx, std::span<const std::size_t> ru
 }
 
 void dom_bindings::refresh_rule_list(context & cx, value list, std::span<const std::size_t> rules) {
-    script::object_object * obj = as_object(list);
+    script::object_object * obj = object_of(list);
     if (obj == nullptr) { return; }
     // ONE OBJECT PER RECORD, for as long as the record is. insertRule must not
     // rebuild the ones it did not touch: `css/cssom/CSSStyleSheet.html` puts an
@@ -156,7 +156,7 @@ void dom_bindings::refresh_rule_list(context & cx, value list, std::span<const s
 
 value dom_bindings::make_rule_object(context & cx, std::size_t rule) {
     const value object = cx.make_object();
-    script::object_object * obj = as_object(object);
+    script::object_object * obj = object_of(object);
     if (obj == nullptr || rule >= css_rule_store_.size()) { return object; }
     script::object_object * internals = cssom_internals(cx);
     if (internals != nullptr) {
@@ -214,7 +214,7 @@ value dom_bindings::make_rule_object(context & cx, std::size_t rule) {
 
 value dom_bindings::declaration_object(context & cx, std::size_t rule) {
     const value object = cx.make_object();
-    script::object_object * obj = as_object(object);
+    script::object_object * obj = object_of(object);
     if (obj == nullptr) { return object; }
     if (script::object_object * internals = cssom_internals(cx)) {
         // WHICH CSSStyleDeclaration. CSSOM splits the property accessors off
@@ -240,7 +240,7 @@ value dom_bindings::declaration_object(context & cx, std::size_t rule) {
 
 void dom_bindings::refresh_declaration_object(context & cx, value declarations) {
     (void)cx;
-    script::object_object * obj = as_object(declarations);
+    script::object_object * obj = object_of(declarations);
     if (obj == nullptr) { return; }
     const std::size_t at = slot_index(obj, rule_key);
     if (at >= css_rule_store_.size()) { return; }
@@ -259,7 +259,7 @@ void dom_bindings::refresh_declaration_object(context & cx, value declarations) 
 
 value dom_bindings::make_sheet_object(context & cx, std::size_t sheet) {
     const value object = cx.make_object();
-    script::object_object * obj = as_object(object);
+    script::object_object * obj = object_of(object);
     if (obj == nullptr) { return object; }
     if (script::object_object * internals = cssom_internals(cx)) {
         if (const value * proto = internals->find("CSSStyleSheet.prototype")) {
@@ -295,7 +295,7 @@ void dom_bindings::install_sheet_property(context & cx, script::object_object & 
     };
     bool installed = false;
     for (const std::string_view name : {"HTMLStyleElement", "HTMLLinkElement"}) {
-        script::object_object * proto = as_object(interface_prototype(name));
+        script::object_object * proto = object_of(interface_prototype(name));
         if (proto == nullptr) { continue; }
         installed = true;
         if (proto->find_accessor("sheet") != nullptr) { continue; }
@@ -389,7 +389,7 @@ void dom_bindings::install_sheet_property(context & cx, script::object_object & 
     }
     // A ShadowRoot's `styleSheets` and `adoptedStyleSheets` - DocumentOrShadowRoot,
     // the same two members the document has, over the shadow tree alone.
-    if (script::object_object * proto = as_object(interface_prototype("ShadowRoot"));
+    if (script::object_object * proto = object_of(interface_prototype("ShadowRoot"));
         proto != nullptr && proto->find_accessor("styleSheets") == nullptr) {
         define_getter(
             cx, *proto, "styleSheets",
@@ -403,7 +403,7 @@ void dom_bindings::install_sheet_property(context & cx, script::object_object & 
             value::object(cx.allocate<script::native_object>(
                 "get adoptedStyleSheets",
                 [](context & c, std::span<value>) {
-                    script::object_object * self = as_object(c.current_this());
+                    script::object_object * self = object_of(c.current_this());
                     if (self == nullptr) { return value::undefined(); }
                     if (const value * held = self->find("__ctbrowser_adopted")) { return *held; }
                     const value made = c.make_array();
@@ -413,7 +413,7 @@ void dom_bindings::install_sheet_property(context & cx, script::object_object & 
             value::object(cx.allocate<script::native_object>(
                 "set adoptedStyleSheets",
                 [owning](context & c, std::span<value> a) {
-                    script::object_object * self = as_object(c.current_this());
+                    script::object_object * self = object_of(c.current_this());
                     if (self == nullptr) { return value::undefined(); }
                     const value made = owning(c.current_this()).adopted_sheets_array(c, a);
                     if (!made.is_undefined()) {

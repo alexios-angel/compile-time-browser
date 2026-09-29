@@ -122,7 +122,7 @@ int main() {
     //
     // SPLITTING IT INTO FIVE BINARIES WAS THE WRONG FIX and was reverted. It
     // would have bought parallelism over a cost that is about to disappear:
-    // docs/plans/angle.md has ANGLE at 192 M fragments per second on the same
+    // docs/history/angle.md has ANGLE at 192 M fragments per second on the same
     // machine, and when the WebGL path defaults to it this test is seconds
     // rather than minutes. Restructuring the test to work around a slow
     // renderer, and then keeping that structure afterwards, is how a suite ends

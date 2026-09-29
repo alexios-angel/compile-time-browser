@@ -681,14 +681,8 @@ void dom_bindings::install_document(context & cx) {
                 const std::string pair = written.substr(0, written.find(';'));
                 const std::size_t equals = pair.find('=');
                 if (equals == std::string::npos) { return value::undefined(); }
-                const auto trim = [](std::string_view piece) {
-                    const std::size_t first = piece.find_first_not_of(" \t");
-                    if (first == std::string_view::npos) { return std::string{}; }
-                    return std::string{
-                        piece.substr(first, piece.find_last_not_of(" \t") - first + 1)};
-                };
-                const std::string name = trim(pair.substr(0, equals));
-                const std::string item = trim(pair.substr(equals + 1));
+                const std::string name{trim(std::string_view{pair}.substr(0, equals), " \t")};
+                const std::string item{trim(std::string_view{pair}.substr(equals + 1), " \t")};
                 // A CONTROL CHARACTER REFUSES THE WHOLE WRITE (RFC 6265
                 // 5.2): `b=A\0Z` leaves the jar as it was.
                 for (const char each : pair) {
@@ -703,8 +697,8 @@ void dom_bindings::install_document(context & cx) {
                 bool expired = false;
                 for (std::size_t at = written.find(';'); at != std::string::npos;
                      at = written.find(';', at + 1)) {
-                    const std::string attribute =
-                        trim(written.substr(at + 1, written.find(';', at + 1) - at - 1));
+                    const std::string_view rest = std::string_view{written}.substr(at + 1);
+                    const std::string attribute{trim(rest.substr(0, rest.find(';')), " \t")};
                     const std::string lowered = ascii_lower_copy(attribute);
                     if (lowered.starts_with("max-age=")) {
                         expired = std::atoll(attribute.c_str() + 8) <= 0;

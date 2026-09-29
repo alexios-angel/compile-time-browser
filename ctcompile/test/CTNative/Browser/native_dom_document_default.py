@@ -37,13 +37,7 @@ def source(negated):
     )
 
 
-CHECKS = r"""
-        (void)pressed;
-        style::engine selectors{atoms};
-        const auto invoke = [&](element_ref anchor, element_ref expected,
-                                style::engine & engine) {
-            return in_outer_document([&] { return @ENTRY@(@ARGUMENTS@, engine); });
-        };
+CHECKS = dom.SELECTOR_CHECKS_PREAMBLE + r"""
         assert(doc.remove_child(button));
         assert(doc.set_attribute(button, classes, "selected"));
         assert(doc.set_attribute(child, classes, "selected"));

@@ -83,6 +83,15 @@ struct scan {
 // where they were, in grammar.cpp, and this declares them.
 
 [[nodiscard]] bool has_keyword(std::string_view set, std::string_view word);
+// The whitespace-separated words of `text`, a bracketed run kept whole.
+[[nodiscard]] std::vector<std::string_view> words_of(std::string_view text);
+// The tokens at `at`, lowercased, when every one is an ident; nullopt otherwise.
+[[nodiscard]] std::optional<std::vector<std::string>> words_of(const token_stream & ts,
+                                                               std::span<const std::size_t> at);
+// One past the `)`, `]` or `}` closing the block a function or bracket at
+// `open` starts; `end`, looking no further, when it does not close.
+[[nodiscard]] std::size_t matching_close(const token_stream & ts, std::size_t open,
+                                         std::size_t end) noexcept;
 // A CSS string as CSSOM 2.1 'serialize a string' writes it, given the body
 // between the quotes. Defined in grammar.cpp.
 [[nodiscard]] std::string string_text(std::string_view body);

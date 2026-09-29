@@ -1,17 +1,14 @@
 // The AOT ABI - calls beyond ct_aot_call: construct, closures, the spread
 // forms, promise wrapping, and the four module rows.
 //
-// One of four files carved out of a 1,586-line aot_bridge.cpp on 2026-09-08.
-// `struct aot_bridge` is declared in internal.hpp beside this; each of its
-// bodies is defined in the file that also holds the extern "C" row calling
-// it, so a wrapper and the member behind it are still one translation unit
-// and the call still inlines. The four members every file calls - ctx_of,
-// frame_of, frame_record and check - stay in-class in the header for the
-// same reason.
+// One of four files carved out of a 1,586-line aot_bridge.cpp on 2026-09-08;
+// each row holds its own body, and internal.hpp says why that is allowed.
 
 #include "internal.hpp"
 
-namespace ctbrowser::script {
+namespace ctbrowser::aot {
+
+extern "C" {
 
 // ct_aot_construct. op::construct's own dispatch through the shared
 // context::construct_new.
@@ -24,10 +21,9 @@ namespace ctbrowser::script {
 // callee_origin walks emitted bytecode from an ip and a register index, and
 // an AOT frame has neither - so describe_callee renders the callee as "the
 // value".
-std::int32_t aot_bridge::construct(aot::ct_aot_frame * f, std::uint64_t callee,
-                                   const std::uint64_t * argv, std::uint32_t argc,
-                                   const aot::ct_aot_site * site, std::uint64_t * out) {
-    const aot_frame_storage & held = frame_of(f);
+std::int32_t ct_aot_construct(ct_aot_frame * f, std::uint64_t callee, const std::uint64_t * argv,
+                              std::uint32_t argc, const ct_aot_site * site, std::uint64_t * out) {
+    const aot_frame_storage & held = aot_bridge::frame_of(f);
     context & cx = *held.ctx;
     // COPIED OUT BEFORE THE CALL, for ct_aot_call's reason: argv points
     // into registers_ for a compiled body, and the call resizes it.
@@ -37,7 +33,7 @@ std::int32_t aot_bridge::construct(aot::ct_aot_frame * f, std::uint64_t callee,
 
     const function_proto & from = *reinterpret_cast<const function_proto *>(site);
     const value produced = cx.construct_new(value::from_bits(callee), args, from);
-    const std::int32_t status = check(f);
+    const std::int32_t status = aot_bridge::check(f);
     if (status == static_cast<std::int32_t>(aot::ct_aot_status::ok)) { *out = produced.bits(); }
     return status;
 }
@@ -54,11 +50,11 @@ std::int32_t aot_bridge::construct(aot::ct_aot_frame * f, std::uint64_t callee,
 // upvalue count that does not match. make_closure raises for all three and
 // the caller polls ct_aot_failed; there is no status to return, because the
 // row answers with a value.
-std::uint64_t aot_bridge::make_closure(aot::ct_aot_frame * f, std::uint64_t enclosing_closure,
-                                       std::uint32_t function_index,
-                                       const std::uint64_t * local_upvalues,
-                                       std::uint32_t upvalue_count, std::uint64_t enclosing_this) {
-    context & cx = *frame_of(f).ctx;
+std::uint64_t ct_aot_make_closure(ct_aot_frame * f, std::uint64_t enclosing_closure,
+                                  std::uint32_t function_index,
+                                  const std::uint64_t * local_upvalues, std::uint32_t upvalue_count,
+                                  std::uint64_t enclosing_this) {
+    context & cx = *aot_bridge::frame_of(f).ctx;
     const value enclosing = value::from_bits(enclosing_closure);
     closure_object * parent = enclosing.is_kind(heap_kind::function)
                                   ? static_cast<closure_object *>(enclosing.as_heap())
@@ -87,8 +83,8 @@ std::uint64_t aot_bridge::make_closure(aot::ct_aot_frame * f, std::uint64_t encl
 // may_reenter is 0 and that was verified against the INSTALLED factory
 // rather than the VM stub: detail::make_promise is new_table, a
 // prototype, four sets and a make_array, with no call() anywhere.
-std::uint64_t aot_bridge::wrap_promise(aot::ct_aot_frame * f, std::uint64_t v) {
-    context & cx = *frame_of(f).ctx;
+std::uint64_t ct_aot_wrap_promise(ct_aot_frame * f, std::uint64_t v) {
+    context & cx = *aot_bridge::frame_of(f).ctx;
     return cx.wrap_in_promise(value::from_bits(v)).bits();
 }
 
@@ -104,26 +100,26 @@ std::uint64_t aot_bridge::wrap_promise(aot::ct_aot_frame * f, std::uint64_t v) {
 // messages these paths raise are the interpreter's, and neither names the
 // enclosing function. It is taken so the ABI does not have to change if one
 // of them ever does.
-std::int32_t aot_bridge::call_spread(aot::ct_aot_frame * f, std::uint64_t callee,
-                                     std::uint64_t arg_array, std::uint64_t receiver,
-                                     const aot::ct_aot_site * site, std::uint64_t * out) {
+std::int32_t ct_aot_call_spread(ct_aot_frame * f, std::uint64_t callee, std::uint64_t arg_array,
+                                std::uint64_t receiver, const ct_aot_site * site,
+                                std::uint64_t * out) {
     (void)site;
-    context & cx = *frame_of(f).ctx;
+    context & cx = *aot_bridge::frame_of(f).ctx;
     const value produced = cx.call_spread(value::from_bits(callee), value::from_bits(arg_array),
                                           value::from_bits(receiver));
-    const std::int32_t status = check(f);
+    const std::int32_t status = aot_bridge::check(f);
     if (status == static_cast<std::int32_t>(aot::ct_aot_status::ok)) { *out = produced.bits(); }
     return status;
 }
 
-std::int32_t aot_bridge::construct_spread(aot::ct_aot_frame * f, std::uint64_t callee,
-                                          std::uint64_t arg_array, const aot::ct_aot_site * site,
-                                          std::uint64_t * out) {
+std::int32_t ct_aot_construct_spread(ct_aot_frame * f, std::uint64_t callee,
+                                     std::uint64_t arg_array, const ct_aot_site * site,
+                                     std::uint64_t * out) {
     (void)site;
-    context & cx = *frame_of(f).ctx;
+    context & cx = *aot_bridge::frame_of(f).ctx;
     const value produced =
         cx.construct_spread(value::from_bits(callee), value::from_bits(arg_array));
-    const std::int32_t status = check(f);
+    const std::int32_t status = aot_bridge::check(f);
     if (status == static_cast<std::int32_t>(aot::ct_aot_status::ok)) { *out = produced.bits(); }
     return status;
 }
@@ -148,10 +144,10 @@ std::int32_t aot_bridge::construct_spread(aot::ct_aot_frame * f, std::uint64_t c
 // ct_aot_module_import_cell. RAISE TIER: it answers the CELL rather than a
 // status, so on either miss the value is undefined and a caller polls
 // ct_aot_failed at a back edge. Not a safepoint - it allocates nothing.
-std::uint64_t aot_bridge::module_import_cell(aot::ct_aot_frame * f, const char * specifier,
-                                             std::uint32_t specifier_len, const char * export_name,
-                                             std::uint32_t export_name_len) {
-    context & cx = *frame_of(f).ctx;
+std::uint64_t ct_aot_module_import_cell(ct_aot_frame * f, const char * specifier,
+                                        std::uint32_t specifier_len, const char * export_name,
+                                        std::uint32_t export_name_len) {
+    context & cx = *aot_bridge::frame_of(f).ctx;
     return cx
         .module_import_cell(std::string{specifier, specifier_len},
                             std::string{export_name, export_name_len})
@@ -167,12 +163,12 @@ std::uint64_t aot_bridge::module_import_cell(aot::ct_aot_frame * f, const char *
 // current value and this hands the same value straight back on that arm -
 // the register ends up holding what it held, which is what the interpreter
 // leaving it alone means. See the row.
-std::int32_t aot_bridge::module_export_cell(aot::ct_aot_frame * f, const char * name,
-                                            std::uint32_t name_len, std::uint64_t * out) {
-    context & cx = *frame_of(f).ctx;
+std::int32_t ct_aot_module_export_cell(ct_aot_frame * f, const char * name, std::uint32_t name_len,
+                                       std::uint64_t * out) {
+    context & cx = *aot_bridge::frame_of(f).ctx;
     const value published =
         cx.module_export_cell(std::string{name, name_len}, value::from_bits(*out));
-    const std::int32_t status = check(f);
+    const std::int32_t status = aot_bridge::check(f);
     if (status == static_cast<std::int32_t>(aot::ct_aot_status::ok)) { *out = published.bits(); }
     return status;
 }
@@ -182,9 +178,9 @@ std::int32_t aot_bridge::module_export_cell(aot::ct_aot_frame * f, const char * 
 // one native getter per export. Safe under a real collector because the
 // half-built object is stored into module_record::namespace_object - a GC
 // root - before the accessor loop runs.
-std::uint64_t aot_bridge::module_namespace(aot::ct_aot_frame * f, const char * specifier,
-                                           std::uint32_t specifier_len) {
-    context & cx = *frame_of(f).ctx;
+std::uint64_t ct_aot_module_namespace(ct_aot_frame * f, const char * specifier,
+                                      std::uint32_t specifier_len) {
+    context & cx = *aot_bridge::frame_of(f).ctx;
     return cx.module_namespace_for(std::string{specifier, specifier_len}).bits();
 }
 
@@ -200,76 +196,15 @@ std::uint64_t aot_bridge::module_namespace(aot::ct_aot_frame * f, const char * s
 // loader pushes frames, so a reference into frames_[i].proto->module taken
 // before it would dangle - and `module` is a std::string on a proto the
 // loader may also be assigning to.
-std::int32_t aot_bridge::dynamic_import(aot::ct_aot_frame * f, std::uint64_t specifier,
-                                        std::uint64_t * out) {
-    context & cx = *frame_of(f).ctx;
-    const context::call_frame * record = frame_record(f);
+std::int32_t ct_aot_dynamic_import(ct_aot_frame * f, std::uint64_t specifier, std::uint64_t * out) {
+    context & cx = *aot_bridge::frame_of(f).ctx;
+    const context::call_frame * record = aot_bridge::frame_record(f);
     const std::string referrer =
         (record == nullptr || record->proto == nullptr) ? std::string{} : record->proto->module;
     const value produced = cx.dynamic_import(value::from_bits(specifier), referrer);
-    const std::int32_t status = check(f);
+    const std::int32_t status = aot_bridge::check(f);
     if (status == static_cast<std::int32_t>(aot::ct_aot_status::ok)) { *out = produced.bits(); }
     return status;
-}
-
-} // namespace ctbrowser::script
-
-namespace ctbrowser::aot {
-
-extern "C" {
-
-// The `site` parameter is where Phase 26 attaches an inline cache without an
-// ABI break. Taken and ignored, because the signature is the thing two code
-// generators are written against and a parameter added later is a break.
-std::int32_t ct_aot_construct(ct_aot_frame * fr, std::uint64_t callee, const std::uint64_t * argv,
-                              std::uint32_t argc, const ct_aot_site * site, std::uint64_t * out) {
-    return script::aot_bridge::construct(fr, callee, argv, argc, site, out);
-}
-
-std::uint64_t ct_aot_make_closure(ct_aot_frame * fr, std::uint64_t enclosing_closure,
-                                  std::uint32_t function_index,
-                                  const std::uint64_t * local_upvalues, std::uint32_t upvalue_count,
-                                  std::uint64_t enclosing_this) {
-    return script::aot_bridge::make_closure(fr, enclosing_closure, function_index, local_upvalues,
-                                            upvalue_count, enclosing_this);
-}
-
-std::uint64_t ct_aot_wrap_promise(ct_aot_frame * fr, std::uint64_t v) {
-    return script::aot_bridge::wrap_promise(fr, v);
-}
-
-std::uint64_t ct_aot_module_import_cell(ct_aot_frame * fr, const char * specifier,
-                                        std::uint32_t specifier_len, const char * export_name,
-                                        std::uint32_t export_name_len) {
-    return script::aot_bridge::module_import_cell(fr, specifier, specifier_len, export_name,
-                                                  export_name_len);
-}
-
-std::int32_t ct_aot_module_export_cell(ct_aot_frame * fr, const char * name, std::uint32_t name_len,
-                                       std::uint64_t * out) {
-    return script::aot_bridge::module_export_cell(fr, name, name_len, out);
-}
-
-std::uint64_t ct_aot_module_namespace(ct_aot_frame * fr, const char * specifier,
-                                      std::uint32_t specifier_len) {
-    return script::aot_bridge::module_namespace(fr, specifier, specifier_len);
-}
-
-std::int32_t ct_aot_dynamic_import(ct_aot_frame * fr, std::uint64_t specifier,
-                                   std::uint64_t * out) {
-    return script::aot_bridge::dynamic_import(fr, specifier, out);
-}
-
-std::int32_t ct_aot_call_spread(ct_aot_frame * fr, std::uint64_t callee, std::uint64_t arg_array,
-                                std::uint64_t receiver, const ct_aot_site * site,
-                                std::uint64_t * out) {
-    return script::aot_bridge::call_spread(fr, callee, arg_array, receiver, site, out);
-}
-
-std::int32_t ct_aot_construct_spread(ct_aot_frame * fr, std::uint64_t callee,
-                                     std::uint64_t arg_array, const ct_aot_site * site,
-                                     std::uint64_t * out) {
-    return script::aot_bridge::construct_spread(fr, callee, arg_array, site, out);
 }
 
 } // extern "C"

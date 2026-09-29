@@ -78,7 +78,7 @@ void tokenizer::character_reference(std::string & out, bool in_attribute) {
             return;
         }
         if (!eof() && input_[at_] == ';') { ++at_; }
-        out += encode_utf8(numeric_reference_code(code));
+        append_utf8(out, numeric_reference_code(code));
         return;
     }
     if (!is_alnum(input_[at_])) {
@@ -125,8 +125,8 @@ void tokenizer::character_reference(std::string & out, bool in_attribute) {
         }
     }
     at_ += consumed;
-    out += encode_utf8(found->first);
-    if (found->second != 0) { out += encode_utf8(found->second); }
+    append_utf8(out, found->first);
+    if (found->second != 0) { append_utf8(out, found->second); }
 }
 
 char32_t tokenizer::numeric_reference_code(std::uint32_t code) {
@@ -135,12 +135,6 @@ char32_t tokenizer::numeric_reference_code(std::uint32_t code) {
         if (entry.from == code) { return entry.to; }
     }
     return static_cast<char32_t>(code);
-}
-
-std::string tokenizer::encode_utf8(char32_t code) {
-    std::string out;
-    append_utf8(out, code);
-    return out;
 }
 
 } // namespace ctbrowser::html

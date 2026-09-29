@@ -1,5 +1,7 @@
 """Execute checked published Map methods and live primitive results without the VM."""
 
+from CTNative.harness import native_args, native_tools
+
 from .driver_common import *
 from .driver_object_maps import *
 from .driver_globals import *
@@ -202,7 +204,8 @@ def setup():
     after another, which is what lit's own pool is for."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--group", choices=GROUPS)
-    args, compilers, nm = owned.setup(parser)
+    args = native_args(__doc__, parser=parser)
+    compilers, nm = native_tools(args.reference)
     return args, args.node, args.reference, compilers, nm
 
 

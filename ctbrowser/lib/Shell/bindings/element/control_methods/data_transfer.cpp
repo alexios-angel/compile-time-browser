@@ -25,17 +25,13 @@ constexpr std::string_view dt_list_key = CTBROWSER_PRIVATE_KEY("ctbrowser:data-t
 constexpr std::string_view owner_key = CTBROWSER_PRIVATE_KEY("ctbrowser:data-transfer-owner");
 constexpr std::string_view dt_files_key = CTBROWSER_PRIVATE_KEY("ctbrowser:data-transfer-files");
 
-[[nodiscard]] script::object_object * as_object(value v) {
-    return v.is_object() ? static_cast<script::object_object *>(v.as_heap()) : nullptr;
-}
-
 [[nodiscard]] script::array_object * as_array(value v) {
     return v.is_array() ? static_cast<script::array_object *>(v.as_heap()) : nullptr;
 }
 
 // The hidden array a FileList or a DataTransfer keeps its entries in.
 [[nodiscard]] script::array_object * entries_of(value holder, std::string_view key) {
-    script::object_object * object = as_object(holder);
+    script::object_object * object = object_of(holder);
     if (object == nullptr) { return nullptr; }
     const value * held = object->find(std::string{key});
     return held == nullptr ? nullptr : as_array(*held);
@@ -50,7 +46,7 @@ constexpr std::string_view dt_files_key = CTBROWSER_PRIVATE_KEY("ctbrowser:data-
         proto = c.make_object();
         if (ctor.is_object_like()) { c.store_property(ctor, "prototype", proto); }
     }
-    script::object_object & on = *as_object(proto);
+    script::object_object & on = *object_of(proto);
     if (on.find("item") != nullptr) { return proto; }
     set_method(c, on, "item", [](context & cx, std::span<value> a) {
         script::array_object * files = entries_of(cx.current_this(), files_key);
@@ -69,9 +65,9 @@ constexpr std::string_view dt_files_key = CTBROWSER_PRIVATE_KEY("ctbrowser:data-
               native(c, "values",
                      [](context & cx, std::span<value>) {
                          const value self = cx.current_this();
-                         const value * held = as_object(self) == nullptr
+                         const value * held = object_of(self) == nullptr
                                                   ? nullptr
-                                                  : as_object(self)->find(std::string{files_key});
+                                                  : object_of(self)->find(std::string{files_key});
                          const value list = held == nullptr ? cx.make_array() : *held;
                          const value values = cx.lookup_property(list, "values");
                          return values.is_callable() ? cx.call(values, {}, list)
@@ -89,10 +85,10 @@ constexpr std::string_view dt_files_key = CTBROWSER_PRIVATE_KEY("ctbrowser:data-
     const value file_ctor = c.global("File");
     const value blob_ctor = c.global("Blob");
     if (file_ctor.is_callable() && c.instance_of(v, file_ctor)) {
-        return as_object(v)->find("name") != nullptr;
+        return object_of(v)->find("name") != nullptr;
     }
     return blob_ctor.is_callable() && c.instance_of(v, blob_ctor) &&
-           as_object(v)->find("name") != nullptr;
+           object_of(v)->find("name") != nullptr;
 }
 
 } // namespace
@@ -136,7 +132,7 @@ value make_file_list(context & c, const std::vector<value> & files) {
 }
 
 bool is_file_list(value v) {
-    script::object_object * object = as_object(v);
+    script::object_object * object = object_of(v);
     return object != nullptr && object->find(std::string{files_key}) != nullptr;
 }
 
@@ -165,7 +161,7 @@ void control_helpers::install_data_transfer(context & cx) const {
     // The item list's own indices, rebuilt from the transfer's records: each
     // a DataTransferItem carrying its kind and type.
     const auto refresh = [item_proto_value](context & c, value list) {
-        script::object_object * on = as_object(list);
+        script::object_object * on = object_of(list);
         if (on == nullptr) { return; }
         const value * owner = on->find(std::string{owner_key});
         script::array_object * records =
@@ -177,10 +173,10 @@ void control_helpers::install_data_transfer(context & cx) const {
         if (records == nullptr) { return; }
         // ...and the transfer's FileList, which is LIVE: the one `files`
         // handed out follows the items (an <input> it was given included).
-        if (script::object_object * transfer = as_object(*owner)) {
+        if (script::object_object * transfer = object_of(*owner)) {
             if (const value * files = transfer->find(std::string{dt_files_key});
-                files != nullptr && as_object(*files) != nullptr) {
-                fill_file_list(c, *as_object(*files), transfer_files(c, *owner));
+                files != nullptr && object_of(*files) != nullptr) {
+                fill_file_list(c, *object_of(*files), transfer_files(c, *owner));
             }
         }
         for (std::size_t i = 0; i < records->items.size(); ++i) {
@@ -195,7 +191,7 @@ void control_helpers::install_data_transfer(context & cx) const {
         }
     };
     const auto records_of_list = [](context & c) -> script::array_object * {
-        script::object_object * on = as_object(c.current_this());
+        script::object_object * on = object_of(c.current_this());
         const value * owner = on == nullptr ? nullptr : on->find(std::string{owner_key});
         return owner == nullptr ? nullptr : entries_of(*owner, dt_items_key);
     };
@@ -263,7 +259,7 @@ void control_helpers::install_data_transfer(context & cx) const {
                        script::attr_configurable);
 
     set_method(cx, *item_proto, "getAsFile", [](context & c, std::span<value>) {
-        script::object_object * self = as_object(c.current_this());
+        script::object_object * self = object_of(c.current_this());
         const value * record =
             self == nullptr ? nullptr : self->find(CTBROWSER_PRIVATE_KEY("record"));
         if (record == nullptr || c.to_string(c.lookup_property(*record, "kind")) != "file") {
@@ -276,7 +272,7 @@ void control_helpers::install_data_transfer(context & cx) const {
 
     // The transfer itself.
     define_getter(cx, *dt_proto, "items", [](context & c, std::span<value>) {
-        script::object_object * self = as_object(c.current_this());
+        script::object_object * self = object_of(c.current_this());
         const value * list = self == nullptr ? nullptr : self->find(std::string{dt_list_key});
         return list == nullptr ? value::undefined() : *list;
     });
@@ -284,7 +280,7 @@ void control_helpers::install_data_transfer(context & cx) const {
     // first read and kept in step with the items from then on.
     define_getter(cx, *dt_proto, "files", [](context & c, std::span<value>) {
         const value self = c.current_this();
-        script::object_object * transfer = as_object(self);
+        script::object_object * transfer = object_of(self);
         if (transfer == nullptr) { return make_file_list(c, {}); }
         if (const value * held = transfer->find(std::string{dt_files_key}); held != nullptr) {
             return *held;
@@ -341,7 +337,7 @@ void control_helpers::install_data_transfer(context & cx) const {
         record->set("type", c.string(format));
         record->set("data", c.string(c.to_string(arg(a, 1))));
         records->items.push_back(value::object(record));
-        script::object_object * self = as_object(c.current_this());
+        script::object_object * self = object_of(c.current_this());
         if (const value * list = self->find(std::string{dt_list_key})) { refresh(c, *list); }
         return value::undefined();
     });
@@ -354,7 +350,7 @@ void control_helpers::install_data_transfer(context & cx) const {
             return c.to_string(c.lookup_property(record, "kind")) == "string" &&
                    (all || c.to_string(c.lookup_property(record, "type")) == format);
         });
-        script::object_object * self = as_object(c.current_this());
+        script::object_object * self = object_of(c.current_this());
         if (const value * list = self->find(std::string{dt_list_key})) { refresh(c, *list); }
         return value::undefined();
     });
@@ -364,7 +360,7 @@ void control_helpers::install_data_transfer(context & cx) const {
     auto * ctor = cx.allocate<script::native_object>(
         "DataTransfer", [dt_proto_value, list_proto_value](context & c, std::span<value>) -> value {
             const value self = c.current_this();
-            script::object_object * made = as_object(self);
+            script::object_object * made = object_of(self);
             if (made == nullptr) {
                 c.throw_error("TypeError",
                               "Failed to construct 'DataTransfer': please use the 'new' operator.");

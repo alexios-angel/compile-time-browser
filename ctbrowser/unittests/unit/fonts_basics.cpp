@@ -10,6 +10,7 @@
 #include <ctbrowser.hpp>
 
 #include "check.hpp"
+#include "dom_probe.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -21,6 +22,7 @@
 using namespace ctbrowser;
 using ctbrowser::shell::browser;
 using ctbrowser::shell::browser_options;
+using ctbrowser_test::find_id;
 
 namespace {
 
@@ -43,18 +45,6 @@ namespace {
         if (command.text.find(text) != std::string::npos) { return &command; }
     }
     return nullptr;
-}
-
-[[nodiscard]] node_id find_id(browser & page, std::string_view want) {
-    const auto txn = page.doc().read();
-    const atom key = page.atoms().intern("id");
-    node_id found{};
-    const auto walk = [&](auto && self, node_id at) -> void {
-        if (!found && txn.attribute_value(at, key) == want) { found = at; }
-        for (const node_id c : txn.children(at)) { self(self, c); }
-    };
-    walk(walk, txn.root());
-    return found;
 }
 
 // --- the face reaches the command -----------------------------------------

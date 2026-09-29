@@ -332,15 +332,12 @@ bool enters_arrow(const census & world, mlir::Value callee) {
 // window). A marked value handed to such a body is reachable there through a
 // computed key, so a body holding one is not a known callee at all.
 bool reads_raw_arguments(FuncOp function) {
-    bool reads = false;
-    function.walk([&](mlir::Operation * op) {
-        if (mlir::isa<MakeArgumentsOp, GatherRestOp>(op)) {
-            reads = true;
-            return mlir::WalkResult::interrupt();
-        }
-        return mlir::WalkResult::advance();
-    });
-    return reads;
+    return function
+        .walk([](mlir::Operation * op) {
+            return mlir::isa<MakeArgumentsOp, GatherRestOp>(op) ? mlir::WalkResult::interrupt()
+                                                                : mlir::WalkResult::advance();
+        })
+        .wasInterrupted();
 }
 
 // PADDING A SHORT CALL IS VISIBLE TO `arguments`, AND IS THE ONE THING THE PAD
@@ -744,15 +741,7 @@ std::optional<std::string> dynamic_global_writes(
 // but nested closures and upvalue reads. Anything else is an escape.
 std::optional<std::string> own_closure_escapes(FuncOp function) {
     if (!has_entry(function)) { return "the function has no callee argument"; }
-    const mlir::BlockArgument callee = function.getBody().front().getArgument(2);
-    for (mlir::OpOperand & use : callee.getUses()) {
-        mlir::Operation * op = use.getOwner();
-        if (auto made = mlir::dyn_cast<CreateClosureOp>(op); made && use.getOperandNumber() == 0) {
-            continue; // the enclosing closure of a nested one
-        }
-        if (mlir::isa<LoadUpvalueOp, StoreUpvalueOp>(op) && use.getOperandNumber() == 0) {
-            continue; // a cell read or write through it
-        }
+    if (mlir::Operation * op = ownClosureEscape(function)) {
         return "the function's own closure escapes into " + describe(op);
     }
     return std::nullopt;

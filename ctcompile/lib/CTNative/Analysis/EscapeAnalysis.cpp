@@ -590,10 +590,8 @@ EscapeVerdicts computeVerdicts(mlir::DataFlowSolver & solver, ctjs::FuncOp funct
                 break;
             }
             for (auto & siteEntry : out.sites) {
-                mlir::Operation * site = siteEntry.first;
-                while (site->getParentRegion() != &function.getBody()) {
-                    site = site->getParentOp();
-                }
+                mlir::Operation * site =
+                    function.getBody().findAncestorOpInRegion(*siteEntry.first);
                 if (site->getBlock() == &entry && !builder->isBeforeInBlock(site)) {
                     late = builder;
                     break;

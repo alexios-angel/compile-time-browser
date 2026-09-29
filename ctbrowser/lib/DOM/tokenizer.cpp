@@ -91,7 +91,7 @@ bool tokenizer::is_alnum(char c) noexcept {
 }
 
 bool tokenizer::is_space(char c) noexcept {
-    return c == ' ' || c == '\t' || c == '\n' || c == '\f' || c == '\r';
+    return html_whitespace.contains(c);
 }
 
 void tokenizer::append_text(std::string & data) {

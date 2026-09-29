@@ -1,5 +1,11 @@
 # ANGLE as the WebGL back end
 
+> **DONE.** ANGLE has been the only WebGL back end since the stack was rebuilt
+> on it on 2026-08-04 (`history/webgl-rewrite.md`), and the software rasteriser
+> stage 5 was to retire went with that rewrite. Kept for stage 0's
+> measurements: 186x to 322x the interpreter, and the identical pixel on Linux
+> and Windows.
+
 **The proposal: stop implementing OpenGL ES and start calling one.** ANGLE is
 what Chrome and Firefox put behind WebGL — a complete GLES 2.0/3.0/3.1
 implementation over Vulkan, D3D11, Metal or desktop GL. This engine currently

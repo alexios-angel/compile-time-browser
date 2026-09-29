@@ -23,6 +23,8 @@
 #include <ctbrowser/script/type_record.hpp>
 #include <ctbrowser/script/vm.hpp>
 
+#include <boost/hash2/fnv1a.hpp>
+
 namespace ctbrowser::script {
 
 namespace {
@@ -51,18 +53,24 @@ type_recorder * active_type_recorder() noexcept {
     return g_active;
 }
 
+// Byte-wise FNV-1a 64 from the standard basis, which is what a default
+// fnv1a_64 is - checked on the published vector, since the value is recorded.
+static_assert([] {
+    boost::hash2::fnv1a_64 h;
+    const unsigned char a[] = {'a'};
+    h.update(a, 1);
+    return h.result();
+}() == 0xaf63dc4c8601ec8cull);
+
 std::uint64_t program_source_hash(const program & prog) noexcept {
-    std::uint64_t h = 14695981039346656037ull;
-    for (const char c : prog.source) {
-        h ^= static_cast<std::uint8_t>(c);
-        h *= 1099511628211ull;
-    }
+    boost::hash2::fnv1a_64 h;
+    h.update(prog.source.data(), prog.source.size());
     // The KIND is part of the identity for the same reason program_image
     // records it: the same text compiled as a module and as a classic script
     // are different programs with different top-level scoping.
-    h ^= static_cast<std::uint8_t>(prog.kind);
-    h *= 1099511628211ull;
-    return h;
+    const auto kind = static_cast<std::uint8_t>(prog.kind);
+    h.update(&kind, 1);
+    return h.result();
 }
 
 void register_observation::observe(value v) noexcept {

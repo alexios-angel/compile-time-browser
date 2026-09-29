@@ -1,4 +1,5 @@
 #include <ctbrowser/dom/document.hpp>
+#include <ctbrowser/dom/xml.hpp>
 
 #include <ctbrowser/core/algorithms.hpp>
 
@@ -11,13 +12,12 @@ namespace ctbrowser {
 
 namespace {
 
-// The three namespaces "adjust foreign attributes" can put an attribute in.
-// Spelled out rather than derived, for the reason bindings/document/internal.hpp spells
-// its four out: one wrong character makes the lookup miss on the valid case and
-// nothing about the failure says so.
+// The three namespaces "adjust foreign attributes" can put an attribute in:
+// XLink here, XML and XMLNS from dom/xml.hpp. Spelled out rather than
+// derived, for the reason bindings/document/internal.hpp spells its four out:
+// one wrong character makes the lookup miss on the valid case and nothing
+// about the failure says so.
 constexpr std::string_view xlink_namespace = "http://www.w3.org/1999/xlink";
-constexpr std::string_view xml_namespace = "http://www.w3.org/XML/1998/namespace";
-constexpr std::string_view xmlns_namespace = "http://www.w3.org/2000/xmlns/";
 
 // Keep the existing shadow-map key order: custom-element reactions enumerate
 // these maps, so changing the hash input would change their visitation order.
@@ -81,10 +81,6 @@ constexpr std::string_view xmlns_namespace = "http://www.w3.org/2000/xmlns/";
 [[nodiscard]] bool pi_name_char(unsigned char c) {
     return pi_name_start(c) || (c >= '0' && c <= '9') || c == '-' || c == '.';
 }
-// XML's S production: space, tab, CR, LF - not form feed, which HTML's set has.
-[[nodiscard]] bool pi_space(char c) {
-    return c == ' ' || c == '\t' || c == '\n' || c == '\r';
-}
 
 [[nodiscard]] std::optional<std::vector<attribute>> parse_pseudo_attributes(atom_table & atoms,
                                                                             std::string_view data) {
@@ -92,7 +88,7 @@ constexpr std::string_view xmlns_namespace = "http://www.w3.org/2000/xmlns/";
     std::size_t at = 0;
     const auto skip_space = [&] {
         const std::size_t before = at;
-        while (at < data.size() && pi_space(data[at])) { ++at; }
+        while (at < data.size() && xml_whitespace.contains(data[at])) { ++at; }
         return at != before;
     };
     // `&#...;`, `&#x...;` or one of the five names, with `at` on the `&`.

@@ -40,6 +40,9 @@
 
 #include <ctbrowser/shell/bindings.hpp>
 
+#include "document/internal.hpp"
+#include "events/internal.hpp"
+
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -63,76 +66,30 @@ constexpr std::size_t npos = std::numeric_limits<std::size_t>::max();
 // `a!-element`, `a\x01-element` and `_-element` are all names a page may
 // define, and PotentialCustomElementName refused every one of them.
 //
-// A valid element local name is the tag names the HTML and the XML parsers
-// can both produce, which is the specification's one regular expression:
-//   ^(?:[A-Za-z][^NUL TAB LF FF CR SPACE / >]*
-//     | [:_ or U+0080 and up][A-Za-z0-9-.:_ or U+0080 and up]*)$
-// The first branch is what the HTML tokenizer will read back as a tag name -
-// it bans only the characters that would END one - and the second is the XML
-// Name production's shape.
-[[nodiscard]] bool html_tag_name_char(char32_t c) {
-    return c != 0 && c != 0x9 && c != 0xA && c != 0xC && c != 0xD && c != 0x20 && c != '/' &&
-           c != '>';
-}
-
-[[nodiscard]] bool xml_name_char(char32_t c) {
-    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' ||
-           c == '.' || c == ':' || c == '_' || (c >= 0x80 && c <= 0x10FFFF);
-}
-
-[[nodiscard]] bool is_valid_element_local_name(const std::vector<char32_t> & points) {
-    if (points.empty()) { return false; }
-    const char32_t first = points.front();
-    if ((first >= 'A' && first <= 'Z') || (first >= 'a' && first <= 'z')) {
-        bool ok = true;
-        for (std::size_t i = 1; i < points.size(); ++i) {
-            ok = ok && html_tag_name_char(points[i]);
-        }
-        if (ok) { return true; }
-    }
-    if (first != ':' && first != '_' && (first < 0x80 || first > 0x10FFFF)) { return false; }
-    for (std::size_t i = 1; i < points.size(); ++i) {
-        if (!xml_name_char(points[i])) { return false; }
-    }
-    return true;
-}
-
+// A valid element local name is detail::is_valid_element_local_name, the
+// DOM's own check (document/internal.hpp).
 [[nodiscard]] bool is_valid_custom_element_name(std::string_view name) {
-    if (name.empty()) { return false; }
-    std::vector<char32_t> points;
-    for (std::size_t at = 0; at < name.size();) { points.push_back(decode_utf8(name, at)); }
+    // Byte-wise, which is exact: every character tested here is ASCII (see
+    // element_name_breaks).
+    //
     // THE FIRST CHARACTER IS AN ASCII LOWER ALPHA. It is a requirement of its
     // own, beside the local-name production: `_-element`, `:-element` and
     // `\u{10000}-element` are all valid element local names and none of them
     // is a valid CUSTOM element name. MEASURED - five subtests of
     // valid-custom-element-names.html say so by code point.
-    if (points.front() < 'a' || points.front() > 'z') { return false; }
+    if (name.empty() || name.front() < 'a' || name.front() > 'z') { return false; }
     bool hyphen = false;
-    for (const char32_t c : points) {
+    for (const char c : name) {
         if (c >= 'A' && c <= 'Z') { return false; }
         hyphen = hyphen || c == '-';
     }
-    if (!hyphen || !is_valid_element_local_name(points)) { return false; }
+    if (!hyphen || !detail::is_valid_element_local_name(name)) { return false; }
     for (const std::string_view reserved :
          {"annotation-xml", "color-profile", "font-face", "font-face-src", "font-face-uri",
           "font-face-format", "font-face-name", "missing-glyph"}) {
         if (name == reserved) { return false; }
     }
     return true;
-}
-
-// The text a reported exception carries. `name` and `message` are read as
-// data rather than through `toString`, which a page's own thrown object may
-// have made throw - see events/dispatch.cpp's twin.
-[[nodiscard]] std::string describe(context & cx, value thrown) {
-    if (!thrown.is_object()) { return cx.to_string(thrown); }
-    const value name = cx.lookup_property(thrown, "name");
-    const value message = cx.lookup_property(thrown, "message");
-    if (name.is_undefined() && message.is_undefined()) { return "an exception"; }
-    std::string text = name.is_undefined() ? std::string{"Error"} : cx.to_string(name);
-    const std::string body = message.is_undefined() ? std::string{} : cx.to_string(message);
-    if (!body.empty()) { text += ": " + body; }
-    return text;
 }
 
 // WebIDL `sequence<DOMString>` from an iterable: every conversion step can
@@ -519,16 +476,10 @@ value dom_bindings::construct_html_element(context & c, value self,
     // whether or not somebody defined the interface itself as an element.
     if (!is_element) {
         const value own = c.lookup_property(c.global(std::string{interface_name}), "prototype");
-        if (own.bits() == c.get_prototype(self).bits()) {
-            c.throw_error("TypeError", "Illegal constructor");
-            return value::undefined();
-        }
+        if (own.bits() == c.get_prototype(self).bits()) { return illegal_constructor(c, {}); }
     }
     const std::size_t index = custom_definition_of(c, self);
-    if (index == npos) {
-        c.throw_error("TypeError", "Illegal constructor");
-        return value::undefined();
-    }
+    if (index == npos) { return illegal_constructor(c, {}); }
     custom_element_definition & def = primary().custom_definitions_[index];
     // Steps 5-6: an autonomous definition constructs through HTMLElement and
     // nothing else; a customized built-in through the interface its `extends`
@@ -652,7 +603,8 @@ void dom_bindings::report_custom_element_exception(context & cx, value thrown,
                                                    std::string_view where, value callback) {
     const context::rooted keep{cx, thrown};
     dom_bindings & global = global_of(callback, primary());
-    const std::string fault = std::string{where} + ": uncaught " + describe(cx, thrown);
+    const std::string fault =
+        std::string{where} + ": uncaught " + detail::describe_thrown(cx, thrown);
     const bool handled = global.dispatch_error_value(fault, thrown);
     if (!handled && callback_error_.empty()) { callback_error_ = fault; }
 }
