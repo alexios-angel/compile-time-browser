@@ -65,8 +65,20 @@ void browser::run_scripts() {
             // HTML's focus fixup rule: a focused element that left the
             // document is focused no more, and the next `focus()` on it is a
             // real one - moveBefore/fire-focusin-focusout.html re-focuses a
-            // button its cleanup re-appended. Silently, as the rule says.
-            if (focused_ && (!bindings_->is_connected(focused_) || focus_was_moved())) {
+            // button its cleanup re-appended. Silently, as the rule says. So
+            // is a control that became ACTUALLY DISABLED, which is no longer a
+            // focusable area (6.6.2) - its own `disabled`, or a fieldset's
+            // around it (fieldset/disabled-003.html).
+            const auto disabled_control = [this](node_id id) {
+                const auto txn = doc_->read();
+                const std::string_view local = txn.local_name(id);
+                return txn.element_ns(id) == node_ns::html &&
+                       (local == "button" || local == "input" || local == "select" ||
+                        local == "textarea") &&
+                       form_store::is_actually_disabled(txn, atoms_, id);
+            };
+            if (focused_ && (!bindings_->is_connected(focused_) || focus_was_moved() ||
+                             disabled_control(focused_))) {
                 (void)set_state(focused_, state_focus, false);
                 focused_ = node_id{};
                 bindings_->observe_focus(focused_);
