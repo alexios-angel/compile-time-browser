@@ -95,6 +95,64 @@ void test_tab_walks_the_flattened_scopes() {
     CHECK_EQ(active(page), std::string{"active=after"});
 }
 
+// shadow-dom/focus/focus-tabindex-order-shadow-varying-tabindex-2/3.html: a
+// focus inside a scope that is out of the order - under a host with
+// tabindex=-1 - goes on through the rest of that scope, then past its owner.
+void test_tab_goes_on_from_a_scope_out_of_the_order() {
+    browser page{browser_options{400, 300}};
+    page.load_html(R"(<!doctype html><body><div id=outer tabindex=-1></div><input id=after>
+        <script>
+        const root = outer.attachShadow({mode: 'open'});
+        root.innerHTML = '<div id=a></div><div id=b tabindex=-1></div><div id=c></div>';
+        for (const id of ['a', 'b', 'c'])
+            root.querySelector('#' + id).attachShadow({mode: 'open'}).innerHTML =
+                '<input id=' + id + 'in>';
+        </script></body>)");
+    page.frame();
+    (void)page.run_script("outer.shadowRoot.querySelector('#b').shadowRoot.firstChild.focus();");
+    CHECK_EQ(active(page), std::string{"active=bin"});
+    tab(page);
+    CHECK_EQ(active(page), std::string{"active=cin"});
+    tab(page);
+    CHECK_EQ(active(page), std::string{"active=after"});
+}
+
+// shadow-dom/focus-navigation/focus-with-negative-index.html: from an
+// element out of the order, Tab and Shift+Tab go to its neighbours in TREE
+// order that are in it - not to where a tabindex of zero would put it.
+void test_tab_from_out_of_the_order_goes_by_tree_order() {
+    browser page{browser_options{400, 300}};
+    page.load_html("<!doctype html><body><div id=p tabindex=2>p</div><div id=x tabindex=-1>x</div>"
+                   "<div id=n tabindex=1>n</div><input id=z></body>");
+    page.frame();
+    (void)page.run_script("x.focus();");
+    tab(page);
+    CHECK_EQ(active(page), std::string{"active=n"});
+    (void)page.run_script("x.focus();");
+    tab(page, true);
+    CHECK_EQ(active(page), std::string{"active=p"});
+}
+
+// shadow-dom/focus-navigation/focus-navigation-slot-fallback.html: a slot
+// nothing is assigned to owns its fallback content as a scope - ordered in
+// there, and placed where the slot is.
+void test_a_slot_owns_its_fallback() {
+    browser page{browser_options{400, 300}};
+    page.load_html(R"(<!doctype html><body><div id=host></div>
+        <script>
+        host.attachShadow({mode: 'open'}).innerHTML =
+            '<input id=j1 tabindex=1><slot><input id=k0><input id=k1 tabindex=1></slot>' +
+            '<input id=j2 tabindex=2>';
+        </script></body>)");
+    page.frame();
+    std::string walked;
+    for (int i = 0; i < 4; ++i) {
+        tab(page);
+        walked += active(page).substr(7) + ' ';
+    }
+    CHECK_EQ(walked, std::string{"j1 j2 k1 k0 "});
+}
+
 // shadow-dom/focus/focus-method-delegatesFocus.html: a host that delegates
 // focus is no focusable area itself; focus() hands focus to the first one in
 // its shadow tree, and leaves a focus already inside the tree where it is.
@@ -221,6 +279,9 @@ void test_a_scroller_takes_focus() {
 int main() {
     test_only_a_focusable_area_takes_focus();
     test_tab_walks_the_flattened_scopes();
+    test_tab_goes_on_from_a_scope_out_of_the_order();
+    test_tab_from_out_of_the_order_goes_by_tree_order();
+    test_a_slot_owns_its_fallback();
     test_a_delegating_host_hands_focus_on();
     test_focus_matches_the_element_alone();
     test_a_radio_group_is_one_stop();

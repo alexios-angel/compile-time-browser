@@ -646,7 +646,8 @@ private:
     [[nodiscard]] node_id focus_delegate(const read_txn & txn, node_id target, bool click);
     [[nodiscard]] node_id flat_parent(const read_txn & txn, node_id at);
     [[nodiscard]] node_id click_focus_target(node_id from);
-    [[nodiscard]] std::vector<node_id> sequential_order(const read_txn & txn, node_id also);
+    [[nodiscard]] std::vector<node_id> sequential_order(const read_txn & txn, node_id also,
+                                                        bool backwards);
     [[nodiscard]] bool sequentially_reachable(const read_txn & txn, node_id candidate,
                                               node_id from);
 

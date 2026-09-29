@@ -421,9 +421,14 @@ bool browser::holds_focusable(const read_txn & txn, node_id at) {
 // it owns. Flattening puts each owner's list after it, or in its place when
 // the owner cannot take focus itself - a host that delegates focus, a slot.
 //
-// `also` is placed as if its tabindex were zero when it is not in the order
-// itself - a focused tabindex -1 element is where a search starts.
-std::vector<node_id> browser::sequential_order(const read_txn & txn, node_id also) {
+// `also`, where a search starts, is placed by TREE order when it is not in
+// the order itself - a focused tabindex -1 element - and so is every owner
+// around it whose scope is out of the order: before the next element of its
+// scope that is in the order, or going `backwards` after the one before it.
+// Every engine does this and the order the spec gives cannot say where such
+// a start is (focus-with-negative-index: "after focusing negative
+// tabindex-ed elements, focus moves in tree order").
+std::vector<node_id> browser::sequential_order(const read_txn & txn, node_id also, bool backwards) {
     struct item {
         node_id id;
         long long rank; // a positive tabindex, or the largest there is for zero
@@ -433,12 +438,19 @@ std::vector<node_id> browser::sequential_order(const read_txn & txn, node_id als
     const auto is_slot = [&](node_id id) {
         return txn.element_ns(id) == node_ns::html && txn.local_name(id) == "slot";
     };
+    const auto inside = [&](node_id id, node_id owner) {
+        for (node_id up = flat_parent(txn, id); up; up = flat_parent(txn, up)) {
+            if (up == owner) { return true; }
+        }
+        return false;
+    };
     // The elements a scope owner owns, found down from `roots`: never into a
-    // host's own children, which its slots own, and never into a slot's
-    // fallback when something is assigned to it, since then that is not
-    // rendered.
+    // host's own children, which its slots own, nor into a slot, which owns
+    // what is assigned to it or else its fallback content.
     const auto scope = [&](std::span<const node_id> roots) {
         std::vector<item> out;
+        std::optional<item> start;
+        std::size_t start_at = 0; // how many of `out` precede it in tree order
         const auto walk = [&](auto && self, node_id at) -> void {
             if (txn.kind(at).value_or(node_kind::text) != node_kind::element) { return; }
             const bool host = static_cast<bool>(doc_->shadow_root_of(at));
@@ -457,16 +469,30 @@ std::vector<node_id> browser::sequential_order(const read_txn & txn, node_id als
             };
             if ((host || slot || focusable) && tabindex >= 0) {
                 out.push_back(item{at, rank(tabindex), host || slot, focusable});
+            } else if ((host || slot) && also && inside(also, at)) {
+                // A scope out of the order is still walked when the search
+                // starts inside it, so Tab goes on to the rest of that scope
+                // (focus-tabindex-order-shadow-varying-tabindex-2, -3).
+                start = item{at, 0, true, false};
+                start_at = out.size();
             } else if (at == also) {
-                // The start of a search, not a stop of its own: where a
-                // tabindex of zero would put it.
-                out.push_back(item{at, rank(0), false, true});
+                start = item{at, 0, false, true}; // a start, not a stop of its own
+                start_at = out.size();
             }
-            if (host || (slot && !bindings_->assigned_nodes_of(at).empty())) { return; }
+            if (host || slot) { return; }
             for (const node_id child : txn.children(at)) { self(self, child); }
         };
         for (const node_id root : roots) { walk(walk, root); }
+        const node_id after = start_at < out.size() ? out[start_at].id : node_id{};
+        const node_id before = start_at > 0 ? out[start_at - 1].id : node_id{};
         std::ranges::stable_sort(out, {}, &item::rank);
+        if (start) {
+            auto where = backwards ? out.begin() : out.end();
+            if (const node_id next = backwards ? before : after) {
+                where = std::ranges::find(out, next, &item::id) + (backwards ? 1 : 0);
+            }
+            out.insert(where, *start);
+        }
         return out;
     };
     std::vector<node_id> order;
@@ -477,6 +503,10 @@ std::vector<node_id> browser::sequential_order(const read_txn & txn, node_id als
             std::vector<node_id> roots;
             if (is_slot(one.id)) {
                 roots = bindings_->assigned_nodes_of(one.id);
+                if (roots.empty()) {
+                    const std::span<const node_id> fallback = txn.children(one.id);
+                    roots.assign(fallback.begin(), fallback.end());
+                }
             } else {
                 const std::span<const node_id> kids = txn.children(doc_->shadow_root_of(one.id));
                 roots.assign(kids.begin(), kids.end());
@@ -529,7 +559,7 @@ bool browser::focus_next(bool backwards) {
     {
         const auto txn = doc_->read();
         const node_id from = focused_ && txn.contains(focused_) ? focused_ : node_id{};
-        const std::vector<node_id> order = sequential_order(txn, from);
+        const std::vector<node_id> order = sequential_order(txn, from, backwards);
         if (order.empty()) { return false; }
         const std::size_t count = order.size();
         const auto at = std::ranges::find(order, from);
