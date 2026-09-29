@@ -26,10 +26,11 @@
 // works in the bindings of the document the selection carries in its
 // `__document` slot.
 //
+// THE USER'S SELECTION IS THIS ONE: a press on text collapses it and a drag
+// extends it, through these same methods (events/input.cpp, select_by_user).
+//
 // ponytail: no `selectstart` event, no selectionchange for a boundary a Range
-// method or a tree edit moves, no `modify()` and no user selection. Nothing here is driven by a
-// click; the engine's own visual selection lives in shell/browser/selection.cpp and the two are not
-// yet one selection.
+// method or a tree edit moves, and no `modify()`.
 
 #include <ctbrowser/shell/bindings.hpp>
 
@@ -113,10 +114,15 @@ constexpr std::string_view window_selection_key = CTBROWSER_SYMBOL_KEY("sym:ctbr
     return range;
 }
 
-void store_range(context & c, value range, bool backwards) {
+// DIRECTIONLESS is the third direction (the Definition): what a selection is
+// that nobody made by indicating one point and then another - a click, and
+// the collapse() a click comes to - kept as an undefined `__backwards`, so
+// the anchor is the start as it is for a forwards one.
+void store_range(context & c, value range, bool backwards, bool directionless = false) {
     if (script::object_object * self = self_object(c)) {
         self->set(std::string{range_slot}, range);
-        self->set(std::string{backwards_slot}, value::boolean(backwards));
+        self->set(std::string{backwards_slot},
+                  directionless ? value::undefined() : value::boolean(backwards));
         const bool has = range.is_object();
         const auto end = [&](const char * name) {
             return has ? c.lookup_property(range, name) : value::undefined();
@@ -193,7 +199,11 @@ void dom_bindings::install_selection(context & cx) {
     });
     define_getter(cx, *proto, "direction", [](context & c, std::span<value>) {
         const value range = range_of(c);
-        if (!range.is_object()) { return c.string("none"); }
+        script::object_object * self = self_object(c);
+        if (!range.is_object() || self == nullptr ||
+            held_slot(self, backwards_slot).is_undefined()) {
+            return c.string("none");
+        }
         return c.string(is_backwards(c) ? "backward" : "forward");
     });
 
@@ -288,12 +298,13 @@ void dom_bindings::install_selection(context & cx) {
         (void)call_on(c, element, "focus", {});
     };
 
-    const auto store = [this, home, focus_editing_host](context & c, value range, bool backwards) {
+    const auto store = [this, home, focus_editing_host](context & c, value range, bool backwards,
+                                                        bool directionless = false) {
         script::object_object * self = self_object(c);
         if (self == nullptr) { return; }
         dom_bindings * at = &home(c);
         const value before = held_slot(self, range_slot);
-        store_range(c, range, backwards);
+        store_range(c, range, backwards, directionless);
         if (range.is_object()) { focus_editing_host(c, *at, range, backwards); }
         if (!before.is_object() && !range.is_object()) { return; }
         if (context::truthy(held_slot(self, scheduled_slot))) { return; }
@@ -500,7 +511,7 @@ void dom_bindings::install_selection(context & cx) {
             // node kind and the offset before it asks where the node is.
             const value made = range_at(c, node, value::number(arg_number(a, 1)));
             if (c.throw_pending() || !rooted_here(home(c), node)) { return value::undefined(); }
-            if (made.is_object()) { store(c, made, false); }
+            if (made.is_object()) { store(c, made, false, true); }
             return value::undefined();
         });
     }
@@ -516,7 +527,7 @@ void dom_bindings::install_selection(context & cx) {
                    const value made = call_on(c, range, "cloneRange", {});
                    if (!made.is_object()) { return value::undefined(); }
                    (void)call_on(c, made, "collapse", {value::boolean(to_start)});
-                   store(c, made, false);
+                   store(c, made, false, true);
                    return value::undefined();
                });
     }

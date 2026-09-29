@@ -459,16 +459,38 @@ bool dom_bindings::dispatch_input(std::string_view type, node_id target,
 // click leaves a DIRECTIONLESS collapsed selection, which is why the collapsed
 // case is `collapse` rather than a setBaseAndExtent to the same point.
 //
-// The positions arrive as UTF-8 byte offsets into a text node, as the painted
-// selection keeps them, and leave as the DOM's UTF-16 offsets.
+// The positions arrive as UTF-8 byte offsets into a text node's BOX, as the
+// painted selection keeps them, and leave as the DOM's UTF-16 offsets into the
+// node's own text. The box folded each whitespace run to one space unless it
+// preserves whitespace (box_builder::collapse_whitespace), so the node's text
+// is walked the same way first - "\n  Hello" shows as " Hello", and the H at
+// byte 1 of the box is at offset 3 of the node - and a position just past a
+// folded space lands past the whole run.
 void dom_bindings::select_by_user(node_id anchor, std::size_t anchor_byte, node_id focus,
                                   std::size_t focus_byte) {
     if (cx_ == nullptr || doc_ == nullptr || !anchor || !focus) { return; }
     context & cx = *cx_;
     const auto in_realm = enter_realm(cx);
     const auto utf16 = [&](node_id id, std::size_t byte) {
+        const located shown = locate(id);
+        const bool folded =
+            shown.f != nullptr && shown.f->box != nullptr && !shown.f->box->preformatted;
         const auto txn = doc_->read();
         const std::string_view text = txn.text(id);
+        if (folded) {
+            const auto is_space = [](char c) {
+                return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f';
+            };
+            std::size_t raw = 0;
+            bool in_run = false;
+            for (std::size_t kept = 0; raw < text.size() && kept < byte; ++raw) {
+                const bool space = is_space(text[raw]);
+                if (!space || !in_run) { ++kept; }
+                in_run = space;
+            }
+            while (in_run && raw < text.size() && is_space(text[raw])) { ++raw; }
+            byte = raw;
+        }
         double units = 0;
         for (std::size_t i = 0; i < std::min(byte, text.size()); ++i) {
             const auto b = static_cast<unsigned char>(text[i]);
@@ -476,11 +498,13 @@ void dom_bindings::select_by_user(node_id anchor, std::size_t anchor_byte, node_
         }
         return units;
     };
-    script::object_object * window = window_object();
-    if (window == nullptr) { return; }
-    const value get = cx.lookup_property(value::object(window), "getSelection");
+    // The DOCUMENT's getSelection, as place_caret_on_focus reaches it. The
+    // window object does not hold the global one - that is the realm's
+    // binding, which only the window view reads through to - so asking the
+    // window found nothing and no press ever reached the page's Selection.
+    const value get = cx.lookup_property(document_, "getSelection");
     if (!get.is_callable()) { return; }
-    const value selection = cx.call(get, std::span<const value>{}, value::object(window));
+    const value selection = cx.call(get, std::span<const value>{}, document_);
     const context::rooted keep_selection{cx, selection};
     const bool collapsed = anchor == focus && anchor_byte == focus_byte;
     const value method =

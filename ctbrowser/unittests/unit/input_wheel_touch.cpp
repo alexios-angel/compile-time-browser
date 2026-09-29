@@ -169,6 +169,22 @@ void test_a_drag_selects_in_the_page_selection() {
     CHECK_EQ(logged(page, "dragged="), std::string{"dragged=true,true,forward"});
 }
 
+// The painted selection counts the box's text, where "Hello\n     world" shows
+// as "Hello world"; the page's Selection counts the node's own. A press past
+// the d is offset 16 of the node, not 11.
+void test_a_press_counts_the_node_text_not_the_folded_box() {
+    browser page{browser_options{400, 300}};
+    page.load_html("<!doctype html><body style='margin:0'>"
+                   "<p id=p style='margin:0'>Hello\n     world</p>");
+    page.frame();
+    (void)page.handle(input_event::mouse_move_to(390, 8));
+    (void)page.handle(input_event::mouse_down_at(390, 8));
+    (void)page.handle(input_event::mouse_up_at(390, 8));
+    (void)page.run_script("console.log('end=' + getSelection().anchorOffset + ',' + "
+                          "p.firstChild.length);");
+    CHECK_EQ(logged(page, "end="), std::string{"end=16,16"});
+}
+
 // scrollend-event-fired-after-sequence-of-scrolls.tentative.html: a drag that
 // pans cancels the finger's pointer once, and its scrolls end in ONE
 // scrollend, after the lift.
@@ -194,6 +210,7 @@ void test_a_panning_drag_cancels_its_pointer_and_ends_once() {
 int main() {
     test_a_panning_drag_cancels_its_pointer_and_ends_once();
     test_a_drag_selects_in_the_page_selection();
+    test_a_press_counts_the_node_text_not_the_folded_box();
     test_wheel_cancelability_and_mousewheel();
     test_wheel_scrolls_the_container_and_scrollend_follows();
     test_a_touch_is_pointer_then_touch_events();
