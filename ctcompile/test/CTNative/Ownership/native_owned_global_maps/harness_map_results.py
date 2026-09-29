@@ -11,70 +11,17 @@ import subprocess
 
 from CTNative.harness import inline_runtime, run_sanitized
 
-from .sources import (
-    methods,
-    owned,
-    boundary,
-    host,
-    parameter_sources,
-    seeded_result_sources,
-    key_fact_sources,
-    joined_result_sources,
-    size_result_sources,
-    payload_result_sources,
-    STRING_RESULT,
-    RESULT_SIGNATURES,
-    mixed_result_sources,
-    MIXED_RESULT_TYPES,
-    saved_read_sources,
-    saved_join_sources,
-    OTHER_STRING_RESULT,
-    guarded_saved_sources,
-    shortcircuit_sources,
-    nullable_result_sources,
-    nullable_key_sources,
-    NULLABLE_OBSERVATIONS,
-    nullable_payload_sources,
-    NULLABLE_PAYLOAD_READBACKS,
-    nullable_host_result_sources,
-    nullable_nested_result_sources,
-    leaf_object_sources,
-    LEAF_OBJECT_FIELDS,
-    leaf_readback_sources,
-    LEAF_COMPARISON_CASES,
-    leaf_absence_sources,
-    leaf_absence_cases,
-    primitive_absence_sources,
-    leaf_clear_sources,
-    leaf_clear_cases,
-    numeric_entry_sources,
-    numeric_entry_cases,
-    scalar_global_cases,
-    scalar_global_sources,
-    scalar_global_output,
-    scalar_global_values,
-    NUMERIC_ENTRY_SAVED_GLOBALS,
-    constant_global_cases,
-    constant_global_sources,
-    normalized_scalar_output,
-    STRING_GLOBAL_LONG,
-    StringValue,
-    string_field_cases,
-    string_field_sources,
-    STRING_FIELD_BYTES,
-    STRING_FIELD_LONG,
-    zero_size_cases,
-    zero_size_sources,
-    one_size_cases,
-    one_size_sources,
-    delete_size_cases,
-    delete_size_sources,
-    join_size_cases,
-    join_size_sources,
-    mutation_size_cases,
-    mutation_size_sources,
-    object_argument_cases,
-)
+from .sources import *
+
+
+def comparable_provenance(cpp, input_ir):
+    # Reparsed forged input has a different filename but the same source
+    # locations. Keep every line/column, other comment byte and emitted token.
+    filename = re.compile(r"(?<!\S)" + re.escape(str(input_ir)) + r"(?=:\d+:\d+(?:\D|$))")
+    return "".join(
+        filename.sub("<input>", line) if line.startswith("// ctcompile:") else line
+        for line in cpp.splitlines(keepends=True)
+    )
 
 
 def instrument_maps(cpp, *, declarations=""):

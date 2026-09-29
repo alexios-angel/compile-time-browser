@@ -1,11 +1,4 @@
-from .sources_nullable_maps import (
-    RESULT_SIGNATURES,
-)
-from .sources_scalar_maps import (
-    hashlib,
-    payload_result_refusals,
-    re,
-)
+from .sources_nullable_maps import *
 
 LEAF_OBJECT_SOURCE = """var host = {};
 (function(factory) { host.slot = factory(); })(function() {
