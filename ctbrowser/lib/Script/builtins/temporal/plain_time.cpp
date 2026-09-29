@@ -41,21 +41,12 @@ value add_duration(context & cx, bool subtract, const tc::time_record & time, va
 value time_round(context & cx, std::span<value> a) {
     const auto time = this_time(cx, "Temporal.PlainTime.prototype.round");
     if (!time) { return value::undefined(); }
-    value round_to;
     std::int64_t increment = 1;
     tc::rounding_mode mode = tc::rounding_mode::half_expand;
     unit_value smallest;
-    if (!options_or_string(cx, arg_at(a, 0), "smallestUnit", round_to) ||
-        !get_rounding_increment_option(cx, round_to, increment) ||
-        !get_rounding_mode_option(cx, round_to, tc::rounding_mode::half_expand, mode) ||
-        !get_unit_option(cx, round_to, "smallestUnit", smallest)) {
+    if (!get_round_options(cx, arg_at(a, 0), increment, mode, smallest)) {
         return value::undefined();
     }
-    if (!smallest.present) {
-        (void)range_error(cx, "smallestUnit is required");
-        return value::undefined();
-    }
-    if (!validate_unit_value(cx, smallest, unit_group::time)) { return value::undefined(); }
     if (!tc::valid_rounding_increment(increment, tc::maximum_rounding_increment(smallest.u),
                                       false)) {
         (void)range_error(cx, "invalid roundingIncrement");

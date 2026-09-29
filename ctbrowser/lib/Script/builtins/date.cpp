@@ -29,42 +29,12 @@ namespace ctbrowser::script::builtins_detail {
 namespace {
 
 constexpr double ms_per_day = 86400000.0;
-[[nodiscard]] constexpr bool is_digit(char c) noexcept {
-    return c >= '0' && c <= '9';
-}
-[[nodiscard]] constexpr bool is_alpha(char c) noexcept {
-    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
-}
 constexpr std::string_view invalid_date_slot = "__ms";
 
 // 21.4.1.31 TimeClip.
 [[nodiscard]] double time_clip(double t) {
     if (!std::isfinite(t) || std::fabs(t) > 8.64e15) { return std::nan(""); }
     return std::trunc(t) + 0.0; // -0 becomes +0
-}
-
-// Days since the epoch <-> y/m/d, proleptic Gregorian, on 64-bit integers
-// (Hinnant's algorithms). NOT <chrono>: std::chrono::year stops at +-32767,
-// and a time value reaches year +-273790.
-[[nodiscard]] long long days_from_civil(long long y, int m, int d) {
-    y -= m <= 2;
-    const long long era = (y >= 0 ? y : y - 399) / 400;
-    const long long yoe = y - era * 400;
-    const long long doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
-    const long long doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    return era * 146097 + doe - 719468;
-}
-void civil_from_days(long long z, long long & y, int & m, int & d) {
-    z += 719468;
-    const long long era = (z >= 0 ? z : z - 146096) / 146097;
-    const long long doe = z - era * 146097;
-    const long long yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    y = yoe + era * 400;
-    const long long doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    const long long mp = (5 * doy + 2) / 153;
-    d = static_cast<int>(doy - (153 * mp + 2) / 5 + 1);
-    m = static_cast<int>(mp < 10 ? mp + 3 : mp - 9);
-    y += m <= 2;
 }
 
 // 21.4.1.28 MakeDay / 21.4.1.29 MakeTime / 21.4.1.30 MakeDate, on doubles: an
@@ -89,7 +59,7 @@ void civil_from_days(long long z, long long & y, int & m, int & d) {
     // day count is offset; days_from_civil's arithmetic stays in range there.
     if (std::fabs(ym) > 1099511627776.0) { return std::nan(""); }
     const double days =
-        static_cast<double>(days_from_civil(static_cast<long long>(ym), mn + 1, 1)) +
+        static_cast<double>(days_from_civil(static_cast<std::int64_t>(ym), mn + 1, 1)) +
         std::trunc(day) - 1.0;
     if (!std::isfinite(days)) { return std::nan(""); }
     const double tv = days * ms_per_day + time;
@@ -103,12 +73,10 @@ struct fields {
     fields out{};
     const double days = std::floor(t / ms_per_day);
     const double rest = t - days * ms_per_day;
-    long long y = 0;
-    int m = 0, d = 0;
-    civil_from_days(static_cast<long long>(days), y, m, d);
-    out.year = static_cast<double>(y);
-    out.month = m - 1;
-    out.day = d;
+    const civil_date civil = civil_from_days(static_cast<std::int64_t>(days));
+    out.year = static_cast<double>(civil.year);
+    out.month = civil.month - 1;
+    out.day = civil.day;
     out.hour = std::floor(rest / 3600000.0);
     out.minute = std::fmod(std::floor(rest / 60000.0), 60.0);
     out.second = std::fmod(std::floor(rest / 1000.0), 60.0);
@@ -167,7 +135,7 @@ constexpr const char * month_names[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun"
         if (i + n > s.size()) { return false; }
         double v = 0;
         for (std::size_t k = 0; k < n; ++k) {
-            if (!is_digit(s[i + k])) { return false; }
+            if (!is_ascii_digit(s[i + k])) { return false; }
             v = v * 10 + (s[i + k] - '0');
         }
         i += n;
@@ -208,7 +176,7 @@ constexpr const char * month_names[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun"
                 if (eat('.')) {
                     std::size_t n = 0;
                     double frac = 0;
-                    while (i < s.size() && is_digit(s[i])) {
+                    while (i < s.size() && is_ascii_digit(s[i])) {
                         if (n < 3) { frac = frac * 10 + (s[i] - '0'); }
                         ++n;
                         ++i;
@@ -237,13 +205,13 @@ constexpr const char * month_names[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun"
     // "Fri Feb 13 2009 23:31:30 GMT+0000 (...)" and "Fri, 13 Feb 2009 23:31:30 GMT".
     const auto word = [&] {
         std::string w;
-        while (i < s.size() && is_alpha(s[i])) { w += s[i++]; }
+        while (i < s.size() && is_ascii_alpha(s[i])) { w += s[i++]; }
         return w;
     };
     const auto number = [&](double & out) {
         double v = 0;
         std::size_t n = 0;
-        while (i < s.size() && is_digit(s[i])) {
+        while (i < s.size() && is_ascii_digit(s[i])) {
             v = v * 10 + (s[i++] - '0');
             ++n;
         }
@@ -263,7 +231,7 @@ constexpr const char * month_names[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun"
     (void)eat(',');
     spaces();
     int mon = -1;
-    if (i < s.size() && is_digit(s[i])) {
+    if (i < s.size() && is_ascii_digit(s[i])) {
         // "13 Feb 2009"
         if (!number(day)) { return std::nan(""); }
         spaces();
@@ -278,7 +246,7 @@ constexpr const char * month_names[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun"
     spaces();
     if (mon < 0 || !number(year)) { return std::nan(""); }
     spaces();
-    if (i < s.size() && is_digit(s[i])) {
+    if (i < s.size() && is_ascii_digit(s[i])) {
         if (!number(hour) || !eat(':') || !number(minute)) { return std::nan(""); }
         if (eat(':') && !number(second)) { return std::nan(""); }
         spaces();

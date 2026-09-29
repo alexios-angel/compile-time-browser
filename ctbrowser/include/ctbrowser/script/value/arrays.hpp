@@ -351,24 +351,32 @@ struct array_object final : heap_object {
 // ENDIAN - which is what every platform this engine targets uses and what a
 // page assembling a colour out of four bytes assumes. Assembling through a
 // uint64 rather than memcpy keeps it independent of the host's own order, so
-// the goldens stay byte-identical wherever they are produced.
-[[nodiscard]] inline std::uint64_t view_raw(const array_object & view, std::size_t i,
-                                            std::size_t width) noexcept {
-    const auto * bytes = static_cast<const array_object *>(view.viewed.as_heap());
-    const std::size_t at = view.byte_offset + i * width;
+// the goldens stay byte-identical wherever they are produced. A DataView picks
+// its byte order per call, so the store's own reads take `little`; a byte past
+// the store reads 0 and is not written.
+[[nodiscard]] inline std::uint64_t store_raw(const array_object & bytes, std::size_t at,
+                                             std::size_t width, bool little = true) noexcept {
     std::uint64_t raw = 0;
     for (std::size_t b = 0; b < width; ++b) {
-        if (at + b >= bytes->items.size()) { break; }
-        const double each = bytes->items[at + b].is_number() ? bytes->items[at + b].as_number() : 0;
+        const std::size_t i = little ? at + b : at + width - 1 - b;
+        if (i >= bytes.items.size()) { continue; }
+        const double each = bytes.items[i].is_number() ? bytes.items[i].as_number() : 0;
         raw |= static_cast<std::uint64_t>(static_cast<std::uint8_t>(each)) << (8 * b);
     }
     return raw;
 }
+inline void store_set_raw(array_object & bytes, std::size_t at, std::size_t width,
+                          std::uint64_t raw, bool little = true) noexcept {
+    for (std::size_t b = 0; b < width; ++b) {
+        const std::size_t i = little ? at + b : at + width - 1 - b;
+        if (i >= bytes.items.size()) { continue; }
+        bytes.items[i] = value::number(static_cast<double>((raw >> (8 * b)) & 0xFF));
+    }
+}
 
-[[nodiscard]] inline double view_get(const array_object & view, std::size_t i) noexcept {
-    const std::size_t width = bytes_per_element(view.elements);
-    const std::uint64_t raw = view_raw(view, i, width);
-    switch (view.elements) {
+// A Number kind's element from its bytes, and its bytes from a number.
+[[nodiscard]] inline double element_from_raw(element_kind kind, std::uint64_t raw) noexcept {
+    switch (kind) {
     // THE NaN BOUNDARY - see canonical_nan_bits. A payload read out of a typed
     // array must not reach a register, because arithmetic quiets bit 51 and a
     // payload with bit 50 set then IS a boxed tag.
@@ -387,38 +395,38 @@ struct array_object final : heap_object {
     default: return static_cast<double>(raw);
     }
 }
+[[nodiscard]] inline std::uint64_t element_to_raw(element_kind kind, double v) noexcept {
+    switch (kind) {
+    case element_kind::f16: return double_to_half(v);
+    case element_kind::f32: return std::bit_cast<std::uint32_t>(static_cast<float>(v));
+    case element_kind::f64: return std::bit_cast<std::uint64_t>(v);
+    default:
+        // THE SAME COERCION AN OWNING TYPED ARRAY DOES - wrap for the integer
+        // kinds, clamp for u8_clamped - so a view and a plain typed array agree
+        // about what `a[i] = 300` means.
+        return static_cast<std::uint64_t>(static_cast<std::int64_t>(coerce_element(kind, v)));
+    }
+}
 
 // The element's bytes as one little-endian word, and the write of one: what
 // a BigInt kind reads and stores (the boxing to a bigint is the caller's,
 // through bigint.hpp), and what every Number kind goes through below.
 [[nodiscard]] inline std::uint64_t view_get_raw(const array_object & view, std::size_t i) noexcept {
-    return view_raw(view, i, bytes_per_element(view.elements));
+    const std::size_t width = bytes_per_element(view.elements);
+    return store_raw(*static_cast<const array_object *>(view.viewed.as_heap()),
+                     view.byte_offset + i * width, width);
 }
 inline void view_set_raw(array_object & view, std::size_t i, std::uint64_t raw) noexcept {
-    auto * bytes = static_cast<array_object *>(view.viewed.as_heap());
     const std::size_t width = bytes_per_element(view.elements);
-    const std::size_t at = view.byte_offset + i * width;
-    for (std::size_t b = 0; b < width; ++b) {
-        if (at + b >= bytes->items.size()) { break; }
-        bytes->items[at + b] = value::number(static_cast<double>((raw >> (8 * b)) & 0xFF));
-    }
+    store_set_raw(*static_cast<array_object *>(view.viewed.as_heap()), view.byte_offset + i * width,
+                  width, raw);
 }
 
+[[nodiscard]] inline double view_get(const array_object & view, std::size_t i) noexcept {
+    return element_from_raw(view.elements, view_get_raw(view, i));
+}
 inline void view_set(array_object & view, std::size_t i, double v) noexcept {
-    std::uint64_t raw = 0;
-    switch (view.elements) {
-    case element_kind::f16: raw = double_to_half(v); break;
-    case element_kind::f32: raw = std::bit_cast<std::uint32_t>(static_cast<float>(v)); break;
-    case element_kind::f64: raw = std::bit_cast<std::uint64_t>(v); break;
-    default:
-        // THE SAME COERCION AN OWNING TYPED ARRAY DOES - wrap for the integer
-        // kinds, clamp for u8_clamped - so a view and a plain typed array agree
-        // about what `a[i] = 300` means.
-        raw =
-            static_cast<std::uint64_t>(static_cast<std::int64_t>(coerce_element(view.elements, v)));
-        break;
-    }
-    view_set_raw(view, i, raw);
+    view_set_raw(view, i, element_to_raw(view.elements, v));
 }
 
 // ONE TYPED ELEMENT AS A `value`, either storage shape, any kind: the number,

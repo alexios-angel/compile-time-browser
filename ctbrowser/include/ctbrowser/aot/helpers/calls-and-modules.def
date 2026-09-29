@@ -483,7 +483,7 @@ CT_AOT_COVERS(/* helper */ ct_aot_module_import_cell, /* opcode */ load_import)
  * current_module_, which is private and has no accessor - but that is an
  * implementation detail of ctbrowser's own DEFINE expansion, not an ABI
  * question, since the helper is DEFINED in ctbrowser under Principle 11,
- * and `aot_bridge` is a friend of `context` in any case.
+ * and every row is a friend of `context` in any case.
  * DELEGATES TO: context::module_export_cell (vm/call/modules.cpp), which is now
  *   the whole of run_loop.cpp's VM_CASE(bind_export):
  *   current_module_->exports[name], creating a cell_object when absent.

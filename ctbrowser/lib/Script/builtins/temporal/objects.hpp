@@ -273,6 +273,13 @@ enum class date_type : std::uint8_t {
 // with the one property `key` (round("day") is round({ smallestUnit: "day" })),
 // undefined is a TypeError, and anything else is GetOptionsObject's.
 [[nodiscard]] bool options_or_string(context & cx, value arg, std::string_view key, value & out);
+// round(roundTo) on PlainTime, PlainDateTime, ZonedDateTime and Instant: the
+// argument through options_or_string, then roundingIncrement, roundingMode and
+// smallestUnit, read in THAT order because a getter can observe it; then a
+// required smallestUnit, validated as a time unit or one of `extra`.
+[[nodiscard]] bool get_round_options(context & cx, value arg, std::int64_t & increment,
+                                     tc::rounding_mode & mode, unit_value & smallest,
+                                     std::initializer_list<tc::unit> extra = {});
 
 // A string from a C++ string, as a value.
 [[nodiscard]] inline value str(context & cx, std::string s) {

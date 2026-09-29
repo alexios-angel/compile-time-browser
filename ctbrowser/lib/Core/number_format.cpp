@@ -439,15 +439,15 @@ double out_of_range_value(std::string_view text) {
     return 0;
 }
 
-std::string_view trim_js_space(std::string_view text) {
+std::string_view trim_js_space(std::string_view text, bool start, bool end) {
     std::size_t from = 0;
-    while (from < text.size()) {
+    while (start && from < text.size()) {
         const std::size_t w = js_space_width(text, from);
         if (w == 0) { break; }
         from += w;
     }
     std::size_t to = text.size();
-    while (to > from) {
+    while (end && to > from) {
         // A trailing space ends at `to`; its lead byte is 1 to 3 bytes back.
         std::size_t w = 0;
         for (std::size_t width = 1; width <= 3 && width <= to - from; ++width) {

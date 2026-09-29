@@ -50,21 +50,12 @@ value add_duration(context & cx, bool subtract, tc::i128 ns, value like) {
 value instant_round(context & cx, std::span<value> a) {
     const auto ns = this_instant(cx, "Temporal.Instant.prototype.round");
     if (!ns) { return value::undefined(); }
-    value round_to;
     std::int64_t increment = 1;
     tc::rounding_mode mode = tc::rounding_mode::half_expand;
     unit_value smallest;
-    if (!options_or_string(cx, arg_at(a, 0), "smallestUnit", round_to) ||
-        !get_rounding_increment_option(cx, round_to, increment) ||
-        !get_rounding_mode_option(cx, round_to, tc::rounding_mode::half_expand, mode) ||
-        !get_unit_option(cx, round_to, "smallestUnit", smallest)) {
+    if (!get_round_options(cx, arg_at(a, 0), increment, mode, smallest)) {
         return value::undefined();
     }
-    if (!smallest.present) {
-        (void)range_error(cx, "smallestUnit is required");
-        return value::undefined();
-    }
-    if (!validate_unit_value(cx, smallest, unit_group::time)) { return value::undefined(); }
     // The increments that divide a solar day.
     const auto maximum = static_cast<std::int64_t>(tc::ns_per_day / tc::unit_length_ns(smallest.u));
     if (!tc::valid_rounding_increment(increment, maximum, true)) {

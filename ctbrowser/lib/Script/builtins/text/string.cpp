@@ -104,124 +104,8 @@ using text_body = std::function<value(context &, const string_object &, std::spa
 // coercion and cannot run a user `valueOf`, so
 // `"a,b".split(",", {valueOf: () => 1})` read NaN, became 0, and answered [].
 [[nodiscard]] double uint32_arg(context & cx, value v) {
-    const double n = cx.to_number_value(v);
-    if (!std::isfinite(n)) { return 0.0; }
-    return static_cast<double>(static_cast<std::uint32_t>(
-        static_cast<std::int64_t>(std::fmod(std::trunc(n), 4294967296.0))));
+    return static_cast<double>(number_to_uint32(cx.to_number_value(v)));
 }
-
-// --- TrimString's whitespace set, over UTF-8 -------------------------------
-//
-// `trim`, `trimStart` and `trimEnd` were `find_first_not_of(" \t\n\r\f\v")`,
-// the ASCII six. The specification's set (22.1.3.32.1 takes the union of 12.2
-// WhiteSpace and 12.3 LineTerminator) has fourteen more, and every one of them
-// is NON-ASCII - so unlike case folding, which needs tables this engine
-// deliberately does not carry, this one is answerable EXACTLY from the bytes:
-// UTF-8 is self-synchronising, the code points are fixed, and no locale enters
-// into it. 30 test262 files in trim/, trimStart/ and trimEnd/ assert them.
-struct code_point {
-    std::uint32_t value;
-    std::size_t width;
-};
-
-// NOT A CODE POINT, and it cannot be mistaken for one: every use of this
-// decoder asks "is this whitespace", and the answer for a byte that is not part
-// of a well-formed sequence must be NO. A stray 0xA0 is not U+00A0 and an
-// overlong 0xC1 0xA0 is not U+0020 - trimming either would eat a byte the page
-// put there, which is the one thing a trim must never do.
-inline constexpr std::uint32_t not_a_code_point = 0xFFFFFFFFu;
-
-// One code point decoded FORWARD from `at`. A malformed lead, a truncated
-// sequence and an overlong encoding are each ONE BYTE WIDE and not a code
-// point, so a scan can never stall on a stray byte and can never fold one into
-// the character it was pretending to be - a JS string here is bytes and nothing
-// guarantees they are well-formed UTF-8.
-[[nodiscard]] code_point utf8_at(std::string_view s, std::size_t at) {
-    const auto lead = static_cast<std::uint32_t>(static_cast<unsigned char>(s[at]));
-    const std::size_t left = s.size() - at;
-    const auto trail = [&](std::size_t i) {
-        return static_cast<std::uint32_t>(static_cast<unsigned char>(s[at + i]) & 0x3Fu);
-    };
-    const auto continues = [&](std::size_t n) {
-        if (left < n) { return false; }
-        for (std::size_t i = 1; i < n; ++i) {
-            if ((static_cast<unsigned char>(s[at + i]) & 0xC0u) != 0x80u) { return false; }
-        }
-        return true;
-    };
-    const auto checked = [](std::uint32_t cp, std::uint32_t least, std::size_t width) {
-        return cp < least ? code_point{not_a_code_point, 1} : code_point{cp, width};
-    };
-    if (lead < 0x80u) { return {lead, 1}; }
-    if ((lead & 0xE0u) == 0xC0u && continues(2)) {
-        return checked(((lead & 0x1Fu) << 6) | trail(1), 0x80u, 2);
-    }
-    if ((lead & 0xF0u) == 0xE0u && continues(3)) {
-        return checked(((lead & 0x0Fu) << 12) | (trail(1) << 6) | trail(2), 0x800u, 3);
-    }
-    if ((lead & 0xF8u) == 0xF0u && continues(4)) {
-        return checked(((lead & 0x07u) << 18) | (trail(1) << 12) | (trail(2) << 6) | trail(3),
-                       0x10000u, 4);
-    }
-    return {not_a_code_point, 1};
-}
-
-// U+180E IS NOT HERE. It was a space separator in Unicode 6.2 and stopped being
-// one in 6.3, and test262's trim/u180e.js asserts it is left alone - which is
-// the sort of thing a hand-written set gets wrong by copying an old table.
-[[nodiscard]] bool is_js_space(std::uint32_t cp) {
-    switch (cp) {
-    case 0x09:   // TAB
-    case 0x0A:   // LF, a LineTerminator
-    case 0x0B:   // VT
-    case 0x0C:   // FF
-    case 0x0D:   // CR, a LineTerminator
-    case 0x20:   // SP
-    case 0xA0:   // NBSP
-    case 0x1680: // OGHAM SPACE MARK
-    case 0x2028: // LINE SEPARATOR
-    case 0x2029: // PARAGRAPH SEPARATOR
-    case 0x202F: // NARROW NO-BREAK SPACE
-    case 0x205F: // MEDIUM MATHEMATICAL SPACE
-    case 0x3000: // IDEOGRAPHIC SPACE
-    case 0xFEFF: // ZWNBSP
-        return true;
-    default: return cp >= 0x2000 && cp <= 0x200A; // EN QUAD .. HAIR SPACE
-    }
-}
-
-// TrimString, 22.1.3.32.1: the byte range to KEEP. Written as bounds rather
-// than as a copy so all three methods are one algorithm - they were three
-// copies of the same set, which is how `trim` and `trimEnd` came to disagree
-// about an empty result.
-} // namespace
-
-void trim_bounds(std::string_view s, bool from_start, bool from_end, std::size_t & from,
-                 std::size_t & to) {
-    from = 0;
-    to = s.size();
-    if (from_start) {
-        while (from < to) {
-            const code_point cp = utf8_at(s, from);
-            if (!is_js_space(cp.value)) { break; }
-            from += cp.width;
-        }
-    }
-    if (from_end) {
-        while (to > from) {
-            // Back up over continuation bytes to the lead of the last code
-            // point, then require that it ENDS where the range does - a
-            // truncated sequence is not whitespace and must not be eaten.
-            std::size_t at = to - 1;
-            while (at > from && (static_cast<unsigned char>(s[at]) & 0xC0u) == 0x80u) { --at; }
-            const code_point cp = utf8_at(s, at);
-            if (at + cp.width != to || !is_js_space(cp.value)) { break; }
-            to = at;
-        }
-    }
-}
-
-namespace {
 
 // 22.1.3.14 step 2.b and 22.1.3.20 step 2.b: `matchAll` and `replaceAll`
 // REFUSE a RegExp without `g`, because both mean "every match" and a
@@ -877,10 +761,7 @@ void install_string(context & cx) {
         return c.string(unicode_case(s.text, false));
     });
     text("trim", 0, [](context & c, const string_object & s, std::span<value>) -> value {
-        std::size_t from = 0;
-        std::size_t to = 0;
-        trim_bounds(s.text, true, true, from, to);
-        return c.string(s.text.substr(from, to - from));
+        return c.string(std::string{trim_js_space(s.text)});
     });
     // 22.1.3.16. THE COUNT IS ToIntegerOrInfinity AND THEN A RANGE CHECK, not
     // a clamp: `"x".repeat(-1)` and `"".repeat(Infinity)` are each a RangeError
@@ -946,16 +827,10 @@ void install_string(context & cx) {
         return pad(c, s, a, false);
     });
     text("trimStart", 0, [](context & c, const string_object & s, std::span<value>) -> value {
-        std::size_t from = 0;
-        std::size_t to = 0;
-        trim_bounds(s.text, true, false, from, to);
-        return c.string(s.text.substr(from, to - from));
+        return c.string(std::string{trim_js_space(s.text, true, false)});
     });
     text("trimEnd", 0, [](context & c, const string_object & s, std::span<value>) -> value {
-        std::size_t from = 0;
-        std::size_t to = 0;
-        trim_bounds(s.text, false, true, from, to);
-        return c.string(s.text.substr(from, to - from));
+        return c.string(std::string{trim_js_space(s.text, false, true)});
     });
     // Annex B.2.2.15-16: trimLeft and trimRight are not copies, they ARE
     // trimStart and trimEnd - the same function objects, so their `name` reads
