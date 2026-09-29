@@ -321,6 +321,7 @@ private:
     static constexpr std::uint32_t state_hover = ctbrowser::style::engine::state_hover;
     static constexpr std::uint32_t state_active = ctbrowser::style::engine::state_active;
     static constexpr std::uint32_t state_focus = ctbrowser::style::engine::state_focus;
+    static constexpr std::uint32_t state_focus_visible = ctbrowser::style::state_focus_visible;
 
     void mark(dirty d);
 
@@ -617,15 +618,40 @@ private:
 
     [[nodiscard]] bool via_label(node_id from);
 
-    bool focus(node_id id);
+    // HTML 6.6, browser/focus.cpp. `focus` runs the focusing steps for any
+    // target - null is the viewport - and `focus_update` moves focus to a
+    // focusable area it is handed. The origin is what :focus-visible asks.
+    enum class focus_origin : std::uint8_t {
+        script,
+        pointer,
+        keyboard
+    };
+    bool focus(node_id id, focus_origin origin = focus_origin::script);
+    bool focus_update(node_id id, focus_origin origin = focus_origin::script);
+    [[nodiscard]] bool supports_keyboard_input(const read_txn & txn, node_id id);
+    // How the user last MOVED focus - a pointer or the keyboard; `script`
+    // until they have - which is what a script's focus() shows or not.
+    focus_origin last_focus_by_ = focus_origin::script;
     [[nodiscard]] bool focus_was_moved() const;
+    [[nodiscard]] std::optional<long long> tabindex_value(const read_txn & txn, node_id id);
+    [[nodiscard]] bool focusable_by_default(const read_txn & txn, node_id id);
+    [[nodiscard]] bool is_editing_host(const read_txn & txn, node_id id);
+    [[nodiscard]] bool is_scroller(node_id id) const;
+    [[nodiscard]] bool holds_focusable(const read_txn & txn, node_id at);
+    [[nodiscard]] node_id host_of(const read_txn & txn, node_id id) const;
+    [[nodiscard]] bool being_rendered(const read_txn & txn, node_id id) const;
+    [[nodiscard]] bool is_focusable_area(const read_txn & txn, node_id id);
+    [[nodiscard]] node_id focusable_area_for(const read_txn & txn, node_id target, bool click,
+                                             bool & viewport);
+    [[nodiscard]] node_id focus_delegate(const read_txn & txn, node_id target, bool click);
+    [[nodiscard]] node_id flat_parent(const read_txn & txn, node_id at);
+    [[nodiscard]] node_id click_focus_target(node_id from);
+    [[nodiscard]] std::vector<node_id> sequential_order(const read_txn & txn, node_id also);
+    [[nodiscard]] bool sequentially_reachable(const read_txn & txn, node_id candidate,
+                                              node_id from);
 
-    [[nodiscard]] std::vector<node_id> focusable_controls();
-
-    [[nodiscard]] bool is_focusable(const read_txn & txn, node_id id);
-
-    // Sequential focus navigation. Wraps at both ends, so Tab off the last
-    // control returns to the first rather than dropping focus into nothing.
+    // Sequential focus navigation, Tab and Shift+Tab. Wraps at both ends, so
+    // Tab off the last control returns to the first.
     bool focus_next(bool backwards);
 
     struct autoscroll_state {
@@ -745,6 +771,8 @@ private:
     source_kind source_kind_ = source_kind::html;
     std::string xml_error_;
     std::size_t layouts_ = 0;
+    // The layout the focus fixup last looked at (frame.cpp).
+    std::size_t layouts_fixed_up_ = 0;
     double caret_clock_ms_ = 0;
     double caret_base_ms_ = 0;
     std::string location_href_;

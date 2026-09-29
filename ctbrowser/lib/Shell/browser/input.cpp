@@ -184,7 +184,7 @@ bool browser::handle(const input_event & event) {
             const control_kind kind = kind_of(txn, control);
             if (kind == control_kind::text || kind == control_kind::textarea) {
                 clear_selection();
-                (void)focus(control); // before placing the caret: focus clears it
+                (void)focus(control, focus_origin::pointer); // before the caret: focus clears it
                 // A click that reached the field through its LABEL focuses it
                 // and stops there. The pointer is over the label's text, not
                 // over any glyph of the value, so mapping it through
@@ -229,7 +229,9 @@ bool browser::handle(const input_event & event) {
         (void)dispatch_mouse("mouseup", hit_test(event.x, event.y), event);
         // Focus follows the press, and moves even when the click lands on
         // nothing - which is how clicking the page background blurs a field.
-        changed = focus(control_ancestor(pressed_)) || changed;
+        if (!press_cancelled_) {
+            changed = focus(click_focus_target(pressed_), focus_origin::pointer) || changed;
+        }
         // A click fires on RELEASE, at the element the press started on -
         // which is what makes dragging off a button cancel it, the way every
         // real browser behaves. It is a MouseEvent down the same dispatch a

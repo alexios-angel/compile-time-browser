@@ -206,8 +206,21 @@ bool browser::set_state(node_id at, std::uint32_t bit, bool on) {
     if (!at) { return false; }
     const auto txn = doc_->read();
     bool changed = false;
-    for (node_id n = at; n; n = txn.parent(n)) {
+    // :hover and :active hold for the element and its ancestors; :focus for
+    // the focused element alone - :focus-within is its ancestors' - and for
+    // every shadow host whose tree holds it (HTML 6.6.4, "has the focus");
+    // :focus-visible for the focused element and nothing else.
+    const auto next = [&](node_id n) {
+        return bit == state_focus           ? host_of(txn, n)
+               : bit == state_focus_visible ? node_id{}
+                                            : txn.parent(n);
+    };
+    for (node_id n = at; n; n = next(n)) {
         if (styles_->set_state(n, bit, on)) { changed = true; }
+    }
+    // Nothing is :focus-visible without :focus, whoever takes the focus away.
+    if (bit == state_focus && !on && styles_->set_state(at, state_focus_visible, false)) {
+        changed = true;
     }
     // Conservative, and knowingly so: any state change re-resolves the whole
     // cascade and re-lays-out. Most hovers only change a colour, and a real

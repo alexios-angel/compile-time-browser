@@ -57,6 +57,7 @@ public:
 
     bool dispatch_key(std::string_view type, node_id target, const input_event & input);
     bool dispatch_keypress(node_id target, std::string_view character); // events/input.cpp
+    [[nodiscard]] bool form_associated(node_id element) const;          // custom_elements.cpp
     // USER ACTIVATION (HTML 6.4.3), window/activation.cpp: a trusted
     // activation-triggering input event notifies; transient activation lasts a
     // few seconds after it, sticky activation for good; consuming ends the
@@ -88,6 +89,10 @@ public:
                                                       bool label);
 
     bool dispatch_event(std::string_view type, node_id target, value event);
+    // A slot's assigned nodes and a slottable's slot (shadow_dom.cpp) - the
+    // browser's focus navigation walks the flat tree through them.
+    [[nodiscard]] std::vector<node_id> assigned_nodes_of(node_id slot) const;
+    [[nodiscard]] node_id assigned_slot_of(node_id slottable) const;
 
     bool click(node_id target);
     // The node the `click` whose activation behaviour is running was
@@ -996,8 +1001,6 @@ private:
     void install_xml_serializer(context & cx);
     [[nodiscard]] std::string serialize_xml(node_id node, std::string_view inherited) const;
     void install_shadow_dom(context & cx);
-    [[nodiscard]] std::vector<node_id> assigned_nodes_of(node_id slot) const;
-    [[nodiscard]] node_id assigned_slot_of(node_id slottable) const;
     // `innerHTML` plus the declarative shadow roots, and the copy that carries them across.
     void set_html_unsafe(node_id target, std::string_view markup, bool run_scripts = false);
     void copy_shadow_trees(const document & src, const read_txn & from, node_id source,
