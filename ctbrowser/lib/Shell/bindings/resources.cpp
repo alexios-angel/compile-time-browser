@@ -46,10 +46,6 @@ const std::string response_proto_global = std::string{script::private_key_prefix
 
 using header_list = std::vector<std::pair<std::string, std::string>>;
 
-[[nodiscard]] script::object_object * object_of(value v) {
-    return v.is_object() ? static_cast<script::object_object *>(v.as_heap()) : nullptr;
-}
-
 // A header NAME is a token (RFC 9110 5.6.2).
 [[nodiscard]] bool is_header_name(std::string_view name) {
     constexpr std::string_view marks = "!#$%&'*+-.^_`|~";

@@ -40,6 +40,8 @@
 
 #include <ctbrowser/shell/bindings.hpp>
 
+#include "events/internal.hpp"
+
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -119,20 +121,6 @@ constexpr std::size_t npos = std::numeric_limits<std::size_t>::max();
         if (name == reserved) { return false; }
     }
     return true;
-}
-
-// The text a reported exception carries. `name` and `message` are read as
-// data rather than through `toString`, which a page's own thrown object may
-// have made throw - see events/dispatch.cpp's twin.
-[[nodiscard]] std::string describe(context & cx, value thrown) {
-    if (!thrown.is_object()) { return cx.to_string(thrown); }
-    const value name = cx.lookup_property(thrown, "name");
-    const value message = cx.lookup_property(thrown, "message");
-    if (name.is_undefined() && message.is_undefined()) { return "an exception"; }
-    std::string text = name.is_undefined() ? std::string{"Error"} : cx.to_string(name);
-    const std::string body = message.is_undefined() ? std::string{} : cx.to_string(message);
-    if (!body.empty()) { text += ": " + body; }
-    return text;
 }
 
 // WebIDL `sequence<DOMString>` from an iterable: every conversion step can
@@ -646,7 +634,8 @@ void dom_bindings::report_custom_element_exception(context & cx, value thrown,
                                                    std::string_view where, value callback) {
     const context::rooted keep{cx, thrown};
     dom_bindings & global = global_of(callback, primary());
-    const std::string fault = std::string{where} + ": uncaught " + describe(cx, thrown);
+    const std::string fault =
+        std::string{where} + ": uncaught " + detail::describe_thrown(cx, thrown);
     const bool handled = global.dispatch_error_value(fault, thrown);
     if (!handled && callback_error_.empty()) { callback_error_ = fault; }
 }

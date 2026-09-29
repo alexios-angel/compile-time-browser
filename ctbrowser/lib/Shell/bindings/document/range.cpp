@@ -8,7 +8,6 @@ namespace ctbrowser::shell {
 using namespace detail;
 using namespace range_detail;
 using range_detail::point;
-using range_detail::slot;
 
 namespace {
 

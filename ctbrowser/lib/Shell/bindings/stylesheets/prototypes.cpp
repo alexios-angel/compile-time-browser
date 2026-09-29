@@ -21,12 +21,12 @@ namespace {
     // whatever its target's chain says.
     // ponytail: a page's own Proxy passes too; brand the target when one must not.
     if (self.is_kind(script::heap_kind::proxy)) { return true; }
-    script::object_object * object = as_object(self);
+    script::object_object * object = object_of(self);
     if (object == nullptr || object == proto || object->find("constructor") != nullptr) {
         return false;
     }
     for (int depth = 0; depth < 64; ++depth) {
-        object = as_object(object->prototype);
+        object = object_of(object->prototype);
         if (object == nullptr) { return false; }
         if (object == proto) { return true; }
     }
@@ -52,7 +52,7 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
     std::vector<std::pair<std::string, script::object_object *>> prototypes;
     for (const auto & [key, held] : internals->props) {
         if (key.ends_with(".prototype")) {
-            if (script::object_object * proto = as_object(held)) {
+            if (script::object_object * proto = object_of(held)) {
                 prototypes.emplace_back(key, proto);
             }
         }

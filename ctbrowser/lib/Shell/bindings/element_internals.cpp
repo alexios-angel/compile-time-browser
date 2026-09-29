@@ -111,10 +111,6 @@ constexpr std::string_view aria_elements[] = {"ariaActiveDescendantElement", "ar
                                               "ariaErrorMessageElements",    "ariaFlowToElements",
                                               "ariaLabelledByElements",      "ariaOwnsElements"};
 
-[[nodiscard]] script::object_object * object_of(value v) {
-    return v.is_object() ? static_cast<script::object_object *>(v.as_heap()) : nullptr;
-}
-
 [[nodiscard]] value slot(script::object_object & obj, std::string_view key) {
     const value * held = obj.find(std::string{key});
     return held == nullptr ? value::undefined() : *held;

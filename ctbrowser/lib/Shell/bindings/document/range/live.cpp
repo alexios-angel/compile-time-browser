@@ -4,7 +4,6 @@ namespace ctbrowser::shell {
 
 using namespace detail;
 using namespace range_detail;
-using range_detail::slot;
 
 // `document.createRange()`: a range collapsed at (this document, 0).
 value dom_bindings::create_range(context & cx) {

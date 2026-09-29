@@ -49,18 +49,4 @@ struct point {
     return n;
 }
 
-[[nodiscard]] inline script::object_object * self_object(context & c) {
-    const value self = c.current_this();
-    if (!self.is_object()) {
-        c.throw_error("TypeError", "Illegal invocation");
-        return nullptr;
-    }
-    return static_cast<script::object_object *>(self.as_heap());
-}
-
-[[nodiscard]] inline value slot(script::object_object * self, std::string_view name) {
-    const value * held = self->find(name);
-    return held == nullptr ? value::undefined() : *held;
-}
-
 } // namespace ctbrowser::shell::range_detail

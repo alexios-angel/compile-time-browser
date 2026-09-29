@@ -221,10 +221,6 @@ namespace detail {
 
 // --- the JS side, in general -----------------------------------------------
 
-[[nodiscard]] script::object_object * as_object(value v) {
-    return v.is_object() ? static_cast<script::object_object *>(v.as_heap()) : nullptr;
-}
-
 [[nodiscard]] std::size_t slot_index(script::object_object * obj, std::string_view key) {
     if (obj == nullptr) { return no_index; }
     const value * held = obj->find(key);
@@ -267,7 +263,7 @@ void set_indexed(script::object_object & obj, std::span<const value> items, bool
 // `undefined`. Both are asserted, separately, in `css/cssom/CSSRuleList.html`.
 [[nodiscard]] value collection_item(context & cx, std::span<value> args) {
     const value self = cx.current_this();
-    script::object_object * obj = as_object(self);
+    script::object_object * obj = object_of(self);
     // A PROXY RECEIVER - `document.styleSheets` is one - answers through its
     // `get` trap, which is where its list is brought up to date.
     const bool proxied = obj == nullptr && self.is_kind(script::heap_kind::proxy);
@@ -615,7 +611,7 @@ void detach_rule(std::vector<std::unique_ptr<dom_bindings::css_rule_record>> & s
 
 void mirror_rule_list(script::object_object & rule_obj) {
     const value * list = rule_obj.find(rules_key);
-    script::object_object * held = list == nullptr ? nullptr : as_object(*list);
+    script::object_object * held = list == nullptr ? nullptr : object_of(*list);
     if (held == nullptr) { return; }
     std::vector<value> items;
     if (const value * length = held->find("length"); length != nullptr && length->is_number()) {

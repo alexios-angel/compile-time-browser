@@ -14,7 +14,7 @@ namespace {
 // which WebIDL puts on the prototype, for every declaration - hand its calls
 // over. Null for any other receiver.
 [[nodiscard]] const value * computed_member(context & c, std::string_view name) {
-    script::object_object * self = as_object(c.current_this());
+    script::object_object * self = object_of(c.current_this());
     if (self == nullptr) { return nullptr; }
     return self->find(std::string{script::private_key_prefix} +
                       "computed-member:" + std::string{name});
@@ -52,7 +52,7 @@ void dom_bindings::install_stylesheet_declarations(context & cx,
     // rule is itself indexed - `keyframes[0]` - and MIRRORS it after each read
     // and each write.
     const auto keyframes_list = [this](context & c) {
-        script::object_object * self = as_object(c.current_this());
+        script::object_object * self = object_of(c.current_this());
         const css_rule_record * rule = receiver_rule(c);
         if (self == nullptr || rule == nullptr) { return value::undefined(); }
         if (const value * held = self->find(rules_key)) {
@@ -82,7 +82,7 @@ void dom_bindings::install_stylesheet_declarations(context & cx,
         [this, keyframes_list](context & c, std::span<value> a) {
             css_rule_record * rule = receiver_rule(c);
             if (rule == nullptr) { return value::undefined(); }
-            const std::size_t self = slot_index(as_object(c.current_this()), rule_key);
+            const std::size_t self = slot_index(object_of(c.current_this()), rule_key);
             std::string error;
             const std::size_t made =
                 parse_one_rule(rule->sheet, "@keyframes _ {" + arg_string(c, a, 0) + "}", error);
@@ -163,7 +163,7 @@ void dom_bindings::install_stylesheet_declarations(context & cx,
         cssom_interface(cx, internals, "CSSFontFeatureValuesMap", nullptr, nullptr);
     static constexpr std::string_view feature_key = "__ctbrowser_feature";
     const auto feature_type = [](context & c) {
-        script::object_object * self = as_object(c.current_this());
+        script::object_object * self = object_of(c.current_this());
         const value * held = self == nullptr ? nullptr : self->find(feature_key);
         return held == nullptr ? std::string{} : c.to_string(*held);
     };
@@ -287,10 +287,10 @@ void dom_bindings::install_stylesheet_declarations(context & cx,
         define_getter(
             cx, *feature_values_proto, idl,
             [type_name, feature_map_proto](context & c, std::span<value>) {
-                script::object_object * self = as_object(c.current_this());
+                script::object_object * self = object_of(c.current_this());
                 const std::size_t at = slot_index(self, rule_key);
                 const value made = c.make_object();
-                script::object_object * obj = as_object(made);
+                script::object_object * obj = object_of(made);
                 if (obj == nullptr) { return made; }
                 obj->prototype = value::object(feature_map_proto);
                 obj->define(rule_key, value::number(static_cast<double>(at)), script::attr_none);
@@ -399,7 +399,7 @@ void dom_bindings::install_stylesheet_declarations(context & cx,
             // A computed style belongs to no rule.
             if (computed_member(c, "length") != nullptr) { return value::null(); }
             if (receiver_rule(c) == nullptr) { return illegal_invocation(c); }
-            script::object_object * self = as_object(c.current_this());
+            script::object_object * self = object_of(c.current_this());
             const std::size_t at = slot_index(self, rule_key);
             if (at >= css_rule_store_.size()) { return value::null(); }
             return rule_object_for(c, at);

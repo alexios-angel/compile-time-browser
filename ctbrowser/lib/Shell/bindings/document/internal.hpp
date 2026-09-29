@@ -153,4 +153,10 @@ inline constexpr std::string_view iterator_before_slot = "__pointerBeforeReferen
 inline constexpr std::string_view iterator_inflight_slot = "__inflightNode";
 inline constexpr std::string_view iterator_inflight_before_slot = "__inflightBefore";
 
+// An object's own data property, undefined when it has none.
+[[nodiscard]] inline value slot(script::object_object * self, std::string_view name) {
+    const value * held = self->find(name);
+    return held == nullptr ? value::undefined() : *held;
+}
+
 } // namespace ctbrowser::shell::detail

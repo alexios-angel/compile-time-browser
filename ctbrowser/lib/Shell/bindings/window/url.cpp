@@ -37,15 +37,11 @@ constexpr std::string_view iter_target_key = "__ctbrowser_params_iter";
 constexpr std::string_view iter_kind_key = "__ctbrowser_params_iter_kind";
 constexpr std::string_view iter_at_key = "__ctbrowser_params_iter_at";
 
-[[nodiscard]] script::object_object * as_object(value v) {
-    return v.is_object() ? static_cast<script::object_object *>(v.as_heap()) : nullptr;
-}
-
 // The receiver, branded: `this` must carry the slot or the call is the
 // TypeError WebIDL gives a method invoked on the wrong kind of object.
 [[nodiscard]] script::object_object * branded_this(context & c, std::string_view slot,
                                                    const char * interface) {
-    script::object_object * self = as_object(c.current_this());
+    script::object_object * self = object_of(c.current_this());
     if (self == nullptr || self->find(slot) == nullptr) {
         c.throw_error("TypeError", std::string{interface} + ": illegal invocation");
         return nullptr;
@@ -75,7 +71,7 @@ void store_url(context & c, script::object_object & self, const url_record & url
 
 [[nodiscard]] form_pairs list_of(script::object_object & params) {
     if (const value * owner = params.find(owner_key); owner != nullptr) {
-        if (script::object_object * url = as_object(*owner)) {
+        if (script::object_object * url = object_of(*owner)) {
             return parse_form_urlencoded(url_of(*url).query.value_or(std::string{}));
         }
     }
@@ -90,7 +86,7 @@ void store_url(context & c, script::object_object & self, const url_record & url
 void store_list(context & c, script::object_object & params, const form_pairs & list) {
     const std::string serialised = serialize_form_urlencoded(list);
     if (const value * owner = params.find(owner_key); owner != nullptr) {
-        if (script::object_object * holder = as_object(*owner)) {
+        if (script::object_object * holder = object_of(*owner)) {
             url_record url = url_of(*holder);
             url.query = list.empty() ? std::nullopt : std::optional<std::string>{serialised};
             store_url(c, *holder, url);
@@ -154,7 +150,7 @@ void store_list(context & c, script::object_object & params, const form_pairs & 
     set_method(
         cx, *proto, "next",
         [](context & c, std::span<value>) {
-            script::object_object * self = as_object(c.current_this());
+            script::object_object * self = object_of(c.current_this());
             auto * result = static_cast<script::object_object *>(c.make_object().as_heap());
             result->set("done", value::boolean(true));
             result->set("value", value::undefined());
@@ -162,7 +158,7 @@ void store_list(context & c, script::object_object & params, const form_pairs & 
             const value * target = self->find(iter_target_key);
             const value * kind = self->find(iter_kind_key);
             const value * at = self->find(iter_at_key);
-            script::object_object * params = target == nullptr ? nullptr : as_object(*target);
+            script::object_object * params = target == nullptr ? nullptr : object_of(*target);
             if (params == nullptr || kind == nullptr || at == nullptr) {
                 return value::object(result);
             }
@@ -194,7 +190,7 @@ void install_search_params(context & cx, const value iterator_proto) {
     // other object the record, and everything else is stringified.
     ctor->fn = [ctor](context & c, std::span<value> a) {
         const value self_value = c.current_this();
-        script::object_object * self = as_object(self_value);
+        script::object_object * self = object_of(self_value);
         if (self == nullptr || !c.instance_of(self_value, value::object(ctor))) {
             c.throw_error("TypeError", "URLSearchParams constructor: 'new' is required");
             return value::undefined();
@@ -451,7 +447,7 @@ script::native_object * install_url(context & cx) {
     // `URL.canParse(undefined, "aaa:b")` is false and not a throw.
     ctor->fn = [ctor, params_ctor](context & c, std::span<value> a) {
         const value self_value = c.current_this();
-        script::object_object * self = as_object(self_value);
+        script::object_object * self = object_of(self_value);
         if (self == nullptr || !c.instance_of(self_value, value::object(ctor))) {
             c.throw_error("TypeError", "URL constructor: 'new' is required");
             return value::undefined();
@@ -477,7 +473,7 @@ script::native_object * install_url(context & cx) {
         // step.
         const value params = c.construct(params_ctor, {});
         if (c.throw_pending()) { return value::undefined(); }
-        if (script::object_object * held = as_object(params)) {
+        if (script::object_object * held = object_of(params)) {
             held->define(owner_key, self_value, script::attr_none);
             // The brand: every method checks for list_key, so an attached
             // params carries it too - the value is unused.

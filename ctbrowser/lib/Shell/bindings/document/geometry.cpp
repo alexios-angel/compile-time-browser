@@ -152,7 +152,7 @@ namespace {
     return proto == nullptr ? value::undefined() : *proto;
 }
 
-[[nodiscard]] script::object_object * self_object(context & c) {
+[[nodiscard]] script::object_object * this_object(context & c) {
     const value self = c.current_this();
     return self.is_object() ? static_cast<script::object_object *>(self.as_heap()) : nullptr;
 }
@@ -256,7 +256,7 @@ void dom_bindings::install_geometry_interfaces(context & cx) {
         });
     }
     set_method(cx, *point_ro.proto, "toJSON", [](context & c, std::span<value>) {
-        script::object_object * self = self_object(c);
+        script::object_object * self = this_object(c);
         auto * out = static_cast<script::object_object *>(c.make_object().as_heap());
         for (const char * name : {"x", "y", "z", "w"}) {
             out->set(name, value::number(own_number(self, name)));
@@ -264,7 +264,7 @@ void dom_bindings::install_geometry_interfaces(context & cx) {
         return value::object(out);
     });
     set_method(cx, *point_ro.proto, "matrixTransform", [](context & c, std::span<value>) {
-        script::object_object * self = self_object(c);
+        script::object_object * self = this_object(c);
         return point_with(c, "DOMPoint", own_number(self, "x"), own_number(self, "y"),
                           own_number(self, "z"), own_number(self, "w"));
     });
@@ -296,7 +296,7 @@ void dom_bindings::install_geometry_interfaces(context & cx) {
     // derived edge NaN.
     const auto edge = [](bool far, bool vertical) {
         return [far, vertical](context & c, std::span<value>) {
-            script::object_object * self = self_object(c);
+            script::object_object * self = this_object(c);
             const double a = own_number(self, vertical ? "y" : "x");
             const double b = a + own_number(self, vertical ? "height" : "width");
             if (std::isnan(a) || std::isnan(b)) { return value::number(a + b); }
@@ -308,7 +308,7 @@ void dom_bindings::install_geometry_interfaces(context & cx) {
     define_getter(cx, *rect_ro.proto, "bottom", edge(true, true));
     define_getter(cx, *rect_ro.proto, "left", edge(false, false));
     set_method(cx, *rect_ro.proto, "toJSON", [](context & c, std::span<value>) {
-        script::object_object * self = self_object(c);
+        script::object_object * self = this_object(c);
         auto * out = static_cast<script::object_object *>(c.make_object().as_heap());
         for (const char * name : {"x", "y", "width", "height"}) {
             out->set(name, value::number(own_number(self, name)));

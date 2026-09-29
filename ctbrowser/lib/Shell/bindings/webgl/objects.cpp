@@ -213,7 +213,7 @@ void dom_bindings::install_webgl_methods(context & cx, script::object_object * o
         // as data would upload one float where it asked for a megabyte.
         if (a.size() > 1 && a[1].is_number()) {
             gl->buffer_data(enum_at(a, 0),
-                            std::vector<std::byte>(static_cast<std::size_t>(number_at(a, 1))),
+                            std::vector<std::byte>(static_cast<std::size_t>(arg_number(a, 1))),
                             enum_at(a, 2));
             return value::undefined();
         }
@@ -492,12 +492,12 @@ void dom_bindings::install_webgl_methods(context & cx, script::object_object * o
     });
     set_method(cx, *obj, "clearColor", [gl](context &, std::span<value> a) {
         gl->device().clear_color(
-            static_cast<float>(number_at(a, 0)), static_cast<float>(number_at(a, 1)),
-            static_cast<float>(number_at(a, 2)), static_cast<float>(number_at(a, 3)));
+            static_cast<float>(arg_number(a, 0)), static_cast<float>(arg_number(a, 1)),
+            static_cast<float>(arg_number(a, 2)), static_cast<float>(arg_number(a, 3)));
         return value::undefined();
     });
     set_method(cx, *obj, "clearDepth", [gl](context &, std::span<value> a) {
-        gl->device().clear_depth(static_cast<float>(number_at(a, 0)));
+        gl->device().clear_depth(static_cast<float>(arg_number(a, 0)));
         return value::undefined();
     });
     set_method(cx, *obj, "clearStencil",

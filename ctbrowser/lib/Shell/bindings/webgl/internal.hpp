@@ -35,12 +35,8 @@ namespace ctbrowser::shell::detail {
     return held.is_undefined() ? 0 : to_index(context::to_number(held));
 }
 
-[[nodiscard]] inline double number_at(std::span<value> args, std::size_t i) {
-    return i < args.size() ? context::to_number(args[i]) : 0.0;
-}
-
 [[nodiscard]] inline std::uint32_t enum_at(std::span<value> args, std::size_t i) {
-    return to_index(number_at(args, i));
+    return to_index(arg_number(args, i));
 }
 
 // The same, as the `int` raster::gl::device takes a GL enum as.
@@ -49,7 +45,7 @@ namespace ctbrowser::shell::detail {
 }
 
 [[nodiscard]] inline int int_at(std::span<value> args, std::size_t i) {
-    const double d = number_at(args, i);
+    const double d = arg_number(args, i);
     if (std::isnan(d)) { return 0; }
     return static_cast<int>(std::clamp(d, static_cast<double>(std::numeric_limits<int>::min()),
                                        static_cast<double>(std::numeric_limits<int>::max())));

@@ -42,10 +42,6 @@ const std::string media_slot = std::string{script::private_key_prefix} + "mql:me
 const std::string matches_slot = std::string{script::private_key_prefix} + "mql:matches";
 const std::string document_slot = std::string{script::private_key_prefix} + "mql:document";
 
-[[nodiscard]] script::object_object * object_of(value v) {
-    return v.is_object() ? static_cast<script::object_object *>(v.as_heap()) : nullptr;
-}
-
 [[nodiscard]] std::string slot_string(context & cx, value list, const std::string & slot) {
     auto * object = object_of(list);
     const value * held = object == nullptr ? nullptr : object->find(slot);

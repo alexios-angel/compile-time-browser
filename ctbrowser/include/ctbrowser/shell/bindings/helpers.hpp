@@ -60,6 +60,20 @@ using ctbrowser::script::value;
     return i < args.size() ? args[i] : value::undefined();
 }
 
+// A value's object, or null when it is not one.
+[[nodiscard]] inline script::object_object * object_of(value v) {
+    return v.is_object() ? static_cast<script::object_object *>(v.as_heap()) : nullptr;
+}
+// `this` as an object, or a TypeError "Illegal invocation" and null.
+[[nodiscard]] inline script::object_object * self_object(context & c) {
+    const value self = c.current_this();
+    if (!self.is_object()) {
+        c.throw_error("TypeError", "Illegal invocation");
+        return nullptr;
+    }
+    return static_cast<script::object_object *>(self.as_heap());
+}
+
 // Installing natives. One function object, and the two ways the bindings hang
 // one on an object: as a data property (`attrs` is what `define` takes, and
 // `attr_default` means a plain `set`, which keeps an existing property's

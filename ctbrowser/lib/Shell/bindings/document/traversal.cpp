@@ -44,20 +44,6 @@ constexpr std::string_view reference_slot = iterator_reference_slot;
 constexpr std::string_view before_slot = iterator_before_slot;
 constexpr std::string_view active_slot = "__active";
 
-[[nodiscard]] script::object_object * self_object(context & c) {
-    const value self = c.current_this();
-    if (!self.is_object()) {
-        c.throw_error("TypeError", "Illegal invocation");
-        return nullptr;
-    }
-    return static_cast<script::object_object *>(self.as_heap());
-}
-
-[[nodiscard]] value slot(script::object_object * self, std::string_view name) {
-    const value * held = self->find(name);
-    return held == nullptr ? value::undefined() : *held;
-}
-
 } // namespace
 
 void dom_bindings::install_traversal(context & cx, script::object_object & doc) {

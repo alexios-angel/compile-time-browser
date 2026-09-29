@@ -51,10 +51,6 @@ constexpr int headers_received = 2;
 constexpr int loading = 3;
 constexpr int done = 4;
 
-[[nodiscard]] script::object_object * object_of(value v) {
-    return v.is_object() ? static_cast<script::object_object *>(v.as_heap()) : nullptr;
-}
-
 [[nodiscard]] int number_slot(script::object_object & self, const std::string & slot) {
     const value * held = self.find(slot);
     return held == nullptr ? 0 : static_cast<int>(context::to_number(*held));

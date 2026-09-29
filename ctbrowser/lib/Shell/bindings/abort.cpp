@@ -39,10 +39,6 @@ const std::string dependents_slot = std::string{script::private_key_prefix} + "a
 const std::string sources_slot = std::string{script::private_key_prefix} + "abort:sources";
 const std::string signal_slot = std::string{script::private_key_prefix} + "abort:signal";
 
-[[nodiscard]] script::object_object * object_of(value v) {
-    return v.is_object() ? static_cast<script::object_object *>(v.as_heap()) : nullptr;
-}
-
 [[nodiscard]] bool is_aborted(value signal) {
     auto * object = object_of(signal);
     if (object == nullptr) { return false; }
