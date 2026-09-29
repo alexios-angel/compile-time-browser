@@ -174,11 +174,7 @@ void dom_bindings::install_abort(context & cx) {
         },
         script::attr_builtin);
 
-    auto * signal_ctor =
-        cx.allocate<script::native_object>("AbortSignal", [](context & c, std::span<value>) {
-            c.throw_error("TypeError", "Illegal constructor");
-            return value::undefined();
-        });
+    auto * signal_ctor = cx.allocate<script::native_object>("AbortSignal", illegal_constructor);
     signal_ctor->define("prototype", abort_signal_prototype_, script::attr_none);
     signal_proto->define("constructor", value::object(signal_ctor), script::attr_builtin);
     // `AbortSignal.abort(reason)`: an already-aborted signal; no event fires,

@@ -597,15 +597,6 @@ void dom_bindings::install_resources(context & cx) {
     // prototypes. Babylon.js builds `new Response(xhr.response, {status,
     // statusText, headers: new Headers()})` whenever the two exist, so these
     // are the objects its loader reads back.
-    const auto make_ctor = [&cx](const char * name, script::object_object * proto) {
-        auto * ctor = cx.allocate<script::native_object>(name, script::native_fn{});
-        ctor->define("prototype", value::object(proto), script::attr_none);
-        proto->define("constructor", value::object(ctor), script::attr_builtin);
-        proto->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string(name),
-                      script::attr_configurable);
-        cx.define_builtin_global(name, value::object(ctor));
-        return ctor;
-    };
     // `this` for a constructor: the object `new` made, else a TypeError.
     const auto constructed = [](context & c, script::native_object * ctor, value proto,
                                 const char * name) -> script::object_object * {
@@ -620,10 +611,9 @@ void dom_bindings::install_resources(context & cx) {
         return self;
     };
 
-    auto * headers_proto = cx.allocate<script::object_object>();
+    const auto [headers_ctor, headers_proto] = make_interface(cx, "Headers", {}, {}, std::nullopt);
     const value headers_proto_value = value::object(headers_proto);
     cx.define_builtin_global(headers_proto_global, headers_proto_value);
-    script::native_object * headers_ctor = make_ctor("Headers", headers_proto);
     headers_ctor->fn = [headers_ctor, headers_proto_value, constructed](context & c,
                                                                         std::span<value> a) {
         script::object_object * self = constructed(c, headers_ctor, headers_proto_value, "Headers");
@@ -889,9 +879,8 @@ void dom_bindings::install_resources(context & cx) {
     // refused when it cannot parse against the document's address, or carries
     // credentials. The method is a token, not a forbidden one, normalised; a
     // body is refused for GET and HEAD.
-    auto * request_proto = cx.allocate<script::object_object>();
+    const auto [request_ctor, request_proto] = make_interface(cx, "Request", {}, {}, std::nullopt);
     const value request_proto_value = value::object(request_proto);
-    script::native_object * request_ctor = make_ctor("Request", request_proto);
     request_ctor->fn = [this, request_ctor, request_proto_value, constructed](context & c,
                                                                               std::span<value> a) {
         script::object_object * self = constructed(c, request_ctor, request_proto_value, "Request");
@@ -994,10 +983,10 @@ void dom_bindings::install_resources(context & cx) {
     // `new Response(body, init)` (Fetch 5.5): the status 200-599 else a
     // RangeError, a statusText with no CR or LF, the headers, and a body -
     // refused under a null body status.
-    auto * response_proto = cx.allocate<script::object_object>();
+    const auto [response_ctor, response_proto] =
+        make_interface(cx, "Response", {}, {}, std::nullopt);
     const value response_proto_value = value::object(response_proto);
     cx.define_builtin_global(response_proto_global, response_proto_value);
-    script::native_object * response_ctor = make_ctor("Response", response_proto);
     // "Initialize a response": the three init members onto `self`, or false
     // with the error thrown.
     const auto init_response = [](context & c, script::object_object & self, value init,

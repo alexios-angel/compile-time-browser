@@ -519,16 +519,10 @@ value dom_bindings::construct_html_element(context & c, value self,
     // whether or not somebody defined the interface itself as an element.
     if (!is_element) {
         const value own = c.lookup_property(c.global(std::string{interface_name}), "prototype");
-        if (own.bits() == c.get_prototype(self).bits()) {
-            c.throw_error("TypeError", "Illegal constructor");
-            return value::undefined();
-        }
+        if (own.bits() == c.get_prototype(self).bits()) { return illegal_constructor(c, {}); }
     }
     const std::size_t index = custom_definition_of(c, self);
-    if (index == npos) {
-        c.throw_error("TypeError", "Illegal constructor");
-        return value::undefined();
-    }
+    if (index == npos) { return illegal_constructor(c, {}); }
     custom_element_definition & def = primary().custom_definitions_[index];
     // Steps 5-6: an autonomous definition constructs through HTMLElement and
     // nothing else; a customized built-in through the interface its `extends`

@@ -107,6 +107,40 @@ void set_operation(context & cx, Obj & obj, const std::string & name, unsigned r
     obj.set(name, value::object(made));
 }
 
+// The constructor of an interface a page cannot construct.
+inline value illegal_constructor(context & c, std::span<value>) {
+    c.throw_error("TypeError", "Illegal constructor");
+    return value::undefined();
+}
+
+// An interface's constructor and prototype, wired the WebIDL way: `prototype`
+// on the constructor, `constructor` and `@@toStringTag` on the prototype, and
+// the constructor a global. `construct` may be empty and set afterwards, when
+// it needs the constructor itself (TextEncoder's `new` check). `base` is the
+// prototype's own prototype. `length` is the constructor's number of required
+// arguments (WebIDL 3.7.1); nullopt defines none, as the geometry, canvas and
+// fetch interfaces never have.
+struct interface_pair {
+    script::native_object * ctor;
+    script::object_object * proto;
+};
+[[nodiscard]] inline interface_pair make_interface(context & cx, const char * name,
+                                                   script::native_fn construct = {},
+                                                   value base = {},
+                                                   std::optional<unsigned> length = 0u) {
+    auto * proto = cx.allocate<script::object_object>();
+    if (base.is_object()) { proto->prototype = base; }
+    // Rooted until the global holds it: allocating the constructor can collect.
+    const context::rooted keep{cx, value::object(proto)};
+    auto * ctor = cx.allocate<script::native_object>(name, std::move(construct));
+    if (length) { ctor->define("length", value::number(*length), script::attr_configurable); }
+    ctor->define("prototype", value::object(proto), script::attr_none);
+    proto->define("constructor", value::object(ctor), script::attr_builtin);
+    proto->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string(name), script::attr_configurable);
+    cx.define_builtin_global(name, value::object(ctor));
+    return {ctor, proto};
+}
+
 // WebIDL DICTIONARY MEMBERS - an event's init, observe()'s options, an
 // effect's timing. One member, undefined when it is not there.
 //

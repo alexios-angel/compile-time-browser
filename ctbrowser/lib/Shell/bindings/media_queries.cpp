@@ -215,11 +215,7 @@ void dom_bindings::install_media_queries(context & cx) {
                 ->define("length", value::number(1), script::attr_configurable);
         }
     }
-    auto * ctor =
-        cx.allocate<script::native_object>("MediaQueryList", [](context & c, std::span<value>) {
-            c.throw_error("TypeError", "Illegal constructor");
-            return value::undefined();
-        });
+    auto * ctor = cx.allocate<script::native_object>("MediaQueryList", illegal_constructor);
     ctor->define("prototype", media_query_list_prototype_, script::attr_none);
     // The interface object inherits EventTarget's as its prototype inherits
     // EventTarget.prototype (Web IDL §3.7.1), and takes no arguments.

@@ -120,18 +120,11 @@ struct parsed_color {
 // The prototype-held interface objects: a constructor that refuses to be
 // called and a prototype that names it.
 [[nodiscard]] script::object_object * canvas_interface(context & cx, const char * name) {
-    auto * proto = cx.allocate<script::object_object>();
-    // Rooted until the global holds it - see install_path2d.
-    const script::context::rooted keep{cx, value::object(proto)};
-    auto * ctor = cx.allocate<script::native_object>(name, [name](context & c, std::span<value>) {
+    const auto refuse = [name](context & c, std::span<value>) {
         c.throw_error("TypeError", std::string{"Illegal constructor: "} + name);
         return value::undefined();
-    });
-    ctor->define("prototype", value::object(proto), script::attr_none);
-    proto->define("constructor", value::object(ctor), script::attr_builtin);
-    proto->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string(name), script::attr_configurable);
-    cx.define_builtin_global(name, value::object(ctor));
-    return proto;
+    };
+    return make_interface(cx, name, refuse, {}, std::nullopt).proto;
 }
 
 void canvas_operation(context & cx, script::object_object & proto, const std::string & name,

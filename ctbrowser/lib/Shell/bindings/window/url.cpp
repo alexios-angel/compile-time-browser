@@ -439,7 +439,7 @@ script::native_object * install_url(context & cx) {
     install_search_params(cx, iterator_proto);
     const value params_ctor = cx.global("URLSearchParams");
 
-    const interface_pair made = make_interface(cx, "URL", {}, 1);
+    const interface_pair made = make_interface(cx, "URL", {}, {}, 1);
     auto * ctor = made.ctor;
     // Captured below, so retained here for the same reason: a page that deletes
     // the `URLSearchParams` global must not take `new URL()`'s query object

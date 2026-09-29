@@ -797,11 +797,7 @@ void dom_bindings::install_selection(context & cx) {
     proto->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string("Selection"),
                   script::attr_configurable);
 
-    auto * ctor =
-        cx.allocate<script::native_object>("Selection", [](context & c, std::span<value>) {
-            c.throw_error("TypeError", "Illegal constructor");
-            return value::undefined();
-        });
+    auto * ctor = cx.allocate<script::native_object>("Selection", illegal_constructor);
     ctor->define("prototype", proto_value, script::attr_none);
     proto->define("constructor", value::object(ctor), script::attr_builtin);
     cx.define_builtin_global("Selection", value::object(ctor));

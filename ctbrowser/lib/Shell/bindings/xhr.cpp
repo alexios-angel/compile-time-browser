@@ -629,11 +629,8 @@ void dom_bindings::install_xhr(context & cx) {
     }
     cx.define_builtin_global("XMLHttpRequest", value::object(ctor));
 
-    auto * target_ctor = cx.allocate<script::native_object>(
-        "XMLHttpRequestEventTarget", [](context & c, std::span<value>) {
-            c.throw_error("TypeError", "Illegal constructor");
-            return value::undefined();
-        });
+    auto * target_ctor =
+        cx.allocate<script::native_object>("XMLHttpRequestEventTarget", illegal_constructor);
     target_ctor->define("prototype", value::object(target_proto), script::attr_none);
     target_proto->define("constructor", value::object(target_ctor), script::attr_builtin);
     cx.define_builtin_global("XMLHttpRequestEventTarget", value::object(target_ctor));
