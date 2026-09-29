@@ -191,10 +191,7 @@ add_test(NAME ctcompile_escape_oracle COMMAND ctcompile-test-type-oracle --escap
 # PLACE A FRAME ENDS, AS A TABLE - FrameEnds.def's citations are checked
 # beside the ABI table's in Core/def-citations.test.
 
-# === PHASE 55 CLOSED: the escape claims over four corpora ===
-# Analysis/Escape/escape-claims/{fixture,bootstrap,p5,phaser}.test, over
-# escape-claims/check.py; the fixture is its three parts concatenated by the
-# RUN line, byte for byte.
+# The escape claims over four corpora: Analysis/Escape/escape-claims/*.test.
 
 # A compiled frame's ip contains a catch-pad id, never a bytecode coordinate.
 # Real AOT entries cover return, caught throw and mixed AOT/VM unwind without

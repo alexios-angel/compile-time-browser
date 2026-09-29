@@ -13,17 +13,7 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate)
     "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Scalars/values.emitc.mlir")
 endif()
 
-# ============================================================================
-# THE REFACTOR GOLDENS ARE A PROCEDURE, NOT A TEST. docs/refactor-goldens.md:
-# copy the post-pipeline modules and the census JSONs out of this build tree
-# before a change (`cp build/ctcompile/test/*.mlir build/ctcompile/test/
-# native-claims-*.json /tmp/before`), rebuild, copy again, `diff -r` the two.
-# For a PURE REFACTOR not one byte may move. Nothing in ctest can run it: the
-# artefacts embed the absolute paths the build passed to ctjs-translate, and a
-# golden of derived output has no regeneration rule that cannot be abused. A
-# 271-line snapshot.sh with a selftest wrapped exactly that cp and cmp until
-# 2026-09-15; the pipeline's determinism is what a noisy diff over an unchanged
-# tree would report, and no separate instrument is needed to see it.
+# The refactor goldens are a manual procedure, not a test: docs/refactor-goldens.md.
 
 # Source invocation recovery is structural only until native admission and
 # emission consume both completions. Keep its original checks available for rollback.

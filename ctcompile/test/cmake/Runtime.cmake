@@ -176,5 +176,3 @@ if(CTCOMPILE_ENABLE_MLIR)
   ctcompile_unit_test(ctnative-lattice
     LIBS CTNativeDialect MLIRIR MLIRAsmParser ctbrowser::script)
 endif()
-
-# ============================================================================
