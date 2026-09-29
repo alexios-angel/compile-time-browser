@@ -22,6 +22,56 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Constructor Data registration through element fields, 2026-09-29 UTC
+
+**Landed: `25c5d2bbe`**, continuing `3151d223d`. Terminal constructor
+registration can now use `this.element` after a unique store of a declared
+element parameter. The proof checks source order and every receiver, field-read
+and parameter use before moving registration past construction. It keeps the
+field store and original argument for the existing class and element-field
+proofs; the DOM Data provider and final ownership analysis still reprove the
+result. Changing fields, receiver aliases, other observers and unproved
+prototype behavior remain diagnostics. No runtime carrier or browser API changed.
+
+Two new sources preserve the complete vendor Data declaration: constructor
+registration through the field, and registration composed with later retained
+record field reads. Both produce **59112**, matching Node and the VM. The prior
+compiler refused the first source with `class receiver escapes or observes a
+prototype/descriptor`.
+
+**Measured, devbox only:** `tools/remote-build.sh ctjs-opt ctjs-translate
+ctcompile-test-native-reference` passed **358/358 dependency build steps**.
+`subset.py` ran the two new sources, three existing element-field sources and
+one direct-constructor-registration control: **48 native executions, six provider
+proofs, 12 Node/VM source runs and 34 refusal checks**. GCC and pinned Clang cover
+optimization off/on and explicit/deduced printing. The existing generated-source
+and `nm` checks found no Script symbols. Both tested source hashes match
+commit `25c5d2bbe`. `tools/format.sh --check` passed (1192 C++, 155 Python,
+116 web files), as did `git diff --check`.
+
+The focused command was `flock /tmp/ctbrowser-devbox-build.lock bash
+/tmp/codex-field-publication/check.sh`. Its native checks and original Bootstrap
+probe passed; an extra manifest probe then exposed an overly narrow diagnostic
+parser in the temporary script. The follow-up command `flock
+/tmp/ctbrowser-devbox-build.lock bash /tmp/codex-field-publication/finish.sh`
+passed after correcting that parser, collecting only frontier diagnostics,
+hashes and artifacts without repeating builds or native tests. Evidence is
+preserved at
+`/home/alex/.ctbrowser-auto/codex/ctcompile/artifacts/2026-09-29-field-publication/`.
+Full lit/CTest, broad corpus/native matrices, WPT/test262, Windows and sanitizers
+were not run; nothing was pushed.
+
+**Next measured Bootstrap boundary:** the original W/B/U/Data source still
+refuses `class method capture is not its constructor or an inert sibling helper:
+fn$2 / ctjs.construct` in the final probe (`fn$4` in the first run; both are
+Data helpers capturing the same Map). Adding the standard `Map` identity to that
+same ordinary DOM manifest currently refuses
+`unsupported DOM initial intrinsic identity`. The separate `claude-ctcompile`
+DOM/Map work (`f9c4d1a68`, `2c9594855`, awaiting integration) owns that
+manifest/lowering extension; consult its latest journal before editing those
+paths. The new constructor-field proof is on the DOM Data session path; ordinary DOM classes, captured Data helpers, method receivers and
+the session owner still need to compose before full Bootstrap can run natively.
+
 ## Recovered DOM Data element fields, 2026-09-29 UTC
 
 **Landed: `3151d223d`**, completing the interrupted Astra patch recorded in
