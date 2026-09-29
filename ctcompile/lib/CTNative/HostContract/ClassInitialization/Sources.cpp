@@ -264,6 +264,13 @@ bool classInitialization::methodCaptures(ctjs::CreateClosureOp method,
         }
         auto value = sourceValue(cells.lookup(capture));
         if (value == constructorValue) { continue; }
+        if (auto literal = value.getDefiningOp<ctjs::ConstantOp>();
+            literal && ctjs::isPrimitiveAttr(literal.getValue())) {
+            if (literal->getBlock() != method->getBlock() || !literal->isBeforeInBlock(method)) {
+                return refuse("class primitive capture requires ordered local initialization");
+            }
+            continue;
+        }
         if (maps.contains(value)) {
             if (value.getDefiningOp()->getBlock() != method->getBlock() ||
                 !value.getDefiningOp()->isBeforeInBlock(method)) {
@@ -324,7 +331,8 @@ bool classInitialization::methodCaptures(ctjs::CreateClosureOp method,
             needsDOMMethodProof = true;
         }
     }
-    for (mlir::OpOperand & use : fn.getBody().front().getArgument(ctjs::arg_callee).getUses()) {
+    for (mlir::OpOperand & use :
+         llvm::make_early_inc_range(fn.getBody().front().getArgument(ctjs::arg_callee).getUses())) {
         if (!step()) { return false; }
         if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
         if (domEntry && llvm::isa<ctjs::CreateClosureOp>(use.getOwner())) {
@@ -341,6 +349,21 @@ bool classInitialization::methodCaptures(ctjs::CreateClosureOp method,
             return refuse("class method observes or changes its captured identity");
         }
         auto value = sourceValue(cells.lookup(method.getUpvalues()[load.getIndex()]));
+        if (auto literal = value.getDefiningOp<ctjs::ConstantOp>();
+            literal && ctjs::isPrimitiveAttr(literal.getValue())) {
+            for (mlir::OpOperand & selected : load.getResult().getUses()) {
+                (void)selected;
+                if (!step()) { return false; }
+            }
+            if (!spend(cloneCost(literal))) { return false; }
+            // Preserve the exact primitive before super/method bodies are copied.
+            // The complete source or typed DOM proof still checks every consumer.
+            mlir::OpBuilder at(load);
+            auto local = ctjs::ConstantOp::create(at, load.getLoc(), literal.getValue());
+            load.getResult().replaceAllUsesWith(local.getResult());
+            load.erase();
+            continue;
+        }
         if (maps.contains(value)) {
             mapCaptures[load.getResult()] = value;
             mapOperations.insert(load);

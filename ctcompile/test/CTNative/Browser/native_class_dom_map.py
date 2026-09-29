@@ -33,6 +33,26 @@ CASES = {
   return item.read();""",
 }
 
+CASES["constants"] = """const state = new Map();
+  const amount = 1, label = 'x', enabled = true, empty = null, absent = void 0;
+  const lookup = key => state.get(key) === amount;
+  class Item {
+    read(key) { return lookup(key); }
+    key() { return label; }
+    valid() { return enabled && empty === null && absent === void 0; }
+  }
+  const item = new Item();
+  state.set(element, 1);
+  element.setAttribute(item.key(), 'done');
+  const value = item.read(element);
+  const valid = item.valid();
+  return value && valid;"""
+CASES["constant-chain"] = (
+    CASES["constants"]
+    .replace("  class Item", "  const wrap = key => lookup(key);\n  class Item")
+    .replace("return lookup(key)", "return wrap(key)")
+)
+
 CHECKS = r"""
         (void)classes;
         (void)pressed;
@@ -103,6 +123,47 @@ def main():
         "replaced-binding": "Map = 0;\n" + CASES["local"],
         "property-binding": "element.Map = 0;\n" + CASES["local"],
     }
+    bad.update(
+        {
+            "constant-changing": CASES["constants"]
+            .replace("const amount", "let amount")
+            .replace("  const value", "  amount = 9;\n  const value"),
+            "constant-writer": CASES["constants"]
+            .replace("const amount", "let amount")
+            .replace("state.get(key) === amount", "state.get(key) === amount++"),
+            "constant-late": CASES["constants"]
+            .replace(
+                "  const amount = 1, label = 'x', enabled = true, empty = null, absent = void 0;\n",
+                "",
+            )
+            .replace(
+                "  class Item",
+                "  const amount = 1, label = 'x', enabled = true, empty = null, absent = void 0;\n  class Item",
+            ),
+            "constant-input": CASES["constants"].replace("amount = 1", "amount = element"),
+            "constant-object": CASES["constants"].replace("amount = 1", "amount = {n: 1}"),
+            "constant-bigint": CASES["constants"].replace("amount = 1", "amount = 1n"),
+            "constant-call": CASES["constants"].replace("state.get(key) === amount", "amount()"),
+            "constant-store": CASES["constants"].replace(
+                "read(key) { return", "read(key) { amount.n = 3; return"
+            ),
+            "constant-unused-effect": CASES["constants"]
+            .replace(
+                "  class Item", "  const hidden = n => { ambient(n + amount); };\n  class Item"
+            )
+            .replace("    key()", "    unused(n) { hidden(n); }\n    key()"),
+            "constant-helper-escape": CASES["constants"].replace(
+                "return lookup(key)", "element.setAttribute('bad', lookup); return lookup(key)"
+            ),
+        }
+    )
+    # Constant transport does not authorize arithmetic on a possibly absent Map read.
+    for name in ("constants", "constant-chain"):
+        bad[name + "-arithmetic"] = (
+            CASES[name]
+            .replace("state.get(key) === amount", "state.get(key) + amount")
+            .replace("return value && valid;", "return value === 2 && valid;")
+        )
     for name, body in bad.items():
         ir, contract = dom.prepare(args, name, source(body), 1, entry_name="probe")
         for owned, optimize, manifest in dom.variants(

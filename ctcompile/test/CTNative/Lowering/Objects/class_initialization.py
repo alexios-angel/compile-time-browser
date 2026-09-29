@@ -5,6 +5,24 @@ from CTNative.Lowering.Objects.class_initialization_inputs import *
 
 from CTNative.harness import native_args, without_intrinsic
 
+# Fixed primitive cells retain their exact literals through class/helper copies.
+OBSERVATIONS.update(
+    {
+        "inherited-primitive-captures": (34, 34),
+        "primitive-capture-loop": (8, 8),
+        "primitive-capture-computed": (7, 7),
+    }
+)
+POSITIVES.update(
+    {
+        "method-captured",
+        "nested-helper-primitive",
+        "captured-helper-nested",
+        "inherited-primitive-captures",
+        "primitive-capture-loop",
+    }
+)
+
 # The standalone reference has no console binding; actual conflicts throw there.
 CONFLICT_OBSERVATIONS = {
     "class-map-record-nested-conflict-direct": (594414, 594414),
@@ -790,7 +808,6 @@ def main():
             "nested-helper-changing": "class local cell has changing writes",
             "nested-helper-identity": "captured helper escapes its ordinary local call",
             "nested-helper-excess": "captured helper escapes its ordinary local call",
-            "nested-helper-primitive": "class method capture is not its constructor or an inert sibling helper",
             "nested-helper-receiver": "captured helper observes its implicit receiver or new.target",
             "nested-helper-effect": "unknown call, binding or reflective effect",
             "nested-helper-newtarget": "captured helper observes its implicit receiver or new.target",
@@ -805,7 +822,6 @@ def main():
             "captured-helper-identity": "captured helper escapes its ordinary local call",
             "captured-helper-receiver": "captured helper observes its implicit receiver or new.target",
             "captured-helper-excess": "captured helper escapes its ordinary local call",
-            "captured-helper-nested": "class method capture is not its constructor or an inert sibling helper",
             "inherited-super-helper": "super method requires a proved capture-free linear base target",
             "inherited-explicit": "derived class requires receiver-preserving super normalization",
             "override-ambient": "unknown call, binding or reflective effect",
