@@ -84,7 +84,7 @@ void control_helpers::accessor(context & cx, const char * which, const char * na
 
 value control_helpers::slot_of(context & c, dom_bindings * b, node_id id,
                                std::string_view key) const {
-    const value w = b->wrap(c, id);
+    const value w = dom_bindings::unwrap_legacy_proxy(b->wrap(c, id));
     if (!w.is_object()) { return value::undefined(); }
     const value * held = static_cast<script::object_object *>(w.as_heap())->find(key);
     return held == nullptr ? value::undefined() : *held;
@@ -95,7 +95,7 @@ value control_helpers::slot_of(context & c, dom_bindings * b, node_id id,
 // ([SameObject]) that refreshes on that version. A change to the slot says so.
 void control_helpers::set_slot(context & c, dom_bindings * b, node_id id, std::string_view key,
                                value v) const {
-    const value w = b->wrap(c, id);
+    const value w = dom_bindings::unwrap_legacy_proxy(b->wrap(c, id));
     if (w.is_object()) {
         auto * obj = static_cast<script::object_object *>(w.as_heap());
         if (key == selected_slot) {
@@ -108,7 +108,7 @@ void control_helpers::set_slot(context & c, dom_bindings * b, node_id id, std::s
 
 void control_helpers::erase_slot(context & c, dom_bindings * b, node_id id,
                                  std::string_view key) const {
-    const value w = b->wrap(c, id);
+    const value w = dom_bindings::unwrap_legacy_proxy(b->wrap(c, id));
     if (!w.is_object()) { return; }
     if (static_cast<script::object_object *>(w.as_heap())->erase(key) && key == selected_slot) {
         b->doc_->note_unversioned_change();

@@ -22,6 +22,18 @@
 
 namespace ctbrowser::shell::detail {
 
+// WHERE AN ORDINARY WRAPPER KEEPS THE PROXY a page is handed instead of it,
+// for a legacy platform object (control_methods/legacy_objects.cpp). On the
+// wrapper, so the proxy lives exactly as long as the wrapper does and moves
+// with it when the node is adopted.
+inline constexpr std::string_view legacy_object_key = CTBROWSER_PRIVATE_KEY("LegacyPlatformObject");
+
+// The wrapper a page sees for this ordinary one: its proxy, when it has one.
+[[nodiscard]] inline value exposed_wrapper(script::object_object & obj) {
+    const value * proxy = obj.find(legacy_object_key);
+    return proxy != nullptr ? *proxy : value::object(&obj);
+}
+
 // WHICH RULE OF SECTION 2.6 A ROW FOLLOWS. Every one of these is a separate
 // paragraph in the specification with its own parse, its own default and, for
 // three of them, its own way of throwing.

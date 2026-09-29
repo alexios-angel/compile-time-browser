@@ -504,7 +504,7 @@ void dom_bindings::settle_attribute_writes(const std::vector<document::write_not
             present = txn.has_attribute(note.node, note.name);
         }
         // A body/frameset's window-forwarded handler belongs to the window step.
-        const value self = wrap(*cx_, note.node);
+        const value self = unwrap_legacy_proxy(wrap(*cx_, note.node));
         path_step at{note.node, listen_on::node};
         auto * object = static_cast<script::object_object *>(self.as_heap());
         if (forwards_to_window(name) && window_object() != nullptr && body_or_frameset_of(self)) {

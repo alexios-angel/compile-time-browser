@@ -267,6 +267,7 @@ void dom_bindings::install(context & cx) {
 // It also refuses a handle a page FABRICATED. `{__node: 5}` used to name node
 // 5; it now names nothing, which is what it always meant.
 node_id dom_bindings::handle_of(value v) {
+    v = unwrap_legacy_proxy(v); // a form's or a select's wrapper is a proxy over this one
     if (!v.is_object()) { return node_id{}; }
     auto * obj = static_cast<script::object_object *>(v.as_heap());
     const value * slot = obj->find(std::string{handle_property});

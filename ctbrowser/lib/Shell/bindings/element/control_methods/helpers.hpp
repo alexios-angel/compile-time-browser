@@ -96,6 +96,12 @@ struct control_helpers {
     unsigned validity_flags(context & c, dom_bindings * b, node_id id) const;
     bool check_one(context & c, dom_bindings * b, node_id id) const;
     bool validate_form(context & c, dom_bindings * b, node_id form) const;
+    // HTMLFormElement and HTMLSelectElement as LEGACY PLATFORM OBJECTS
+    // (legacy_objects.cpp): the proxy wrap() hands out over `target`, or
+    // undefined for an element that is neither.
+    value legacy_object(context & c, script::object_object & target, node_id id) const;
+    // An img's form owner - the named getter's second kind of candidate.
+    node_id image_form_owner(const read_txn & txn, node_id img) const;
     void install_data_transfer(context & cx) const;
 
     void walk_tree(const read_txn & txn, node_id from, auto && visit) const {

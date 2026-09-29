@@ -126,6 +126,7 @@ private:
     [[nodiscard]] static node_id unpack(std::uint64_t bits);
 
     [[nodiscard]] node_id receiver(context & cx);
+    [[nodiscard]] static value unwrap_legacy_proxy(value v); // element/wrapper.cpp
 
     void refresh_element(context & cx, script::object_object & obj, node_id id);
 

@@ -4,6 +4,7 @@ target_sources(ctbrowser-shell PRIVATE
   focus_and_canvas.cpp
   form_data_and_submission.cpp
   helpers.hpp
+  legacy_objects.cpp
   numbers_and_validation.cpp
   numbers_and_validation_helpers.cpp
   pickers.cpp
