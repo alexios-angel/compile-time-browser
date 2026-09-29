@@ -841,6 +841,16 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             if (words == "size layout style paint") { return "strict"; }
             if (words == "layout style paint") { return "content"; }
         }
+        // 4b''''''''. A CURSOR'S URLS ARE WRITTEN THE ONE WAY a computed <url>
+        //            is, quoted: `url()` is `url("")` and `url(#foo)` is
+        //            `url("#foo")` (css-values/urls/empty, fragment-only). The
+        //            cascade holds the author's bytes; the declaration's own
+        //            canonical form respells exactly that.
+        if (property == "cursor" && ascii_lower_copy(text).find("url(") != std::string::npos) {
+            const style::css::value_check checked =
+                style::css::check_declaration("cursor", trim(text, html_whitespace), false);
+            if (checked.valid && !checked.substituted) { return checked.serialized; }
+        }
         // 4b'. A BASIC SHAPE (lib/Style/css/properties/shapes.cpp).
         if (property == "clip-path" || property == "shape-outside" || property == "offset-path" ||
             property == "object-view-box") {

@@ -326,6 +326,11 @@ value dom_bindings::computed_style_object(context & cx, node_id id, atom pseudo)
         const style::css::property_syntax * known = style::css::find_property(name);
         if (known != nullptr && !known->shorthand) { indexed.push_back(name); }
     }
+    // ...THE VENDOR-PREFIXED ONES LAST, each run still in order: CSSOM's
+    // "lexicographical order" sorts `-webkit-` after the standard names
+    // (getComputedStyle-property-order), where a plain sort puts `-` first.
+    std::ranges::stable_partition(indexed,
+                                  [](const std::string & name) { return !name.starts_with('-'); });
     // ...AND THE CUSTOM PROPERTIES AFTER THEM, every one the element has a
     // value for (cssstyledeclaration-custom-properties, -registered-...).
     for (const auto & [name, text] : cached->entries) {
