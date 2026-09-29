@@ -741,15 +741,7 @@ std::optional<std::string> dynamic_global_writes(
 // but nested closures and upvalue reads. Anything else is an escape.
 std::optional<std::string> own_closure_escapes(FuncOp function) {
     if (!has_entry(function)) { return "the function has no callee argument"; }
-    const mlir::BlockArgument callee = function.getBody().front().getArgument(2);
-    for (mlir::OpOperand & use : callee.getUses()) {
-        mlir::Operation * op = use.getOwner();
-        if (auto made = mlir::dyn_cast<CreateClosureOp>(op); made && use.getOperandNumber() == 0) {
-            continue; // the enclosing closure of a nested one
-        }
-        if (mlir::isa<LoadUpvalueOp, StoreUpvalueOp>(op) && use.getOperandNumber() == 0) {
-            continue; // a cell read or write through it
-        }
+    if (mlir::Operation * op = ownClosureEscape(function)) {
         return "the function's own closure escapes into " + describe(op);
     }
     return std::nullopt;
