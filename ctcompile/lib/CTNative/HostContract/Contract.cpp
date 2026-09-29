@@ -83,6 +83,7 @@ const llvm::StringSet<> & host_detail::domInitialIntrinsics() {
         "RegExp",
         "Element",
         "Function",
+        "Map",
         "__ctbrowser_regexp",
         "__ctbrowser_for_of_open",
         "__ctbrowser_iter_next",

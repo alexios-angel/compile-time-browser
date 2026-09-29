@@ -187,10 +187,10 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
                 return false;
             }
             if (depth || frame ||
-                !hasKind(result.getValue(),
-                         {Kind::undefined, Kind::boolean, Kind::number, Kind::string,
-                          Kind::undefinedString, Kind::optionalString, Kind::json,
-                          Kind::jsonAggregate, Kind::stringVector, Kind::symbol})) {
+                !hasKind(result.getValue(), {Kind::undefined, Kind::boolean, Kind::number,
+                                             Kind::string, Kind::undefinedString,
+                                             Kind::optionalString, Kind::json, Kind::jsonAggregate,
+                                             Kind::stringVector, Kind::symbol, Kind::mapPayload})) {
                 refusal = "DOM entry return must be a scalar with no borrowed browser handle";
                 return false;
             }
@@ -233,6 +233,10 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
             values[closure.getResult()] = replacement ? Kind::replacementCallback : Kind::callback;
             proved.closures.emplace_back(closure, callback);
             usedCallbacks.insert(callback);
+            continue;
+        }
+        if (const auto handled = mapOperation(operation)) {
+            if (!*handled) { return false; }
             continue;
         }
         if (const auto handled = browserOperation(operation)) {

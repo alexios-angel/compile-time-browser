@@ -1055,6 +1055,73 @@ cover 22 input strings/null across six source shapes, including canonical compar
 and repeated Number calls. These clients link DOM/Core only and reject Script/AOT
 symbols or generic nullable value helpers in generated code.
 
+## Local Maps
+
+An entry whose manifest lists `"Map"` in `initial_intrinsics` may own local
+standard Maps, for example per-element state:
+
+```javascript
+function remember(first, second) {
+  const seen = new Map();
+  seen.set(first, 1).set(second, 2);
+  first.setAttribute('data-size', seen.size);
+  return seen.delete(second) && seen.has(first);
+}
+```
+
+The DOM proof admits only the shape: an empty `new Map()` by the declared
+constructor, `set`/`get`/`has`/`delete`/`clear` called on the same instance with
+their exact argument counts, and `size`. Keys are elements or Numbers, Strings
+and Booleans; payloads are Numbers, Strings and Booleans, so neither side can run
+a conversion hook. A `get` result may be returned, tested for truthiness or
+compared with `===` against a primitive. The instance itself cannot be returned,
+stored, yielded, carried by a loop or passed to a browser method, so it never
+outlives the call.
+
+Storage is `prepareNativeMaps`' ordinary proof, run on a fingerprinted private
+clone after DOM preparation. The complete DOM proof supplies the Map identity
+evidence the closed-source path gets from its module-wide scan: every other
+read and call is a typed browser operation or an initial intrinsic, none of
+which can rebind `Map`, write a prototype or run script. A Map the storage proof
+refuses refuses the entry. The generated code keys
+`ctnative::map_storage<ctbrowser::element_ref, V>` by document and node
+identity without dereferencing either; equal node bits in another document are
+another key.
+
+One level of nesting is Bootstrap's Data shape:
+
+```javascript
+function register(element) {
+  const data = new Map();
+  data.has(element) || data.set(element, new Map());
+  const instances = data.get(element);
+  if (!instances.has('bs.button') && 0 === instances.size) { instances.set('bs.button', 1); }
+  element.classList.add('registered');
+  return data.has(element) && data.get(element).get('bs.button') || null;
+}
+```
+
+A Map any of whose `set` calls (through fluent aliases too) stores a
+`new Map()` is a parent: every one of its payloads must then be a fresh child
+constructed for that one `set`, so no child is stored twice, and its `get`
+results are children under the same confinement. A child's own payloads stay
+primitive; a third level refuses. `prepareNativeMaps` proves the child reads
+present: its presence facts now survive a typed browser call or invocation,
+which cannot reach a confined Map, where an unknown call still erases them
+(`provePresence` takes the same `hostTyped` predicate, `nullptr` elsewhere). A
+`get` result joined in a branch with a Boolean, Number, String, `null` or
+`undefined` is still such a primitive, and native inference picks the carrier
+(`ctnative::nullable_scalar` above).
+
+`native-dom-map.test` executes six entries under both DOM providers, both
+optimization policies, both printing layouts and GCC/Clang against the real
+DOM, with shape, undeclared-constructor, rebinding, child (unguarded, returned,
+shared, mixed, third-level) and work-budget refusals.
+Data storage that outlives a call is the owned Data session below. Class
+entries still refuse Map construction in the class-initialization proof, and a
+Map key whose inferred type has no carrier (an element mixed with a String, for
+example) refuses at native admission, which the diagnostic names.
+
 ## Owned synchronous sessions
 
 Select `ctbrowser-dom-session-v1` with the same fingerprint, entry and

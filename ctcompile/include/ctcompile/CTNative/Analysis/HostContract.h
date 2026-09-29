@@ -383,6 +383,10 @@ public:
     [[nodiscard]] bool jsonAssignment(ctjs::SetPropertyOp operation) const;
     // Sole writer over unique direct snapshot keys; only final own data is observed.
     [[nodiscard]] bool jsonSnapshotAssignment(ctjs::SetPropertyOp operation) const;
+    // Typed browser calls and invocations, initial intrinsic and document
+    // reads: none rebinds a standard constructor, writes a prototype or
+    // reenters script.
+    [[nodiscard]] bool typedOperation(mlir::Operation * operation) const;
 
 private:
     std::string refusal;

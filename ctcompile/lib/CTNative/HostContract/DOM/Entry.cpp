@@ -553,4 +553,13 @@ bool DOMEntryAnalysis::jsonSnapshotAssignment(ctjs::SetPropertyOp operation) con
     return llvm::is_contained(proof.snapshotAssignments, operation);
 }
 
+bool DOMEntryAnalysis::typedOperation(mlir::Operation * operation) const {
+    if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(operation)) {
+        return isInitialIntrinsic(load) || isCurrentDocument(load);
+    }
+    if (auto invoke = llvm::dyn_cast<ctjs::InvokeOp>(operation)) { return invocation(invoke); }
+    auto call = llvm::dyn_cast<ctjs::CallOp>(operation);
+    return call && (this->call(call) || isStringPrefixRegExp(call));
+}
+
 } // namespace ctcompile::ctnative
