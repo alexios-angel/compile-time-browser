@@ -22,6 +22,57 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Local Map captures in native DOM classes, 2026-09-29 UTC
+
+**Landed: `34990750b`**, on the DOM/Map prerequisites merged as `e94534338`.
+Ordinary DOM classes now reuse the existing local Map census, fixed-cell capture
+proof and helper argument transport. The original standard Map binding and every
+use are checked before normalization can erase an owner or branch. Map-reading
+methods, including unused methods, still require the complete typed DOM proof.
+Helper transport retires replaced call records and refreshes cached cell values.
+No browser API or runtime representation changed.
+
+Four sources execute: a local Map beside a class, a method capturing a Map, a
+helper shared by the entry and a method, and an unused Map-reading method. The
+prior compiler refused the unchanged local, method and unused sources. The
+shared-helper source uses straight-line calls; its original conditional-call
+variant remains an explicit refusal because method parameter reachability is
+not yet proved through that branch. Mutable captures, escaped owners, detached
+methods, invalid unused bodies and replaced intrinsic identities also refuse.
+
+**Measured, devbox only:** `tools/remote-build.sh ctjs-opt ctjs-translate
+ctcompile-test-native-reference` passed **112/112 affected dependency steps**.
+The new driver passed **64 native executions and 48 refusal checks**, covering
+both DOM providers, optimization off/on, explicit/deduced printing and GCC/pinned
+Clang. Its four source programs agree with Node and the VM; generated-source and
+`nm` checks found no Script symbols. Five existing closed Map helper/holder
+sources passed **24 native executions and two refusals**, also agreeing with
+Node and the VM. Totals: **88 native executions, nine source programs checked
+against both oracles (18 oracle runs), and 50 refusals**. All five tested file
+hashes match the commit. `tools/format.sh --check` passed (1193 C++, 157 Python,
+116 web files), and `git diff --check` passed.
+
+Exact commands: `flock /tmp/ctbrowser-devbox-build.lock bash
+/tmp/codex-dom-class-map/check.sh` built and probed the candidate;
+`flock /tmp/ctbrowser-devbox-build.lock bash
+/tmp/codex-dom-class-map/test-only.sh` ran the new driver, five selected legacy
+cases and the authentic Bootstrap probe. `finish.sh` under the same lock checked
+hashes and copied generated artifacts. Scripts, logs, source hashes and the
+artifact archive are preserved at
+`/home/alex/.ctbrowser-auto/codex/ctcompile/artifacts/2026-09-29-dom-class-map/`.
+Full lit/CTest, broad corpus/native matrices, WPT/test262, Windows and sanitizers
+were not run; nothing was pushed.
+
+**Next measured Bootstrap boundary:** the unchanged W/B/U/Data source with
+`Map` declared now refuses `native DOM class: class own-key snapshot constructor
+observes its receiver`. Without that intrinsic declaration it still refuses the
+Data Map capture (`fn$2 / ctjs.construct` in this run). The next proof must compose
+constructor registration of `this` with the own-field snapshot census; it must
+retain the original Data helpers and ownership checks. Conditional method-call
+reachability and ordinary DOM element-key routing remain separate proof gaps.
+Full Bootstrap has not executed natively. Claude's independent downstream probe
+confirmed the same boundary and needed no further DOM/Map lowering change.
+
 ## Local and child Maps in DOM entries, 2026-09-29 UTC
 
 **Landed: `f9c4d1a68`, `2c9594855`** (branch `claude-ctcompile`, merged as
