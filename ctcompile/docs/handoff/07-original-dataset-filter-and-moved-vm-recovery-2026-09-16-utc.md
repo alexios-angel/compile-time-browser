@@ -523,7 +523,7 @@ Timing uses unchanged Bootstrap IR, saved baseline/candidate tools, warm-up and
 fingerprints match exactly. Tiny URI lowering measured **8.263 → 8.579 ms**,
 so there is no measured general transcompilation speedup. The CLI clears supplied
 reports before fingerprinting; its decorated-input timing does not measure the
-clone fallback. See [the quality review](../native-quality-review-2026-09-15.md).
+clone fallback. See [the quality review](../reviews/native-quality-review-2026-09-15.md).
 
 Complete **310-step build / 606/606 CTests in 1454.14s / 177/177 lit in
 962.95s PASS**, with the full wrapper's exit status **0** retained.

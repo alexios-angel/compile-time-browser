@@ -49,6 +49,67 @@ their original order and directory scope, preserving source/build paths and
 helper visibility. Importer coverage reads the driver, instruction dispatch
 and operator tables explicitly.
 
+The notes beside this one, one line each; dated handoffs, plans, reviews and
+per-note evidence live in the subdirectories.
+
+- [bootstrap-data-probe.md](bootstrap-data-probe.md) — the Bootstrap Data publication probe (`tools/check/bootstrap-data-probe.py`)
+- [bootstrap-native-next.md](bootstrap-native-next.md) — what native Bootstrap needs next; its steps are in `bootstrap-native-next/`
+- [bootstrap-provider-next.md](bootstrap-provider-next.md) — the next Bootstrap native provider boundary; steps in `bootstrap-provider-next/`
+- [ctcompile.md](ctcompile.md) — the `ctcompile` command line
+- [escape-load-evidence.md](escape-load-evidence.md) — direct loads and candidate provenance in escape analysis
+- [escape-oracle-aot.md](escape-oracle-aot.md) — AOT-compiled frames' allocations in the escape oracle
+- [escape-storage-evidence.md](escape-storage-evidence.md) — direct storage evidence (`EscapeVerdicts::directStorage`)
+- [HANDOFF.md](HANDOFF.md) — continuation state: synchronization, the current gate and next steps
+- [LLVMUpgrade.md](LLVMUpgrade.md) — upgrading LLVM and MLIR, always as its own change
+- [merge-main.md](merge-main.md) — the 2026-09-24 merge of ctcompile-v1 into main
+- [native-ab.md](native-ab.md) — the native tier's four measured numbers (part 24 Phase 63 Step 4)
+- [native-binding-time.md](native-binding-time.md) — binding-time analysis
+- [native-bootstrap-host-contract.md](native-bootstrap-host-contract.md) — the Bootstrap Data host and export contract
+- [native-bootstrap-script-this.md](native-bootstrap-script-this.md) — Bootstrap's classic-script receiver
+- [native-callbacks.md](native-callbacks.md) — callback arguments and Bootstrap startup
+- [native-conditional-effects.md](native-conditional-effects.md) — conditional heap-effect queries across calls
+- [native-const-bindings.md](native-const-bindings.md) — const bindings and by-value parameters in native C++
+- [native-deforestation.md](native-deforestation.md) — `--ctnative-deforest`: removing temporary Map snapshots
+- [native-divergences.md](native-divergences.md) — where the native backend and the interpreter declaredly disagree
+- [native-dom-entry.md](native-dom-entry.md) — DOM entries through the `ctbrowser-dom-v1` host contract
+- [native-exceptions.md](native-exceptions.md) — JavaScript exceptions as C++ unwinding
+- [native-export-boundary.md](native-export-boundary.md) — export ownership and calls
+- [native-host-callables.md](native-host-callables.md) — the exported getter proof
+- [native-host-prefix.md](native-host-prefix.md) — checked host entry-prefix specialization
+- [native-host-slots.md](native-host-slots.md) — checked host roots and publication-slot flow
+- [native-literals.md](native-literals.md) — readable native C++ literals
+- [native-map-presence.md](native-map-presence.md) — conditional membership proofs for Maps
+- [native-maps.md](native-maps.md) — standard Maps, toward Bootstrap Data
+- [native-method-tables.md](native-method-tables.md) — returned method tables
+- [native-modern-pe.md](native-modern-pe.md) — design review: modern partial evaluation for CTNative
+- [native-nested-maps.md](native-nested-maps.md) — Maps containing Maps
+- [native-object-fields.md](native-object-fields.md) — owned component fields
+- [native-object-keys.md](native-object-keys.md) — object identities as Map keys
+- [native-object-values.md](native-object-values.md) — object identities in Map values
+- [native-optimization-defaults.md](native-optimization-defaults.md) — what `--ctnative-lower-to-emitc` optimizes by default
+- [native-optional-scalars.md](native-optional-scalars.md) — tagged optional scalars
+- [native-owned-global-maps.md](native-owned-global-maps.md) — captured Maps across global publication; evidence in `native-owned-global-maps/`
+- [native-owned-global-methods.md](native-owned-global-methods.md) — ownership for an exported getter
+- [native-owned-globals.md](native-owned-globals.md) — checked ordinary global owners
+- [native-owned-method-table-slots.md](native-owned-method-table-slots.md) — owning method-table fields on confined objects
+- [native-partial-evaluation.md](native-partial-evaluation.md) — partial evaluation and heap residualisation
+- [native-pe-call-proof.md](native-pe-call-proof.md) — proving partial-evaluation call targets
+- [native-pe-roadmap.md](native-pe-roadmap.md) — the partial-evaluation implementation plan
+- [native-precomputation.md](native-precomputation.md) — `--ctnative-precompute`: symbolic precomputation
+- [native-provider-diagnostics.md](native-provider-diagnostics.md) — provider diagnostics and callback effects
+- [native-provider-mutations.md](native-provider-mutations.md) — private Map mutation summaries
+- [native-provider-objects.md](native-provider-objects.md) — provider object payloads
+- [native-reachability.md](native-reachability.md) — `--ctnative-prune-unreachable`: removing unreachable helpers
+- [native-returned-closures.md](native-returned-closures.md) — returned closures
+- [native-scalar-unions.md](native-scalar-unions.md) — closed boolean/number unions
+- [native-source-invocations.md](native-source-invocations.md) — source calls at the native exception boundary
+- [native-specialization.md](native-specialization.md) — `--ctnative-specialize`: direct-call variants
+- [native-string-snapshots.md](native-string-snapshots.md) — string-key Map snapshots
+- [native-strings.md](native-strings.md) — owning native strings
+- [native-supercompilation.md](native-supercompilation.md) — supercompilation design and research basis
+- [refactor-goldens.md](refactor-goldens.md) — proving a lowering refactor changed nothing
+- [release-0.1.0.md](release-0.1.0.md) — the 0.1.0 developer preview scope and checklist
+
 The September 2026 reorganization reduced the original entry files as follows:
 
 | File | Before | After |
