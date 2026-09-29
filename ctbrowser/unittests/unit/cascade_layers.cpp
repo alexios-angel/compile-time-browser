@@ -57,6 +57,25 @@ void test_layers_across_sheets() {
     expect_value(f, f.find("t"), "color", "green", "a second sheet's @layer a is the first's");
 }
 
+// A `@keyframes` name defined in two layers means the stronger layer's rule,
+// unlayered above every layer, whatever the document order
+// (layer-keyframes-override).
+void test_keyframes_by_layer() {
+    fixture f;
+    f.styles.add_sheet("@keyframes a { from { top: 1px } } @layer { @keyframes a { from { top: 2px "
+                       "} } } @layer base, override; @layer override { @keyframes b { from { top: "
+                       "3px } } } @layer base { @keyframes b { from { top: 4px } } }",
+                       1);
+    const auto first_top = [&](std::string_view name) {
+        const keyframes_rule * k = f.styles.keyframes_of(name);
+        return k == nullptr || k->keyframes.empty() || k->keyframes[0].values.empty()
+                   ? std::string{}
+                   : k->keyframes[0].values[0].second;
+    };
+    CHECK_EQ(first_top("a"), std::string{"1px"});
+    CHECK_EQ(first_top("b"), std::string{"3px"});
+}
+
 void test_revert_layer() {
     fixture f;
     f.load("<t>x</t>",
@@ -223,6 +242,7 @@ void test_container_queries() {
 int main() {
     test_layer_order();
     test_layers_across_sheets();
+    test_keyframes_by_layer();
     test_revert_layer();
     test_revert_rule();
     test_revert_expanded_properties();

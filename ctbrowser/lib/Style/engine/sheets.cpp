@@ -57,6 +57,9 @@ void engine::clear_origin(std::uint8_t origin) {
     for (const auto & [key, rules] : index_.by_class) { scan(rules); }
     for (const auto & [key, rules] : index_.by_tag) { scan(rules); }
     scan(index_.universal);
+    // ...or an `@keyframes` of another origin, which is ranked by its layer too.
+    std::erase_if(keyframes_, [origin](const keyframes_rule & k) { return k.origin == origin; });
+    for (const keyframes_rule & k : keyframes_) { layered = layered || k.layer != 0; }
     if (!layered) {
         layer_names_.assign(1, std::string{});
         layer_rank_.assign(1, 0xFFFFFFFFu);
@@ -73,7 +76,6 @@ void engine::clear_origin(std::uint8_t origin) {
     if (!contained) { containers_.assign(1, css::container_condition{}); }
     // A sheet's @function rules go with its other rules; a registration does not.
     erase_if(functions_, [origin](const auto & entry) { return entry.second.origin == origin; });
-    std::erase_if(keyframes_, [origin](const keyframes_rule & k) { return k.origin == origin; });
     // The @font-face list is not indexed by origin and is not cleared: a face is
     // a resource the browser has already been asked to load, and unloading one
     // because a rule was edited is a different question from unsaying the rule.
@@ -370,7 +372,6 @@ void engine::add_sheet(std::string_view css, std::uint8_t origin) {
     for (std::size_t i = condition_base; i < conditions_.size(); ++i) {
         condition_truth_[i] = condition_holds(i);
     }
-    file_keyframes(sheet, origin, condition_base);
 
     // THE SHEET'S LAYERS, merged into the engine's by NAME: `@layer a` in two
     // sheets is one layer, first declared where it first appeared. An
@@ -400,6 +401,8 @@ void engine::add_sheet(std::string_view css, std::uint8_t origin) {
         layer_map[i + 1] = static_cast<std::uint16_t>(found - layer_names_.begin());
     }
     if (!sheet.layers.empty()) { rerank_layers(); }
+    // ...ITS `@keyframes`, each in the engine's layer its block sat in.
+    file_keyframes(sheet, origin, condition_base, layer_map);
     // ...AND ITS SCOPES, appended: a scope belongs to its sheet.
     std::vector<std::uint16_t> scope_map(sheet.scopes.size() + 1, 0);
     for (std::size_t i = 0; i < sheet.scopes.size(); ++i) {

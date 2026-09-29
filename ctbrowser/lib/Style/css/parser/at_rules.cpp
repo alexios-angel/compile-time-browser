@@ -275,6 +275,7 @@ void parser::record_keyframes(std::span<const component_value> prelude,
                               const component_value & block) {
     keyframes_block made;
     made.condition = condition_;
+    made.layer = layer_;
     for (const component_value & v : prelude) {
         if (v.kind != cv_kind::token) { return; }
         const css_token & t = sheet_.tokens[v.token];

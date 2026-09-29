@@ -125,6 +125,7 @@ struct keyframes_rule {
     std::string name;
     std::uint8_t origin = 0;
     std::uint32_t condition = 0; // the engine's condition table; 0 unconditional
+    std::uint32_t layer = 0;     // the engine's layer table; 0 unlayered
     std::vector<keyframe> keyframes;
 };
 
@@ -212,9 +213,10 @@ public:
         const auto it = registrations_.find(name.id);
         return it == registrations_.end() ? nullptr : &it->second;
     }
-    // THE `@keyframes` RULE A NAME MEANS, or null: the LAST one in document
-    // order whose `@media` holds wins (CSS Animations 1 §4: "the last one in
-    // document order"). Names are case-sensitive, as a <custom-ident> is.
+    // THE `@keyframes` RULE A NAME MEANS, or null: of those whose `@media`
+    // holds, the one in the strongest origin and layer - unlayered above every
+    // layer (CSS Cascade 5 §6.4.3) - and of those the LAST in document order
+    // (CSS Animations 1 §4). Names are case-sensitive, as a <custom-ident> is.
     [[nodiscard]] const keyframes_rule * keyframes_of(std::string_view name) const;
 
     // A CUSTOM FUNCTION from a sheet's `@function` rule, CSS Functions and
@@ -607,7 +609,7 @@ private:
     // (lib/Style/css/keyframes.cpp). `condition_base` is where the sheet's
     // `@media` table landed in `conditions_`, for the rule's condition index.
     void file_keyframes(const css::stylesheet & sheet, std::uint8_t origin,
-                        std::size_t condition_base);
+                        std::size_t condition_base, std::span<const std::uint16_t> layer_map);
     std::vector<keyframes_rule> keyframes_;
 
     // Does this text carry a unit that resolves against the element's own font -

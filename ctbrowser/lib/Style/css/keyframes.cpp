@@ -21,11 +21,12 @@
 namespace ctbrowser::style {
 
 void engine::file_keyframes(const css::stylesheet & sheet, std::uint8_t origin,
-                            std::size_t condition_base) {
+                            std::size_t condition_base, std::span<const std::uint16_t> layer_map) {
     for (const css::keyframes_block & block : sheet.keyframes) {
         keyframes_rule made;
         made.name = block.name;
         made.origin = origin;
+        made.layer = block.layer < layer_map.size() ? layer_map[block.layer] : 0u;
         made.condition = block.condition == 0
                              ? 0u
                              : static_cast<std::uint32_t>(condition_base + block.condition - 1);
@@ -125,10 +126,18 @@ void engine::file_keyframes(const css::stylesheet & sheet, std::uint8_t origin,
 }
 
 const keyframes_rule * engine::keyframes_of(std::string_view name) const {
+    // The layer's rank is its place in the layer order, unlayered the highest
+    // (rerank_layers); an origin outranks every layer in it.
+    const auto strength = [this](const keyframes_rule & k) {
+        const std::uint32_t rank = k.layer < layer_rank_.size() ? layer_rank_[k.layer] : 0u;
+        return std::pair{k.origin, rank};
+    };
+    const keyframes_rule * best = nullptr;
     for (auto it = keyframes_.rbegin(); it != keyframes_.rend(); ++it) {
-        if (it->name == name && condition_holds(it->condition)) { return &*it; }
+        if (it->name != name || !condition_holds(it->condition)) { continue; }
+        if (best == nullptr || strength(*it) > strength(*best)) { best = &*it; }
     }
-    return nullptr;
+    return best;
 }
 
 } // namespace ctbrowser::style

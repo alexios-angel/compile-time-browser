@@ -24,6 +24,10 @@ struct keyframes_block {
     std::string name; // the <custom-ident> or <string>, unquoted, case preserved
     // The `@media` this rule sits inside (stylesheet::conditions), 0 for none.
     std::uint32_t condition = 0;
+    // ...and the `@layer` (stylesheet::layers, 1-based), 0 for none: a name
+    // defined in two layers means the rule of the stronger one (CSS Cascade 5
+    // §6.4.3, layer-keyframes-override).
+    std::uint32_t layer = 0;
     std::vector<keyframe_block> frames; // in source order
 };
 
