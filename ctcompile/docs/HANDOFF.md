@@ -22,6 +22,79 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Fixed primitive captures in class initialization, 2026-09-29 UTC
+
+**Landed: `3cd8ffd27` directly on `ctcompile-v1`, after integration merge
+`ee4b99178`.** Constructor, method and sibling-helper capture proof now copies
+fixed Number, String, Boolean, null and undefined literals into their original
+load sites before super/method bodies are copied. It reuses
+`ctjs::isPrimitiveAttr`; native storage and browser APIs are unchanged. Fixed
+cells, early-capture rejection, exact slots, local source order, unique closure
+sites, helper identity/call/receiver rules and complete source or typed DOM
+effect proofs remain mandatory. Each copied operation and replaced use consumes
+proof budget; failed proofs roll back. Both the original read-only audit and
+the integrated-tip audit found no must-fix.
+
+The unchanged `method-captured`, `nested-helper-primitive` and
+`captured-helper-nested` fixtures are now positive cases. New inherited
+constructor and loop-method sources exercise literal copying before
+normalization. Two DOM sources combine all five primitive kinds with a captured
+Map and one or two helper levels. Their original arithmetic variants advanced
+past capture proof but still refused typed `ctjs.binary`: Map payload arithmetic
+is unproved. Those bodies remain negative controls; positives use the existing
+payload equality operation. Mutable cells, nested writers, late initialization,
+object/BigInt/input captures, invalid primitive consumers, escaping helpers and
+unused ambient effects still refuse.
+
+**Measured on the integrated tip, devbox only:** under one
+`/tmp/ctbrowser-devbox-build.lock` hold,
+`tools/remote-build.sh ctjs-opt ctjs-translate ctcompile-test-native-reference`
+passed a **497-step** dependency rebuild. Eight lowering preflights passed
+(seven admissions and one computed-producer refusal). The exact lit filter
+`^ctcompile :: CTNative/Browser/native-class-dom-(map|static)[.]test$`
+passed **2/2 in 144.65 s**: Map covered **96 native executions / 102 refusals**,
+and static factories covered **64 / 40**. The focused `legacy.py` selection
+checked 23 class sources with **56 native executions / 23 refusals**, including
+zero-budget, stale/missing-authority and rollback controls. The primitive
+capture's first complete proof budget remains **501**.
+
+Total: **216 native executions, 165 refusals and 33 source checks against both
+Node and the VM**. The preflights and closed Button probe below are separate.
+GCC and pinned Clang, optimization off/on, both DOM providers, explicit/deduced
+C++, generated-source/`nm` no-Script checks and four local/devbox source hashes
+pass. `tools/format.sh --check` passed (1184 C++, 161 Python, 116 web files),
+as did `git diff --check`. The gate completed and released its lock. These
+totals also matched the earlier completed pre-merge gate (144.10 s), whose
+evidence survived the interruption and devbox restart; repeated runs are not
+added to the totals.
+
+Exact integrated commands are in
+`/tmp/codex-constant-captures/finish/check.sh`. Both runs' scripts, logs, hashes,
+reviews and archives are preserved at
+`/home/alex/.ctbrowser-auto/codex/ctcompile/artifacts/2026-09-29-constant-captures/`.
+The integrated archive is **10,347,785 bytes**; the earlier complete archive is
+**10,351,449 bytes**. Full lit/CTest, broad corpus/native matrices, WPT/test262,
+Windows and sanitizers were not run for this increment. No isolated performance
+measurement or full native Bootstrap execution is claimed. No browser
+implementation changed or push was made.
+
+**Next native/Bootstrap boundary:** the unchanged closed vendor prefix plus
+complete Button class still agrees in Node and the VM on retained element,
+exact Data registration, empty config and two toggles. Native lowering advances
+past the fixed `transitionend` capture and now refuses
+**`native DOM class: captured helper observes its implicit callee`**.
+The next proof is the transition helper's captured callback, retained through
+the dormant `_queueCallback`; its body and effects must remain checked.
+
+Other open obligations include W -> B -> U publication, method-used/mutable
+`_element`, receiver-specific computed `DATA_KEY`, config ownership, eager
+`Set` initialization and entry/session ownership of Data records. Static
+getters and lexical-super methods retaining captures keep their separate
+capture-free requirements. Peer element-valued record work remains uncommitted
+in `wt/claude-ctcompile`: its current probe reaches native field admission
+(`_element` has `!ctnative.dom_element`, not Number/Boolean). It is not included
+in this increment.
+
 ## DOM records built before their Map, and element-keyed records, 2026-09-29 UTC
 
 **Landed: `6d49cd0b0`, `bc70c33d8`** (branch `claude-ctcompile`, merged as `07fab7146`),
