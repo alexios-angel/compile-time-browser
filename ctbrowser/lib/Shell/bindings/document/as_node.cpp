@@ -51,9 +51,7 @@ namespace {
 // The DOCUMENT_POSITION_* bits, DOM 4.4. Named because `20` at the one place
 // they are combined says nothing and `contained_by | following` says all of it.
 constexpr unsigned position_disconnected = 0x01;
-constexpr unsigned position_preceding = 0x02;
 constexpr unsigned position_following = 0x04;
-constexpr unsigned position_contains = 0x08;
 constexpr unsigned position_contained_by = 0x10;
 constexpr unsigned position_implementation_specific = 0x20;
 
@@ -270,27 +268,7 @@ void dom_bindings::install_document_as_node(context & cx, script::object_object 
     // Node interface object here to inherit from - it is a rung of its own in
     // docs/wpt.md's handoff - so they are own properties, which is what
     // `document.DOCUMENT_POSITION_CONTAINED_BY` needs to answer at all.
-    for (const auto & [name, bits] : std::initializer_list<std::pair<const char *, double>>{
-             {"ELEMENT_NODE", 1},
-             {"ATTRIBUTE_NODE", 2},
-             {"TEXT_NODE", 3},
-             {"CDATA_SECTION_NODE", 4},
-             {"ENTITY_REFERENCE_NODE", 5},
-             {"ENTITY_NODE", 6},
-             {"PROCESSING_INSTRUCTION_NODE", 7},
-             {"COMMENT_NODE", 8},
-             {"DOCUMENT_NODE", 9},
-             {"DOCUMENT_TYPE_NODE", 10},
-             {"DOCUMENT_FRAGMENT_NODE", 11},
-             {"NOTATION_NODE", 12},
-             {"DOCUMENT_POSITION_DISCONNECTED", position_disconnected},
-             {"DOCUMENT_POSITION_PRECEDING", position_preceding},
-             {"DOCUMENT_POSITION_FOLLOWING", position_following},
-             {"DOCUMENT_POSITION_CONTAINS", position_contains},
-             {"DOCUMENT_POSITION_CONTAINED_BY", position_contained_by},
-             {"DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC", position_implementation_specific}}) {
-        doc.set(name, value::number(bits));
-    }
+    for (const auto & [name, bits] : node_constants) { doc.set(name, value::number(bits)); }
 
     // --- where the document sits ------------------------------------------
 
