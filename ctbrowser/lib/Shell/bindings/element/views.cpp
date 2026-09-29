@@ -280,18 +280,23 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
     // on the wrapper. As properties, assigning markup stored a string, built no
     // nodes, rendered nothing and reported nothing - and reading one back gave
     // whatever the page last wrote rather than what the DOM actually holds.
+    // Both [LegacyNullToEmptyString]: `el.innerHTML = null` empties the
+    // element rather than writing the word (innerhtml-07.html).
+    const auto markup_of = [](context & c, std::span<value> a) {
+        return arg(a, 0).is_null() ? std::string{} : arg_string(c, a, 0);
+    };
     define_getter(
         cx, obj, "innerHTML",
         [this, id](context & c, std::span<value>) { return c.string(inner_html(id)); },
-        [this, id](context & c, std::span<value> a) {
-            set_inner_html(id, arg_string(c, a, 0));
+        [this, id, markup_of](context & c, std::span<value> a) {
+            set_inner_html(id, markup_of(c, a));
             return value::undefined();
         });
     define_getter(
         cx, obj, "outerHTML",
         [this, id](context & c, std::span<value>) { return c.string(outer_html(id)); },
-        [this, id](context & c, std::span<value> a) {
-            set_outer_html(c, id, arg_string(c, a, 0));
+        [this, id, markup_of](context & c, std::span<value> a) {
+            set_outer_html(c, id, markup_of(c, a));
             return value::undefined();
         });
     // `data` AND `nodeValue` - the text a Text or Comment node holds, which is
