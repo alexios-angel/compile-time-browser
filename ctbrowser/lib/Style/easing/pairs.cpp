@@ -176,7 +176,7 @@ struct gap_shape {
     std::size_t start = std::string_view::npos;
     for (std::size_t i = 0; i <= text.size(); ++i) {
         const char c = i < text.size() ? text[i] : ' ';
-        const bool space = c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f';
+        const bool space = html_whitespace.contains(c);
         if (depth == 0 && space) {
             if (start != std::string_view::npos) { out.push_back(text.substr(start, i - start)); }
             start = std::string_view::npos;
