@@ -144,8 +144,9 @@ std::string prepareDOMMaps(mlir::ModuleOp module, std::optional<HostContract> & 
             // ponytail: the Map proof is unbudgeted here, as on the owned-global
             // path; thread a WorkBudget through its fixpoints if host-max-steps
             // must bound it too.
-            prepareNativeMaps(*prepared, nullptr,
-                              [&](mlir::Operation * op) { return source.typedOperation(op); });
+            prepareNativeMaps(
+                *prepared, nullptr, [&](mlir::Operation * op) { return source.typedOperation(op); },
+                [&](ctjs::CreateObjectOp object) { return source.recordObject(object); });
             std::string refusal;
             prepared->walk([&](mlir::Operation * op) {
                 auto reason = op->getAttrOfType<mlir::StringAttr>(kNativeMapReason);

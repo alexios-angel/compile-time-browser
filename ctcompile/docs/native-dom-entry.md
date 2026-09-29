@@ -1122,6 +1122,49 @@ entries still refuse Map construction in the class-initialization proof, and a
 Map key whose inferred type has no carrier (an element mixed with a String, for
 example) refuses at native admission, which the diagnostic names.
 
+### Records as Map payloads
+
+A local Map may also store fresh scalar-field records, keeping their identity:
+
+```javascript
+function probe(element) {
+  const state = new Map();
+  const first = {n: 7};
+  state.set('x', first);
+  const saved = state.get('x');
+  state.delete('x');
+  state.set('x', {n: 9});
+  saved.n = 8;                       // writes through to `first`
+  element.setAttribute('x', 'done');
+  const current = state.get('x');
+  return first.n === 8 && current.n === 9;
+}
+```
+
+The DOM source proof keeps an object that is a `set` payload as data rather
+than a callable holder. The entry proof (`Maps.cpp` `recordOperation`) types it
+as a record only when its uses are constant field reads and writes and `set`
+calls of one local Map constructed before it. The Number, String and Boolean
+fields a record writes before it is first stored seal that Map's schema; every
+record the Map stores has the same fields and kinds, and later writes through
+the record or a `get` result keep them. Neither a record nor a `get` result may
+be returned, compared, carried by a branch or passed anywhere else. Class
+instances reach the same shape once class lifting and helper expansion inline
+their constructor and methods.
+
+`prepareDOMMaps` passes the proved records to `prepareNativeMaps` as
+`hostRecord`, which selects `NativeMap::proveRecords` exactly as a lifted
+receiver does: every Map operation in the entry block, literal String keys,
+records owned by the entry frame and every `get` proved present. Emission uses
+stack records the Map borrows, `map_storage<std::string, record *>` with
+`map_get_present`, so a saved `get` keeps pointing at its record across
+deletion and reinsertion. `native-dom-records.test` executes a literal record,
+a class instance with a method and a three-field record under both providers,
+both policies and GCC/Clang, and refuses returned, compared, browser-argument,
+absent, schema, kind, new-field, nested, element-key, mixed, two-Map and
+computed-field sources. Element keys, nullable reads and records that outlive
+the call remain refused.
+
 ## Owned synchronous sessions
 
 Select `ctbrowser-dom-session-v1` with the same fingerprint, entry and

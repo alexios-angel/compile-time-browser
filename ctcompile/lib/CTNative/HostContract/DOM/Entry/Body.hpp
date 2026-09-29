@@ -86,8 +86,10 @@ enum class Kind {
     mapIntrinsic, // The initial standard Map constructor.
     map,          // A local instance, used only through mapMethod calls and size.
     mapMethod,    // Its set/get/has/delete/clear, called on that same instance.
-    mapPayload    // A get result - a stored Number/String/Boolean or undefined - or one
+    mapPayload,   // A get result - a stored Number/String/Boolean or undefined - or one
                   // joined with another primitive in a branch.
+    record,       // A fresh local record stored in exactly one local Map.
+    recordAlias   // A get result of such a Map: the stored record, never absent.
 };
 
 // Scalars whose truth test runs no conversion hook.
@@ -142,6 +144,12 @@ struct Body {
     bool documentRootPresent = false;
     // Every fluent alias of a local Map whose payloads are fresh child Maps.
     llvm::DenseSet<mlir::Value> mapParents{};
+    // Records: the Map each record and alias belongs to, the scalar fields a
+    // record initializes before it is first stored, and each record Map's
+    // schema, sealed by its first stored record. Maps storing primitives.
+    llvm::DenseMap<mlir::Value, mlir::Value> recordMaps{};
+    llvm::DenseMap<mlir::Value, llvm::StringMap<Kind>> recordFields{}, recordSchemas{};
+    llvm::DenseSet<mlir::Value> storedRecords{}, primitiveMaps{};
     llvm::DenseSet<mlir::Block *> nonReturning{};
 
     bool supplied(llvm::StringRef name) const { return intrinsics.contains(name); }
@@ -160,6 +168,7 @@ struct Body {
                                     mlir::Value & frame, bool & returned);
     std::optional<bool> browserOperation(mlir::Operation & operation);
     std::optional<bool> mapOperation(mlir::Operation & operation);
+    std::optional<bool> recordOperation(mlir::Operation & operation);
 };
 
 } // namespace ctcompile::ctnative::dom_entry_detail
