@@ -100,6 +100,16 @@ void dom_bindings::install_window(context & cx) {
             .dispatch_error_value("Uncaught exception", a[0]);
         return value::undefined();
     });
+    // `print()` and `blur()`, HTML 8.8.1 and 7.2.2.1, which DO NOTHING here and
+    // are allowed to: the printing steps' first step lets a user agent with
+    // no printer - a kiosk, a headless engine - return without printing (and
+    // so without beforeprint/afterprint), and Window's blur() steps are "do
+    // nothing". Present because a page calls them unconditionally; a frame's
+    // realm starts with them too (a detached frame's print, borrowed, is
+    // print-in-detached-frame.html).
+    for (const char * name : {"print", "blur"}) {
+        cx.define_native(name, [](context &, std::span<value>) { return value::undefined(); });
+    }
 
     // `new Event(type)` and `window.dispatchEvent(event)`.
     //
