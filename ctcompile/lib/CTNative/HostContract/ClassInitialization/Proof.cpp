@@ -552,8 +552,12 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
         return refuse("base publication lacks a completed unique leaf proof");
     }
     if (!proveMaps()) { return false; }
+    if ((domEntry || contract.provider == HostContract::Provider::ctbrowserDOMDataSession) &&
+        !forwardDOMDataFields(contract)) {
+        return false;
+    }
     if (contract.provider == HostContract::Provider::ctbrowserDOMDataSession) {
-        if (!forwardDOMDataFields(contract) || !proveDOMDataFamily(contract)) { return false; }
+        if (!proveDOMDataFamily(contract)) { return false; }
     }
     // Every invocation the census below admits is a recorded call. A helper
     // or holder slot called in the source whose calls all sit in bodies that
