@@ -22,6 +22,52 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Inherited DOM methods on constructed leaves, 2026-09-29 UTC
+
+**Landed: `70b728a06`**, continuing `b7bec2456` / `3aff0d5d3`.
+The existing receiver-copy mechanism now gives each constructed DOM leaf its
+own inherited method bodies. Those copies pass the existing complete typed
+method probes, including unused bodies, actual parameter reachability and
+field mutation order. Copies retain snapshot markers and consume the work
+budget before allocation. The binding and class proofs run before consumed
+heritage/super declarations are removed from the final DOM contract.
+No browser implementation, runtime carrier or ownership policy changed.
+
+Nine new source admissions cover inherited calls and parameters, unused writes,
+separate base instances, sibling receivers, deeper inheritance, field updates,
+own-field snapshots and overridden static getters. Fifteen new source refusals
+cover unknown/ambient effects, unused parameter bodies, invalid dispatch and
+sibling inputs, receiver/method escapes, replaced helpers, shadowed methods and
+terminal unconstructed classes. Shadowed original bodies remain unproved and
+explicitly refused; copying selected bodies does not authorize erasing them.
+
+**Measured, devbox only:** `tools/remote-build.sh ctjs-opt ctjs-translate
+ctcompile-test-native-reference` passed (12/12, then 3/3 after contract cleanup).
+The `class_dom.py` harness restricted by `subset.py` to **14 positive and 19
+refusal sources** passed **56 Node/interpreter observations, eight combined
+native executables and 304 refusal checks**. GCC and pinned Clang exercised both
+DOM providers, optimization off/on and explicit/deduced printing. Generated
+executables passed the existing `nm -C` no-script/AOT-symbol gate. All seven
+tested source/test hashes match the devbox. `tools/format.sh --check` passed
+(1180 C++, 155 Python, 116 web files), and `git diff --check` passed.
+
+The baseline reproduced the former inherited-method gate after switching the
+fixtures to generic MLIR (the known `cf.switch` custom-printer parse failure
+prevented the first attempt from reaching the proof). The first post-change
+build exposed retained helper declarations at the final DOM contract gate;
+the final run above includes their cleanup. Logs, exact wrappers, selected
+cases, generated C++/IR and hashes are archived at
+`/home/alex/.ctbrowser-auto/codex/ctcompile/artifacts/2026-09-29-inherited-dom/`.
+Build, tests, frontier probe and evidence copy held
+`/tmp/ctbrowser-devbox-build.lock`. No CTest, full lit, WPT/test262, broad
+corpus/native matrix, Windows or sanitizer run was made; nothing was pushed.
+
+**Next measured Bootstrap boundary:** the original W/B/U/Data DOM probe now
+refuses **`inherited DOM methods require an unshadowed constructed leaf`**.
+`B._getConfig` overrides `W._getConfig`; proving the shadowed original body is
+the next class-proof boundary. DOM Data-session Maps and real Manipulator/
+EventHandler helpers remain after it. Full Bootstrap has not executed natively.
+
 ## Fixed DOM class own-field snapshots, 2026-09-29 UTC
 
 **Landed: `b7bec2456`.** The earlier literal-definition/AOT-this thread was
