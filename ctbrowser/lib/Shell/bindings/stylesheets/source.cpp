@@ -295,7 +295,13 @@ bool declaration_allowed(const dom_bindings::css_rule_record & rule, std::string
         }
     }
     if (name.starts_with("--")) { return true; }
-    if (rule.type == keyframe_rule) { return !name.starts_with("animation"); }
+    // A keyframe takes every property but the animation ones - save the two
+    // that are ABOUT the keyframe, its easing and its composite operation (CSS
+    // Animations 1 §4.3, 2 §4.4; keyframes-allowed-properties).
+    if (rule.type == keyframe_rule) {
+        return !name.starts_with("animation") || name == "animation-timing-function" ||
+               name == "animation-composition";
+    }
     if (rule.type != page_rule) { return true; }
     // The descriptors, then Appendix A's "applicable CSS 2.1 properties" -
     // bidi, background, border, counter, color, font, height, line-height,

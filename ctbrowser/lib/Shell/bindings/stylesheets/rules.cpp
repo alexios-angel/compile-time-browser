@@ -4,6 +4,7 @@
 #include "internal.hpp"
 
 #include <ctbrowser/shell/net/url.hpp>
+#include <ctbrowser/style/css/calc.hpp>
 
 #include <charconv>
 
@@ -63,6 +64,37 @@ namespace {
         at = close;
     }
     return out + std::string{prelude.substr(done)};
+}
+
+// ONE `<keyframe-selector>` (CSS Animations 1 §3, Scroll Animations 1 §4.3):
+// `from`, `to`, a percentage within [0%, 100%], or a `<timeline-range-name>`
+// before one - a math function standing in for the percentage, since its
+// range is only known when it computes. `-10%` and `120%` are no keyframe.
+[[nodiscard]] bool keyframe_selector_valid(std::string_view text) {
+    using style::css::token_type;
+    const style::css::token_stream s = style::css::tokenize(text);
+    std::vector<const style::css::css_token *> tokens;
+    int depth = 0;
+    for (const style::css::css_token & t : s.tokens) {
+        if (t.type == token_type::eof) { break; }
+        // Only the top level is looked at; a math function is taken whole.
+        if (depth == 0 && t.type != token_type::whitespace) { tokens.push_back(&t); }
+        if (t.type == token_type::function || t.type == token_type::open_paren) { ++depth; }
+        if (t.type == token_type::close_paren && depth > 0) { --depth; }
+    }
+    const auto percentage = [&](const style::css::css_token & t) {
+        if (t.type == token_type::percentage) { return t.number >= 0 && t.number <= 100; }
+        return t.type == token_type::function && style::css::may_have_math(s.text_of(t));
+    };
+    if (tokens.size() == 1) {
+        const style::css::css_token & t = *tokens[0];
+        return (t.type == token_type::ident && ascii_iequals_any(s.text_of(t), {"from", "to"})) ||
+               percentage(t);
+    }
+    return tokens.size() == 2 && tokens[0]->type == token_type::ident &&
+           ascii_iequals_any(s.text_of(*tokens[0]), {"cover", "contain", "entry", "exit",
+                                                     "entry-crossing", "exit-crossing"}) &&
+           percentage(*tokens[1]);
 }
 
 } // namespace
@@ -372,6 +404,9 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
         const std::size_t brace = brace_at(one);
         const std::size_t shut = brace == std::string_view::npos ? brace : block_end(one, brace);
         if (brace == std::string_view::npos || shut == std::string_view::npos) { return no_index; }
+        for (const std::string_view part : split_on_commas(one.substr(0, brace))) {
+            if (!keyframe_selector_valid(part)) { return no_index; }
+        }
         css_rule_store_.push_back(std::make_unique<css_rule_record>());
         css_rule_record & frame = *css_rule_store_.back();
         frame.sheet = sheet;
