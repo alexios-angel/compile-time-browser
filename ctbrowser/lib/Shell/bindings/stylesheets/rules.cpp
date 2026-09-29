@@ -675,8 +675,15 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
                 made.verbatim.clear();
             }
         } else if (made.type == page_rule) {
+            // A `<page-selector-list>` the grammar refuses is no rule at all
+            // (CSS Paged Media 3 §3, page-rules-001).
             bool ok = false;
             made.prelude = serialize_page_selector(made.prelude, ok);
+            if (!ok) {
+                css_rule_store_.pop_back();
+                error = "SyntaxError";
+                return no_index;
+            }
         } else if (made.type == font_feature_values_rule && open != std::string_view::npos &&
                    close != std::string_view::npos) {
             // CSS Fonts 4 §8.9: `<family-name>#`, then feature blocks, each

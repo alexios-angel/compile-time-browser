@@ -110,52 +110,57 @@ namespace detail {
     return "url(" + quoted_string(value) + ")";
 }
 
-// CSS Paged Media 3 §3's `<page-selector>`: an optional identifier followed by
-// any number of `:left`, `:right`, `:first` or `:blank`, with NO whitespace
-// anywhere in it - `named :first` is two selectors and therefore not one.
+// CSS Paged Media 3 §3's `<page-selector-list>`: comma-separated
+// `<page-selector>`s, each an optional identifier followed by any number of
+// `:left`, `:right`, `:first` or `:blank`, with NO whitespace inside one -
+// `named :first` is two selectors and therefore not one. `@page a, b` is one
+// rule for two page names, and an empty entry - `@page , { }`, `a,` - is no
+// list at all (page-rules-001).
 //
-// The name keeps the author's case and the pseudo-pages are lowercased, which
-// is the split `css/cssom/cssom-pagerule.html` asserts by writing `:First` and
-// demanding `:first` back. `ok` is false for a selector this grammar refuses,
-// and CSSOM 6.4.5 says a refused one leaves the rule alone.
+// Read as TOKENS, so an escaped name is one identifier (`name1\{\}name2`) and
+// comes back in its canonical escaped form. The name keeps the author's case
+// and the pseudo-pages are lowercased, which is the split
+// `css/cssom/cssom-pagerule.html` asserts by writing `:First` and demanding
+// `:first` back. `ok` is false for a list this grammar refuses, and CSSOM 6.4.5
+// says a refused one leaves the rule alone.
 [[nodiscard]] std::string serialize_page_selector(std::string_view text, bool & ok) {
-    ok = true;
-    const std::string_view one = trim(text, html_whitespace);
-    if (one.empty()) { return {}; }
-    if (one.find_first_of(html_whitespace) != std::string_view::npos) {
-        ok = false;
+    using style::css::token_type;
+    const style::css::token_stream s = style::css::tokenize(text);
+    ok = false;
+    std::size_t i = 0;
+    const auto type = [&] { return i < s.tokens.size() ? s.tokens[i].type : token_type::eof; };
+    const auto skip_whitespace = [&] {
+        while (type() == token_type::whitespace) { ++i; }
+    };
+    skip_whitespace();
+    if (type() == token_type::eof) {
+        ok = true;
         return {};
     }
-    const auto ident_char = [](char c, bool first) {
-        const auto u = static_cast<unsigned char>(c);
-        if (u >= 0x80 || c == '_' || c == '-' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) {
-            return true;
-        }
-        return !first && c >= '0' && c <= '9';
-    };
-    std::size_t at = 0;
     std::string out;
-    while (at < one.size() && one[at] != ':') {
-        if (!ident_char(one[at], at == 0)) {
-            ok = false;
-            return {};
+    for (;;) {
+        std::string one;
+        if (type() == token_type::ident) {
+            one = style::css::serialize_identifier(s.value_of(s.tokens[i]));
+            ++i;
         }
-        out += one[at];
-        ++at;
-    }
-    while (at < one.size()) {
-        const std::size_t next = one.find(':', at + 1);
-        const std::string_view pseudo =
-            one.substr(at + 1, (next == std::string_view::npos ? one.size() : next) - at - 1);
-        if (!ascii_iequals(pseudo, "left") && !ascii_iequals(pseudo, "right") &&
-            !ascii_iequals(pseudo, "first") && !ascii_iequals(pseudo, "blank")) {
-            ok = false;
-            return {};
+        while (type() == token_type::colon) {
+            ++i;
+            if (type() != token_type::ident) { return {}; }
+            const std::string pseudo = ascii_lower_copy(s.value_of(s.tokens[i]));
+            if (!ascii_iequals_any(pseudo, {"left", "right", "first", "blank"})) { return {}; }
+            one += ':' + pseudo;
+            ++i;
         }
-        out += ':';
-        out += ascii_lower_copy(pseudo);
-        at = next == std::string_view::npos ? one.size() : next;
+        if (one.empty()) { return {}; }
+        out += (out.empty() ? "" : ", ") + one;
+        skip_whitespace();
+        if (type() == token_type::eof) { break; }
+        if (type() != token_type::comma) { return {}; }
+        ++i;
+        skip_whitespace();
     }
+    ok = true;
     return out;
 }
 
@@ -367,7 +372,20 @@ bool declaration_allowed(const dom_bindings::css_rule_record & rule, std::string
     }
     const bool ok = (lengths == static_cast<int>(parts.size())) ||
                     (lengths == 0 && keywords <= 1 && orientations <= 1);
-    return ok ? out : std::string{};
+    if (!ok) { return {}; }
+    // `portrait` beside a page size is the size as it is, and the shortest
+    // spelling leaves it out: `letter portrait` is `letter` (size-valid).
+    if (keywords == 1 && orientations == 1 && lengths == 0) {
+        const std::size_t space = out.find(' ');
+        const std::string first = out.substr(0, space);
+        const std::string second = out.substr(space + 1);
+        const bool first_is_size = first != "portrait" && first != "landscape";
+        const std::string size = first_is_size ? first : second;
+        const std::string orientation = first_is_size ? second : first;
+        if (size == "auto") { return {}; }
+        return orientation == "portrait" ? size : size + " " + orientation;
+    }
+    return out;
 }
 
 // `@font-face`'s `src` (CSS Fonts 4 §4.3): a comma list of `<url> [
