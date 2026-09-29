@@ -61,6 +61,7 @@
 
 #include "element/internal.hpp"
 #include "events/internal.hpp"
+#include "window/internal.hpp"
 
 #include <algorithm>
 #include <memory>
@@ -1041,6 +1042,15 @@ void dom_bindings::install_frame_realm(context & cx, dom_bindings & owner, node_
     }
     auto * frame_window = cx.allocate<script::object_object>();
     window_ = value::object(frame_window);
+    // AN INSTANCE OF Window, as the page's window is (element/interfaces.cpp),
+    // and of the shared intrinsics' interfaces: its location a Location, its
+    // six BarProps its own.
+    frame_window->prototype = cx.lookup_property(cx.global("Window"), "prototype");
+    if (location_.is_object()) {
+        static_cast<script::object_object *>(location_.as_heap())->prototype =
+            cx.lookup_property(cx.global("Location"), "prototype");
+    }
+    install_bar_props(cx, *frame_window, cx.lookup_property(cx.global("BarProp"), "prototype"));
     const value frame_view = make_window_view(cx, window_, realm);
     window_view_ = frame_view;
     // `parent` is the window of the document the <iframe> is in - the page's,

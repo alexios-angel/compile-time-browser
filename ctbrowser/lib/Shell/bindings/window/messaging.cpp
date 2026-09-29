@@ -135,9 +135,9 @@ void dom_bindings::install_post_message(context & cx, script::object_object & wi
     // behind. Every other interface's instance is a DataCloneError there (and
     // so here, which clones through it).
     //
-    // A File is a Blob with a name here, on Blob's own prototype
-    // (window.cpp), so an instance is found as whichever of the two the
-    // clone's interface walk met first - and the two lists are one.
+    // A File is a Blob with a name, File.prototype inheriting Blob's
+    // (window.cpp): a File clones as a File and a Blob as a Blob, and the two
+    // lists are one because a Blob simply has no `name` to copy.
     const std::vector<std::string> blob{"size", "type", "__bytes", "name", "lastModified"};
     cx.set_serializable_interface("Blob", blob);
     cx.set_serializable_interface("File", blob);

@@ -395,6 +395,7 @@ void dom_bindings::install_style_accessor(context & cx) {
     if (secondary_) { return; }
     const auto view_of = [this](context & c, value self) -> value {
         constexpr std::string_view key = CTBROWSER_SYMBOL_KEY("sym:ctbrowser:style");
+        self = unwrap_legacy_proxy(self); // a form's or a select's: the object behind
         if (!self.is_object()) { return value::undefined(); }
         dom_bindings & owner = target_owner(self);
         const node_id id = owner.handle_of(self);

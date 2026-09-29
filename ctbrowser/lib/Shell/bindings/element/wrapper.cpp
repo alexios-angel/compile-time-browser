@@ -1,6 +1,7 @@
 // dom_bindings - the element wrapper itself: identity, refresh, the box it
 // occupies, equality of nodes, and the wrapper a node already has.
 
+#include "control_methods/helpers.hpp"
 #include "internal.hpp"
 
 namespace ctbrowser::shell {
@@ -20,12 +21,12 @@ value dom_bindings::wrap(context & cx, node_id id) {
     ensure_dom_interfaces(cx);
     if (const auto it = wrappers_.find(id.key()); it != wrappers_.end()) {
         refresh_element(cx, *it->second, id);
-        return value::object(it->second);
+        return exposed_wrapper(*it->second);
     }
     // A node whose wrapper was adopted into another document IS that object
     // still - the other document refreshes it. See adopted_away_.
     if (const auto it = adopted_away_.find(id.key()); it != adopted_away_.end()) {
-        return value::object(it->second);
+        return exposed_wrapper(*it->second);
     }
     auto * obj = cx.allocate<script::object_object>();
     value wrapper = value::object(obj);
@@ -108,7 +109,26 @@ value dom_bindings::wrap(context & cx, node_id id) {
     }
     refresh_element(cx, *obj, id);
     wrappers_.emplace(id.key(), obj);
+    // A FORM AND A SELECT ARE LEGACY PLATFORM OBJECTS (WebIDL 3.9), and what
+    // the page holds is the proxy over this object - control_methods/
+    // legacy_objects.cpp. Kept on it, so every later wrap() hands out the same.
+    if (const value legacy = control_helpers{this}.legacy_object(cx, *obj, id);
+        !legacy.is_undefined()) {
+        obj->define(legacy_object_key, legacy, script::attr_none);
+        return legacy;
+    }
     return wrapper;
+}
+
+// THE ORDINARY WRAPPER BEHIND A LEGACY PLATFORM OBJECT'S PROXY - and only
+// behind ours: a page's `new Proxy(form, {})` is not a Node, and stays itself.
+value dom_bindings::unwrap_legacy_proxy(value v) {
+    if (!v.is_kind(script::heap_kind::proxy)) { return v; }
+    const value target = static_cast<script::proxy_object *>(v.as_heap())->target;
+    if (!target.is_object()) { return v; }
+    const value * held =
+        static_cast<script::object_object *>(target.as_heap())->find(legacy_object_key);
+    return held != nullptr && held->bits() == v.bits() ? target : v;
 }
 
 node_id dom_bindings::unpack(std::uint64_t bits) {
@@ -119,7 +139,7 @@ node_id dom_bindings::unpack(std::uint64_t bits) {
 }
 
 node_id dom_bindings::receiver(context & cx) {
-    const value self = cx.current_this();
+    const value self = unwrap_legacy_proxy(cx.current_this());
     if (!self.is_object()) { return node_id{}; }
     auto * obj = static_cast<script::object_object *>(self.as_heap());
     const value * slot = obj->find(std::string{handle_property});
@@ -270,7 +290,7 @@ value dom_bindings::value_of_wrapper(node_id id) const {
     if (!id) { return value::undefined(); }
     const auto it = wrappers_.find(id.key());
     return it == wrappers_.end() || it->second == nullptr ? value::undefined()
-                                                          : value::object(it->second);
+                                                          : exposed_wrapper(*it->second);
 }
 
 // `isEqualNode`: THE DOM'S STRUCTURAL COMPARISON, DOM 4.4 "equals".

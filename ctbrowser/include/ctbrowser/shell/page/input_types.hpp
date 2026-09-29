@@ -35,6 +35,12 @@ namespace ctbrowser::shell::input_types {
                                          bool multiple = false, bool display_p3 = false,
                                          bool alpha = false);
 
+// A number control's VALUE from the text the user typed into it (HTML
+// 4.10.5.1.12): the text when it is a valid floating-point number, the number
+// itself when the text is one with a trailing decimal point ("1." is 1), else
+// the empty string - with the text left as it was, which is "bad input".
+[[nodiscard]] std::string number_value_of_input(std::string_view typed);
+
 // "Normalize newlines" (Infra): every CR LF and then every lone CR becomes LF.
 // A textarea's API value, and a custom validity message.
 [[nodiscard]] std::string normalize_newlines(std::string_view text);
