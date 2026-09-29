@@ -69,6 +69,13 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/closure-surplus.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=CLOSURESURPLUS
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/closure-arguments.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=CLOSUREARGS
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/name-arguments.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=NAMEARGS
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/this-top.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=THISTOP
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/this-called.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=THISCALLED
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/this-arrow.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=THISARROW
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/this-iife.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=THISIIFE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/this-returned.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=THISRETURNED
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/this-field.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=THISFIELD
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/this-refused.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=THISREFUSED
 
 // --- THE POSITIVE CASE: the MVP program ---------------------------------------
 //
@@ -543,6 +550,66 @@
 // NAMEARGS: ctjs.call %
 // NAMEARGS-NOT: ctjs.call_direct
 
+// --- THE GLOBAL OBJECT AS `this` ------------------------------------------------
+//
+// NO NAME IS NEEDED TO HOLD IT. A classic script's top level runs with the
+// global object as its receiver, so `this.f = ...` there is the same write as
+// `globalThis.f = ...` - and before the receiver was watched, `f` resolved and
+// its call_direct answered 1 where the VM answers 2.
+//
+// THISTOP: ctjs.globals = [
+// THISTOP-SAME: {name = "f", reason = "written through the global object (ctjs.set_property at {{[^)]*}}), which binds this name", resolved = "none", stores = 1 : i32}
+// THISTOP-NOT: call_direct
+
+// AND ONE CALL DEEPER. A plain call hands its callee an undefined receiver,
+// which OrdinaryCallBindThis turns into the global object in a sloppy body -
+// so the `this` of every body a call this pass can name enters is watched.
+//
+// THISCALLED: ctjs.globals = [
+// THISCALLED-SAME: {name = "f", reason = "written through a receiver that may be the global object (ctjs.set_property at {{[^)]*}}), which binds this name", resolved = "none", stores = 1 : i32}
+// THISCALLED-SAME: {name = "install", reason = "closed: 1 call(s) rewritten", resolved = @install${{[0-9]+}}, stores = 1 : i32}
+// THISCALLED-NOT: call_direct @f$
+
+// AN ARROW KEEPS THE `this` IT WAS WRITTEN WITH, which at the top level is the
+// global object itself.
+//
+// THISARROW: ctjs.globals = [
+// THISARROW-SAME: {name = "f", reason = "written through the global object (ctjs.set_property at {{[^)]*}}), which binds this name", resolved = "none", stores = 1 : i32}
+// THISARROW-NOT: call_direct @f$
+
+// A CLOSURE CALLED WHERE IT IS WRITTEN is a call this pass names too.
+//
+// THISIIFE: ctjs.globals = [
+// THISIIFE-SAME: {name = "f", reason = "written through a receiver that may be the global object (ctjs.set_property at {{[^)]*}}), which binds this name", resolved = "none", stores = 1 : i32}
+// THISIIFE-NOT: call_direct @f$
+
+// AND RETURNED IT IS OUT OF SIGHT: `(function () { return this; })()` is the
+// global object obtained without naming it, and whoever receives it may write
+// anything through it.
+//
+// THISRETURNED: ctjs.globals = [
+// THISRETURNED-SAME: {name = "add", reason = "a receiver that may be the global object escapes into ctjs.return{{[^"]*}}", resolved = "none", stores = 1 : i32}
+// THISRETURNED-NOT: call_direct
+
+// BUT A RECEIVER IS ALMOST ALWAYS AN INSTANCE. `this.count = 0` binds the
+// global `count` only in the world where `this` is the global object, and no
+// load or store in the program names `count` - so it gets no row, and `add`
+// resolves.
+//
+// THISFIELD: ctjs.globals = [
+// THISFIELD-SAME: {name = "add", reason = "closed: 1 call(s) rewritten", resolved = @add$1, stores = 1 : i32}
+// THISFIELD-NOT: name = "count"
+// THISFIELD: ctjs.call_direct @add$1
+
+// A REFUSED BODY'S `this` MAY BE THE GLOBAL OBJECT TOO, and its summary reads
+// the name written through it off the bytecode, as it does for `globalThis`.
+//
+// THISREFUSED: ctjs.globals = [
+// THISREFUSED-SAME: {name = "f", reason = "a function the importer refused (ctjs.skipped) stores this name, so the binding this pass can see is not the only one", resolved = "none", stores = 1 : i32}
+// THISREFUSED-SAME: ctjs.skipped
+// THISREFUSED-SAME: stores = ["f"]
+// THISREFUSED-NOT: call_direct @f$
+
 //--- closed.js
 function add(a, b) { return a + b; }
 function twice(x) { return add(x, x); }
@@ -759,3 +826,43 @@ var out = (function (a, b) { return arguments.length; })(1);
 // is one argument to two parameters, and `two` reads its raw window.
 function two(a, b) { return arguments.length; }
 var out = two(1);
+
+//--- this-top.js
+function f() { return 1; }
+this.f = function () { return 2; };
+var r = f();
+
+//--- this-called.js
+function f() { return 1; }
+function install() { this.f = function () { return 2; }; }
+install();
+var r = f();
+
+//--- this-arrow.js
+function f() { return 1; }
+var install = () => { this.f = function () { return 2; }; };
+install();
+var r = f();
+
+//--- this-iife.js
+function f() { return 1; }
+(function () { this.f = function () { return 2; }; })();
+var r = f();
+
+//--- this-returned.js
+function add(a, b) { return a + b; }
+function grab() { return this; }
+var g = grab();
+var z = add(1, 2);
+
+//--- this-field.js
+function add(a, b) { return a + b; }
+function init() { this.count = 0; }
+init();
+var z = add(1, 2);
+
+//--- this-refused.js
+function f() { return 1; }
+function* g() { this.f = function () { return 2; }; yield 0; }
+g().next();
+var r = f();

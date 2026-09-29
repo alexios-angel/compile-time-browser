@@ -13,6 +13,7 @@ namespace ctcompile::ctjs::globals_detail {
 // that names the wrong one sends a reader to the wrong line.
 enum class watched {
     global_object, // globalThis / window, whose properties ARE the globals
+    receiver,      // a function's `this`, which may BE the global object
     compiler,      // a value that may be `Function`, which compiles source
 };
 

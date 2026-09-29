@@ -122,9 +122,9 @@ bool may_be_function(mlir::Value value) {
     // prototype_replaced(): step two assumes nothing put a CALLABLE where that
     // link points, and `X.prototype = <a function>` would.
     // `Object.setPrototypeOf(X.prototype, f)` would too and is a call into a
-    // native - invisible here, exactly as a global object obtained without
-    // naming it (`(function(){ return this })()`) is invisible to the rest of
-    // this clause. Said rather than papered over.
+    // native - invisible here, exactly as a global object a native or the host
+    // hands over (`document.defaultView`, `this` in a timer callback) is
+    // invisible to the rest of this clause. Said rather than papered over.
     if (auto link = mlir::dyn_cast<GetProtoOp>(definition)) {
         if (link.getObject().getDefiningOp<LoadHomeOp>() != nullptr) { return false; }
     }

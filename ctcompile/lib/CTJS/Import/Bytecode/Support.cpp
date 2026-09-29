@@ -59,11 +59,12 @@ static_assert(std::size(opcode_may_suspend) == opcode_count,
 //   * `.constructor` read with a constant key. That is `Function` off any
 //     function, and following the value needs the IR this body has none of.
 //     Opaque.
-//   * the global object read as a global. A write through it binds a global in
-//     a spec-conformant engine - but the NAME it binds is `proto.names[in.b]`
-//     of the op::set_prop that writes it, which is as static as a set_global's.
-//     So those names join `stores` and the body stays bounded. A write through
-//     a COMPUTED key is the one that cannot be named, and it is opaque.
+//   * the global object read as a global, or as `this`. A write through it
+//     binds a global in a spec-conformant engine - but the NAME it binds is
+//     `proto.names[in.b]` of the op::set_prop that writes it, which is as
+//     static as a set_global's. So those names join `stores` and the body stays
+//     bounded. A write through a COMPUTED key is the one that cannot be named,
+//     and it is opaque.
 //
 // EVERY TEST IS ON AN OPERAND, and two earlier versions of this were not. The
 // first asked whether the NAME OR STRING POOLS mentioned `constructor`,
@@ -128,6 +129,10 @@ static_assert(std::size(opcode_may_suspend) == opcode_count,
             }
             break;
         }
+        // AND WITHOUT A NAME. A sloppy body called with a nullish receiver has
+        // the global object as `this`, and the pass cannot see who calls a
+        // body it never imported.
+        case op::load_this: reads_global_object = true; break;
         case op::get_prop: {
             const std::string * name = name_at(in.c);
             if (name != nullptr && *name == "constructor") {

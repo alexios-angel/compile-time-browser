@@ -63,7 +63,9 @@
 //     know, resolves NOTHING in the module. A NAMED READ OFF IT DOES NOT
 //     PROPAGATE unless the name is one of the host's own self-aliases
 //     (hands_back_the_global_object), which is what keeps
-//     `window.getComputedStyle(el)` from answering.
+//     `window.getComputedStyle(el)` from answering. And the object needs no
+//     name at all to be `this`: the top level's receiver, and the receiver of
+//     every body a call this pass can name enters, are followed the same way.
 //
 //     TWO OF THOSE CLAUSES USED TO BE COARSER THAN THEIR OWN REASONING.
 //
@@ -307,6 +309,22 @@ FuncOp known_callee(const census & world, mlir::Value callee) {
     return FuncOp{};
 }
 
+// DOES CALLING THIS VALUE ENTER AN ARROW? The importer hands
+// ctjs.create_closure the enclosing receiver only when the target is an arrow,
+// and a `ctjs.constant` undefined otherwise (op::closure in Instructions.cpp),
+// so that operand is the one mark the IR carries. An arrow ignores the receiver
+// a call passes it.
+bool enters_arrow(const census & world, mlir::Value callee) {
+    CreateClosureOp made = callee.getDefiningOp<CreateClosureOp>();
+    if (auto load = callee.getDefiningOp<LoadGlobalOp>()) {
+        const auto row = world.bindings.find(load.getNameAttr());
+        if (row != world.bindings.end()) {
+            made = bound_closure(world, load.getNameAttr(), row->second).closure;
+        }
+    }
+    return made && made.getEnclosingThis().getDefiningOp<ConstantOp>() == nullptr;
+}
+
 // DOES THIS BODY READ ITS RAW ARGUMENT WINDOW? `arguments` and a rest
 // parameter copy the FRAME's registers - every value the site passed, not the
 // declared ones - and read them back under an index this walk cannot see
@@ -397,6 +415,22 @@ void rewrite_direct(CallOp call, FuncOp target, unsigned parameters) {
     call.erase();
 }
 
+// WHAT A WATCHED VALUE IS CALLED IN A REASON.
+const char * name_of(watched kind) {
+    switch (kind) {
+    case watched::global_object: return "the global object";
+    case watched::receiver: return "a receiver that may be the global object";
+    case watched::compiler: break;
+    }
+    return "a value that may be the run-time compiler";
+}
+
+// A NAMED WRITE THROUGH A WATCHED VALUE: where it is, and through which kind.
+struct bound_write {
+    std::string at;
+    watched through;
+};
+
 // CLAUSE 5: can anything in the module write the globals table other than a
 // ctjs.store_global this pass can count? Answers the reason if so.
 //
@@ -439,7 +473,7 @@ void rewrite_direct(CallOp call, FuncOp target, unsigned parameters) {
 // this pass cannot enumerate).
 std::optional<std::string> dynamic_global_writes(
     mlir::ModuleOp module, const census & world,
-    llvm::MapVector<mlir::StringAttr, std::string> & bound_through) {
+    llvm::MapVector<mlir::StringAttr, bound_write> & bound_through) {
     std::optional<std::string> reason;
     // COMPUTED ONCE, because it is a question about the whole module and
     // may_be_function() is asked once per `.constructor` read.
@@ -449,10 +483,6 @@ std::optional<std::string> dynamic_global_writes(
     llvm::DenseMap<mlir::Operation *, bool> raw_arguments;
     const auto mark = [&](mlir::Value value, watched kind) {
         if (marked.try_emplace(value, kind).second) { work.push_back(value); }
-    };
-    const auto name_of = [](watched kind) {
-        return kind == watched::global_object ? "the global object"
-                                              : "a value that may be the run-time compiler";
     };
     const auto reads_arguments = [&](FuncOp target) {
         const auto row = raw_arguments.try_emplace(target.getOperation(), false);
@@ -472,8 +502,47 @@ std::optional<std::string> dynamic_global_writes(
     // everything; the rest refuse the names they name, in the census.
     if (const std::optional<std::string> refused = opaque_refusal(module)) { return refused; }
 
+    // THE GLOBAL OBJECT NEEDS NO NAME TO BE `this`. A classic script's top level
+    // runs with it as the receiver (run.cpp selects the realm's global value
+    // for every classic script, strict or not), so `function f() { return 1; }
+    // this.f = function () { return 2; }; f();` rebinds `f` - and resolving it
+    // answered 1 through a call_direct where the VM answers 2.
+    if (FuncOp top = world.top; top && has_entry(top)) {
+        mark(top.getBody().front().getArgument(0), watched::global_object);
+    }
+
     module.walk([&](mlir::Operation * op) {
         if (reason) { return mlir::WalkResult::interrupt(); }
+        // A CALL THIS PASS CAN NAME HANDS ITS CALLEE A RECEIVER, and for the
+        // plain call these always are it is undefined - which
+        // OrdinaryCallBindThis turns into the global object in a sloppy body
+        // (the VM's load_this, and ct_aot_this since c8b4ef2df). The IR does
+        // not record strictness, so every such callee's `this` is watched;
+        // an arrow keeps the `this` it was written with instead.
+        //
+        // A CALLER THIS PASS CANNOT NAME IS WHERE THE WALK STOPS, as it stops
+        // at `document.defaultView`. The host enters timer and animation-frame
+        // callbacks with the global object as `this` (the call_fenced sites in
+        // lib/Shell/bindings/window/callbacks.cpp), a native such as
+        // Array.prototype.forEach enters with undefined and `f.call(x)` with
+        // x, and none of those is an operation in this module. Watching EVERY
+        // receiver instead was measured over the 1,804 JavaScript programs in
+        // ctcompile/test and the three vendor bundles: 533 lose names, 675 in
+        // all, differential.js 59 to 0 - every function a host entry or a
+        // property read may call and that returns or passes `this` on.
+        if (auto call = mlir::dyn_cast<CallOp>(op)) {
+            FuncOp target = known_callee(world, call.getCallee());
+            if (target && has_entry(target) && !enters_arrow(world, call.getCallee())) {
+                mark(target.getBody().front().getArgument(0), watched::receiver);
+            }
+        }
+        if (auto direct = mlir::dyn_cast<CallDirectOp>(op)) {
+            auto target =
+                mlir::SymbolTable::lookupNearestSymbolFrom<FuncOp>(direct, direct.getCalleeAttr());
+            if (target && has_entry(target)) {
+                mark(target.getBody().front().getArgument(0), watched::receiver);
+            }
+        }
         if (auto load = mlir::dyn_cast<LoadGlobalOp>(op)) {
             if (names_global_object(load.getName())) {
                 mark(load.getResult(), watched::global_object);
@@ -590,9 +659,9 @@ std::optional<std::string> dynamic_global_writes(
                     return std::string{name_of(kind)} + " escapes into " + describe(op);
                 }
                 const llvm::StringRef key = constantKey(set.getKey());
-                if (kind == watched::global_object && !key.empty() && key != "__proto__") {
+                if (kind != watched::compiler && !key.empty() && key != "__proto__") {
                     bound_through.insert(
-                        {mlir::StringAttr::get(module.getContext(), key), describe(op)});
+                        {mlir::StringAttr::get(module.getContext(), key), {describe(op), kind}});
                     continue;
                 }
                 return std::string{name_of(kind)} + " is written through (" + describe(op) + ")";
@@ -600,6 +669,21 @@ std::optional<std::string> dynamic_global_writes(
             if (mlir::isa<DeletePropertyOp, DeleteNamedOp, DefineAccessorOp, SetProtoOp,
                           CopyPropsOp>(op)) {
                 return std::string{name_of(kind)} + " is written through (" + describe(op) + ")";
+            }
+            // AN ARROW'S LEXICAL `this`. The VM reads $enclosing_this only for
+            // an arrow (make_closure's captured_this), and the arrow reads it
+            // back as its own receiver argument.
+            if (auto made = mlir::dyn_cast<CreateClosureOp>(op);
+                made && use.getOperandNumber() == 1) {
+                FuncOp arrow =
+                    world.by_index.lookup(static_cast<std::uint32_t>(made.getFunction()));
+                if (!arrow || !has_entry(arrow)) {
+                    return std::string{name_of(kind)} +
+                           " is captured by an arrow whose body was not imported (" + describe(op) +
+                           ")";
+                }
+                mark(arrow.getBody().front().getArgument(0), kind);
+                continue;
             }
             if (auto call = mlir::dyn_cast<CallOp>(op)) {
                 // THE OBJECT AS THE CALLEE ITSELF - `globalThis(...)` - names no
@@ -711,15 +795,25 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
         // `bound_through` is the set of names a `globalThis.NAME = v` binds -
         // one row each, refused for the same reason a second ctjs.store_global
         // would refuse them, and NOT a reason to refuse anything else.
-        llvm::MapVector<mlir::StringAttr, std::string> bound_through;
+        llvm::MapVector<mlir::StringAttr, bound_write> bound_through;
         const std::optional<std::string> dynamic =
             dynamic_global_writes(module, world, bound_through);
         // A NAME BOUND ONLY THAT WAY HAS NEITHER A LOAD NOR A STORE, so it has
         // no census row yet - and a verdict nobody can read is not a verdict.
         // Skipped when the module is refused outright: those names would carry
         // the module-wide reason, which says nothing about them.
+        //
+        // AND ONLY THROUGH THE GLOBAL OBJECT ITSELF. A receiver is almost always
+        // an instance, and `this.x = 1` binds the global `x` only in the world
+        // where it is not; a name no load or store in the program mentions has
+        // nothing to resolve either way, so a row for every field a constructor
+        // writes would be noise.
         if (!dynamic) {
-            for (const auto & written : bound_through) { (void)world.bindings[written.first]; }
+            for (const auto & written : bound_through) {
+                if (written.second.through == watched::global_object) {
+                    (void)world.bindings[written.first];
+                }
+            }
         }
 
         llvm::SmallVector<mlir::Attribute> rows;
@@ -751,8 +845,8 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
             // bail this used to be.
             if (const auto written = bound_through.find(name); written != bound_through.end()) {
                 record(name, facts.stores.size(), FuncOp{},
-                       "written through the global object (" + written->second +
-                           "), which binds this name");
+                       "written through " + std::string{name_of(written->second.through)} + " (" +
+                           written->second.at + "), which binds this name");
                 continue;
             }
             // ---- clauses 1-3 and 6, which known_callee() also asks ---------
