@@ -950,6 +950,27 @@ bool classInitialization::foldDecidedArms(ctjs::CreateClosureOp constructor,
         auto load =
             call ? call.getCallee().getDefiningOp<ctjs::LoadUpvalueOp>() : ctjs::LoadUpvalueOp{};
         auto helper = load ? callableCaptures.lookup(load) : ctjs::FuncOp{};
+        // Publication runs before the full capture census. A fixed local cell
+        // can already name a capture-free helper; evaluate only its pure path,
+        // then leave the closure and cell for that later complete census.
+        if (!helper && load && load.getClosure() == entry.getArgument(ctjs::arg_callee) &&
+            load->getBlock() == &entry && load.getIndex() >= 0 &&
+            static_cast<size_t>(load.getIndex()) < constructor.getUpvalues().size() &&
+            !earlyCaptures.contains(constructor)) {
+            const auto cell = cells.find(constructor.getUpvalues()[load.getIndex()]);
+            auto closure = cell == cells.end()
+                               ? ctjs::CreateClosureOp{}
+                               : sourceValue(cell->second).getDefiningOp<ctjs::CreateClosureOp>();
+            auto targetFunction = target(closure);
+            if (targetFunction && closure.getUpvalues().empty() &&
+                targetFunction.getUpvalueCount() == 0 && targetFunction.getBody().hasOneBlock() &&
+                closure->getBlock() == constructor->getBlock() &&
+                closure->isBeforeInBlock(constructor) &&
+                call.getArgs().size() + ctjs::implicit_arguments <=
+                    targetFunction.getBody().front().getNumArguments()) {
+                helper = targetFunction;
+            }
+        }
         llvm::SmallVector<mlir::Value> arguments;
         if (helper && undefined(call.getReceiver())) {
             for (mlir::Value argument : call.getArgs()) {

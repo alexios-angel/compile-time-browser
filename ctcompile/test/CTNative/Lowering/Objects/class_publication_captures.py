@@ -85,6 +85,19 @@ var a = probe();
         .replace("new Item(7, 1)", "new Item(7, 0)"),
         expected,
     )
+    for name in ("holder", "direct", "else"):
+        text, expected = programs["guarded-" + name]
+        programs["helper-guarded-" + name] = (
+            text.replace("  class Item", "  const gate = flag => flag;\n  class Item").replace(
+                "if (enabled)", "if (gate(enabled))"
+            ),
+            expected,
+        )
+    text, expected = programs["helper-guarded-holder"]
+    programs["helper-guarded-padded"] = (
+        text.replace("flag => flag", "(flag, absent) => absent ? false : flag"),
+        expected,
+    )
     return programs
 
 
@@ -199,6 +212,30 @@ def main():
         "captured-constructor": guarded.replace(
             "  const first", "  const make = () => new Item(9, false);\n  const first"
         ).replace("  return saved.n", "  make();\n  return saved.n"),
+    }
+    for name, text in bad.items():
+        assert text != guarded
+        _, ir, manifest = prepared_source(args, name, text)
+        classes.prepare(args, name, ir, manifest, success=False)
+        refusals += 1
+    guarded = sources()["helper-guarded-holder"][0]
+    bad = {
+        "mixed-helper-guards": guarded.replace("new Item(7, 1)", "new Item(7, false)"),
+        "changing-guard-helper": guarded.replace("const gate", "let gate").replace(
+            "  const first", "  gate = flag => false;\n  const first"
+        ),
+        "effectful-guard-helper": guarded.replace("flag => flag", "flag => unknown(flag)"),
+        "captured-guard-helper": guarded.replace("flag => flag", "flag => add(flag)"),
+        "ambient-undefined-helper": guarded.replace(
+            "flag => flag", "(flag, absent) => absent === undefined ? flag : false"
+        ),
+        "receiver-guard-helper": guarded.replace("flag => flag", "function(flag) { return this; }"),
+        "retained-guard-helper": guarded.replace(
+            "flag => flag", "flag => flag || unknown(flag)"
+        ).replace("  const first", "  gate(false);\n  const first"),
+        "helper-dropped-class-setup": guarded.replace(
+            "this); } }", "this); } else { __ctbrowser_class_defined(undefined); } }"
+        ),
     }
     for name, text in bad.items():
         assert text != guarded
