@@ -655,10 +655,7 @@ void install_globals(context & cx) {
         // double, which rounds past 2^53 as the note allows.
         const std::string s = str_at(c, a, 0);
         if (c.throw_pending()) { return value::undefined(); }
-        std::size_t from = 0;
-        std::size_t to = 0;
-        trim_bounds(s, true, false, from, to);
-        std::string_view rest = std::string_view{s}.substr(from);
+        std::string_view rest = trim_js_space(s, true, false);
         double sign = 1;
         if (!rest.empty() && (rest.front() == '+' || rest.front() == '-')) {
             if (rest.front() == '-') { sign = -1; }
