@@ -165,6 +165,17 @@ config.substitutions.insert(
         f"python3 {checks}/print-deduced.py --translate ctjs-translate --cxx {config.host_cxx}",
     ),
 )
+# The Browser DOM drivers' shared command-line tail. At the front like the gates
+# above, so the tool, %dom_clang, %build, %{monorepo}, %nm and %t substitutions
+# still expand what it expands to.
+config.substitutions.insert(
+    0,
+    (
+        "%dom_driver",
+        "--translate ctjs-translate --opt ctjs-opt --clang %dom_clang --build %build"
+        " --include %{monorepo}/ctbrowser/include --work %t --nm %nm",
+    ),
+)
 # The modules the build writes for every native fixture (Native.cmake's
 # ctcompile_add_native_pipeline: <name>.pipeline{,.deduced,.mutated}.emitc.mlir)
 # - the same files docs/refactor-goldens.md measures a refactor against, so
