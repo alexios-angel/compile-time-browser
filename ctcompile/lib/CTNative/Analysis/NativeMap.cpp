@@ -127,12 +127,14 @@ struct plan {
 // Record owners remain stack objects. The Map borrows their addresses and
 // saved reads keep that address across overwrite/delete; neither owns a record.
 // ponytail: one entry-block Map and literal keys; transport needs a wider lifetime proof.
-std::string proveRecords(plan & candidate) {
-    if (!llvm::any_of(candidate.calls, [](ctjs::CallOp call) {
-            if (mapMethodName(call) != "set" ||
-                !call.getArgs()[1].getDefiningOp<ctjs::CreateObjectOp>()) {
-                return false;
-            }
+std::string proveRecords(plan & candidate,
+                         llvm::function_ref<bool(ctjs::CreateObjectOp)> hostRecord) {
+    if (!llvm::any_of(candidate.calls, [&](ctjs::CallOp call) {
+            auto stored = call.getArgs().size() == 2
+                              ? call.getArgs()[1].getDefiningOp<ctjs::CreateObjectOp>()
+                              : ctjs::CreateObjectOp{};
+            if (mapMethodName(call) != "set" || !stored) { return false; }
+            if (hostRecord && hostRecord(stored)) { return true; }
             // Existing plain-object identity Maps keep their independent
             // owning representation. A lifted receiver needs its real record.
             return llvm::any_of(call.getArgs()[1].getUses(), [](mlir::OpOperand & use) {
@@ -515,7 +517,8 @@ std::string provePayloads(mlir::ModuleOp module, llvm::ArrayRef<plan> plans,
 } // namespace
 
 void prepareNativeMaps(mlir::ModuleOp module, const OwnedGlobalRoots * globals,
-                       llvm::function_ref<bool(mlir::Operation *)> hostTyped) {
+                       llvm::function_ref<bool(mlir::Operation *)> hostTyped,
+                       llvm::function_ref<bool(ctjs::CreateObjectOp)> hostRecord) {
     // Proof annotations are derived, not trusted input, including on reruns.
     module.walk([&](mlir::Operation * op) {
         for (llvm::StringRef name :
@@ -620,7 +623,7 @@ void prepareNativeMaps(mlir::ModuleOp module, const OwnedGlobalRoots * globals,
         reason = provePayloads(module, plans, graph, families, copies.calls, globals, hostTyped);
     }
     for (plan & candidate : plans) {
-        if (reason.empty()) { reason = proveRecords(candidate); }
+        if (reason.empty()) { reason = proveRecords(candidate, hostRecord); }
     }
     auto * context = module.getContext();
     if (!reason.empty()) {

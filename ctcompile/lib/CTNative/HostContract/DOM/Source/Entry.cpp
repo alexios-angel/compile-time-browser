@@ -71,9 +71,25 @@ bool DOMSource::forwardFields(ctjs::FuncOp function) {
 bool DOMSource::dataObject(ctjs::CreateObjectOp object) {
     // Preserve fresh data allocations for the complete DOM proof. Unlike
     // callable holders, their constructors and uses must not be erased here.
+    // A record stored as a `set` payload also keeps its own field reads; the
+    // complete proof types that Map, its schema and every alias.
+    const auto stored = [](mlir::OpOperand & operand) {
+        auto call = llvm::dyn_cast<ctjs::CallOp>(operand.getOwner());
+        auto method =
+            call ? call.getCallee().getDefiningOp<ctjs::GetPropertyOp>() : ctjs::GetPropertyOp{};
+        return method && operand.getOperandNumber() == 3 && call.getArgs().size() == 2 &&
+               method.getObject() == call.getReceiver() &&
+               ctjs::constantKey(method.getKey()) == "set";
+    };
+    const bool record = llvm::any_of(object.getResult().getUses(), stored);
     for (mlir::OpOperand & operand : object.getResult().getUses()) {
         if (!step()) { return false; }
         auto * use = operand.getOwner();
+        if (record && (stored(operand) ||
+                       (llvm::isa<ctjs::GetPropertyOp>(use) && operand.getOperandNumber() == 0 &&
+                        ctjs::ordinaryKey(use->getOperand(1))))) {
+            continue;
+        }
         if (llvm::isa<ctjs::RootOp, ctjs::ReturnOp, mlir::scf::YieldOp, ctjs::CopyPropsOp>(use)) {
             continue;
         }
