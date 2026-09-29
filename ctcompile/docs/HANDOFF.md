@@ -22,6 +22,56 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Unobserved DOM method parameters, 2026-09-29 UTC
+
+**Landed: `d81ddb48a`**, continuing `6d2b7c649` / `b869e4c14`.
+The exact former `shadowed_parameter` body now emits native C++.
+One budgeted census checks every explicit formal's uses at the existing
+per-instance method proof. A method with only unused/rooted formals can use
+the same synthetic invocation as a zero-argument method; the existing lift
+supplies undefined slots. The complete body, capture, receiver and final
+typed proofs still run. Original signatures and argument expressions remain.
+Own, inherited and shadowed methods share the rule. Defaults and observed
+parameters still need actual original calls; `arguments`, rest, unknown
+effects and invalid receivers retain their independent refusals.
+
+Seven admissions cover the exact former refusal, multiple unused formals,
+shadowed writes that must not execute, captured helpers, own/inherited unused
+methods and effects in an original call's ignored argument. Nine new refusal
+sources cover the corresponding proof boundaries.
+
+**Measured, devbox only:** `tools/remote-build.sh ctjs-opt ctjs-translate
+ctcompile-test-native-reference` passed **4/4 build steps**. The existing
+`class_dom.py` harness, restricted by `subset.py` to **12 positive and 14
+refusal sources**, passed **48 Node/interpreter observations, eight combined
+native executions and 240 refusal checks**. GCC and pinned Clang covered
+both DOM providers, optimization off/on and explicit/deduced printing.
+The existing `nm -C` gate found no Script/AOT symbols, and no temporary
+proof slots remained. The old compiler reproduced the original-call refusal.
+`tools/format.sh --check` passed (1180 C++, 155 Python, 116 web files),
+and `git diff --check` passed. All four tested source/test hashes match the
+devbox. The exact command was `flock /tmp/ctbrowser-devbox-build.lock bash
+/tmp/codex-dom-formals/check.sh`; it held the lock through the old-refusal
+reproduction, explicit-target build, focused harness, authentic Bootstrap
+probe and evidence copy. Scripts, logs, hashes, C++/IR and executables are
+archived at `/home/alex/.ctbrowser-auto/codex/ctcompile/artifacts/2026-09-29-dom-formals/`.
+No CTest, full lit, WPT/test262, broad corpus/native matrix, Windows or sanitizer
+run was made; nothing was pushed.
+
+**Next measured Bootstrap boundary:** the unchanged original
+W/B/U/Data probe still refuses `class method capture is not its constructor
+or an inert sibling helper`, currently **`fn$3 / ctjs.construct`**.
+The Data Map and DOM composition remains the main ownership task. The audited
+gates are concrete: `ClassInitialization/Proof.cpp` skips the Map census in
+ordinary DOM mode; `ClassInitialization/DOMData.cpp::proveDOMDataFamily` accepts
+element uses only as captured-Map outer keys; `Provider/Records.cpp` requires
+literal constructor actuals and primitive record fields. Finally,
+`Lowering/LowerToEmitC.cpp` selects `DOMEntryAnalysis` or `OwnedGlobalRoots`,
+not a combined proof. Reuse their existing element/session ownership and
+typed DOM operations when connecting these paths; enabling Map captures alone
+is insufficient. Parameter-dependent shadowed bodies and actual
+Manipulator/EventHandler helpers remain. Full Bootstrap has not run natively.
+
 ## Unused DOM method helpers and Data capture diagnosis, 2026-09-29 UTC
 
 **Landed: `6d2b7c649`**, continuing `5bbc9392a` / `ae2b2470e`.
