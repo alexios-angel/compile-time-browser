@@ -218,11 +218,17 @@ void dom_bindings::install_window(context & cx) {
     // one, read it, hand it to createObjectURL - which is what a test, a
     // drag-and-drop shim and p5's own loader path all need.
     {
-        // A File IS a Blob with a name, so it shares the prototype and
+        // A File IS a Blob with a name: File.prototype inherits Blob's, so
         // `file instanceof Blob` is true - which is what p5's downloadFile
-        // branches on.
-        auto * file_ctor =
-            cx.allocate<script::native_object>("File", [](context & c, std::span<value> a) {
+        // branches on - and a Blob is not a File (FileAPI 4.1;
+        // structured-clone.any.js asks `instanceof File` of a cloned Blob).
+        auto * file_proto = cx.allocate<script::object_object>();
+        file_proto->prototype = blob_prototype_;
+        file_proto->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string("File"),
+                           script::attr_configurable);
+        const value file_prototype = value::object(file_proto);
+        auto * file_ctor = cx.allocate<script::native_object>(
+            "File", [file_prototype](context & c, std::span<value> a) {
                 const value blob_ctor_value = c.global("Blob");
                 // Built THROUGH Blob rather than beside it: one place decides what
                 // a part list means, so a File made of strings, typed arrays and
@@ -233,13 +239,26 @@ void dom_bindings::install_window(context & cx) {
                                        : c.make_object();
                 if (!made.is_object()) { return made; }
                 auto * file = static_cast<script::object_object *>(made.as_heap());
+                file->prototype = file_prototype;
                 file->set("name", c.string(a.size() > 1 ? c.to_string(a[1]) : std::string{}));
-                // The clock, not zero: a page that sorts by lastModified would
-                // otherwise find every file identical.
-                file->set("lastModified", value::number(c.clock_ms()));
+                // The options' lastModified, a WebIDL `long long` (NaN and the
+                // infinities are 0), else the clock - not zero: a page that
+                // sorts by lastModified would otherwise find every file
+                // identical. ponytail: no modulo 2^64 - a timestamp past 2^63
+                // ms is not one a page makes.
+                const value given = a.size() > 2 && a[2].is_object_like()
+                                        ? c.lookup_property(a[2], "lastModified")
+                                        : value::undefined();
+                const double stamp =
+                    given.is_undefined() ? c.clock_ms() : context::to_number(given);
+                file->set("lastModified",
+                          value::number(std::isfinite(stamp) ? std::trunc(stamp) + 0.0 : 0.0));
                 return made;
             });
-        file_ctor->set("prototype", blob_prototype_);
+        // The prototype is in a C++ capture - see native_object::retained.
+        file_ctor->retained.push_back(file_prototype);
+        file_ctor->define("prototype", file_prototype, script::attr_none);
+        file_proto->define("constructor", value::object(file_ctor), script::attr_builtin);
         cx.define_builtin_global("File", value::object(file_ctor));
 
         // A FileList is array-SHAPED: indices, a length, and item(). Every page
