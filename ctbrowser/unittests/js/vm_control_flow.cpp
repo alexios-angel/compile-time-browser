@@ -822,6 +822,45 @@ void test_with() {
     CHECK(!compiler::compile("'use strict'; with ({}) {}").ok);
 }
 
+// A BLOCK'S `let` IS A BINDING FROM THE BLOCK'S START (14.2.3): a closure
+// written before the declaration captures it, and reads it once it is set -
+// in a nested block, a loop body and a function's block alike.
+void test_block_lexical_captured_early() {
+    expect_result("{ let f = () => later; let later = 1; return f(); }", "1");
+    expect_result("{ let f = () => later; try { f(); } catch (e) {"
+                  " return e instanceof ReferenceError; } let later = 1; }",
+                  "true");
+    expect_result("{ let f = () => later; let later; return f(); }", "undefined");
+    expect_result("{ let f = () => later = 2; let effects = 0;"
+                  " try { later = ++effects; } catch (e) {"
+                  " return (e instanceof ReferenceError) + ',' + effects; } let later = 1; }",
+                  "true,1");
+    expect_result("{ let f = () => later = 2; try { f(); } catch (e) {"
+                  " return e instanceof ReferenceError; } const later = 1; }",
+                  "true");
+    expect_result("{ let f = () => later; try { eval('later'); } catch (e) {"
+                  " return e instanceof ReferenceError; } let later = 1; }",
+                  "true");
+    expect_result("{ let f = () => later; let later = 1; return eval('later'); }", "1");
+    expect_result("{ let f = () => later; try { eval('later = 2'); } catch (e) {"
+                  " return e instanceof ReferenceError; } let later = 1; }",
+                  "true");
+    expect_result("{ let f = () => later; let later = 1; { let later = 2;"
+                  " return eval('later') + f(); } }",
+                  "3");
+    expect_result("var out = []; for (var i = 0; i < 2; i++) { const get = () => v;"
+                  " const v = i * 10; out.push(get()); } return out.join();",
+                  "0,10");
+    expect_result("return (function () { if (true) { let m = { has() { return set.size; } };"
+                  " let set = new Set([1, 2]); return m.has(); } })();",
+                  "2");
+    // A block's hoisted name is that block's: a class of the same name in a
+    // block inside it is a binding of its own.
+    expect_result("return (function () { { const g = () => C; const C = 1;"
+                  " { class C {} return typeof C + g(); } } })();",
+                  "function1");
+}
+
 int main() {
     test_with();
     test_errors();
@@ -846,6 +885,7 @@ int main() {
     test_for_of();
     test_nested_for_of();
     test_shorthand_capture();
+    test_block_lexical_captured_early();
     test_for_in();
     test_switch();
     test_error_stacks();

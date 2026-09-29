@@ -175,8 +175,12 @@ struct set_record {
 // GetIteratorFromMethod(record.object, record.keys) then IteratorStepValue,
 // each key handed to `visit`, which answers false to stop (IteratorClose is
 // then run: the specification closes the iterator on every early exit). FALSE
-// with a throw in flight.
-template <typename Fn> [[nodiscard]] bool each_key(context & c, const set_record & r, Fn && visit) {
+// with a throw in flight. `opened` runs once the iterator and its `next` are
+// in hand and before the first step - where union and symmetricDifference
+// copy the receiver (24.2.4.14 / 24.2.4.12 step 5: the `next` read is page
+// code, and may change it).
+template <typename Fn, typename Opened>
+[[nodiscard]] bool each_key(context & c, const set_record & r, Fn && visit, Opened && opened) {
     const detail::unwind_watch watch{c};
     const value iterator = c.call(r.keys, std::span<const value>{}, r.object);
     if (watch.threw()) { return false; }
@@ -187,6 +191,7 @@ template <typename Fn> [[nodiscard]] bool each_key(context & c, const set_record
     const context::rooted keep{c, iterator};
     const value next = c.lookup_property(iterator, "next");
     if (watch.threw()) { return false; }
+    opened();
     for (std::size_t guard = 0; guard < (1u << 24); ++guard) {
         if (!next.is_callable()) {
             c.throw_error("TypeError", "the iterator's next is not a function");
@@ -204,15 +209,16 @@ template <typename Fn> [[nodiscard]] bool each_key(context & c, const set_record
         if (context::truthy(done)) { return true; }
         const value item = c.lookup_property(step, "value");
         if (watch.threw()) { return false; }
-        if (!visit(item)) {
-            const value close = c.lookup_property(iterator, "return");
-            if (watch.threw()) { return false; }
-            if (close.is_callable()) { (void)c.call(close, std::span<const value>{}, iterator); }
-            return !watch.threw();
-        }
+        // IteratorClose with a normal completion - asked of throw_pending, not
+        // the watch: a generator's return() unwinds its own frame through
+        // any `finally` without throwing at all (iterator_internal.hpp).
+        if (!visit(item)) { return detail::iterator_close(c, iterator); }
         if (watch.threw()) { return false; }
     }
     return true;
+}
+template <typename Fn> [[nodiscard]] bool each_key(context & c, const set_record & r, Fn && visit) {
+    return each_key(c, r, std::forward<Fn>(visit), [] {});
 }
 
 // A fresh Set holding `items`, on Set.prototype - what the algebra methods
@@ -850,17 +856,18 @@ void install_collections(context & cx) {
             });
         };
         algebra("union", [](context & c, array_object & self, const set_record & other) -> value {
-            std::vector<value> result = self.items;
-            const context::rooted_values keep{c, result};
-            const value out = make_set(c, result);
+            const value out = make_set(c, {});
             const context::rooted keep_out{c, out};
             auto * list = static_cast<array_object *>(
                 static_cast<object_object *>(out.as_heap())->find("__entries")->as_heap());
-            const bool ok = each_key(c, other, [&](value key) {
-                const value v = normalise_key(key);
-                if (find_member(*list, v) < 0) { list->items.push_back(v); }
-                return true;
-            });
+            const bool ok = each_key(
+                c, other,
+                [&](value key) {
+                    const value v = normalise_key(key);
+                    if (find_member(*list, v) < 0) { list->items.push_back(v); }
+                    return true;
+                },
+                [&] { list->items = self.items; });
             return ok ? out : value::undefined();
         });
         algebra("intersection",
@@ -918,22 +925,23 @@ void install_collections(context & cx) {
                 });
         algebra("symmetricDifference",
                 [](context & c, array_object & self, const set_record & other) -> value {
-                    std::vector<value> result = self.items;
-                    const context::rooted_values keep{c, result};
-                    const value out = make_set(c, result);
+                    const value out = make_set(c, {});
                     const context::rooted keep_out{c, out};
                     auto * list = static_cast<array_object *>(
                         static_cast<object_object *>(out.as_heap())->find("__entries")->as_heap());
-                    const bool ok = each_key(c, other, [&](value key) {
-                        const value v = normalise_key(key);
-                        const std::ptrdiff_t at = find_member(*list, v);
-                        if (find_member(self, v) >= 0) {
-                            if (at >= 0) { list->items.erase(list->items.begin() + at); }
-                        } else if (at < 0) {
-                            list->items.push_back(v);
-                        }
-                        return true;
-                    });
+                    const bool ok = each_key(
+                        c, other,
+                        [&](value key) {
+                            const value v = normalise_key(key);
+                            const std::ptrdiff_t at = find_member(*list, v);
+                            if (find_member(self, v) >= 0) {
+                                if (at >= 0) { list->items.erase(list->items.begin() + at); }
+                            } else if (at < 0) {
+                                list->items.push_back(v);
+                            }
+                            return true;
+                        },
+                        [&] { list->items = self.items; });
                     return ok ? out : value::undefined();
                 });
         algebra("isSubsetOf",

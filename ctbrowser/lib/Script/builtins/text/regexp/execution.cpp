@@ -4,6 +4,44 @@ namespace ctbrowser::script::builtins_detail {
 
 namespace regexp_detail {
 
+namespace {
+
+bool full_unicode_flags(std::string_view flags) {
+    return flags.find('u') != std::string_view::npos || flags.find('v') != std::string_view::npos;
+}
+
+// WITHOUT `u` OR `v` THE PATTERN IS CODE UNITS (22.2.2): a literal
+// "\u{1D306}" in it is two characters, each quantifiable and each a class
+// member on its own, so it is compiled with its pairs split
+// (utf16::split_pairs) - and matched against a subject split the same way
+// (builtin_exec). A group's NAME is not a character of the pattern and keeps
+// its pair: `(?<name>` and `\k<name>` are copied as written.
+std::string split_pattern_pairs(const std::string & source) {
+    if (!utf16::has_pair(source)) { return source; }
+    std::string out;
+    std::size_t done = 0;
+    for (std::size_t i = 0; i < source.size(); ++i) {
+        const bool group_name = source.compare(i, 3, "(?<") == 0 && i + 3 < source.size() &&
+                                source[i + 3] != '=' && source[i + 3] != '!';
+        const bool reference = source.compare(i, 3, "\\k<") == 0;
+        if (source[i] == '\\' && !reference) {
+            ++i; // an escaped character is not the start of either
+            continue;
+        }
+        if (!group_name && !reference) { continue; }
+        const std::size_t close = source.find('>', i);
+        if (close == std::string::npos) { break; }
+        out += utf16::split_pairs(std::string_view{source}.substr(done, i - done));
+        out.append(source, i, close + 1 - i);
+        done = close + 1;
+        i = close;
+    }
+    out += utf16::split_pairs(std::string_view{source}.substr(done));
+    return out;
+}
+
+} // namespace
+
 // The compiled program lives in a cache keyed by `source\0flags`, so the same
 // literal in a loop compiles once. Shared by every native this file installs
 // and dies with them.
@@ -14,7 +52,8 @@ namespace regexp_detail {
     const std::string key = source + '\0' + flags;
     const auto it = cache->find(key);
     if (it != cache->end()) { return it->second; }
-    auto program = std::make_shared<rx::rx_prog>(rx::rx_compile(source, flags));
+    auto program = std::make_shared<rx::rx_prog>(
+        rx::rx_compile(full_unicode_flags(flags) ? source : split_pattern_pairs(source), flags));
     cache->emplace(key, program);
     return program;
 }
@@ -95,8 +134,9 @@ namespace regexp_detail {
 // strings; every position the result REPORTS - `index` and each `indices`
 // pair - is the UTF-16 index a script counts in (string_object::unit_index).
 [[nodiscard]] value exec_result(context & cx, const rx::rx_prog & program, value subject,
-                                const rx::rx_match & m) {
-    const auto & str = *static_cast<const string_object *>(subject.as_heap());
+                                const rx::rx_match & m, const string_object * matched) {
+    const auto & str =
+        matched != nullptr ? *matched : *static_cast<const string_object *>(subject.as_heap());
     const std::string & s = str.text;
     value out = cx.make_array();
     const context::rooted keep{cx, out};
@@ -260,10 +300,12 @@ value regexp_exec(context & cx, value rx, value subject) {
 // lastIndex is a UNIT index and the matcher walks BYTES: the one conversion
 // in is locate, and the ones out are unit_index. A lastIndex at a pair's low
 // half is where the two views part: under `u` the input is code points and
-// the match starts at the pair holding it (step 13.b); without `u` the
-// matcher would start at the lone half, which a matcher over bytes cannot
-// stand on, so it starts after the pair - a pattern that matches a lone low
-// surrogate against half of a pair is the case this does not model.
+// the match starts at the pair holding it (step 13.b); without `u` the input
+// is code units, and the matcher walks the subject with its pairs split
+// (utf16::split_pairs, as the pattern was compiled), where every unit is a
+// code point of its own - so there is no pair to stand inside. The split
+// text has the subject's units at the subject's unit indices, so every
+// position reported from it is the subject's.
 [[nodiscard]] value builtin_exec(context & cx, const std::shared_ptr<regex_cache> & cache, value rx,
                                  value subject) {
     std::string source;
@@ -274,19 +316,14 @@ value regexp_exec(context & cx, value rx, value subject) {
     if (!get_last_index(cx, rx, last)) { return value::undefined(); }
     const bool stateful = program->global || program->sticky;
     if (!stateful) { last = 0; }
-    const auto & str = *static_cast<const string_object *>(subject.as_heap());
-    const bool full_unicode =
-        flags.find('u') != std::string::npos || flags.find('v') != std::string::npos;
+    const auto & subject_text = *static_cast<const string_object *>(subject.as_heap());
+    const string_object & str =
+        full_unicode_flags(flags) ? subject_text : subject_text.code_units();
     rx::rx_match m;
     bool hit = program->ok && last <= static_cast<double>(str.length());
     if (hit) {
-        const utf16::position at = str.locate(static_cast<std::size_t>(last));
-        std::size_t start = at.byte;
-        if (at.low_half && !full_unicode) { (void)decode_utf8(str.text, start); }
-        // A sticky match is at `start` or nowhere - and never after a lone
-        // half the matcher had to step over.
-        hit = !(program->sticky && at.low_half && !full_unicode) &&
-              rx::rx_search(*program, str.text, start, m, program->sticky);
+        const std::size_t start = str.locate(static_cast<std::size_t>(last)).byte;
+        hit = rx::rx_search(*program, str.text, start, m, program->sticky);
     }
     if (!hit) {
         if (stateful && !set_last_index(cx, rx, 0)) { return value::undefined(); }
@@ -295,7 +332,7 @@ value regexp_exec(context & cx, value rx, value subject) {
     if (stateful && !set_last_index(cx, rx, static_cast<double>(str.unit_index(m.end)))) {
         return value::undefined();
     }
-    const value result = exec_result(cx, *program, subject, m);
+    const value result = exec_result(cx, *program, subject, m, &str);
     // The legacy statics (RegExp.$1, RegExp.lastMatch, ...): updated by a
     // match of a RegExp with its legacy features, emptied by a subclass
     // instance's, so a stale answer is never reported for either.

@@ -162,6 +162,13 @@ bool compiler_impl::contains_direct_eval(std::int32_t idx) const {
     return e != eval_ticks_.end() && *e < where.hi;
 }
 
+bool compiler_impl::own_direct_eval(std::int32_t idx) const {
+    if (current_ast_ != &ast_) { return false; }
+    const interval where = range_of(idx);
+    // eval_ticks_ holds the tick of the function each call is IN.
+    return !where.empty() && std::ranges::binary_search(eval_ticks_, where.lo);
+}
+
 bool compiler_impl::arrow_wants_new_target(std::int32_t idx, bool in_arrow) const {
     if (idx < 0) { return false; }
     const vp::node & n = at(idx);
@@ -410,6 +417,128 @@ void compiler_impl::predeclare_locals(std::int32_t body, bool lexical_only) {
             },
             lexical, true);
     }
+}
+
+void compiler_impl::hoist_captured_lexicals(const vp::node & block) {
+    // The capture index covers the program's own tree (contains_direct_eval).
+    if (current_ast_ != &ast_) { return; }
+    const std::span<const std::int32_t> stmts = kids(block);
+    const auto lexical = [this](std::int32_t s) {
+        return at(s).kind == vp::nk::var_decl && at(s).text != "var";
+    };
+    // The cheap question first: is any simple `let`/`const` of this block
+    // captured by a function at all? Nearly every block answers no.
+    bool captured = false;
+    for (const std::int32_t s : stmts) {
+        if (!lexical(s)) { continue; }
+        for (const std::int32_t d : kids(at(s))) {
+            captured = captured || (at(d).b < 0 && is_captured(at(d).text));
+        }
+    }
+    if (!captured) { return; }
+    for (std::size_t i = 0; i < stmts.size(); ++i) {
+        if (!lexical(stmts[i])) { continue; }
+        const std::span<const std::int32_t> declarators = kids(at(stmts[i]));
+        for (std::size_t j = 0; j < declarators.size(); ++j) {
+            const vp::node & decl = at(declarators[j]);
+            if (decl.b >= 0 || !is_captured(decl.text) ||
+                find_local_in_current_scope(decl.text) != nullptr) {
+                continue;
+            }
+            // Read by a function compiled before the declaration - in an
+            // earlier statement or declarator - which would otherwise
+            // resolve the name to some other binding.
+            const bool before =
+                std::ranges::any_of(stmts.first(i),
+                                    [&](std::int32_t s) { return closure_reads(s, decl.text); }) ||
+                std::ranges::any_of(declarators.first(j), [&](std::int32_t d) {
+                    return closure_reads(at(d).a, decl.text);
+                });
+            if (!before) { continue; }
+            // As predeclare_locals makes a function body's own: in its
+            // dead zone for this frame until the declarator has run - the
+            // offset its statement knows it by (compile_stmt).
+            const std::uint16_t r = declare_local(std::string{decl.text});
+            fn().locals.back().initialized_at = decl.end;
+            fn().locals.back().readonly = declared_immutability(at(stmts[i]));
+            fn().locals.back().lexical = true;
+            proto().emit(instruction{op::load_undef, r});
+            if (fn().locals.back().boxed) { proto().emit(instruction{op::new_cell, r}); }
+            // A closure may run before OR after this declaration. Its
+            // runtime readiness travels in an ordinary captured cell.
+            const std::string flag = "@tdz:" + std::string{decl.text};
+            fn().locals.back().ready_flag = flag;
+            const std::uint16_t ready = declare_local(flag);
+            fn().locals.back().boxed = true;
+            proto().emit(instruction{op::load_false, ready});
+            proto().emit(instruction{op::new_cell, ready});
+        }
+    }
+}
+
+bool compiler_impl::closure_reads(std::int32_t idx, std::string_view name, bool in_function) {
+    if (idx < 0) { return false; }
+    const vp::node & n = at(idx);
+    if (in_function) {
+        // A mention as tour records one: a name, a shorthand `{ name }`, a
+        // template's substitution.
+        if ((n.kind == vp::nk::ident || (n.kind == vp::nk::prop && n.c == 2)) && n.text == name) {
+            return true;
+        }
+        if (n.kind == vp::nk::tmpl) {
+            bool found = false;
+            each_name_in_template(n.text, [&](std::string_view m) { found = found || m == name; });
+            if (found) { return true; }
+        }
+    }
+    if (binds_again(n, name)) { return false; }
+    const bool function = in_function || is_function_node(n);
+    // A field initialiser runs later, as a function body does (see tour).
+    const bool field_init = n.kind == vp::nk::class_member && (n.c == 0 || n.c == 3);
+    const std::array<std::int32_t, 4> slots = child_slots(n);
+    for (std::size_t i = 0; i < slots.size(); ++i) {
+        if (closure_reads(slots[i], name, function || (field_init && i == 1))) { return true; }
+    }
+    return std::ranges::any_of(kids(n),
+                               [&](std::int32_t k) { return closure_reads(k, name, function); });
+}
+
+bool compiler_impl::binds_again(const vp::node & n, std::string_view name) {
+    std::vector<std::string> names;
+    if (is_function_node(n)) {
+        // Its parameters, its own name as an expression, `arguments` unless
+        // it is an arrow, and every name its body declares.
+        if ((n.kind == vp::nk::func_expr && n.text == name) ||
+            (n.kind != vp::nk::arrow && name == "arguments")) {
+            return true;
+        }
+        for (const std::int32_t p : kids(n)) {
+            names.emplace_back(at(p).text);
+            pattern_names(at(p).b, names);
+        }
+        if (n.a >= 0 && at(n.a).kind == vp::nk::block) {
+            hoist_nested_vars(n.a, [&](std::string v) { names.push_back(std::move(v)); });
+            collect_lexical_names(kids(at(n.a)), names);
+            collect_function_names(kids(at(n.a)), names);
+        }
+    } else if (n.kind == vp::nk::block) {
+        collect_lexical_names(kids(n), names);
+        collect_function_names(kids(n), names);
+    } else if (n.kind == vp::nk::switch_stmt) {
+        // Every CaseClause of a switch is one scope.
+        for (const std::int32_t clause : kids(n)) {
+            collect_lexical_names(kids(at(clause)), names);
+            collect_function_names(kids(at(clause)), names);
+        }
+    } else if (n.kind == vp::nk::catch_clause) {
+        names.emplace_back(n.text);
+        pattern_names(n.b, names);
+    } else if ((n.kind == vp::nk::for_stmt || n.kind == vp::nk::forof_stmt) && n.a >= 0) {
+        collect_lexical_names(std::span<const std::int32_t>{&n.a, 1}, names);
+    } else if (n.kind == vp::nk::class_decl) {
+        names.emplace_back(n.text);
+    }
+    return std::ranges::find(names, name) != names.end();
 }
 
 bool compiler_impl::was_predeclared(std::string_view name) const {

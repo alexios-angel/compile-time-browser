@@ -159,14 +159,18 @@ constexpr void append_utf8(std::string & out, char32_t cp) {
 // low surrogate starting the next - `ED A0..AF xx` then `ED B0..BF xx` -
 // are one code point once they meet, as the UTF-16 they stand for would be.
 // Rewrites in place; a text with no ED byte is untouched at the cost of one
-// memchr.
+// memchr. Compact with separate read/write cursors: erasing two bytes per
+// pair shifts the remaining suffix per pair and makes long match results quadratic.
 inline void join_surrogates(std::string & text) {
     std::size_t at = text.find('\xED');
-    while (at != std::string::npos && at + 5 < text.size()) {
+    if (at == std::string::npos) { return; }
+    std::size_t write = at;
+    while (at + 5 < text.size()) {
         const auto b1 = static_cast<unsigned char>(text[at + 1]);
         const auto b3 = static_cast<unsigned char>(text[at + 3]);
         const auto b4 = static_cast<unsigned char>(text[at + 4]);
-        if (b1 >= 0xA0 && b1 <= 0xAF && b3 == 0xED && b4 >= 0xB0 && b4 <= 0xBF) {
+        if (text[at] == '\xED' && b1 >= 0xA0 && b1 <= 0xAF && b3 == 0xED && b4 >= 0xB0 &&
+            b4 <= 0xBF) {
             const auto b2 = static_cast<unsigned char>(text[at + 2]);
             const auto b5 = static_cast<unsigned char>(text[at + 5]);
             const char32_t high = 0xD000u | ((b1 & 0x3Fu) << 6) | (b2 & 0x3Fu);
@@ -174,12 +178,14 @@ inline void join_surrogates(std::string & text) {
             const char32_t cp = 0x10000u + ((high - 0xD800u) << 10) + (low - 0xDC00u);
             std::string four;
             append_utf8(four, cp);
-            text.replace(at, 6, four);
-            at = text.find('\xED', at + 4);
+            for (const char byte : four) { text[write++] = byte; }
+            at += 6;
             continue;
         }
-        at = text.find('\xED', at + 1);
+        text[write++] = text[at++];
     }
+    while (at < text.size()) { text[write++] = text[at++]; }
+    text.resize(write);
 }
 
 // One code point out of UTF-8, advancing `at` past it. A truncated or

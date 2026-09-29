@@ -22,8 +22,30 @@
 namespace ctbrowser::script {
 
 context::context() {
+    // The first realm: the page's (main_realm).
+    scope_realm_ = &create_empty_realm();
+    set_realm_template(globals());
+    set_global_this(make_global_object(*scope_realm_));
+}
+
+realm_record & context::create_realm() {
     realms_.push_back(std::make_unique<realm_record>());
-    scope_realm_ = realms_.front().get();
+    realm_record & made = *realms_.back();
+    made.globals = realm_template_;
+    made.builtin = realm_template_builtin_;
+    made.platform_prototypes = realm_template_platform_prototypes_;
+    // The page's intrinsics, SHARED - the ones its template's bindings are
+    // (see realm_record).
+    made.intrinsics = main_realm().intrinsics;
+    return made;
+}
+
+// ponytail: a realm lives as long as its context - closures point at their
+// realm by address - so a page making ShadowRealms in a loop grows realms_.
+realm_record & context::create_empty_realm() {
+    realms_.push_back(std::make_unique<realm_record>());
+    realm_record & made = *realms_.back();
+    const realm_scope in{*this, made};
     // Compiler primitives needed even when the embedding installs no builtins.
     define_native(std::string{define_own_name}, [](context & c, std::span<value> a) {
         if (a.size() >= 3) {
@@ -41,17 +63,14 @@ context::context() {
         std::string text = c.to_string(key);
         return c.throw_pending() ? value::undefined() : c.string(std::move(text));
     });
-    set_realm_template(globals());
-    set_global_this(make_global_object(*scope_realm_));
+    return made;
 }
 
-realm_record & context::create_realm() {
-    realms_.push_back(std::make_unique<realm_record>());
-    realm_record & made = *realms_.back();
-    made.globals = realm_template_;
-    made.builtin = realm_template_builtin_;
-    made.platform_prototypes = realm_template_platform_prototypes_;
-    return made;
+realm_record * context::realm_of(value global) const noexcept {
+    for (const auto & realm : realms_) {
+        if (global.is_heap() && realm->global_this.bits() == global.bits()) { return realm.get(); }
+    }
+    return nullptr;
 }
 
 void context::set_realm_template(const string_flat_map<value> & globals) {

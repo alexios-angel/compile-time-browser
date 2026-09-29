@@ -202,8 +202,13 @@ inline constexpr void rx_class_escape(rx_class & out, char e) {
 // `i` is positioned just after the escape letter `e`; on success it advances
 // past the digits. A malformed escape returns false and is left to
 // rx_escape_char, which keeps the previous lenient behaviour.
+//
+// In the `u` and `v` modes (`unicode_mode`) a lead surrogate's `\uHHHH`
+// followed by a trail surrogate's is ONE code point (22.2.1
+// RegExpUnicodeEscapeSequence :: `u` HexLeadSurrogate `\u` HexTrailSurrogate),
+// so `/\ud834\udf06/u` is the pattern `/\u{1d306}/u`.
 inline bool rx_code_point_escape(std::string_view src, std::size_t & i, char e,
-                                 std::uint32_t & cp) {
+                                 std::uint32_t & cp, bool unicode_mode = false) {
 	std::size_t want = 0;
 	if (e == 'x') {
 		want = 2;
@@ -234,6 +239,18 @@ inline bool rx_code_point_escape(std::string_view src, std::size_t & i, char e,
 	}
 	cp = value;
 	i += want;
+	if (unicode_mode && e == 'u' && value >= 0xD800 && value <= 0xDBFF && i + 6 <= src.size() &&
+	    src[i] == '\\' && src[i + 1] == 'u') {
+		std::uint32_t trail = 0;
+		std::size_t k = 2;
+		for (; k < 6 && hex_value(src[i + k]) >= 0; ++k) {
+			trail = trail * 16 + static_cast<std::uint32_t>(hex_value(src[i + k]));
+		}
+		if (k == 6 && trail >= 0xDC00 && trail <= 0xDFFF) {
+			cp = 0x10000 + ((value - 0xD800) << 10) + (trail - 0xDC00);
+			i += 6;
+		}
+	}
 	return true;
 }
 
@@ -360,7 +377,7 @@ inline bool rx_class_set_character(std::string_view src, std::size_t & i, std::u
 		if (i + 1 >= src.size()) { return false; }
 		const char e = src[i + 1];
 		i += 2;
-		if (rx_code_point_escape(src, i, e, cp)) { return true; }
+		if (rx_code_point_escape(src, i, e, cp, true)) { return true; }
 		if (e == 'b') { cp = 0x08; return true; }
 		if (e == 'c') {
 			if (i < src.size() && ((src[i] >= 'a' && src[i] <= 'z') || (src[i] >= 'A' && src[i] <= 'Z'))) {
@@ -628,7 +645,7 @@ inline rx_piece rx_parse_atom(std::string_view src, std::size_t & i, rx_prog & p
 			if (src[i] == '\\' && i + 1 < src.size()) {
 				const char e = src[i + 1];
 				i += 2;
-				if (rx_code_point_escape(src, i, e, cp)) { return; }
+				if (rx_code_point_escape(src, i, e, cp, p.unicode || p.unicode_sets)) { return; }
 				// ClassEscape: `\b` is U+0008 inside a class (22.2.2.9.3), and
 				// `\cX` the control character - with Annex B's ClassControlLetter
 				// (digits and `_` too) and its lone `\c`, a backslash.
@@ -843,7 +860,7 @@ inline rx_piece rx_parse_atom(std::string_view src, std::size_t & i, rx_prog & p
 			return pc;
 		}
 		std::uint32_t cp = 0;
-		if (rx_code_point_escape(src, i, e, cp)) {
+		if (rx_code_point_escape(src, i, e, cp, p.unicode || p.unicode_sets)) {
 			pc.kind = rx_piece::lit;
 			if (cp > 0x7F) {
 				// THE SUBJECT IS UTF-8, so a code point above ASCII is the

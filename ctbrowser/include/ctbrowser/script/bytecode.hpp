@@ -557,6 +557,12 @@ struct program {
     // EvalDeclarationInstantiation (context::global_declaration_instantiation,
     // context::eval_declaration_instantiation).
     bool eval_global = false;
+    // A SLOPPY DIRECT EVAL WHOSE CALLER'S FUNCTION KEEPS ITS VARIABLE
+    // ENVIRONMENT ON AN OBJECT (the compiler's with_scope::eval_vars): its
+    // hoisted_vars and functions are made there by its own first
+    // instructions (19.2.1.3 steps 16-17), so whoever runs it declares none
+    // of them as a global.
+    bool eval_vars_env = false;
     // A CLASSIC SCRIPT'S TOP-LEVEL LEXICAL NAMES - `let`, `const`, `class` -
     // and its top-level FUNCTION declarations: with hoisted_vars, what
     // 16.1.7 GlobalDeclarationInstantiation checks against the bindings

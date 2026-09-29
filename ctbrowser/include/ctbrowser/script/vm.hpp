@@ -146,8 +146,18 @@ public:
     [[nodiscard]] realm_record & entry_realm() const noexcept;
     [[nodiscard]] realm_record & main_realm() const noexcept;
     // A NEW REALM whose binding table is a copy of the template - see
-    // set_realm_template - and whose global object is the caller's to set.
+    // set_realm_template - whose intrinsics are the page's own (shared), and
+    // whose global object is the caller's to set.
     [[nodiscard]] realm_record & create_realm();
+    // A NEW REALM WITH NOTHING IN IT but the two natives compiled code calls
+    // whatever the embedding installs (define_own_name, to_property_key_name)
+    // - no intrinsic, no global object: 9.3.1 CreateRealm, which builtins'
+    // create_intrinsic_realm then fills the way install_builtins filled the
+    // first.
+    [[nodiscard]] realm_record & create_empty_realm();
+    // The realm whose global object is `global`, or null. What a ShadowRealm
+    // keeps in its [[ShadowRealm]] slot is that object.
+    [[nodiscard]] realm_record * realm_of(value global) const noexcept;
     // What a new realm's binding table starts as: the page's globals as they
     // stood before any page script ran - the builtins and the platform's
     // interface objects, none of the page's own `var`s.
@@ -395,6 +405,8 @@ public:
         async_function,
         count_
     };
+
+    static_assert(static_cast<std::size_t>(proto_kind::count_) == realm_prototype_count);
 
     [[nodiscard]] static proto_kind function_proto_kind(value v) noexcept;
 
@@ -973,9 +985,6 @@ private:
     // Live try blocks, innermost last. Not per-frame, because a throw has to be
     // able to find a handler several frames up.
     std::vector<handler> handlers_;
-    std::array<object_object *, static_cast<std::size_t>(proto_kind::count_)> prototypes_{};
-    // Seven entries, scanned linearly: see register_error_prototype.
-    std::vector<std::pair<std::string, object_object *>> error_prototypes_;
     std::function<value(context &, value, bool)> promise_factory_;
     std::function<double()> clock_;
     std::function<value(context &)> pending_promise_factory_;
@@ -1070,8 +1079,7 @@ private:
     bool fence_hit_ = false;
     value fence_thrown_;
     bool store_rejected_ = false;
-    value await_job_ = value::undefined();        // see await_job(); a root in each_root
-    value throw_type_error_ = value::undefined(); // see throw_type_error(); a root too
+    value await_job_ = value::undefined(); // see await_job(); a root in each_root
     // What `call` parked for rethrow_pending - see `call`.
     bool has_pending_throw_ = false;
     value pending_throw_;
