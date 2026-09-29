@@ -824,6 +824,13 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
 
 bool classInitialization::proveDOMMethods(const HostContract & contract) {
     if (!needsDOMMethodProof) { return true; }
+    llvm::StringSet<> helperNames;
+    for (auto function : module.getOps<ctjs::FuncOp>()) {
+        if (!step()) { return false; }
+        if (domEntryHelpers.contains(function) && function.isPrivate()) {
+            helperNames.insert(function.getSymName());
+        }
+    }
     llvm::SetVector<mlir::Operation *> unused;
     for (auto [made, definition] : methodProbes) {
         (void)made;
@@ -845,6 +852,19 @@ bool classInitialization::proveDOMMethods(const HostContract & contract) {
     }
     const auto omitUnused = [&](mlir::ModuleOp candidate, mlir::IRMapping * mapping,
                                 ctjs::SetPropertyOp keep) {
+        llvm::StringSet<> dependencies;
+        const auto recordDependencies = [&](ctjs::FuncOp function) {
+            return !function
+                        .walk([&](mlir::Operation * operation) {
+                            if (!step()) { return mlir::WalkResult::interrupt(); }
+                            auto call = llvm::dyn_cast<ctjs::CallDirectOp>(operation);
+                            if (call && helperNames.contains(call.getCallee())) {
+                                dependencies.insert(call.getCallee());
+                            }
+                            return mlir::WalkResult::advance();
+                        })
+                        .wasInterrupted();
+        };
         for (mlir::Operation * operation : unused) {
             if (!step()) { return false; }
             if (operation == keep) { continue; }
@@ -855,6 +875,7 @@ bool classInitialization::proveDOMMethods(const HostContract & contract) {
                                        .getValue()
                                        .getDefiningOp<ctjs::CreateClosureOp>());
             auto fn = candidate.lookupSymbol<ctjs::FuncOp>(original.getSymName());
+            if (!recordDependencies(fn)) { return false; }
             if (!mlir::SymbolTable::symbolKnownUseEmpty(fn, candidate.getOperation()) ||
                 !mlir::SymbolTable::symbolKnownUseEmpty(fn, &candidate.getBodyRegion())) {
                 return refuse("unused DOM method retains a symbol reference");
@@ -868,6 +889,35 @@ bool classInitialization::proveDOMMethods(const HostContract & contract) {
             }
             closure.erase();
             fn.erase();
+        }
+        // A removed method's helper is proved in that method's own copy.
+        // Keep every surviving symbolic or numeric caller; an originally
+        // unused helper is never a dependency here and retains its own proof.
+        // ponytail: repeated bounded scans; index callers if large classes need it.
+        for (bool erased = true; erased;) {
+            erased = false;
+            for (auto fn : llvm::make_early_inc_range(candidate.getOps<ctjs::FuncOp>())) {
+                if (!step()) { return false; }
+                if (!dependencies.contains(fn.getSymName())) { continue; }
+                if (!spendWalk(candidate, [](mlir::Operation * op) {
+                        return uint64_t(3) + op->getNumOperands();
+                    })) {
+                    return false;
+                }
+                const auto index = functionIndex(fn);
+                auto named = candidate.walk([&](ctjs::CreateClosureOp closure) {
+                    return index && closure.getFunction() == *index ? mlir::WalkResult::interrupt()
+                                                                    : mlir::WalkResult::advance();
+                });
+                if (named.wasInterrupted() ||
+                    !mlir::SymbolTable::symbolKnownUseEmpty(fn, candidate.getOperation()) ||
+                    !mlir::SymbolTable::symbolKnownUseEmpty(fn, &candidate.getBodyRegion())) {
+                    continue;
+                }
+                if (!recordDependencies(fn)) { return false; }
+                fn.erase();
+                erased = true;
+            }
         }
         return true;
     };

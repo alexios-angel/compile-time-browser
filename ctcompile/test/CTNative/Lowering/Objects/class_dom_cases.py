@@ -1239,9 +1239,6 @@ SHADOWED_CASES = {
     ),
 }
 SHADOWED_REFUSALS = {
-    # A helper only a shadowed body calls still needs an independent unused
-    # helper proof; dropping that body must not silently drop this obligation.
-    "shadowed_unused_helper": SHADOWED_HELPER,
     # The unconstructed base's original constructor retains its separate
     # call proof even when a copied leaf body could consume the field.
     "shadowed_constructor_effect": SHADOWED_CLASS.replace(
@@ -1279,6 +1276,81 @@ SHADOWED_REFUSALS = {
         "target.getAttribute('x')", "target.unknown()"
     ),
 }
+# These dependencies lose their last call only when their independently
+# probed method is omitted; unrelated unused helper bodies still require proof.
+SHADOW_HELPER_CASES = {
+    "class_shadowed_helper": (SHADOWED_HELPER, "1111"),
+    "class_shadowed_helper_chain": (
+        SHADOWED_HELPER.replace(
+            "const get = target => target.getAttribute('x');",
+            "const inner = target => target.getAttribute('x');\n"
+            "const get = target => inner(target);",
+        ),
+        "1111",
+    ),
+    "class_shadowed_helper_shared": (
+        SHADOWED_HELPER.replace(
+            "read() { return true; }", "read() { return get(this.element) === null; }"
+        ),
+        "1000",
+    ),
+    "class_shadowed_helper_write": (
+        SHADOWED_HELPER.replace(
+            "target => target.getAttribute('x')",
+            "target => { target.setAttribute('helper-probe', 'bad'); return null; }",
+        ).replace(
+            "  return new Button(element).read();",
+            "  const button = new Button(element);\n"
+            "  return button.read() && element.getAttribute('helper-probe') === null;",
+        ),
+        "1111",
+    ),
+    "class_shadowed_helper_instances": (
+        SHADOWED_HELPER.replace(
+            "  return new Button(element).read();",
+            "  const first = new Button(element);\n"
+            "  const second = new Button(other);\n"
+            "  return first.read() && second.read();",
+        ),
+        "1111",
+    ),
+    "class_shadowed_helper_entry": (
+        SHADOWED_HELPER.replace(
+            "  return new Button(element).read();",
+            "  const button = new Button(element);\n"
+            "  return button.read() && get(element) === null;",
+        ),
+        "1000",
+    ),
+}
+SHADOW_HELPER_REFUSALS = {
+    "shadowed_helper_bad_argument": SHADOWED_HELPER.replace("get(this.element)", "get({})"),
+    "shadowed_helper_unused_unrelated": "const unrelated = target => target.unknown();\n"
+    + SHADOWED_HELPER,
+    "shadowed_helper_bad_instance": SHADOW_HELPER_CASES["class_shadowed_helper_instances"][
+        0
+    ].replace("new Button(other)", "new Button({})"),
+    "shadowed_helper_chain_effect": SHADOW_HELPER_CASES["class_shadowed_helper_chain"][0].replace(
+        "target.getAttribute('x')", "target.unknown()"
+    ),
+    "shadowed_helper_shared_bad_receiver": SHADOW_HELPER_CASES["class_shadowed_helper_shared"][
+        0
+    ].replace(
+        "read() { return get(this.element) === null; }", "read() { return get({}) === null; }"
+    ),
+    "shadowed_helper_entry_bad_receiver": SHADOW_HELPER_CASES["class_shadowed_helper_entry"][
+        0
+    ].replace("get(element) === null", "get({}) === null"),
+    "shadowed_helper_mutable": SHADOWED_HELPER.replace("const get =", "let get =").replace(
+        "  return new Button(element).read();",
+        "  get = target => target.unknown();\n  return new Button(element).read();",
+    ),
+    "shadowed_helper_escape": SHADOWED_HELPER.replace(
+        "return get(this.element) === null;", "return get;"
+    ),
+}
+SHADOWED_CASES.update(SHADOW_HELPER_CASES)
+SHADOWED_REFUSALS.update(SHADOW_HELPER_REFUSALS)
 INHERITED_CASES.update(SHADOWED_CASES)
 INHERITED_REFUSALS.update(SHADOWED_REFUSALS)
 TWO_ELEMENT_CLASSES.update(
@@ -1287,6 +1359,8 @@ TWO_ELEMENT_CLASSES.update(
         "class_inherited_dom_field_order",
         "inherited_bad_sibling",
         "class_shadowed_instances",
+        "class_shadowed_helper_instances",
+        "shadowed_helper_bad_instance",
         "shadowed_bad_instance",
     }
 )

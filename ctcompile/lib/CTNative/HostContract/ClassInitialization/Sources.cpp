@@ -293,7 +293,12 @@ bool classInitialization::methodCaptures(ctjs::CreateClosureOp method,
         auto helper = target(closure);
         if (!helper || closure->getBlock() != method->getBlock() ||
             !closure->isBeforeInBlock(method)) {
-            return refuse("class method capture is not its constructor or an inert sibling helper");
+            return refuse(
+                ("class method capture is not its constructor or an inert sibling helper: " +
+                 fn.getSymName() + " / " +
+                 (value.getDefiningOp() ? value.getDefiningOp()->getName().getStringRef()
+                                        : llvm::StringRef("block argument")))
+                    .str());
         }
         // Every edge keeps its fixed cell and source order. Shared helpers
         // record their reads once, only after their entire capture proof succeeds.
