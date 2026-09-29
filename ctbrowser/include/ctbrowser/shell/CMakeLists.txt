@@ -6,9 +6,23 @@ target_sources(ctbrowser-shell PUBLIC FILE_SET HEADERS FILES
   input.hpp
   metrics.hpp
   shell.hpp
+  bindings/animations_types.hpp
+  bindings/custom_elements_types.hpp
+  bindings/document_types.hpp
+  bindings/helpers.hpp
+  bindings/lifecycle_types.hpp
+  bindings/mutation_types.hpp
+  bindings/resources_types.hpp
+  bindings/stylesheets_types.hpp
+  image/images.hpp
+  net/net.hpp
+  net/url.hpp
+  page/accessibility.hpp
+  page/assets.hpp
+  page/canvas.hpp
+  page/composite.hpp
+  page/forms.hpp
+  page/input_types.hpp
+  page/svg_cache.hpp
+  page/webgl.hpp
 )
-
-add_subdirectory(bindings)
-add_subdirectory(image)
-add_subdirectory(net)
-add_subdirectory(page)
