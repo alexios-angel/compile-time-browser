@@ -5,6 +5,7 @@
 #include "ctcompile/CTJS/IR/CTJSOps.h"
 #include "ctcompile/CTNative/Analysis/PrimitiveAlternatives.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
 
 #include <cstdint>
 #include <optional>
@@ -39,7 +40,10 @@ bool isNativeMapRecordStore(mlir::OpOperand & use);
 
 /// Annotate only after proving both the standard constructor/method identity
 /// and every instance use. No runtime assumption or boxed fallback is added.
-void prepareNativeMaps(mlir::ModuleOp module, const OwnedGlobalRoots * globals = nullptr);
+/// `hostTyped` names the operations a complete host proof has typed: none
+/// rebinds or inspects the standard Map, writes a prototype or runs script.
+void prepareNativeMaps(mlir::ModuleOp module, const OwnedGlobalRoots * globals = nullptr,
+                       llvm::function_ref<bool(mlir::Operation *)> hostTyped = nullptr);
 
 /// The operation performed by a proved call or size read, or empty.
 llvm::StringRef nativeMapAction(mlir::Operation * op);

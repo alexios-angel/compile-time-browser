@@ -513,7 +513,8 @@ std::string provePayloads(mlir::ModuleOp module, llvm::ArrayRef<plan> plans,
 
 } // namespace
 
-void prepareNativeMaps(mlir::ModuleOp module, const OwnedGlobalRoots * globals) {
+void prepareNativeMaps(mlir::ModuleOp module, const OwnedGlobalRoots * globals,
+                       llvm::function_ref<bool(mlir::Operation *)> hostTyped) {
     // Proof annotations are derived, not trusted input, including on reruns.
     module.walk([&](mlir::Operation * op) {
         for (llvm::StringRef name :
@@ -582,6 +583,9 @@ void prepareNativeMaps(mlir::ModuleOp module, const OwnedGlobalRoots * globals) 
         if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(op);
             store && store.getName() == "Map") {
             reason = "standard Map binding is assigned in this program";
+        } else if (hostTyped && llvm::isa<ctjs::LoadGlobalOp, ctjs::CallOp>(op) &&
+                   !calls.contains(op) && hostTyped(op)) {
+            // The complete host proof typed this read or browser call.
         } else if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op);
                    load && load.getName() != "Map" && !copies.builtins.contains(op)) {
             // A complete live source-owner proof identifies this load as the

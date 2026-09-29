@@ -127,6 +127,36 @@ std::string withProvedClone(mlir::ModuleOp module, std::optional<HostContract> &
     return {};
 }
 
+// A DOM entry's local standard Maps. The complete DOM proof of the clone types
+// every other read and call - the identity evidence prepareNativeMaps needs -
+// and a Map it cannot prove refuses the entry rather than lowering boxed.
+std::string prepareDOMMaps(mlir::ModuleOp module, std::optional<HostContract> & hostContract,
+                           unsigned maxSteps) {
+    bool maps = false;
+    module.walk([&](ctjs::LoadGlobalOp load) { maps |= load.getName() == "Map"; });
+    if (!maps) { return {}; }
+    return withProvedClone<DOMEntryAnalysis>(
+        module, hostContract, maxSteps, "native DOM Map entry: ",
+        [&](mlir::OwningOpRef<mlir::ModuleOp> & prepared,
+            HostContract & transformed) -> std::string {
+            const DOMEntryAnalysis source(*prepared, transformed, maxSteps);
+            if (!source.proved()) { return ("native DOM Map entry: " + source.reason()).str(); }
+            // ponytail: the Map proof is unbudgeted here, as on the owned-global
+            // path; thread a WorkBudget through its fixpoints if host-max-steps
+            // must bound it too.
+            prepareNativeMaps(*prepared, nullptr,
+                              [&](mlir::Operation * op) { return source.typedOperation(op); });
+            std::string refusal;
+            prepared->walk([&](mlir::Operation * op) {
+                auto reason = op->getAttrOfType<mlir::StringAttr>(kNativeMapReason);
+                if (reason && refusal.empty()) {
+                    refusal = ("native DOM Map: " + reason.getValue()).str();
+                }
+            });
+            return refusal;
+        });
+}
+
 struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerToEmitCPass> {
     using CTNativeLowerToEmitCBase::CTNativeLowerToEmitCBase;
 
@@ -205,6 +235,11 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
              hostContract->provider == HostContract::Provider::ctbrowserIntrinsics)) {
             if (auto error = prepareDOMEntry(module, *hostContract, hostMaxSteps)) {
                 module.emitError() << llvm::toString(std::move(error));
+                return signalPassFailure();
+            }
+            if (auto refusal = prepareDOMMaps(module, hostContract, hostMaxSteps);
+                !refusal.empty()) {
+                module.emitError() << refusal;
                 return signalPassFailure();
             }
             domEntry = std::make_unique<DOMEntryAnalysis>(module, *hostContract, hostMaxSteps);
@@ -578,7 +613,10 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                             llvm::any_of(admittedDOM->callbacks(), [&](ctjs::FuncOp callback) {
                                 return !llvm::is_contained(accepted, callback);
                             }))) {
-            module.emitError("native DOM entry did not pass complete native admission");
+            auto reason =
+                admittedDOM->entry()->getAttrOfType<mlir::StringAttr>("ctnative.not_native");
+            module.emitError() << "native DOM entry did not pass complete native admission"
+                               << (reason ? ": " + reason.getValue().str() : std::string{});
             return signalPassFailure();
         }
 

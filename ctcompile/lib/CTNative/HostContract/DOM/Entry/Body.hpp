@@ -82,13 +82,17 @@ enum class Kind {
     optionalBoolean, // Boolean or null, never undefined.
     optionalNumber,  // Number or null, never undefined.
     null,
-    undefined
+    undefined,
+    mapIntrinsic, // The initial standard Map constructor.
+    map,          // A local instance, used only through mapMethod calls and size.
+    mapMethod,    // Its set/get/has/delete/clear, called on that same instance.
+    mapPayload    // A get result: a stored Number/String/Boolean or undefined.
 };
 
 // Scalars whose truth test runs no conversion hook.
 inline constexpr std::array truthyKinds{
-    Kind::boolean,         Kind::number,          Kind::string, Kind::optionalString,
-    Kind::undefinedString, Kind::nullableElement, Kind::null,   Kind::symbol};
+    Kind::boolean,         Kind::number, Kind::string, Kind::optionalString, Kind::undefinedString,
+    Kind::nullableElement, Kind::null,   Kind::symbol, Kind::mapPayload};
 // Invariant scalars a loop may carry.
 inline constexpr std::array loopKinds{Kind::number, Kind::string,          Kind::boolean,
                                       Kind::symbol, Kind::undefinedString, Kind::element};
@@ -152,6 +156,7 @@ struct Body {
     std::optional<bool> controlFlow(mlir::Operation & operation, mlir::Block & body, unsigned depth,
                                     mlir::Value & frame, bool & returned);
     std::optional<bool> browserOperation(mlir::Operation & operation);
+    std::optional<bool> mapOperation(mlir::Operation & operation);
 };
 
 } // namespace ctcompile::ctnative::dom_entry_detail
