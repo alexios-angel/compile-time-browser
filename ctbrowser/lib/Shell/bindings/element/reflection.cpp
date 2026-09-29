@@ -61,28 +61,9 @@ namespace detail {
 
 namespace {
 
-[[nodiscard]] long long to_int32(double x) {
-    const long long unsigned_value = to_uint32(x);
-    return unsigned_value >= 2147483648LL ? unsigned_value - 4294967296LL : unsigned_value;
-}
-
 constexpr long long max_int32 = 2147483647;
 
 } // namespace
-
-namespace detail {
-
-// ToUint32 and ToInt32 (ECMA-262 7.1.6/7.1.7), which is what WebIDL's
-// `unsigned long` and `long` do to whatever a page assigns. `el.tabIndex = 1e30`
-// wraps; it does not clamp and it does not throw.
-[[nodiscard]] long long to_uint32(double x) {
-    if (!std::isfinite(x)) { return 0; }
-    double wrapped = std::fmod(std::trunc(x), 4294967296.0);
-    if (wrapped < 0) { wrapped += 4294967296.0; }
-    return static_cast<long long>(wrapped);
-}
-
-} // namespace detail
 
 // One reflected attribute's getter: read the content attribute, apply the rule
 // its type names. A receiver that does not resolve to an element - a wrapper for
@@ -269,10 +250,13 @@ value dom_bindings::reflected_set(context & cx, const void * row_ptr, std::span<
     default: break;
     }
     const double given = arg_number(args, 0);
+    // ToInt32 and ToUint32 (ECMA-262 7.1.6/7.1.7), which is what WebIDL's `long`
+    // and `unsigned long` do to whatever a page assigns: `el.tabIndex = 1e30`
+    // wraps; it does not clamp and it does not throw.
     long long number =
         row.type == reflect_type::signed_long || row.type == reflect_type::limited_long
-            ? to_int32(given)
-            : to_uint32(given);
+            ? static_cast<long long>(number_to_int32(given))
+            : number_to_uint32(given);
     switch (row.type) {
     case reflect_type::limited_long:
         // "On setting, if the value is negative, the user agent must fire an

@@ -16,8 +16,6 @@
 namespace ctbrowser::shell {
 
 namespace detail {
-// ToUint32 - defined in element/reflection.cpp beside the rows that use it.
-[[nodiscard]] long long to_uint32(double x);
 // A body's bytes decoded, BOM and all - defined in xhr.cpp beside the
 // response decoding that needed it first.
 [[nodiscard]] std::string decode_body(std::string_view bytes, std::string_view name);
@@ -377,7 +375,7 @@ void dom_bindings::install_image_views(context & cx, script::object_object & obj
                 property, [this, id, property](context &, std::span<value> a) {
                     // A reflected `unsigned long`: ToUint32, and
                     // anything past 2^31-1 writes the default 0.
-                    long long given = detail::to_uint32(arg_number(a, 0));
+                    long long given = number_to_uint32(arg_number(a, 0));
                     if (given > 2147483647LL) { given = 0; }
                     (void)doc_->set_attribute(id, atoms_->intern(property), std::to_string(given));
                     mutated();

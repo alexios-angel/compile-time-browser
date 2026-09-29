@@ -209,10 +209,6 @@ std::string remove_stored_declaration(script::object_object & held, context & cx
 // Defined in reflection.cpp.
 [[nodiscard]] std::span<const reflected_attribute> reflection_rows();
 
-// ToUint32, for the numeric reflection types and for CharacterData offsets.
-// Defined in reflection.cpp.
-[[nodiscard]] long long to_uint32(double x);
-
 // The rules for parsing integers, HTML 2.4.4.1: false when there is no integer
 // there at all. Defined in reflection.cpp.
 [[nodiscard]] bool parse_html_integer(std::string_view text, long long & out);
