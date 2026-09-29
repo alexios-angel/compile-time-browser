@@ -10,6 +10,19 @@ using namespace range_detail;
 using range_detail::point;
 using range_detail::slot;
 
+namespace {
+
+// DID ANYTHING THROW SINCE `before`? A throw a native raises lands on its
+// handler at once and throw_pending cannot see it (context::unwinds) - the
+// stack having moved is what says one happened. Checking throw_pending alone,
+// surroundContents went on to append into a node insertNode had just refused,
+// and that second throw escaped the page's own try block.
+[[nodiscard]] bool threw_since(const context & c, const context::stack_mark & before) {
+    return c.throw_pending() || c.mark_stack() != before;
+}
+
+} // namespace
+
 // ============================================================================
 // RANGE
 // ============================================================================
@@ -672,6 +685,7 @@ void dom_bindings::install_range(context & cx) {
                          length_of, to_value, call_on, remove, inclusive_ancestor, start_of, end_of,
                          set_start,
                          set_end](context & c, script::object_object * self, value node_value) {
+        const context::stack_mark before = c.mark_stack();
         const spot node = from_value(c, node_value);
         if (node.none()) {
             c.throw_error("TypeError", "insertNode: the argument is not a Node");
@@ -686,7 +700,6 @@ void dom_bindings::install_range(context & cx) {
             throw_dom_exception(c, "HierarchyRequestError", "insertNode: nowhere to insert");
             return;
         }
-        const bool collapsed = s.node == e.node && s.offset == e.offset;
         spot reference;
         if (is_text(s.node)) {
             reference = s.node;
@@ -787,7 +800,7 @@ void dom_bindings::install_range(context & cx) {
             const spot text = s.node;
             const double at = s.offset;
             const value made = call_on(c, text, "splitText", {value::number(at)});
-            if (c.throw_pending()) { return; }
+            if (threw_since(c, before)) { return; }
             reference = from_value(c, made);
             if (reference.none()) { return; }
             for (point * p : {&s, &e}) {
@@ -802,16 +815,18 @@ void dom_bindings::install_range(context & cx) {
         if (const spot old_parent = parent_of(node); !old_parent.none()) {
             const double old_index = index_of(node);
             remove(c, node);
-            if (c.throw_pending()) { return; }
+            if (threw_since(c, before)) { return; }
             removed(old_parent, old_index, node);
         }
         const double at = reference.none() ? length_of(parent) : index_of(reference);
         const double count = type_of(node) == type_fragment ? length_of(node) : 1;
         (void)call_on(c, parent, "insertBefore",
                       {node_value, reference.none() ? value::null() : to_value(c, reference)});
-        if (c.throw_pending()) { return; }
+        if (threw_since(c, before)) { return; }
         inserted(parent, at, count);
-        if (collapsed) { e = point{parent, at + count}; }
+        // Step 13 asks NOW whether start and end are the same: removing the
+        // node (step 9) can have collapsed a range that selected it.
+        if (s.node == e.node && s.offset == e.offset) { e = point{parent, at + count}; }
         set_start(c, self, s);
         set_end(c, self, e);
     };
@@ -824,6 +839,7 @@ void dom_bindings::install_range(context & cx) {
                                 to_value](context & c, std::span<value> a) {
         script::object_object * self = self_object(c);
         if (self == nullptr) { return value::undefined(); }
+        const context::stack_mark before = c.mark_stack();
         const spot parent = from_value(c, arg(a, 0));
         if (parent.none()) {
             c.throw_error("TypeError", "surroundContents: the argument is not a Node");
@@ -850,11 +866,12 @@ void dom_bindings::install_range(context & cx) {
             return value::undefined();
         }
         const value fragment = extract_from(c, self, true);
-        if (!fragment.is_object_like() || c.throw_pending()) { return value::undefined(); }
+        if (!fragment.is_object_like() || threw_since(c, before)) { return value::undefined(); }
         for (const node_id id : children_of(parent)) { remove(c, spot{parent.owner, id}); }
         insert(c, self, arg(a, 0));
-        if (c.throw_pending()) { return value::undefined(); }
+        if (threw_since(c, before)) { return value::undefined(); }
         append(c, to_value(c, parent), fragment);
+        if (threw_since(c, before)) { return value::undefined(); }
         select(c, self, arg(a, 0), false);
         return value::undefined();
     });
@@ -936,8 +953,9 @@ void dom_bindings::install_range(context & cx) {
             if (!first.is_object_like()) { break; }
             const value append = c.lookup_property(fragment, "appendChild");
             if (!append.is_callable()) { break; }
+            const context::stack_mark before = c.mark_stack();
             (void)c.call(append, std::span<const value>{&first, 1}, fragment);
-            if (c.throw_pending()) { break; }
+            if (threw_since(c, before)) { break; }
         }
         // IN AN XML DOCUMENT the fragment is the XML parser's, and the
         // HTML `<html>`, `<head>` and `<body>` a page wraps its markup
@@ -968,8 +986,9 @@ void dom_bindings::install_range(context & cx) {
                     const value child = c.lookup_property(wrapper, "firstChild");
                     if (!child.is_object_like()) { break; }
                     const value args[2] = {child, wrapper};
+                    const context::stack_mark before = c.mark_stack();
                     (void)c.call(insert, args, parent);
-                    if (c.throw_pending()) { break; }
+                    if (threw_since(c, before)) { break; }
                 }
                 const value remove = c.lookup_property(wrapper, "remove");
                 if (remove.is_callable()) { (void)c.call(remove, {}, wrapper); }

@@ -13,7 +13,7 @@
 // properties, and `scroll-snap-align` / `scroll-snap-type`. A row says which
 // words stand alone, the groups (one word from each, at most), whether the
 // canonical form is the group order or the author's, and the spellings that
-// collapse (`size style layout paint` is `strict`).
+// collapse (`contain scale-down` is `scale-down`).
 
 #include "internal.hpp"
 
@@ -53,14 +53,10 @@ constexpr or_grammar or_grammars[] = {
      "none math-auto",
      {"capitalize uppercase lowercase", "full-width", "full-size-kana"},
      true},
-    {"contain",
-     "none strict content",
-     {"size inline-size", "layout", "style", "paint"},
-     true,
-     "size layout style paint",
-     "strict",
-     "layout style paint",
-     "content"},
+    // The SPECIFIED value keeps its words: `layout style paint` is not
+    // `content` until it computes (contain-valid against contain-computed),
+    // and getComputedStyle does that collapse.
+    {"contain", "none strict content", {"size inline-size", "layout", "style", "paint"}, true},
     // `normal | [ [ size | inline-size ] || scroll-state ]`, CSS Conditional 5 §4.2.
     {"container-type", "normal", {"size inline-size", "scroll-state"}, true},
     // `oblique-only` is the style synthesis a shorthand may name instead of
@@ -220,7 +216,10 @@ constexpr or_grammar or_grammars[] = {
         if (t.type == token_type::ident) {
             const std::string_view word = ts.text_of(t);
             if (reserved_ident(word) || ascii_iequals(word, "none")) { return std::nullopt; }
-            name = std::string{word};
+            // Written back as an identifier, escapes and all: `a\ 8 9` is the
+            // counter `a 8` at 9, and unescaped it would read as the counter
+            // `a` and a stray number (counter-reset-valid).
+            name = serialize_identifier(word);
             ++k;
         } else if (t.type == token_type::function && reset &&
                    ascii_iequals(ts.text_of(t), "reversed(")) {
@@ -230,7 +229,7 @@ constexpr or_grammar or_grammars[] = {
             }
             const std::string_view word = ts.text_of(ts.tokens[at[k + 1]]);
             if (reserved_ident(word) || ascii_iequals(word, "none")) { return std::nullopt; }
-            name = "reversed(" + std::string{word} + ")";
+            name = "reversed(" + serialize_identifier(word) + ")";
             reversed = true;
             k += 3;
         } else {

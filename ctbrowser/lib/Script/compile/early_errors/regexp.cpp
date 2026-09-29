@@ -208,7 +208,7 @@ private:
         const char e = s_[i_ + 1];
         std::size_t j = i_ + 2;
         std::uint32_t cp = 0;
-        if (rx::rx_code_point_escape(s_, j, e, cp)) { return cp; }
+        if (rx::rx_code_point_escape(s_, j, e, cp, unicode_)) { return cp; }
         if (std::string_view{"dDsSwW"}.find(e) != std::string_view::npos) { return -2; }
         if ((e == 'p' || e == 'P') && unicode_) { return -2; }
         if (e == 'c') { return j < s_.size() && ascii_letter(s_[j]) ? s_[j] % 32 : -1; }
@@ -347,7 +347,11 @@ private:
             }
             const bool four = hex(peek()) && hex(peek(1)) && hex(peek(2)) && hex(peek(3));
             if (four) {
-                i_ += 4;
+                // Under `u` a lead surrogate's escape takes the trail's after
+                // it - one code point, as the matcher reads it
+                // (rx_code_point_escape) and class_atom_value names it.
+                std::uint32_t cp = 0;
+                (void)rx::rx_code_point_escape(s_, i_, 'u', cp, unicode_);
             } else if (unicode_) {
                 fail("`\\u` must be followed by four hexadecimal digits");
             }

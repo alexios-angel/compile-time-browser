@@ -135,8 +135,26 @@ inline auto context::each_root(std::size_t register_limit, std::size_t frame_lim
     for (const auto & realm : realms_) {
         visit(root_label::globals, realm->global_this);
         for (const auto & [name, v] : realm->globals) { visit(root_label::globals, v); }
+        for (const auto & [name, v] : realm->platform_prototypes) { visit(root_label::globals, v); }
+        // The prototype tables hold every builtin method. Nothing else
+        // references them, so without this the standard library is
+        // collected on the first gc - and the NativeError prototypes for the
+        // same reason: an engine-raised error is put on one, and a page that
+        // never mentions `RangeError` holds no other reference to its table.
+        const realm_intrinsics & intrinsics = *realm->intrinsics;
+        for (object_object * table : intrinsics.prototypes) {
+            if (table != nullptr) { visit(root_label::prototypes, value::object(table)); }
+        }
+        for (const auto & [kind, table] : intrinsics.error_prototypes) {
+            (void)kind;
+            if (table != nullptr) { visit(root_label::prototypes, value::object(table)); }
+        }
+        visit(root_label::prototypes, intrinsics.throw_type_error);
     }
     for (const auto & [name, v] : realm_template_) { visit(root_label::globals, v); }
+    for (const auto & [name, v] : realm_template_platform_prototypes_) {
+        visit(root_label::globals, v);
+    }
     const std::size_t top = std::min(register_limit, registers_.size());
     for (std::size_t i = 0; i < top; ++i) { visit(root_label::registers, registers_[i]); }
     // The receiver of a native call in progress. It is held in a C++
@@ -171,7 +189,6 @@ inline auto context::each_root(std::size_t register_limit, std::size_t frame_lim
         for (const value & arg : job.args) { visit(root_label::microtasks, arg); }
     }
     visit(root_label::microtasks, await_job_); // the one native every settled await queues
-    visit(root_label::prototypes, throw_type_error_);
     // EVERY MODULE'S EXPORT CELLS. They live in `modules_` and in no
     // register once the module has finished evaluating, so without this a
     // collection between two modules frees the bindings the second one is
@@ -193,19 +210,6 @@ inline auto context::each_root(std::size_t register_limit, std::size_t frame_lim
     // body with it in a local; without this the object being constructed
     // is freed by any collection inside either. See context::rooted.
     for (const value & v : temporaries_) { visit(root_label::temporaries, v); }
-    // The prototype tables hold every builtin method. Nothing else
-    // references them, so without this the standard library is collected
-    // on the first gc.
-    for (object_object * table : prototypes_) {
-        if (table != nullptr) { visit(root_label::prototypes, value::object(table)); }
-    }
-    // ...and the six NativeError prototypes, for the same reason: an
-    // engine-raised error is put on one, and a page that never mentions
-    // `RangeError` holds no other reference to its table.
-    for (const auto & [kind, table] : error_prototypes_) {
-        (void)kind;
-        if (table != nullptr) { visit(root_label::prototypes, value::object(table)); }
-    }
     // The per-function string cache. These are live `value`s held by the
     // context itself and referenced from nowhere else - a sweep without
     // them frees a string literal that a running loop is about to read

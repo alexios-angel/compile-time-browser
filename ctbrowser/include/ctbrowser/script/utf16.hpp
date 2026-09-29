@@ -142,6 +142,36 @@ struct position {
     return false;
 }
 
+// Does the text hold a code point above U+FFFF - a four-byte sequence, which
+// is two units?
+[[nodiscard]] inline bool has_pair(std::string_view s) noexcept {
+    return std::any_of(s.begin(), s.end(),
+                       [](char c) { return static_cast<unsigned char>(c) >= 0xF0; });
+}
+
+// THE SAME UNITS WITH EVERY PAIR WRITTEN AS ITS TWO LONE HALVES (CESU-8):
+// the text as a walk over code points meets it when the walk has to see CODE
+// UNITS - a RegExp without `u` or `v`, whose pattern and input are both
+// sequences of units (22.2.2), so `.` takes one half of "\u{1D306}". Nothing
+// keeps this form: context::string joins the halves of any string made from
+// it again.
+[[nodiscard]] inline std::string split_pairs(std::string_view s) {
+    if (!has_pair(s)) { return std::string{s}; }
+    std::string out;
+    out.reserve(s.size() + s.size() / 2);
+    for (std::size_t at = 0; at < s.size();) {
+        const std::size_t from = at;
+        const char32_t cp = decode_utf8(s, at);
+        if (cp < 0x10000) {
+            out.append(s.substr(from, at - from));
+            continue;
+        }
+        append_utf8(out, code_unit(cp, 0));
+        append_utf8(out, code_unit(cp, 1));
+    }
+    return out;
+}
+
 // IsLessThan's string arm (7.2.13 step 3) - and the default sort order, which
 // is the same comparison: CODE UNIT order, as a three-way answer. UTF-8's
 // byte order is CODE POINT order, and the two part only where a code point

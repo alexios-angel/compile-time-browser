@@ -56,6 +56,8 @@ public:
     bool dispatch(std::string_view type, node_id target);
 
     bool dispatch_key(std::string_view type, node_id target, const input_event & input);
+    bool dispatch_keypress(node_id target, std::string_view character); // events/input.cpp
+    [[nodiscard]] bool form_associated(node_id element) const;          // custom_elements.cpp
     // USER ACTIVATION (HTML 6.4.3), window/activation.cpp: a trusted
     // activation-triggering input event notifies; transient activation lasts a
     // few seconds after it, sticky activation for good; consuming ends the
@@ -70,8 +72,27 @@ public:
 
     bool dispatch_mouse(std::string_view type, node_id target, const input_event & input);
     bool dispatch_wheel(node_id target, const input_event & input);
+    bool dispatch_touch(std::string_view phase, node_id target, float x, float y,
+                        bool pointer = true);
+    // While a finger is down its scrolls' scrollends wait for the lift (events/input.cpp).
+    void hold_scrollend(bool hold);
+    std::optional<std::vector<node_id>> held_scrollend_;
+    bool wheel_scroll(node_id from, float dx, float dy); // events/input.cpp
+    void select_by_user(node_id anchor, std::size_t anchor_byte, node_id focus,
+                        std::size_t focus_byte); // events/input.cpp
+    bool dispatch_input(std::string_view type, node_id target,
+                        std::optional<std::string_view> input_type,
+                        std::optional<std::string_view> data); // events/input.cpp
+    // The computed role, or accessible name, of the element `getter(slot)` returns in
+    // the page - testdriver's get_computed_role/label (page/accessibility.cpp).
+    std::optional<std::string> computed_accessibility(std::string_view getter, double slot,
+                                                      bool label);
 
     bool dispatch_event(std::string_view type, node_id target, value event);
+    // A slot's assigned nodes and a slottable's slot (shadow_dom.cpp) - the
+    // browser's focus navigation walks the flat tree through them.
+    [[nodiscard]] std::vector<node_id> assigned_nodes_of(node_id slot) const;
+    [[nodiscard]] node_id assigned_slot_of(node_id slottable) const;
 
     bool click(node_id target);
     // The node the `click` whose activation behaviour is running was
@@ -126,6 +147,7 @@ private:
     [[nodiscard]] static node_id unpack(std::uint64_t bits);
 
     [[nodiscard]] node_id receiver(context & cx);
+    [[nodiscard]] static value unwrap_legacy_proxy(value v); // element/wrapper.cpp
 
     void refresh_element(context & cx, script::object_object & obj, node_id id);
 
@@ -850,8 +872,6 @@ private:
                                              std::string_view interface_name = "HTMLCollection");
     [[nodiscard]] std::vector<node_id> query(std::string_view selector, node_id within = node_id{},
                                              bool * invalid = nullptr, bool first_only = false);
-    // The document's own live properties - title and activeElement.
-    void refresh_document();
 
     document * doc_;
     atom_table * atoms_;
@@ -967,6 +987,7 @@ private:
     void deactivate_event_handler(path_step at, std::string_view type);
     [[nodiscard]] bool has_handler_listener(path_step at, std::string_view type) const;
     void settle_attribute_writes(const std::vector<document::write_note> & writes);
+    void settle_form_writes(const std::vector<document::write_note> & writes); // control_methods
     [[nodiscard]] value compile_handler_attribute(context & cx, value self,
                                                   const std::string & name);
 
@@ -980,8 +1001,6 @@ private:
     void install_xml_serializer(context & cx);
     [[nodiscard]] std::string serialize_xml(node_id node, std::string_view inherited) const;
     void install_shadow_dom(context & cx);
-    [[nodiscard]] std::vector<node_id> assigned_nodes_of(node_id slot) const;
-    [[nodiscard]] node_id assigned_slot_of(node_id slottable) const;
     // `innerHTML` plus the declarative shadow roots, and the copy that carries them across.
     void set_html_unsafe(node_id target, std::string_view markup, bool run_scripts = false);
     void copy_shadow_trees(const document & src, const read_txn & from, node_id source,
@@ -1026,6 +1045,7 @@ public:
 
     void set_viewport_scroll_hooks(std::function<point()> get, std::function<void(point)> set);
     void queue_scroll_event(node_id target);
+    void fire_scrollend(context & cx, std::span<const node_id> scrolled);
     void report_media_query_changes();
 
     void flush_layout();

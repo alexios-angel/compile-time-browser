@@ -37,6 +37,10 @@ void dom_bindings::activate_event_handler(context & cx, path_step at, std::strin
     made.host = at.host;
     made.type = std::string{type};
     made.handler = true;
+    // "Add an event listener" computes the default passive value for it like
+    // any other (HTML 8.1.8.1 adds it without saying): `document.body.onwheel`
+    // is as passive as an addEventListener("wheel") there.
+    made.passive = default_passive_value(made.type, at);
     // An identity of its own, traced through the listener list.
     made.callback = value::object(cx.allocate<script::native_object>(
         "event handler", [](context &, std::span<value>) { return value::undefined(); }));
@@ -504,7 +508,7 @@ void dom_bindings::settle_attribute_writes(const std::vector<document::write_not
             present = txn.has_attribute(note.node, note.name);
         }
         // A body/frameset's window-forwarded handler belongs to the window step.
-        const value self = wrap(*cx_, note.node);
+        const value self = unwrap_legacy_proxy(wrap(*cx_, note.node));
         path_step at{note.node, listen_on::node};
         auto * object = static_cast<script::object_object *>(self.as_heap());
         if (forwards_to_window(name) && window_object() != nullptr && body_or_frameset_of(self)) {

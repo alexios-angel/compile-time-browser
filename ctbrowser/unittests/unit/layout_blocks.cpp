@@ -92,6 +92,21 @@ void test_block_fills_width_and_stacks() {
     expect_near(b->bounds.y, 20, "second block stacks below the first");
 }
 
+// The root element's box is sized by its own style like any other - the page
+// is as tall and wide as `html { height; width }` says (scrollend-event-fired-
+// for-programmatic-scroll's root variants scroll exactly that) - while its
+// overflow stays the viewport's, so it is no scroll container itself.
+void test_the_root_element_takes_its_own_size() {
+    fixture f;
+    f.load("<html><body><div id=a></div></body></html>",
+           "html { height: 3000px; width: 2000px; overflow: auto } body { margin: 0 }");
+    engine eng;
+    const fragment out = eng.run(f.root, 800);
+    expect_near(out.bounds.height, 3000, "the root's stated height is honoured");
+    expect_near(out.bounds.width, 2000, "and its stated width");
+    check(!f.root.scroll_container, "the root's overflow is the viewport's, not its own");
+}
+
 // CSS Sizing 3 §5: `width: max-content` is as wide as the text on one line,
 // `min-content` as wide as its longest word, `fit-content` the clamp between
 // them within the container - and none of them is `auto`. The monospace
@@ -429,6 +444,7 @@ void test_auto_margins_centre() {
 } // namespace
 
 int main() {
+    test_the_root_element_takes_its_own_size();
     test_min_and_max_width_clamp();
     test_auto_margins_centre();
     test_display_none_produces_no_box();

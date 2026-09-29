@@ -244,6 +244,26 @@ void browser::frame(scheduler * pool) {
     }
     if (dirty_ >= dirty::paint) { record(); }
     dirty_ = dirty::nothing;
+    // THE FOCUS FIXUP (HTML, update the rendering): a focused element a
+    // layout since the last look left no focusable area - hidden, disabled,
+    // made inert - gives focus to the viewport, `blur` and all. After the
+    // reset, so what that changes is the next frame's to draw.
+    if (std::exchange(layouts_fixed_up_, layouts_) != layouts_ && focused_) {
+        bool lost = false;
+        bool typing = false;
+        {
+            const auto txn = doc_->read();
+            lost = !txn.contains(focused_) || !is_focusable_area(txn, focused_);
+            typing = !lost && supports_keyboard_input(txn, focused_);
+        }
+        if (lost) {
+            (void)focus_update(node_id{});
+        } else if (typing) {
+            // A focused control that BECAME a text field - its type changed
+            // under the focus - shows it from now on (focus-visible-027).
+            (void)set_state(focused_, state_focus_visible, true);
+        }
+    }
     ++frames_;
     // Paint Timing's first-paint: the first rendering update this document
     // has had. Idempotent, and the bindings are rebuilt per document, so a

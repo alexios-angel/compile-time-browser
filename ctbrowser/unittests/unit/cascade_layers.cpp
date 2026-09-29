@@ -57,6 +57,25 @@ void test_layers_across_sheets() {
     expect_value(f, f.find("t"), "color", "green", "a second sheet's @layer a is the first's");
 }
 
+// A `@keyframes` name defined in two layers means the stronger layer's rule,
+// unlayered above every layer, whatever the document order
+// (layer-keyframes-override).
+void test_keyframes_by_layer() {
+    fixture f;
+    f.styles.add_sheet("@keyframes a { from { top: 1px } } @layer { @keyframes a { from { top: 2px "
+                       "} } } @layer base, override; @layer override { @keyframes b { from { top: "
+                       "3px } } } @layer base { @keyframes b { from { top: 4px } } }",
+                       1);
+    const auto first_top = [&](std::string_view name) {
+        const keyframes_rule * k = f.styles.keyframes_of(name);
+        return k == nullptr || k->keyframes.empty() || k->keyframes[0].values.empty()
+                   ? std::string{}
+                   : k->keyframes[0].values[0].second;
+    };
+    CHECK_EQ(first_top("a"), std::string{"1px"});
+    CHECK_EQ(first_top("b"), std::string{"3px"});
+}
+
 void test_revert_layer() {
     fixture f;
     f.load("<t>x</t>",
@@ -193,6 +212,28 @@ void test_scope() {
     expect_value(h, t.children(t.children(ha)[0])[0], "color", "green", "nested scope");
     expect_value(h, t.children(ha)[1], "color", "", "outside the inner scope");
     expect_value(h, ha, "z-index", "3", "& in @scope is the root");
+
+    // The IMPLICIT scope: rooted at the element the shell names ahead of the
+    // sheet (css::scope_block), and at nothing when none is named.
+    fixture k;
+    (void)parse_html(k.doc, "<div><p>1</p></div><section><p>2</p></section>");
+    const node_id root = k.find("div");
+    k.styles.add_sheet("@scope { p { color: green } :scope { z-index: 4 } }", 1);
+    k.styles.add_sheet("@-ctbrowser-scope-root " + std::to_string(engine::key_of(root)) +
+                           "; @scope { p { color: blue } :scope { z-index: 5 } }",
+                       1);
+    k.resolved = k.styles.resolve_all(k.doc.read());
+    const auto kt = k.doc.read();
+    expect_value(k, kt.children(root)[0], "color", "blue", "inside the implicit root");
+    expect_value(k, root, "z-index", "5", ":scope is the implicit root");
+    CHECK(k.value_of(kt.children(k.find("section"))[0], "color").empty()); // outside it
+
+    // `@import ... scope(<argument>)` as the `@scope` prelude it stands for.
+    CHECK_EQ(css::import_scope_prelude(" .a "), std::string{"(.a)"});
+    CHECK_EQ(css::import_scope_prelude("toolbar"), std::string{"(toolbar)"});
+    CHECK_EQ(css::import_scope_prelude("(.a) to (.b)"), std::string{"(.a) to (.b)"});
+    CHECK_EQ(css::import_scope_prelude("to (.b)"), std::string{"to (.b)"});
+    CHECK(css::import_scope_prelude("").empty());
 }
 
 // `@container`: a style query needs no layout; a size query asks the hook
@@ -223,6 +264,7 @@ void test_container_queries() {
 int main() {
     test_layer_order();
     test_layers_across_sheets();
+    test_keyframes_by_layer();
     test_revert_layer();
     test_revert_rule();
     test_revert_expanded_properties();

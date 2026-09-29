@@ -147,4 +147,11 @@ inline constexpr std::string_view super_set_name = "__ctbrowser_super_set";
 // otherwise.
 void install_builtins(context & cx, std::uint64_t seed = 0x2545F4914F6CDD1DULL);
 
+// A REALM WITH INTRINSICS OF ITS OWN (9.3.1 CreateRealm, 9.3.2
+// SetDefaultGlobalBindings): a new realm, its global object, and every
+// intrinsic install_builtins makes, made again inside it - so its `Array` is
+// not this realm's `Array`. What a ShadowRealm stands on. The realm lives as
+// long as the context.
+realm_record & create_intrinsic_realm(context & cx);
+
 } // namespace ctbrowser::script

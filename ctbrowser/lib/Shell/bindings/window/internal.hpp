@@ -27,6 +27,9 @@ struct interface_pair {
     return {ctor, proto};
 }
 
+// `locationbar`, `menubar` and the rest onto `window` (window.cpp).
+void install_bar_props(context & cx, script::object_object & window, value prototype);
+
 // `URL` and `URLSearchParams`, the URL Standard's two interfaces (§6), as thin
 // adapters over shell/net/url.hpp - defined in url.cpp, installed as globals.
 // Answers the URL constructor so install_window can hang the two blob methods

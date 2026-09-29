@@ -328,12 +328,25 @@ private:
                 return t;
             }
             // The closing quote, or EOF - which §4.3.4 says is a parse error and
-            // a normal string token, not a bad one.
-            at_ = scan < s_.size() ? scan + 1 : s_.size();
+            // a normal string token, not a bad one...
             css_token t;
             t.type = token_type::string;
-            t.text = static_cast<std::uint32_t>(start);
-            t.length = static_cast<std::uint32_t>(at_ - start);
+            if (scan < s_.size()) {
+                at_ = scan + 1;
+                t.text = static_cast<std::uint32_t>(start);
+                t.length = static_cast<std::uint32_t>(at_ - start);
+                return t;
+            }
+            // ...whose value is everything to the end, with no quote there to
+            // strip: rebuilt into the tail, closed, so value_of() does not eat
+            // its last character - `[charset="utf-8` is `utf-8`
+            // (missing-right-token).
+            at_ = s_.size();
+            const std::size_t out_start = decoded_.size();
+            decoded_.append(s_.substr(start));
+            decoded_ += quote;
+            t.text = static_cast<std::uint32_t>(s_.size() + out_start);
+            t.length = static_cast<std::uint32_t>(decoded_.size() - out_start);
             return t;
         }
         // Escapes present: rebuild into the tail, KEEPING the quotes so

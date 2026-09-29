@@ -255,8 +255,9 @@ constexpr property_syntax table[] = {
     // `100%` rather than be dropped, which is the same question.
     {"letter-spacing", k::length_percentage, "normal", "normal", true, false},
     {"word-spacing", k::length_percentage, "normal", "normal", true, false},
-    {"text-align", k::keyword_only, "start end left right center justify match-parent", "start",
-     true, false},
+    // `justify-all` is CSS Text 3 §6.1's: justify, the last line too.
+    {"text-align", k::keyword_only, "start end left right center justify match-parent justify-all",
+     "start", true, false},
     {"text-indent", k::freeform, "", "0px", true, false},     // declaration.cpp
     {"text-transform", k::freeform, "", "none", true, false}, // keywords.cpp's grammar
     {"text-decoration", k::freeform, "", "none", false, false, true},

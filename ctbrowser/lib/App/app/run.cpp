@@ -155,11 +155,6 @@ namespace ctbrowser {
 //
 // This is the whole application API: it owns the window, the event loop, the
 // clock, the frame pacing and the teardown.
-// How long an idle application blocks before looking around anyway. Not
-// forever: a wait that never times out would need every source of change to be
-// an SDL event, and the browser has its own clock.
-constexpr std::int32_t idle_wait_ms = 250;
-
 int run_app(std::string_view html, app_options options) {
     apply_environment(options);
 
@@ -431,8 +426,8 @@ int run_app(std::string_view html, app_options options) {
                 // the caret's next blink - so a blinking caret still blinks on
                 // time and a page with neither sleeps until the user acts.
                 const double due = page.next_wakeup_ms();
-                const std::int32_t timeout = due >= static_cast<double>(idle_wait_ms)
-                                                 ? idle_wait_ms
+                const std::int32_t timeout = due >= static_cast<double>(options.idle_wait_ms)
+                                                 ? options.idle_wait_ms
                                                  : static_cast<std::int32_t>(std::max(1.0, due));
                 host->wait_for_event(timeout);
             }

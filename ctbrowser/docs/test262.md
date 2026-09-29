@@ -16,6 +16,79 @@ subset, plus a self-test proving the harness itself is load-bearing.
 
 ---
 
+## Round fifteen VM recovery — 2026-09-29
+
+The previous `r15-vm3` draft (33 tracked edits and two new ShadowRealm files
+on `31c3d8ae0`) is recovered in `a1967639e`, with the supporting linear
+surrogate compaction in `4edf98dce`. Its original 26-directory comparison
+remains historical: **17,464 → 17,570 PASS**, with seven regressions. The
+original JSON is preserved under
+`/home/alex/.ctbrowser-auto/claude/ctbrowser/r15/vm3/{m-before,m-after}/`.
+
+Fresh focused recovery measurements cover 14 affected directories: **4,053 →
+4,141 PASS**, 27 FAIL and 93 SKIP out of 4,261 files. There are **88 gained
+passes and no lost passes** against the same selections from the historical
+base. All runs used four workers, a 10-second timeout and 2048 MiB address-space
+limit on the devbox. The RegExp directory was remeasured after the final string
+fix; the other 13 rows retain their first recovery measurements.
+
+| directory under `test/` | PASS |
+|---|---:|
+| `built-ins/RegExp` | 1,867 |
+| `annexB/built-ins/RegExp` | 55 |
+| `built-ins/Function` | 490 |
+| `built-ins/Proxy` | 270 |
+| `built-ins/Set` | 382 |
+| `built-ins/ShadowRealm` | 61 |
+| `built-ins/Symbol` | 79 |
+| `built-ins/eval` | 10 |
+| `language/block-scope` | 145 |
+| `language/eval-code` | 345 |
+| `language/expressions/call` | 82 |
+| `language/statements/const` | 135 |
+| `language/statements/let` | 142 |
+| `language/statements/using` | 78 |
+
+All seven original regressions are repaired. Four early closure reads now
+throw ReferenceError through a captured readiness cell, using existing
+bytecode instructions. The three CharacterClassEscapes timeouts came from
+joining the non-Unicode match's surrogate pairs by repeatedly shifting the
+remaining string. An instrumented unchanged case took 25.247 seconds; linear
+in-place compaction restored all **1,867/1,867 runnable RegExp tests**, with
+12 existing cross-realm skips. That complete directory took 126.7 seconds;
+the per-test timeout stayed at 10 seconds.
+
+The recovered semantics include separate ShadowRealm intrinsics, wrapped
+cross-realm calls, direct-eval variable environments, captured block bindings,
+RegExp code-unit versus Unicode matching, Set iterator ordering, Symbol registry
+lookup and revoked Proxy call/construct identity. Existing bytecode opcodes
+and public method signatures are preserved; the VM remains the standards
+oracle. Frame realms still share their parent's intrinsics, and ShadowRealm
+records remain allocated for the context's lifetime.
+
+Validation passed an explicit `ct262` plus 14 test-target build and all 14
+selected CTests, then a 356-step rebuild and **16/16 CTests** after the string
+repair: `core_basics`, `string_basics`, `vm_control_flow`, `direct_eval`,
+`eval_declarations`, `regexp_unicode`, `regexp_model`, `shadow_realm`,
+`vm_realms`, `symbol_basics`, `keyed_collections`, `is_constructor`,
+`vm_objects`, `gc_pressure`, `frames`, `script_gc`. The pinned full formatting
+check passed 1,182 C++ files, 155 Python and 116 web files. No full test262,
+CTest, compiler lit or corpus/native matrix was run.
+
+Exact locked commands, logs and JSON are in
+`/home/alex/.ctbrowser-auto/codex/ctbrowser/artifacts/2026-09-29-claude-recovery/vm3-recovery/`:
+`check.sh`, `check-linear.sh`, `results/` and `linear-results/`. The command for
+each selected directory is `python3 tools/check/test262.py --binary
+build/tools/ct262 --dir test/<directory> --jobs 4 --timeout 10 --memory-mb 2048
+--json <output>`, in `projects/ctbrowser-agentV`. See `wpt.md` for the final
+combined browser validation and integration status.
+
+The next small language cluster is the four remaining function-local closure
+TDZ failures across `let`, `const` and `using`, plus `let`'s global closure
+write before initialization. The recovery fixes block-local bindings but
+does not yet track runtime initialization of every function-body lexical.
+These failures predate the recovered draft.
+
 ## The decision: the official corpus, and a runner of our own
 
 `https://github.com/Izhido/test262_harness_cpp` was evaluated first, as asked,

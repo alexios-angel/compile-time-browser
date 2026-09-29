@@ -616,6 +616,7 @@ compiler_impl::reference compiler_impl::prepare_reference(const vp::node & targe
             }
         }
         out.readonly = binding_immutability(target.text);
+        out.ready_flag = binding_ready_flag(target.text);
         if (const local * l = find_local_entry(fn(), target.text)) {
             out.what = l->boxed ? reference::kind::boxed_local : reference::kind::local;
             out.reg = l->reg;
@@ -690,6 +691,7 @@ void compiler_impl::emit_load(const reference & ref, std::uint16_t dst) {
         patch_here(done);
         return;
     }
+    emit_ready_check(ref.ready_flag);
     switch (ref.what) {
     case reference::kind::local: proto().emit(instruction{op::move, dst, ref.reg}); break;
     case reference::kind::boxed_local: proto().emit(instruction{op::cell_get, dst, ref.reg}); break;
@@ -750,6 +752,7 @@ void compiler_impl::emit_store(const reference & ref, std::uint16_t src) {
         patch_here(done);
         return;
     }
+    emit_ready_check(ref.ready_flag);
     if (refuse_immutable_write(ref.readonly)) { return; }
     switch (ref.what) {
     case reference::kind::local: proto().emit(instruction{op::move, ref.reg, src}); break;

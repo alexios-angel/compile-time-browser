@@ -999,6 +999,96 @@ def published_constructor_fields(args):
     )
 
 
+def element_field_source():
+    return (
+        published_source()
+        .replace("constructor(n)", "constructor(n, key)")
+        .replace("this.n = n;", "this.n = n; this.element = key;")
+        .replace("new Item(2)", "new Item(2, element)")
+        .replace("new Item(7)", "new Item(7, element)")
+        .replace("host.slot.get(element)", "host.slot.get(savedFirst.element)")
+        .replace("host.slot.remove(element)", "host.slot.remove(savedFirst.element)")
+        .replace("host.slot.set(element, result)", "host.slot.set(savedFirst.element, result)")
+    )
+
+
+def published_element_fields(args):
+    original = element_field_source()
+    sources = {
+        "retained": original,
+        "direct": original.replace("savedFirst.element", "first.element"),
+        "saved-key": original.replace(
+            "  traceEntered = 1;", "  const key = savedFirst.element; traceEntered = 1;"
+        ).replace("host.slot.get(savedFirst.element)", "host.slot.get(key)"),
+    }
+    executions = refusals = 0
+    for label, text in sources.items():
+        name = "class-element-field-" + label
+        published_observation(args, name, text)
+        ir, contract = published_prepare(args, name, text)
+        prepared = classes.prepare(args, name, ir, contract, success=True)
+        checked = dict(contract, module_sha256=host.fingerprint(args.opt, prepared))
+        published_provider(args, name, prepared, checked)
+        for optimize in (False, True):
+            native = dom.lower(args, prepared, checked, f"{name}-{optimize}", optimize=optimize)
+            executions += check_record_executable(args, f"{name}-{optimize}", native)
+        if label == "retained":
+            for suffix, request, options in (
+                ("stale", dict(contract, module_sha256="0" * 64), ""),
+                ("no-input", dict(contract, element_parameters=[]), ""),
+                ("no-root", dict(contract, roots=[]), ""),
+                ("budget", contract, "max-steps=0"),
+                ("small-budget", contract, "max-steps=100"),
+            ):
+                classes.prepare(args, name + suffix, ir, request, success=False, options=options)
+                refusals += 1
+    controls = {
+        "retained-write": original.replace("savedFirst.n = 5;", "savedFirst.element = {};"),
+        "direct-write": original.replace("savedFirst.n = 5;", "first.element = {};"),
+        "nested-write": original.replace("5 + second.n", "(second.element = {}, 14)"),
+        "saved-key-write": sources["saved-key"]
+        .replace("const key =", "let key =")
+        .replace("traceEntered = 1;", "key = {}; traceEntered = 1;"),
+        "repeated-field": original.replace(
+            "this.element = key;", "this.element = key; this.element = {};"
+        ),
+        "mixed-actual": original.replace("new Item(7, element)", "new Item(7, {})"),
+        "missing-actual": original.replace("new Item(7, element)", "new Item(7)"),
+        "replacement": original.replace("this.element = key;", "this.element = key; return {};"),
+        "method": original.replace(
+            "this.element = key; } }", "this.element = key; } key() { return this.element; } }"
+        ),
+        "helper-receiver": original.replace(
+            "this.element = key;", "this.element = key; unknown(this);"
+        ),
+        "property-observer": original.replace(
+            "host.slot.set(savedFirst.element, result)",
+            "host.slot.set(savedFirst.element, savedFirst.element.nodeType)",
+        ),
+        "payload": original.replace(
+            "host.slot.set(savedFirst.element, result)",
+            "host.slot.set(savedFirst.element, savedFirst.element)",
+        ),
+        "coercion": original.replace(
+            "host.slot.set(savedFirst.element, result)",
+            "host.slot.set(savedFirst.element, +savedFirst.element)",
+        ),
+        "escape": original.replace(
+            "  traceEntered = 1;", "  escaped = savedFirst; traceEntered = 1;"
+        ),
+    }
+    for label, text in controls.items():
+        if text == original:
+            raise RuntimeError(f"{label}: element-field control did not change its source")
+        name = "class-element-field-refused-" + label
+        ir, contract = published_prepare(args, name, text)
+        classes.prepare(args, name, ir, contract, success=False)
+        refusals += 1
+    print(
+        f"class element fields: {len(sources)} Node/VM observations, {len(sources)} provider proofs, {executions} native executions, {refusals} refusals"
+    )
+
+
 def published_records(args):
     original = record_source()
     snapshot = original.replace(
@@ -1181,6 +1271,7 @@ def main():
     published_composite_results(args)
     published_class_fields(args)
     published_constructor_fields(args)
+    published_element_fields(args)
     if args.class_families_only:
         return
     original = source()

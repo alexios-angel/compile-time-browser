@@ -40,8 +40,10 @@ enum legacy_field : std::size_t {
 [[nodiscard]] object_object * this_regexp(context & cx, const char * method);
 [[nodiscard]] std::string escape_pattern(const std::string & source);
 // `subject` is a string value; the result's positions are its UNIT indices.
+// `matched` is the text the matcher walked when that was not the subject's
+// own - its pairs split, for a RegExp without `u` - and cuts the strings.
 [[nodiscard]] value exec_result(context & cx, const rx::rx_prog & program, value subject,
-                                const rx::rx_match & m);
+                                const rx::rx_match & m, const string_object * matched = nullptr);
 bool has_regexp_matcher(value v);
 bool regexp_slots(value v, std::string & source, std::string & flags);
 std::size_t advance_string_index(const string_object & s, std::size_t index, bool full_unicode);

@@ -1,4 +1,5 @@
 target_sources(ctbrowser-shell PUBLIC FILE_SET HEADERS FILES
+  accessibility.hpp
   assets.hpp
   canvas.hpp
   composite.hpp

@@ -76,6 +76,10 @@ bool match_display(const token_stream & ts, const scan & found, std::string & ou
             out = "inline-block";
         } else if (inside == "ruby") {
             out = "ruby";
+        } else if (inside == "grid-lanes") {
+            // `inline-grid-lanes` is a keyword of its own, not the short form
+            // of this pair: the pair is written out (display-valid).
+            out = "inline grid-lanes";
         } else {
             out = "inline-" + inside;
         }

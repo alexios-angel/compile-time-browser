@@ -408,6 +408,18 @@ public:
     // `lexical_only`: an eval's top level, whose `let`/`const`/`class` are its
     // own (19.2.1.3 step 17's lexEnv) while its `var`s stay the caller's.
     void predeclare_locals(std::int32_t body, bool lexical_only = false);
+    // A NESTED BLOCK'S `let`/`const` THAT A CLOSURE EARLIER IN THE BLOCK
+    // CAPTURES, hoisted to the block's start (14.2.3 BlockDeclarationInstantiation:
+    // every lexical binding of a block exists from its entry). Only those:
+    // any other declaration is made where it stands, as it always was.
+    void hoist_captured_lexicals(const vp::node & block);
+    // Does something in `idx` read `name` from inside a function - `idx`
+    // itself or one within it - through no scope in between that binds the
+    // name again (binds_again)? Then compiling that function before the
+    // declaration would resolve the name to some other binding.
+    [[nodiscard]] bool closure_reads(std::int32_t idx, std::string_view name,
+                                     bool in_function = false);
+    [[nodiscard]] bool binds_again(const vp::node & n, std::string_view name);
     template <typename Hoist> void hoist_nested_vars(std::int32_t index, const Hoist & hoist);
     template <typename Each>
     void each_block_function(std::int32_t index, const Each & each,
@@ -502,11 +514,23 @@ public:
     // the lookup chain for a name. Hoisted function DECLARATIONS are compiled
     // at the enclosing function's entry, before any `with` is open, and read
     // their names without the object - the one shape this does not cover.
+    //
+    // A SLOPPY DIRECT EVAL'S `var`s ARE ITS CALLER'S FUNCTION'S (19.2.1.3
+    // EvalDeclarationInstantiation: the variable environment is the
+    // caller's), made while the function runs - so a function whose own body
+    // calls `eval(` keeps them on an object of its own, and every name it and
+    // the functions inside it resolve beyond their own locals is looked up
+    // there first: a with_scope marked `eval_vars`, whose object has a null
+    // prototype and whose bindings are not a call's `this`. A direct eval is
+    // handed every such object around it (compile_direct_eval), looks names
+    // up on all of them and makes its `var`s on the innermost
+    // (compile_program, eval_vars_name_).
     struct with_scope {
         std::string name;        // the hidden local holding the object
         std::size_t frame = 0;   // frames_ index the statement is in
         std::size_t locals_mark; // position of that local in its frame: names
                                  // declared at or past it are inside the body
+        bool eval_vars = false;  // a direct eval's variable environment, not a `with`
     };
     std::vector<with_scope> with_scopes_;
     void compile_with(const vp::node & n);
@@ -521,11 +545,19 @@ public:
     // ReferenceError when it no longer has `name` (see the definition).
     void emit_with_still_bound(std::uint16_t obj, std::string_view name);
     [[nodiscard]] std::vector<const with_scope *> applicable_with_scopes(std::string_view name);
+    // Does this function's own body - not a nested function's - call `eval(`?
+    [[nodiscard]] bool own_direct_eval(std::int32_t idx) const;
+    // In a direct eval's program: the innermost `eval_vars` binding it was
+    // handed - its caller's variable environment - or empty when none was.
+    std::string eval_vars_name_;
     // Does this call need a receiver register: a member callee, or a plain
     // name inside a `with` (the object that binds it is the `this`, 13.3.6.2
     // step 6 via WithBaseObject).
     [[nodiscard]] bool call_needs_receiver(const vp::node & callee);
     // compile_ident without the with lookup: a local, an upvalue or a global.
+    [[nodiscard]] std::string binding_ready_flag(std::string_view name);
+    void emit_ready_check(std::string_view flag);
+    void initialize_lexical(std::string_view name);
     void emit_plain_read(std::string_view name, std::uint16_t dst, bool typeof_lookup = false);
     void emit_plain_write(std::string_view name, std::uint16_t src);
     void emit_global_write(std::string_view name, std::uint16_t src);

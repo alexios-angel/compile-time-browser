@@ -214,8 +214,27 @@ struct string_object final : heap_object {
 
     // The length in UTF-16 code units - what `length` answers.
     [[nodiscard]] std::size_t length() const {
-        if (units_ == unmeasured) { units_ = utf16::length(text); }
-        return units_;
+        if (units_ == unmeasured) {
+            units_ = utf16::length(text);
+            if (units_ != text.size() && utf16::has_pair(text)) { units_ |= pair_bit; }
+        }
+        return units_ & ~pair_bit;
+    }
+    // Does the text hold a code point above U+FFFF - two units? Measured
+    // with the length and kept in its top bit, so a RegExp without `u`
+    // asks it per exec for nothing (regexp/execution.cpp builtin_exec).
+    [[nodiscard]] bool has_pair() const {
+        (void)length();
+        return (units_ & pair_bit) != 0;
+    }
+    // RegExp without u/v walks code units. Keep its split view once per
+    // immutable string: a global scan must not copy the subject per match.
+    [[nodiscard]] const string_object & code_units() const {
+        if (!has_pair()) { return *this; }
+        if (!code_units_) {
+            code_units_ = std::make_unique<string_object>(utf16::split_pairs(text));
+        }
+        return *code_units_;
     }
     // Is every byte one unit? Then an index into `text` IS a unit index, and
     // nothing below decodes.
@@ -244,9 +263,11 @@ struct string_object final : heap_object {
 
 private:
     static constexpr std::size_t unmeasured = static_cast<std::size_t>(-1);
+    static constexpr std::size_t pair_bit = ~(unmeasured >> 1);
     [[nodiscard]] const utf16_mark * marks() const;
     mutable std::size_t units_ = unmeasured;
     mutable std::unique_ptr<utf16_mark[]> marks_;
+    mutable std::unique_ptr<string_object> code_units_;
 };
 
 // The spellings that mark a property key as a SYMBOL rather than a string:
@@ -356,13 +377,22 @@ struct proxy_object final : heap_object {
     // Private elements belong to the Proxy itself, even after revocation.
     // Allocated lazily; ordinary property operations only see the target.
     value private_elements;
-    proxy_object(value t, value h) : heap_object(heap_kind::proxy), target(t), handler(h) {}
+    // [[Call]] and [[Construct]] are decided when the proxy is made, by its
+    // target (10.5.14 ProxyCreate steps 7.a and 7.b.i), and revoking it takes
+    // neither away: a revoked proxy over a function is still a function to
+    // `typeof`, and calling it is the TypeError. `constructor` is ProxyCreate's
+    // to set (builtins' proxy.cpp asks is_constructor); a proxy the VM makes
+    // for itself leaves it false, and is_constructor asks its target.
+    bool callable;
+    bool constructor = false;
+    proxy_object(value t, value h)
+        : heap_object(heap_kind::proxy), target(t), handler(h), callable(t.is_callable()) {}
 };
 
 inline bool value::is_callable() const noexcept {
     if (is_kind(heap_kind::function) || is_kind(heap_kind::native)) { return true; }
     if (is_kind(heap_kind::proxy)) {
-        return static_cast<const proxy_object *>(as_heap())->target.is_callable();
+        return static_cast<const proxy_object *>(as_heap())->callable;
     }
     return false;
 }

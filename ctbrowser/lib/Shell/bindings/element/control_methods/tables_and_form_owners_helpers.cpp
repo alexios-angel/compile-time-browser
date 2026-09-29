@@ -82,9 +82,13 @@ void control_helpers::accessor(context & cx, const char * which, const char * na
                         set ? native(cx, name, std::move(set)) : value::undefined());
 }
 
-value control_helpers::slot_of(context & c, dom_bindings * b, node_id id,
+// A SLOT LIVES ON THE WRAPPER, so a node that has none has no slots - and
+// reading one does not make one: the insertion steps (form_writes.cpp) ask
+// about every option the parser inserts. The ordinary object, never the
+// legacy platform object's proxy over it (legacy_objects.cpp).
+value control_helpers::slot_of(context &, dom_bindings * b, node_id id,
                                std::string_view key) const {
-    const value w = b->wrap(c, id);
+    const value w = dom_bindings::unwrap_legacy_proxy(b->value_of_wrapper(id));
     if (!w.is_object()) { return value::undefined(); }
     const value * held = static_cast<script::object_object *>(w.as_heap())->find(key);
     return held == nullptr ? value::undefined() : *held;
@@ -95,7 +99,7 @@ value control_helpers::slot_of(context & c, dom_bindings * b, node_id id,
 // ([SameObject]) that refreshes on that version. A change to the slot says so.
 void control_helpers::set_slot(context & c, dom_bindings * b, node_id id, std::string_view key,
                                value v) const {
-    const value w = b->wrap(c, id);
+    const value w = dom_bindings::unwrap_legacy_proxy(b->wrap(c, id));
     if (w.is_object()) {
         auto * obj = static_cast<script::object_object *>(w.as_heap());
         if (key == selected_slot) {
@@ -106,9 +110,9 @@ void control_helpers::set_slot(context & c, dom_bindings * b, node_id id, std::s
     }
 }
 
-void control_helpers::erase_slot(context & c, dom_bindings * b, node_id id,
+void control_helpers::erase_slot(context &, dom_bindings * b, node_id id,
                                  std::string_view key) const {
-    const value w = b->wrap(c, id);
+    const value w = dom_bindings::unwrap_legacy_proxy(b->value_of_wrapper(id));
     if (!w.is_object()) { return; }
     if (static_cast<script::object_object *>(w.as_heap())->erase(key) && key == selected_slot) {
         b->doc_->note_unversioned_change();
@@ -130,7 +134,10 @@ std::string control_helpers::input_type(const read_txn & txn, dom_bindings * b, 
 }
 
 std::string control_helpers::value_of(const read_txn & txn, dom_bindings * b, node_id id) const {
-    return b->forms_->state_of(txn, *b->atoms_, id).value;
+    // The store holds what the control SHOWS; a number control's value is
+    // what the user agent made of it (input_types::number_value_of_input).
+    const control_state & held = b->forms_->state_of(txn, *b->atoms_, id);
+    return held.type == "number" ? input_types::number_value_of_input(held.value) : held.value;
 }
 
 node_id control_helpers::tree_top(const read_txn & txn, dom_bindings * b, node_id id) const {

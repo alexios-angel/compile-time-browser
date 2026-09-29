@@ -6,6 +6,29 @@ namespace ctbrowser::shell {
 
 using namespace detail;
 
+namespace {
+
+// A COMPUTED STYLE'S OWN ANSWER to one of CSSStyleDeclaration's members. The
+// read-only declaration getComputedStyle returns keeps them under private keys
+// (computed_style/object.cpp spells the same ones), and the members below -
+// which WebIDL puts on the prototype, for every declaration - hand its calls
+// over. Null for any other receiver.
+[[nodiscard]] const value * computed_member(context & c, std::string_view name) {
+    script::object_object * self = as_object(c.current_this());
+    if (self == nullptr) { return nullptr; }
+    return self->find(std::string{script::private_key_prefix} +
+                      "computed-member:" + std::string{name});
+}
+
+// WebIDL's receiver check: a member called on no CSSStyleDeclaration at all -
+// `null`, a plain object - is a TypeError (cssom/idlharness).
+[[nodiscard]] value illegal_invocation(context & c) {
+    c.throw_error("TypeError", "Illegal invocation: the receiver is not a CSSStyleDeclaration");
+    return value::undefined();
+}
+
+} // namespace
+
 void dom_bindings::install_stylesheet_declarations(context & cx,
                                                    script::object_object * internals) {
     // --- CSSKeyframesRule and CSSKeyframeRule
@@ -351,17 +374,31 @@ void dom_bindings::install_stylesheet_declarations(context & cx,
           "page-orientation", "marks", "bleed"}) {
         both_spellings(page_descriptors_proto, name);
     }
+    // A COMPUTED receiver hands the call to its own answer; one that is no
+    // declaration at all is refused, as WebIDL refuses a wrong `this`.
+    const auto computed_call = [](context & c, std::string_view name,
+                                  std::span<value> a) -> std::optional<value> {
+        const value * fn = computed_member(c, name);
+        if (fn == nullptr) { return std::nullopt; }
+        // `length` is kept as the number itself; the rest are natives.
+        if (fn->is_number()) { return *fn; }
+        return c.call(*fn, a, c.current_this());
+    };
     define_getter(
         cx, *declaration_proto, "length",
-        [this](context & c, std::span<value>) {
+        [this, computed_call](context & c, std::span<value> a) {
+            if (const auto out = computed_call(c, "length", a)) { return *out; }
             const css_rule_record * rule = receiver_rule(c);
-            return value::number(rule == nullptr ? 0
-                                                 : static_cast<double>(rule->declarations.size()));
+            if (rule == nullptr) { return illegal_invocation(c); }
+            return value::number(static_cast<double>(rule->declarations.size()));
         },
         {}, script::attr_configurable);
     define_getter(
         cx, *declaration_proto, "parentRule",
         [this](context & c, std::span<value>) {
+            // A computed style belongs to no rule.
+            if (computed_member(c, "length") != nullptr) { return value::null(); }
+            if (receiver_rule(c) == nullptr) { return illegal_invocation(c); }
             script::object_object * self = as_object(c.current_this());
             const std::size_t at = slot_index(self, rule_key);
             if (at >= css_rule_store_.size()) { return value::null(); }
@@ -370,15 +407,16 @@ void dom_bindings::install_stylesheet_declarations(context & cx,
         {}, script::attr_configurable);
     define_getter(
         cx, *declaration_proto, "cssText",
-        [this](context & c, std::span<value>) {
+        [this, computed_call](context & c, std::span<value> a) {
+            if (const auto out = computed_call(c, "cssText", a)) { return *out; }
             const css_rule_record * rule = receiver_rule(c);
-            return c.string(rule == nullptr
-                                ? std::string{}
-                                : style::css::serialize_declaration_block(rule->declarations));
+            if (rule == nullptr) { return illegal_invocation(c); }
+            return c.string(style::css::serialize_declaration_block(rule->declarations));
         },
-        [this](context & c, std::span<value> a) {
+        [this, computed_call](context & c, std::span<value> a) {
+            if (computed_call(c, "cssText=", a)) { return value::undefined(); }
             css_rule_record * rule = receiver_rule(c);
-            if (rule == nullptr) { return value::undefined(); }
+            if (rule == nullptr) { return illegal_invocation(c); }
             // A WHOLE-BLOCK REPLACEMENT, not a merge, and through the same
             // declaration-list parser a `style` attribute goes through - so a
             // `;` inside a string cannot end a declaration here either.
@@ -391,7 +429,9 @@ void dom_bindings::install_stylesheet_declarations(context & cx,
         script::attr_configurable);
     set_method(
         cx, *declaration_proto, "item",
-        [](context & c, std::span<value> a) {
+        [this, computed_call](context & c, std::span<value> a) {
+            if (const auto out = computed_call(c, "item", a)) { return *out; }
+            if (receiver_rule(c) == nullptr) { return illegal_invocation(c); }
             const value held = collection_item(c, a);
             // CSSOM's `item` answers the EMPTY STRING past the end here, unlike the
             // collections above whose `item` answers null.
@@ -400,25 +440,28 @@ void dom_bindings::install_stylesheet_declarations(context & cx,
         script::attr_builtin);
     set_method(
         cx, *declaration_proto, "getPropertyValue",
-        [this](context & c, std::span<value> a) {
+        [this, computed_call](context & c, std::span<value> a) {
+            if (const auto out = computed_call(c, "getPropertyValue", a)) { return *out; }
             const css_rule_record * rule = receiver_rule(c);
-            if (rule == nullptr) { return c.string(""); }
+            if (rule == nullptr) { return illegal_invocation(c); }
             return c.string(style::css::declaration_value(rule->declarations, asked_name(c, a)));
         },
         script::attr_builtin);
     set_method(
         cx, *declaration_proto, "getPropertyPriority",
-        [this](context & c, std::span<value> a) {
+        [this, computed_call](context & c, std::span<value> a) {
+            if (const auto out = computed_call(c, "getPropertyPriority", a)) { return *out; }
             const css_rule_record * rule = receiver_rule(c);
-            if (rule == nullptr) { return c.string(""); }
+            if (rule == nullptr) { return illegal_invocation(c); }
             return c.string(style::css::declaration_priority(rule->declarations, asked_name(c, a)));
         },
         script::attr_builtin);
     set_method(
         cx, *declaration_proto, "setProperty",
-        [this](context & c, std::span<value> a) {
+        [this, computed_call](context & c, std::span<value> a) {
+            if (const auto out = computed_call(c, "setProperty", a)) { return *out; }
             css_rule_record * rule = receiver_rule(c);
-            if (rule == nullptr) { return value::undefined(); }
+            if (rule == nullptr) { return illegal_invocation(c); }
             // [LegacyNullToEmptyString] on both `value` and `priority`, and
             // `priority` is optional: null is "", and an undefined priority is the
             // default "" rather than the string "undefined" - which was refusing
@@ -443,9 +486,10 @@ void dom_bindings::install_stylesheet_declarations(context & cx,
         script::attr_builtin);
     set_method(
         cx, *declaration_proto, "removeProperty",
-        [this](context & c, std::span<value> a) {
+        [this, computed_call](context & c, std::span<value> a) {
+            if (const auto out = computed_call(c, "removeProperty", a)) { return *out; }
             css_rule_record * rule = receiver_rule(c);
-            if (rule == nullptr) { return c.string(""); }
+            if (rule == nullptr) { return illegal_invocation(c); }
             bool removed = false;
             const std::string was =
                 style::css::remove_declaration(rule->declarations, asked_name(c, a), removed);

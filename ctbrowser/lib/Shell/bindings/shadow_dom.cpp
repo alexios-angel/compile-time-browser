@@ -651,13 +651,17 @@ void dom_bindings::install_shadow_dom(context & cx) {
             cx, *on, "assign",
             [this](context & c, std::span<value> args) {
                 // THE SLOT MAY BE ANOTHER DOCUMENT'S - one a page moved away -
-                // and its own bindings answer for it.
-                const value self = c.current_this();
+                // and its own bindings answer for it. Every wrapper below is
+                // the ORDINARY object: a form's or a select's is behind the
+                // proxy the page holds (control_methods/legacy_objects.cpp),
+                // and the marks and the list are kept on that object.
+                const value self = unwrap_legacy_proxy(c.current_this());
                 dom_bindings * home = owner_of(self);
                 const node_id slot = home == nullptr ? node_id{} : home->handle_of(self);
                 if (!slot) { return value::undefined(); }
                 std::vector<value> nodes;
-                for (const value & one : args) {
+                for (const value & given : args) {
+                    const value one = unwrap_legacy_proxy(given);
                     // ONLY A SLOTTABLE, of any document: the argument type is
                     // `(Element or Text)...`, so anything else is a WebIDL
                     // conversion failure before one node is assigned.

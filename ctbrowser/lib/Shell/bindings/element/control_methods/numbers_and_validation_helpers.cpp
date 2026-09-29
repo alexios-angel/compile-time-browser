@@ -231,7 +231,12 @@ unsigned control_helpers::validity_flags(context & c, dom_bindings * b, node_id 
     if (type == "number" || type == "date" || type == "month" || type == "week" || type == "time" ||
         type == "datetime-local" || type == "range") {
         const std::optional<double> number = helpers.to_number(txn, b, id, text);
-        if (!text.empty() && !number) { flags |= bad_input; }
+        // BAD INPUT is text the user agent could not make a value of: for a
+        // number control that is the typed text behind an empty value.
+        const std::string & shown = b->forms_->state_of(txn, *b->atoms_, id).value;
+        if ((!text.empty() && !number) || (type == "number" && text.empty() && !shown.empty())) {
+            flags |= bad_input;
+        }
         if (number && type != "range") {
             const auto min = helpers.bound_of(txn, b, id, "min");
             const auto max = helpers.bound_of(txn, b, id, "max");

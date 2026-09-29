@@ -45,12 +45,12 @@ inline constexpr std::uint32_t state_disabled = 1u << 4;
 // `:target` - the document's indicated element, set by the shell from the URL's
 // fragment the way `:focus` is set from the focus (dom_bindings::observe_location).
 inline constexpr std::uint32_t state_target = 1u << 5;
-// `:focus-within` - the element or a descendant has the focus - and
-// `:focus-visible`. Neither is SET by the shell: both are derived from
-// `state_focus` when an element's facts are gathered (engine::facts_of), the
-// first by asking whether the focused element is in the subtree, the second
-// as `:focus` itself - focus here comes from script and the keyboard, which
-// is exactly when Selectors 4 §9.3 says the ring shows.
+// `:focus-within` - the element or a descendant has the focus - is derived
+// from `state_focus` when an element's facts are gathered (engine::facts_of),
+// by asking whether the focused element is in the subtree. `:focus-visible`
+// is SET by the shell with the focus, from how the focus got there - the
+// keyboard, a pointer, a script - which is Selectors 4 §9.3's heuristic
+// (shell/browser/focus.cpp, focus_update).
 inline constexpr std::uint32_t state_focus_within = 1u << 6;
 inline constexpr std::uint32_t state_focus_visible = 1u << 7;
 

@@ -272,10 +272,9 @@ struct cloner {
     value held;
     std::vector<std::pair<heap_object *, value>> memory;
     std::size_t depth = 0;
-    // THE HOST'S INTERFACES: each builtin global that is not an intrinsic
-    // (context::is_intrinsic_name) and has a `prototype`, keyed by that
-    // prototype. Built the first time an object with an unusual prototype is
-    // met, so an array of numbers - p5's colours - never pays for it.
+    // THE HOST'S REGISTERED INTERFACES, keyed by prototype. Their global
+    // bindings may have been deleted or replaced. Built the first time an object with an unusual
+    // prototype is met, so an array of numbers - p5's colours - never pays for it.
     struct interface_entry {
         heap_object * key;
         value prototype;
@@ -287,18 +286,8 @@ struct cloner {
     void build_interfaces() {
         interfaces_built = true;
         realm_record & realm = c.current_realm();
-        std::vector<std::string> names;
-        for (const auto & [name, marked] : realm.builtin) {
-            if (marked && !c.is_intrinsic_name(name)) { names.push_back(name); }
-        }
-        for (const std::string & name : names) {
-            const auto it = realm.globals.find(name);
-            if (it == realm.globals.end() || !it->second.is_callable()) { continue; }
-            const value prototype = c.lookup_property(it->second, "prototype");
-            if (c.throw_pending()) { return; }
-            if (!prototype.is_object()) { continue; }
-            // Another name for an interface already seen (File's prototype is
-            // Blob's here): the first one keeps it.
+        for (const auto & [name, prototype] : realm.platform_prototypes) {
+            // Legacy factory aliases can share an interface prototype.
             if (std::ranges::any_of(interfaces, [&](const interface_entry & known) {
                     return known.key == prototype.as_heap();
                 })) {

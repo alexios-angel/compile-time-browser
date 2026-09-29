@@ -344,6 +344,25 @@ void test_decode_utf8() {
     CHECK_EQ(at, std::size_t{1});
 }
 
+void test_join_surrogates() {
+    // Adjacent pairs compact without losing lone surrogates, NULs or the suffix.
+    using namespace std::literals;
+    const std::u16string units =
+        u"a\0\U00010000\U0010FFFFz"s + char16_t{0xD800} + u"x" + char16_t{0xDC00};
+    std::string split;
+    for (const char16_t unit : units) { ctbrowser::append_utf8(split, unit); }
+    ctbrowser::join_surrogates(split);
+    CHECK_EQ(split, utf16_to_wtf8(units));
+    ctbrowser::join_surrogates(split);
+    CHECK_EQ(split, utf16_to_wtf8(units));
+    for (std::string text :
+         {std::string{}, std::string{"abc"}, std::string{"\xED"}, std::string{"\xED\xA0"}}) {
+        const std::string unchanged = text;
+        ctbrowser::join_surrogates(text);
+        CHECK_EQ(text, unchanged);
+    }
+}
+
 void test_wtf8_utf16() {
     using namespace std::literals;
     CHECK(wtf8_to_utf16("").empty());
@@ -423,6 +442,7 @@ void test_allocator_is_mimalloc() {
 int main() {
     test_base64_leniency();
     test_decode_utf8();
+    test_join_surrogates();
     test_wtf8_utf16();
     test_unicode_lowercase_unit();
     test_allocator_is_mimalloc();

@@ -11,6 +11,29 @@ what the numbers are, what moved them, and — the part that matters most here �
 Everything below was measured on the devbox against WPT `3f6b09ae`, four
 workers, a 4 GB `ulimit -v` per driver, `CTBROWSER_GL_DRIVER=deterministic`.
 
+## Round fifteen CSS recovery — 2026-09-29
+
+The 13 CSS6 commits `d3cdab27b` through `e080a9b49`, on `r15-css6`
+at `caa4624b8`, are included in recovery merge `401b2af11` on
+`codex-ctbrowser`. Preserved before/final JSON records 25 affected CSS
+directories at **1,329 → 1,388 passing files** and **40,024 → 40,182
+passing subtests**. Settings match the instrument above. The saved
+post-merge build and selected CTests passed **182/182 steps and 31/31 tests**;
+fresh combined recovery also passed the explicit 214-step build and all
+45 selected CTests (see `wpt.md` for the exact list and commands). The targeted
+`css/selectors/focus-visible-028.html` now passes its one subtest with four
+workers, 4096 MiB and deterministic GL. The 25-directory table above remains
+historical; that selection was not rerun.
+
+The sole passing-file loss is `css/cssom/flex-serialization.html`:
+`c5f6b054a` serializes the omitted flex basis as `0%`, matching the cascade,
+where that test expects `0px`. CSSStyleDeclaration prototype members and
+receiver checks, keyframe variable substitution and layer precedence, scope
+roots, selector grammar and CSSOM rule validation account for the recovered
+changes. Exact selections, commands and outputs remain in
+`/home/alex/.ctbrowser-auto/claude/ctbrowser/r15/css6/`.
+See `wpt.md` for combined recovery status and the next focus/HTML failures.
+
 ## Round thirteen — 2026-09-26
 
 Full `css/` at `037fbaae`: **2,234/3,014 runnable files PASS, 101,800

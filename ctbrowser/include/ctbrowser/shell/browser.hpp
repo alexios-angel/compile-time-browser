@@ -294,6 +294,11 @@ public:
     // reason a scroll does not invalidate them.
     [[nodiscard]] node_id hit_test(float x, float y) const;
 
+    // A FINGER, from a driver - there is no touchscreen in the app layer yet:
+    // `phase` is "start", "move" or "end". Touch Events and the touch pointer's
+    // Pointer Events, and a drag nobody cancelled scrolls (browser/input.cpp).
+    bool touch(std::string_view phase, float x, float y);
+
     // --- frames ----------------------------------------------------------
 
     // Run whatever this frame needs and composite. Cheap when nothing is dirty,
@@ -316,6 +321,7 @@ private:
     static constexpr std::uint32_t state_hover = ctbrowser::style::engine::state_hover;
     static constexpr std::uint32_t state_active = ctbrowser::style::engine::state_active;
     static constexpr std::uint32_t state_focus = ctbrowser::style::engine::state_focus;
+    static constexpr std::uint32_t state_focus_visible = ctbrowser::style::state_focus_visible;
 
     void mark(dirty d);
 
@@ -612,15 +618,41 @@ private:
 
     [[nodiscard]] bool via_label(node_id from);
 
-    bool focus(node_id id);
+    // HTML 6.6, browser/focus.cpp. `focus` runs the focusing steps for any
+    // target - null is the viewport - and `focus_update` moves focus to a
+    // focusable area it is handed. The origin is what :focus-visible asks.
+    enum class focus_origin : std::uint8_t {
+        script,
+        pointer,
+        keyboard
+    };
+    bool focus(node_id id, focus_origin origin = focus_origin::script);
+    bool focus_update(node_id id, focus_origin origin = focus_origin::script);
+    [[nodiscard]] bool supports_keyboard_input(const read_txn & txn, node_id id);
+    // The user's last say in focus - a key pressed, or a pointer that moved
+    // it; `script` until either - which is what a script's focus() shows.
+    focus_origin last_focus_by_ = focus_origin::script;
     [[nodiscard]] bool focus_was_moved() const;
+    [[nodiscard]] std::optional<long long> tabindex_value(const read_txn & txn, node_id id);
+    [[nodiscard]] bool focusable_by_default(const read_txn & txn, node_id id);
+    [[nodiscard]] bool is_editing_host(const read_txn & txn, node_id id);
+    [[nodiscard]] bool is_scroller(node_id id) const;
+    [[nodiscard]] bool holds_focusable(const read_txn & txn, node_id at);
+    [[nodiscard]] node_id host_of(const read_txn & txn, node_id id) const;
+    [[nodiscard]] bool being_rendered(const read_txn & txn, node_id id) const;
+    [[nodiscard]] bool is_focusable_area(const read_txn & txn, node_id id);
+    [[nodiscard]] node_id focusable_area_for(const read_txn & txn, node_id target, bool click,
+                                             bool & viewport);
+    [[nodiscard]] node_id focus_delegate(const read_txn & txn, node_id target, bool click);
+    [[nodiscard]] node_id flat_parent(const read_txn & txn, node_id at);
+    [[nodiscard]] node_id click_focus_target(node_id from);
+    [[nodiscard]] std::vector<node_id> sequential_order(const read_txn & txn, node_id also,
+                                                        bool backwards);
+    [[nodiscard]] bool sequentially_reachable(const read_txn & txn, node_id candidate,
+                                              node_id from);
 
-    [[nodiscard]] std::vector<node_id> focusable_controls();
-
-    [[nodiscard]] bool is_focusable(const read_txn & txn, node_id id);
-
-    // Sequential focus navigation. Wraps at both ends, so Tab off the last
-    // control returns to the first rather than dropping focus into nothing.
+    // Sequential focus navigation, Tab and Shift+Tab. Wraps at both ends, so
+    // Tab off the last control returns to the first.
     bool focus_next(bool backwards);
 
     struct autoscroll_state {
@@ -640,6 +672,17 @@ private:
     bool edit_key(control_state & control, const input_event & event);
 
     bool edited(bool changed);
+    // The same, telling the page WHAT the edit was (Input Events' inputType
+    // and data) - the `beforeinput` before it is before_edit's.
+    bool edited(bool changed, std::string_view input_type, std::optional<std::string_view> data);
+    // `beforeinput` for an edit about to happen: true when a listener
+    // cancelled it, or when the field it was aimed at is no longer focused.
+    bool before_edit(std::string_view input_type, std::optional<std::string_view> data);
+    // A focused <select>'s arrow keys (browser/chrome.cpp).
+    bool select_key(const input_event & event);
+    // `change` on blur is owed only for a value the user edited since focus.
+    bool edited_since_focus_ = false;
+    std::string value_at_focus_;
     bool moved(bool changed);
 
     // What clicking a control does once no listener has cancelled it.
@@ -703,6 +746,20 @@ private:
     // that has to keep aiming at the pointer needs it remembered.
     point pointer_;
     bool have_pointer_ = false;
+    // The wheel event transaction's target and when its last notch came.
+    node_id wheel_target_;
+    double wheel_last_ms_ = 0;
+    // The element the finger went down on, and where it is now.
+    node_id touch_target_;
+    point touch_at_;
+    // Whether this finger's drag has started panning - its pointer was
+    // cancelled then (Pointer Events' "suppress a pointer").
+    bool touch_panning_ = false;
+    // The checkbox, radio or button a held Space made :active.
+    node_id space_active_;
+    // The ELEMENT under a viewport point - a text run's hit is its parent's -
+    // or the body over nothing: what a wheel or a finger is aimed at.
+    [[nodiscard]] node_id element_at(float x, float y);
     // When the next auto-scroll step falls due, on caret_clock_ms_'s scale.
     double autoscroll_due_ms_ = 0;
     std::function<void(const std::string &)> alert_hook_;
@@ -715,6 +772,8 @@ private:
     source_kind source_kind_ = source_kind::html;
     std::string xml_error_;
     std::size_t layouts_ = 0;
+    // The layout the focus fixup last looked at (frame.cpp).
+    std::size_t layouts_fixed_up_ = 0;
     double caret_clock_ms_ = 0;
     double caret_base_ms_ = 0;
     std::string location_href_;
@@ -802,6 +861,9 @@ private:
     [[nodiscard]] int layout_viewport_width() const noexcept;
     node_id hovered_;
     node_id pressed_;
+    // Whether the page cancelled that press - then it moved no selection and
+    // gives nothing focus.
+    bool press_cancelled_ = false;
     dirty dirty_ = dirty::everything;
     bool author_sheet_loaded_ = false;
     // What the author sheet was built from, so a restyle can tell whether the

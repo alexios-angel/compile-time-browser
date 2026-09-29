@@ -60,8 +60,9 @@ void test_select_options_and_selectedness() {
        " return [s.options[2].selected, s.options[1].selected].join(); })()",
        "true,false");
     // add/remove, on the select and on its options collection; length as a
-    // setter. Inserting a selected option beside a selected one keeps the
-    // LAST selected - "ask for a reset" - so `b` stays.
+    // setter. An option added selected is the one selected - every other
+    // option's selectedness goes false (HTML 4.10.7) - and removing it leaves
+    // none, so the first enabled option is selected.
     is("(function () { var s = document.getElementById('s');"
        " var made = new Option('D', 'd'); s.add(made); var o = [s.length, s.options[3].text,"
        " made.value, made instanceof HTMLOptionElement];"
@@ -72,7 +73,7 @@ void test_select_options_and_selectedness() {
        " try { s.add(document.createElement('div')); } catch (e) { o.push(e.name); }"
        " try { s.add(new Option('q'), document.body); } catch (e) { o.push(e.name); }"
        " return o.join(); })()",
-       "4,D,d,true,2,b,4,1,2,4,true,TypeError,NotFoundError");
+       "4,D,d,true,0,z,4,0,2,4,true,TypeError,NotFoundError");
     // `new Option()` from nothing, and an option's text and form.
     is("(function () { var o = new Option(); var s = document.getElementById('s');"
        " s.options[0].text = ' A  B '; return [o.text, o.value, o.selected, o.index,"

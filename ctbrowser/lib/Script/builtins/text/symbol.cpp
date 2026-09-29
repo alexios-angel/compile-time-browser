@@ -117,8 +117,7 @@ void install_symbol(context & cx) {
     // per call. Two `Symbol.for('x')` produced two objects with the same key,
     // and `===` compares identity - so the one guarantee the registry exists to
     // give, that a key looked up twice is the same symbol, was the one it did
-    // not keep. The shared_ptr is captured by both `for` and `keyFor`, which is
-    // what lets the second answer questions about the first.
+    // not keep.
     //
     // AND THE SYMBOLS THEMSELVES HAVE TO LIVE IN A HEAP OBJECT, not in the
     // capture. They were `value`s inside the shared_ptr, and a `value` in a C++
@@ -134,8 +133,7 @@ void install_symbol(context & cx) {
     // symbols move into an ARRAY, which mark_object traces like any other -
     // which means the registry roots itself AS IT GROWS, where a snapshot into
     // native_object::retained would only root what was registered by the time
-    // the native was built. Both natives retain the one array handle, so
-    // neither can be left reading the other's freed entries.
+    // the native was built. `for` retains the one array handle.
     const auto keys = std::make_shared<std::vector<std::string>>();
     const value registry = cx.make_array();
     auto * symbol_for =
@@ -158,21 +156,21 @@ void install_symbol(context & cx) {
     detail::install_arity(cx, symbol_for, 1);
     symbol->define("for", value::object(symbol_for), attr_builtin);
     // The inverse: the key a registered symbol was made under, or undefined for
-    // one that never went through the registry.
+    // one that never went through the registry. READ OFF THE SYMBOL'S OWN KEY,
+    // which only `for` mints with that prefix: the GlobalSymbolRegistry is the
+    // AGENT's (20.4.2.2), so a symbol a ShadowRealm's `Symbol.for` made - equal
+    // to this realm's by key, as every symbol is - has its key here too.
     auto * symbol_key_for =
-        cx.allocate<native_object>("keyFor", [keys, registry](context & c, std::span<value> a) {
+        cx.allocate<native_object>("keyFor", [](context & c, std::span<value> a) {
             const value want = arg_at(a, 0);
             if (!want.is_kind(heap_kind::symbol)) {
                 c.throw_error("TypeError", "Symbol.keyFor: argument is not a symbol");
                 return value::undefined();
             }
-            auto * held = static_cast<array_object *>(registry.as_heap());
-            for (std::size_t i = 0; i < keys->size() && i < held->items.size(); ++i) {
-                if (held->items[i] == want) { return c.string((*keys)[i]); }
-            }
-            return value::undefined();
+            const std::string & key = static_cast<symbol_object *>(want.as_heap())->key;
+            if (!key.starts_with(registered_symbol_key_prefix)) { return value::undefined(); }
+            return c.string(key.substr(registered_symbol_key_prefix.size()));
         });
-    symbol_key_for->retained.push_back(registry);
     symbol_key_for->is_constructor = false;
     detail::install_arity(cx, symbol_key_for, 1);
     symbol->define("keyFor", value::object(symbol_key_for), attr_builtin);

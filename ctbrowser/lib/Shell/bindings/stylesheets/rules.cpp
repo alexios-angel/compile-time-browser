@@ -4,6 +4,7 @@
 #include "internal.hpp"
 
 #include <ctbrowser/shell/net/url.hpp>
+#include <ctbrowser/style/css/calc.hpp>
 
 #include <charconv>
 
@@ -65,6 +66,37 @@ namespace {
     return out + std::string{prelude.substr(done)};
 }
 
+// ONE `<keyframe-selector>` (CSS Animations 1 §3, Scroll Animations 1 §4.3):
+// `from`, `to`, a percentage within [0%, 100%], or a `<timeline-range-name>`
+// before one - a math function standing in for the percentage, since its
+// range is only known when it computes. `-10%` and `120%` are no keyframe.
+[[nodiscard]] bool keyframe_selector_valid(std::string_view text) {
+    using style::css::token_type;
+    const style::css::token_stream s = style::css::tokenize(text);
+    std::vector<const style::css::css_token *> tokens;
+    int depth = 0;
+    for (const style::css::css_token & t : s.tokens) {
+        if (t.type == token_type::eof) { break; }
+        // Only the top level is looked at; a math function is taken whole.
+        if (depth == 0 && t.type != token_type::whitespace) { tokens.push_back(&t); }
+        if (t.type == token_type::function || t.type == token_type::open_paren) { ++depth; }
+        if (t.type == token_type::close_paren && depth > 0) { --depth; }
+    }
+    const auto percentage = [&](const style::css::css_token & t) {
+        if (t.type == token_type::percentage) { return t.number >= 0 && t.number <= 100; }
+        return t.type == token_type::function && style::css::may_have_math(s.text_of(t));
+    };
+    if (tokens.size() == 1) {
+        const style::css::css_token & t = *tokens[0];
+        return (t.type == token_type::ident && ascii_iequals_any(s.text_of(t), {"from", "to"})) ||
+               percentage(t);
+    }
+    return tokens.size() == 2 && tokens[0]->type == token_type::ident &&
+           ascii_iequals_any(s.text_of(*tokens[0]), {"cover", "contain", "entry", "exit",
+                                                     "entry-crossing", "exit-crossing"}) &&
+           percentage(*tokens[1]);
+}
+
 } // namespace
 
 namespace detail {
@@ -103,10 +135,17 @@ void prune_bare_declarations(std::vector<std::unique_ptr<dom_bindings::css_rule_
 // --- the record store -------------------------------------------------------
 
 std::string dom_bindings::rule_css_text(const css_rule_record & rule) const {
-    // A nested declarations rule is its block, and nothing around it.
+    // A nested declarations rule is its block, and nothing around it...
     if (rule.at_name == nested_declarations_name) {
         return style::css::serialize_declaration_block(rule.declarations);
     }
+    // ...and an EMPTY one is not written at all among its parent's children
+    // (CSSOM "serialize a CSS rule": a CSSNestedDeclarations with no
+    // declarations is skipped - nested-declarations-cssom-whitespace).
+    const auto empty_nested_declarations = [this](std::size_t child) {
+        const css_rule_record & one = *css_rule_store_[child];
+        return one.at_name == nested_declarations_name && one.declarations.empty();
+    };
     // A PRELUDE AND A DECLARATION BLOCK. A keyframe's prelude is its keyText and
     // a style rule's is its selector; neither carries an at-keyword.
     if (rule.type == style_rule || rule.type == keyframe_rule) {
@@ -122,7 +161,7 @@ std::string dom_bindings::rule_css_text(const css_rule_record & rule) const {
         std::string out = rule.selector + " {\n";
         if (!block.empty()) { out += "  " + block + "\n"; }
         for (const std::size_t child : rule.children) {
-            if (child >= css_rule_store_.size()) { continue; }
+            if (child >= css_rule_store_.size() || empty_nested_declarations(child)) { continue; }
             out += "  " + rule_css_text(*css_rule_store_[child]) + "\n";
         }
         return out + "}";
@@ -206,7 +245,7 @@ std::string dom_bindings::rule_css_text(const css_rule_record & rule) const {
     }
     out += " {\n";
     for (const std::size_t child : rule.children) {
-        if (child >= css_rule_store_.size()) { continue; }
+        if (child >= css_rule_store_.size() || empty_nested_declarations(child)) { continue; }
         // TWO SPACES BEFORE THE CHILD'S FIRST LINE ONLY: CSSOM appends the
         // serialised child as it is, so a nested group's own lines keep the
         // indentation it gave them and nothing accumulates
@@ -372,6 +411,9 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
         const std::size_t brace = brace_at(one);
         const std::size_t shut = brace == std::string_view::npos ? brace : block_end(one, brace);
         if (brace == std::string_view::npos || shut == std::string_view::npos) { return no_index; }
+        for (const std::string_view part : split_on_commas(one.substr(0, brace))) {
+            if (!keyframe_selector_valid(part)) { return no_index; }
+        }
         css_rule_store_.push_back(std::make_unique<css_rule_record>());
         css_rule_record & frame = *css_rule_store_.back();
         frame.sheet = sheet;
@@ -594,8 +636,10 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
                 if (part.empty()) { break; }
                 const bool layer =
                     ascii_iequals(part, "layer") || ascii_iequals(part.substr(0, 6), "layer(");
-                if (!layer && !ascii_iequals(part.substr(0, 9), "supports(")) { break; }
-                if (!well_formed(part)) { break; }
+                // `scope()` (CSS Cascade 6 §2.2) may be empty: the implicit scope.
+                const bool scope = ascii_iequals(part.substr(0, 6), "scope(") && part.back() == ')';
+                if (!layer && !scope && !ascii_iequals(part.substr(0, 9), "supports(")) { break; }
+                if (!scope && !well_formed(part)) { break; }
                 if (!extra.empty()) { extra += ' '; }
                 extra += collapse_whitespace(part, html_whitespace);
                 after = probe;
@@ -638,8 +682,15 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
                 made.verbatim.clear();
             }
         } else if (made.type == page_rule) {
+            // A `<page-selector-list>` the grammar refuses is no rule at all
+            // (CSS Paged Media 3 §3, page-rules-001).
             bool ok = false;
             made.prelude = serialize_page_selector(made.prelude, ok);
+            if (!ok) {
+                css_rule_store_.pop_back();
+                error = "SyntaxError";
+                return no_index;
+            }
         } else if (made.type == font_feature_values_rule && open != std::string_view::npos &&
                    close != std::string_view::npos) {
             // CSS Fonts 4 §8.9: `<family-name>#`, then feature blocks, each
@@ -779,6 +830,13 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
                 made.verbatim.clear();
             }
         } else if (at_rule_holds_rules(made.at_name)) {
+            // `@starting-style` takes no prelude at all (CSS Transitions 2
+            // §3.1): `@starting-style div { }` is no rule (starting-style-parsing).
+            if (made.at_name == "starting-style" && !trim(made.prelude, html_whitespace).empty()) {
+                css_rule_store_.pop_back();
+                error = "SyntaxError";
+                return no_index;
+            }
             if (made.at_name == "scope") {
                 // `[(<scope-start>)]? [to (<scope-end>)]?`, CSS Cascade 6 §3:
                 // each a selector list that parses and names no

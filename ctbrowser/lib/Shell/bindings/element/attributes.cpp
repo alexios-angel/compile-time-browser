@@ -193,7 +193,7 @@ void dom_bindings::bind_attr_object(context & cx, script::object_object & attr, 
                                      return value::null();
                                  }
                                  const value already = value_of_wrapper(owner);
-                                 return already.is_object() ? already : wrap(c, owner);
+                                 return already.is_object_like() ? already : wrap(c, owner);
                              })),
                          value::undefined());
 }
@@ -444,7 +444,7 @@ void dom_bindings::install_named_node_map(context & cx) {
         // ANY other element's, another document's included: the owner is
         // read off the Attr, not looked up in this document's wrappers.
         const value owner_now = c.lookup_property(given, "ownerElement");
-        if (owner_now.is_object() && self.handle_of(owner_now) != at.id) {
+        if (owner_now.is_object_like() && self.handle_of(owner_now) != at.id) {
             self.throw_dom_exception(c, "InUseAttributeError",
                                      "setNamedItem: the attribute belongs to another element");
             return value::null();

@@ -126,7 +126,38 @@ void compiler_impl::emit_with_still_bound(std::uint16_t obj, std::string_view na
     release_to(mark);
 }
 
+std::string compiler_impl::binding_ready_flag(std::string_view name) {
+    const auto [level, position] = binding_position(name);
+    if (level != no_binding) { return frames_[level].locals[position].ready_flag; }
+    // A direct eval receives the readiness cell beside its lexical cell.
+    const std::string flag = "@tdz:" + std::string{name};
+    return std::ranges::find(eval_outer_names_, flag) != eval_outer_names_.end() ? flag : "";
+}
+
+void compiler_impl::emit_ready_check(std::string_view flag) {
+    if (flag.empty()) { return; }
+    const std::uint32_t mark = reg_mark();
+    const std::uint16_t ready = alloc_reg();
+    emit_plain_read(flag, ready);
+    const std::size_t initialized = proto().emit(instruction{op::jump_if_true, ready});
+    emit_throw("ReferenceError",
+               "Cannot access '" + std::string{flag.substr(5)} + "' before initialization");
+    patch_here(initialized);
+    release_to(mark);
+}
+
+void compiler_impl::initialize_lexical(std::string_view name) {
+    const std::string flag = binding_ready_flag(name);
+    if (flag.empty()) { return; }
+    const std::uint32_t mark = reg_mark();
+    const std::uint16_t ready = alloc_reg();
+    proto().emit(instruction{op::load_true, ready});
+    emit_plain_write(flag, ready);
+    release_to(mark);
+}
+
 void compiler_impl::emit_plain_read(std::string_view name, std::uint16_t dst, bool typeof_lookup) {
+    emit_ready_check(binding_ready_flag(name));
     if (const local * l = find_local_entry(fn(), name)) {
         proto().emit(instruction{l->boxed ? op::cell_get : op::move, dst, l->reg});
         return;
@@ -146,6 +177,7 @@ void compiler_impl::emit_plain_read(std::string_view name, std::uint16_t dst, bo
 }
 
 void compiler_impl::emit_plain_write(std::string_view name, std::uint16_t src) {
+    if (!declaring_) { emit_ready_check(binding_ready_flag(name)); }
     if (!declaring_ && refuse_immutable_write(binding_immutability(name))) { return; }
     if (const local * l = find_local_entry(fn(), name)) {
         if (l->boxed) {

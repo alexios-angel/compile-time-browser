@@ -1355,4 +1355,18 @@ void dom_bindings::install_registry_accessors(context & cx) {
     }
 }
 
+// A FORM-ASSOCIATED CUSTOM ELEMENT (HTML 4.13.2): a custom element whose
+// definition says `formAssociated` - a form control, so one the browser's
+// focus has to ask whether it is disabled.
+bool dom_bindings::form_associated(node_id element) const {
+    const auto found = custom_elements_.find(element.key());
+    if (found == custom_elements_.end() ||
+        found->second.state != custom_element_state::status::custom) {
+        return false;
+    }
+    const std::vector<custom_element_definition> & defined = primary().custom_definitions_;
+    return found->second.definition < defined.size() &&
+           defined[found->second.definition].form_associated;
+}
+
 } // namespace ctbrowser::shell

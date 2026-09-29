@@ -424,9 +424,14 @@ namespace {
         return "(" + serialize_media_query_text(inside) + ")";
     }
     const std::size_t colon = inside.find(':');
-    if (colon == std::string_view::npos) {
-        return "(" + ascii_lower_copy(collapse_whitespace(inside, html_whitespace)) + ")";
-    }
+    // ...BUT A CUSTOM PROPERTY'S NAME IS NOT: a <dashed-ident> is
+    // case-sensitive, and `(--FOO: bar)` stays itself
+    // (mq-unknown-feature-custom-property).
+    const auto name = [](std::string_view text) {
+        std::string collapsed = collapse_whitespace(text, html_whitespace);
+        return collapsed.starts_with("--") ? collapsed : ascii_lower_copy(collapsed);
+    };
+    if (colon == std::string_view::npos) { return "(" + name(inside) + ")"; }
     // THE NAME IS FOLDED AND THE VALUE IS NOT. A feature name is an identifier
     // and `(Color)` and `(color)` are one feature; a value may be a string, a
     // `url()` or a number with a unit, none of which fold. A `<ratio>` is
@@ -440,8 +445,7 @@ namespace {
         spaced += trim(std::string_view{value}.substr(slash + 1), " ");
         value = std::move(spaced);
     }
-    return "(" + ascii_lower_copy(collapse_whitespace(inside.substr(0, colon), html_whitespace)) +
-           ": " + value + ")";
+    return "(" + name(inside.substr(0, colon)) + ": " + value + ")";
 }
 
 } // namespace

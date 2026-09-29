@@ -234,11 +234,15 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
             // did: the block declared its own `x`, the scope popped it, and
             // every later read found undefined.
             const bool function_scoped = n.text == "var";
-            if (was_predeclared(decl.text) &&
-                (function_scoped || find_local_in_current_scope(decl.text) != nullptr)) {
-                // hoisted above: this statement is only the initializer,
-                // and emit_write knows whether it goes through a cell - the
-                // declaration's own write, which a `const` takes (declaring_)
+            const local * here = find_local_in_current_scope(decl.text);
+            if ((was_predeclared(decl.text) && (function_scoped || here != nullptr)) ||
+                (!function_scoped && here != nullptr && here->initialized_at == decl.end)) {
+                // hoisted above - a body's by predeclare_locals, a block's
+                // by hoist_captured_lexicals, which marks the local with
+                // this declarator's end: this statement is only the
+                // initializer, and emit_write knows whether it goes through
+                // a cell - the declaration's own write, which a `const`
+                // takes (declaring_)
                 if (decl.a >= 0) {
                     const std::uint32_t mark = reg_mark();
                     const std::uint16_t tmp = alloc_reg();
@@ -250,6 +254,7 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
                     declaring_ = outer_declaring;
                     release_to(mark);
                 }
+                initialize_lexical(decl.text);
                 continue;
             }
             const std::uint16_t r = declare_local(std::string{decl.text});
@@ -297,6 +302,7 @@ void compiler_impl::compile_stmt(std::int32_t idx) {
         return; // locals must NOT be released by the mark below
     case vp::nk::block:
         push_scope();
+        hoist_captured_lexicals(n);
         compile_statement_list(kids(n), false);
         pop_scope();
         break;

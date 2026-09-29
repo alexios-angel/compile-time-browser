@@ -175,7 +175,31 @@ void test_group_names() {
 
 } // namespace
 
+// WITHOUT `u` THE INPUT IS CODE UNITS (22.2.2): `.` takes one half of a pair,
+// a literal pair in the pattern is two characters, and every position is a
+// unit. With `u` a `\uHHHH\uHHHH` pair of escapes is one code point.
+void test_code_units() {
+    expect_result("return [/^.$/.test('\\u{10300}'), /^..$/.test('\\u{10300}'),"
+                  " /^.$/u.test('\\u{10300}')].join();",
+                  "false,true,true");
+    expect_result("return '\\u{1d401}'.match(/./)[0].length + ',' +"
+                  " 'a\\u{1d401}b'.match(/b/).index;",
+                  "1,3");
+    expect_result("return '\\ud834\\udf06'.replace(/^|\\udf06/g, 'X') === 'X\\ud834X';", "true");
+    expect_result("return /^\\ud834\\udf06$/u.test('\\u{1d306}') + ',' +"
+                  " /^[\\ud834\\udf06]$/u.test('\\u{1d306}');",
+                  "true,true");
+    // ...and so does the compile-time check: a range between two pairs.
+    expect_result("return /^[\\ud834\\udf06-\\ud834\\udf08]$/u.test('\\u{1d307}');", "true");
+    // A pair written in the pattern: without `u`, `+` repeats its second half.
+    expect_result("return /^\\u{1d306}+$/u.test('\\u{1d306}\\u{1d306}') + ',' +"
+                  " /^\\ud834\\udf06+$/.test('\\ud834\\udf06\\udf06') + ',' +"
+                  " new RegExp('^\\u{1d306}+$').test('\\ud834\\udf06\\udf06');",
+                  "true,true,true");
+}
+
 int main() {
+    test_code_units();
     test_group_names();
     test_property_escapes();
     test_canonicalize();

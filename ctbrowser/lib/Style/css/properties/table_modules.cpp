@@ -318,7 +318,7 @@ constexpr property_syntax modules[] = {
      "normal auto space-all trim-both trim-all trim-start space-first", "normal", true, false},
     // CSS Text 4 §8.1's shorthand of the two, and §10's text-fit.
     {"text-spacing", k::freeform, "", "normal", true, false, true},
-    {"text-fit", k::freeform, "", "none", false, false}, // keywords.cpp
+    {"text-fit", k::freeform, "", "none", true, false}, // keywords.cpp; inherited, §10
     {"text-size-adjust", k::percentage, "auto none", "auto", true, true},
     {"text-combine-upright", k::freeform, "", "none", true, false},
     {"text-orientation", k::keyword_only, "mixed upright sideways", "mixed", true, false},
@@ -370,6 +370,8 @@ constexpr property_syntax modules[] = {
      true, false},
     {"image-resolution", k::freeform, "", "1dppx", true, false},
     {"caret-shape", k::keyword_only, "auto bar block underscore", "auto", true, false},
+    // CSS UI 4 §6.2.2: whether the UA blinks the caret or the page animates it.
+    {"caret-animation", k::keyword_only, "auto manual", "auto", true, false},
     {"nav-up", k::freeform, "", "auto", false, false},
     {"nav-down", k::freeform, "", "auto", false, false},
     {"nav-left", k::freeform, "", "auto", false, false},
