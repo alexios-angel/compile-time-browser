@@ -8,5 +8,6 @@ target_sources(ctcompile-ctnative-lowering PRIVATE
   Inheritance.cpp
   Proof.cpp
   Rewrite.cpp
+  StaticFactories.cpp
   Proof.hpp
 )
