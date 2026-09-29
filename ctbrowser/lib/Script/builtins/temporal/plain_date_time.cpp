@@ -99,21 +99,10 @@ value date_time_with(context & cx, std::span<value> a) {
 value date_time_round(context & cx, std::span<value> a) {
     const auto self = this_date_time(cx, "Temporal.PlainDateTime.prototype.round");
     if (!self) { return value::undefined(); }
-    value round_to;
     std::int64_t increment = 1;
     tc::rounding_mode mode = tc::rounding_mode::half_expand;
     unit_value smallest;
-    if (!options_or_string(cx, arg_at(a, 0), "smallestUnit", round_to) ||
-        !get_rounding_increment_option(cx, round_to, increment) ||
-        !get_rounding_mode_option(cx, round_to, tc::rounding_mode::half_expand, mode) ||
-        !get_unit_option(cx, round_to, "smallestUnit", smallest)) {
-        return value::undefined();
-    }
-    if (!smallest.present) {
-        (void)range_error(cx, "smallestUnit is required");
-        return value::undefined();
-    }
-    if (!validate_unit_value(cx, smallest, unit_group::time, false, {tc::unit::day})) {
+    if (!get_round_options(cx, arg_at(a, 0), increment, mode, smallest, {tc::unit::day})) {
         return value::undefined();
     }
     const bool day = smallest.u == tc::unit::day;

@@ -1470,6 +1470,19 @@ bool options_or_string(context & cx, value arg, std::string_view key, value & ou
     return get_options_object(cx, arg, out);
 }
 
+bool get_round_options(context & cx, value arg, std::int64_t & increment, tc::rounding_mode & mode,
+                       unit_value & smallest, std::initializer_list<tc::unit> extra) {
+    value round_to;
+    if (!options_or_string(cx, arg, "smallestUnit", round_to) ||
+        !get_rounding_increment_option(cx, round_to, increment) ||
+        !get_rounding_mode_option(cx, round_to, tc::rounding_mode::half_expand, mode) ||
+        !get_unit_option(cx, round_to, "smallestUnit", smallest)) {
+        return false;
+    }
+    if (!smallest.present) { return range_error(cx, "smallestUnit is required"); }
+    return validate_unit_value(cx, smallest, unit_group::time, false, extra);
+}
+
 // --- installation ------------------------------------------------------------
 
 void install_calendar_getters(context & cx, object_object * proto, kind k, std::uint32_t which) {
