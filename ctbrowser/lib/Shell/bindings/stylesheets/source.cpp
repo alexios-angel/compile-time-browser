@@ -239,17 +239,27 @@ namespace detail {
 // than as a proxy because the collection is small, is rebuilt whenever it
 // changes, and has to keep its OWN identity - a page's expando on
 // `document.styleSheets` survives a re-read.
-void set_indexed(script::object_object & obj, std::span<const value> items) {
-    std::size_t was = 0;
-    if (const value * held = obj.find("length"); held != nullptr && held->is_number()) {
-        const double count = held->as_number();
-        if (count > 0) { was = static_cast<std::size_t>(count); }
+//
+// ...OR WITHOUT THE `length`, for an interface that has it as an ATTRIBUTE on
+// its prototype - a CSSStyleDeclaration (cssom/idlharness: "must inherit
+// property length"). The stale indices are then found by asking.
+void set_indexed(script::object_object & obj, std::span<const value> items, bool own_length) {
+    if (!own_length) {
+        for (std::size_t i = items.size(); obj.erase(std::to_string(i)); ++i) {}
+    } else {
+        std::size_t was = 0;
+        if (const value * held = obj.find("length"); held != nullptr && held->is_number()) {
+            const double count = held->as_number();
+            if (count > 0) { was = static_cast<std::size_t>(count); }
+        }
+        for (std::size_t i = items.size(); i < was; ++i) { (void)obj.erase(std::to_string(i)); }
     }
-    for (std::size_t i = items.size(); i < was; ++i) { (void)obj.erase(std::to_string(i)); }
     for (std::size_t i = 0; i < items.size(); ++i) {
         obj.define(std::to_string(i), items[i], script::attr_enumerable);
     }
-    obj.define("length", value::number(static_cast<double>(items.size())), script::attr_none);
+    if (own_length) {
+        obj.define("length", value::number(static_cast<double>(items.size())), script::attr_none);
+    }
 }
 
 // `item(index)` for every collection here: the indexed property, or NULL past

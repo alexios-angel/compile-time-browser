@@ -253,7 +253,8 @@ void dom_bindings::refresh_declaration_object(context & cx, value declarations) 
     for (const css_declaration & declared : css_rule_store_[at]->declarations) {
         names.push_back(cx.string(declared.name));
     }
-    set_indexed(*obj, names);
+    // No own `length`: it is CSSStyleDeclaration's attribute, on the prototype.
+    set_indexed(*obj, names, false);
 }
 
 value dom_bindings::make_sheet_object(context & cx, std::size_t sheet) {
