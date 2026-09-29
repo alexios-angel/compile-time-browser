@@ -185,8 +185,9 @@ void test_keyword_combinations() {
     bad("text-decoration-line", "underline underline");
     bad("text-decoration-line", "spelling-error overline");
     ok("text-transform", "full-width capitalize", "capitalize full-width");
-    ok("contain", "size style layout paint", "strict");
-    ok("contain", "style layout paint", "content");
+    // The specified value keeps the words; getComputedStyle collapses them.
+    ok("contain", "size style layout paint", "size layout style paint");
+    ok("contain", "style layout paint", "layout style paint");
     ok("contain", "paint layout", "layout paint");
     bad("contain", "size inline-size");
     // `<urange>#`, the unicode-range descriptor (urange-parsing.html).

@@ -13,7 +13,7 @@
 // properties, and `scroll-snap-align` / `scroll-snap-type`. A row says which
 // words stand alone, the groups (one word from each, at most), whether the
 // canonical form is the group order or the author's, and the spellings that
-// collapse (`size style layout paint` is `strict`).
+// collapse (`contain scale-down` is `scale-down`).
 
 #include "internal.hpp"
 
@@ -53,14 +53,10 @@ constexpr or_grammar or_grammars[] = {
      "none math-auto",
      {"capitalize uppercase lowercase", "full-width", "full-size-kana"},
      true},
-    {"contain",
-     "none strict content",
-     {"size inline-size", "layout", "style", "paint"},
-     true,
-     "size layout style paint",
-     "strict",
-     "layout style paint",
-     "content"},
+    // The SPECIFIED value keeps its words: `layout style paint` is not
+    // `content` until it computes (contain-valid against contain-computed),
+    // and getComputedStyle does that collapse.
+    {"contain", "none strict content", {"size inline-size", "layout", "style", "paint"}, true},
     // `normal | [ [ size | inline-size ] || scroll-state ]`, CSS Conditional 5 §4.2.
     {"container-type", "normal", {"size inline-size", "scroll-state"}, true},
     // `oblique-only` is the style synthesis a shorthand may name instead of

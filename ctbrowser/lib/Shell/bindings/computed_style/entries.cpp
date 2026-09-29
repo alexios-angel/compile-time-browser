@@ -832,6 +832,15 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
                 return (open ? "open " : "") + shape;
             }
         }
+        // 4b'''''''. CONTAINMENT COMPUTES TO ITS SHORT KEYWORDS (CSS Contain 2
+        //           §2): `size layout style paint` is `strict` and `layout
+        //           style paint` is `content`. The specified value keeps the
+        //           words (contain-valid), so the collapse is made here.
+        if (property == "contain") {
+            const std::string words = collapse_keyword(text);
+            if (words == "size layout style paint") { return "strict"; }
+            if (words == "layout style paint") { return "content"; }
+        }
         // 4b'. A BASIC SHAPE (lib/Style/css/properties/shapes.cpp).
         if (property == "clip-path" || property == "shape-outside" || property == "offset-path" ||
             property == "object-view-box") {
