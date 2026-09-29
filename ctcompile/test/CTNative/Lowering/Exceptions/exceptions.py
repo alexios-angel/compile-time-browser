@@ -16,6 +16,7 @@ from CTNative.harness import (
     run,
 )
 from CTNative.Browser.native_dom import link_options
+from CTNative.Exports.boundary import FUNCTION as CTJS_FUNCTION, NATIVE as NATIVE_FUNCTION
 
 PROGRAMS = {
     "guarded": (2, {"caught42": 42, "normal20": 20}),
@@ -124,9 +125,6 @@ IMPORT_REFUSALS = ("catch_finally", "nested_catch")
 IMPORT_REASON = "more than one protected region in a function"
 NATIVE_PIPELINE = f"builtin.module(ctnative-lower-to-emitc{{optimize=false}},{CLEANUP})"
 DEFAULT_NATIVE_PIPELINE = NATIVE_PIPELINE.replace("{optimize=false}", "")
-
-CTJS_FUNCTION = re.compile(r"^\s*ctjs\.func\b", re.M)
-NATIVE_FUNCTION = re.compile(r"^\s*emitc\.func\b", re.M)
 
 
 NODE_ORACLE = r"""
