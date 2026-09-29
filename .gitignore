@@ -5,14 +5,14 @@
 # third-party/ and tools/ carry their own rules.
 /.claude/
 .mimocode/
-Keep `/build*/` at the root and add a `build*/` rule to `ctbrowser/.gitignore` (unanchored is wrong there given the file's stated anchoring rule, so: `/build*/`), e.g. after line 8:
+# Keep `/build*/` at the root and add a `build*/` rule to `ctbrowser/.gitignore` (unanchored is wrong there given the file's stated anchoring rule, so: `/build*/`), e.g. after line 8:
 
 # The CONFIGURE root moved here with the monorepo, so `cmake -B build` typed in
 # this directory now makes the build tree HERE. The presets all point at
 # ${sourceParentDir}, which the repository root's /build*/ covers.
 /build*/
 
-and the same three lines in a new ctcompile/.gitignore.
+# and the same three lines in a new ctcompile/.gitignore.
 /examples-*/
 
 # A tool run by hand from the repository root - `tools/check/compare.py`,
