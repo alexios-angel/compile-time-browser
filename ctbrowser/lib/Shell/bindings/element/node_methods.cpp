@@ -96,6 +96,20 @@ void dom_bindings::install_node_methods(context & cx) {
                if (!self || atoms_ == nullptr) { return value::undefined(); }
                const std::string where = arg_string(c, args, 0);
                const std::string markup = arg_string(c, args, 1);
+               // THE FRAGMENT'S CONTEXT IS THE PARENT for `beforebegin` and
+               // `afterend` (HTML, insertAdjacentHTML), and a parent that is
+               // none or the Document is a NoModificationAllowedError - not the
+               // null and the HierarchyRequestError insertAdjacentElement
+               // answers.
+               if (ascii_iequals(where, "beforebegin") || ascii_iequals(where, "afterend")) {
+                   const node_id parent = dom_parent(doc_->read(), self);
+                   if (!parent || parent == doc_->document_node()) {
+                       throw_dom_exception(c, "NoModificationAllowedError",
+                                           "insertAdjacentHTML: the element has no parent "
+                                           "element to parse the markup in");
+                       return value::undefined();
+                   }
+               }
                const std::optional<std::pair<node_id, node_id>> place =
                    adjacent_place(c, self, where);
                if (!place) { return value::undefined(); }
