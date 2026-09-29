@@ -19,29 +19,20 @@
 #include <ctbrowser/style/style.hpp>
 
 #include "check.hpp"
+#include "dom_probe.hpp"
 #include <string>
 #include <string_view>
 
 using namespace ctbrowser;
 using ctbrowser::shell::browser;
 using ctbrowser::shell::browser_options;
+using ctbrowser_test::said;
 
 namespace {
 
-[[nodiscard]] std::string said(std::string_view body_script) {
-    browser page{browser_options{200, 100}};
-    page.load_html("<!DOCTYPE html><body>" + std::string{body_script});
-    std::string out;
-    for (const std::string & one : page.alerts()) {
-        if (!out.empty()) { out += ';'; }
-        out += one;
-    }
-    if (!page.script_error().empty()) { out += "|error:" + page.script_error(); }
-    return out;
-}
-
 void test_mathml_is_a_namespace() {
-    CHECK_EQ(said("<math xml:lang=en definitionurl=d><mi>a</mi><mrow><b>x</b></mrow></math>"
+    CHECK_EQ(said("<!DOCTYPE html><body>"
+                  "<math xml:lang=en definitionurl=d><mi>a</mi><mrow><b>x</b></mrow></math>"
                   "<script>"
                   "var m = document.querySelector('math');"
                   "var xl = m.getAttributeNodeNS('http://www.w3.org/XML/1998/namespace', 'lang');"
@@ -55,7 +46,8 @@ void test_mathml_is_a_namespace() {
 }
 
 void test_svg_names_are_adjusted_from_any_case() {
-    CHECK_EQ(said("<SVG VIEWBOX='0 0 1 1'><FOREIGNOBJECT><p>hi</p></FOREIGNOBJECT>"
+    CHECK_EQ(said("<!DOCTYPE html><body>"
+                  "<SVG VIEWBOX='0 0 1 1'><FOREIGNOBJECT><p>hi</p></FOREIGNOBJECT>"
                   "<lineargradient gradientunits=x xml:base=b xlink:href=h/></SVG>"
                   "<script>"
                   "var s = document.querySelector('svg');"
@@ -72,7 +64,8 @@ void test_svg_names_are_adjusted_from_any_case() {
 }
 
 void test_a_fragment_parses_in_its_elements_context() {
-    CHECK_EQ(said("<table id=t></table><svg id=s></svg><title id=ti></title>"
+    CHECK_EQ(said("<!DOCTYPE html><body>"
+                  "<table id=t></table><svg id=s></svg><title id=ti></title>"
                   "<script>"
                   "t.innerHTML = '<tr><td>x';"
                   "s.innerHTML = '<circle/>x<![CDATA[y]]>';"

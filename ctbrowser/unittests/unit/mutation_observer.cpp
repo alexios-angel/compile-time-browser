@@ -28,29 +28,16 @@
 #include <ctbrowser/style/style.hpp>
 
 #include "check.hpp"
+#include "dom_probe.hpp"
 #include <string>
 #include <string_view>
 
 using namespace ctbrowser;
 using ctbrowser::shell::browser;
 using ctbrowser::shell::browser_options;
+using ctbrowser_test::said;
 
 namespace {
-
-// Load a page and return everything it said, in order, joined with `;`. A
-// script fault is appended rather than swallowed: a test whose page threw
-// halfway through would otherwise report a short list and blame the feature.
-[[nodiscard]] std::string said(std::string_view html) {
-    browser page{browser_options{200, 100}};
-    page.load_html(html);
-    std::string out;
-    for (const std::string & one : page.alerts()) {
-        if (!out.empty()) { out += ';'; }
-        out += one;
-    }
-    if (!page.script_error().empty()) { out += "|error:" + page.script_error(); }
-    return out;
-}
 
 // THE VALIDATION HALF, and it is the half that is all-or-nothing: five
 // MutationObserver files in dom/nodes are a fast FAIL without it and a

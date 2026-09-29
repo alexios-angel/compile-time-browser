@@ -16,26 +16,16 @@
 #include <ctbrowser/style/style.hpp>
 
 #include "check.hpp"
+#include "dom_probe.hpp"
 #include <string>
 #include <string_view>
 
 using namespace ctbrowser;
 using ctbrowser::shell::browser;
 using ctbrowser::shell::browser_options;
+using ctbrowser_test::said;
 
 namespace {
-
-[[nodiscard]] std::string said(std::string_view html) {
-    browser page{browser_options{200, 100}};
-    page.load_html(html);
-    std::string out;
-    for (const std::string & one : page.alerts()) {
-        if (!out.empty()) { out += ';'; }
-        out += one;
-    }
-    if (!page.script_error().empty()) { out += "|error:" + page.script_error(); }
-    return out;
-}
 
 void test_one_selection_per_window() {
     CHECK_EQ(said("<html><body><script>"
