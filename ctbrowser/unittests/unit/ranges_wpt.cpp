@@ -203,6 +203,16 @@ void test_insert_node_and_surround_contents() {
        " r.setStart(box, 2); r.setEnd(box, 3); r.insertNode(document.getElementById('p1'));"
        " return box.firstChild.id + ',' + r.startOffset + ',' + r.endOffset; })()",
        "p2,1,3");
+    // Removing the selected node collapses the range before reinsertion.
+    is("(function () { var p = document.getElementById('p1'); var r = document.createRange();"
+       " r.selectNode(p); r.insertNode(p); return r.startOffset + ',' + r.endOffset; })()",
+       "0,1");
+    // The insertion error must stay in this handler; appending into the text
+    // after it would throw a second error outside the handler.
+    is("(function () { var t = document.getElementById('p1').firstChild;"
+       " var r = document.createRange(); r.selectNodeContents(t);"
+       " try { r.surroundContents(t); } catch (e) { return e.name; } return 'no throw'; })()",
+       "HierarchyRequestError");
     // The errors: a comment start, a text with no parent, the node itself.
     is("(function () { var r = document.createRange(); var o = [];"
        " r.setStart(document.getElementById('box').childNodes[2], 0);"
