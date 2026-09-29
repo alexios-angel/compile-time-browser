@@ -29,12 +29,6 @@ namespace ctbrowser::script::builtins_detail {
 namespace {
 
 constexpr double ms_per_day = 86400000.0;
-[[nodiscard]] constexpr bool is_digit(char c) noexcept {
-    return c >= '0' && c <= '9';
-}
-[[nodiscard]] constexpr bool is_alpha(char c) noexcept {
-    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
-}
 constexpr std::string_view invalid_date_slot = "__ms";
 
 // 21.4.1.31 TimeClip.
@@ -141,7 +135,7 @@ constexpr const char * month_names[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun"
         if (i + n > s.size()) { return false; }
         double v = 0;
         for (std::size_t k = 0; k < n; ++k) {
-            if (!is_digit(s[i + k])) { return false; }
+            if (!is_ascii_digit(s[i + k])) { return false; }
             v = v * 10 + (s[i + k] - '0');
         }
         i += n;
@@ -182,7 +176,7 @@ constexpr const char * month_names[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun"
                 if (eat('.')) {
                     std::size_t n = 0;
                     double frac = 0;
-                    while (i < s.size() && is_digit(s[i])) {
+                    while (i < s.size() && is_ascii_digit(s[i])) {
                         if (n < 3) { frac = frac * 10 + (s[i] - '0'); }
                         ++n;
                         ++i;
@@ -211,13 +205,13 @@ constexpr const char * month_names[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun"
     // "Fri Feb 13 2009 23:31:30 GMT+0000 (...)" and "Fri, 13 Feb 2009 23:31:30 GMT".
     const auto word = [&] {
         std::string w;
-        while (i < s.size() && is_alpha(s[i])) { w += s[i++]; }
+        while (i < s.size() && is_ascii_alpha(s[i])) { w += s[i++]; }
         return w;
     };
     const auto number = [&](double & out) {
         double v = 0;
         std::size_t n = 0;
-        while (i < s.size() && is_digit(s[i])) {
+        while (i < s.size() && is_ascii_digit(s[i])) {
             v = v * 10 + (s[i++] - '0');
             ++n;
         }
@@ -237,7 +231,7 @@ constexpr const char * month_names[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun"
     (void)eat(',');
     spaces();
     int mon = -1;
-    if (i < s.size() && is_digit(s[i])) {
+    if (i < s.size() && is_ascii_digit(s[i])) {
         // "13 Feb 2009"
         if (!number(day)) { return std::nan(""); }
         spaces();
@@ -252,7 +246,7 @@ constexpr const char * month_names[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun"
     spaces();
     if (mon < 0 || !number(year)) { return std::nan(""); }
     spaces();
-    if (i < s.size() && is_digit(s[i])) {
+    if (i < s.size() && is_ascii_digit(s[i])) {
         if (!number(hour) || !eat(':') || !number(minute)) { return std::nan(""); }
         if (eat(':') && !number(second)) { return std::nan(""); }
         spaces();

@@ -32,15 +32,6 @@ namespace ctbrowser::script::detail::early {
 
 namespace {
 
-[[nodiscard]] bool hex(char c) {
-    return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
-}
-[[nodiscard]] bool digit(char c) {
-    return c >= '0' && c <= '9';
-}
-[[nodiscard]] bool ascii_letter(char c) {
-    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
-}
 // The SyntaxCharacters, which are the identity escapes `u` mode still allows.
 [[nodiscard]] bool syntax_char(char c) {
     return std::string_view{"^$\\.*+?()[]{}|/"}.find(c) != std::string_view::npos;
@@ -211,10 +202,10 @@ private:
         if (rx::rx_code_point_escape(s_, j, e, cp, unicode_)) { return cp; }
         if (std::string_view{"dDsSwW"}.find(e) != std::string_view::npos) { return -2; }
         if ((e == 'p' || e == 'P') && unicode_) { return -2; }
-        if (e == 'c') { return j < s_.size() && ascii_letter(s_[j]) ? s_[j] % 32 : -1; }
+        if (e == 'c') { return j < s_.size() && is_ascii_alpha(s_[j]) ? s_[j] % 32 : -1; }
         if (e == 'b') { return 0x08; }
-        if (e == '0') { return j < s_.size() && digit(s_[j]) ? -1 : 0; }
-        if (digit(e) || e == 'u' || e == 'x' || e == 'k') { return -1; }
+        if (e == '0') { return j < s_.size() && is_ascii_digit(s_[j]) ? -1 : 0; }
+        if (is_ascii_digit(e) || e == 'u' || e == 'x' || e == 'k') { return -1; }
         switch (e) {
         case 'n': return '\n';
         case 'r': return '\r';
@@ -249,7 +240,7 @@ private:
         bool has_high = false;
         bool comma = false;
         std::size_t digits = 0;
-        while (j < s_.size() && digit(s_[j])) {
+        while (j < s_.size() && is_ascii_digit(s_[j])) {
             low = std::min<std::uint64_t>(low * 10 + static_cast<std::uint64_t>(s_[j] - '0'),
                                           1ull << 53);
             ++j;
@@ -260,7 +251,7 @@ private:
             comma = true;
             ++j;
             std::size_t more = 0;
-            while (j < s_.size() && digit(s_[j])) {
+            while (j < s_.size() && is_ascii_digit(s_[j])) {
                 high = std::min<std::uint64_t>(high * 10 + static_cast<std::uint64_t>(s_[j] - '0'),
                                                1ull << 53);
                 ++j;
@@ -324,7 +315,9 @@ private:
                 const std::string_view digits = end == std::string_view::npos
                                                     ? std::string_view{}
                                                     : s_.substr(i_ + 1, end - i_ - 1);
-                const bool ok = !digits.empty() && std::all_of(digits.begin(), digits.end(), hex);
+                const bool ok =
+                    !digits.empty() && std::all_of(digits.begin(), digits.end(),
+                                                   [](char d) { return hex_value(d) >= 0; });
                 if (unicode_) {
                     if (!ok) {
                         fail("`\\u{...}` needs hexadecimal digits");
@@ -333,9 +326,7 @@ private:
                     std::uint64_t code = 0;
                     for (const char d : digits) { // saturating: leading zeros are legal
                         code = std::min<std::uint64_t>(
-                            code * 16 + static_cast<std::uint64_t>(
-                                            digit(d) ? d - '0' : (d | 0x20) - 'a' + 10),
-                            0x110000);
+                            code * 16 + static_cast<std::uint64_t>(hex_value(d)), 0x110000);
                     }
                     if (code > 0x10FFFF) {
                         fail("`\\u{" + std::string{digits} + "}` is past the last code point");
@@ -345,7 +336,8 @@ private:
                 }
                 return; // without `u`, `\u{` is the letter u and a brace
             }
-            const bool four = hex(peek()) && hex(peek(1)) && hex(peek(2)) && hex(peek(3));
+            const bool four = hex_value(peek()) >= 0 && hex_value(peek(1)) >= 0 &&
+                              hex_value(peek(2)) >= 0 && hex_value(peek(3)) >= 0;
             if (four) {
                 // Under `u` a lead surrogate's escape takes the trail's after
                 // it - one code point, as the matcher reads it
@@ -358,7 +350,7 @@ private:
             return;
         }
         if (c == 'x') {
-            if (hex(peek()) && hex(peek(1))) {
+            if (hex_value(peek()) >= 0 && hex_value(peek(1)) >= 0) {
                 i_ += 2;
             } else if (unicode_) {
                 fail("`\\x` must be followed by two hexadecimal digits");
@@ -366,7 +358,7 @@ private:
             return;
         }
         if (c == 'c') {
-            if (ascii_letter(peek())) {
+            if (is_ascii_alpha(peek())) {
                 ++i_;
             } else if (unicode_) {
                 fail("`\\c` must be followed by a letter");
@@ -374,14 +366,14 @@ private:
             return;
         }
         if (c == '0') {
-            if (unicode_ && digit(peek())) {
+            if (unicode_ && is_ascii_digit(peek())) {
                 fail("a legacy octal escape is not allowed with the u flag");
             }
             return;
         }
-        if (digit(c)) {
+        if (is_ascii_digit(c)) {
             std::uint32_t n = static_cast<std::uint32_t>(c - '0');
-            while (digit(peek()) && n < 100000) {
+            while (is_ascii_digit(peek()) && n < 100000) {
                 n = n * 10 + static_cast<std::uint32_t>(peek() - '0');
                 ++i_;
             }

@@ -647,17 +647,6 @@ std::optional<double> difference_plain_datetime_with_total(const iso_datetime & 
 
 namespace {
 
-[[nodiscard]] bool ascii_iequals(std::string_view a, std::string_view b) noexcept {
-    if (a.size() != b.size()) { return false; }
-    for (std::size_t i = 0; i < a.size(); ++i) {
-        const auto lower = [](char c) {
-            return c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c;
-        };
-        if (lower(a[i]) != lower(b[i])) { return false; }
-    }
-    return true;
-}
-
 // The zone's fixed offset in minutes; every zone here has one ("UTC" is 0).
 [[nodiscard]] std::int64_t offset_minutes_of(std::string_view zone) {
     const auto parsed = parse_time_zone_identifier(zone);

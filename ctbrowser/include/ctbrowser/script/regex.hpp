@@ -1099,7 +1099,7 @@ inline std::uint32_t rx_utf8_decode_before(std::string_view s, std::size_t end, 
 }
 
 inline char rx_fold(char c, bool icase) {
-	return icase && c >= 'A' && c <= 'Z' ? static_cast<char>(c + ('a' - 'A')) : c;
+	return icase ? ascii_lower(c) : c;
 }
 inline constexpr bool rx_is_word(char c) {
 	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||

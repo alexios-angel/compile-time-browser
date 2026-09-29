@@ -924,11 +924,7 @@ void install_regexp(context & cx) {
         // ToUint32(limit), 22.2.6.14 step 13: undefined is 2^32 - 1.
         double lim = 4294967295.0;
         if (!limit.is_undefined()) {
-            const double n = c.to_number_value(limit);
-            lim = std::isfinite(n)
-                      ? static_cast<double>(static_cast<std::uint32_t>(
-                            static_cast<std::int64_t>(std::fmod(std::trunc(n), 4294967296.0))))
-                      : 0.0;
+            lim = static_cast<double>(number_to_uint32(c.to_number_value(limit)));
         }
         if (watch.threw()) { return value::undefined(); }
         if (lim == 0) { return out; }

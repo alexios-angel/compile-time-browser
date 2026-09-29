@@ -12,6 +12,8 @@
 
 #include "core.hpp"
 
+#include <ctbrowser/core/algorithms.hpp>
+
 #include <cmath>
 #include <cstdlib>
 
@@ -41,12 +43,6 @@ struct cursor {
     }
 };
 
-[[nodiscard]] bool is_digit(char c) noexcept {
-    return c >= '0' && c <= '9';
-}
-[[nodiscard]] bool is_alpha(char c) noexcept {
-    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
-}
 [[nodiscard]] bool is_sign(char c) noexcept {
     return c == '+' || c == '-';
 }
@@ -55,7 +51,7 @@ struct cursor {
 bool digits(cursor & c, int count, int & out) {
     int value = 0;
     for (int i = 0; i < count; ++i) {
-        if (!is_digit(c.peek(static_cast<std::size_t>(i)))) { return false; }
+        if (!is_ascii_digit(c.peek(static_cast<std::size_t>(i)))) { return false; }
         value = value * 10 + (c.peek(static_cast<std::size_t>(i)) - '0');
     }
     c.at += static_cast<std::size_t>(count);
@@ -81,7 +77,7 @@ bool minute_second(cursor & c, int & out, int highest = 59) {
 bool fraction(cursor & c, std::string & out) {
     if (c.peek() != '.' && c.peek() != ',') { return false; }
     std::size_t n = 0;
-    while (is_digit(c.peek(1 + n))) { ++n; }
+    while (is_ascii_digit(c.peek(1 + n))) { ++n; }
     if (n < 1 || n > 9) { return false; }
     out = std::string{c.text.substr(c.at + 1, n)};
     c.at += 1 + n;
@@ -258,10 +254,10 @@ bool iana_name(cursor & c) {
     cursor probe = c;
     for (;;) {
         const char lead = probe.peek();
-        if (!is_alpha(lead) && lead != '.' && lead != '_') { return false; }
+        if (!is_ascii_alpha(lead) && lead != '.' && lead != '_') { return false; }
         ++probe.at;
-        for (char ch = probe.peek();
-             is_alpha(ch) || is_digit(ch) || ch == '.' || ch == '_' || ch == '-' || ch == '+';
+        for (char ch = probe.peek(); is_ascii_alpha(ch) || is_ascii_digit(ch) || ch == '.' ||
+                                     ch == '_' || ch == '-' || ch == '+';
              ch = probe.peek()) {
             ++probe.at;
         }
@@ -302,13 +298,15 @@ bool annotation_item(cursor & c, annotation & out) {
     const std::size_t key_start = probe.at;
     const auto key_lead = [](char ch) { return (ch >= 'a' && ch <= 'z') || ch == '_'; };
     if (!key_lead(probe.peek())) { return false; }
-    while (key_lead(probe.peek()) || is_digit(probe.peek()) || probe.peek() == '-') { ++probe.at; }
+    while (key_lead(probe.peek()) || is_ascii_digit(probe.peek()) || probe.peek() == '-') {
+        ++probe.at;
+    }
     out.key = std::string{probe.text.substr(key_start, probe.at - key_start)};
     if (!probe.eat('=')) { return false; }
     const std::size_t value_start = probe.at;
     for (;;) {
         std::size_t n = 0;
-        while (is_alpha(probe.peek()) || is_digit(probe.peek())) {
+        while (is_ascii_alpha(probe.peek()) || is_ascii_digit(probe.peek())) {
             ++probe.at;
             ++n;
         }
@@ -455,14 +453,6 @@ bool parse_goal(std::string_view text, goal g, parsed & out) {
     return false;
 }
 
-[[nodiscard]] std::string ascii_lower(std::string_view s) {
-    std::string out{s};
-    for (char & ch : out) {
-        if (ch >= 'A' && ch <= 'Z') { ch = static_cast<char>(ch - 'A' + 'a'); }
-    }
-    return out;
-}
-
 } // namespace
 
 std::optional<parse_record> parse_iso_datetime(std::string_view text,
@@ -487,7 +477,7 @@ std::optional<parse_record> parse_iso_datetime(std::string_view text,
                 return std::nullopt;
             }
         }
-        const bool iso_calendar = !have_calendar || ascii_lower(calendar) == "iso8601";
+        const bool iso_calendar = !have_calendar || ascii_iequals(calendar, "iso8601");
         if (g == goal::year_month && !result.date.has_day && !iso_calendar) { return std::nullopt; }
         if (g == goal::month_day && !result.date.year && !iso_calendar) { return std::nullopt; }
         parse_record record;
@@ -539,7 +529,7 @@ std::optional<std::string> parse_temporal_calendar_string(std::string_view text)
         if (i == text.size() || text[i] == '-') {
             if (n == 0) { return std::nullopt; }
             n = 0;
-        } else if (is_alpha(text[i]) || is_digit(text[i])) {
+        } else if (is_ascii_alpha(text[i]) || is_ascii_digit(text[i])) {
             ++n;
         } else {
             return std::nullopt;
@@ -574,7 +564,7 @@ std::optional<duration_record> parse_temporal_duration_string(std::string_view t
     // Digits then a designator; `frac` receives a fraction when one is allowed.
     const auto number = [&](cursor & at, std::string & whole, std::string * frac) {
         const std::size_t start = at.at;
-        while (is_digit(at.peek())) { ++at.at; }
+        while (is_ascii_digit(at.peek())) { ++at.at; }
         if (at.at == start) { return false; }
         whole = std::string{at.text.substr(start, at.at - start)};
         if (frac != nullptr) { (void)fraction(at, *frac); }

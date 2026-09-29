@@ -120,10 +120,8 @@ std::string unicode_case(std::string_view s, bool upper) {
         // ASCII is most of every page's text, and its mapping is one compare.
         const auto byte = static_cast<unsigned char>(s[i]);
         if (byte < 0x80u) {
-            char c = s[i++];
-            if (upper && c >= 'a' && c <= 'z') { c = static_cast<char>(c - 'a' + 'A'); }
-            if (!upper && c >= 'A' && c <= 'Z') { c = static_cast<char>(c - 'A' + 'a'); }
-            out.push_back(c);
+            const char c = s[i++];
+            out.push_back(upper ? ascii_upper(c) : ascii_lower(c));
             continue;
         }
         const std::size_t from = i;

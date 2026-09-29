@@ -104,10 +104,7 @@ using text_body = std::function<value(context &, const string_object &, std::spa
 // coercion and cannot run a user `valueOf`, so
 // `"a,b".split(",", {valueOf: () => 1})` read NaN, became 0, and answered [].
 [[nodiscard]] double uint32_arg(context & cx, value v) {
-    const double n = cx.to_number_value(v);
-    if (!std::isfinite(n)) { return 0.0; }
-    return static_cast<double>(static_cast<std::uint32_t>(
-        static_cast<std::int64_t>(std::fmod(std::trunc(n), 4294967296.0))));
+    return static_cast<double>(number_to_uint32(cx.to_number_value(v)));
 }
 
 // 22.1.3.14 step 2.b and 22.1.3.20 step 2.b: `matchAll` and `replaceAll`

@@ -203,10 +203,10 @@ void checker::check_number(std::int32_t idx) {
         (body[1] == 'x' || body[1] == 'X' || body[1] == 'o' || body[1] == 'O' || body[1] == 'b' ||
          body[1] == 'B')) {
         const char radix = body[1];
-        const auto belongs = [radix, decimal](char c) {
+        const auto belongs = [radix](char c) {
             if (radix == 'b' || radix == 'B') { return c == '0' || c == '1'; }
             if (radix == 'o' || radix == 'O') { return c >= '0' && c <= '7'; }
-            return decimal(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+            return hex_value(c) >= 0;
         };
         const std::string_view digits = body.substr(2);
         if (digits.empty()) {
@@ -327,9 +327,7 @@ void checker::check_string(std::int32_t idx, bool is_template, bool tagged) {
         report("this string literal is not terminated", idx);
         return;
     }
-    const auto hex = [](char c) {
-        return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
-    };
+    const auto hex = [](char c) { return hex_value(c) >= 0; };
     const auto bad = [&](const char * what) {
         if (is_template && tagged) { return; }
         report(std::string{what} + " in " +

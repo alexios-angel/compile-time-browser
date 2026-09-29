@@ -38,9 +38,7 @@ void compiler_impl::split_template(std::string_view raw, std::vector<std::string
 }
 
 bool compiler_impl::template_chunk_cooks(std::string_view chunk) {
-    const auto hex = [](char c) {
-        return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
-    };
+    const auto hex = [](char c) { return hex_value(c) >= 0; };
     for (std::size_t i = 0; i + 1 < chunk.size(); ++i) {
         if (chunk[i] != '\\') { continue; }
         const char e = chunk[++i];

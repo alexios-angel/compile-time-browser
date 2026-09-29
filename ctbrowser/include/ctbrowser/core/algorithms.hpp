@@ -66,6 +66,16 @@ void ascii_upper_in_place(std::string & text) noexcept;
 [[nodiscard]] std::vector<std::string_view> split_top_level(std::string_view text,
                                                             std::string_view separators);
 
+// --- ASCII classes ----------------------------------------------------------
+
+// 0-9 and A-Za-z, and nothing a locale or a UTF-8 byte could add.
+[[nodiscard]] constexpr bool is_ascii_digit(char c) noexcept {
+    return c >= '0' && c <= '9';
+}
+[[nodiscard]] constexpr bool is_ascii_alpha(char c) noexcept {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+}
+
 // --- hex ------------------------------------------------------------------
 
 // -1 rather than 0 for a non-digit, because `0` is a perfectly good hex digit
