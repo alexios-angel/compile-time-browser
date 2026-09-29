@@ -86,25 +86,71 @@ mlir::Value nativeMapRecordPayload(mlir::Value map) {
     return {};
 }
 
+namespace {
+
+// Record Map keys compared at compile time: literal Strings by text, any other
+// key (an element, a parameter) only by SSA identity - it may equal any key it
+// is not.
+enum class keyRelation {
+    same,
+    distinct,
+    unknown
+};
+
+keyRelation relate(mlir::Value left, mlir::Value right) {
+    if (left == right) { return keyRelation::same; }
+    const auto text = [](mlir::Value key) {
+        auto constant = key.getDefiningOp<ctjs::ConstantOp>();
+        return constant ? llvm::dyn_cast<ctjs::StringAttr>(constant.getValue())
+                        : ctjs::StringAttr{};
+    };
+    const auto left_text = text(left), right_text = text(right);
+    if (!left_text || !right_text) { return keyRelation::unknown; }
+    return left_text.getValue() == right_text.getValue() ? keyRelation::same
+                                                         : keyRelation::distinct;
+}
+
+// The record a `get` answers: the payload of the latest `set` of the same key,
+// unless a later operation on that Map may have replaced it (`ambiguous`) or
+// removed it. Null when either happened or no such `set` precedes the read.
+mlir::Value exactRecordOrigin(ctjs::CallOp get, bool & ambiguous) {
+    ambiguous = false;
+    mlir::Value origin;
+    for (mlir::Operation & op : *get->getBlock()) {
+        if (&op == get.getOperation()) { return origin; }
+        auto call = llvm::dyn_cast<ctjs::CallOp>(op);
+        if (!call || call.getReceiver() != get.getReceiver()) { continue; }
+        const auto action = mapMethodName(call);
+        if (action == "clear") {
+            origin = {};
+            ambiguous = false;
+            continue;
+        }
+        if (action != "set" && action != "delete") { continue; }
+        switch (relate(call.getArgs()[0], get.getArgs()[0])) {
+        case keyRelation::same:
+            origin = action == "set" ? call.getArgs()[1] : mlir::Value{};
+            ambiguous = false;
+            break;
+        case keyRelation::unknown:
+            ambiguous = action == "set";
+            origin = {};
+            break;
+        case keyRelation::distinct: break;
+        }
+    }
+    return {};
+}
+
+} // namespace
+
 mlir::Value nativeMapRecordOrigin(mlir::Value read) {
     auto get = read.getDefiningOp<ctjs::CallOp>();
     if (!get || nativeMapAction(get) != "get" || !nativeMapRecordPayload(get.getReceiver())) {
         return {};
     }
-    mlir::Value origin;
-    const auto key = ctjs::constantKey(get.getArgs()[0]);
-    for (mlir::Operation & op : *get->getBlock()) {
-        if (&op == get.getOperation()) { return origin; }
-        auto call = llvm::dyn_cast<ctjs::CallOp>(op);
-        if (!call || call.getReceiver() != get.getReceiver()) { continue; }
-        const auto action = nativeMapAction(call);
-        if (action == "clear") { origin = {}; }
-        if ((action == "set" || action == "delete") &&
-            ctjs::constantKey(call.getArgs()[0]) == key) {
-            origin = action == "set" ? call.getArgs()[1] : mlir::Value{};
-        }
-    }
-    return {};
+    bool ambiguous = false;
+    return exactRecordOrigin(get, ambiguous);
 }
 
 bool isNativeMapRecordStore(mlir::OpOperand & use) {
@@ -126,7 +172,7 @@ struct plan {
 
 // Record owners remain stack objects. The Map borrows their addresses and
 // saved reads keep that address across overwrite/delete; neither owns a record.
-// ponytail: one entry-block Map and literal keys; transport needs a wider lifetime proof.
+// ponytail: one entry-block Map; transport needs a wider lifetime proof.
 std::string proveRecords(plan & candidate,
                          llvm::function_ref<bool(ctjs::CreateObjectOp)> hostRecord) {
     if (!llvm::any_of(candidate.calls, [&](ctjs::CallOp call) {
@@ -171,32 +217,27 @@ std::string proveRecords(plan & candidate,
             return "native record Map requires direct entry-block operations";
         }
     }
-    llvm::StringMap<mlir::Value> entries;
     unsigned work = 0;
     for (mlir::Operation & op : *map->getBlock()) {
         if (++work > 65536) { return "native record Map lifetime proof exceeded its work limit"; }
         auto call = llvm::dyn_cast<ctjs::CallOp>(op);
         if (!call || call.getReceiver() != map.getResult()) { continue; }
         const auto action = mapMethodName(call);
-        if (action == "clear") {
-            entries.clear();
-            continue;
-        }
-        auto key = call.getArgs()[0].getDefiningOp<ctjs::ConstantOp>();
-        auto text = key ? llvm::dyn_cast<ctjs::StringAttr>(key.getValue()) : ctjs::StringAttr{};
-        if (!text) { return "native record Map requires literal String keys"; }
         if (action == "set") {
             auto record = call.getArgs()[1].getDefiningOp<ctjs::CreateObjectOp>();
             if (!record || record->getBlock() != map->getBlock() ||
                 !record->isBeforeInBlock(call)) {
                 return "native record Map requires enclosing record owners";
             }
-            entries[text.getValue()] = record.getResult();
-        } else if (action == "delete") {
-            entries.erase(text.getValue());
         } else if (action == "get") {
-            if (!entries.count(text.getValue())) {
-                return "native record Map requires present reads";
+            // ponytail: a linear scan per read; index the Map's operations if
+            // long entry blocks exceed the lifetime proof's work limit.
+            work += static_cast<unsigned>(call->getBlock()->getOperations().size());
+            bool ambiguous = false;
+            if (!exactRecordOrigin(call, ambiguous)) {
+                return ambiguous ? "native record Map read may answer a record stored under an "
+                                   "equal key"
+                                 : "native record Map requires present reads";
             }
             // Saved aliases cannot outlive the enclosing owner or be published.
             for (mlir::OpOperand & use : call.getResult().getUses()) {

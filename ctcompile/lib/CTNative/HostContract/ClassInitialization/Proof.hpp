@@ -41,11 +41,14 @@ inline HostContract classBindingContract(HostContract binding) {
     return binding;
 }
 
-// An explicit DOM Data entry input that the contract declares an element.
+// An explicit DOM entry input that the contract declares an element.
 inline bool declaredElementInput(const HostContract & contract, ctjs::FuncOp scope,
                                  mlir::BlockArgument input) {
-    return contract.provider == HostContract::Provider::ctbrowserDOMDataSession && input &&
-           scope.getSymName() == contract.entry && input.getOwner() == &scope.getBody().front() &&
+    return (contract.provider == HostContract::Provider::ctbrowserDOMDataSession ||
+            contract.provider == HostContract::Provider::ctbrowserDOM ||
+            contract.provider == HostContract::Provider::ctbrowserDOMSession) &&
+           input && scope.getSymName() == contract.entry &&
+           input.getOwner() == &scope.getBody().front() &&
            input.getArgNumber() >= ctjs::implicit_arguments &&
            llvm::is_contained(contract.elementParameters,
                               input.getArgNumber() - ctjs::implicit_arguments);

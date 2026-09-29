@@ -147,7 +147,9 @@ bool classInitialization::sinkCapturedPublication(
     // ponytail: terminal registration, or one unconstructed base with one leaf.
     // Shared/deeper families and observable suffixes need a wider publication proof.
     const bool domData = contract.provider == HostContract::Provider::ctbrowserDOMDataSession;
-    if ((!domData && contract.provider != HostContract::Provider::closedSource) ||
+    const bool dom = contract.provider == HostContract::Provider::ctbrowserDOM ||
+                     contract.provider == HostContract::Provider::ctbrowserDOMSession;
+    if ((!domData && !dom && contract.provider != HostContract::Provider::closedSource) ||
         setup.getArgs().size() != 1) {
         return true;
     }
@@ -843,7 +845,9 @@ bool classInitialization::sinkConstructorPublication(ctjs::CreateClosureOp const
     // publication needs exception/reentry and complete family observer proofs.
     auto function = target(constructor);
     const bool isBase = baseClasses.contains(constructor.getResult());
-    if (contract.provider != HostContract::Provider::closedSource ||
+    const bool dom = contract.provider == HostContract::Provider::ctbrowserDOM ||
+                     contract.provider == HostContract::Provider::ctbrowserDOMSession;
+    if ((!dom && contract.provider != HostContract::Provider::closedSource) ||
         (instances.empty() && !isBase) || !function.getBody().hasOneBlock() ||
         constructor.getUpvalues().size() != 1) {
         return true;
@@ -945,7 +949,12 @@ bool classInitialization::sinkConstructorPublication(ctjs::CreateClosureOp const
     // call would bypass that census and must keep the original constructor.
     if (auto stop = publicationSymbolObserver(*this, function)) { return *stop; }
     if (!proveMaps()) { return false; }
-    if (auto problem = host_detail::initialBindingProblem(module, contract); !problem.empty()) {
+    auto binding = dom ? classBindingContract(contract) : contract;
+    if (dom) {
+        if (!spendWalk(module, declarationCost)) { return false; }
+        binding.initialIntrinsics.push_back("Map");
+    }
+    if (auto problem = host_detail::initialBindingProblem(module, binding); !problem.empty()) {
         return refuse(problem);
     }
     if (isBase) {
