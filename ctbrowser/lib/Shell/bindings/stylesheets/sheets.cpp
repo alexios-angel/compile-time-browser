@@ -114,6 +114,13 @@ std::string dom_bindings::author_style_text() {
                     } else if (ascii_iequals(part, "layer")) {
                         out += "@layer {\n";
                         closers += "}\n";
+                    } else if (ascii_iequals(part.substr(0, 6), "scope(") && part.back() == ')') {
+                        // The `@scope` block `scope()` stands for, as
+                        // browser::collect_author_styles splices it.
+                        out += "@scope " +
+                               style::css::import_scope_prelude(part.substr(6, part.size() - 7)) +
+                               " {\n";
+                        closers += "}\n";
                     }
                 }
                 self(self, record.imported_sheet, depth + 1);
@@ -125,7 +132,24 @@ std::string dom_bindings::author_style_text() {
         }
         if (!sheet_media.empty()) { out += "}\n"; }
     };
-    for (const std::size_t at : css_document_sheets_) { emit(emit, at, 0); }
+    // ...EACH SHEET WITH THE ROOT OF AN IMPLICIT `@scope` IN IT - its owner
+    // node's parent - written ahead as browser::collect_author_styles writes
+    // it (css::scope_block), and only ahead of a sheet that has one. A sheet
+    // with no owner, an adopted one, names none (0): the root the sheet
+    // before it named is not its root.
+    const auto emit_rooted = [&](std::size_t at) {
+        const std::size_t from = out.size();
+        emit(emit, at, 0);
+        if (ascii_lower_copy(std::string_view{out}.substr(from)).find("@scope") ==
+            std::string::npos) {
+            return;
+        }
+        const node_id owner = at < css_sheets_.size() ? css_sheets_[at]->owner : node_id{};
+        const std::uint64_t root = owner ? style::engine::key_of(doc_->read().parent(owner)) : 0;
+        out.insert(from, "@" + std::string{style::css::scope_root_at_rule} + " " +
+                             std::to_string(root) + ";\n");
+    };
+    for (const std::size_t at : css_document_sheets_) { emit_rooted(at); }
     // AND THE ADOPTED SHEETS, AFTER THEM AND IN THEIR OWN ORDER.
     //
     // They were in the object model and in nothing else: `adoptedStyleSheets`
@@ -144,7 +168,7 @@ std::string dom_bindings::author_style_text() {
     if (script::object_object * internals = as_object(cssom_internals_)) {
         if (const value * held = internals->find("adopted"); held != nullptr && held->is_array()) {
             for (const value each : static_cast<script::array_object *>(held->as_heap())->items) {
-                emit(emit, slot_index(as_object(each), sheet_key), 0);
+                emit_rooted(slot_index(as_object(each), sheet_key));
             }
         }
     }

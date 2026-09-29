@@ -51,12 +51,26 @@ script::object_object * cssom_interface(context & cx, script::object_object * in
 // `Symbol.iterator in CSSStyleDeclaration.prototype` is asked by name, and
 // a page driving the iterator by hand needs a real one. Web IDL gives an
 // indexed-getter interface exactly the Array iterator, so it IS that one,
-// over the snapshot iterable_values already takes.
+// over a snapshot of the indices below `length`.
+//
+// `length` ASKED FOR, not found: a CSSStyleDeclaration's is an attribute on
+// its prototype (cssom/idlharness), and the array-like walk iterable_values
+// makes reads an own data property only.
 void cssom_iterable(context & cx, script::object_object * on) {
     set_method(
         cx, *on, CTBROWSER_SYMBOL_KEY("iterator"),
         [](context & c, std::span<value>) {
-            const value items = c.iterable_values(c.current_this());
+            const value self = c.current_this();
+            const value items = c.make_array();
+            const script::context::rooted keep{c, items}; // an index may be a getter
+            const double length = context::to_number(c.lookup_property(self, "length"));
+            // Bounded before the cast, as collection_item bounds an index.
+            const std::size_t count =
+                length >= 1 ? static_cast<std::size_t>(std::min(length, 16777216.0)) : 0;
+            auto * list = static_cast<script::array_object *>(items.as_heap());
+            for (std::size_t i = 0; i < count; ++i) {
+                list->items.push_back(c.lookup_property(self, std::to_string(i)));
+            }
             return c.call(c.lookup_property(items, "values"), std::span<const value>{}, items);
         },
         script::attr_builtin);

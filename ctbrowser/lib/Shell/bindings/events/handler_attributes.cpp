@@ -37,6 +37,10 @@ void dom_bindings::activate_event_handler(context & cx, path_step at, std::strin
     made.host = at.host;
     made.type = std::string{type};
     made.handler = true;
+    // "Add an event listener" computes the default passive value for it like
+    // any other (HTML 8.1.8.1 adds it without saying): `document.body.onwheel`
+    // is as passive as an addEventListener("wheel") there.
+    made.passive = default_passive_value(made.type, at);
     // An identity of its own, traced through the listener list.
     made.callback = value::object(cx.allocate<script::native_object>(
         "event handler", [](context &, std::span<value>) { return value::undefined(); }));

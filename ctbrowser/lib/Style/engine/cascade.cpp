@@ -5,14 +5,38 @@
 #include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/style/css/boolean.hpp>
 
+#include <optional>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 // engine: the method bodies.
 // The header says what these do; this says how.
 
 namespace ctbrowser::style {
+
+namespace {
+
+// A KEYWORD FONT SIZE AS PIXELS (CSS Fonts 4 §2.5): an <absolute-size> is the
+// length the table gives it at the 16px `medium` - the same table
+// easing/numeric.cpp adds with - a <relative-size> steps the parent's by the
+// 1.2 ratio every engine uses, and `initial` is `medium`. Left as text, the
+// box builder read each one as no size at all and inherited the parent's.
+[[nodiscard]] std::optional<float> font_size_keyword_px(std::string_view word, float parent) {
+    static constexpr std::pair<std::string_view, float> sizes[] = {
+        {"xx-small", 9}, {"x-small", 10}, {"small", 13},    {"medium", 16},
+        {"large", 18},   {"x-large", 24}, {"xx-large", 32}, {"xxx-large", 48}};
+    for (const auto & [name, px] : sizes) {
+        if (ascii_iequals(word, name)) { return px; }
+    }
+    if (ascii_iequals(word, "initial")) { return 16.0f; }
+    if (ascii_iequals(word, "larger")) { return parent * 1.2f; }
+    if (ascii_iequals(word, "smaller")) { return parent / 1.2f; }
+    return std::nullopt;
+}
+
+} // namespace
 
 computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const element_facts & self,
                                    const ancestor_filter & ancestors, std::size_t depth,
@@ -157,6 +181,15 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
             } else {
                 position->second = at;
             }
+        }
+        // `display`'s INITIAL VALUE IS `inline`, and it has to be said: an
+        // absent display is the element's own default to the box builder -
+        // what the trimmed UA sheet leaves unwritten - so an empty one would
+        // make `div { display: initial }` a block (css-display/inheritance).
+        // An `unset` a rollback arrived at is the UA's answer and stays absent.
+        if (property == "display" &&
+            (value == "initial" || (value == "unset" && d.value == "unset"))) {
+            value = "inline";
         }
         if (value == "inherit") {
             value = std::string{parent ? parent->get(d.property) : std::string_view{}};
@@ -472,10 +505,9 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
     // before they were computed to pixels - see the root's overflow below.
     std::vector<atom> viewport_registered;
     std::vector<atom> read; // what the font-size's substitution looked at
-    // Whether the WINNING font-size declaration actually resolved to a length.
-    // `font-size: larger` and the other relative keywords are not modelled, and
-    // rewriting one to a pixel value would be inventing an answer - so the text
-    // survives and whoever reads it decides.
+    // Whether the WINNING font-size declaration actually resolved to a length -
+    // a keyword included, see font_size_keyword_px. What does not (`math` and
+    // anything unmodelled) keeps its text and whoever reads it decides.
     bool font_size_resolved = false;
     {
         // The em basis for resolving font-size is the PARENT's; the rem basis is
@@ -540,6 +572,10 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
                 }
             } else if (ascii_iequals(text, "inherit")) {
                 own_font_size = parent_font_size;
+                font_size_resolved = true;
+            } else if (const std::optional<float> keyword =
+                           font_size_keyword_px(text, parent_font_size)) {
+                own_font_size = *keyword;
                 font_size_resolved = true;
             } else {
                 font_size_resolved = false; // a keyword: leave the text alone

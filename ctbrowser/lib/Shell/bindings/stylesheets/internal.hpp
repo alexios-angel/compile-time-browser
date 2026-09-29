@@ -142,7 +142,7 @@ inline constexpr std::uint32_t font_feature_values_rule = 14;
 [[nodiscard]] std::vector<std::string_view> split_top_level_rules(std::string_view css);
 [[nodiscard]] script::object_object * as_object(value v);
 [[nodiscard]] std::size_t slot_index(script::object_object * obj, std::string_view key);
-void set_indexed(script::object_object & obj, std::span<const value> items);
+void set_indexed(script::object_object & obj, std::span<const value> items, bool own_length = true);
 [[nodiscard]] value collection_item(context & cx, std::span<value> args);
 bool store_declaration(dom_bindings::css_rule_record & rule, const std::string & css_name,
                        std::string_view text, bool important);
