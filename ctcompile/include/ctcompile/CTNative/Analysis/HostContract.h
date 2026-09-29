@@ -115,6 +115,11 @@ struct HostContract {
     // unobserved private closure: key conversion preserves that Symbol, and
     // naming changes only the closure's own name. These declarations authorize
     // neither arbitrary conversions nor observable function-name mutation.
+    // Compiler source helpers a bare context installs may also be declared:
+    // __ctbrowser_define_own (4 arguments), __ctbrowser_define_accessor (4),
+    // __ctbrowser_in_object (1) and __ctbrowser_require_object (1). A declared
+    // identity stays closed only as a direct call with an undefined receiver
+    // and that arity; reflecting or storing the binding still refuses.
     std::vector<std::string> initialIntrinsics;
     bool realmGlobalThis = false;
     // The embedding invokes this entry as a classic script, with its stable

@@ -275,6 +275,29 @@ module {
             check(DOMEntryAnalysis(*module, programmatic).proved() == accepted,
                   "live DOM proof independently validates computed helper declarations");
         }
+        // Compiler source helpers a bare context installs: object literals
+        // define, `in` checks the object first, computed accessors go through
+        // one native, and an empty object pattern needs RequireObjectCoercible.
+        // Identity alone is not a proof; the call shape is checked separately.
+        for (const auto * name : {"__ctbrowser_define_own", "__ctbrowser_define_accessor",
+                                  "__ctbrowser_in_object", "__ctbrowser_require_object"}) {
+            for (const bool accepted : {true, false}) {
+                const std::string identity = accepted ? name : (std::string(name) + "x");
+                const std::string declaration =
+                    "\"initial_intrinsics\":[\"" + identity + "\"],\"element_parameters\"";
+                auto helpers =
+                    parseHostContract(replaced(replaced(json, "ctbrowser-dom-v1", provider),
+                                               "\"element_parameters\"", declaration));
+                check(static_cast<bool>(helpers) == accepted,
+                      "DOM contracts accept the exact source helper identity");
+                if (helpers) {
+                    check(helpers->initialIntrinsics == std::vector<std::string>{identity},
+                          "source helper identity is retained");
+                } else {
+                    llvm::consumeError(helpers.takeError());
+                }
+            }
+        }
         for (const auto identities :
              {"[\"__ctbrowser_class_defined\"]", "[\"__ctbrowser_class_defined\",\"Error\"]",
               "[\"Error\",\"__ctbrowser_class_defined\"]", "[\"Error\"]",

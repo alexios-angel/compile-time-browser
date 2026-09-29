@@ -48,7 +48,7 @@ bool keys(const llvm::json::Object & object, llvm::ArrayRef<llvm::StringRef> all
 bool closedSourceIntrinsic(llvm::StringRef name) {
     static const llvm::StringSet<> names{"Map", "Array", "Error", "Object", "Function"};
     return names.contains(name) || host_detail::classIntrinsicArity(name) ||
-           host_detail::iteratorIntrinsicArity(name);
+           host_detail::iteratorIntrinsicArity(name) || host_detail::sourceHelperArity(name);
 }
 
 std::string realmReceiverProblem(const HostContract & contract) {
@@ -89,6 +89,14 @@ const llvm::StringSet<> & host_detail::domInitialIntrinsics() {
         "__ctbrowser_iter_close",
         "__ctbrowser_to_property_key",
         "__ctbrowser_set_function_name",
+        // Compiler source helpers a bare context installs. Object literals
+        // DEFINE data (define_own) rather than assign, `in` checks the object
+        // before ToPropertyKey, computed accessors go through one native, and
+        // an empty object pattern needs RequireObjectCoercible.
+        "__ctbrowser_define_own",
+        "__ctbrowser_define_accessor",
+        "__ctbrowser_in_object",
+        "__ctbrowser_require_object",
     };
     return names;
 }
@@ -531,7 +539,9 @@ std::string initialBindingProblem(mlir::ModuleOp module, const HostContract & co
                 }
             } else if (const unsigned arity = classIntrinsicArity(load.getName())
                                                   ? classIntrinsicArity(load.getName())
-                                                  : iteratorIntrinsicArity(load.getName())) {
+                                                  : (iteratorIntrinsicArity(load.getName())
+                                                         ? iteratorIntrinsicArity(load.getName())
+                                                         : sourceHelperArity(load.getName()))) {
                 auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
                 if (call && use.getOperandNumber() == 0 && call.getArgs().size() == arity &&
                     ctjs::isUndefinedConstant(call.getReceiver()) &&

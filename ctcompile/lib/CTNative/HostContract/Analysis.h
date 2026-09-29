@@ -66,6 +66,18 @@ inline unsigned iteratorIntrinsicArity(llvm::StringRef name) {
     return name.size() <= 23 ? arities.lookup(name) : 0;
 }
 
+// Compiler source helpers a bare context installs and the importer emits as a
+// direct call with an undefined receiver. Identity plus this arity is what lets
+// a declared binding stay closed; anything else still refuses.
+inline unsigned sourceHelperArity(llvm::StringRef name) {
+    static const llvm::StringMap<unsigned> arities{
+        {"__ctbrowser_define_own", 4},      {"__ctbrowser_define_accessor", 4},
+        {"__ctbrowser_to_property_key", 1}, {"__ctbrowser_in_object", 1},
+        {"__ctbrowser_require_object", 1},
+    };
+    return name.size() <= 28 ? arities.lookup(name) : 0;
+}
+
 // Complete original Bootstrap F callback; callers still prove enclosure, uses,
 // intrinsic identity and the actual replacement receiver.
 bool isLowercaseReplacement(ctjs::FuncOp function, llvm::function_ref<bool()> step);
