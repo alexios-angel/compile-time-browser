@@ -12,7 +12,7 @@ points; the rest are foldered:
     tools/mingw/    build-*-mingw.sh, the Windows cross sysroot
     tools/gen/      generators that write into the tree
     tools/corpus/   the ratchets and API probes for the vendored libraries
-    tools/check/    verification: package, PNG, SPIR-V, render, browser parity
+    tools/check/    verification: package, render, browser parity
 
 **`tools/remote-build.sh` is the whole verification gate.** There is no CI - the
 GitHub workflow was deleted on 2026-08-08 - so nothing checks formatting or runs
@@ -78,7 +78,7 @@ with it.
 - `tools/fetch-angle.sh` — downloads the PINNED ANGLE release into
   `third-party/angle/`. ANGLE is fetched rather than built: it needs GN,
   depot_tools and, on Windows, clang-cl and the Windows SDK. `-DCTBROWSER_WITH_ANGLE=ON`
-  then gives `raster/gles.hpp` a real GLES 3.1 device. See `docs/plans/angle.md`.
+  then gives `raster/gles.hpp` a real GLES 3.1 device. See `docs/history/angle.md`.
 - `tools/mingw/build-libs-mingw.sh` — every CMake-built library in the Windows
   sysroot, one table: zlib, libpng and libjpeg-turbo (PNG and JPEG decode in the
   SDL-FREE engine), mimalloc (not optional in the default build), simdutf, and

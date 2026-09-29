@@ -158,14 +158,11 @@ void box_builder::normalise(box_node & parent) {
 }
 
 std::string box_builder::collapse_whitespace(std::string_view text) {
-    const auto is_space = [](char c) {
-        return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f';
-    };
     std::string out;
     out.reserve(text.size());
     bool in_run = false;
     for (const char c : text) {
-        if (is_space(c)) {
+        if (html_whitespace.contains(c)) {
             if (!in_run) { out.push_back(' '); }
             in_run = true;
         } else {

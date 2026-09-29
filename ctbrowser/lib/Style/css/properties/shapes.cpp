@@ -217,15 +217,6 @@ void absolutize(std::vector<path_segment> & data) {
 constexpr std::string_view geometry_boxes =
     "border-box padding-box content-box margin-box fill-box stroke-box view-box";
 
-[[nodiscard]] std::vector<std::string_view> words_of(std::string_view text) {
-    std::vector<std::string_view> out;
-    for (const std::string_view raw : split_top_level(text, html_whitespace)) {
-        const std::string_view part = trim(raw, html_whitespace);
-        if (!part.empty()) { out.push_back(part); }
-    }
-    return out;
-}
-
 [[nodiscard]] std::string joined(std::span<const std::string> parts, std::string_view by = " ") {
     std::string out;
     for (const std::string & part : parts) {

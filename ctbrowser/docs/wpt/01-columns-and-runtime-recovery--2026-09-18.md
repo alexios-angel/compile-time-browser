@@ -629,7 +629,7 @@ touched, and the whole is 35%. By what stands in front of the most tests:
   **`custom-elements`** 37 of 180, **`shadow-dom`** 74 of 182,
   **`selection`** 8 of 86 (46 HARNESS_ERRORs), **`encoding`** 12 of 54
   (TextDecoder for anything but UTF-8), **`url`** 11 of 29 (the WHATWG
-  parser over `urltestdata.json`; `docs/plans/ada-url.md`).
+  parser over `urltestdata.json`; `docs/history/ada-url.md`).
 
 Against `b346dc0b` on the five old suites: +10 files
 (`line-break-ch-unit`, `viewport-units-invalidation`,

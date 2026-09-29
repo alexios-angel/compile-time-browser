@@ -65,21 +65,6 @@ private:
         const std::string_view raw = ts_.text_of(ts_.tokens[i]);
         return raw.empty() ? raw : raw.substr(0, raw.size() - 1);
     }
-    // One past the `)` matching the function at `open`, or `end_`.
-    [[nodiscard]] std::size_t matching_close(std::size_t open) const noexcept {
-        int depth = 0;
-        for (std::size_t i = open; i < end_; ++i) {
-            const token_type type = ts_.tokens[i].type;
-            if (type == token_type::function || type == token_type::open_paren ||
-                type == token_type::open_square || type == token_type::open_curly) {
-                ++depth;
-            } else if (type == token_type::close_paren || type == token_type::close_square ||
-                       type == token_type::close_curly) {
-                if (--depth == 0) { return i + 1; }
-            }
-        }
-        return end_;
-    }
     [[nodiscard]] std::string text_between(std::size_t begin, std::size_t end) const {
         std::string out;
         for (std::size_t i = begin; i < end; ++i) { out += ts_.text_of(ts_.tokens[i]); }
@@ -311,7 +296,7 @@ private:
         case token_type::function: {
             if (!ascii_iequals_any(function_name_at(at_), math_names)) { return std::nullopt; }
             const std::size_t open = at_;
-            const std::size_t after = matching_close(open);
+            const std::size_t after = matching_close(ts_, open, end_);
             out.k = channel::kind::calc;
             out.raw_calc = text_between(open, after);
             if (after == end_ || ts_.tokens[after - 1].type != token_type::close_paren) {

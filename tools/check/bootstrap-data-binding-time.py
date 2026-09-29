@@ -22,6 +22,7 @@ _SPEC = importlib.util.spec_from_file_location(
 _SOURCE = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_SOURCE)
 ProbeError = _SOURCE.ProbeError
+run = _SOURCE.run
 
 FUNCTION = re.compile(r"^\s*ctjs\.func\s+(?:private\s+)?@([^\s(]+)")
 BINDING = re.compile(r'ctnative\.binding_time = "(static|dynamic)"')
@@ -36,15 +37,6 @@ ROLES = (
     "Data.get",
     "Data.remove",
 )
-
-
-def run(command: list[str], text: str | None = None) -> subprocess.CompletedProcess:
-    result = subprocess.run(command, input=text, capture_output=True, text=True, timeout=120)
-    if result.returncode:
-        raise ProbeError(
-            f"command failed ({result.returncode}): {command[0]}\n{result.stdout}{result.stderr}"
-        )
-    return result
 
 
 def functions(ir: str) -> dict[str, dict]:

@@ -107,7 +107,7 @@ std::string serialize_font_family(std::string_view text) {
             ++i;
             continue;
         }
-        if (c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f') {
+        if (html_whitespace.contains(c)) {
             gap = !name.empty();
             ++i;
             continue;

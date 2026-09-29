@@ -39,23 +39,6 @@ struct image_context {
     return std::string_view{ts.pool}.substr(first.text, last.text + last.length - first.text);
 }
 
-// The index one past the block a function or paren at `open` starts.
-[[nodiscard]] std::size_t matching_close(const token_stream & ts, std::size_t open) noexcept {
-    int depth = 0;
-    for (std::size_t i = open; i < ts.tokens.size(); ++i) {
-        const token_type type = ts.tokens[i].type;
-        if (type == token_type::eof) { return i; }
-        if (type == token_type::function || type == token_type::open_paren ||
-            type == token_type::open_square || type == token_type::open_curly) {
-            ++depth;
-        } else if (type == token_type::close_paren || type == token_type::close_square ||
-                   type == token_type::close_curly) {
-            if (--depth == 0) { return i + 1; }
-        }
-    }
-    return ts.tokens.size() - 1;
-}
-
 // The significant (non-whitespace) token indices of [begin, end), split at
 // the top-level commas.
 [[nodiscard]] std::vector<std::vector<std::size_t>> arguments(const token_stream & ts,
@@ -292,7 +275,7 @@ enum class method_read : std::uint8_t {
     const css_token & t = ts.tokens[arg[at]];
     if (t.type == token_type::ident || t.type == token_type::hash) { return at + 1; }
     if (t.type == token_type::function) {
-        const std::size_t close = matching_close(ts, arg[at]);
+        const std::size_t close = matching_close(ts, arg[at], ts.tokens.size() - 1);
         std::size_t k = at;
         while (k < arg.size() && arg[k] < close) { ++k; }
         return k;
@@ -358,7 +341,7 @@ struct gradient_reader {
                 const css_token & t = ts.tokens[arg[at]];
                 std::size_t end = at + 1;
                 if (t.type == token_type::function) {
-                    const std::size_t close = matching_close(ts, arg[at]);
+                    const std::size_t close = matching_close(ts, arg[at], ts.tokens.size() - 1);
                     end = at;
                     while (end < arg.size() && arg[end] < close) { ++end; }
                 } else if (t.type != token_type::dimension && t.type != token_type::percentage &&
@@ -432,7 +415,7 @@ struct gradient_reader {
                 (t.type == token_type::number && t.number == 0)) {
                 std::size_t end = at + 1;
                 if (t.type == token_type::function) {
-                    const std::size_t close = matching_close(ts, first[at]);
+                    const std::size_t close = matching_close(ts, first[at], ts.tokens.size() - 1);
                     end = at;
                     while (end < first.size() && first[end] < close) { ++end; }
                 }
@@ -520,7 +503,8 @@ struct gradient_reader {
                     extent.empty() && sizes.size() < 2 && !have_geometry) {
                     std::size_t end = at + 1;
                     if (t.type == token_type::function) {
-                        const std::size_t close = matching_close(ts, first[at]);
+                        const std::size_t close =
+                            matching_close(ts, first[at], ts.tokens.size() - 1);
                         end = at;
                         while (end < first.size() && first[end] < close) { ++end; }
                     }
@@ -605,7 +589,8 @@ struct gradient_reader {
                 const css_token & t = ts.tokens[first[at + 1]];
                 std::size_t end = at + 2;
                 if (t.type == token_type::function) {
-                    const std::size_t close = matching_close(ts, first[at + 1]);
+                    const std::size_t close =
+                        matching_close(ts, first[at + 1], ts.tokens.size() - 1);
                     end = at + 1;
                     while (end < first.size() && first[end] < close) { ++end; }
                 }
@@ -705,7 +690,7 @@ std::optional<std::string> one_image(const token_stream & ts, const std::vector<
         return depth == 0 ? std::string{} : std::optional<std::string>{};
     }
     if (first.type != token_type::function) { return std::nullopt; }
-    const std::size_t close = matching_close(ts, item.front());
+    const std::size_t close = matching_close(ts, item.front(), ts.tokens.size() - 1);
     if (item.back() + 1 != close && !(close == ts.tokens.size() - 1 && item.back() < close)) {
         return std::string{}; // something after the function
     }

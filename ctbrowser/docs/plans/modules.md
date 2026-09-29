@@ -120,7 +120,7 @@ The hard half, and the part where a shortcut becomes a shim:
   it sits.
 * **Specifier resolution.** Relative (`./x.js`, `../y.js`) against the importing
   module's URL — `shell/net/url.cpp` resolves URLs already, though see
-  `docs/plans/ada-url.md` about which standard it resolves them by. Bare
+  `docs/history/ada-url.md` about which standard it resolves them by. Bare
   specifiers (`import "@babylonjs/core"`) need **import maps**, which is a small
   JSON document in the page and is the standards-track answer rather than a
   bundler.

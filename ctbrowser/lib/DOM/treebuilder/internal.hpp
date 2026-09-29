@@ -10,7 +10,7 @@
 namespace ctbrowser::html::treebuilder_detail {
 
 [[nodiscard]] inline bool is_whitespace(char c) {
-    return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f';
+    return html_whitespace.contains(c);
 }
 
 [[nodiscard]] inline bool all_whitespace(std::string_view text) {

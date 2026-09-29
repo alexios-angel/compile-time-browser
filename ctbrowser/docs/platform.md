@@ -195,7 +195,7 @@ with its hex and octal forms, IPv6, opaque hosts, the forbidden code points),
 the §1.3 percent-encode sets, the §4.5 serialiser, the §4.7 origin, the §6.1
 setter steps with their state overrides, and §5's
 application/x-www-form-urlencoded. Until this date it was Boost.URL - RFC 3986,
-which is not the specification a browser implements - and `docs/plans/ada-url.md`
+which is not the specification a browser implements - and `docs/history/ada-url.md`
 records the eight of fifteen measured cases that differed.
 
 **Measured**: `unittests/unit/url_wpt` drives the suite's own

@@ -123,7 +123,6 @@ private:
         std::vector<std::uint8_t> coverage; // width * height, 0..255
     };
 
-    [[nodiscard]] static std::string lowered(std::string_view text);
     [[nodiscard]] static int pixel_size(float font_size) noexcept;
 
     template <typename Fn> static void for_each_code_point(std::string_view text, Fn && fn) {
@@ -137,7 +136,7 @@ private:
     // what a browser does with a family it only has one weight of.
     [[nodiscard]] const loaded_face * resolve(std::string_view family, bool bold,
                                               bool italic) const {
-        const std::string name = lowered(family);
+        const std::string name = ascii_lower_copy(family);
         for (const face_key & candidate :
              {face_key{name, bold, italic}, face_key{name, false, false},
               face_key{default_family_, bold, italic}, face_key{default_family_, false, false}}) {
@@ -157,7 +156,7 @@ private:
                                         int size) const {
         const loaded_face * face = resolve(family, bold, italic);
         if (face == nullptr) { return nullptr; }
-        const sized_key key{face_key{lowered(family), bold, italic}, size};
+        const sized_key key{face_key{ascii_lower_copy(family), bold, italic}, size};
         if (const auto it = sized_.find(key); it != sized_.end()) { return it->second; }
         TTF_Font * font = open_sized(face->bytes, size);
         sized_.emplace(key, font);
@@ -172,7 +171,7 @@ private:
         const std::lock_guard guard{mutex_};
         TTF_Font * font = sized_font(family, bold, italic, size);
         if (font == nullptr) { return nullptr; }
-        const glyph_key key{face_key{lowered(family), bold, italic}, size, code};
+        const glyph_key key{face_key{ascii_lower_copy(family), bold, italic}, size, code};
         if (const auto it = glyphs_.find(key); it != glyphs_.end()) { return &it->second; }
 
         int minx = 0;
@@ -263,7 +262,7 @@ bool sdl_ttf_backend::add_face(std::string family, bool bold, bool italic,
     TTF_Font * probe = open_sized(entry.bytes, 16);
     if (probe == nullptr) { return false; }
     TTF_CloseFont(probe);
-    faces_[face_key{lowered(family), bold, italic}] = std::move(entry);
+    faces_[face_key{ascii_lower_copy(family), bold, italic}] = std::move(entry);
     return true;
 }
 
@@ -274,11 +273,7 @@ std::size_t sdl_ttf_backend::face_count() const {
 
 void sdl_ttf_backend::set_default_family(std::string family) {
     const std::lock_guard guard{mutex_};
-    default_family_ = lowered(family);
-}
-
-std::string sdl_ttf_backend::lowered(std::string_view text) {
-    return ascii_lower_copy(text);
+    default_family_ = ascii_lower_copy(family);
 }
 
 int sdl_ttf_backend::pixel_size(float font_size) noexcept {

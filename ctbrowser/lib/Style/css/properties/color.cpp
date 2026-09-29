@@ -31,6 +31,12 @@ std::optional<srgb_color> resolve_color(std::string_view specified, const color_
                       static_cast<float>(srgb.alpha_none ? 0.0 : srgb.alpha)};
 }
 
+std::optional<std::uint32_t> system_color(std::string_view name) {
+    const named * hit = find_named(system_colors, name);
+    if (hit == nullptr) { return std::nullopt; }
+    return hit->rgb;
+}
+
 std::optional<space_color> color_in_space(std::string_view specified, std::string_view space_name,
                                           const color_context & ctx) {
     const std::optional<space> target = interpolation_space(space_name);

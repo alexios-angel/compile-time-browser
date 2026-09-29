@@ -287,6 +287,10 @@ struct srgb_color {
 };
 [[nodiscard]] std::optional<srgb_color> resolve_color(std::string_view specified,
                                                       const color_context & ctx);
+// A SYSTEM COLOUR BY NAME, ASCII case-insensitive - CSS Color 4 §6.2's and the
+// deprecated ones §6.3 keeps parsing - as the light-scheme 0xRRGGBB Chromium
+// ships, which is what the cascade resolves one to. nullopt for any other word.
+[[nodiscard]] std::optional<std::uint32_t> system_color(std::string_view name);
 // A COLOUR IN AN INTERPOLATION SPACE (CSS Color 4 §12), for whoever
 // interpolates - transitions, animations, gradients: the three channels in
 // the space's own units (a hue in degrees), which of them are missing after

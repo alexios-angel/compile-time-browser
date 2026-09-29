@@ -797,18 +797,15 @@ private:
             std::size_t end = last.text + last.length;
             const std::string_view source =
                 std::string_view{sheet_.pool}.substr(0, sheet_.source_length);
-            const auto is_space = [](char c) {
-                return c == ' ' || c == '\t' || c == '\n' || c == '\f' || c == '\r';
-            };
             if (first.type == token_type::url) {
-                while (begin > 0 && is_space(source[begin - 1])) { --begin; }
+                while (begin > 0 && html_whitespace.contains(source[begin - 1])) { --begin; }
                 if (begin >= 4 && source[begin - 1] == '(' &&
                     ascii_iequals(source.substr(begin - 4, 3), "url")) {
                     begin -= 4;
                 }
             }
             if (last.type == token_type::url) {
-                while (end < source.size() && is_space(source[end])) { ++end; }
+                while (end < source.size() && html_whitespace.contains(source[end])) { ++end; }
                 if (end < source.size() && source[end] == ')') { ++end; }
             }
             return {static_cast<std::uint32_t>(begin), static_cast<std::uint32_t>(end - begin)};

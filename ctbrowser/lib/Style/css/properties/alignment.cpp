@@ -94,16 +94,6 @@ enum class axis : std::uint8_t {
     return false;
 }
 
-[[nodiscard]] std::optional<std::vector<std::string>> words_of(const token_stream & ts,
-                                                               const scan & found) {
-    std::vector<std::string> words;
-    for (const std::size_t i : found.significant) {
-        if (ts.tokens[i].type != token_type::ident) { return std::nullopt; }
-        words.push_back(ascii_lower_copy(ts.text_of(ts.tokens[i])));
-    }
-    return words;
-}
-
 [[nodiscard]] std::optional<std::pair<axis, bool>> axis_of(std::string_view property) {
     static constexpr std::pair<std::string_view, std::pair<axis, bool>> table[] = {
         {"align-content", {axis::content, false}}, {"justify-content", {axis::content, true}},
@@ -124,7 +114,7 @@ bool match_alignment(std::string_view property, const token_stream & ts, const s
                      std::string & out) {
     const std::optional<std::pair<axis, bool>> a = axis_of(property);
     if (!a) { return false; }
-    const std::optional<std::vector<std::string>> words = words_of(ts, found);
+    const std::optional<std::vector<std::string>> words = words_of(ts, found.significant);
     if (!words) { return false; }
     std::size_t at = 0;
     if (!read_alignment(*words, at, a->first, a->second, out)) { return false; }
@@ -139,7 +129,7 @@ bool split_place(std::string_view shorthand, std::string_view value, std::string
                                           : axis::items;
     const token_stream ts = tokenize(value);
     const scan found = scan_tokens(ts);
-    const std::optional<std::vector<std::string>> words = words_of(ts, found);
+    const std::optional<std::vector<std::string>> words = words_of(ts, found.significant);
     if (!words || words->empty()) { return false; }
     std::size_t at = 0;
     if (!read_alignment(*words, at, kind, false, align)) { return false; }

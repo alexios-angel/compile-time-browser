@@ -12,14 +12,6 @@
 namespace ctbrowser {
 namespace {
 
-// XML 1.0 white space: the same four characters HTML calls whitespace minus
-// the form feed. `core/algorithms.hpp` takes the whitespace set as a parameter
-// for exactly this reason - HTML, JavaScript and XML each have their own, and
-// unifying them would be a bug.
-[[nodiscard]] bool is_space(char c) {
-    return c == ' ' || c == '\t' || c == '\r' || c == '\n';
-}
-
 // NameStartChar and NameChar, the ASCII half exactly and everything above
 // 0x7F accepted. A non-validating parser gets nothing from rejecting a name
 // whose fourth byte is outside the XML 1.0 name ranges - the document either
@@ -124,7 +116,7 @@ private:
         }
     }
     void skip_space() {
-        while (!done() && is_space(peek())) { advance(); }
+        while (!done() && xml_whitespace.contains(peek())) { advance(); }
     }
 
     void fail(std::string message) {
@@ -491,7 +483,7 @@ private:
         std::vector<std::pair<std::string, std::string>> attrs;
         bool empty_element = false;
         for (;;) {
-            const bool had_space = is_space(peek());
+            const bool had_space = xml_whitespace.contains(peek());
             skip_space();
             if (done()) {
                 fail("unterminated start tag <" + qualified + ">");
@@ -740,7 +732,7 @@ private:
             }
             // XML 1.0 §3.3.3: every white-space character in an attribute
             // value normalises to a space before anything sees it.
-            into.push_back(is_space(peek()) ? ' ' : peek());
+            into.push_back(xml_whitespace.contains(peek()) ? ' ' : peek());
             advance();
         }
         if (done()) {

@@ -125,16 +125,6 @@ constexpr or_grammar or_grammars[] = {
      true},
 };
 
-[[nodiscard]] std::optional<std::vector<std::string>> words_of(const token_stream & ts,
-                                                               const scan & found) {
-    std::vector<std::string> words;
-    for (const std::size_t i : found.significant) {
-        if (ts.tokens[i].type != token_type::ident) { return std::nullopt; }
-        words.push_back(ascii_lower_copy(ts.text_of(ts.tokens[i])));
-    }
-    return words;
-}
-
 [[nodiscard]] std::optional<std::string> match_or(const or_grammar & g,
                                                   std::span<const std::string> words) {
     if (words.empty()) { return std::nullopt; }
@@ -1457,7 +1447,7 @@ bool match_keywords(std::string_view property, const token_stream & ts, const sc
     for (const or_grammar & g : or_grammars) {
         if (!ascii_iequals(g.property, property)) { continue; }
         handled = true;
-        const std::optional<std::vector<std::string>> words = words_of(ts, found);
+        const std::optional<std::vector<std::string>> words = words_of(ts, found.significant);
         if (words) { answer = match_or(g, *words); }
     }
     if (!handled && ascii_iequals(property, "font-size-adjust")) {
@@ -1480,7 +1470,7 @@ bool match_keywords(std::string_view property, const token_stream & ts, const sc
     if (!handled && (ascii_iequals(property, "scroll-snap-align") ||
                      ascii_iequals(property, "scroll-snap-type"))) {
         handled = true;
-        const std::optional<std::vector<std::string>> words = words_of(ts, found);
+        const std::optional<std::vector<std::string>> words = words_of(ts, found.significant);
         if (words) { answer = scroll_snap(property, *words); }
     }
     for (const ident_grammar & g : ident_grammars) {
@@ -1506,7 +1496,7 @@ bool match_keywords(std::string_view property, const token_stream & ts, const sc
     }
     if (!handled && ascii_iequals_any(property, {"color-scheme", "scrollbar-gutter"})) {
         handled = true;
-        const std::optional<std::vector<std::string>> words = words_of(ts, found);
+        const std::optional<std::vector<std::string>> words = words_of(ts, found.significant);
         if (words) {
             answer = ascii_iequals(property, "color-scheme") ? color_scheme(*words)
                                                              : scrollbar_gutter(*words);
@@ -1515,7 +1505,7 @@ bool match_keywords(std::string_view property, const token_stream & ts, const sc
     for (const pair_grammar & g : pair_grammars) {
         if (handled || !ascii_iequals(g.property, property)) { continue; }
         handled = true;
-        const std::optional<std::vector<std::string>> words = words_of(ts, found);
+        const std::optional<std::vector<std::string>> words = words_of(ts, found.significant);
         if (words) { answer = keyword_pair(g, *words); }
     }
     if (!handled && ascii_iequals(property, "font-style")) {

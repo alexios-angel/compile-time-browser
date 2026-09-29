@@ -45,6 +45,41 @@ namespace detail {
     return false;
 }
 
+[[nodiscard]] std::vector<std::string_view> words_of(std::string_view text) {
+    std::vector<std::string_view> out;
+    for (const std::string_view raw : split_top_level(text, html_whitespace)) {
+        const std::string_view part = trim(raw, html_whitespace);
+        if (!part.empty()) { out.push_back(part); }
+    }
+    return out;
+}
+
+[[nodiscard]] std::optional<std::vector<std::string>> words_of(const token_stream & ts,
+                                                               std::span<const std::size_t> at) {
+    std::vector<std::string> words;
+    for (const std::size_t i : at) {
+        if (ts.tokens[i].type != token_type::ident) { return std::nullopt; }
+        words.push_back(ascii_lower_copy(ts.text_of(ts.tokens[i])));
+    }
+    return words;
+}
+
+[[nodiscard]] std::size_t matching_close(const token_stream & ts, std::size_t open,
+                                         std::size_t end) noexcept {
+    int depth = 0;
+    for (std::size_t i = open; i < end; ++i) {
+        const token_type type = ts.tokens[i].type;
+        if (type == token_type::function || type == token_type::open_paren ||
+            type == token_type::open_square || type == token_type::open_curly) {
+            ++depth;
+        } else if (type == token_type::close_paren || type == token_type::close_square ||
+                   type == token_type::close_curly) {
+            if (--depth == 0) { return i + 1; }
+        }
+    }
+    return end;
+}
+
 [[nodiscard]] scan scan_tokens(const token_stream & ts) {
     scan out;
     int depth = 0;
