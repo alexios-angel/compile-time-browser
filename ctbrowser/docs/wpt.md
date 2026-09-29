@@ -14,6 +14,52 @@ them moves.
     tools/wpt/run-wpt.py --selftest            prove the harness works
     tools/wpt/run-wpt.py --dir dom/nodes       one directory, one table
 
+## Round fifteen recovery — 2026-09-29
+
+The previous Claude work is merged on `codex-ctbrowser`, through `c0034cb52`:
+`401b2af11` merges `claude-ctbrowser` at `27ebe486b` (INPUT, focus and CSS6),
+then `c0034cb52` merges `r15-html6` at `8e91ce46a`, including its final
+disabled-focus correction. Together these recover 44 implementation commits
+on integration base `6ffb9f353`. They are **not yet landed on `ctcompile-v1`**.
+
+These are the preserved Claude measurements, recounted from their JSON files,
+**not a new measurement of the combined branch**. Each compares against
+`31c3d8ae0`, with WPT `3f6b09ae`, four workers, the default 4096 MiB process
+limit and `CTBROWSER_GL_DRIVER=deterministic`. The selections overlap and
+must not be summed.
+
+| selection | files PASS before → after | subtests PASS before → after |
+|---|---:|---:|
+| INPUT/focus, seven directories | 971 → 1,135 | 64,885 → 65,250 |
+| CSS6, 25 CSS directories | 1,329 → 1,388 | 40,024 → 40,182 |
+| HTML6, seven directories before its root merge | 1,244 → 1,265 | 99,990 → 100,065 |
+| HTML6, four surviving measurements after its root merge | 745 → 777 | 22,358 → 22,485 |
+
+The INPUT selection is `dom/events`, `shadow-dom`, `css/selectors`,
+`html/semantics/forms`, `css/cssom-view`, `custom-elements` and `selection`.
+The four surviving HTML merged measurements cover forms, `dom/nodes`,
+`custom-elements` and `domparsing`. Evidence is retained under
+`/home/alex/.ctbrowser-auto/claude/ctbrowser/r15/{input,css6,html6}/`.
+CSS's saved post-merge build passed 182 steps and its 31 selected CTests;
+the INPUT journal records 41 focused CTests passing. No HTML CTest log
+survived locally. Fresh combined build, CTests and WPT measurements remain
+pending devbox SSH authentication. The local pinned
+`tools/format.sh --check` passed: 1,190 C++ files, 155 Python and 116 web.
+
+Next checks must cover the recovered input/focus, CSSOM, forms, frame and
+DOM changes. Re-measure `css/selectors/focus-visible-028.html` after
+`db5daf22d`, and investigate the remaining select-label focus loss in
+`customizable-select/select-mouse-behavior.html`. HTML's File/Blob prototype
+separation also exposes two `structured-clone.any.js` failures: deleting
+the Blob global breaks cloning and incorrectly permits Blob transfer.
+CSS's one recorded file loss is documented in `css-conformance.md`.
+
+Two original worktrees still contain uncommitted recovery work and were
+preserved untouched: `r15-vm3` (see `test262.md`) and `ctbrowser-wpt`
+(DOM wrapper ephemerons, Range exception propagation and `dom_wrapper_gc`).
+Neither is part of these merges. No expectation files changed in recovery;
+full CTest, compiler, WPT and test262 suites have not been run.
+
 ## Round thirteen and the root's fixes — 2026-09-26
 
 Round thirteen's four agents (CSS4, HTML4, DOM4, VM) were all cut off by the

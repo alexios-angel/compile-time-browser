@@ -16,6 +16,30 @@ subset, plus a self-test proving the harness itself is load-bearing.
 
 ---
 
+## Round fifteen VM recovery remains unmerged — 2026-09-29
+
+The `r15-vm3` worktree at `.claude/worktrees/wf_49ab7713-ad8-4`
+still holds 33 modified tracked files and two new ShadowRealm source/test
+files on base `31c3d8ae0`. Recovery preserved it without committing or
+merging it. The recorded 26-directory test262 comparison is
+**17,464 → 17,570 PASS**, using four workers, a 10-second timeout and
+2 GiB limit. JSON evidence is under
+`/home/alex/.ctbrowser-auto/claude/ctbrowser/r15/vm3/{m-before,m-after}/`.
+These are historical results, not measurements of `codex-ctbrowser`.
+
+Seven passing cases regress and must be resolved before this work lands:
+
+- `language/statements/{const,let,using}/block-local-closure-get-before-initialization.js`
+  and `language/statements/using/global-closure-get-before-initialization.js`
+  stop throwing the required ReferenceError.
+- `built-ins/RegExp/CharacterClassEscapes/character-class-non-{digit,whitespace,word}-class-escape-positive-cases.js`
+  time out at 10 seconds.
+
+The pending changes include ShadowRealm, direct-eval variable environments,
+captured block bindings, RegExp UTF-16 handling, Set iteration, Symbol and
+Proxy behavior. Fresh focused validation awaits devbox SSH authentication;
+no new VM semantics or bytecode changes were landed during this recovery.
+
 ## The decision: the official corpus, and a runner of our own
 
 `https://github.com/Izhido/test262_harness_cpp` was evaluated first, as asked,
