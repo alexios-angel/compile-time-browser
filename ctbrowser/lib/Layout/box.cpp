@@ -10,7 +10,15 @@ box_node box_builder::build(const read_txn & txn, node_id root) {
     out.kind = box_kind::block;
     out.source = root;
     out.style = style_of(root);
-    build_children(txn, root, out, 16.0f);
+    // THE ROOT ELEMENT'S BOX IS STYLED LIKE ANY OTHER: its width, height,
+    // margins, padding and border are its own - `html { height: 3000px }`
+    // makes the page that tall to scroll, and they were read for no root at
+    // all. Its OVERFLOW is the viewport's instead (CSS Overflow 3 §3.3), so
+    // the box itself scrolls and clips nothing; the tag stays empty, which is
+    // how the body's propagation knows its parent is the root.
+    style_box(out, out.style, display_kind::block, 16.0f, text_face{}, false, false);
+    out.scroll_container = out.clips_overflow = out.blocks_margin_collapse = false;
+    build_children(txn, root, out, out.font_size, out.face, out.underline, out.line_through);
     drop_collapsible_spaces(out);
     normalise(out);
     return out;
