@@ -216,7 +216,10 @@ constexpr or_grammar or_grammars[] = {
         if (t.type == token_type::ident) {
             const std::string_view word = ts.text_of(t);
             if (reserved_ident(word) || ascii_iequals(word, "none")) { return std::nullopt; }
-            name = std::string{word};
+            // Written back as an identifier, escapes and all: `a\ 8 9` is the
+            // counter `a 8` at 9, and unescaped it would read as the counter
+            // `a` and a stray number (counter-reset-valid).
+            name = serialize_identifier(word);
             ++k;
         } else if (t.type == token_type::function && reset &&
                    ascii_iequals(ts.text_of(t), "reversed(")) {
@@ -226,7 +229,7 @@ constexpr or_grammar or_grammars[] = {
             }
             const std::string_view word = ts.text_of(ts.tokens[at[k + 1]]);
             if (reserved_ident(word) || ascii_iequals(word, "none")) { return std::nullopt; }
-            name = "reversed(" + std::string{word} + ")";
+            name = "reversed(" + serialize_identifier(word) + ")";
             reversed = true;
             k += 3;
         } else {

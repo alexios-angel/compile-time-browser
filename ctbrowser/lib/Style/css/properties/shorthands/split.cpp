@@ -927,6 +927,14 @@ split split_text_spacing(std::string_view value, std::vector<std::string> & out)
         out = {trim_part.serialized, space.serialized};
         return split::ok;
     }
+    // ...or text-autospace's words alone, the trim at its initial `normal`:
+    // `no-autospace` (text-spacing-valid).
+    if (const value_check space = check_declaration("text-autospace", value, false);
+        !words.empty() && space.valid && !is_wide_keyword(space.serialized) &&
+        !ascii_iequals(space.serialized, "auto")) {
+        out = {"normal", space.serialized};
+        return split::ok;
+    }
     return split::invalid;
 }
 

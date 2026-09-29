@@ -855,7 +855,10 @@ bool supports_declaration(std::string_view property, std::string_view value) {
     // unknown name is false here even though `el.style` stores it. That is the
     // one place the two callers differ and it is what the specification says:
     // §5 of CSS Conditional 3 is "would the declaration be dropped".
-    if (property.starts_with("--")) { return !trim(value, html_whitespace).empty(); }
+    // `--` alone is no custom property name: CSS Variables 1 §2 reserves it.
+    if (property.starts_with("--")) {
+        return property.size() > 2 && !trim(value, html_whitespace).empty();
+    }
     if (find_property(property) == nullptr) { return false; }
     // `allow_important` is true because `@supports (color: red !important)` is a
     // <declaration> and the priority does not change the answer.

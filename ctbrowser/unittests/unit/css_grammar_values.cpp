@@ -43,6 +43,8 @@ void test_display() {
     ok("display", "flow run-in", "run-in");
     ok("display", "table-row", "table-row");
     ok("display", "BLOCK", "block");
+    ok("display", "grid-lanes inline", "inline grid-lanes");
+    ok("display", "inline-grid-lanes", "inline-grid-lanes");
     bad("display", "grid inline-grid");
     bad("display", "none grid");
     bad("display", "flex list-item");
@@ -219,6 +221,8 @@ void test_keyword_combinations() {
     ok("counter-reset", "foo", "foo 0");
     ok("counter-increment", "foo 2 bar", "foo 2 bar 1");
     ok("counter-reset", "reversed(foo) 3", "reversed(foo) 3");
+    ok("counter-set", "a\\ 8 9", "a\\ 8 9"); // the counter `a 8`, escaped back
+    ok("text-align", "justify-all", "justify-all");
     ok("counter-set", "foo calc(1.6)", "foo calc(1.6)"); // rounded when it computes
     bad("counter-reset", "none foo");
     ok("will-change", "TRANSFORM, transform", "TRANSFORM, transform");
