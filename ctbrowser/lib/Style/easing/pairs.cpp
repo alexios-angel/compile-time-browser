@@ -491,62 +491,22 @@ struct size_sum {
     css::calc_result lengths;
     bool has_size = false, has_lengths = false, number = false;
 };
-struct size_sum_reader {
-    std::string_view text;
+struct size_sum_reader : css::linear_sum<size_sum_reader, size_sum> {
     const css::length_context & ctx;
-    std::size_t at = 0;
 
-    void skip_space() {
-        while (at < text.size() && (text[at] == ' ' || text[at] == '\t' || text[at] == '\n')) {
-            ++at;
-        }
-    }
+    static double number_of(const size_sum & s) { return s.lengths.px; }
     static void scale(size_sum & s, double by) {
         s.size *= by;
         s.lengths.px *= by;
         s.lengths.percent *= by;
     }
-    [[nodiscard]] std::optional<size_sum> sum() {
-        std::optional<size_sum> left = product();
-        while (left) {
-            skip_space();
-            if (at >= text.size() || (text[at] != '+' && text[at] != '-')) { break; }
-            const double sign = text[at] == '-' ? -1 : 1;
-            ++at;
-            const std::optional<size_sum> right = product();
-            if (!right || left->number != right->number) { return std::nullopt; }
-            left->size += sign * right->size;
-            left->lengths.px += sign * right->lengths.px;
-            left->lengths.percent += sign * right->lengths.percent;
-            left->lengths.has_percent = left->lengths.has_percent || right->lengths.has_percent;
-            left->has_size = left->has_size || right->has_size;
-            left->has_lengths = left->has_lengths || right->has_lengths;
-        }
-        return left;
-    }
-    [[nodiscard]] std::optional<size_sum> product() {
-        std::optional<size_sum> left = factor();
-        while (left) {
-            skip_space();
-            if (at >= text.size() || (text[at] != '*' && text[at] != '/')) { break; }
-            const bool divide = text[at] == '/';
-            ++at;
-            std::optional<size_sum> right = factor();
-            if (!right) { return std::nullopt; }
-            if (divide) {
-                if (!right->number || right->lengths.px == 0) { return std::nullopt; }
-                scale(*left, 1 / right->lengths.px);
-            } else if (right->number) {
-                scale(*left, right->lengths.px);
-            } else if (left->number) {
-                const double by = left->lengths.px;
-                left = std::move(right);
-                scale(*left, by);
-            } else {
-                return std::nullopt;
-            }
-        }
-        return left;
+    static void add(size_sum & s, double sign, const size_sum & rhs) {
+        s.size += sign * rhs.size;
+        s.lengths.px += sign * rhs.lengths.px;
+        s.lengths.percent += sign * rhs.lengths.percent;
+        s.lengths.has_percent = s.lengths.has_percent || rhs.lengths.has_percent;
+        s.has_size = s.has_size || rhs.has_size;
+        s.has_lengths = s.has_lengths || rhs.has_lengths;
     }
     [[nodiscard]] std::optional<size_sum> factor() {
         skip_space();
@@ -598,7 +558,7 @@ struct size_sum_reader {
 
 [[nodiscard]] std::optional<size_sum> size_sum_of(std::string_view calc,
                                                   const css::length_context & ctx) {
-    size_sum_reader reader{calc, ctx};
+    size_sum_reader reader{{calc, " \t\n"}, ctx};
     std::optional<size_sum> out = reader.sum();
     reader.skip_space();
     if (!out || reader.at != calc.size() || out->number) { return std::nullopt; }

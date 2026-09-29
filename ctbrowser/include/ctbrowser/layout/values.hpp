@@ -9,6 +9,7 @@
 
 #include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/core/core.hpp>
+#include <ctbrowser/style/css/calc.hpp>
 
 // Turning style strings into layout numbers.
 //
@@ -253,63 +254,21 @@ struct size_calculation {
 }
 
 namespace detail {
-// One pass of a recursive-descent reader over a calc-size() calculation. The
-// grammar is CSS Values 4 §10.1's <calc-sum> with `size` as a term, and the
-// result is kept linear: a product may have at most one non-number side.
-struct size_calc_reader {
-    std::string_view text;
-    std::size_t at = 0;
-
-    void skip_space() {
-        while (at < text.size() && (text[at] == ' ' || text[at] == '\t')) { ++at; }
-    }
-    [[nodiscard]] std::optional<size_calculation> sum() {
-        std::optional<size_calculation> left = product();
-        while (left) {
-            skip_space();
-            if (at >= text.size() || (text[at] != '+' && text[at] != '-')) { break; }
-            const float sign = text[at] == '-' ? -1.0f : 1.0f;
-            ++at;
-            const std::optional<size_calculation> right = product();
-            if (!right || left->number != right->number) { return std::nullopt; }
-            left->size += sign * right->size;
-            left->percent += sign * right->percent;
-            left->px += sign * right->px;
-            left->em += sign * right->em;
-        }
-        return left;
-    }
-    [[nodiscard]] std::optional<size_calculation> product() {
-        std::optional<size_calculation> left = factor();
-        while (left) {
-            skip_space();
-            if (at >= text.size() || (text[at] != '*' && text[at] != '/')) { break; }
-            const bool divide = text[at] == '/';
-            ++at;
-            const std::optional<size_calculation> right = factor();
-            if (!right) { return std::nullopt; }
-            // Linear: a number scales the other side; two lengths cannot multiply
-            // and a length cannot divide anything.
-            if (divide) {
-                if (!right->number || right->px == 0) { return std::nullopt; }
-                scale(*left, 1.0f / right->px);
-            } else if (right->number) {
-                scale(*left, right->px);
-            } else if (left->number) {
-                const float by = left->px;
-                *left = *right;
-                scale(*left, by);
-            } else {
-                return std::nullopt;
-            }
-        }
-        return left;
-    }
+// One pass over a calc-size() calculation: style's linear <calc-sum> reader with
+// `size` a term, and `em` kept apart for the element's font size to resolve.
+struct size_calc_reader : style::css::linear_sum<size_calc_reader, size_calculation> {
+    static float number_of(const size_calculation & c) { return c.px; }
     static void scale(size_calculation & c, float by) {
         c.size *= by;
         c.percent *= by;
         c.px *= by;
         c.em *= by;
+    }
+    static void add(size_calculation & c, float sign, const size_calculation & rhs) {
+        c.size += sign * rhs.size;
+        c.percent += sign * rhs.percent;
+        c.px += sign * rhs.px;
+        c.em += sign * rhs.em;
     }
     [[nodiscard]] std::optional<size_calculation> factor() {
         skip_space();
@@ -360,7 +319,7 @@ struct size_calc_reader {
 } // namespace detail
 
 inline std::optional<size_calculation> parse_size_calculation(std::string_view text) {
-    detail::size_calc_reader reader{text};
+    detail::size_calc_reader reader{{text, " \t"}};
     std::optional<size_calculation> out = reader.sum();
     reader.skip_space();
     if (!out || reader.at != text.size() || out->number) { return std::nullopt; }

@@ -3,6 +3,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 
 // `calc()`, and the unit table every relative length goes through.
 //
@@ -357,5 +358,63 @@ struct folded_value {
 [[nodiscard]] std::string serialize_calc(const calc_result & value);
 // A bare <number> through the same rules: `0.5`, `12`, `calc(infinity)`.
 [[nodiscard]] std::string serialize_number(double value);
+
+// A <calc-sum> READ AS A LINEAR FUNCTION: CSS Values 4 §10.1's `+`/`-` between
+// products and `*`/`/` between factors, kept linear - a product has at most one
+// side that is not a number, and nothing divides by a length. calc-size()'s
+// calculation is read this way twice, by style's interpolation and by layout,
+// with a term of each one's own. The deriving `Reader` supplies `factor()`
+// (recursing into sum() for parentheses) and, over its `Term`, `number_of(t)` -
+// the value of a bare <number>, which a term flags `number` - `scale(t, by)`
+// and `add(t, sign, rhs)`.
+template <class Reader, class Term> struct linear_sum {
+    std::string_view text;
+    std::string_view space; // what skip_space() skips
+    std::size_t at = 0;
+
+    void skip_space() {
+        while (at < text.size() && space.find(text[at]) != std::string_view::npos) { ++at; }
+    }
+    [[nodiscard]] std::optional<Term> sum() {
+        using scalar = decltype(Reader::number_of(std::declval<const Term &>()));
+        std::optional<Term> left = product();
+        while (left) {
+            skip_space();
+            if (at >= text.size() || (text[at] != '+' && text[at] != '-')) { break; }
+            const scalar sign = text[at] == '-' ? scalar{-1} : scalar{1};
+            ++at;
+            const std::optional<Term> right = product();
+            if (!right || left->number != right->number) { return std::nullopt; }
+            Reader::add(*left, sign, *right);
+        }
+        return left;
+    }
+    [[nodiscard]] std::optional<Term> product() {
+        using scalar = decltype(Reader::number_of(std::declval<const Term &>()));
+        Reader & self = static_cast<Reader &>(*this);
+        std::optional<Term> left = self.factor();
+        while (left) {
+            skip_space();
+            if (at >= text.size() || (text[at] != '*' && text[at] != '/')) { break; }
+            const bool divide = text[at] == '/';
+            ++at;
+            std::optional<Term> right = self.factor();
+            if (!right) { return std::nullopt; }
+            if (divide) {
+                if (!right->number || Reader::number_of(*right) == 0) { return std::nullopt; }
+                Reader::scale(*left, scalar{1} / Reader::number_of(*right));
+            } else if (right->number) {
+                Reader::scale(*left, Reader::number_of(*right));
+            } else if (left->number) {
+                const scalar by = Reader::number_of(*left);
+                left = std::move(right);
+                Reader::scale(*left, by);
+            } else {
+                return std::nullopt;
+            }
+        }
+        return left;
+    }
+};
 
 } // namespace ctbrowser::style::css
