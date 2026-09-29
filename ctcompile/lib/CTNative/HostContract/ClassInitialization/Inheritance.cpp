@@ -1216,10 +1216,21 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
                 shadowedGetters.insert(item.first());
             }
         }
+        // Each inherited DOM body must reach an actual leaf's private proof.
+        // ponytail: shadowed originals need independent probes before erasure.
+        if (domEntry && (selectedBaseDefinitions.size() != baseDefinitions.size() ||
+                         (!methodKeys.empty() && instances.empty() &&
+                          !baseClasses.contains(closure.getResult())))) {
+            return refuse("inherited DOM methods require an unshadowed constructed leaf");
+        }
         if (!shadowedGetters.empty() &&
-            (!cloneReceiverGetters(closure.getResult(), staticDefinitions, shadowedGetters) ||
-             !cloneReceiverMethods(closure, prototype, call, shadowedGetters,
-                                   selectedBaseDefinitions, definitions))) {
+            !cloneReceiverGetters(closure.getResult(), staticDefinitions, shadowedGetters)) {
+            return false;
+        }
+        if ((!shadowedGetters.empty() || (domEntry && !instances.empty())) &&
+            !cloneReceiverMethods(closure, prototype, call, shadowedGetters,
+                                  selectedBaseDefinitions, definitions,
+                                  domEntry && !instances.empty())) {
             return false;
         }
     }
@@ -1370,10 +1381,6 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
         }
         // Recheck inherited receiver uses against the final method table:
         // a base field write must not shadow a method added by the leaf.
-        // ponytail: inherited DOM still needs per-leaf body proofs.
-        if (domEntry && !methodKeys.empty()) {
-            return refuse("inherited DOM methods require per-leaf body proof");
-        }
         for (ctjs::SetPropertyOp definition : baseDefinitions) {
             auto fn = target(definition.getValue().getDefiningOp<ctjs::CreateClosureOp>());
             llvm::SmallVector<ctjs::GetPropertyOp> receiverReads;

@@ -530,15 +530,27 @@ def variants(contract):
             yield bool(owned), optimize, dict(contract, provider=provider)
 
 
-def prepare(args, name, source, parameters, *, entry_name=None):
+def prepare(args, name, source, parameters, *, entry_name=None, generic=False):
     js = args.work / f"{name}.js"
     ir = args.work / f"{name}.mlir"
     js.write_text(source)
-    prepare_js(args, js, args.work / f"{name}.raw.mlir", ir, complete=True)
-    entries = [symbol for symbol in FUNCTION.findall(ir.read_text()) if symbol != "_script_$0"]
+    prepare_js(
+        args,
+        js,
+        args.work / f"{name}.raw.mlir",
+        ir,
+        *(["--mlir-print-op-generic"] if generic else []),
+        complete=True,
+    )
+    symbols = (
+        re.findall(r'sym_name = "([^"]+)"', ir.read_text())
+        if generic
+        else FUNCTION.findall(ir.read_text())
+    )
+    entries = [symbol for symbol in symbols if symbol != "_script_$0"]
     if entry_name is not None:
         entries = [symbol for symbol in entries if symbol.rsplit("$", 1)[0] == entry_name]
-    elif len(FUNCTION.findall(ir.read_text())) != 2:
+    elif len(symbols) != 2:
         raise RuntimeError(f"{name}: expected one source entry and its declaration wrapper")
     if len(entries) != 1:
         raise RuntimeError(f"{name}: expected one source entry and its declaration wrapper")

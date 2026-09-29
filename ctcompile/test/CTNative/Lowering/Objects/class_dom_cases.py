@@ -990,3 +990,160 @@ F_REFUSALS.update(
 )
 CLASS_CASES.update(F_CASES)
 CLASS_REFUSALS.update(F_REFUSALS)
+
+INHERITED_CLASS = """class Base {
+    constructor(element) { this.element = element; }
+    read() { return this.element.getAttribute('x') === null; }
+  }
+  class Button extends Base { constructor(element) { super(element); } }
+  return new Button(element).read();
+"""
+INHERITED_CASES = {
+    "class_inherited_dom": (INHERITED_CLASS, "1000"),
+    "class_inherited_dom_parameter": (
+        INHERITED_CLASS.replace("read()", "read(key)", 1)
+        .replace("getAttribute('x')", "getAttribute(key)")
+        .replace(".read();", ".read('x');"),
+        "1000",
+    ),
+    "class_inherited_dom_unused": (
+        INHERITED_CLASS.replace(
+            "    read()",
+            "    unused() { this.element.setAttribute('unused-probe', 'bad'); }\n    read()",
+        ).replace(
+            "  return new Button(element).read();",
+            "  const saved = new Button(element).read();\n"
+            "  return saved && element.getAttribute('unused-probe') === null;",
+        ),
+        "1000",
+    ),
+    "class_inherited_dom_base_instance": (
+        INHERITED_CLASS.replace(
+            "  return new Button(element).read();",
+            "  const base = new Base(element);\n"
+            "  const button = new Button(element);\n"
+            "  return base.read() && button.read();",
+        ),
+        "1000",
+    ),
+    "class_inherited_dom_siblings": (
+        INHERITED_CLASS.replace(
+            "  return new Button(element).read();",
+            "  class Other extends Base { constructor(element) { super(element); } }\n"
+            "  const first = new Button(element);\n"
+            "  const second = new Other(other);\n"
+            "  return first.read() && !second.read();",
+        ),
+        "1000",
+    ),
+    "class_inherited_dom_chain": (
+        INHERITED_CLASS.replace(
+            "  return new Button(element).read();",
+            "  class Leaf extends Button { constructor(element) { super(element); } }\n"
+            "  return new Leaf(element).read();",
+        ),
+        "1000",
+    ),
+    "class_inherited_dom_field_order": (
+        INHERITED_CLASS.replace(
+            "  return new Button(element).read();",
+            "  const button = new Button(element);\n"
+            "  const saved = button.read();\n"
+            "  button.element = other;\n"
+            "  return saved && !button.read();",
+        ),
+        "1000",
+    ),
+    "class_inherited_dom_snapshot": (
+        INHERITED_CLASS.replace(
+            "    read()",
+            "    keys() { return Object.getOwnPropertyNames(this)[0]; }\n    read()",
+        ).replace(
+            "  return new Button(element).read();",
+            "  const button = new Button(element);\n"
+            "  return button.read() && button.keys() === 'element';",
+        ),
+        "1000",
+    ),
+    "class_inherited_dom_getter": (
+        INHERITED_CLASS.replace("    read()", "    static get KEY() { return 'x'; }\n    read()")
+        .replace("getAttribute('x')", "getAttribute(this.constructor.KEY)")
+        .replace(
+            "super(element); } }",
+            "super(element); } static get KEY() { return 'marker'; } }",
+        )
+        .replace(
+            "  return new Button(element).read();",
+            "  element.setAttribute('marker', 'done');\n"
+            "  const base = new Base(element);\n"
+            "  const button = new Button(element);\n"
+            "  return base.read() && !button.read();",
+        ),
+        "1000",
+    ),
+}
+INHERITED_REFUSALS = {
+    "inherited_unused_unknown_dom": INHERITED_CLASS.replace(
+        "    read()", "    unused() { this.element.unknown(); }\n    read()"
+    ),
+    "inherited_unused_parameter": INHERITED_CLASS.replace(
+        "    read()", "    unused(key) { this.element.getAttribute(key); }\n    read()"
+    ),
+    "inherited_unused_ambient": INHERITED_CLASS.replace(
+        "    read()", "    unused() { ambient(); }\n    read()"
+    ),
+    "inherited_unused_bad_dispatch": INHERITED_CLASS.replace(
+        "    read()", "    unused() { this.element = {}; this.read(); }\n    read()"
+    ),
+    "inherited_sibling_missing_call": INHERITED_CASES["class_inherited_dom_parameter"][0].replace(
+        "  return new Button(element).read('x');",
+        "  class Other extends Base { constructor(element) { super(element); } }\n"
+        "  const other = new Other(element);\n"
+        "  return new Button(element).read('x');",
+    ),
+    "inherited_shadowed_dom": INHERITED_CLASS.replace(
+        "super(element); } }", "super(element); } read() { return true; } }"
+    ),
+    "inherited_shadowed_unknown_dom": INHERITED_CLASS.replace(
+        "super(element); } }", "super(element); } read() { return true; } }"
+    ).replace("getAttribute('x')", "unknown()"),
+    "inherited_replaced_element": INHERITED_CLASS.replace(
+        "  return new Button(element).read();",
+        "  const button = new Button(element); button.read();\n"
+        "  button.element = {}; return button.read();",
+    ),
+    "inherited_bad_sibling": INHERITED_CASES["class_inherited_dom_siblings"][0].replace(
+        "new Other(other)", "new Other({})"
+    ),
+    "inherited_detached": INHERITED_CLASS.replace(
+        "  return new Button(element).read();",
+        "  const button = new Button(element); const read = button.read; return read();",
+    ),
+    "inherited_receiver_escape": INHERITED_CLASS.replace(
+        "return this.element.getAttribute('x') === null;", "return this;"
+    ),
+    "inherited_method_replaced": INHERITED_CLASS.replace(
+        "  return new Button(element).read();",
+        "  const button = new Button(element); button.read = () => true; return button.read();",
+    ),
+    "inherited_heritage_replaced": "__ctbrowser_class_heritage = () => {};\n" + INHERITED_CLASS,
+    "inherited_unconstructed_leaf": """class Base {
+    bad() { this.element.unknown(); }
+  }
+  class Leaf extends Base {}
+  class Dummy {}
+  const dummy = new Dummy();
+  return dummy instanceof Leaf;
+""",
+    "inherited_unconstructed_own_method": """class Base {}
+  class Leaf extends Base { bad() { this.element.unknown(); } }
+  class Dummy {}
+  const dummy = new Dummy();
+  return dummy instanceof Leaf;
+""",
+}
+TWO_ELEMENT_CLASSES.update(
+    {"class_inherited_dom_siblings", "class_inherited_dom_field_order", "inherited_bad_sibling"}
+)
+CLASS_CASES.update(INHERITED_CASES)
+CLASS_REFUSALS.update(INHERITED_REFUSALS)

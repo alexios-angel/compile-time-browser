@@ -1216,19 +1216,20 @@ ctjs::FuncOp classInitialization::cloneFunction(ctjs::FuncOp fn, unsigned index)
 bool classInitialization::cloneReceiverMethods(
     ctjs::CreateClosureOp leaf, ctjs::CreateObjectOp prototype, ctjs::CallOp helper,
     const llvm::StringSet<> & shadowed, llvm::SmallVectorImpl<ctjs::SetPropertyOp> & selected,
-    llvm::SmallVectorImpl<ctjs::SetPropertyOp> & definitions) {
+    llvm::SmallVectorImpl<ctjs::SetPropertyOp> & definitions, bool perLeaf) {
     // An inherited method reading an overridden or copied getter through
     // this.constructor selects other getters for this class's instances. Put a
     // copy on this class's prototype, as if the source overrode it with the
     // same body: the own-method proof checks it in this class's environment,
-    // and base instances keep the original.
+    // and base instances keep the original. DOM entries use the same copies
+    // for every inherited body, so each leaf gets its own typed method probes.
     const auto copies = receiverGetters.lookup(leaf.getResult());
     llvm::SmallVector<ctjs::SetPropertyOp> kept;
     for (ctjs::SetPropertyOp definition : selected) {
         if (!step()) { return false; }
         auto closure = definition.getValue().getDefiningOp<ctjs::CreateClosureOp>();
         auto fn = target(closure);
-        bool reads = false;
+        bool reads = perLeaf;
         if (fn) {
             const auto receiver = fn.getBody().front().getArgument(ctjs::arg_receiver);
             for (mlir::Operation * user : receiver.getUsers()) {
@@ -1251,8 +1252,10 @@ bool classInitialization::cloneReceiverMethods(
             continue;
         }
         unsigned index = 0;
+        if (perLeaf && !spendWalk(fn, cloneCost)) { return false; }
         if (!freshFunctionIndex(index)) { return false; }
-        cloneFunction(fn, index);
+        auto copy = cloneFunction(fn, index);
+        if (snapshotMethods.contains(fn)) { snapshotMethods.insert(copy); }
         mlir::OpBuilder at(helper);
         auto made = ctjs::CreateClosureOp::create(
             at, closure.getLoc(), closure.getType(), closure.getEnclosingClosure(),

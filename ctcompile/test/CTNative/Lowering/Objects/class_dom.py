@@ -353,10 +353,21 @@ def main():
     class_sources = {name: body for name, (body, _) in CLASS_CASES.items()} | CLASS_REFUSALS
     for name, body in class_sources.items():
         ir, contract = dom.prepare(
-            args, name, source(name, body), 2 if name in TWO_ELEMENT_CLASSES else 1, entry_name=name
+            args,
+            name,
+            source(name, body),
+            2 if name in TWO_ELEMENT_CLASSES else 1,
+            entry_name=name,
+            generic=name in INHERITED_CASES or name in INHERITED_REFUSALS,
         )
-        check_mutable_helper(ir.read_text())
-        if "ctjs.construct" not in ir.read_text() or '"prototype"' not in ir.read_text():
+        # Inspect custom assembly without reparsing its super-guard cf.switch.
+        text = (
+            run([args.opt, str(ir)]).stdout
+            if name in INHERITED_CASES or name in INHERITED_REFUSALS
+            else ir.read_text()
+        )
+        check_mutable_helper(text)
+        if "ctjs.construct" not in text or '"prototype"' not in text:
             raise RuntimeError(f"{name}: source lost ordinary class construction")
         if name.startswith("class_unused_cell_"):
             helpers = [
@@ -379,8 +390,18 @@ def main():
                 + (["JSON", "decodeURIComponent"] if name in M_CASES or name in M_REFUSALS else [])
                 + (["__ctbrowser_regexp"] if name in F_CASES or name in F_REFUSALS else [])
                 + (
+                    [
+                        "__ctbrowser_class_heritage",
+                        "__ctbrowser_bind_this",
+                        "__ctbrowser_init_fields",
+                    ]
+                    if name in INHERITED_CASES or name in INHERITED_REFUSALS
+                    else []
+                )
+                + (
                     ["Object"]
                     if name == "element_arm_prototype"
+                    or name == "class_inherited_dom_snapshot"
                     or name in SNAPSHOT_CASES
                     or name in SNAPSHOT_REFUSALS
                     else []
@@ -457,10 +478,22 @@ def main():
                         )
                 if name in ELEMENT_ARM_REFUSALS and ELEMENT_ARM_REFUSALS[name][1] not in diagnostic:
                     raise RuntimeError(f"{name}: element facts lost their refusal: {diagnostic}")
+                if (
+                    name
+                    in (
+                        "inherited_shadowed_dom",
+                        "inherited_shadowed_unknown_dom",
+                        "inherited_unconstructed_leaf",
+                        "inherited_unconstructed_own_method",
+                    )
+                    and "inherited DOM methods require an unshadowed constructed leaf"
+                    not in diagnostic
+                ):
+                    raise RuntimeError(f"{name}: inherited body lost its refusal: {diagnostic}")
                 refusals += 1
                 continue
             prepared.append((name, owned, ir, request))
-            if name in SNAPSHOT_CASES:
+            if name in SNAPSHOT_CASES or name == "class_inherited_dom_snapshot":
                 dom.lower(
                     args,
                     ir,
@@ -505,6 +538,7 @@ def main():
                 or name in F_CASES
                 or name in FILTER_CASES
                 or name in UTF16_CASES
+                or name in INHERITED_CASES
                 or name == "class_own_keys_clear"
             )
             dom.lower(

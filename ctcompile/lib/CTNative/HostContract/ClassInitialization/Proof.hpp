@@ -232,7 +232,8 @@ struct classInitialization {
     bool cloneReceiverMethods(ctjs::CreateClosureOp leaf, ctjs::CreateObjectOp prototype,
                               ctjs::CallOp helper, const llvm::StringSet<> & shadowed,
                               llvm::SmallVectorImpl<ctjs::SetPropertyOp> & selected,
-                              llvm::SmallVectorImpl<ctjs::SetPropertyOp> & definitions);
+                              llvm::SmallVectorImpl<ctjs::SetPropertyOp> & definitions,
+                              bool perLeaf);
     bool cloneReceiverGetters(mlir::Value leaf,
                               const llvm::StringMap<ctjs::DefineAccessorOp> & environment,
                               const llvm::StringSet<> & shadowed);

@@ -113,9 +113,9 @@ llvm::Error normalizeDOMClasses(mlir::ModuleOp module, HostContract & contract, 
     if (!proof.normalizeMethods()) { return refuse(proof.reason); }
     proof.rewrite();
     llvm::erase_if(contract.initialIntrinsics, [](const auto & name) {
-        // Heritage and super helpers remain declared until their operations
-        // have a semantic normalization; binding identity alone consumes none.
-        return name == host_detail::classDefinedIntrinsic || name == "Error";
+        // The class proof normalized these helpers after checking their
+        // identities. Any residual use must pass the complete DOM proof.
+        return host_detail::classIntrinsicArity(name) || name == "Error";
     });
     if (!proof.proveDOMMethods(contract)) { return refuse(proof.reason); }
     return llvm::Error::success();
