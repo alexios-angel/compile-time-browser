@@ -32,6 +32,15 @@ CASES = {
     .replace("@MAKE7@", "new Item(7)")
     .replace("@MAKE9@", "new Item(9)")
     .replace("@READ@", "current.read()"),
+    # Element keys compare by identity: the same parameter is the same key.
+    "element": """const state = new Map();
+  const first = {n: 7};
+  state.set(element, first);
+  const saved = state.get(element);
+  saved.n = 8;
+  element.setAttribute('x', 'done');
+  const present = state.has(element);
+  return first.n === 8 && present;""",
     # The record may be built before its Map, as class publication leaves it.
     "late-map": """const first = {n: 7};
   const state = new Map();
@@ -92,9 +101,19 @@ BAD = {
         LITERAL.replace("const first = {n: 7};", "const first = {n: 7, inner: {n: 1}};"),
         None,
     ),
-    "element-key": (
-        LITERAL.replace("state.set('x', first);", "state.set(element, first);"),
-        "native record Map requires literal String keys",
+    # A literal and an element key may not be told apart at compile time.
+    "ambiguous": (
+        LITERAL.replace("state.set('x', second);", "state.set(element, second);").replace(
+            "const current = state.get('x');",
+            "const current = state.get(element);\n  const again = state.get('x');",
+        ),
+        "native record Map read may answer a record stored under an equal key",
+    ),
+    "maybe-deleted": (
+        LITERAL.replace(
+            "state.set('x', first);", "state.set('x', first);\n  state.delete(element);"
+        ),
+        "native record Map requires present reads",
     ),
     "mixed": (
         LITERAL.replace("state.set('x', second);", "state.set('x', second);\n  state.set('y', 1);"),
@@ -149,10 +168,7 @@ def main():
             native = dom.lower(args, ir, manifest, label, optimize=optimize, max_steps=1000000)
             cpp = run([args.translate, "--mlir-to-cpp", str(native)]).stdout
             # Stack owners the Map borrows: no owning or boxed record carrier.
-            if (
-                not re.search(r"map_storage<std::string, ctn_\w+ \*>", cpp)
-                or "shared_ptr<ctn_" in cpp
-            ):
+            if not re.search(r"map_storage<[^,<>]+, ctn_\w+ \*>", cpp) or "shared_ptr<ctn_" in cpp:
                 raise RuntimeError(f"{label}: records are not borrowed stack owners\n{cpp}")
             dom.standalone(args, native, label, CHECKS, args.compilers, includes, libraries)
             executions += 4

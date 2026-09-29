@@ -102,9 +102,10 @@ void lowering::retype(ctjs::FuncOp fn) {
         if (!llvm::isa<ctjs::ValueType>(v.getType())) { return; }
         if (auto payload = nativeMapRecordPayload(v)) {
             const auto pointer = spelling(shapeAt(payload)) + " *";
+            const auto key = mapKeySpelling(llvm::cast<MapType>(typeOf(v)).getKeyType());
             recordMapPointers[v.getDefiningOp()] = pointer;
-            v.setType(ec::OpaqueType::get(
-                context, "std::shared_ptr<ctnative::map_storage<std::string, " + pointer + ">>"));
+            v.setType(ec::OpaqueType::get(context, "std::shared_ptr<ctnative::map_storage<" +
+                                                       key.str() + ", " + pointer + ">>"));
             return;
         }
         if (auto found = ownedObjectTypes.find(v); found != ownedObjectTypes.end()) {

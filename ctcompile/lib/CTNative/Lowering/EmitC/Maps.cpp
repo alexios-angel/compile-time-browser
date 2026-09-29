@@ -31,7 +31,9 @@ bool lowering::replaceMap(mlir::Operation * o) {
         const auto record = recordMapPointers.find(o);
         const std::string callee =
             record != recordMapPointers.end()
-                ? "ctnative::make_map<std::string, " + record->second + ">"
+                ? ("ctnative::make_map<" + mapKeySpelling(map.getKeyType()) + ", " +
+                   record->second + ">")
+                      .str()
             : (llvm::isa<MapType, BoolType, StrType>(map.getValueType()) ||
                isObjectValueType(map.getValueType()) ||
                !mixedMapSpelling(map.getValueType()).empty() ||
