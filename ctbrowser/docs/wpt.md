@@ -20,7 +20,8 @@ The previous Claude work is merged on `codex-ctbrowser`, through `c0034cb52`:
 `401b2af11` merges `claude-ctbrowser` at `27ebe486b` (INPUT, focus and CSS6),
 then `c0034cb52` merges `r15-html6` at `8e91ce46a`, including its final
 disabled-focus correction. Together these recover 44 implementation commits
-on integration base `6ffb9f353`. They are **not yet landed on `ctcompile-v1`**.
+on integration base `6ffb9f353`. Recovery is now **landed on `ctcompile-v1`**
+through `9f68c91c0`, including VM merge `5d8a96f2f` and the fixes below.
 
 These are the preserved Claude measurements, recounted from their JSON files,
 **not a new measurement of the combined branch**. Each compares against
@@ -42,23 +43,62 @@ The four surviving HTML merged measurements cover forms, `dom/nodes`,
 `/home/alex/.ctbrowser-auto/claude/ctbrowser/r15/{input,css6,html6}/`.
 CSS's saved post-merge build passed 182 steps and its 31 selected CTests;
 the INPUT journal records 41 focused CTests passing. No HTML CTest log
-survived locally. Fresh combined build, CTests and WPT measurements remain
-pending devbox SSH authentication. The local pinned
-`tools/format.sh --check` passed: 1,190 C++ files, 155 Python and 116 web.
+survived locally.
 
-Next checks must cover the recovered input/focus, CSSOM, forms, frame and
-DOM changes. Re-measure `css/selectors/focus-visible-028.html` after
-`db5daf22d`, and investigate the remaining select-label focus loss in
-`customizable-select/select-mouse-behavior.html`. HTML's File/Blob prototype
-separation also exposes two `structured-clone.any.js` failures: deleting
-the Blob global breaks cloning and incorrectly permits Blob transfer.
-CSS's one recorded file loss is documented in `css-conformance.md`.
+After SSH authentication was restored, fresh devbox validation on the
+combined recovery passed the explicit `ctdrive` plus 45 test-target build
+(**214/214 steps**) and all **45/45 selected CTests**, in 2.70 seconds.
+The exact target/test list and locked commands are preserved in
+`/home/alex/.ctbrowser-auto/codex/ctbrowser/artifacts/2026-09-29-claude-recovery/{focused-tests.txt,validate-committed.sh,validate-committed.log}`.
+They cover input/focus, CSSOM, forms, frames, custom elements and DOM behavior.
+Full CTest, WPT, test262 and native/corpus matrices were not run.
 
-Two original worktrees still contain uncommitted recovery work and were
-preserved untouched: `r15-vm3` (see `test262.md`) and `ctbrowser-wpt`
-(DOM wrapper ephemerons, Range exception propagation and `dom_wrapper_gc`).
-Neither is part of these merges. No expectation files changed in recovery;
-full CTest, compiler, WPT and test262 suites have not been run.
+Fresh WPT runs used `--jobs 4 --memory-mb 4096`, the `ctdrive` built in
+`projects/ctbrowser-root`, and `CTBROWSER_GL_DRIVER=deterministic`:
+
+| directory / `--filter` | subtests PASS | result |
+|---|---:|---|
+| `css/selectors` / `focus-visible-028.html` | 1/1 | PASS |
+| `html/semantics/forms` / `select-mouse-behavior.html` | 3/10 | FAIL |
+| `html/webappapis/structured-clone` / `structured-clone.any.js`, before repair | 134/152 | FAIL |
+| same structured-clone file, after `ad9de2733` | 136/152 | FAIL |
+
+`ad9de2733` retains registered host prototypes independently of mutable global
+bindings. Deleting or replacing `Blob` no longer breaks deserialization or
+permits its transfer. Both former WPT losses are fixed, with no passing
+subtests lost; six exact CTests (`structured_clone`, `vm_realms`, `frames`,
+`script_gc`, `gc_pressure`, `property_attributes`) passed after a 219-step
+build, including two new regression assertions under GC stress. Commands
+and JSON are in the same artifact directory's `validate-clone.sh`,
+`measure-before/` and `clone-after.json`. The pinned full format check passed
+1,190 C++ files, 155 Python and 116 web files.
+
+The next HTML failure is customizable-select behavior. Its select-label test
+passes in isolation, but fails in the original sequence. A diagnostic copy
+that cancels `contextmenu` passes both label subtests (4/10 total instead of
+3/10), confirming the native menu consumes the label press. The original
+WPT above remains the comparison point; picker and option state remain open. Structured clone still has 16
+failing subtests, including FileList identity. CSS's recorded flex serialization
+loss remains documented in `css-conformance.md`.
+
+The original DOMMEM worktree (`ctbrowser-wpt`) remains preserved. Its weak
+wrapper draft cannot land unchanged: collection member IDs do not trace their
+wrappers, and the saved `childNodes` getter captures an unrooted raw wrapper.
+`9f68c91c0` recovers its independent Range corrections: insertion checks
+whether removal collapsed the range, and native operations stop when a prior
+call unwound into a JavaScript handler. The small two-case Range probe moved
+from 1/2 to **2/2 PASS**; both cases also live in `ranges_wpt.cpp`.
+
+Final combined validation passed **368/368 build steps and 20/20 CTests** in
+0.87 seconds. The exact selection is the 16 tests listed in `test262.md` plus
+`structured_clone`, `ranges_wpt`, `tree_accessors` and `forms_legacy_objects`.
+The combined structured-clone run retained the identical 136 passing subtests.
+Commands and results are in the artifact directory's `validate-combined.sh`,
+`validate-combined.log`, `range-before.json`, `range-after.json` and
+`clone-combined.json`. The pinned full format check passed **1,192 C++ files,
+155 Python and 116 web files**. All builds and measurements held the shared
+devbox lock; full suites and native/corpus matrices remain unrun. See
+`test262.md` for the VM measurements and remaining language failures.
 
 ## Round thirteen and the root's fixes — 2026-09-26
 

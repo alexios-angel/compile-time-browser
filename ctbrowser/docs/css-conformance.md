@@ -19,7 +19,11 @@ at `caa4624b8`, are included in recovery merge `401b2af11` on
 directories at **1,329 → 1,388 passing files** and **40,024 → 40,182
 passing subtests**. Settings match the instrument above. The saved
 post-merge build and selected CTests passed **182/182 steps and 31/31 tests**;
-the combined recovery branch has not been remeasured or landed.
+fresh combined recovery also passed the explicit 214-step build and all
+45 selected CTests (see `wpt.md` for the exact list and commands). The targeted
+`css/selectors/focus-visible-028.html` now passes its one subtest with four
+workers, 4096 MiB and deterministic GL. The 25-directory table above remains
+historical; that selection was not rerun.
 
 The sole passing-file loss is `css/cssom/flex-serialization.html`:
 `c5f6b054a` serializes the omitted flex basis as `0%`, matching the cascade,
