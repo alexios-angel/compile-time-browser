@@ -34,7 +34,7 @@ def sources():
 var a = probe();
 """
     single = source.replace("  const twice = n => n * 2;\n", "")
-    return {
+    programs = {
         "holder": (single, 381),
         "holder-first": (
             single.replace("this.n = add(n)", "const data = e; this.n = add(n)").replace(
@@ -60,17 +60,36 @@ var a = probe();
             381,
         ),
     }
+    for name, (text, expected) in list(programs.items()):
+        implicit = name == "holder-first"
+        leaf = "" if implicit else "constructor(n) { super(n); this.tag = n + 1; }"
+        programs["inherited-" + name] = (
+            text.replace("class Item {", "class Base {").replace(
+                "  const first", f"  class Item extends Base {{ {leaf} }}\n  const first"
+            ),
+            expected + (0 if implicit else 1),
+        )
+    return programs
 
 
 def prepared_source(args, name, text):
     js = args.work / (name + ".js")
     ir = args.work / (name + ".mlir")
     js.write_text(text)
-    prepare_js(args, js, args.work / (name + ".raw.mlir"), ir, complete=True)
+    prepare_js(
+        args, js, args.work / (name + ".raw.mlir"), ir, "--mlir-print-op-generic", complete=True
+    )
     manifest = dict(
         host.manifest(args.opt, ir),
         initial_intrinsics=["__ctbrowser_class_defined", "Map", "Object"],
     )
+    if "extends" in text:
+        manifest["initial_intrinsics"] += [
+            "__ctbrowser_class_heritage",
+            "__ctbrowser_bind_this",
+            "__ctbrowser_init_fields",
+            "__ctbrowser_super_get",
+        ]
     return js, ir, manifest
 
 
@@ -124,6 +143,26 @@ def main():
         assert text != original
         _, ir, manifest = prepared_source(args, name, text)
         classes.prepare(args, name, ir, manifest, success=False)
+        refusals += 1
+    inherited = sources()["inherited-holder"][0]
+    bad = {
+        "second-leaf": inherited.replace(
+            "  const first", "  class Other extends Base {}\n  const first"
+        ),
+        "constructed-base": inherited.replace("new Item(2)", "new Base(2)"),
+        "leaf-capture": inherited.replace("this.tag = n + 1", "this.tag = add(n)"),
+        "leaf-observer": inherited.replace("this.tag = n + 1", "this.tag = this.count()"),
+        "leaf-replacement": inherited.replace("this.tag = n + 1;", "return {};"),
+        "deeper-family": inherited.replace(
+            "class Item extends Base", "class Middle extends Base {}\n  class Item extends Middle"
+        ),
+        "unknown-prefix": inherited.replace("n => n + 1", "n => unknown(n)"),
+        "base-suffix-observer": inherited.replace(publication, publication + " this.count();"),
+    }
+    for name, text in bad.items():
+        assert text != inherited
+        _, ir, manifest = prepared_source(args, "inherited-" + name, text)
+        classes.prepare(args, "inherited-" + name, ir, manifest, success=False)
         refusals += 1
     print(f"Constructor publication captures: {executions} native executions, {refusals} refusals")
 
