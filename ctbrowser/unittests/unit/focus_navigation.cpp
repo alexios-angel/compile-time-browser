@@ -161,9 +161,9 @@ void test_a_disabled_form_associated_element_is_not_focusable() {
 
 // css/selectors/focus-visible-*.html: :focus-visible after the keyboard moved
 // focus, on a field that takes typing however it got focus, and for a
-// script's focus() before the user moved focus at all - not after a press
-// moved it to anything else (focus-visible-script-focus-008), and not for a
-// script's focus() that follows such a press.
+// script's focus() before the user moved focus at all or after a key - not
+// after a press moved it to anything else (focus-visible-script-focus-008),
+// and not for a script's focus() that follows such a press.
 void test_focus_visible_follows_how_focus_came() {
     browser page{browser_options{400, 300}};
     page.load_html("<!doctype html><body style='margin:0'>"
@@ -187,7 +187,12 @@ void test_focus_visible_follows_how_focus_came() {
     CHECK_EQ(visible("typing"), std::string{"typing=1,1"});
     (void)page.run_script("d.focus();");
     CHECK_EQ(visible("after"), std::string{"after=0,1"});
-    tab(page);
+    // focus-visible-028: a key - one whose default a listener may cancel -
+    // is the keyboard's turn, so a script's focus after it shows.
+    (void)page.handle(input_event::key_press("ArrowRight"));
+    (void)page.run_script("e.focus();");
+    CHECK_EQ(visible("keyed"), std::string{"keyed=1,1"});
+    tab(page, true);
     CHECK_EQ(visible("tabbed"), std::string{"tabbed=1,1"});
 }
 

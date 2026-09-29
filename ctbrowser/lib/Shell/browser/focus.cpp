@@ -309,9 +309,9 @@ bool browser::focus(node_id id, focus_origin origin) {
 // And whether the focus is shown - :focus-visible (Selectors 4 leaves the
 // heuristic to the user agent; this is every engine's): always after the
 // keyboard moved it and on a field that takes typing; never after a pointer
-// moved it anywhere else; and for a script's focus() as the user last moved
-// focus - a click that focused nothing moved nothing, and before the user
-// has moved it at all a script's focus shows.
+// moved it anywhere else; and for a script's focus() after whatever the user
+// did last - a key shows it, a pointer that moved focus does not, and a click
+// that focused nothing or no interaction at all leaves it shown.
 bool browser::focus_update(node_id id, focus_origin origin) {
     if (id == focused_) { return false; }
     if (focused_) {

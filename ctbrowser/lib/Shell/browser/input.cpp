@@ -254,7 +254,15 @@ bool browser::handle(const input_event & event) {
         pressed_ = node_id{};
         return changed;
     }
-    case input_kind::key_down: return handle_key(event);
+    case input_kind::key_down:
+        // A key other than a modifier is the keyboard's turn: a script's
+        // focus() after it shows, whatever the key's own listeners cancelled
+        // (focus-visible-028).
+        if (!event.key.starts_with("Shift") && !event.key.starts_with("Control") &&
+            !event.key.starts_with("Alt") && !event.key.starts_with("Meta")) {
+            last_focus_by_ = focus_origin::keyboard;
+        }
+        return handle_key(event);
     case input_kind::key_up: {
         const bool cancelled = dispatch_key("keyup", event);
         // The release of a Space that made a control :active CLICKS it.

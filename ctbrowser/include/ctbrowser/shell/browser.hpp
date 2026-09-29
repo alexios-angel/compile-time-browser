@@ -629,8 +629,8 @@ private:
     bool focus(node_id id, focus_origin origin = focus_origin::script);
     bool focus_update(node_id id, focus_origin origin = focus_origin::script);
     [[nodiscard]] bool supports_keyboard_input(const read_txn & txn, node_id id);
-    // How the user last MOVED focus - a pointer or the keyboard; `script`
-    // until they have - which is what a script's focus() shows or not.
+    // The user's last say in focus - a key pressed, or a pointer that moved
+    // it; `script` until either - which is what a script's focus() shows.
     focus_origin last_focus_by_ = focus_origin::script;
     [[nodiscard]] bool focus_was_moved() const;
     [[nodiscard]] std::optional<long long> tabindex_value(const read_txn & txn, node_id id);
