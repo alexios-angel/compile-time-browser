@@ -22,6 +22,59 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Shadowed zero-argument DOM methods, 2026-09-29 UTC
+
+**Landed: 5bbc9392a**, continuing `70b728a06` / `5ae3ee876`.
+Shadowed zero-argument bodies now get temporary, collision-checked slots on each
+constructed DOM leaf. The existing source, capture, getter, snapshot and complete
+typed method proofs check those copies. Calls inside them retain ordinary leaf
+dispatch. Every instance must pass before the temporary slots are erased; the
+slots never enter the inherited method table or generated native output.
+Parameterized shadowed originals still require original-call proof.
+
+The first lowering exposed an independent field-cleanup restriction: an isolated
+object's unread element field was retained after all its reads disappeared.
+`DOMSource::forwardFields` now removes unread stores after the same complete
+own-key/use census, preserving every value producer, effect and failure.
+Aliases, dynamic/prototype keys and callable fields retain their existing checks.
+No browser implementation, runtime carrier or ownership policy changed.
+
+Focused cases cover the former shadowed-body refusal, writes that must not run,
+entry-local field effects, ordinary dispatch, separate base and leaf instances,
+constructed intermediate classes, multiple receivers, snapshots, static getters
+and two colliding source keys. Controls retain unproved captured helpers, unknown effects,
+invalid receivers/arguments, escapes, parameterized shadows and unconstructed
+leaves. The attempted base-constructor effect case remains an exact source
+refusal at its separate constructor-call gate; its entry-local counterpart checks
+the field cleanup without widening that gate.
+
+**Measured, devbox only:** `tools/remote-build.sh ctjs-opt ctjs-translate
+ctcompile-test-native-reference` passed; the final invocation was up to date.
+`class_dom.py`, narrowed by `subset.py` to **18 positive and 28 refusal sources**,
+passed **72 Node/interpreter observations, eight combined native executions and
+368 refusal checks**. GCC and pinned Clang exercised both DOM providers,
+optimization off/on and explicit/deduced printing. The existing `nm -C` gate
+found no Script/AOT symbols. Temporary proof-slot checks passed too. All eight
+tested source/test hashes match the devbox. `tools/format.sh --check` passed
+(1180 C++, 155 Python, 116 web files), and `git diff --check` passed.
+The old compiler reproduced `inherited DOM methods require an unshadowed
+constructed leaf`. The first build passed 12/12, and the field fix rebuilt 3/3.
+The String-specific emission helper also needed to accept Boolean-only class
+entries; its native-entry and forbidden-carrier checks remain. Earlier failed
+attempts and the ten-admission preflight are retained in the logs. Exact wrappers, selected cases, source/tool hashes,
+generated C++/IR and native executables are archived at
+`/home/alex/.ctbrowser-auto/codex/ctcompile/artifacts/2026-09-29-shadow-dom/`.
+Build, tests, frontier probe and evidence copy held
+`/tmp/ctbrowser-devbox-build.lock`. No CTest, full lit, WPT/test262, broad
+corpus/native matrix, Windows or sanitizer run was made; nothing was pushed.
+
+**Next measured Bootstrap boundary:** the original W/B/U/Data DOM probe now
+refuses **`class method capture is not its constructor or an inert sibling helper`**.
+The next step is the captured-value census in `methodCaptures` for that original
+program. Parameterized shadowed methods, unused captured-helper bodies, DOM
+Data-session Maps and the real Manipulator/EventHandler helpers retain their
+separate proof gaps. Full Bootstrap has not executed natively.
+
 ## Inherited DOM methods on constructed leaves, 2026-09-29 UTC
 
 **Landed: `70b728a06`**, continuing `b7bec2456` / `3aff0d5d3`.
