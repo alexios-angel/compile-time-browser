@@ -455,13 +455,7 @@ def interpreter(reference, folder, case, js):
 
 
 def contract(opt, ir):
-    observations = sorted(set(re.findall(r'ctjs.store_global "(trace\d+)"', ir.read_text())))
-    return dict(
-        host.manifest(opt, ir, undefined=("undefined",)),
-        observations=observations + ["callCount", "lastMatch"],
-        initial_intrinsics=["Map", "Array"],
-        realm_global_this=True,
-    )
+    return mutations.contract(opt, ir, ("callCount", "lastMatch"), ("Map", "Array"))
 
 
 def no_facts(report, label):
@@ -639,8 +633,9 @@ def controls(args, prepared):
     )
 
 
-def main():
-    parser = argparse.ArgumentParser()
+def parse_args(parser=None):
+    """The Node-checked provider command line; `parser` may carry extra options."""
+    parser = parser or argparse.ArgumentParser()
     parser.add_argument("--translate")
     parser.add_argument("--opt")
     parser.add_argument("--node", required=True)
@@ -651,6 +646,11 @@ def main():
     if not args.oracle_only and not (args.translate and args.opt and args.reference):
         parser.error("compiler checks require --translate, --opt and --reference")
     args.work.mkdir(parents=True, exist_ok=True)
+    return args
+
+
+def main():
+    args = parse_args()
     node, reference = args.node, args.reference
     prepared, evidence = {}, {}
     for case in cases():
