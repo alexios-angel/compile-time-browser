@@ -158,24 +158,6 @@ constexpr encoding_row encodings[] = {
 
 // --- UTF-8 ------------------------------------------------------------------
 
-void push_code_point(std::string & out, char32_t cp) {
-    if (cp < 0x80) {
-        out.push_back(static_cast<char>(cp));
-    } else if (cp < 0x800) {
-        out.push_back(static_cast<char>(0xC0 | (cp >> 6)));
-        out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
-    } else if (cp < 0x10000) {
-        out.push_back(static_cast<char>(0xE0 | (cp >> 12)));
-        out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
-        out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
-    } else {
-        out.push_back(static_cast<char>(0xF0 | (cp >> 18)));
-        out.push_back(static_cast<char>(0x80 | ((cp >> 12) & 0x3F)));
-        out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
-        out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
-    }
-}
-
 // The decoders all answer the same two things: the text, and whether an error
 // was met (which `fatal` turns into a TypeError and everything else into
 // U+FFFD, already substituted).
@@ -199,7 +181,7 @@ struct decoded {
     std::vector<std::uint8_t> sequence;
     const auto fail = [&](std::size_t back) {
         out.error = true;
-        push_code_point(out.text, 0xFFFD);
+        append_utf8(out.text, 0xFFFD);
         code_point = 0;
         seen = 0;
         needed = 0;
@@ -246,7 +228,7 @@ struct decoded {
         code_point = (code_point << 6) | (byte & 0x3Fu);
         sequence.push_back(byte);
         if (++seen == needed) {
-            push_code_point(out.text, code_point);
+            append_utf8(out.text, code_point);
             code_point = 0;
             seen = 0;
             needed = 0;
@@ -258,7 +240,7 @@ struct decoded {
         // call while streaming, and are one error when there is no next call.
         if (flush) {
             out.error = true;
-            push_code_point(out.text, 0xFFFD);
+            append_utf8(out.text, 0xFFFD);
         } else {
             out.pending = sequence;
         }
@@ -280,12 +262,12 @@ struct decoded {
         if (have_lead) {
             have_lead = false;
             if (unit >= 0xDC00 && unit <= 0xDFFF) {
-                push_code_point(out.text, 0x10000 + ((lead - 0xD800) << 10) + (unit - 0xDC00));
+                append_utf8(out.text, 0x10000 + ((lead - 0xD800) << 10) + (unit - 0xDC00));
                 continue;
             }
             // The lead was unpaired; this unit is decoded again from scratch.
             out.error = true;
-            push_code_point(out.text, 0xFFFD);
+            append_utf8(out.text, 0xFFFD);
         }
         if (unit >= 0xD800 && unit <= 0xDBFF) {
             lead = unit;
@@ -294,17 +276,17 @@ struct decoded {
         }
         if (unit >= 0xDC00 && unit <= 0xDFFF) {
             out.error = true;
-            push_code_point(out.text, 0xFFFD);
+            append_utf8(out.text, 0xFFFD);
             continue;
         }
-        push_code_point(out.text, unit);
+        append_utf8(out.text, unit);
     }
     // A lone trailing byte, or a lead surrogate with nothing after it: both
     // carry over while streaming and are an error at the end.
     if (have_lead || at < bytes.size()) {
         if (flush) {
             out.error = true;
-            push_code_point(out.text, 0xFFFD);
+            append_utf8(out.text, 0xFFFD);
         } else {
             if (have_lead) {
                 out.pending.push_back(bytes[at - 2]);
@@ -330,9 +312,9 @@ struct decoded {
         const char16_t mapped = index[byte - 0x80u];
         if (mapped == 0) {
             out.error = true;
-            push_code_point(out.text, 0xFFFD);
+            append_utf8(out.text, 0xFFFD);
         } else {
-            push_code_point(out.text, mapped);
+            append_utf8(out.text, mapped);
         }
     }
     return out;
@@ -344,7 +326,7 @@ struct decoded {
         if (byte <= 0x7F) {
             out.text.push_back(static_cast<char>(byte));
         } else {
-            push_code_point(out.text, static_cast<char32_t>(0xF780 + byte - 0x80u));
+            append_utf8(out.text, static_cast<char32_t>(0xF780 + byte - 0x80u));
         }
     }
     return out;

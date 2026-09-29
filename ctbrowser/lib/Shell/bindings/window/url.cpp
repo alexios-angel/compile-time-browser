@@ -96,22 +96,6 @@ void store_list(context & c, script::object_object & params, const form_pairs & 
     params.define(list_key, c.string(serialised), script::attr_none);
 }
 
-// A name, in the UTF-16 code units `sort()` is defined to order by - which is
-// not byte order once a supplementary character meets one above U+E000.
-[[nodiscard]] std::vector<char16_t> code_units(std::string_view text) {
-    std::vector<char16_t> out;
-    for (std::size_t at = 0; at < text.size();) {
-        const char32_t cp = decode_utf8(text, at);
-        if (cp >= 0x10000) {
-            out.push_back(static_cast<char16_t>(0xD800 + ((cp - 0x10000) >> 10)));
-            out.push_back(static_cast<char16_t>(0xDC00 + ((cp - 0x10000) & 0x3FF)));
-        } else {
-            out.push_back(static_cast<char16_t>(cp));
-        }
-    }
-    return out;
-}
-
 // One [name, value] pair as the array `entries()` yields.
 [[nodiscard]] value pair_value(context & c, const std::pair<std::string, std::string> & pair) {
     const value out = c.make_array();
@@ -342,9 +326,10 @@ void install_search_params(context & cx, const value iterator_proto) {
         script::object_object * self = branded_this(c, list_key, "URLSearchParams");
         if (self == nullptr) { return value::undefined(); }
         form_pairs list = list_of(*self);
-        // STABLE, by the names' UTF-16 code units, as §6.2 says.
+        // STABLE, by the names' UTF-16 code units, as §6.2 says - which is not
+        // byte order once a supplementary character meets one above U+E000.
         std::stable_sort(list.begin(), list.end(), [](const auto & x, const auto & y) {
-            return code_units(x.first) < code_units(y.first);
+            return wtf8_to_utf16(x.first) < wtf8_to_utf16(y.first);
         });
         store_list(c, *self, list);
         return value::undefined();

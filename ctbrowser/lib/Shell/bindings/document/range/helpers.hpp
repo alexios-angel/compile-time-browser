@@ -41,12 +41,4 @@ struct point {
     double offset = 0;
 };
 
-// UTF-16 CODE UNITS OVER UTF-8 BYTES: every CharacterData offset is one, and
-// `length` counts them, so a boundary inside "🌠" is at 1 of 2.
-[[nodiscard]] inline std::size_t units_length(std::string_view text) {
-    std::size_t n = 0;
-    for (std::size_t at = 0; at < text.size();) { n += decode_utf8(text, at) >= 0x10000 ? 2 : 1; }
-    return n;
-}
-
 } // namespace ctbrowser::shell::range_detail

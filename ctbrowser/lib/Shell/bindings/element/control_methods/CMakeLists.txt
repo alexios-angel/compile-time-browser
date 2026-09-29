@@ -13,6 +13,5 @@ target_sources(ctbrowser-shell PRIVATE
   select_and_options_helpers.cpp
   tables_and_form_owners.cpp
   tables_and_form_owners_helpers.cpp
-  text_encoding.cpp
   text_selection.cpp
 )
