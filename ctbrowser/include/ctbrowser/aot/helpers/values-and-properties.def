@@ -651,6 +651,20 @@ CT_AOT_HELPER(/* name */ ct_aot_set_index, /* ret */ int32_t,
               /* may_throw */ 1, /* may_reenter */ 1, /* is_safepoint */ 1)
 CT_AOT_COVERS(/* helper */ ct_aot_set_index, /* opcode */ set_index)
 
+/* An object literal's own data property, DEFINED (CreateDataPropertyOrThrow):
+ * no setter or read-only property up the chain intercepts it, "__proto__" is
+ * an ordinary own key, and there is no strict-mode arm because nothing is
+ * assigned. ctcompile imports op::define_data as a ctjs.set_property marked
+ * `ctjs.define_own` and lowers only that mark here.
+ * DELEGATES TO: context::define_data_property, the member VM_CASE(define_data)
+ *   and the define_own_name native call.
+ * FAILURE: Full status. A rejection is the TypeError; a proxy target's
+ *   defineProperty trap is user code. No out-parameter - a is the literal. */
+CT_AOT_HELPER(/* name */ ct_aot_define_data, /* ret */ int32_t,
+              /* params */ (struct ct_aot_frame *fr, uint64_t obj, uint64_t key, uint64_t v),
+              /* may_throw */ 1, /* may_reenter */ 1, /* is_safepoint */ 1)
+CT_AOT_COVERS(/* helper */ ct_aot_define_data, /* opcode */ define_data)
+
 /* Verified all-zero, and distinct from set_index for reasons the code
  * states: it is a SILENT NO-OP when the target is not heap_kind::array, it
  * never touches `length`, never consults a prototype, and set_index on the

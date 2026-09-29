@@ -143,3 +143,5 @@ The following sections retain the complete original text and measurements.
 - [The GC pin, and UTF-16 strings — 2026-09-26](test262/03-measured-2026-09-25.md#the-gc-pin-and-utf-16-strings--2026-09-26)
 <a id="round-thirteen--2026-09-26"></a>
 - [Round thirteen — 2026-09-26](test262/03-measured-2026-09-25.md#round-thirteen--2026-09-26)
+<a id="object-literals-define-through-an-opcode--2026-09-29"></a>
+- [Object literals define through an opcode — 2026-09-29](test262/03-measured-2026-09-25.md#object-literals-define-through-an-opcode--2026-09-29)

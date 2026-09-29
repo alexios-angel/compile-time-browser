@@ -474,6 +474,12 @@ void importInstruction(function_importer & state, mlir::Block * entry, std::size
     case op::set_index:
         ctjs::SetPropertyOp::create(into, where, reg(in.a), reg(in.b), reg(in.c));
         break;
+    case op::define_data:
+        // A LITERAL'S OWN PROPERTY: the store every native proof reads, marked
+        // so the boxed tier defines it rather than assigning it.
+        ctjs::SetPropertyOp::create(into, where, reg(in.a), reg(in.b), reg(in.c))
+            ->setAttr(ctjs::defineOwnMarker, into.getUnitAttr());
+        break;
     case op::new_object: set(in.a, ctjs::CreateObjectOp::create(into, where, value_type)); break;
     case op::new_cell:
         // IN PLACE: the bytecode boxes the register's current value and

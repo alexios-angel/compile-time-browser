@@ -539,6 +539,13 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
         while (0);
         VM_NEXT;
 
+        VM_CASE(define_data) do {
+            define_data_property(reg(in.a), reg(in.b), reg(in.c), true);
+            break;
+        }
+        while (0);
+        VM_NEXT;
+
         VM_CASE(apply)
         VM_CASE(construct_apply) do {
             // a IS BOTH THE CALLEE AND THE DESTINATION, b is the argument

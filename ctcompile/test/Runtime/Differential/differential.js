@@ -346,7 +346,9 @@ function spread(pad, xs) {
 //
 // `in` ON AN ARRAY ASKS ABOUT AN INDEX, so the key must parse as a whole
 // number AND consume the whole string: "1x" is not index 1. On a non-object it
-// is simply false rather than a throw.
+// is the TypeError of 13.10.1, which `hasItPrimitive` catches by name - the old
+// lenient runtime answered false, and the uncaught throw after it moved to the
+// specification (7a9fb5dd6) failed every arm driven after this one.
 //
 // `instanceof` HAS TWO CHAINS. A page's own class is found by walking the
 // explicit `prototype` links; an array or a function has no such link and is
@@ -356,6 +358,14 @@ function spread(pad, xs) {
 // the bug that pass fixed, so it is the case that pins the object-like guard.
 function hasIt(pad, o, k) {
     return k in o;
+}
+
+function hasItPrimitive(pad, o, k) {
+    try {
+        return hasIt(pad, o, k);
+    } catch (e) {
+        return e.name;
+    }
 }
 
 function isA(pad, x, C) {
@@ -859,7 +869,7 @@ function drive(which) {
         OUT = "" + hasIt(0, [7, 8], 0) + "/" + hasIt(0, [7, 8], "1x") + "/" + hasIt(0, [7, 8], 2) +
             "/" + hasIt(0, {
                 a: 1
-            }, "a") + "/" + hasIt(0, 5, "x");
+            }, "a") + "/" + hasItPrimitive(0, 5, "x");
     }
     if (which === 26) {
         OUT = "" + isA(0, new Point(1), Point) + "/" + isA(0, [], Array) + "/" + isA(0, 5, Number);

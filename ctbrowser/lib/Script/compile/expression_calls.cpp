@@ -977,10 +977,14 @@ void compiler_impl::compile_object(const vp::node & n, std::uint16_t dst) {
             patch_here(nonnull);
             proto().emit(instruction{op::set_proto, dst, v});
             patch_here(primitive);
-        } else if ((prop.d & 1) != 0) {
-            emit_define_own_key(dst, key, v, true);
         } else {
-            emit_define_own(dst, decode_string_literal(prop.text), v, true);
+            // DEFINED, not set (13.2.5.5 CreateDataPropertyOrThrow), by an
+            // opcode rather than a global helper a page could replace.
+            if ((prop.d & 1) == 0) {
+                key = alloc_reg();
+                emit_string(key, decode_string_literal(prop.text));
+            }
+            proto().emit(instruction{op::define_data, dst, key, v});
         }
         release_to(mark);
     }

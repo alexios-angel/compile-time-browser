@@ -902,4 +902,20 @@ bool context::define_own_property(value target, const std::string & name,
     return false;
 }
 
+// THE ONE BODY behind op::define_data, ct_aot_define_data and the
+// define_own_name native, so no tier can drift into a [[Set]].
+void context::define_data_property(value target, value key, value v, bool enumerable) {
+    if (!target.is_object_like()) { return; }
+    property_descriptor wanted;
+    wanted.has_value = wanted.has_writable = wanted.has_enumerable = true;
+    wanted.has_configurable = true;
+    wanted.held = v;
+    wanted.writable = wanted.configurable = true;
+    wanted.enumerable = enumerable;
+    const std::string name = to_string(key);
+    if (!define_own_property(target, name, wanted)) {
+        throw_error("TypeError", "Cannot redefine property: " + name);
+    }
+}
+
 } // namespace ctbrowser::script

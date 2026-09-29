@@ -127,6 +127,9 @@ enum class op : std::uint8_t {
     // `get x()` / `set x(v)`.
     define_getter, // a.<b> gets the getter in c
     define_setter, // a.<b> gets the setter in c
+    // `{k: v}`: a[b] DEFINED as c (CreateDataPropertyOrThrow), not [[Set]] -
+    // a setter or read-only `k` up the chain does not intercept a literal.
+    define_data,
 
     // --- objects and arrays
     new_object, // a = {}
