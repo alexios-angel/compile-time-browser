@@ -22,6 +22,62 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Local and child Maps in DOM entries, 2026-09-29 UTC
+
+**Landed: `f9c4d1a68`, `2c9594855`** (branch `claude-ctcompile`, merged as
+`e94534338`). Claude compiler worker (`claude-ctcompile`): the DOM-entry and
+lowering half of the Data composition; ClassInitialization stays with Codex.
+
+A `ctbrowser-dom-v1`/`-session-v1` entry refused every `new Map()`, and a
+manifest naming `Map` refused `unsupported DOM initial intrinsic identity`.
+`Map` is now a DOM initial intrinsic, and an entry may own local standard Maps
+(`DOM/Entry/Maps.cpp`): an empty construction by the declared constructor,
+`set`/`get`/`has`/`delete`/`clear` on the same instance with exact arity, and
+`size`. Keys are elements or Number/String/Boolean; payloads are primitives or,
+one level deep, fresh child Maps - a Map any of whose `set` calls stores a
+`new Map()` is a parent, every payload must be a child constructed for that one
+`set`, and its `get` results are children under the same confinement. No Map
+can be returned, stored, yielded, loop-carried or passed. A `get` result may be
+returned, truth-tested, compared with `===`, or joined in a branch with another
+primitive (`t.has(e) && t.get(e).get(i) || null`).
+
+Storage is `prepareNativeMaps`' ordinary proof on a proved clone after DOM
+preparation (`prepareDOMMaps` in `LowerToEmitC.cpp`, only when the module loads
+`Map`). Its new optional `hostTyped` predicate - `DOMEntryAnalysis::typedOperation`
+here, `nullptr` for every other caller - lets the complete DOM proof discharge
+the module-wide Map identity scan and lets presence facts survive typed browser
+calls and invocations, which cannot reach a confined Map. An unproved Map
+refuses the entry, and native admission's refusal now names the entry's
+`ctnative.not_native` reason. Element keys are `ctbrowser::element_ref` in
+`ctnative::map_storage`, compared by document and node identity.
+
+**Measured, devbox `projects/ct-ctc-tests`, focused:** slice 1 build 112/112
+and lit `native-dom`, `native-dom-map`, `native-dom-session`,
+`native-dom-data-session`, `Maps/{maps,map-proof,dom-map-keys}` 7/7; slice 2
+build 280/280 and lit those four Browser tests plus
+`native-bootstrap-dom-data-session` and all 20 `CTNative/Lowering/Maps` tests
+25/25. `native-dom-map.test` runs six entries (two of them Bootstrap Data's
+register/remove shape) under both DOM providers, optimization off/on,
+explicit/deduced printing and GCC/Clang against the real DOM, with shape,
+declaration, rebinding, five child and work-budget refusals. The merged tree
+(`ctcompile-v1` `e130f12ac` + both slices) then built 154/154 with
+`ctcompile-test-native-reference` and passed `native-dom-map` +
+`native-class-dom-data` 2/2 (520 s). Devbox sources were hash-identical to the
+commits; the whole-repo `tools/format.sh --check` with the pinned clang-format
+passed (1193 C++, 156 Python, 116 web). Not run: full lit/CTest, WPT, test262,
+sanitizers, Windows. Scripts and logs: `/tmp/claude-ctc/gate4/` and
+`~/.ctbrowser-auto/claude/ctcompile/artifacts/2026-09-29-gate4/`.
+
+**Measured Bootstrap frontier with `Map` declared** (Codex's unchanged
+`frontier.py` on `2c9594855`): `class method capture is not its constructor or
+an inert sibling helper: fn$2 / ctjs.construct` - Data's `set` capturing
+`t = new Map`, because `Proof.cpp` skips the class Map census in DOM mode and
+`methodCaptures` refuses a captured Map when `domEntry`. Next: enable the
+closed-mode Map machinery (census, `normalizeCapturedMapHelpers`,
+`normalizeNestedMaps`) in DOM class mode, then make the DOM-entry proof accept
+what it hands over - the component instance as a child payload and the
+`console.error` conflict arm are the expected gaps.
+
 ## Constructor Data registration through element fields, 2026-09-29 UTC
 
 **Landed: `25c5d2bbe`**, continuing `3151d223d`. Terminal constructor
