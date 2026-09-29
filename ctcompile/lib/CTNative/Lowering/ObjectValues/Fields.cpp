@@ -1,16 +1,11 @@
 #include "../Admission/Admission.h"
 #include "../EmitC/Emitter.h"
+#include "llvm/ADT/StringExtras.h"
 
 namespace ctcompile::ctnative::lowering_detail {
 namespace {
 std::string fieldName(llvm::StringRef name) {
-    constexpr char hex[] = "0123456789abcdef";
-    std::string out = "field_";
-    for (unsigned char byte : name.bytes()) {
-        out += hex[byte >> 4];
-        out += hex[byte & 15];
-    }
-    return out;
+    return "field_" + llvm::toHex(name, /*LowerCase=*/true);
 }
 } // namespace
 
