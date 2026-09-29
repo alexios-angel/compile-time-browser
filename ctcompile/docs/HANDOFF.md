@@ -22,6 +22,55 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Unused DOM method helpers and Data capture diagnosis, 2026-09-29 UTC
+
+**Landed: `6d2b7c649`**, continuing `5bbc9392a` / `ae2b2470e`.
+The exact former `SHADOWED_HELPER` refusal now emits native C++. Removing an
+independently probed method from another proof copy also retires its private
+helper dependencies when no symbolic or numeric closure reference remains.
+Each method's own copy retains those calls and receives the complete typed
+proof with its actual inputs. Final cleanup occurs only after every method
+probe passes. Originally unused helpers retain the existing independent body
+proof. The bounded dependency scans also handle helper chains and shared callers.
+No browser implementation, runtime carrier or ownership rule changed.
+
+Six source admissions cover the original helper, a transitive chain, surviving
+method and entry callers, multiple instances and a shadowed write that must not
+execute. Eight new refusal sources retain invalid receivers, mutable or escaped
+helpers, unknown effects and unrelated unused bodies. Existing shadowed-method,
+inherited-method and unused-body controls also ran.
+
+**Measured, devbox only:** `tools/remote-build.sh ctjs-opt ctjs-translate
+ctcompile-test-native-reference` passed **4/4 build steps**. The existing
+`class_dom.py` harness restricted by `subset.py` to **11 positive and 13 refusal
+sources** passed **44 Node/interpreter observations, eight combined native
+executions and 228 refusal checks**. GCC and pinned Clang exercised both DOM
+providers, optimization off/on and explicit/deduced printing. The existing
+`nm -C` gate found no Script/AOT symbols; no temporary proof slots remained.
+All three changed source/test hashes match the devbox. `tools/format.sh --check`
+passed (1180 C++, 155 Python, 116 web files), and `git diff --check` passed.
+
+The exact command was `flock /tmp/ctbrowser-devbox-build.lock bash
+/tmp/codex-dom-helper/check.sh subset`; it held the lock through the build,
+focused harness, authentic Bootstrap probe and evidence copy. Scripts, logs,
+hashes and generated C++/IR/binaries are archived at
+`/home/alex/.ctbrowser-auto/codex/ctcompile/artifacts/2026-09-29-dom-helper/`.
+The initial baseline wrapper rejected its extra oracle flags before invoking
+the compiler; no fresh baseline result is claimed. The exact former source's
+refusal remains in the preceding shadow-DOM archive's `check-smoke.log`.
+No CTest, full lit, WPT/test262, broad corpus/native matrix, Windows or sanitizer
+run was made; nothing was pushed.
+
+**Next measured Bootstrap boundary:** the unchanged original W/B/U/Data probe
+still refuses `class method capture is not its constructor or an inert sibling
+helper`, now pinpointed as **`fn$2 / ctjs.construct`**. This is Data's `set` helper
+capturing the local Map `t`. Ordinary DOM class mode deliberately skips the Map
+census; the separate DOM Data-session proof currently grants element-key
+observations, not the combined element fields and DOM operations needed here.
+The next ownership task is to compose those existing proofs without bypassing
+either. Parameterized shadowed originals and real Manipulator/EventHandler
+helpers remain separate gaps. Full Bootstrap has not executed natively.
+
 ## Shadowed zero-argument DOM methods, 2026-09-29 UTC
 
 **Landed: 5bbc9392a**, continuing `70b728a06` / `5ae3ee876`.
