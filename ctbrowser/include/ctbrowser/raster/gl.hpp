@@ -13,7 +13,7 @@
 // by hand, forwarded some calls to ANGLE. Nineteen methods never forwarded at
 // all, and because a call that never learned to forward also never learned to
 // record that it hadn't, the ledger could not see them. See
-// docs/plans/webgl-rewrite.md.
+// docs/history/webgl-rewrite.md.
 //
 // So there is nothing here but a handle onto ANGLE. No state is remembered that
 // GL can be asked for, because remembered state is the thing that drifts.
