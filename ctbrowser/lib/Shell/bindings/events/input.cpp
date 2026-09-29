@@ -602,6 +602,9 @@ value dom_bindings::make_mouse_event(context & cx, std::string_view type, node_i
     object->set("composed", value::boolean(true));
     object->set("clientX", value::number(input.x));
     object->set("clientY", value::number(input.y));
+        // A scroller removed while it scrolled never finishes its scroll
+        // (scrollend-event-not-fired-after-removing-scroller.tentative.html).
+        if (at && !is_connected(at)) { continue; }
     object->set("pageX", value::number(input.x));
     object->set("pageY", value::number(input.y));
     object->set("offsetX", value::number(input.x));

@@ -844,3 +844,6 @@ private:
 
 #include "browser/access_inline.hpp"
 #include "browser/geometry_inline.hpp"
+    // Whether the page cancelled that press - then it moved no selection and
+    // gives nothing focus.
+    bool press_cancelled_ = false;

@@ -185,6 +185,45 @@ void test_a_press_counts_the_node_text_not_the_folded_box() {
     CHECK_EQ(logged(page, "end="), std::string{"end=16,16"});
 }
 
+// selection/canvas-drag.html: a press and a drag on a canvas select nothing;
+// modifying-selection-with-primary-mouse-button.tentative.html: a press whose
+// mousedown the page cancelled moves neither the selection nor the focus.
+void test_a_canvas_or_a_cancelled_press_selects_nothing() {
+    browser page{browser_options{400, 300}};
+    page.load_html("<!doctype html><body style='margin:0'><p id=p style='margin:0'>words</p>"
+                   "<canvas id=c style='display:block;width:200px;height:100px'></canvas>"
+                   "<input id=field></body>");
+    page.frame();
+    (void)page.handle(input_event::mouse_move_to(10, 40));
+    (void)page.handle(input_event::mouse_down_at(10, 40));
+    (void)page.handle(input_event::mouse_move_to(190, 40));
+    (void)page.handle(input_event::mouse_up_at(190, 40));
+    (void)page.run_script("console.log('canvas=' + getSelection().isCollapsed);");
+    CHECK_EQ(logged(page, "canvas="), std::string{"canvas=true"});
+
+    (void)page.run_script("field.focus(); getSelection().collapse(p.firstChild, 2);"
+                          "addEventListener('mousedown', e => e.preventDefault());");
+    (void)page.handle(input_event::mouse_move_to(1, 8));
+    (void)page.handle(input_event::mouse_down_at(1, 8));
+    (void)page.handle(input_event::mouse_up_at(1, 8));
+    (void)page.run_script("console.log('cancelled=' + getSelection().anchorOffset + ',' +"
+                          " document.activeElement.id);");
+    CHECK_EQ(logged(page, "cancelled="), std::string{"cancelled=2,field"});
+}
+
+// scrollend-event-not-fired-after-removing-scroller.tentative.html: a scroller
+// removed while it scrolls never finishes, so it hears no scrollend.
+void test_a_removed_scroller_hears_no_scrollend() {
+    browser page{browser_options{400, 300}};
+    page.load_html(page_source);
+    page.frame();
+    (void)page.run_script("box.addEventListener('scrollend', note);"
+                          "box.onscroll = () => box.remove();"
+                          "box.scrollTo(0, 50);");
+    settle(page);
+    CHECK_EQ(seen(page), std::string{"seen="});
+}
+
 // scrollend-event-fired-after-sequence-of-scrolls.tentative.html: a drag that
 // pans cancels the finger's pointer once, and its scrolls end in ONE
 // scrollend, after the lift.
@@ -211,6 +250,8 @@ int main() {
     test_a_panning_drag_cancels_its_pointer_and_ends_once();
     test_a_drag_selects_in_the_page_selection();
     test_a_press_counts_the_node_text_not_the_folded_box();
+    test_a_canvas_or_a_cancelled_press_selects_nothing();
+    test_a_removed_scroller_hears_no_scrollend();
     test_wheel_cancelability_and_mousewheel();
     test_wheel_scrolls_the_container_and_scrollend_follows();
     test_a_touch_is_pointer_then_touch_events();

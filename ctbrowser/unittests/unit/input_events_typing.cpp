@@ -133,11 +133,34 @@ void test_the_keyboard_clicks_a_focused_control() {
     CHECK_EQ(enter, std::string{"enter=1,true"});
 }
 
+// checkable-active-space-key-being-disabled.html: a control its own keydown
+// listener disabled is neither :active while Space is held nor clicked by it.
+void test_a_control_disabled_by_its_keydown_is_not_pressed() {
+    browser page{browser_options{400, 300}};
+    page.load_html(R"(<!doctype html><body><input type=checkbox id=c>
+        <script>document.getElementById('c').addEventListener('keydown',
+            e => { e.target.disabled = true; });</script></body>)");
+    page.frame();
+    (void)page.run_script("document.getElementById('c').focus();");
+    (void)page.handle(input_event::key_press("Space"));
+    (void)page.run_script("console.log('held=' + document.querySelector('input:active'));");
+    (void)page.handle(input_event::key_release("Space"));
+    (void)page.run_script("console.log('after=' + document.getElementById('c').checked);");
+    std::string held, after;
+    for (const std::string & line : page.bindings().console_output()) {
+        if (line.starts_with("held=")) { held = line; }
+        if (line.starts_with("after=")) { after = line; }
+    }
+    CHECK_EQ(held, std::string{"held=null"});
+    CHECK_EQ(after, std::string{"after=false"});
+}
+
 } // namespace
 
 int main() {
     test_the_keyboard_clicks_a_focused_control();
     test_typing_fires_beforeinput_input_and_change();
     test_select_arrow_keys_fire_input_and_change();
+    test_a_control_disabled_by_its_keydown_is_not_pressed();
     REPORT("input_events_typing");
 }

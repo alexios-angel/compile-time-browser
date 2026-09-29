@@ -16,6 +16,14 @@ constexpr std::ptrdiff_t wheel_lines = 3;
 // was told - a driver's `scroll` of N pixels moves N (scrollend-event-fired-
 // to-document asserts the distance).
 constexpr float notch_pixels = 100.0f;
+// A REPLACED element - a picture, a canvas, a frame - holds no text of its
+// own, and a press on one starts no text selection (selection/canvas-drag.html).
+[[nodiscard]] bool replaced(const read_txn & txn, node_id id) {
+    if (!id || txn.element_ns(id) != node_ns::html) { return false; }
+    const std::string_view name = txn.local_name(id);
+    return name == "canvas" || name == "img" || name == "video" || name == "audio" ||
+           name == "iframe" || name == "embed" || name == "object";
+}
 // How long a resting wheel keeps its transaction's target. UI Events leaves it
 // to the user agent; half a second is inside what the engines use.
 constexpr double wheel_transaction_ms = 500;
@@ -162,13 +170,15 @@ bool browser::handle(const input_event & event) {
             return true;
         }
         pressed_ = hit_test(event.x, event.y);
-        (void)dispatch_mouse("mousedown", pressed_, event);
+        // A press the page CANCELLED - its pointerdown or its mousedown - has
+        // no default action: no selection moves and no focus changes.
+        press_cancelled_ = dispatch_mouse("mousedown", pressed_, event);
         // A press begins a SELECTION. Inside an editable control that is a
         // selection of ITS text, anchored where the click landed; outside
         // one it is a page selection. A control had neither: clicking in a
         // textarea put the caret wherever it already was and dragging did
         // nothing at all.
-        {
+        if (!press_cancelled_) {
             const auto txn = doc_->read();
             const node_id control = control_ancestor(pressed_);
             const control_kind kind = kind_of(txn, control);
@@ -191,7 +201,7 @@ bool browser::handle(const input_event & event) {
                 }
                 restart_caret_blink();
                 mark(dirty::paint);
-            } else if (kind == control_kind::none) {
+            } else if (kind == control_kind::none && !replaced(txn, pressed_)) {
                 const text_position at = position_at(event.x, event.y);
                 selection_anchor_ = at;
                 selection_focus_ = at;
@@ -450,13 +460,18 @@ bool browser::handle_key(const input_event & event) {
     // button at once.
     if (focused_) {
         const control_kind kind = kind_of(doc_->read(), focused_);
-        if (event.key == "Space" && (kind == control_kind::checkbox ||
-                                     kind == control_kind::radio || kind == control_kind::button)) {
+        // Not one a keydown listener has just disabled: it would be :active
+        // with nothing to end the press (checkable-active-space-key-being-
+        // disabled.html).
+        const bool live = !is_disabled(focused_);
+        if (event.key == "Space" && live &&
+            (kind == control_kind::checkbox || kind == control_kind::radio ||
+             kind == control_kind::button)) {
             space_active_ = focused_;
             (void)set_state(focused_, state_active, true);
             return true;
         }
-        if (event.key == "Enter" && kind == control_kind::button) {
+        if (event.key == "Enter" && live && kind == control_kind::button) {
             (void)dispatch_mouse("click", focused_, input_event{});
             return true;
         }
