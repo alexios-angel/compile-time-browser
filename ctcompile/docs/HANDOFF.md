@@ -22,6 +22,84 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Fixed element fields in Map-retained DOM records, 2026-09-29 UTC
+
+**Landed: `3e03cfc49`.** Ordinary DOM and DOM session class preparation now reuse
+fixed-field forwarding for explicitly declared element inputs. A method-free,
+noninherited record may retain a constructor-initialized element field while
+stored in a literal-String-key Map. Reads through its direct or saved alias
+forward the exact input; the scalar record remains an entry-frame value borrowed
+by its Map. Saved aliases retain the original record across deletion and
+replacement. DOM operations use the existing public browser API.
+
+The existing proof still requires a unique formal store, complete actual and
+alias checks, and no field mutation, methods, inheritance or escape. The final
+DOM typed body/effect proof remains mandatory. DOMData family validation remains
+exclusive to that provider. The same declared-input helper also serves direct
+publication formal keys and nested Map routing; their original key, caller and
+one-live-input alias checks remain. Publication field-key reads are unchanged.
+Independent read-only audit found no must-fix. Bare local fields already forwarded
+through DOMSource; this increment specifically composes retained-record fields.
+
+Two complete new sources reproduce baseline refusals; a third checks distinct
+documents and aliased inputs after record replacement. Twelve new source controls
+cover mutation, duplicate stores, missing/mixed actuals, constructor replacement,
+input observation, escape/capture/coercion, an unused instance method and a valid
+derived constructor. Missing declared inputs remain refusal controls.
+
+**Measured, devbox only:** `tools/remote-build.sh ctjs-opt ctjs-translate
+ctcompile-test-native-reference` passed a 13-step rebuild. Both baseline refusals
+match `3e9817b30` implementation hashes; both post-build admissions passed. All
+10 positive and 36 negative final lowering preflights passed. The exact lit filter
+`^ctcompile :: CTNative/Browser/(native-dom-publication|native-class-dom-alias)[.]test$`
+passed **2/2 in 244.00 s**: publication checked **160 native executions / 260
+refusals**, and existing alias controls checked **32 / 23**. Direct calls to
+`native_class_dom_data.published_element_fields` and `published_field_registration`
+added **24 / 19** and **16 / 15**, respectively. Total: **232 native executions,
+317 refusals and 21 source checks against both Node and the VM**. Nine existing
+provider proofs also passed. Baseline/preflight checks and the Bootstrap probes
+below are separate from these totals.
+
+GCC and pinned Clang, optimization off/on, both ordinary DOM providers, explicit/
+deduced C++, generated-source/`nm` no-Script checks and borrowed scalar-record
+checks pass. The pair's emitted record contains only `ctnative::js_num n`; its
+reads use the correct original element input. Six local/devbox source hashes
+match. `tools/format.sh --check` passed (1194 C++, 161 Python, 116 web files), as
+did `git diff --check`. The whole run held one devbox lock and exited zero.
+No isolated performance measurement is claimed.
+
+Exact commands are in `/tmp/codex-element-fields/{explore,final,collect}.sh`.
+Scripts, logs, hashes, both read-only audits and the **16,561,303-byte** evidence
+archive are preserved at
+`/home/alex/.ctbrowser-auto/codex/ctcompile/artifacts/2026-09-29-element-fields/`.
+Full lit/CTest, broad corpus/native matrices, WPT/test262, Windows and sanitizers
+were not run for this increment. No browser implementation changed or push made.
+
+**Next native/Bootstrap boundary:** the earlier partial W/B/U/Data probe still
+refuses the own-key snapshot receiver with Map declared, and `fn$3 /
+ctjs.construct` capture without Map. A new probe preserves the original vendor
+prefix from `const t = new Map,` through just before `const z`, plus the complete
+`class U extends B` through just before its click-listener installation. This
+includes H/M/F, P and transition helpers; no helpers are stubbed or startup
+listeners installed. With a nodeType-1 element and empty dataset, **Node and the
+VM agree** on retained input, exact `bs.button` Data registration, empty config,
+and on/off toggle effects. This is one additional source and two oracle runs.
+Native compilation refuses **`class method capture is not its constructor or an
+inert sibling helper: fn$43 / ctjs.constant`**; its IR identifies the transition
+helper `b`, retained through the dormant `_queueCallback` method. `closed_frontier.py`
+preserves the source, contract, diagnostics and oracle results. Full native
+Bootstrap has not executed.
+
+Remaining obligations include that helper capture/reachability proof, W -> B -> U
+publication, method-used/mutable `_element`, receiver-specific computed `DATA_KEY`
+and config ownership. The closed prefix also eagerly initializes the event-name
+`Set`, which lacks DOM-contract support; this run does not attribute its observed
+refusal to Set. Fixed-field erasure cannot cover `dispose` clearing `_element` or
+instance methods reading it. Peer late-Map/element-key record commits `6d49cd0b0`
+and `bc70c33d8` (combined branch `4122d4c9f`) remain separately owned and unmerged
+at this checkpoint; land their verified branch after this handoff release, then
+remeasure the complete vendor Data composition.
+
 ## Conditional reads through saved DOM records, 2026-09-29 UTC
 
 **Landed: `a379b152e`.** Closure lifting now admits a nested constant field read
