@@ -130,10 +130,6 @@ struct reflected_attribute {
 inline constexpr std::string_view named_node_map_owner_key =
     CTBROWSER_SYMBOL_KEY("sym:ctbrowser:attributes-owner");
 
-// The one namespace URI dom/xml.hpp does not name, because nothing upstream of
-// the bindings distinguishes MathML.
-inline constexpr std::string_view mathml_namespace = "http://www.w3.org/1998/Math/MathML";
-
 // "SHADOW-INCLUDING ROOT", DOM 4.4. Up until there is no parent, and then -
 // with `composed` - across the one edge a parent pointer cannot express: from a
 // shadow root to its host, and on up the light tree that host sits in.
