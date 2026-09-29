@@ -340,8 +340,8 @@ int main() {
          "in",
          {{"hasIt", 0u, &ctc_hasIt}, {}},
          "an INDEX against a name - `1x` is not index 1, and 2 is past the end - and the "
-         "non-object arm, which is false rather than a throw",
-         "true/false/false/true/false"},
+         "non-object arm, which is the TypeError of 13.10.1 rather than false",
+         "true/false/false/true/TypeError"},
         {26u,
          "instanceof",
          {{"isA", 0u, &ctc_isA}, {}},
