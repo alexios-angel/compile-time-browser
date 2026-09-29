@@ -1565,19 +1565,20 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         if (!work.step(2 * uint64_t(sourceCost))) {
             return error("DOM custom iterator budget exhausted");
         }
-        for (const auto & uses : {mlir::SymbolTable::getSymbolUses(candidate.getOperation()),
-                                  mlir::SymbolTable::getSymbolUses(&candidate.getBodyRegion())}) {
-            if (!uses) { return error("DOM iterator sibling helper has unknown symbol uses"); }
-            for (const auto & use : *uses) {
-                if (!spend()) { return error("DOM custom iterator budget exhausted"); }
-                auto body = mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
-                    use.getUser(), use.getSymbolRef());
-                auto found = helperBodies.find(body);
-                if (found != helperBodies.end() &&
-                    !llvm::is_contained(helpers[found->second].calls, use.getUser())) {
-                    return error("DOM iterator sibling helper has an unproved symbolic observer");
-                }
-            }
+        // A failed step leaves no budget, so error() reports exhaustion for it.
+        if (auto stop = host_detail::forEachSymbolUse(
+                candidate, true, spend,
+                [&](const mlir::SymbolTable::SymbolUse & use,
+                    ctjs::FuncOp body) -> std::optional<bool> {
+                    auto found = helperBodies.find(body);
+                    if (found != helperBodies.end() &&
+                        !llvm::is_contained(helpers[found->second].calls, use.getUser())) {
+                        return false;
+                    }
+                    return std::nullopt;
+                })) {
+            return error(*stop ? "DOM iterator sibling helper has unknown symbol uses"
+                               : "DOM iterator sibling helper has an unproved symbolic observer");
         }
     }
     for (auto & helper : helpers) {

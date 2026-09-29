@@ -119,23 +119,22 @@ bool DOMSource::bindConstantArguments(ctjs::CreateClosureOp closure, ctjs::FuncO
         auto module = target->getParentOfType<mlir::ModuleOp>();
         if (!target.isPrivate() || creations.lookup(*functionIndex(target)) != 0) { return true; }
         if (!step(2 * uint64_t(operationCount))) { return false; }
-        for (const auto & uses : {mlir::SymbolTable::getSymbolUses(module.getOperation()),
-                                  mlir::SymbolTable::getSymbolUses(&module.getBodyRegion())}) {
-            if (!uses) { return true; }
-            for (const auto & use : *uses) {
-                if (!step()) { return false; }
-                if (mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
-                        use.getUser(), use.getSymbolRef()) != target) {
-                    continue;
-                }
-                auto call = llvm::dyn_cast<ctjs::CallDirectOp>(use.getUser());
-                if (!call || call.getTarget() != target || !undefined(call.getCalleeValue()) ||
-                    !undefined(call.getNewTarget()) ||
-                    call.getArgs().size() + ctjs::implicit_arguments != body.getNumArguments()) {
-                    return true;
-                }
-                invocations.push_back(call.getArgs());
-            }
+        if (auto stop = host_detail::forEachSymbolUse(
+                module, true, [&] { return step(); },
+                [&](const mlir::SymbolTable::SymbolUse & use,
+                    ctjs::FuncOp callee) -> std::optional<bool> {
+                    if (callee != target) { return std::nullopt; }
+                    auto call = llvm::dyn_cast<ctjs::CallDirectOp>(use.getUser());
+                    if (!call || call.getTarget() != target || !undefined(call.getCalleeValue()) ||
+                        !undefined(call.getNewTarget()) ||
+                        call.getArgs().size() + ctjs::implicit_arguments !=
+                            body.getNumArguments()) {
+                        return true;
+                    }
+                    invocations.push_back(call.getArgs());
+                    return std::nullopt;
+                })) {
+            return *stop;
         }
     }
     llvm::SmallVector<llvm::SmallVector<ctjs::StringAttr>> inputs(body.getNumArguments());
