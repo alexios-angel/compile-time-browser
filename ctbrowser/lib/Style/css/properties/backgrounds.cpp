@@ -53,16 +53,6 @@ struct layer_context {
     return std::string_view{ts.pool}.substr(first.text, last.text + last.length - first.text);
 }
 
-[[nodiscard]] std::optional<std::vector<std::string>> words_of(
-    const token_stream & ts, const std::vector<std::size_t> & layer) {
-    std::vector<std::string> words;
-    for (const std::size_t i : layer) {
-        if (ts.tokens[i].type != token_type::ident) { return std::nullopt; }
-        words.push_back(ascii_lower_copy(ts.text_of(ts.tokens[i])));
-    }
-    return words;
-}
-
 [[nodiscard]] std::optional<std::string> repeat_style(std::span<const std::string> words) {
     if (words.empty() || words.size() > 2) { return std::nullopt; }
     if (words.size() == 1) {

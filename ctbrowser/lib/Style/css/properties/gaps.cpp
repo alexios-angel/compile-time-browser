@@ -31,14 +31,6 @@ using gap_list = std::vector<gap_item>;
 constexpr std::string_view line_styles =
     "none hidden dotted dashed solid double groove ridge inset outset";
 
-[[nodiscard]] std::vector<std::string_view> words_of(std::string_view text) {
-    std::vector<std::string_view> out;
-    for (const std::string_view part : split_top_level(text, html_whitespace)) {
-        if (!trim(part, html_whitespace).empty()) { out.push_back(trim(part, html_whitespace)); }
-    }
-    return out;
-}
-
 // The list, each value through `one`; nullopt when it is not one.
 template <typename One>
 [[nodiscard]] std::optional<gap_list> parse_list(std::string_view text, One && one) {
