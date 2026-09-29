@@ -22,6 +22,65 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## The global object as `this` in the closed world, 2026-09-29 UTC
+
+**Landed: `998a49159`, `30259e727`** (branch `claude-ctcompile`, merged as `92e761983`).
+Claude compiler worker (`claude-ctcompile`), beside Codex's DOM class rungs.
+
+`--ctjs-resolve-globals` resolved `f` in
+`function f() { return 1; } this.f = function () { return 2; }; f();`, and its
+`call_direct` answered 1 where the VM answers 2 (claude-ctbrowser's 01:18Z
+report). Clause 5 followed the global object only where the program loads it by
+name. It now also follows it as `this`:
+
+- the top level's receiver, which a classic script runs with;
+- the receiver of every body a call the pass can name enters: a plain call's
+  undefined receiver is the global object in a sloppy body (OrdinaryCallBindThis
+  in the VM's `load_this` and, since `c8b4ef2df`, `ct_aot_this`), and the IR
+  records no strictness;
+- an arrow's, through `create_closure`'s enclosing receiver;
+- the receiver of every function no `create_closure` in the module builds - one
+  created inside a refused body, where an arrow inherits that body's `this`.
+
+A named write through a receiver binds that name per name, with a row only when
+the program already loads or stores the name. The importer's refused-body
+summary (`Bytecode/Support.cpp`) now follows the object through the body's
+registers - a forward dataflow over the bytecode edges, handlers given every
+state - so named and computed writes count only through a register that may
+hold it, and handing it on (argument, stored value, return, yield, throw, cell)
+makes the body opaque.
+
+**Documented hole, measured rather than closed.** A caller the pass cannot name
+can still enter a function with the global object as `this`: the Shell enters
+timer and animation-frame callbacks with `global_this`
+(`lib/Shell/bindings/window/callbacks.cpp`), natives pass undefined, `f.call(x)`
+passes x, and a refused body's plain calls are not in the IR. That is the same
+class as `document.defaultView`. Watching every receiver instead was built and
+measured: 533 of 1,804 test programs lose names (675 in all), `differential.js`
+59 to 0.
+
+**Measured, devbox `projects/ct-ctc-tests`, focused:** `ctjs-opt ctjs-translate`
+build PASS with source hashes matching; lit CTJS (Transforms, IR, Import except
+`literal-helper-identity`) plus `closure-refusals` 16/16; `literal-helper-identity`
+RESULT and CAPTURE FileCheck PASS (its VALUE lines run the VM reference and were
+not rerun); `ctcompile_native_claims_{,default_}p5` and `_phaser` PASS. The
+`--ctjs-resolve-globals` output of every JavaScript program in `ctcompile/test`
+plus the three vendor bundles, against the tip without the change: 1,763 of
+1,806 byte-identical, 30 untranslated on both sides, 13 changed - eight of the
+nine new cases (`this-field` is the unchanged positive control),
+`closure-refusals` `arrowthis` (a plain call returning its `this`), the two
+`literal-helper-identity` helper rows, and p5/phaser refused-body rows (their
+resolution was already 0). Resolved/rewrote/closed totals 4,607/6,407/4,550 to
+4,596/6,397/4,539. The VM reference answers `r=2` on the repro, the generator and the
+hand-on probes; the base build resolves `f` on every probe. On an arrow inside
+a sloppy generator it throws instead (its `this` is undefined, not the global
+object) - journaled for the browser worker. Pinned
+clang-format clean. Not run: full lit/CTest, WPT, test262, sanitizers.
+
+**Next:** closing the documented hole needs strictness in the IR plus a
+per-function "who can enter this" proof (a `.call` model, host entry points);
+it is not on Bootstrap's path, whose factory is strict and resolves no names.
+
 ## Unobserved DOM method parameters, 2026-09-29 UTC
 
 **Landed: `d81ddb48a`**, continuing `6d2b7c649` / `b869e4c14`.
