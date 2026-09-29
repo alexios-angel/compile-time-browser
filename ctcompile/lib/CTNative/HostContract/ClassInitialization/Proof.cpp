@@ -400,7 +400,7 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
         }
     }
     if (!proveHeritage(contract)) { return false; }
-    if (!dropUnreadStatics()) { return false; }
+    if (!expandStaticFactories() || !dropUnreadStatics()) { return false; }
     if (!maps.empty()) {
         llvm::SmallVector<unsigned> requiredHelpers;
         for (ctjs::CallOp call : calls) {

@@ -243,6 +243,9 @@ struct classInitialization {
                        llvm::ArrayRef<ctjs::GetPropertyOp> reads, ctjs::CallOp helper);
 
     bool proveHeritage(const HostContract & contract);
+    // Exact local `C.k(args)` whose static body builds through `this`: that
+    // body at the call site, with C for `this` - StaticFactories.cpp.
+    bool expandStaticFactories();
     // Static methods no read reaches never run; remove them before any proof.
     bool dropUnreadStatics();
     // A dropped source call `holder.key(...)`: its slot may have lost its last call.
