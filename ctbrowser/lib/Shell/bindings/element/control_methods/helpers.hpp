@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../internal.hpp"
+#include <ctbrowser/script/utf16.hpp>
 #include <ctbrowser/shell/page/input_types.hpp>
 
 namespace ctbrowser::shell::detail {
@@ -25,10 +26,6 @@ enum flag : unsigned {
     bad_input = 1u << 8,
     custom_error = 1u << 9,
 };
-
-std::size_t units_before(std::string_view text, std::size_t bytes);
-std::size_t units_length_of(std::string_view text);
-std::size_t bytes_before(std::string_view text, std::size_t units);
 
 // FileList objects (data_transfer.cpp): a list over the Files given, whether a
 // value is one, and the Files it holds.

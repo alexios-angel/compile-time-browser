@@ -88,7 +88,7 @@ using namespace detail;
 // without going through the getter that refreshes it. So every mutation
 // refreshes the list cached on its receiver, when there is one.
 void dom_bindings::refresh_cached_rules(context & c, std::span<const std::size_t> rules) {
-    script::object_object * self = as_object(c.current_this());
+    script::object_object * self = object_of(c.current_this());
     if (self == nullptr) { return; }
     if (const value * held = self->find(rules_key)) { refresh_rule_list(c, *held, rules); }
 }
@@ -101,7 +101,7 @@ void dom_bindings::declaration_accessor(context & cx, script::object_object * on
             // ~290 property accessors are reachable from, and a sheet with
             // three thousand rules in it would otherwise build three
             // thousand of them for a page that never reads one.
-            script::object_object * self = as_object(c.current_this());
+            script::object_object * self = object_of(c.current_this());
             if (self == nullptr) { return value::undefined(); }
             if (const value * held = self->find(style_key)) {
                 refresh_declaration_object(c, *held);

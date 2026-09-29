@@ -42,10 +42,6 @@ const std::string media_slot = std::string{script::private_key_prefix} + "mql:me
 const std::string matches_slot = std::string{script::private_key_prefix} + "mql:matches";
 const std::string document_slot = std::string{script::private_key_prefix} + "mql:document";
 
-[[nodiscard]] script::object_object * object_of(value v) {
-    return v.is_object() ? static_cast<script::object_object *>(v.as_heap()) : nullptr;
-}
-
 [[nodiscard]] std::string slot_string(context & cx, value list, const std::string & slot) {
     auto * object = object_of(list);
     const value * held = object == nullptr ? nullptr : object->find(slot);
@@ -215,11 +211,7 @@ void dom_bindings::install_media_queries(context & cx) {
                 ->define("length", value::number(1), script::attr_configurable);
         }
     }
-    auto * ctor =
-        cx.allocate<script::native_object>("MediaQueryList", [](context & c, std::span<value>) {
-            c.throw_error("TypeError", "Illegal constructor");
-            return value::undefined();
-        });
+    auto * ctor = cx.allocate<script::native_object>("MediaQueryList", illegal_constructor);
     ctor->define("prototype", media_query_list_prototype_, script::attr_none);
     // The interface object inherits EventTarget's as its prototype inherits
     // EventTarget.prototype (Web IDL §3.7.1), and takes no arguments.

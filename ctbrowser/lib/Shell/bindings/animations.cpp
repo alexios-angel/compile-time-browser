@@ -761,11 +761,7 @@ void dom_bindings::install_animations(context & cx) {
             }
             return c.string(animations_[i].name);
         });
-        auto * sub_ctor =
-            cx.allocate<script::native_object>(name, [](context & c, std::span<value>) {
-                c.throw_error("TypeError", "Illegal constructor");
-                return value::undefined();
-            });
+        auto * sub_ctor = cx.allocate<script::native_object>(name, illegal_constructor);
         sub_ctor->define("prototype", value::object(sub), script::attr_none);
         sub->define("constructor", value::object(sub_ctor), script::attr_builtin);
         sub->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string(name),

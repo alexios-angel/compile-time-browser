@@ -51,10 +51,6 @@ constexpr int headers_received = 2;
 constexpr int loading = 3;
 constexpr int done = 4;
 
-[[nodiscard]] script::object_object * object_of(value v) {
-    return v.is_object() ? static_cast<script::object_object *>(v.as_heap()) : nullptr;
-}
-
 [[nodiscard]] int number_slot(script::object_object & self, const std::string & slot) {
     const value * held = self.find(slot);
     return held == nullptr ? 0 : static_cast<int>(context::to_number(*held));
@@ -629,11 +625,8 @@ void dom_bindings::install_xhr(context & cx) {
     }
     cx.define_builtin_global("XMLHttpRequest", value::object(ctor));
 
-    auto * target_ctor = cx.allocate<script::native_object>(
-        "XMLHttpRequestEventTarget", [](context & c, std::span<value>) {
-            c.throw_error("TypeError", "Illegal constructor");
-            return value::undefined();
-        });
+    auto * target_ctor =
+        cx.allocate<script::native_object>("XMLHttpRequestEventTarget", illegal_constructor);
     target_ctor->define("prototype", value::object(target_proto), script::attr_none);
     target_proto->define("constructor", value::object(target_ctor), script::attr_builtin);
     cx.define_builtin_global("XMLHttpRequestEventTarget", value::object(target_ctor));

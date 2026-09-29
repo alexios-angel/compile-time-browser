@@ -6,6 +6,7 @@
 #include <charconv>
 #include <utility>
 
+#include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/raster/svg.hpp>
 
 namespace ctbrowser::shell {
@@ -21,10 +22,6 @@ namespace {
 // on it - so changing the function changes no observable behaviour.
 [[nodiscard]] std::uint64_t content_hash(std::string_view text) noexcept {
     return boost::hash<std::string_view>{}(text);
-}
-
-[[nodiscard]] bool is_space(char c) noexcept {
-    return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f';
 }
 
 // The value of `name` in the FIRST tag of the document, which for a well-formed
@@ -44,12 +41,12 @@ namespace {
          at += name.size()) {
         // A name match has to be a whole attribute name, or `width` matches
         // inside `stroke-width` and a stroke decides the document's size.
-        if (at == 0 || !(is_space(tag[at - 1]))) { continue; }
+        if (at == 0 || !html_whitespace.contains(tag[at - 1])) { continue; }
         std::size_t after = at + name.size();
-        while (after < tag.size() && is_space(tag[after])) { ++after; }
+        while (after < tag.size() && html_whitespace.contains(tag[after])) { ++after; }
         if (after >= tag.size() || tag[after] != '=') { continue; }
         ++after;
-        while (after < tag.size() && is_space(tag[after])) { ++after; }
+        while (after < tag.size() && html_whitespace.contains(tag[after])) { ++after; }
         if (after >= tag.size()) { return {}; }
         const char quote = tag[after];
         if (quote != '"' && quote != '\'') { return {}; } // unquoted: not worth it
@@ -66,16 +63,15 @@ namespace {
 // natural size, and reading the 100 as pixels turns a full-width banner into a
 // stamp.
 [[nodiscard]] float absolute_length(std::string_view text) {
-    while (!text.empty() && is_space(text.front())) { text.remove_prefix(1); }
-    while (!text.empty() && is_space(text.back())) { text.remove_suffix(1); }
+    text = trim(text, html_whitespace);
     if (text.empty()) { return 0; }
 
     float value = 0;
     const auto [stop, err] = std::from_chars(text.data(), text.data() + text.size(), value);
     if (err != std::errc{} || value <= 0) { return 0; }
 
-    std::string_view unit = text.substr(static_cast<std::size_t>(stop - text.data()));
-    while (!unit.empty() && is_space(unit.front())) { unit.remove_prefix(1); }
+    const std::string_view unit =
+        trim(text.substr(static_cast<std::size_t>(stop - text.data())), html_whitespace);
     if (unit.empty() || unit == "px") { return value; }
     return 0; // %, em, and everything else needs a context this does not have
 }
@@ -99,7 +95,7 @@ svg_natural scan_svg_natural(std::string_view source) {
     const char * at = box.data();
     const char * stop = box.data() + box.size();
     while (found < 4 && at < stop) {
-        while (at < stop && (is_space(*at) || *at == ',')) { ++at; }
+        while (at < stop && (html_whitespace.contains(*at) || *at == ',')) { ++at; }
         const auto [next, err] = std::from_chars(at, stop, numbers[found]);
         if (err != std::errc{}) { break; }
         at = next;

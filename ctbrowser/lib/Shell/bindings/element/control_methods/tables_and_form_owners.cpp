@@ -66,8 +66,7 @@ void dom_bindings::install_control_tables(context & cx) {
     // WebIDL `long`: ToInt32 of whatever was passed, -1 when absent.
     const auto index_arg = [](context & c, std::span<value> a) {
         if (a.empty()) { return -1LL; }
-        const long long unsigned_value = to_uint32(c.to_number_value(a[0]));
-        return unsigned_value >= 2147483648LL ? unsigned_value - 4294967296LL : unsigned_value;
+        return static_cast<long long>(number_to_int32(c.to_number_value(a[0])));
     };
     // "insert a row/cell at index" over a list: -1 or the length appends,
     // anything else goes before the index-th member; out of range is an

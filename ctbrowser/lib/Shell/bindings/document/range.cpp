@@ -8,7 +8,6 @@ namespace ctbrowser::shell {
 using namespace detail;
 using namespace range_detail;
 using range_detail::point;
-using range_detail::slot;
 
 namespace {
 
@@ -103,7 +102,9 @@ void dom_bindings::install_range(context & cx) {
     const auto length_of = [type_of, is_character_data](spot at) -> double {
         if (at.is_attr()) { return 0; }
         if (is_character_data(at)) {
-            return static_cast<double>(units_length(at.owner->doc_->read().text(at.id)));
+            // UTF-16 code units, as every CharacterData offset is: a boundary
+            // inside "🌠" is at 1 of 2.
+            return static_cast<double>(script::utf16::length(at.owner->doc_->read().text(at.id)));
         }
         if (type_of(at) == type_doctype) { return 0; }
         return static_cast<double>(at.owner->doc_->read().children(at.id).size());

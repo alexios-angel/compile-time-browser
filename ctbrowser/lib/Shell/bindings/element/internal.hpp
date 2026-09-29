@@ -130,10 +130,6 @@ struct reflected_attribute {
 inline constexpr std::string_view named_node_map_owner_key =
     CTBROWSER_SYMBOL_KEY("sym:ctbrowser:attributes-owner");
 
-// The one namespace URI dom/xml.hpp does not name, because nothing upstream of
-// the bindings distinguishes MathML.
-inline constexpr std::string_view mathml_namespace = "http://www.w3.org/1998/Math/MathML";
-
 // "SHADOW-INCLUDING ROOT", DOM 4.4. Up until there is no parent, and then -
 // with `composed` - across the one edge a parent pointer cannot express: from a
 // shadow root to its host, and on up the light tree that host sits in.
@@ -208,10 +204,6 @@ std::string remove_stored_declaration(script::object_object & held, context & cx
 // The reflection table, for the file that builds the interface prototypes.
 // Defined in reflection.cpp.
 [[nodiscard]] std::span<const reflected_attribute> reflection_rows();
-
-// ToUint32, for the numeric reflection types and for CharacterData offsets.
-// Defined in reflection.cpp.
-[[nodiscard]] long long to_uint32(double x);
 
 // The rules for parsing integers, HTML 2.4.4.1: false when there is no integer
 // there at all. Defined in reflection.cpp.

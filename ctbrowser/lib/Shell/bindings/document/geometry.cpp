@@ -145,23 +145,6 @@ std::vector<node_id> dom_bindings::elements_from_point(double x, double y, bool 
 // translation, which the fragments already carry.
 namespace {
 
-struct interface_pair {
-    script::native_object * ctor;
-    script::object_object * proto;
-};
-
-[[nodiscard]] interface_pair make_interface(context & cx, const char * name,
-                                            script::native_fn construct, value base = {}) {
-    auto * proto = cx.allocate<script::object_object>();
-    if (base.is_object()) { proto->prototype = base; }
-    auto * ctor = cx.allocate<script::native_object>(name, std::move(construct));
-    ctor->define("prototype", value::object(proto), script::attr_none);
-    proto->define("constructor", value::object(ctor), script::attr_builtin);
-    proto->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string(name), script::attr_configurable);
-    cx.define_builtin_global(name, value::object(ctor));
-    return {ctor, proto};
-}
-
 [[nodiscard]] value prototype_of_global(context & cx, const char * name) {
     const value ctor = cx.global(name);
     if (!ctor.is_kind(script::heap_kind::native)) { return value::undefined(); }
@@ -169,7 +152,7 @@ struct interface_pair {
     return proto == nullptr ? value::undefined() : *proto;
 }
 
-[[nodiscard]] script::object_object * self_object(context & c) {
+[[nodiscard]] script::object_object * this_object(context & c) {
     const value self = c.current_this();
     return self.is_object() ? static_cast<script::object_object *>(self.as_heap()) : nullptr;
 }
@@ -261,9 +244,9 @@ void dom_bindings::install_geometry_interfaces(context & cx) {
         };
     };
     const interface_pair point_ro =
-        make_interface(cx, "DOMPointReadOnly", point_ctor("DOMPointReadOnly"));
-    const interface_pair point =
-        make_interface(cx, "DOMPoint", point_ctor("DOMPoint"), value::object(point_ro.proto));
+        make_interface(cx, "DOMPointReadOnly", point_ctor("DOMPointReadOnly"), {}, std::nullopt);
+    const interface_pair point = make_interface(cx, "DOMPoint", point_ctor("DOMPoint"),
+                                                value::object(point_ro.proto), std::nullopt);
     for (const auto & [pair, interface] :
          {std::pair{point_ro, "DOMPointReadOnly"}, std::pair{point, "DOMPoint"}}) {
         set_method(cx, *pair.ctor, "fromPoint", [interface](context & c, std::span<value> args) {
@@ -273,7 +256,7 @@ void dom_bindings::install_geometry_interfaces(context & cx) {
         });
     }
     set_method(cx, *point_ro.proto, "toJSON", [](context & c, std::span<value>) {
-        script::object_object * self = self_object(c);
+        script::object_object * self = this_object(c);
         auto * out = static_cast<script::object_object *>(c.make_object().as_heap());
         for (const char * name : {"x", "y", "z", "w"}) {
             out->set(name, value::number(own_number(self, name)));
@@ -281,7 +264,7 @@ void dom_bindings::install_geometry_interfaces(context & cx) {
         return value::object(out);
     });
     set_method(cx, *point_ro.proto, "matrixTransform", [](context & c, std::span<value>) {
-        script::object_object * self = self_object(c);
+        script::object_object * self = this_object(c);
         return point_with(c, "DOMPoint", own_number(self, "x"), own_number(self, "y"),
                           own_number(self, "z"), own_number(self, "w"));
     });
@@ -298,9 +281,9 @@ void dom_bindings::install_geometry_interfaces(context & cx) {
         };
     };
     const interface_pair rect_ro =
-        make_interface(cx, "DOMRectReadOnly", rect_ctor("DOMRectReadOnly"));
-    const interface_pair rect_rw =
-        make_interface(cx, "DOMRect", rect_ctor("DOMRect"), value::object(rect_ro.proto));
+        make_interface(cx, "DOMRectReadOnly", rect_ctor("DOMRectReadOnly"), {}, std::nullopt);
+    const interface_pair rect_rw = make_interface(cx, "DOMRect", rect_ctor("DOMRect"),
+                                                  value::object(rect_ro.proto), std::nullopt);
     for (const auto & [pair, interface] :
          {std::pair{rect_ro, "DOMRectReadOnly"}, std::pair{rect_rw, "DOMRect"}}) {
         set_method(cx, *pair.ctor, "fromRect", [interface](context & c, std::span<value> args) {
@@ -313,7 +296,7 @@ void dom_bindings::install_geometry_interfaces(context & cx) {
     // derived edge NaN.
     const auto edge = [](bool far, bool vertical) {
         return [far, vertical](context & c, std::span<value>) {
-            script::object_object * self = self_object(c);
+            script::object_object * self = this_object(c);
             const double a = own_number(self, vertical ? "y" : "x");
             const double b = a + own_number(self, vertical ? "height" : "width");
             if (std::isnan(a) || std::isnan(b)) { return value::number(a + b); }
@@ -325,7 +308,7 @@ void dom_bindings::install_geometry_interfaces(context & cx) {
     define_getter(cx, *rect_ro.proto, "bottom", edge(true, true));
     define_getter(cx, *rect_ro.proto, "left", edge(false, false));
     set_method(cx, *rect_ro.proto, "toJSON", [](context & c, std::span<value>) {
-        script::object_object * self = self_object(c);
+        script::object_object * self = this_object(c);
         auto * out = static_cast<script::object_object *>(c.make_object().as_heap());
         for (const char * name : {"x", "y", "width", "height"}) {
             out->set(name, value::number(own_number(self, name)));
@@ -337,15 +320,17 @@ void dom_bindings::install_geometry_interfaces(context & cx) {
     });
 
     // DOMQuad: four points, `fromRect`, `fromQuad`, `getBounds`, `toJSON`.
-    const interface_pair quad =
-        make_interface(cx, "DOMQuad", [](context & c, std::span<value> args) {
+    const interface_pair quad = make_interface(
+        cx, "DOMQuad",
+        [](context & c, std::span<value> args) {
             const auto corner = [&](std::size_t i) {
                 const value init = i < args.size() ? args[i] : value::undefined();
                 return point_with(c, "DOMPoint", number_of(c, init, "x"), number_of(c, init, "y"),
                                   number_of(c, init, "z"), number_of(c, init, "w", 1));
             };
             return quad_with(c, corner(0), corner(1), corner(2), corner(3));
-        });
+        },
+        {}, std::nullopt);
     set_method(cx, *quad.ctor, "fromRect", [](context & c, std::span<value> args) {
         const value init = args.empty() ? value::undefined() : args[0];
         return make_dom_quad(c, rect{static_cast<float>(number_of(c, init, "x")),

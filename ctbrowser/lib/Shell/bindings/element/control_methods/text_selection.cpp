@@ -29,8 +29,8 @@ void dom_bindings::install_control_text_selection(context & cx) {
         text_selection out;
         const std::size_t lo = std::min(held.caret, held.selection);
         const std::size_t hi = std::max(held.caret, held.selection);
-        out.start = units_before(held.value, lo);
-        out.end = units_before(held.value, hi);
+        out.start = script::utf16::units_before(held.value, lo);
+        out.end = script::utf16::units_before(held.value, hi);
         const value direction = helpers.slot_of(c, b, id, "__selectionDirection");
         if (direction.is_string()) { out.direction = c.to_string(direction); }
         if (out.start == out.end) {
@@ -48,7 +48,7 @@ void dom_bindings::install_control_text_selection(context & cx) {
         {
             const auto txn = b->doc_->read();
             control_state & held = b->forms_->state_of(txn, *b->atoms_, id);
-            const std::size_t length = units_length_of(held.value);
+            const std::size_t length = script::utf16::length(held.value);
             const auto clamp = [&](double x) {
                 if (std::isnan(x) || x < 0) { return std::size_t{0}; }
                 return std::min(static_cast<std::size_t>(x), length);
@@ -58,8 +58,8 @@ void dom_bindings::install_control_text_selection(context & cx) {
             if (e < s) { s = e; }
             const text_selection before = selection_of(c, txn, b, id);
             if (direction != "forward" && direction != "backward") { direction = "none"; }
-            const std::size_t s_bytes = bytes_before(held.value, s);
-            const std::size_t e_bytes = bytes_before(held.value, e);
+            const std::size_t s_bytes = script::utf16::locate(held.value, s).byte;
+            const std::size_t e_bytes = script::utf16::locate(held.value, e).byte;
             if (direction == "backward") {
                 held.caret = s_bytes;
                 held.selection = e_bytes;
@@ -175,7 +175,7 @@ void dom_bindings::install_control_text_selection(context & cx) {
                 {
                     const auto txn = b->doc_->read();
                     if (!selection_applies(txn, b, id)) { return value::undefined(); }
-                    length = units_length_of(b->forms_->state_of(txn, *b->atoms_, id).value);
+                    length = script::utf16::length(b->forms_->state_of(txn, *b->atoms_, id).value);
                 }
                 set_selection(c, b, id, 0, static_cast<double>(length), "none");
                 return value::undefined();
@@ -208,7 +208,7 @@ void dom_bindings::install_control_text_selection(context & cx) {
                     current = selection_of(c, txn, b, id);
                     text = b->forms_->state_of(txn, *b->atoms_, id).value;
                 }
-                const std::size_t length = units_length_of(text);
+                const std::size_t length = script::utf16::length(text);
                 std::size_t start = current.start;
                 std::size_t end = current.end;
                 std::string mode = "preserve";
@@ -229,10 +229,10 @@ void dom_bindings::install_control_text_selection(context & cx) {
                     c.throw_error("TypeError", "setRangeText: `end` is required with `start`");
                     return value::undefined();
                 }
-                const std::size_t start_bytes = bytes_before(text, start);
-                const std::size_t end_bytes = bytes_before(text, end);
+                const std::size_t start_bytes = script::utf16::locate(text, start).byte;
+                const std::size_t end_bytes = script::utf16::locate(text, end).byte;
                 text.replace(start_bytes, end_bytes - start_bytes, replacement);
-                const std::size_t new_length = units_length_of(replacement);
+                const std::size_t new_length = script::utf16::length(replacement);
                 const std::size_t new_end = start + new_length;
                 std::size_t s = current.start;
                 std::size_t e = current.end;

@@ -48,18 +48,16 @@ void dom_bindings::install_window(context & cx) {
     // document.open() (no-new-global.window.js). None is constructible. Their
     // members stay own properties of the instances - Location's are
     // [LegacyUnforgeable], which is where WebIDL puts them anyway.
-    const auto illegal = [](context & c, std::span<value>) {
-        c.throw_error("TypeError", "Illegal constructor");
-        return value::undefined();
-    };
-    const value storage_proto = value::object(make_interface(cx, "Storage", illegal).proto);
-    const value navigator_proto = value::object(make_interface(cx, "Navigator", illegal).proto);
+    const value storage_proto =
+        value::object(make_interface(cx, "Storage", illegal_constructor).proto);
+    const value navigator_proto =
+        value::object(make_interface(cx, "Navigator", illegal_constructor).proto);
     static_cast<script::object_object *>(location_.as_heap())->prototype =
-        value::object(make_interface(cx, "Location", illegal).proto);
+        value::object(make_interface(cx, "Location", illegal_constructor).proto);
     // `locationbar` and its five siblings: a BarProp each, `visible` true -
     // this is not a popup (7.2.2.4).
     {
-        auto * bar_prop = make_interface(cx, "BarProp", illegal).proto;
+        auto * bar_prop = make_interface(cx, "BarProp", illegal_constructor).proto;
         bar_prop->define_accessor(
             "visible",
             native(cx, "visible", [](context &, std::span<value>) { return value::boolean(true); }),

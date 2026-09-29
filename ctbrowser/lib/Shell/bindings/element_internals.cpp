@@ -111,10 +111,6 @@ constexpr std::string_view aria_elements[] = {"ariaActiveDescendantElement", "ar
                                               "ariaErrorMessageElements",    "ariaFlowToElements",
                                               "ariaLabelledByElements",      "ariaOwnsElements"};
 
-[[nodiscard]] script::object_object * object_of(value v) {
-    return v.is_object() ? static_cast<script::object_object *>(v.as_heap()) : nullptr;
-}
-
 [[nodiscard]] value slot(script::object_object & obj, std::string_view key) {
     const value * held = obj.find(std::string{key});
     return held == nullptr ? value::undefined() : *held;
@@ -511,11 +507,7 @@ void dom_bindings::install_element_internals(context & cx,
     states_proto->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string("CustomStateSet"),
                          script::attr_configurable);
     custom_state_set_prototype_ = value::object(states_proto);
-    auto * states_ctor =
-        cx.allocate<script::native_object>("CustomStateSet", [](context & c, std::span<value>) {
-            c.throw_error("TypeError", "Illegal constructor");
-            return value::undefined();
-        });
+    auto * states_ctor = cx.allocate<script::native_object>("CustomStateSet", illegal_constructor);
     states_ctor->set("prototype", custom_state_set_prototype_);
     states_proto->define("constructor", value::object(states_ctor), script::attr_builtin);
     cx.define_builtin_global("CustomStateSet", value::object(states_ctor));
@@ -586,11 +578,7 @@ void dom_bindings::install_element_internals(context & cx,
 
     proto->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string("ElementInternals"),
                   script::attr_configurable);
-    auto * ctor =
-        cx.allocate<script::native_object>("ElementInternals", [](context & c, std::span<value>) {
-            c.throw_error("TypeError", "Illegal constructor");
-            return value::undefined();
-        });
+    auto * ctor = cx.allocate<script::native_object>("ElementInternals", illegal_constructor);
     ctor->set("prototype", element_internals_prototype_);
     proto->define("constructor", value::object(ctor), script::attr_builtin);
     cx.define_builtin_global("ElementInternals", value::object(ctor));

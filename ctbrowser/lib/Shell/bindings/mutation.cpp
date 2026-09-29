@@ -686,11 +686,7 @@ void dom_bindings::install_mutation_observer(context & cx) {
     // --- makes that silently false.
     auto * record_proto = cx.allocate<script::object_object>();
     mutation_record_prototype_ = value::object(record_proto);
-    auto * record_ctor =
-        cx.allocate<script::native_object>("MutationRecord", [](context & c, std::span<value>) {
-            c.throw_error("TypeError", "Illegal constructor");
-            return value::undefined();
-        });
+    auto * record_ctor = cx.allocate<script::native_object>("MutationRecord", illegal_constructor);
     record_ctor->define("prototype", mutation_record_prototype_, script::attr_none);
     record_proto->define("constructor", value::object(record_ctor), script::attr_builtin);
     cx.define_builtin_global("MutationRecord", value::object(record_ctor));

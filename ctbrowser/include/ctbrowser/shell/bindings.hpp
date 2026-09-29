@@ -11,41 +11,74 @@ struct control_helpers;
 // Detailed contracts: docs/reference/header-contracts/shell-bindings-*.md
 class dom_bindings {
 public:
+    // `on_mutation` is how the browser learns it has to re-run the pipeline.
+    // Taking it as a callback rather than a browser reference keeps this
+    // testable on its own and keeps the dependency pointing one way.
     dom_bindings(document & doc, atom_table & atoms, canvas_store & canvases, form_store & forms,
-                 std::function<void()> on_mutation, std::function<void(node_id)> on_focus);
+                 std::function<void()> on_mutation, std::function<void(node_id)> on_focus)
+        : doc_(&doc), atoms_(&atoms), canvases_(&canvases), forms_(&forms),
+          on_mutation_(std::move(on_mutation)), on_focus_(std::move(on_focus)) {}
 
     ~dom_bindings();
 
     void observe_resources(asset_registry & assets, image_store & images);
 
-    void allow_network(bool allowed);
+    // Whether fetch() may open a socket when the registry misses. Off makes a
+    // run hermetic, which is what a test wants and what CTBROWSER_NETWORK=0
+    // selects.
+    void allow_network(bool allowed) { network_allowed_ = allowed; }
 
-    [[nodiscard]] bool reload_requested() const noexcept;
+    // NAVIGATION, as state rather than as an action. `location.reload()` cannot
+    // reload the page where it is called: the reload tears down this context and
+    // the program still running inside it. So it records the request and the
+    // browser drains it between ticks.
+    [[nodiscard]] bool reload_requested() const noexcept { return reload_requested_; }
     void observe_location(std::string href, std::string hash);
 
     void observe_focus(node_id id);
     void set_alert_hook(std::function<void(const std::string &)> hook);
 
-    void set_activate_hook(std::function<void(node_id)> hook);
+    // `element.click()` does two things: it dispatches a click event, and - if
+    // nothing called preventDefault - it performs the element's DEFAULT ACTION.
+    // The second half belongs to the browser (following a link, toggling a
+    // checkbox, submitting a form), so it comes in as a hook for the same reason
+    // on_mutation does: the dependency points one way.
+    void set_activate_hook(std::function<void(node_id)> hook) { on_activate_ = std::move(hook); }
 
     bool refresh_wrappers();
 
-    void observe_layout(const layout::fragment * fragments);
+    // Layout results, so offsetWidth and friends can answer. Set by the
+    // browser after each layout; null until the first one, and the natives
+    // return 0 then rather than pretending.
+    void observe_layout(const layout::fragment * fragments) { fragments_ = fragments; }
 
-    void observe_styles(const style::style_map * styles);
+    // The cascade's output and the box tree, for getComputedStyle. Three sources
+    // are needed rather than one because `style::computed_style` is not a
+    // computed style: it holds only the declarations that MATCHED, as text, with
+    // no inheritance and no initial values. So a keyword comes from the style
+    // map, a resolved length from the box tree, and a used size from the
+    // fragment - see lib/Shell/bindings/computed_style/.
+    void observe_styles(const style::style_map * styles) { styles_ = styles; }
 
-    void observe_boxes(const layout::box_node * boxes);
+    void observe_boxes(const layout::box_node * boxes) { boxes_ = boxes; }
     void observe_viewport(int width, int height);
 
     using loaded_frame = binding_detail::loaded_frame;
 
-    [[nodiscard]] std::vector<loaded_frame> loaded_frames() const;
+    [[nodiscard]] std::vector<loaded_frame> loaded_frames() const {
+        std::vector<loaded_frame> out;
+        for (const frame_entry & entry : frames_) {
+            if (entry.bindings != nullptr) { out.push_back({entry.element, entry.bindings}); }
+        }
+        return out;
+    }
 
-    [[nodiscard]] document & owned_document() noexcept;
+    [[nodiscard]] document & owned_document() noexcept { return *doc_; }
 
-    void advance_clock(double ms);
+    // Milliseconds since the page loaded, for performance.now and the timers.
+    void advance_clock(double ms) { now_ms_ += ms; }
 
-    [[nodiscard]] double now_ms() const noexcept;
+    [[nodiscard]] double now_ms() const noexcept { return now_ms_; }
 
     void register_roots(context & cx);
 
@@ -119,14 +152,21 @@ public:
     std::function<void(node_id form)> reset_form_;
     void record_first_paint();
 
-    void announce_load(node_id id, bool ok);
+    // A resource the BROWSER loaded for an element - a `<link rel=stylesheet>`,
+    // a `<style>`, a `<script>` - is announced at that element on the next
+    // tick, the way an `<iframe>`'s load is: `load`, or `error` when the bytes
+    // were not found. Queued rather than fired because the page's own script
+    // registers the listener after the element has already been processed.
+    void announce_load(node_id id, bool ok) { frame_loads_.push_back(pending_frame{id, ok, true}); }
 
-    [[nodiscard]] std::size_t pending_timers() const noexcept;
+    [[nodiscard]] std::size_t pending_timers() const noexcept { return timers_.size(); }
     [[nodiscard]] double next_callback_ms() const;
 
     [[nodiscard]] std::size_t pending_animation_frames() const noexcept;
 
-    [[nodiscard]] const std::string & callback_error() const noexcept;
+    // The first fault a timer or animation-frame callback raised. Empty when
+    // the page's callbacks are running cleanly.
+    [[nodiscard]] const std::string & callback_error() const noexcept { return callback_error_; }
     [[nodiscard]] std::vector<std::string> unforwarded_gl_calls() const;
 
     [[nodiscard]] const std::vector<std::string> & console_output() const noexcept;
@@ -443,9 +483,18 @@ private:
 
     void install_custom_elements(context & cx);
 
-    [[nodiscard]] dom_bindings & primary() noexcept;
+    // WHERE THE DEFINITIONS LIVE: the primary's vector, whichever registry
+    // took them. A document a page made (createHTMLDocument, DOMParser) has
+    // no browsing context and so no registry (HTML 4.13.3) - it never
+    // upgrades a candidate - but an element adopted into it keeps its
+    // definition, and that definition is found here.
+    [[nodiscard]] dom_bindings & primary() noexcept {
+        return primary_ == nullptr ? *this : *primary_;
+    }
 
-    [[nodiscard]] const dom_bindings & primary() const noexcept;
+    [[nodiscard]] const dom_bindings & primary() const noexcept {
+        return primary_ == nullptr ? *this : *primary_;
+    }
     [[nodiscard]] custom_element_registry & registry_of(value receiver);
     // A new registry record on the primary, for `object`.
     custom_element_registry & make_registry(dom_bindings * document, value object);
@@ -513,7 +562,9 @@ private:
                                          value & thrown);
     void sync_custom_element_roots();
 
-    [[nodiscard]] bool has_browsing_context() const noexcept;
+    // A document with a browsing context has a registry: the page's, and a
+    // frame's once frames.cpp asked for it.
+    [[nodiscard]] bool has_browsing_context() const noexcept { return registry_ != nullptr; }
 
     std::vector<custom_element_definition> custom_definitions_; // the primary's
     flat_map<std::uint64_t, custom_element_state> custom_elements_;
@@ -556,7 +607,16 @@ public:
     [[nodiscard]] static std::string resolve_sheet_href(std::string_view base,
                                                         std::string_view reference);
 
-    void set_author_styles_hook(std::function<void(std::string)> hook);
+    // WHAT THE CASCADE WOULD HAVE TO BE TOLD. insertRule/deleteRule/replaceSync
+    // change the object model; nothing reaches `style::engine` from here,
+    // because the browser loads the author sheet exactly once per page
+    // (`author_sheet_loaded_`) and re-running the cascade is its business, not
+    // the bindings'. So the bindings publish the new text and the browser
+    // decides: with no hook installed the object model is still correct and the
+    // RENDER simply does not move. See bindings/stylesheets/internal.hpp.
+    void set_author_styles_hook(std::function<void(std::string)> hook) {
+        on_author_styles_ = std::move(hook);
+    }
     [[nodiscard]] std::string author_style_text();
 
 private:
@@ -596,9 +656,17 @@ private:
     void style_sheets_changed();
 
 public:
-    [[nodiscard]] std::uint64_t style_stamp() const noexcept;
+    // Counts style_sheets_changed(): a CSSOM edit changes what an element
+    // computes to without touching the document, so a cached computed style
+    // compares this beside the document version.
+    [[nodiscard]] std::uint64_t style_stamp() const noexcept { return style_generation_; }
 
-    [[nodiscard]] std::uint64_t restyle_stamp() const noexcept;
+    // Counts the browser's style resolutions (update_css_animations is called
+    // at the end of each): a registered property, a resized viewport, a media
+    // change - anything that moves a computed value without a document or
+    // CSSOM edit - has resolved by the time a read flushes, and this is what
+    // says so.
+    [[nodiscard]] std::uint64_t restyle_stamp() const noexcept { return restyle_generation_; }
 
 private:
     std::uint64_t style_generation_ = 0;
@@ -619,9 +687,21 @@ private:
     std::string css_preferred_title_; // see preferred_sheet_title
     value cssom_internals_;
     std::function<void(std::string)> on_author_styles_;
+    // END style sheets
 
+    // BEGIN selectors (bindings/document/tree_ops.cpp)
 public:
-    void observe_style_engine(style::engine & engine);
+    // THE CASCADE'S OWN ENGINE, so that a selector cannot mean one thing in a
+    // stylesheet and another in a script. `query()` runs `style::engine::select`,
+    // which is the matcher a rule goes through; handing over the browser's engine
+    // rather than making one here is what keeps `:hover` and the interned atoms the
+    // same on both sides.
+    //
+    // Optional: bindings built without a browser - which several unit tests do -
+    // fall back to an engine of their own. Matching needs the atom table and the
+    // traversal state, not the rules, so an engine with no sheets in it answers a
+    // query exactly as well.
+    void observe_style_engine(style::engine & engine) { selector_engine_ = &engine; }
 
     [[nodiscard]] node_id find_by_id(const std::string & want);
 
@@ -1023,7 +1103,18 @@ public:
     // `hashchange` at the window, a HashChangeEvent with both addresses.
     bool dispatch_hash_change(const std::string & old_url, const std::string & new_url);
 
-    [[nodiscard]] double observed_now();
+    // TIME AS A SCRIPT OBSERVES IT: `performance.now()` and an event's
+    // timeStamp. The engine's one clock moves only between ticks, so within a
+    // script two readings were equal forever and `while (performance.now() <
+    // t)` never ended (Event-timestamp-safe-resolution.html spins until two
+    // events differ). Each observation advances it by the 5 us a browser
+    // coarsens to, counted from the tick's start - so it is still a function
+    // of the page's own behaviour and a golden stays a golden. The first
+    // reading of a tick is the clock itself; an event the ENGINE makes reads
+    // the clock, not this.
+    [[nodiscard]] double observed_now() {
+        return now_ms_ + 0.005 * static_cast<double>(time_reads_++);
+    }
     std::uint64_t time_reads_ = 0;
     void install_frame_accessors(context & cx);
     void install_element_reflection(context & cx);
@@ -1039,23 +1130,44 @@ public:
     [[nodiscard]] node_id element_reference_by_id(const read_txn & txn, node_id element,
                                                   std::string_view id) const;
 
-    void set_layout_hook(std::function<void()> hook);
+    // THE LAYOUT FLUSH. A box read from script - offsetX of a dispatched
+    // click, getBoundingClientRect - is read from the layout AS THE SCRIPT
+    // LEFT IT, which before the first frame is no layout at all. The browser
+    // installs the same flush its getComputedStyle wrapper does; anything
+    // reading `box_of` calls this first. Only what is stale runs.
+    void set_layout_hook(std::function<void()> hook) { flush_layout_ = std::move(hook); }
     static void install_iterable_declaration(context & cx, script::object_object & proto,
                                              bool named_only);
 
-    void set_viewport_scroll_hooks(std::function<point()> get, std::function<void(point)> set);
+    // WHERE THE VIEWPORT'S SCROLL POSITION LIVES for this document: the
+    // browser's, for the page. Unset, the bindings keep one of their own (a
+    // frame's document). See the SCROLLING section above.
+    void set_viewport_scroll_hooks(std::function<point()> get, std::function<void(point)> set) {
+        viewport_scroll_get_ = std::move(get);
+        viewport_scroll_set_ = std::move(set);
+    }
     void queue_scroll_event(node_id target);
     void fire_scrollend(context & cx, std::span<const node_id> scrolled);
     void report_media_query_changes();
 
-    void flush_layout();
+    // A FRAME'S DOCUMENT FLUSHES THROUGH THE PAGE'S HOOK: only the primary
+    // bindings are given one, and the browser's flush lays out every frame
+    // whose document moved (frames_stale) - so a frame's `scrollWidth` read
+    // right after an innerHTML write answered from no layout at all.
+    void flush_layout() {
+        if (flush_layout_) {
+            flush_layout_();
+        } else if (primary_ != nullptr && primary_->flush_layout_) {
+            primary_->flush_layout_();
+        }
+    }
     std::function<void()> flush_layout_;
     std::vector<node_id> unstarted_scripts_;
     void run_inserted_scripts();
     void execute_script_element(context & cx, node_id id, const std::string & source);
 
 public:
-    void note_unstarted_script(node_id id);
+    void note_unstarted_script(node_id id) { unstarted_scripts_.push_back(id); }
 
 private:
     void install_range(context & cx);
@@ -1083,7 +1195,7 @@ private:
     bool step_in_shadow_ = false; // the dispatch step fire_at invokes is in a shadow tree
 
 public:
-    [[nodiscard]] std::span<const node_id> moved_by_mutation() const;
+    [[nodiscard]] std::span<const node_id> moved_by_mutation() const { return moved_by_mutation_; }
 
 private:
     void install_form_owner(context & cx);
@@ -1117,7 +1229,7 @@ public:
     // False when the page is being replaced: the parser stops reading.
     using script_runner = std::function<bool(const parser_script &)>;
 
-    void set_script_runner(script_runner run);
+    void set_script_runner(script_runner run) { run_script_ = std::move(run); }
     [[nodiscard]] parse_result parse_document(std::string_view html);
 
 private:
@@ -1141,8 +1253,3 @@ private:
 };
 
 } // namespace ctbrowser::shell
-
-#include "bindings/custom_elements_inline.hpp"
-#include "bindings/document_inline.hpp"
-#include "bindings/lifecycle_inline.hpp"
-#include "bindings/stylesheets_inline.hpp"

@@ -166,7 +166,7 @@ void dom_bindings::install_element_child_views(context & cx, script::object_obje
                 })),
             value::object(cx.allocate<script::native_object>(
                 property, [this, id, property, fallback, read](context &, std::span<value> a) {
-                    long long want = to_uint32(arg_number(a, 0));
+                    long long want = number_to_uint32(arg_number(a, 0));
                     if (want > 2147483647LL) { want = fallback; }
                     (void)doc_->set_attribute(id, atoms_->intern(property), std::to_string(want));
                     // The SURFACE follows, or the canvas keeps drawing into a

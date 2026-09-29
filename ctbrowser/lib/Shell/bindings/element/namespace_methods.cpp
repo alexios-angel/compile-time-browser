@@ -91,11 +91,7 @@ void dom_bindings::install_node_namespaces(context & cx) {
                 return txn.kind(one).value_or(node_kind::element) == node_kind::text;
             };
             const auto units_of = [](std::string_view text) {
-                std::size_t n = 0;
-                for (std::size_t at = 0; at < text.size();) {
-                    n += decode_utf8(text, at) >= 0x10000 ? 2 : 1;
-                }
-                return static_cast<double>(n);
+                return static_cast<double>(script::utf16::length(text));
             };
             const auto walk = [&](auto && again, node_id at) -> void {
                 const std::span<const node_id> kids = txn.children(at);
@@ -133,10 +129,8 @@ void dom_bindings::install_node_namespaces(context & cx) {
         // data is APPENDED (a replace at the old length, of nothing) and the
         // absorbed siblings' boundaries move into the node before they go.
         for (const run & one : merged) {
-            std::size_t added = 0;
-            for (std::size_t at = one.units; at < one.data.size();) {
-                added += decode_utf8(one.data, at) >= 0x10000 ? 2 : 1;
-            }
+            const std::size_t added =
+                script::utf16::length(std::string_view{one.data}.substr(one.units));
             (void)doc_->set_text(
                 one.node, one.data,
                 document::data_edit{one.units, 0, static_cast<std::uint32_t>(added)});

@@ -240,16 +240,16 @@ void dom_bindings::install_control_collections_labels(context & cx) {
         });
     helpers.accessor(cx, "HTMLTextAreaElement", "type",
                      [](context & c, std::span<value>) { return c.string("textarea"); });
-    helpers.accessor(cx, "HTMLTextAreaElement", "textLength",
-                     [helpers](context & c, std::span<value>) {
-                         const auto where = helpers.at(c);
-                         dom_bindings * b = where.first;
-                         const node_id id = where.second;
-                         if (!id) { return value::number(0); }
-                         const auto txn = b->doc_->read();
-                         return value::number(
-                             static_cast<double>(units_length_of(helpers.value_of(txn, b, id))));
-                     });
+    helpers.accessor(
+        cx, "HTMLTextAreaElement", "textLength", [helpers](context & c, std::span<value>) {
+            const auto where = helpers.at(c);
+            dom_bindings * b = where.first;
+            const node_id id = where.second;
+            if (!id) { return value::number(0); }
+            const auto txn = b->doc_->read();
+            return value::number(
+                static_cast<double>(script::utf16::length(helpers.value_of(txn, b, id))));
+        });
     // A textarea's `defaultValue`, HTML 4.10.11: its CHILD TEXT CONTENT (the
     // Text children's data - a <span> inside contributes nothing, where
     // textContent would count it), and "string replace all" to set.

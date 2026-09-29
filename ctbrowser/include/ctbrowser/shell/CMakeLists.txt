@@ -9,7 +9,6 @@ target_sources(ctbrowser-shell PUBLIC FILE_SET HEADERS FILES
 )
 
 add_subdirectory(bindings)
-add_subdirectory(browser)
 add_subdirectory(image)
 add_subdirectory(net)
 add_subdirectory(page)
