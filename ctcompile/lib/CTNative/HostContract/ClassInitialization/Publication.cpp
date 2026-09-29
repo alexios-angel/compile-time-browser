@@ -153,13 +153,35 @@ bool classInitialization::sinkCapturedPublication(
     }
     auto constructor = setup.getArgs().front().getDefiningOp<ctjs::CreateClosureOp>();
     auto function = target(constructor);
-    if (!function || constructor.getUpvalues().size() != 1 || function.getUpvalueCount() != 1 ||
+    if (!function || constructor.getUpvalues().empty() ||
+        constructor.getUpvalues().size() != function.getUpvalueCount() ||
         !function.getBody().hasOneBlock() || !undefined(constructor.getEnclosingThis()) ||
         earlyCaptures.contains(constructor) || constructor->getBlock() != setup->getBlock() ||
         !constructor->isBeforeInBlock(setup) || hasOuterCapture(constructor)) {
         return true;
     }
-    auto cell = constructor.getUpvalues().front();
+    auto & body = function.getBody().front();
+    ctjs::LoadUpvalueOp captured;
+    // Select the registration's capture from its receiver argument. Other
+    // captures stay in place for the complete constructor/helper census.
+    for (mlir::OpOperand & use : body.getArgument(ctjs::arg_receiver).getUses()) {
+        if (!step()) { return false; }
+        auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
+        if (!call || use.getOperandNumber() != 4 || call.getArgs().size() != 3) { continue; }
+        auto load = call.getReceiver().getDefiningOp<ctjs::LoadUpvalueOp>();
+        if (!load) { load = call.getCallee().getDefiningOp<ctjs::LoadUpvalueOp>(); }
+        if (!load || captured || load.getIndex() < 0 ||
+            static_cast<size_t>(load.getIndex()) >= constructor.getUpvalues().size()) {
+            return true;
+        }
+        captured = load;
+    }
+    if (!captured || captured.getClosure() != body.getArgument(ctjs::arg_callee) ||
+        captured->getBlock() != &body) {
+        return true;
+    }
+    const auto captureIndex = captured.getIndex();
+    auto cell = constructor.getUpvalues()[captureIndex];
     if (!cells.contains(cell)) { return true; }
     auto source = sourceValue(cells.lookup(cell));
     auto helper = source.getDefiningOp<ctjs::CreateClosureOp>();
@@ -168,16 +190,19 @@ bool classInitialization::sinkCapturedPublication(
         !source.getDefiningOp()->isBeforeInBlock(constructor)) {
         return true;
     }
-    auto & body = function.getBody().front();
-    ctjs::LoadUpvalueOp captured;
+    llvm::SmallVector<ctjs::LoadUpvalueOp> retainedLoads;
     for (mlir::OpOperand & use : body.getArgument(ctjs::arg_callee).getUses()) {
         if (!step()) { return false; }
         if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
         auto load = llvm::dyn_cast<ctjs::LoadUpvalueOp>(use.getOwner());
-        if (!load || captured || load.getIndex() != 0 || load->getBlock() != &body) { return true; }
-        captured = load;
+        if (!load || load.getIndex() < 0 ||
+            static_cast<size_t>(load.getIndex()) >= constructor.getUpvalues().size() ||
+            load->getBlock() != &body || (load.getIndex() == captureIndex && load != captured)) {
+            return true;
+        }
+        if (load != captured) { retainedLoads.push_back(load); }
     }
-    if (!captured || !body.getArgument(ctjs::arg_new_target).use_empty()) { return true; }
+    if (!body.getArgument(ctjs::arg_new_target).use_empty()) { return true; }
     ctjs::GetPropertyOp selection;
     ctjs::CallOp invocation;
     for (mlir::OpOperand & use : captured.getResult().getUses()) {
@@ -253,7 +278,8 @@ bool classInitialization::sinkCapturedPublication(
         }
     }
     const bool isBase = baseClasses.contains(constructor.getResult());
-    if (isBase && (!instances.empty() || heritage.contains(constructor.getResult()))) {
+    if (isBase && (!instances.empty() || heritage.contains(constructor.getResult()) ||
+                   constructor.getUpvalues().size() != 1)) {
         return true;
     }
     if (!isBase && instances.empty()) { return true; }
@@ -390,7 +416,8 @@ bool classInitialization::sinkCapturedPublication(
     }
     // Precharge the new calls, constants, selection and rooted cleanup. The
     // outer pass owns a disposable candidate if any later proof refuses.
-    if (!spend((uint64_t(24) + 4 * keyParameters.size()) * instances.size() + 8) ||
+    if (!spend((uint64_t(24) + 4 * keyParameters.size()) * instances.size() + 8 +
+               constructor.getUpvalues().size() + retainedLoads.size()) ||
         !reason.empty()) {
         return false;
     }
@@ -431,7 +458,12 @@ bool classInitialization::sinkCapturedPublication(
     if (keyRead) { eraseRooted(keyRead); }
     if (selection) { eraseRooted(selection); }
     eraseRooted(captured);
-    setCaptures(constructor, function, {});
+    llvm::SmallVector<mlir::Value> retained(constructor.getUpvalues());
+    retained.erase(retained.begin() + captureIndex);
+    for (auto load : retainedLoads) {
+        if (load.getIndex() > captureIndex) { load.setIndex(load.getIndex() - 1); }
+    }
+    setCaptures(constructor, function, retained);
     // The helper body is unchanged and must pass the existing Map-only
     // expansion. Generic helper admission cannot discharge this obligation.
     requiredHelpers.push_back(*functionIndex(helperFunction));
