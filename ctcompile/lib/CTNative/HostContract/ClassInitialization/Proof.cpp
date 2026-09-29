@@ -828,6 +828,10 @@ bool classInitialization::proveDOMMethods(const HostContract & contract) {
     for (auto [made, definition] : methodProbes) {
         (void)made;
         if (!step()) { return false; }
+        if (proofOnlyMethods.contains(definition)) {
+            unused.insert(definition);
+            continue;
+        }
         bool readKey = false;
         const auto key = ctjs::constantKey(definition.getKey());
         const auto scanned = module.walk([&](ctjs::GetPropertyOp read) {

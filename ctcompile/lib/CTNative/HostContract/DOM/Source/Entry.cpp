@@ -15,7 +15,7 @@ bool DOMSource::forwardFields(ctjs::FuncOp function) {
     for (ctjs::CreateObjectOp object : objects) {
         auto & block = *object->getBlock();
         llvm::DenseSet<mlir::Operation *> uses;
-        bool confined = true, read = false;
+        bool confined = true;
         for (mlir::OpOperand & use : object.getResult().getUses()) {
             if (!step()) { return false; }
             auto * operation = use.getOwner();
@@ -33,14 +33,14 @@ bool DOMSource::forwardFields(ctjs::FuncOp function) {
                 confined = false;
                 break;
             }
-            read |= static_cast<bool>(get);
             uses.insert(operation);
         }
-        if (!confined || !read) { continue; }
+        if (!confined) { continue; }
         // The isolated DOM provider fixes the initial prototype. Only
         // initialized own fields are read; the complete use census rules
         // out aliases, identity observations, accessors and prototype edits.
-        // Keep every value producer for the subsequent complete DOM proof.
+        // Unread fields are inert too. Keep every value producer for the
+        // subsequent complete DOM proof, including its effects and failures.
         // Writes stay in the source block; nested reads see the fields at
         // their enclosing branch/loop, which cannot mutate this object.
         // ponytail: one charged function scan per local object; index stores

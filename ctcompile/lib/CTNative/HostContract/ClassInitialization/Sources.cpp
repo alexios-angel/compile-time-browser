@@ -1216,7 +1216,7 @@ ctjs::FuncOp classInitialization::cloneFunction(ctjs::FuncOp fn, unsigned index)
 bool classInitialization::cloneReceiverMethods(
     ctjs::CreateClosureOp leaf, ctjs::CreateObjectOp prototype, ctjs::CallOp helper,
     const llvm::StringSet<> & shadowed, llvm::SmallVectorImpl<ctjs::SetPropertyOp> & selected,
-    llvm::SmallVectorImpl<ctjs::SetPropertyOp> & definitions, bool perLeaf) {
+    llvm::SmallVectorImpl<ctjs::SetPropertyOp> & definitions, bool perLeaf, bool proofOnly) {
     // An inherited method reading an overridden or copied getter through
     // this.constructor selects other getters for this class's instances. Put a
     // copy on this class's prototype, as if the source overrode it with the
@@ -1229,6 +1229,12 @@ bool classInitialization::cloneReceiverMethods(
         if (!step()) { return false; }
         auto closure = definition.getValue().getDefiningOp<ctjs::CreateClosureOp>();
         auto fn = target(closure);
+        // No source call selects a shadowed slot. Inventing actual arguments
+        // would grant its body authority that the original program lacks.
+        if (proofOnly &&
+            (!fn || fn.getBody().front().getNumArguments() != ctjs::implicit_arguments)) {
+            return refuse("shadowed DOM method parameters require original call proof");
+        }
         bool reads = perLeaf;
         if (fn) {
             const auto receiver = fn.getBody().front().getArgument(ctjs::arg_receiver);
@@ -1257,12 +1263,37 @@ bool classInitialization::cloneReceiverMethods(
         auto copy = cloneFunction(fn, index);
         if (snapshotMethods.contains(fn)) { snapshotMethods.insert(copy); }
         mlir::OpBuilder at(helper);
+        mlir::Value key = definition.getKey();
+        if (proofOnly) {
+            // Keep ordinary dispatch unchanged, including calls from this
+            // body back to the overridden key. Avoid all source string keys.
+            llvm::StringSet<> keys;
+            auto walked = module.walk([&](ctjs::ConstantOp constant) {
+                if (!step()) { return mlir::WalkResult::interrupt(); }
+                if (auto text = llvm::dyn_cast<ctjs::StringAttr>(constant.getValue())) {
+                    keys.insert(text.getValue());
+                }
+                return mlir::WalkResult::advance();
+            });
+            if (walked.wasInterrupted()) { return false; }
+            std::string name = "__ctnative_shadow_" + std::to_string(index);
+            while (keys.contains(name)) {
+                if (!step()) { return false; }
+                name += '_';
+            }
+            key = ctjs::ConstantOp::create(at, definition.getLoc(),
+                                           ctjs::StringAttr::get(module.getContext(), name));
+        }
         auto made = ctjs::CreateClosureOp::create(
             at, closure.getLoc(), closure.getType(), closure.getEnclosingClosure(),
             closure.getEnclosingThis(), at.getI32IntegerAttr(static_cast<int32_t>(index)),
             closure.getUpvalues(), closure.getEnclosingIndicesAttr());
         definitions.push_back(ctjs::SetPropertyOp::create(
-            at, definition.getLoc(), prototype.getResult(), definition.getKey(), made.getResult()));
+            at, definition.getLoc(), prototype.getResult(), key, made.getResult()));
+        if (proofOnly) {
+            proofOnlyMethods.insert(definitions.back());
+            needsDOMMethodProof = true;
+        }
         auto home = ctjs::ConstantOp::create(at, definition.getLoc(),
                                              ctjs::StringAttr::get(module.getContext(), "__home"));
         ctjs::SetPropertyOp::create(at, definition.getLoc(), made.getResult(), home.getResult(),

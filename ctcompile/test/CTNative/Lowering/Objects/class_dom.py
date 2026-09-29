@@ -211,6 +211,7 @@ def check_native(args, modules, optimize, compilers, includes, libraries):
                 args,
                 native,
                 label,
+                optional_read=None if name in SHADOWED_CASES else True,
                 callbacks=int(name in FILTER_CASES) + int(name in F_DATASET_CASES),
             )
             if name in F_DATASET_CASES and "ctnative::replace_uppercase<" not in cpp:
@@ -229,6 +230,8 @@ def check_native(args, modules, optimize, compilers, includes, libraries):
                 raise RuntimeError(f"{label}: native output lost its snapshot assignment")
             if re.search(r"__ctbrowser_class_defined|__proto__|__home__|invoke_callable", cpp):
                 raise RuntimeError(f"{label}: native entry retained class metadata or dispatch")
+            if name != "class_shadowed_key_collision" and "__ctnative_shadow_" in cpp:
+                raise RuntimeError(f"{label}: native output retained a shadow proof slot")
             headers.update(re.findall(r"^#(?:include|define CTNATIVE_)[^\n]*", cpp, re.M))
             body = re.sub(r"^#(?:include|define CTNATIVE_)[^\n]*\n?", "", cpp, flags=re.M)
             bodies.append(f"namespace {label} {{\n{body}\n}}\n")
@@ -401,7 +404,7 @@ def main():
                 + (
                     ["Object"]
                     if name == "element_arm_prototype"
-                    or name == "class_inherited_dom_snapshot"
+                    or name in ("class_inherited_dom_snapshot", "class_shadowed_snapshot")
                     or name in SNAPSHOT_CASES
                     or name in SNAPSHOT_REFUSALS
                     else []
@@ -481,19 +484,25 @@ def main():
                 if (
                     name
                     in (
-                        "inherited_shadowed_dom",
-                        "inherited_shadowed_unknown_dom",
                         "inherited_unconstructed_leaf",
                         "inherited_unconstructed_own_method",
                     )
-                    and "inherited DOM methods require an unshadowed constructed leaf"
-                    not in diagnostic
+                    and "inherited DOM methods require a constructed leaf" not in diagnostic
                 ):
                     raise RuntimeError(f"{name}: inherited body lost its refusal: {diagnostic}")
+                if (
+                    name in ("shadowed_parameter", "shadowed_default_parameter")
+                    and "shadowed DOM method parameters require original call proof"
+                    not in diagnostic
+                ):
+                    raise RuntimeError(f"{name}: shadowed body lost its refusal: {diagnostic}")
                 refusals += 1
                 continue
             prepared.append((name, owned, ir, request))
-            if name in SNAPSHOT_CASES or name == "class_inherited_dom_snapshot":
+            if name in SNAPSHOT_CASES or name in (
+                "class_inherited_dom_snapshot",
+                "class_shadowed_snapshot",
+            ):
                 dom.lower(
                     args,
                     ir,

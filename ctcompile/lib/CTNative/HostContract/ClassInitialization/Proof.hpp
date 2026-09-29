@@ -109,6 +109,8 @@ struct classInitialization {
     llvm::DenseSet<mlir::Operation *> methods;
     llvm::DenseSet<mlir::Operation *> methodCalls;
     llvm::SmallVector<std::pair<ctjs::ConstructOp, ctjs::SetPropertyOp>> methodProbes;
+    // Shadowed bodies get private slots only until their typed probes pass.
+    llvm::DenseSet<mlir::Operation *> proofOnlyMethods;
     bool needsDOMMethodProof = false;
     llvm::DenseSet<mlir::Operation *> helpers;
     llvm::DenseSet<mlir::Operation *> helperCalls;
@@ -233,7 +235,7 @@ struct classInitialization {
                               ctjs::CallOp helper, const llvm::StringSet<> & shadowed,
                               llvm::SmallVectorImpl<ctjs::SetPropertyOp> & selected,
                               llvm::SmallVectorImpl<ctjs::SetPropertyOp> & definitions,
-                              bool perLeaf);
+                              bool perLeaf, bool proofOnly = false);
     bool cloneReceiverGetters(mlir::Value leaf,
                               const llvm::StringMap<ctjs::DefineAccessorOp> & environment,
                               const llvm::StringSet<> & shadowed);

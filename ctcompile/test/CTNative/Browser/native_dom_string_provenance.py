@@ -25,7 +25,8 @@ def emitted(args, module, name, *, optional_read=True, uri_call=False, callbacks
             and "ctnative::get_attribute" not in cpp
             and "std::optional<std::string>" not in cpp
         )
-        or (not optional_read and "ctnative::has_attribute" not in cpp)
+        # Class entries can return a Boolean without reading an attribute.
+        or (optional_read is False and "ctnative::has_attribute" not in cpp)
         or (uri_call and re.search(r"\bcatch\s*\(", cpp))
         or (
             uri_call

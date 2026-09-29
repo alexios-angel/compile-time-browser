@@ -1190,7 +1190,8 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
         definitions.push_back(write);
     }
     llvm::StringSet<> shadowedGetters;
-    llvm::SmallVector<ctjs::SetPropertyOp> baseDefinitions, selectedBaseDefinitions;
+    llvm::SmallVector<ctjs::SetPropertyOp> baseDefinitions, selectedBaseDefinitions,
+        shadowedBaseDefinitions;
     if (auto inherited = heritage.lookup(closure.getResult())) {
         auto base = inheritedMethods.find(sourceValue(inherited.getArgs()[1]));
         if (base == inheritedMethods.end()) {
@@ -1204,6 +1205,8 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
             // body stays in baseDefinitions for the receiver/source census.
             if (methodKeys.insert(ctjs::constantKey(definition.getKey())).second) {
                 selectedBaseDefinitions.push_back(definition);
+            } else {
+                shadowedBaseDefinitions.push_back(definition);
             }
         }
         // One shared method/getter body has one selected target. Reuse the
@@ -1217,11 +1220,9 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
             }
         }
         // Each inherited DOM body must reach an actual leaf's private proof.
-        // ponytail: shadowed originals need independent probes before erasure.
-        if (domEntry && (selectedBaseDefinitions.size() != baseDefinitions.size() ||
-                         (!methodKeys.empty() && instances.empty() &&
-                          !baseClasses.contains(closure.getResult())))) {
-            return refuse("inherited DOM methods require an unshadowed constructed leaf");
+        if (domEntry && !methodKeys.empty() && instances.empty() &&
+            !baseClasses.contains(closure.getResult())) {
+            return refuse("inherited DOM methods require a constructed leaf");
         }
         if (!shadowedGetters.empty() &&
             !cloneReceiverGetters(closure.getResult(), staticDefinitions, shadowedGetters)) {
@@ -1231,6 +1232,11 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
             !cloneReceiverMethods(closure, prototype, call, shadowedGetters,
                                   selectedBaseDefinitions, definitions,
                                   domEntry && !instances.empty())) {
+            return false;
+        }
+        if (domEntry && !instances.empty() &&
+            !cloneReceiverMethods(closure, prototype, call, shadowedGetters,
+                                  shadowedBaseDefinitions, definitions, true, true)) {
             return false;
         }
     }
@@ -1490,6 +1496,9 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
     setup.insert(backedge);
     auto & allDefinitions = inheritedMethods[closure.getResult()];
     allDefinitions = definitions;
+    llvm::erase_if(allDefinitions, [&](ctjs::SetPropertyOp definition) {
+        return proofOnlyMethods.contains(definition);
+    });
     allDefinitions.append(baseDefinitions);
     inheritedGetters[closure.getResult()] = std::move(staticDefinitions);
     return true;

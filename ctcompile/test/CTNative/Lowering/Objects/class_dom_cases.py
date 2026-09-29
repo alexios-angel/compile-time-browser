@@ -1101,9 +1101,6 @@ INHERITED_REFUSALS = {
         "  const other = new Other(element);\n"
         "  return new Button(element).read('x');",
     ),
-    "inherited_shadowed_dom": INHERITED_CLASS.replace(
-        "super(element); } }", "super(element); } read() { return true; } }"
-    ),
     "inherited_shadowed_unknown_dom": INHERITED_CLASS.replace(
         "super(element); } }", "super(element); } read() { return true; } }"
     ).replace("getAttribute('x')", "unknown()"),
@@ -1142,8 +1139,156 @@ INHERITED_REFUSALS = {
   return dummy instanceof Leaf;
 """,
 }
+SHADOWED_CLASS = INHERITED_CLASS.replace(
+    "super(element); } }", "super(element); } read() { return true; } }"
+)
+SHADOWED_HELPER = "const get = target => target.getAttribute('x');\n" + SHADOWED_CLASS.replace(
+    "this.element.getAttribute('x')", "get(this.element)"
+)
+SHADOWED_CASES = {
+    # The former refusal source, unchanged.
+    "class_shadowed_dom": (SHADOWED_CLASS, "1111"),
+    "class_shadowed_key_collision": (
+        SHADOWED_CLASS.replace(
+            "this.element = element;",
+            "this.element = element; this.__ctnative_shadow_6 = 'first'; "
+            "this.__ctnative_shadow_6_ = 'second';",
+        ).replace(
+            "  return new Button(element).read();",
+            "  const button = new Button(element);\n"
+            "  return button.read() && button.__ctnative_shadow_6 === 'first' "
+            "&& button.__ctnative_shadow_6_ === 'second';",
+        ),
+        "1111",
+    ),
+    "class_shadowed_write": (
+        SHADOWED_CLASS.replace(
+            "return this.element.getAttribute('x') === null;",
+            "this.element.setAttribute('shadow-probe', 'bad'); return false;",
+        ).replace(
+            "  return new Button(element).read();",
+            "  const button = new Button(element);\n"
+            "  return button.read() && element.getAttribute('shadow-probe') === null;",
+        ),
+        "1111",
+    ),
+    "class_shadowed_field_effect": (
+        SHADOWED_CLASS.replace(
+            "  return new Button(element).read();",
+            "  const button = new Button(element);\n"
+            "  button.unread = element.setAttribute('effect', 'kept');\n"
+            "  return button.read() && element.getAttribute('effect') === 'kept';",
+        ),
+        "1111",
+    ),
+    "class_shadowed_dispatch": (
+        SHADOWED_CLASS.replace(
+            "return this.element.getAttribute('x') === null;", "return this.read();"
+        ).replace(
+            "read() { return true; }", "read() { return this.element.getAttribute('x') === null; }"
+        ),
+        "1000",
+    ),
+    "class_shadowed_chain": (
+        SHADOWED_CLASS.replace(
+            "  return new Button(element).read();",
+            "  class Leaf extends Button {\n"
+            "    constructor(element) { super(element); }\n"
+            "    read() { return this.element.getAttribute('x') === null; }\n"
+            "  }\n"
+            "  const middle = new Button(element);\n"
+            "  const leaf = new Leaf(element);\n"
+            "  return middle.read() && leaf.read();",
+        ),
+        "1000",
+    ),
+    "class_shadowed_base_instance": (
+        SHADOWED_CLASS.replace(
+            "  return new Button(element).read();",
+            "  const base = new Base(element);\n"
+            "  const button = new Button(element);\n"
+            "  return base.read() && button.read();",
+        ),
+        "1000",
+    ),
+    "class_shadowed_instances": (
+        SHADOWED_CLASS.replace(
+            "  return new Button(element).read();",
+            "  const first = new Button(element);\n"
+            "  const second = new Button(other);\n"
+            "  return first.read() && second.read();",
+        ),
+        "1111",
+    ),
+    "class_shadowed_snapshot": (
+        SHADOWED_CLASS.replace(
+            "return this.element.getAttribute('x') === null;",
+            "const keys = Object.getOwnPropertyNames(this);\n"
+            "      return keys.length === 1 && keys[0] === 'element';",
+        ),
+        "1111",
+    ),
+    "class_shadowed_getter": (
+        SHADOWED_CLASS.replace("    read()", "    static get KEY() { return 'x'; }\n    read()")
+        .replace("getAttribute('x')", "getAttribute(this.constructor.KEY)")
+        .replace(
+            "read() { return true; }",
+            "read() { return true; } static get KEY() { return 'marker'; }",
+        ),
+        "1111",
+    ),
+}
+SHADOWED_REFUSALS = {
+    # A helper only a shadowed body calls still needs an independent unused
+    # helper proof; dropping that body must not silently drop this obligation.
+    "shadowed_unused_helper": SHADOWED_HELPER,
+    # The unconstructed base's original constructor retains its separate
+    # call proof even when a copied leaf body could consume the field.
+    "shadowed_constructor_effect": SHADOWED_CLASS.replace(
+        "this.element = element;",
+        "this.element = element; this.unread = element.setAttribute('effect', 'kept');",
+    ).replace(
+        "  return new Button(element).read();",
+        "  const button = new Button(element);\n"
+        "  return button.read() && element.getAttribute('effect') === 'kept';",
+    ),
+    "shadowed_field_effect": SHADOWED_CASES["class_shadowed_field_effect"][0].replace(
+        "element.setAttribute('effect', 'kept')", "element.unknown()"
+    ),
+    "shadowed_ambient": SHADOWED_CLASS.replace("getAttribute('x')", "getAttribute(ambient())"),
+    "shadowed_bad_argument": SHADOWED_CLASS.replace("getAttribute('x')", "getAttribute({})"),
+    "shadowed_bad_dispatch": SHADOWED_CASES["class_shadowed_dispatch"][0].replace(
+        "return this.read();", "this.element = {}; return this.read();"
+    ),
+    "shadowed_parameter": SHADOWED_CLASS.replace("    read()", "    read(key)"),
+    "shadowed_default_parameter": SHADOWED_CLASS.replace("    read()", "    read(key = 'x')"),
+    "shadowed_bad_instance": SHADOWED_CASES["class_shadowed_instances"][0].replace(
+        "new Button(other)", "new Button({})"
+    ),
+    "shadowed_bad_chain": SHADOWED_CASES["class_shadowed_chain"][0].replace(
+        "getAttribute('x')", "unknown()", 1
+    ),
+    "shadowed_receiver_escape": SHADOWED_CLASS.replace(
+        "return this.element.getAttribute('x') === null;", "return this;"
+    ),
+    "shadowed_detached": SHADOWED_CLASS.replace(
+        "return this.element.getAttribute('x') === null;",
+        "const read = this.element.getAttribute; return read('x');",
+    ),
+    "shadowed_helper_effect": SHADOWED_HELPER.replace(
+        "target.getAttribute('x')", "target.unknown()"
+    ),
+}
+INHERITED_CASES.update(SHADOWED_CASES)
+INHERITED_REFUSALS.update(SHADOWED_REFUSALS)
 TWO_ELEMENT_CLASSES.update(
-    {"class_inherited_dom_siblings", "class_inherited_dom_field_order", "inherited_bad_sibling"}
+    {
+        "class_inherited_dom_siblings",
+        "class_inherited_dom_field_order",
+        "inherited_bad_sibling",
+        "class_shadowed_instances",
+        "shadowed_bad_instance",
+    }
 )
 CLASS_CASES.update(INHERITED_CASES)
 CLASS_REFUSALS.update(INHERITED_REFUSALS)
