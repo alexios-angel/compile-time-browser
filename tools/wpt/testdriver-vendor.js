@@ -145,17 +145,67 @@
         }]);
     };
 
+    // Which modifier a key code is, if any: WebDriver holds Shift and
+    // Control down across the keys that follow them, and ctdrive's key
+    // steps carry that state as flags.
+    function modifier(code) {
+        if (code === "ShiftLeft" || code === "ShiftRight") {
+            return "shift";
+        }
+        if (code === "ControlLeft" || code === "ControlRight") {
+            return "ctrl";
+        }
+        return null;
+    }
+
     // Element Send Keys: focus, then every character - a special one as its
-    // key, anything else as typed text.
+    // key, anything else as typed text. A modifier TOGGLES, as WebDriver's
+    // "dispatch the events for a typeable string" has it, and the null key
+    // releases them all.
     driver.send_keys = function (element, keys) {
         element.focus();
         var steps = [];
+        var held = {
+            shift: false,
+            ctrl: false
+        };
+
+        function release() {
+            if (held.shift) {
+                held.shift = false;
+                steps.push({
+                    cmd: "keyup",
+                    code: "ShiftLeft",
+                    ctrl: held.ctrl
+                });
+            }
+            if (held.ctrl) {
+                held.ctrl = false;
+                steps.push({
+                    cmd: "keyup",
+                    code: "ControlLeft"
+                });
+            }
+        }
         for (var i = 0; i < keys.length; ++i) {
             var ch = keys[i];
-            if (special[ch]) {
+            var which = modifier(special[ch]);
+            if (ch === "\uE000") {
+                release();
+            } else if (which) {
+                held[which] = !held[which];
+                steps.push({
+                    cmd: held[which] ? "keydown" : "keyup",
+                    code: special[ch],
+                    shift: held.shift,
+                    ctrl: held.ctrl
+                });
+            } else if (special[ch]) {
                 steps.push({
                     cmd: "key",
-                    code: special[ch]
+                    code: special[ch],
+                    shift: held.shift,
+                    ctrl: held.ctrl
                 });
             } else {
                 steps.push({
@@ -164,6 +214,7 @@
                 });
             }
         }
+        release();
         return perform(steps);
     };
 
@@ -194,7 +245,13 @@
     }
 
     // Perform Actions, tick by tick: tick i runs action i of every source.
+    // A key source's Shift and Control stay held from their keyDown to their
+    // keyUp, so Shift+Tab reaches the page as a shifted Tab.
     driver.action_sequence = function (sources) {
+        var held = {
+            shift: false,
+            ctrl: false
+        };
         var ticks = 0;
         for (var s = 0; s < sources.length; ++s) {
             ticks = Math.max(ticks, (sources[s].actions || []).length);
@@ -264,10 +321,16 @@
                     }
                 } else if (source.type === "key") {
                     var code = special[a.value];
+                    var which = modifier(code);
+                    if (which) {
+                        held[which] = a.type === "keyDown";
+                    }
                     if (a.type === "keyDown" && code) {
                         steps.push({
                             cmd: "keydown",
-                            code: code
+                            code: code,
+                            shift: held.shift,
+                            ctrl: held.ctrl
                         });
                     } else if (a.type === "keyDown") {
                         steps.push({
@@ -277,7 +340,9 @@
                     } else if (a.type === "keyUp" && code) {
                         steps.push({
                             cmd: "keyup",
-                            code: code
+                            code: code,
+                            shift: held.shift,
+                            ctrl: held.ctrl
                         });
                     }
                 } else if (source.type === "wheel" && a.type === "scroll") {
