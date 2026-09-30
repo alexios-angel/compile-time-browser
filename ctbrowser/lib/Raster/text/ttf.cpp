@@ -13,8 +13,10 @@
 #include <SDL3/SDL.h>
 #include <SDL3_ttf/SDL_ttf.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <string_view>
 #include <utility>
@@ -46,7 +48,7 @@ public:
         const int size = pixel_size(font_size);
         float total = 0;
         for_each_code_point(text, [&](char32_t cp) {
-            if (const glyph * g = glyph_for(family, bold, italic, size, cp)) {
+            if (const auto g = glyph_for(family, bold, italic, size, cp)) {
                 total += g->advance;
             } else {
                 total += font8x8_fonts().advance(" ", font_size, family, bold, italic);
@@ -65,7 +67,7 @@ public:
             where.y + ascent(c.font_size, c.face.family, c.face.bold, c.face.italic);
         float pen = where.x;
         for_each_code_point(c.text, [&](char32_t cp) {
-            const glyph * g = glyph_for(c.face.family, c.face.bold, c.face.italic, size, cp);
+            const auto g = glyph_for(c.face.family, c.face.bold, c.face.italic, size, cp);
             if (g == nullptr) {
                 pen += font8x8_fonts().advance(" ", c.font_size, c.face.family, c.face.bold,
                                                c.face.italic);
@@ -123,6 +125,7 @@ private:
         std::vector<std::uint8_t> coverage; // width * height, 0..255
     };
 
+    static constexpr float max_pixel_size = 2048;
     [[nodiscard]] static int pixel_size(float font_size) noexcept;
 
     template <typename Fn> static void for_each_code_point(std::string_view text, Fn && fn) {
@@ -158,6 +161,16 @@ private:
         if (face == nullptr) { return nullptr; }
         const sized_key key{face_key{ascii_lower_copy(family), bold, italic}, size};
         if (const auto it = sized_.find(key); it != sized_.end()) { return it->second; }
+        // BOUNDED: a page cycling font-size through thousands of values opened
+        // a FreeType face per size and never closed one. Every TTF_Font is
+        // only used under the lock, so closing them all here is safe.
+        // ponytail: clear-all rather than LRU; add recency if a real page thrashes.
+        if (sized_.size() >= max_sized_fonts) {
+            for (auto & [k, open] : sized_) {
+                if (open != nullptr) { TTF_CloseFont(open); }
+            }
+            sized_.clear();
+        }
         TTF_Font * font = open_sized(face->bytes, size);
         sized_.emplace(key, font);
         return font;
@@ -165,14 +178,15 @@ private:
 
     // Rasterized once, then read. The lookup is under the lock; the BLIT is
     // not, which is safe because a glyph never changes after it is inserted and
-    // std::map does not move its nodes.
-    [[nodiscard]] const glyph * glyph_for(std::string_view family, bool bold, bool italic, int size,
-                                          char32_t code) const {
+    // the caller holds a reference - the cache may drop it meanwhile.
+    [[nodiscard]] std::shared_ptr<const glyph> glyph_for(std::string_view family, bool bold,
+                                                         bool italic, int size,
+                                                         char32_t code) const {
         const std::lock_guard guard{mutex_};
         TTF_Font * font = sized_font(family, bold, italic, size);
         if (font == nullptr) { return nullptr; }
         const glyph_key key{face_key{ascii_lower_copy(family), bold, italic}, size, code};
-        if (const auto it = glyphs_.find(key); it != glyphs_.end()) { return &it->second; }
+        if (const auto it = glyphs_.find(key); it != glyphs_.end()) { return it->second; }
 
         int minx = 0;
         int maxx = 0;
@@ -214,7 +228,11 @@ private:
                 SDL_DestroySurface(alpha);
             }
         }
-        return &glyphs_.emplace(key, std::move(made)).first->second;
+        // ponytail: clear-all bound, like sized_ above.
+        if (glyphs_.size() >= max_glyphs) { glyphs_.clear(); }
+        auto shared = std::make_shared<const glyph>(std::move(made));
+        glyphs_.emplace(key, shared);
+        return shared;
     }
 
     // Antialiased: the glyph's coverage scales the text colour's alpha, which
@@ -247,7 +265,9 @@ private:
     mutable std::mutex mutex_;
     std::map<face_key, loaded_face> faces_;
     mutable std::map<sized_key, TTF_Font *> sized_;
-    mutable std::map<glyph_key, glyph> glyphs_;
+    mutable std::map<glyph_key, std::shared_ptr<const glyph>> glyphs_;
+    static constexpr std::size_t max_sized_fonts = 64;
+    static constexpr std::size_t max_glyphs = 16384;
     std::string default_family_;
 };
 
@@ -288,8 +308,10 @@ void sdl_ttf_backend::set_default_family(std::string family) {
 }
 
 int sdl_ttf_backend::pixel_size(float font_size) noexcept {
-    const int size = static_cast<int>(font_size + 0.5f);
-    return size < 1 ? 1 : size;
+    // Clamped BEFORE the cast, which is undefined for 1e30 or NaN, and so a
+    // `font-size: 100000px` does not ask FreeType for a gigapixel glyph.
+    if (!(font_size >= 1.0f)) { return 1; }
+    return static_cast<int>(std::min(font_size, max_pixel_size) + 0.5f);
 }
 
 TTF_Font * sdl_ttf_backend::open_sized(const std::vector<std::byte> & bytes, int size) {

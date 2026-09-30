@@ -14,6 +14,7 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <limits>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -505,6 +506,30 @@ void test_replacing_a_face_keeps_measuring() {
     check(fonts->ascent(13, "Fira Sans", false, false) > 0, "and its metrics are live");
 }
 
+// DOS-024: every font-size opened a FreeType face that was never closed, and a
+// size of 1e30 or NaN was an undefined float-to-int cast. The caches are bounded
+// (and the glyph a draw is using survives an eviction); sizes clamp.
+void test_font_sizes_are_bounded() {
+    if (!raster::ttf_available()) { return; }
+    const std::unique_ptr<raster::ttf_backend> fonts = raster::make_ttf_backend();
+    const std::vector<std::byte> regular =
+        shell::asset_registry{}.load("resources/fonts/FiraSans-Regular.ttf");
+    check(fonts->add_face("Fira Sans", false, false, regular), "the face loads");
+    const float first = fonts->advance("Hamburgefonstiv", 13, "Fira Sans", false, false);
+    for (int size = 1; size <= 300; ++size) {
+        (void)fonts->advance("Hamburgefonstiv", static_cast<float>(size), "Fira Sans", false,
+                             false);
+    }
+    check(fonts->advance("Hamburgefonstiv", 13, "Fira Sans", false, false) == first,
+          "a size evicted from the cache measures the same when reopened");
+    check(fonts->advance("H", 1e30f, "Fira Sans", false, false) ==
+              fonts->advance("H", 2048, "Fira Sans", false, false),
+          "a huge size clamps to the largest rasterised one");
+    check(fonts->advance("H", std::numeric_limits<float>::quiet_NaN(), "Fira Sans", false, false) >=
+              0,
+          "and NaN is a size, not undefined behaviour");
+}
+
 // A page's OWN font, from its @font-face rule. The file is named by the page
 // and loaded through the asset registry like any other resource, so a page can
 // ship a face the machine has never heard of.
@@ -599,6 +624,7 @@ int main() {
     test_page_font_face();
     test_the_glyph_cache_is_thread_safe();
     test_replacing_a_face_keeps_measuring();
+    test_font_sizes_are_bounded();
     test_real_fonts_are_deterministic_and_thread_safe();
     test_real_fonts_do_not_quantise();
 
