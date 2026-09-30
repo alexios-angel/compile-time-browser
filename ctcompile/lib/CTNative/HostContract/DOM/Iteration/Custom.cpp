@@ -1,19 +1,15 @@
-#include "../../../Analysis/StringNumber.h"
-#include "../../Prefix/Analysis.h"
 #include "../Source/Proof.hpp"
+#include "ExactPrimitives.h"
 #include "ctbrowser/core/symbol.hpp"
-#include "ctcompile/CTNative/Runtime/String.hpp"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/Verifier.h"
 #include "mlir/Transforms/RegionUtils.h"
-#include "llvm/ADT/APFloat.h"
 
 #include <bit>
-#include <cmath>
-#include <limits>
 
 namespace ctcompile::ctnative {
+using namespace dom_iteration_detail;
 
 llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostContract & contract,
                                         unsigned maxSteps,
@@ -22,8 +18,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     dom_source_detail::DOMSource work(maxSteps);
     const auto spend = [&] { return work.step(); };
     const auto error = [&](llvm::StringRef reason) {
-        return llvm::createStringError(llvm::inconvertibleErrorCode(),
-                                       work.remaining ? reason
+        return llvm::createStringError(work.remaining ? reason
                                                       : "DOM custom iterator budget exhausted");
     };
     const auto helper = [](ctjs::CallOp call) -> llvm::StringRef {
@@ -31,6 +26,14 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         return load ? load.getName() : llvm::StringRef{};
     };
     const auto undefined = dom_source_detail::DOMSource::undefined;
+    // A String key constant, and the hidden own slot of iterator state `index`.
+    const auto keyConstant = [&](mlir::OpBuilder & at, mlir::Location where, llvm::StringRef name) {
+        return ctjs::ConstantOp::create(at, where,
+                                        ctjs::StringAttr::get(candidate.getContext(), name));
+    };
+    const auto stateKey = [](std::size_t index) {
+        return "__ctcompile_state_" + std::to_string(index);
+    };
     // The value a tuple yield or invoke edge forwards `use` to, or null: an
     // if/switch or invoke result, or an invoke continuation's argument.
     const auto forwarded = [](mlir::OpOperand & use) -> mlir::Value {
@@ -199,276 +202,6 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     if (object->getBlock() != openAnchor->getBlock() || !object->isBeforeInBlock(openAnchor)) {
         return error("DOM custom iterator holder lacks preceding local allocation");
     }
-    const auto exactBoolean = [](mlir::Value condition) -> std::optional<bool> {
-        mlir::IntegerAttr value;
-        if (mlir::matchPattern(condition, mlir::m_Constant(&value))) {
-            return !value.getValue().isZero();
-        }
-        if (auto truthy = condition.getDefiningOp<ctjs::TruthyOp>()) {
-            auto constant = truthy.getValue().getDefiningOp<ctjs::ConstantOp>();
-            if (constant) {
-                auto value = PrimitiveAlternatives::literal(constant.getValue());
-                if (value.known) { return value.truthy != 0; }
-            }
-        }
-        return std::nullopt;
-    };
-    const auto chargeText = [&](std::string_view text) {
-        if (text.size() > work.remaining) {
-            work.remaining = 0;
-            return false;
-        }
-        work.remaining -= static_cast<unsigned>(text.size());
-        return true;
-    };
-    const auto exactNumber = [&](mlir::Attribute value) -> std::optional<double> {
-        if (auto numeric = llvm::dyn_cast<ctjs::NumberAttr>(value)) { return numeric.getDouble(); }
-        if (auto boolean = llvm::dyn_cast<ctjs::BooleanAttr>(value)) {
-            return boolean.getValue() ? 1.0 : 0.0;
-        }
-        if (llvm::isa<ctjs::NullAttr>(value)) { return 0.0; }
-        if (llvm::isa<ctjs::UndefinedAttr>(value)) {
-            return std::numeric_limits<double>::quiet_NaN();
-        }
-        if (auto text = llvm::dyn_cast<ctjs::StringAttr>(value)) {
-            if (!chargeText(text.getValue())) { return std::nullopt; }
-            return literalStringNumber(text.getValue());
-        }
-        return std::nullopt;
-    };
-    const auto exactUnary = [&](ctjs::UnaryOp unary) -> mlir::Attribute {
-        if (unary->getNumOperands() != 1 || !unary.getKindAttr()) { return {}; }
-        auto input = unary->getOperand(0).getDefiningOp<ctjs::ConstantOp>();
-        if (!input || !input.getValue()) { return {}; }
-        if (unary.getKind() == ctjs::UnaryKind::Not) {
-            const auto value = PrimitiveAlternatives::literal(input.getValue());
-            return value.known ? ctjs::BooleanAttr::get(unary.getContext(), !value.truthy)
-                               : mlir::Attribute{};
-        }
-        if (unary.getKind() == ctjs::UnaryKind::TypeOf ||
-            unary.getKind() == ctjs::UnaryKind::Void) {
-            if (!ctjs::isPrimitiveAttr(input.getValue())) { return {}; }
-            return host_detail::prefixUnary(unary.getKind(),
-                                            host_detail::prefixValue::constant(input.getValue()),
-                                            unary.getContext())
-                .literal;
-        }
-        if (unary.getKind() != ctjs::UnaryKind::Plus && unary.getKind() != ctjs::UnaryKind::Neg &&
-            unary.getKind() != ctjs::UnaryKind::BitNot) {
-            return {};
-        }
-        auto number = llvm::dyn_cast<ctjs::NumberAttr>(input.getValue());
-        if (!number) {
-            const auto converted = exactNumber(input.getValue());
-            if (!converted) { return {}; }
-            number = ctjs::NumberAttr::get(unary.getContext(), std::bit_cast<uint64_t>(*converted));
-        }
-        if (unary.getKind() == ctjs::UnaryKind::Plus) { return number; }
-        if (unary.getKind() == ctjs::UnaryKind::BitNot) {
-            return ctjs::NumberAttr::get(
-                unary.getContext(),
-                std::bit_cast<uint64_t>((~::ctnative::js_num{number.getDouble()}).value()));
-        }
-        // Number negation changes only the sign, including zero and NaN.
-        llvm::APFloat result(llvm::APFloat::IEEEdouble(), llvm::APInt(64, number.getBits()));
-        result.changeSign();
-        return ctjs::NumberAttr::get(unary.getContext(), result.bitcastToAPInt().getZExtValue());
-    };
-    const auto exactComparison = [&](ctjs::CompareOp comparison) -> std::optional<bool> {
-        if (comparison->getNumOperands() != 2 || !comparison.getKindAttr()) { return std::nullopt; }
-        auto lhs = comparison->getOperand(0).getDefiningOp<ctjs::ConstantOp>();
-        auto rhs = comparison->getOperand(1).getDefiningOp<ctjs::ConstantOp>();
-        if (!lhs || !rhs || !lhs.getValue() || !rhs.getValue()) { return std::nullopt; }
-        // Reuse the source-prefix proof: strict primitive equality and exact
-        // String equality need neither conversion nor object hooks.
-        const auto primitive = host_detail::prefixCompare(
-            comparison.getKind(), host_detail::prefixValue::constant(lhs.getValue()),
-            host_detail::prefixValue::constant(rhs.getValue()), comparison.getContext());
-        if (auto result = llvm::dyn_cast_if_present<ctjs::BooleanAttr>(primitive.literal)) {
-            return result.getValue();
-        }
-        if (comparison.getKind() == ctjs::CompareKind::Eq) {
-            // Absence compares by tag, before any numeric conversion. Only
-            // exact primitives can bypass conversion; objects/BigInts refuse.
-            const auto absent = [](mlir::Attribute value) {
-                return llvm::isa<ctjs::NullAttr, ctjs::UndefinedAttr>(value);
-            };
-            if (absent(lhs.getValue()) || absent(rhs.getValue())) {
-                if (!ctjs::isPrimitiveAttr(lhs.getValue()) ||
-                    !ctjs::isPrimitiveAttr(rhs.getValue())) {
-                    return std::nullopt;
-                }
-                return absent(lhs.getValue()) && absent(rhs.getValue());
-            }
-        } else if (llvm::isa<ctjs::StringAttr>(lhs.getValue()) &&
-                   llvm::isa<ctjs::StringAttr>(rhs.getValue())) {
-            const std::string_view a = llvm::cast<ctjs::StringAttr>(lhs.getValue()).getValue();
-            const std::string_view b = llvm::cast<ctjs::StringAttr>(rhs.getValue()).getValue();
-            // Charge the complete inputs before decoding or allocating. Core's
-            // total decoder also accepts malformed bytes; require a lossless,
-            // canonical WTF-8 roundtrip before interpreting them as JS Strings.
-            for (auto text : {a, b}) {
-                if (!chargeText(text)) { return std::nullopt; }
-            }
-            const auto left = ctbrowser::wtf8_to_utf16(a), right = ctbrowser::wtf8_to_utf16(b);
-            if (ctbrowser::utf16_to_wtf8(left) != a || ctbrowser::utf16_to_wtf8(right) != b) {
-                return std::nullopt;
-            }
-            const auto order = left <=> right;
-            switch (comparison.getKind()) {
-            case ctjs::CompareKind::Lt: return order < 0;
-            case ctjs::CompareKind::Le: return order <= 0;
-            case ctjs::CompareKind::Gt: return order > 0;
-            case ctjs::CompareKind::Ge: return order >= 0;
-            default: return std::nullopt;
-            }
-        }
-        const auto left = exactNumber(lhs.getValue()), right = exactNumber(rhs.getValue());
-        if (!left || !right) { return std::nullopt; }
-        // These exact primitive conversions cannot call hooks. Binary64
-        // comparisons preserve unordered NaNs and signed-zero equality.
-        const double a = *left, b = *right;
-        switch (comparison.getKind()) {
-        case ctjs::CompareKind::Eq: return a == b;
-        case ctjs::CompareKind::Lt: return a < b;
-        case ctjs::CompareKind::Le: return a <= b;
-        case ctjs::CompareKind::Gt: return a > b;
-        case ctjs::CompareKind::Ge: return a >= b;
-        default: return std::nullopt;
-        }
-    };
-    const auto exactArithmetic = [&](mlir::Operation * binary) -> mlir::Attribute {
-        if (!llvm::isa<ctjs::BinaryOp, ctjs::BinaryStaticOp>(binary) ||
-            binary->getNumOperands() != 2) {
-            return {};
-        }
-        auto kind = binary->getAttrOfType<ctjs::BinaryKindAttr>("kind");
-        if (!kind) { return {}; }
-        const bool isStatic = llvm::isa<ctjs::BinaryStaticOp>(binary);
-        switch (kind.getValue()) {
-        // Either family for the bitwise six: the operands are constants below,
-        // on which ctjs.binary's ToNumeric is the identity.
-        case ctjs::BinaryKind::Add:
-        case ctjs::BinaryKind::BitAnd:
-        case ctjs::BinaryKind::BitOr:
-        case ctjs::BinaryKind::BitXor:
-        case ctjs::BinaryKind::Shl:
-        case ctjs::BinaryKind::Shr:
-        case ctjs::BinaryKind::UShr: break;
-        case ctjs::BinaryKind::Concat:
-        case ctjs::BinaryKind::Sub:
-        case ctjs::BinaryKind::Mul:
-        case ctjs::BinaryKind::Div:
-        case ctjs::BinaryKind::Mod:
-        case ctjs::BinaryKind::Pow:
-            if (isStatic) { return {}; }
-            break;
-        default: return {};
-        }
-        auto lhs = binary->getOperand(0).getDefiningOp<ctjs::ConstantOp>();
-        auto rhs = binary->getOperand(1).getDefiningOp<ctjs::ConstantOp>();
-        if (!lhs || !rhs || !lhs.getValue() || !rhs.getValue()) { return {}; }
-        // Concat always converts both primitives to String; generic Add does
-        // so only if either is a String. Static Add remains numeric.
-        if (!isStatic && (kind.getValue() == ctjs::BinaryKind::Concat ||
-                          (kind.getValue() == ctjs::BinaryKind::Add &&
-                           (llvm::isa<ctjs::StringAttr>(lhs.getValue()) ||
-                            llvm::isa<ctjs::StringAttr>(rhs.getValue()))))) {
-            if (!ctjs::isPrimitiveAttr(lhs.getValue()) || !ctjs::isPrimitiveAttr(rhs.getValue())) {
-                return {};
-            }
-            const auto text = [&](mlir::Attribute value) -> std::optional<::ctnative::js_string> {
-                if (auto string = llvm::dyn_cast<ctjs::StringAttr>(value)) {
-                    const std::string_view bytes = string.getValue();
-                    // Charge before decoding/copying. Canonical operands leave
-                    // at most one surrogate pair for concatenation to join.
-                    if (!chargeText(bytes) ||
-                        ctbrowser::utf16_to_wtf8(ctbrowser::wtf8_to_utf16(bytes)) != bytes) {
-                        return std::nullopt;
-                    }
-                    return ::ctnative::js_string{bytes};
-                }
-                if (auto number = llvm::dyn_cast<ctjs::NumberAttr>(value)) {
-                    return ::ctnative::js_string{ctbrowser::number_to_string(number.getDouble())};
-                }
-                if (auto boolean = llvm::dyn_cast<ctjs::BooleanAttr>(value)) {
-                    return boolean.getValue() ? ::ctnative::js_string{"true"}
-                                              : ::ctnative::js_string{"false"};
-                }
-                if (llvm::isa<ctjs::NullAttr>(value)) { return ::ctnative::js_string{"null"}; }
-                if (llvm::isa<ctjs::UndefinedAttr>(value)) {
-                    return ::ctnative::js_string{"undefined"};
-                }
-                return std::nullopt;
-            };
-            auto left = text(lhs.getValue()), right = text(rhs.getValue());
-            if (!left || !right || !chargeText(left->value()) || !chargeText(right->value())) {
-                return {};
-            }
-            // Native String addition and the VM share Core's surrogate join.
-            const auto joined = std::move(*left) + *right;
-            return ctjs::StringAttr::get(binary->getContext(), joined.value());
-        }
-        const auto number = [&](mlir::Attribute value) -> ctjs::NumberAttr {
-            if (auto original = llvm::dyn_cast<ctjs::NumberAttr>(value)) { return original; }
-            const auto converted = exactNumber(value);
-            return converted ? ctjs::NumberAttr::get(binary->getContext(),
-                                                     std::bit_cast<uint64_t>(*converted))
-                             : ctjs::NumberAttr{};
-        };
-        auto left = number(lhs.getValue()), right = number(rhs.getValue());
-        if (!left || !right) { return {}; }
-        if (ctjs::isBitwise(kind.getValue())) {
-            // Reuse the typed Number operators and their public Core conversions:
-            // ToInt32/ToUint32, masked shift counts and unsigned left shifts.
-            const ::ctnative::js_num a{left.getDouble()}, b{right.getDouble()};
-            ::ctnative::js_num result;
-            switch (kind.getValue()) {
-            case ctjs::BinaryKind::BitAnd: result = a & b; break;
-            case ctjs::BinaryKind::BitOr: result = a | b; break;
-            case ctjs::BinaryKind::BitXor: result = a ^ b; break;
-            case ctjs::BinaryKind::Shl: result = a << b; break;
-            case ctjs::BinaryKind::Shr: result = a >> b; break;
-            case ctjs::BinaryKind::UShr: result = a.unsigned_shift_right(b); break;
-            default: return {};
-            }
-            return ctjs::NumberAttr::get(binary->getContext(),
-                                         std::bit_cast<uint64_t>(result.value()));
-        }
-        if (kind.getValue() == ctjs::BinaryKind::Pow) {
-            const double base = left.getDouble(), exponent = right.getDouble();
-            // Match native Number exponentiation: libm differs at magnitude one
-            // with a NaN/infinite exponent. Keep NaN literals canonical.
-            const double nan = std::numeric_limits<double>::quiet_NaN();
-            const double result = exponent == 0 ? 1
-                                  : std::abs(base) == 1 && !std::isfinite(exponent)
-                                      ? nan
-                                      : std::pow(base, exponent);
-            return ctjs::NumberAttr::get(
-                binary->getContext(), std::bit_cast<uint64_t>(std::isnan(result) ? nan : result));
-        }
-        // Exact Number operands cannot invoke conversion hooks. LLVM supplies
-        // binary64 rounding independently of the host's floating-point state.
-        llvm::APFloat result(llvm::APFloat::IEEEdouble(), llvm::APInt(64, left.getBits()));
-        const llvm::APFloat operand(llvm::APFloat::IEEEdouble(), llvm::APInt(64, right.getBits()));
-        switch (kind.getValue()) {
-        case ctjs::BinaryKind::Add:
-            (void)result.add(operand, llvm::APFloat::rmNearestTiesToEven);
-            break;
-        case ctjs::BinaryKind::Sub:
-            (void)result.subtract(operand, llvm::APFloat::rmNearestTiesToEven);
-            break;
-        case ctjs::BinaryKind::Mul:
-            (void)result.multiply(operand, llvm::APFloat::rmNearestTiesToEven);
-            break;
-        case ctjs::BinaryKind::Div:
-            (void)result.divide(operand, llvm::APFloat::rmNearestTiesToEven);
-            break;
-        case ctjs::BinaryKind::Mod: (void)result.mod(operand); break;
-        default: return {};
-        }
-        return ctjs::NumberAttr::get(binary->getContext(), result.bitcastToAPInt().getZExtValue());
-    };
     const auto exactUndefined = [&](ctjs::LoadGlobalOp load) {
         // The initialized DOM provider supplies this binding. Check every
         // source write before pruning helpers, including unreachable writes.
@@ -505,13 +238,13 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(operation)) {
                     projectBranches |=
                         (unary.getKindAttr() && unary.getKind() == ctjs::UnaryKind::Not) ||
-                        static_cast<bool>(exactUnary(unary));
+                        static_cast<bool>(exactUnary(unary, work));
                 }
                 if (auto comparison = llvm::dyn_cast<ctjs::CompareOp>(operation)) {
-                    projectBranches |= exactComparison(comparison).has_value();
+                    projectBranches |= exactComparison(comparison, work).has_value();
                 }
                 if (llvm::isa<ctjs::BinaryOp, ctjs::BinaryStaticOp>(operation)) {
-                    projectBranches |= static_cast<bool>(exactArithmetic(operation));
+                    projectBranches |= static_cast<bool>(exactArithmetic(operation, work));
                 }
                 if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(operation)) {
                     projectBranches |= exactUndefined(load);
@@ -562,7 +295,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                         return mlir::WalkResult::advance();
                     }
                     if (!spend()) { return mlir::WalkResult::interrupt(); }
-                    auto result = exactArithmetic(binary);
+                    auto result = exactArithmetic(binary, work);
                     if (!result) { return mlir::WalkResult::advance(); }
                     rewriter.setInsertionPoint(binary);
                     rewriter.replaceOpWithNewOp<ctjs::ConstantOp>(binary, result);
@@ -572,7 +305,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 if (calculated.wasInterrupted()) { return ctjs::FuncOp{}; }
                 const auto folded = found.walk([&](ctjs::UnaryOp unary) {
                     if (!spend()) { return mlir::WalkResult::interrupt(); }
-                    auto result = exactUnary(unary);
+                    auto result = exactUnary(unary, work);
                     if (!result) { return mlir::WalkResult::advance(); }
                     // Exact primitive operands prove both the result and the
                     // absence of hooks. Keep the input and all its other uses.
@@ -584,7 +317,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 if (folded.wasInterrupted()) { return ctjs::FuncOp{}; }
                 const auto compared = found.walk([&](ctjs::CompareOp comparison) {
                     if (!spend()) { return mlir::WalkResult::interrupt(); }
-                    const auto result = exactComparison(comparison);
+                    const auto result = exactComparison(comparison, work);
                     if (!result) { return mlir::WalkResult::advance(); }
                     rewriter.setInsertionPoint(comparison);
                     rewriter.replaceOpWithNewOp<ctjs::ConstantOp>(
@@ -681,8 +414,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             // must all prove below before this private candidate can publish.
             if (!spend() || !spend()) { return error("DOM custom iterator budget exhausted"); }
             mlir::OpBuilder at(accessor);
-            auto key = ctjs::ConstantOp::create(
-                at, accessor.getLoc(), ctjs::StringAttr::get(candidate.getContext(), "return"));
+            auto key = keyConstant(at, accessor.getLoc(), "return");
             store = ctjs::SetPropertyOp::create(at, accessor.getLoc(), object, key, getter);
             accessor.erase();
         }
@@ -1678,9 +1410,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                     work.refuse("DOM iterator callable selection is too deep");
                     return {};
                 }
-                for (unsigned operation = 0; operation < 6; ++operation) {
-                    if (!spend()) { return {}; }
-                }
+                if (!work.drain(6)) { return {}; }
                 auto tag = tags[targets[position]];
                 if (position + 1 == targets.size()) {
                     auto selected = ctjs::CallOp::create(
@@ -2002,10 +1732,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             // identity. Its unwind users still need complete state proof.
             continue;
         }
-        if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(user);
-            compare && compare.getKind() == ctjs::CompareKind::StrictEq &&
-            ((compare.getLhs() == open.getResult() && undefined(compare.getRhs())) ||
-             (compare.getRhs() == open.getResult() && undefined(compare.getLhs())))) {
+        if (strictUndefinedTest(llvm::dyn_cast<ctjs::CompareOp>(user), open.getResult())) {
             continue;
         }
         if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user);
@@ -2394,12 +2121,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                                             : ctjs::TruthyOp{};
                         auto compare = truth ? truth.getValue().getDefiningOp<ctjs::CompareOp>()
                                              : ctjs::CompareOp{};
-                        if (compare && compare.getKind() == ctjs::CompareKind::StrictEq &&
-                            nested->getParentRegion() == &branch.getThenRegion() &&
-                            ((compare.getLhs() == open.getResult() &&
-                              undefined(compare.getRhs())) ||
-                             (compare.getRhs() == open.getResult() &&
-                              undefined(compare.getLhs())))) {
+                        if (strictUndefinedTest(compare, open.getResult()) &&
+                            nested->getParentRegion() == &branch.getThenRegion()) {
                             inactive = true;
                             break;
                         }
@@ -2493,10 +2216,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                     mlir::OpBuilder at(&operation);
                     auto * joined = at.create(built);
                     for (auto & region : joined->getRegions()) {
-                        for (auto value : current) {
-                            (void)value;
-                            if (!spend()) { return false; }
-                        }
+                        if (!work.drain(current.size())) { return false; }
                         auto armState = current;
                         if (region.empty()) {
                             auto & arm = region.emplaceBlock();
@@ -2573,10 +2293,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         mlir::OpBuilder at(returned);
         for (auto [index, value] : llvm::enumerate(current)) {
             if (!spend()) { return error("DOM custom iterator budget exhausted"); }
-            auto key = ctjs::ConstantOp::create(
-                at, returned.getLoc(),
-                ctjs::StringAttr::get(candidate.getContext(),
-                                      "__ctcompile_state_" + std::to_string(index)));
+            auto key = keyConstant(at, returned.getLoc(), stateKey(index));
             ctjs::SetPropertyOp::create(at, returned.getLoc(), returned.getValue(), key, value);
         }
     }
@@ -2604,8 +2321,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     mlir::Value emittedDone;
     const auto methodCall = [&](mlir::OpBuilder & at, llvm::StringRef name,
                                 mlir::IRMapping & values, llvm::SmallVector<mlir::Value> & state) {
-        auto key = ctjs::ConstantOp::create(at, where,
-                                            ctjs::StringAttr::get(candidate.getContext(), name));
+        auto key = keyConstant(at, where, name);
         auto holder = values.lookup(object.getResult());
         auto method = ctjs::GetPropertyOp::create(at, where, type, holder, key);
         auto called = ctjs::CallOp::create(at, where, type, method, holder,
@@ -2615,10 +2331,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         if (name == "return" && observableThrow) { return called; }
         for (unsigned index = 0; index < stateInitials.size(); ++index) {
             if (!spend()) { return ctjs::CallOp{}; }
-            auto field = ctjs::ConstantOp::create(
-                at, where,
-                ctjs::StringAttr::get(candidate.getContext(),
-                                      "__ctcompile_state_" + std::to_string(index)));
+            auto field = keyConstant(at, where, stateKey(index));
             state[index + 1] = ctjs::GetPropertyOp::create(at, where, type, called, field);
         }
         return called;
@@ -2628,8 +2341,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                            unsigned depth, bool appendState) -> bool {
         if (depth == 64) { return false; }
         for (mlir::Operation & operation : source) {
-            for (unsigned i = 0; i <= operation.getNumOperands() + state.size(); ++i) {
-                if (!spend()) { return false; }
+            if (!work.drain(uint64_t(1) + operation.getNumOperands() + state.size())) {
+                return false;
             }
             if (&operation == iteratorSlot || &operation == identity ||
                 iteratorSetup.contains(&operation) || stateStorage.contains(&operation) ||
@@ -2665,12 +2378,10 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             if (&operation == next) {
                 emittedNext = methodCall(at, "next", values, state);
                 if (!emittedNext) { return false; }
-                auto key = ctjs::ConstantOp::create(
-                    at, where, ctjs::StringAttr::get(candidate.getContext(), "done"));
+                auto key = keyConstant(at, where, "done");
                 state.front() = ctjs::GetPropertyOp::create(at, where, type, emittedNext, key);
                 emittedDone = state.front();
-                key = ctjs::ConstantOp::create(
-                    at, where, ctjs::StringAttr::get(candidate.getContext(), "value"));
+                key = keyConstant(at, where, "value");
                 auto item = ctjs::GetPropertyOp::create(at, where, type, emittedNext, key);
                 values.map(next.getResult(), item.getResult());
                 continue;
@@ -2688,10 +2399,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                     for (auto & region : branch->getRegions()) {
                         auto & block = region.front();
                         mlir::OpBuilder inside(&block, block.begin());
-                        for (auto value : state) {
-                            (void)value;
-                            if (!spend()) { return false; }
-                        }
+                        if (!work.drain(state.size())) { return false; }
                         auto closingState = state;
                         if (&region == &branch.getElseRegion()) {
                             auto called = methodCall(inside, "return", values, closingState);
@@ -2725,8 +2433,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                     // The unique own data slot has no getter or user lookup.
                     // Keep the actual method call protected, and keep Invoke's
                     // exact call/exit body for the downstream effect proof.
-                    auto key = ctjs::ConstantOp::create(
-                        inside, where, ctjs::StringAttr::get(candidate.getContext(), "return"));
+                    auto key = keyConstant(inside, where, "return");
                     auto holder = values.lookup(object.getResult());
                     auto method = ctjs::GetPropertyOp::create(inside, where, type, holder, key);
                     auto copied = llvm::cast<ctjs::InvokeOp>(inside.clone(operation, values));
@@ -2753,11 +2460,9 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 const auto project = [&](mlir::OpBuilder & inside, bool unwind, mlir::Value payload,
                                          mlir::ValueRange savedValues)
                     -> mlir::FailureOr<llvm::SmallVector<mlir::Value>> {
-                    for (std::size_t i = 0;
-                         i < values.getValueMap().size() + values.getOperationMap().size() +
-                                 values.getBlockMap().size();
-                         ++i) {
-                        if (!spend()) { return mlir::failure(); }
+                    if (!work.drain(values.getValueMap().size() + values.getOperationMap().size() +
+                                    values.getBlockMap().size())) {
+                        return mlir::failure();
                     }
                     mlir::IRMapping projected(values);
                     auto & source =
@@ -2798,9 +2503,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                     mlir::scf::YieldOp::create(inside, where, *projected);
                     calling.setInsertionPointToEnd(&closeGuard.getElseRegion().front());
                 }
-                auto key = ctjs::ConstantOp::create(
-                    calling, where,
-                    ctjs::StringAttr::get(candidate.getContext(), closing ? "return" : "next"));
+                auto key = keyConstant(calling, where, closing ? "return" : "next");
                 auto holder = values.lookup(object.getResult());
                 auto method = ctjs::GetPropertyOp::create(calling, where, type, holder, key);
                 mlir::OperationState built(operation.getLoc(), operation.getName());
@@ -2828,12 +2531,10 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                     mlir::Value completedDone = done;
                     mlir::Value result = payload;
                     if (!closing && !unwind) {
-                        auto doneKey = ctjs::ConstantOp::create(
-                            inside, where, ctjs::StringAttr::get(candidate.getContext(), "done"));
+                        auto doneKey = keyConstant(inside, where, "done");
                         completedDone =
                             ctjs::GetPropertyOp::create(inside, where, type, payload, doneKey);
-                        auto valueKey = ctjs::ConstantOp::create(
-                            inside, where, ctjs::StringAttr::get(candidate.getContext(), "value"));
+                        auto valueKey = keyConstant(inside, where, "value");
                         result =
                             ctjs::GetPropertyOp::create(inside, where, type, payload, valueKey);
                     }
@@ -2990,10 +2691,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                         values.map(argument,
                                    block.addArgument(argument.getType(), argument.getLoc()));
                     }
-                    for (auto value : state) {
-                        (void)value;
-                        if (!spend()) { return false; }
-                    }
+                    if (!work.drain(state.size())) { return false; }
                     auto innerState = state;
                     if (loop) {
                         for (auto & value : innerState) { value = block.addArgument(type, where); }
@@ -3149,10 +2847,9 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 return mlir::WalkResult::interrupt();
             }
             const auto charged = branch.walk([&](mlir::Operation * nested) {
-                for (unsigned i = 0; i <= nested->getNumOperands(); ++i) {
-                    if (!spend()) { return mlir::WalkResult::interrupt(); }
-                }
-                return mlir::WalkResult::advance();
+                return work.drain(uint64_t(1) + nested->getNumOperands())
+                           ? mlir::WalkResult::advance()
+                           : mlir::WalkResult::interrupt();
             });
             if (charged.wasInterrupted()) { return mlir::WalkResult::interrupt(); }
             exhaustedCloses.push_back(branch);

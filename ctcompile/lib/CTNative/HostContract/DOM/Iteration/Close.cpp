@@ -22,9 +22,7 @@ namespace ctcompile::ctnative {
 // The caller owns a disposable clone. Preserve both source completions while
 // upstream structures their common CFG; no native effect or payload is proved here.
 static llvm::Error structureCloseCompletion(ctjs::FuncOp function, WorkBudget & budget) {
-    const auto refuse = [](llvm::StringRef reason) {
-        return llvm::createStringError(llvm::inconvertibleErrorCode(), reason);
-    };
+    const auto refuse = [](llvm::StringRef reason) { return llvm::createStringError(reason); };
     bool returns = false;
     uint64_t size = 0, width = 8;
     for (auto & block : function.getBody()) {
@@ -133,7 +131,7 @@ llvm::Expected<bool> normalizeDOMIteratorClose(mlir::ModuleOp candidate,
                                                const HostContract & contract, unsigned maxSteps) {
     WorkBudget budget{maxSteps};
     const auto refuse = [](llvm::StringRef reason) -> llvm::Expected<bool> {
-        return llvm::createStringError(llvm::inconvertibleErrorCode(), reason);
+        return llvm::createStringError(reason);
     };
     bool replacedClose = false;
     const auto counted = candidate.walk([&](mlir::Operation * operation) {

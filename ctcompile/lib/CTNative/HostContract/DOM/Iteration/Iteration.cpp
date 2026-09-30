@@ -13,9 +13,7 @@ namespace ctcompile::ctnative {
 
 llvm::Error normalizeDOMElementGuards(mlir::ModuleOp candidate, const HostContract & contract,
                                       unsigned maxSteps) {
-    const auto error = [](llvm::StringRef text) {
-        return llvm::createStringError(llvm::inconvertibleErrorCode(), text);
-    };
+    const auto error = [](llvm::StringRef text) { return llvm::createStringError(text); };
     WorkBudget budget{maxSteps};
     const auto spend = [&] { return budget.spend(); };
     // Charge the source census and fingerprint before inspecting the contract.
@@ -54,9 +52,7 @@ llvm::Error normalizeDOMElementGuards(mlir::ModuleOp candidate, const HostContra
     const auto scan = entry.walk<mlir::WalkOrder::PostOrder>([&](mlir::Operation * operation) {
         if (!spend()) { return mlir::WalkResult::interrupt(); }
         for (mlir::Value result : operation->getResults()) {
-            for ([[maybe_unused]] mlir::OpOperand & use : result.getUses()) {
-                if (!spend()) { return mlir::WalkResult::interrupt(); }
-            }
+            if (!budget.spend(result.getNumUses())) { return mlir::WalkResult::interrupt(); }
         }
         if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(operation);
             compare && compare.getKind() == ctjs::CompareKind::StrictEq) {
@@ -143,9 +139,7 @@ llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract &
     // must still reject writes, reentry, escaped snapshots and unknown calls.
     WorkBudget budget{maxSteps};
     const auto spend = [&] { return budget.spend(); };
-    const auto error = [](llvm::StringRef text) {
-        return llvm::createStringError(llvm::inconvertibleErrorCode(), text);
-    };
+    const auto error = [](llvm::StringRef text) { return llvm::createStringError(text); };
     llvm::SmallVector<ctjs::CallOp> opens;
     bool hasLoop = false;
     const auto census = candidate.walk([&](mlir::Operation * operation) {
@@ -212,10 +206,8 @@ llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract &
                 branch ? branch.getCondition().getDefiningOp<ctjs::TruthyOp>() : ctjs::TruthyOp{};
             auto compare =
                 truth ? truth.getValue().getDefiningOp<ctjs::CompareOp>() : ctjs::CompareOp{};
-            if (branch && iterable->getParentRegion() == &branch.getThenRegion() && compare &&
-                compare.getKind() == ctjs::CompareKind::StrictEq &&
-                ((compare.getLhs() == open.getResult() && undefined(compare.getRhs())) ||
-                 (compare.getRhs() == open.getResult() && undefined(compare.getLhs())))) {
+            if (branch && iterable->getParentRegion() == &branch.getThenRegion() &&
+                strictUndefinedTest(compare, open.getResult())) {
                 materializations.insert(operation);
             }
             return mlir::WalkResult::advance();
@@ -229,9 +221,8 @@ llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract &
         mlir::OpBuilder at(open);
         auto * iterationBody = open->getBlock();
         at.setInsertionPoint(open);
-        for (mlir::OpOperand & use : open.getResult().getUses()) {
-            (void)use;
-            if (!spend()) { return error("DOM iteration work budget exhausted"); }
+        if (!budget.spend(open.getResult().getNumUses())) {
+            return error("DOM iteration work budget exhausted");
         }
         auto empty = ctjs::ConstantOp::create(at, open.getLoc(),
                                               ctjs::UndefinedAttr::get(candidate.getContext()));
@@ -256,9 +247,8 @@ llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract &
             for (mlir::Operation * operation : operations) {
                 if (!spend()) { return error("DOM iteration work budget exhausted"); }
                 for (mlir::Value result : operation->getResults()) {
-                    for (mlir::OpOperand & use : result.getUses()) {
-                        (void)use;
-                        if (!spend()) { return error("DOM iteration work budget exhausted"); }
+                    if (!budget.spend(result.getNumUses())) {
+                        return error("DOM iteration work budget exhausted");
                     }
                 }
                 at.setInsertionPoint(operation);

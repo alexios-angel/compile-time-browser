@@ -4,11 +4,13 @@
 #include "../Analysis.h"
 #include "Source/Proof.hpp"
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
+#include "ctcompile/CTNative/Analysis/WorkBudget.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/IRMapping.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/ScopeExit.h"
 
 namespace ctcompile::ctnative {
 
@@ -17,14 +19,10 @@ namespace ctcompile::ctnative {
 // live payloads; forward a capture only when every active incoming value agrees.
 static llvm::Error forwardRecoveredCaptures(ctjs::FuncOp function, unsigned remaining) {
     const auto refuse = [] {
-        return llvm::createStringError(llvm::inconvertibleErrorCode(),
-                                       "DOM recovered capture correspondence exhausted its budget");
+        return llvm::createStringError("DOM recovered capture correspondence exhausted its budget");
     };
-    const auto spend = [&](uint64_t cost = 1) {
-        if (cost > remaining) { return false; }
-        remaining -= static_cast<unsigned>(cost);
-        return true;
-    };
+    WorkBudget budget{remaining};
+    const auto spend = [&](uint64_t cost = 1) { return budget.spend(cost); };
     mlir::DominanceInfo dominance(function);
     const auto origin = [&](auto && self, mlir::Value value,
                             unsigned depth) -> mlir::FailureOr<mlir::Value> {
@@ -82,7 +80,7 @@ static llvm::Error forwardRecoveredCaptures(ctjs::FuncOp function, unsigned rema
                 result.replaceAllUsesWith(*capture);
             }
         }
-        return remaining ? mlir::WalkResult::advance() : mlir::WalkResult::interrupt();
+        return budget.remaining ? mlir::WalkResult::advance() : mlir::WalkResult::interrupt();
     });
     if (aliases.wasInterrupted()) { return refuse(); }
     bool changed = true;
@@ -143,14 +141,10 @@ static llvm::Error forwardRecoveredCaptures(ctjs::FuncOp function, unsigned rema
 
 static llvm::Error normalizeIntrinsicGlobals(mlir::ModuleOp module, llvm::StringRef entry,
                                              unsigned & remaining, unsigned sourceSize) {
-    const auto refuse = [](llvm::StringRef reason) {
-        return llvm::createStringError(llvm::inconvertibleErrorCode(), reason);
-    };
-    const auto spend = [&](uint64_t cost = 1) {
-        if (cost > remaining) { return false; }
-        remaining -= static_cast<unsigned>(cost);
-        return true;
-    };
+    const auto refuse = [](llvm::StringRef reason) { return llvm::createStringError(reason); };
+    WorkBudget budget{remaining};
+    const llvm::scope_exit charged([&] { remaining = static_cast<unsigned>(budget.remaining); });
+    const auto spend = [&](uint64_t cost = 1) { return budget.spend(cost); };
     const auto undefined = ctjs::isUndefinedConstant;
     llvm::DenseMap<unsigned, ctjs::FuncOp> functions;
     ctjs::FuncOp wrapper;
@@ -294,9 +288,7 @@ static llvm::Error normalizeIntrinsicGlobals(mlir::ModuleOp module, llvm::String
 }
 
 llvm::Error liftDOMClasses(mlir::ModuleOp module, unsigned maxSteps) {
-    const auto refuse = [](const llvm::Twine & reason) {
-        return llvm::createStringError(llvm::inconvertibleErrorCode(), reason);
-    };
+    const auto refuse = [](const llvm::Twine & reason) { return llvm::createStringError(reason); };
     // ponytail: quadratic input-size ceiling around the existing finite
     // lift; thread a step budget through its censuses before widening it.
     uint64_t operations = 0, size = 0;
@@ -373,20 +365,89 @@ static llvm::Error publishPrepared(mlir::ModuleOp module, HostContract & contrac
     prepared.lookupSymbol<ctjs::FuncOp>(contract.entry).setPublic();
     transformed.moduleSha256 = hostContractFingerprint(prepared);
     const DOMEntryAnalysis checked(prepared, transformed, maxSteps);
-    if (!checked.proved()) {
-        return llvm::createStringError(llvm::inconvertibleErrorCode(),
-                                       stage + ": " + checked.reason());
-    }
+    if (!checked.proved()) { return llvm::createStringError(stage + ": " + checked.reason()); }
     module->setAttrs(prepared->getAttrs());
     module.getBodyRegion().takeBody(prepared.getBodyRegion());
     contract = std::move(transformed);
     return llvm::Error::success();
 }
 
+// A handler in the entry is normalized in place. A handler owned by a local
+// helper is normalized first, under the same fingerprinted proof, so helper
+// expansion then inlines one structured invoke. `entryHandler` stays set when
+// the entry's own handler remains; `deferredCatch` when its recovered catch
+// awaits the independent effect proof after expansion.
+static llvm::Error normalizeHandlers(mlir::ModuleOp composed, const HostContract & contract,
+                                     HostContract & transformed, unsigned maxSteps,
+                                     bool & entryHandler, bool & deferredCatch) {
+    llvm::SmallVector<std::string> handlers;
+    for (auto function : composed.getOps<ctjs::FuncOp>()) {
+        bool hasHandler = false;
+        function.walk([&](ctjs::PushHandlerOp) { hasHandler = true; });
+        if (hasHandler) { handlers.push_back(function.getSymName().str()); }
+    }
+    entryHandler = llvm::is_contained(handlers, contract.entry);
+    for (const std::string & handler : handlers) {
+        if (handler == contract.entry) {
+            auto close = normalizeDOMIteratorClose(composed, transformed, maxSteps);
+            if (!close) { return close.takeError(); }
+            if (*close) {
+                entryHandler = false;
+                transformed.moduleSha256 = hostContractFingerprint(composed);
+                continue;
+            }
+        }
+        auto caught = lowering_detail::normalizeDOMCaughtThrow(
+            composed.lookupSymbol<ctjs::FuncOp>(handler), maxSteps,
+            handler == contract.entry ? llvm::ArrayRef<unsigned>(contract.elementParameters)
+                                      : llvm::ArrayRef<unsigned>{});
+        if (!caught) { return caught.takeError(); }
+        if (*caught) {
+            if (handler == contract.entry) { entryHandler = false; }
+            transformed.moduleSha256 = hostContractFingerprint(composed);
+            continue;
+        }
+        if (handler == contract.entry) {
+            auto entry = composed.lookupSymbol<ctjs::FuncOp>(handler);
+            WorkBudget budget{maxSteps};
+            bool hasHelper = false, sourcePoison = false;
+            const auto scanned = entry.walk([&](mlir::Operation * operation) {
+                if (!budget.spend(uint64_t(1) + operation->getNumOperands())) {
+                    return mlir::WalkResult::interrupt();
+                }
+                hasHelper |= llvm::isa<ctjs::CreateClosureOp>(operation);
+                sourcePoison |= llvm::isa<mlir::ub::PoisonOp>(operation);
+                return mlir::WalkResult::advance();
+            });
+            if (hasHelper && !sourcePoison && !scanned.wasInterrupted()) {
+                const auto remaining = static_cast<unsigned>(budget.remaining);
+                auto recovered = lowering_detail::recoverPrimitiveExceptionRegion(
+                    entry, remaining, lowering_detail::ExceptionRecoveryMode::CheckedInvocations);
+                if (!recovered.recovered) {
+                    return llvm::createStringError("DOM helper catch recovery: " +
+                                                   recovered.refusal);
+                }
+                if (auto error = forwardRecoveredCaptures(entry, remaining - recovered.steps)) {
+                    return error;
+                }
+                // Keep the catch and every represented call. Expansion may
+                // resolve local captures and own records, but only the later
+                // independent effect proof can select a normal completion.
+                deferredCatch = true;
+                entryHandler = false;
+                transformed.moduleSha256 = hostContractFingerprint(composed);
+                continue;
+            }
+        }
+        auto error = lowering_detail::normalizeDOMURI(composed, transformed, maxSteps, handler);
+        transformed.moduleSha256 = hostContractFingerprint(composed);
+        if (error) { return error; }
+    }
+    return llvm::Error::success();
+}
+
 llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsigned maxSteps) {
-    const auto refuse = [](const llvm::Twine & reason) {
-        return llvm::createStringError(llvm::inconvertibleErrorCode(), reason);
-    };
+    const auto refuse = [](const llvm::Twine & reason) { return llvm::createStringError(reason); };
     if (contract.provider == HostContract::Provider::ctbrowserIntrinsics) {
         // Exact helpers reuse the DOM normalizer, but not its prototype
         // or initialization premises. Check those boundaries on original source;
@@ -507,79 +568,9 @@ llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsi
         if (auto error = liftDOMClasses(*composed, maxSteps)) { return error; }
         transformed.moduleSha256 = hostContractFingerprint(*composed);
     }
-    // A handler in the entry is normalized in place. A handler
-    // owned by a local helper is normalized first, under the
-    // same fingerprinted proof, so helper expansion then
-    // inlines one structured invoke.
-    llvm::SmallVector<std::string> handlers;
-    for (auto function : composed->getOps<ctjs::FuncOp>()) {
-        bool hasHandler = false;
-        function.walk([&](ctjs::PushHandlerOp) { hasHandler = true; });
-        if (hasHandler) { handlers.push_back(function.getSymName().str()); }
-    }
-    bool entryHandler = llvm::is_contained(handlers, contract.entry);
-    bool deferredCatch = false;
-    llvm::Error sourceError = llvm::Error::success();
-    for (const std::string & handler : handlers) {
-        if (sourceError) { break; }
-        if (handler == contract.entry) {
-            auto close = normalizeDOMIteratorClose(*composed, transformed, maxSteps);
-            if (!close) {
-                sourceError = close.takeError();
-                break;
-            }
-            if (*close) {
-                entryHandler = false;
-                transformed.moduleSha256 = hostContractFingerprint(*composed);
-                continue;
-            }
-        }
-        auto caught = lowering_detail::normalizeDOMCaughtThrow(
-            composed->lookupSymbol<ctjs::FuncOp>(handler), maxSteps,
-            handler == contract.entry ? llvm::ArrayRef<unsigned>(contract.elementParameters)
-                                      : llvm::ArrayRef<unsigned>{});
-        if (!caught) {
-            sourceError = caught.takeError();
-            break;
-        }
-        if (*caught) {
-            if (handler == contract.entry) { entryHandler = false; }
-            transformed.moduleSha256 = hostContractFingerprint(*composed);
-            continue;
-        }
-        if (handler == contract.entry) {
-            auto entry = composed->lookupSymbol<ctjs::FuncOp>(handler);
-            unsigned remaining = maxSteps;
-            bool hasHelper = false, sourcePoison = false;
-            const auto scanned = entry.walk([&](mlir::Operation * operation) {
-                const uint64_t cost = uint64_t(1) + operation->getNumOperands();
-                if (cost > remaining) { return mlir::WalkResult::interrupt(); }
-                remaining -= static_cast<unsigned>(cost);
-                hasHelper |= llvm::isa<ctjs::CreateClosureOp>(operation);
-                sourcePoison |= llvm::isa<mlir::ub::PoisonOp>(operation);
-                return mlir::WalkResult::advance();
-            });
-            if (hasHelper && !sourcePoison && !scanned.wasInterrupted()) {
-                auto recovered = lowering_detail::recoverPrimitiveExceptionRegion(
-                    entry, remaining, lowering_detail::ExceptionRecoveryMode::CheckedInvocations);
-                if (recovered.recovered) {
-                    sourceError = forwardRecoveredCaptures(entry, remaining - recovered.steps);
-                    if (sourceError) { break; }
-                    // Keep the catch and every represented call. Expansion may
-                    // resolve local captures and own records, but only the later
-                    // independent effect proof can select a normal completion.
-                    deferredCatch = true;
-                    entryHandler = false;
-                    transformed.moduleSha256 = hostContractFingerprint(*composed);
-                    continue;
-                }
-                sourceError = refuse("DOM helper catch recovery: " + recovered.refusal);
-                break;
-            }
-        }
-        sourceError = lowering_detail::normalizeDOMURI(*composed, transformed, maxSteps, handler);
-        transformed.moduleSha256 = hostContractFingerprint(*composed);
-    }
+    bool entryHandler = false, deferredCatch = false;
+    llvm::Error sourceError =
+        normalizeHandlers(*composed, contract, transformed, maxSteps, entryHandler, deferredCatch);
     if (!sourceError && !entryHandler) {
         std::vector<mlir::Value> inactiveFillers;
         sourceError =
