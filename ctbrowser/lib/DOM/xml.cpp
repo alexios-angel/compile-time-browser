@@ -371,22 +371,37 @@ private:
     // place of the reference in the input and is parsed as whatever the
     // reference sat in - content, so markup inside it makes elements, or an
     // attribute value, where a `<` in it is then the error the spec says it
-    // is. Done by splicing a copy of the input: an entity reference is rare
-    // and the input small, and the alternative is a second cursor through
-    // every production. A bound on expansions is what stops `<!ENTITY a
-    // "&a;">` from being a loop.
+    // is. The alternative is a second cursor through every production. A bound
+    // on expansions is what stops `<!ENTITY a "&a;">` from being a loop, and a
+    // bound on the BYTES expanded is what stops a 100 KB entity referenced ten
+    // thousand times from being a gigabyte.
+    //
+    // WRITTEN INTO THE CONSUMED PREFIX, not spliced: nothing reads behind the
+    // cursor, so the replacement goes in the bytes just before the reference's
+    // end and the cursor steps back over it. Copying the whole buffer per
+    // reference made N references to anything O(N * input). Only when the
+    // prefix is too short is the tail copied, once, behind fresh slack.
     bool include_entity(const std::string & replacement, std::size_t reference_end) {
         if (++expansions_ > max_entity_expansions) {
             fail("entity expansion too deep");
             return false;
         }
-        std::string spliced;
-        spliced.reserve(src_.size() + replacement.size());
-        spliced.append(src_.substr(0, at_));
-        spliced.append(replacement);
-        spliced.append(src_.substr(reference_end));
-        owned_ = std::move(spliced);
-        src_ = owned_;
+        expanded_bytes_ += replacement.size();
+        if (expanded_bytes_ > max_expanded_bytes) {
+            fail("entity expansion too large");
+            return false;
+        }
+        if (!spliced_ || reference_end < replacement.size()) {
+            const std::size_t slack = std::max<std::size_t>(2 * replacement.size(), 64 * 1024);
+            std::string next(slack, '\0');
+            next.append(src_.substr(reference_end));
+            owned_ = std::move(next);
+            src_ = owned_;
+            spliced_ = true;
+            reference_end = slack;
+        }
+        at_ = reference_end - replacement.size();
+        std::ranges::copy(replacement, owned_.begin() + static_cast<std::ptrdiff_t>(at_));
         return true;
     }
 
@@ -774,6 +789,7 @@ private:
     }
 
     static constexpr std::size_t max_entity_expansions = 10000;
+    static constexpr std::size_t max_expanded_bytes = 16 * 1024 * 1024;
 
     document & doc_;
     document::builder builder_;
@@ -784,6 +800,8 @@ private:
     std::string owned_;
     std::map<std::string, std::string> entities_;
     std::size_t expansions_ = 0;
+    std::size_t expanded_bytes_ = 0;
+    bool spliced_ = false; // src_ views owned_
     std::size_t at_ = 0;
     std::size_t line_ = 1;
     std::size_t column_ = 1;

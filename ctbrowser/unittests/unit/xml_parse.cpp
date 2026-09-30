@@ -270,6 +270,34 @@ void test_internal_subset_entities() {
     CHECK(!undeclared.error.empty());
 }
 
+// DOS-019: a 100 KB entity referenced ten thousand times is a gigabyte of
+// text; the expansion stops at 16 MB. Many small references, nested ones
+// included, still expand exactly - they are written into the consumed prefix
+// rather than re-copying the whole input each time.
+void test_entity_expansion_is_bounded() {
+    std::string bomb = "<!DOCTYPE a [<!ENTITY big \"" + std::string(100 * 1024, 'x') + "\">]><a>";
+    for (int i = 0; i < 10000; ++i) { bomb += "&big;"; }
+    bomb += "</a>";
+    atom_table atoms;
+    document doc{atoms};
+    CHECK_EQ(parse_xml(doc, bomb).error, std::string{"entity expansion too large"});
+
+    std::string many =
+        "<!DOCTYPE a [<!ENTITY i \"<i>&j;</i>\"><!ENTITY j \"ab\">]><a q=\"&j;&j;\">";
+    for (int i = 0; i < 4000; ++i) { many += "&i;"; }
+    many += "</a>";
+    atom_table atoms2;
+    document doc2{atoms2};
+    const xml_parse_result out = parse_xml(doc2, many);
+    CHECK(out.error.empty());
+    const auto r = doc2.read();
+    CHECK_EQ(r.children(out.tree.root).size(), std::size_t{4000});
+    CHECK_EQ(std::string{r.text(r.children(r.children(out.tree.root)[3999])[0])},
+             std::string{"ab"});
+    CHECK_EQ(std::string{r.attribute_value(out.tree.root, atoms2.intern("q"))},
+             std::string{"abab"});
+}
+
 // The document knows what it is, and an XML document is never in quirks mode.
 void test_document_is_marked() {
     atom_table atoms;
@@ -309,6 +337,7 @@ void test_prolog() {
 } // namespace
 
 int main() {
+    test_entity_expansion_is_bounded();
     test_cdata_is_character_data();
     test_cdata_outside_the_root_is_an_error_not_a_crash();
     test_case_is_preserved();
