@@ -1,6 +1,7 @@
 #include "LoweringSupport.h"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
 #include "ctcompile/Support/CppLiterals.hpp"
+#include "ctcompile/Support/SourceSite.h"
 
 namespace ctcompile::ctnative::lowering_detail {
 
@@ -25,6 +26,25 @@ struct UnaryPlusIsIdentity : mlir::OpRewritePattern<ctjs::UnaryOp> {
         return mlir::success();
     }
 };
+
+// Whether a Variant's `alternatives` are exactly two, one satisfying each predicate.
+template <class First, class Second>
+bool pairAlternatives(llvm::ArrayRef<mlir::Type> alternatives, First && first, Second && second) {
+    return alternatives.size() == 2 && llvm::any_of(alternatives, first) &&
+           llvm::any_of(alternatives, second);
+}
+
+template <class Kind> bool is(mlir::Type type) {
+    return llvm::isa<Kind>(type);
+}
+
+// Whether `level` holds for this Map or for any Map nested as its values.
+template <class Level> bool anyMapLevel(MapType type, Level && level) {
+    for (; type; type = llvm::dyn_cast<MapType>(type.getValueType())) {
+        if (level(type)) { return true; }
+    }
+    return false;
+}
 
 } // namespace
 
@@ -59,15 +79,11 @@ carrier carrierOf(mlir::Type type) {
         return carrier::string;
     }
     if (auto opt = llvm::dyn_cast<OptType>(type)) {
-        if (carrierOf(opt.getElementType()) == carrier::booleanString) {
-            return carrier::nullableBooleanString;
-        }
-        if (carrierOf(opt.getElementType()) == carrier::numberString) {
-            return carrier::nullableNumberString;
-        }
-        if (carrierOf(opt.getElementType()) == carrier::string) { return carrier::nullableString; }
-        if (llvm::isa<BottomType>(opt.getElementType()) ||
-            isScalarCarrier(carrierOf(opt.getElementType()))) {
+        const carrier inner = carrierOf(opt.getElementType());
+        if (inner == carrier::booleanString) { return carrier::nullableBooleanString; }
+        if (inner == carrier::numberString) { return carrier::nullableNumberString; }
+        if (inner == carrier::string) { return carrier::nullableString; }
+        if (llvm::isa<BottomType>(opt.getElementType()) || isScalarCarrier(inner)) {
             return carrier::nullable;
         }
     }
@@ -76,19 +92,13 @@ carrier carrierOf(mlir::Type type) {
     // neither adds nullability nor admits objects or unknown values. A closed
     // Boolean/String temporary has its own finite, owning variant carrier.
     if (auto variant = llvm::dyn_cast<VariantType>(type)) {
-        if (variant.getAlternatives().size() == 2 &&
-            llvm::any_of(variant.getAlternatives(),
-                         [](mlir::Type alternative) { return llvm::isa<BoolType>(alternative); }) &&
-            llvm::any_of(variant.getAlternatives(), [](mlir::Type alternative) {
+        if (pairAlternatives(variant.getAlternatives(), is<BoolType>, [](mlir::Type alternative) {
                 auto string = llvm::dyn_cast<StrType>(alternative);
                 return string && string.getEncoding() == StrEncoding::UTF8;
             })) {
             return carrier::booleanString;
         }
-        if (variant.getAlternatives().size() == 2 &&
-            llvm::any_of(variant.getAlternatives(),
-                         [](mlir::Type alternative) { return llvm::isa<NumType>(alternative); }) &&
-            llvm::any_of(variant.getAlternatives(), [](mlir::Type alternative) {
+        if (pairAlternatives(variant.getAlternatives(), is<NumType>, [](mlir::Type alternative) {
                 return carrierOf(alternative) == carrier::string;
             })) {
             return carrier::numberString;
@@ -134,13 +144,7 @@ bool isScalarCarrier(carrier value) {
 }
 
 bool isStringUnionCarrier(carrier value) {
-    switch (value) {
-    case carrier::booleanString:
-    case carrier::nullableBooleanString:
-    case carrier::numberString:
-    case carrier::nullableNumberString: return true;
-    default: return false;
-    }
+    return carrierInfo(value).stringUnion;
 }
 
 bool isPrimitiveCarrier(carrier value) {
@@ -171,30 +175,27 @@ mlir::Type vectorCarrierType(mlir::MLIRContext * c, bool strings) {
 // Scalar call operands and independently typed reads remain separate gates.
 llvm::StringRef mixedMapSpelling(mlir::Type type) {
     auto variant = llvm::dyn_cast<VariantType>(type);
-    if (!variant || variant.getAlternatives().size() != 2) { return {}; }
-    bool boolean = false, number = false, string = false;
-    for (mlir::Type alternative : variant.getAlternatives()) {
-        boolean |= llvm::isa<BoolType>(alternative);
-        number |= llvm::isa<NumType>(alternative);
-        string |= carrierOf(alternative) == carrier::string;
+    if (!variant) { return {}; }
+    const auto alternatives = variant.getAlternatives();
+    if (pairAlternatives(alternatives, is<BoolType>, is<NumType>)) {
+        return "std::variant<ctnative::js_boolean_t, double>";
     }
-    if (boolean && number) { return "std::variant<ctnative::js_boolean_t, double>"; }
-    if (boolean && string) { return kBooleanStringMapType; }
+    if (pairAlternatives(alternatives, is<BoolType>, [](mlir::Type alternative) {
+            return carrierOf(alternative) == carrier::string;
+        })) {
+        return kBooleanStringMapType;
+    }
     return {};
 }
 
 llvm::StringRef mixedMapKeySpelling(mlir::Type type) {
     if (auto scalar = mixedMapSpelling(type); !scalar.empty()) { return scalar; }
     auto variant = llvm::dyn_cast<VariantType>(type);
-    if (!variant || variant.getAlternatives().size() != 2) { return {}; }
-    bool number = false, object = false;
-    for (mlir::Type alternative : variant.getAlternatives()) {
-        number |= llvm::isa<NumType>(alternative);
-        object |= llvm::isa<ObjectIdentityType>(alternative);
-    }
     // Keys own exact identities; object/scalar payloads retain object_value storage.
-    return number && object ? "std::variant<double, std::shared_ptr<ctnative::identity_object>>"
-                            : llvm::StringRef{};
+    return variant &&
+                   pairAlternatives(variant.getAlternatives(), is<NumType>, is<ObjectIdentityType>)
+               ? "std::variant<double, std::shared_ptr<ctnative::identity_object>>"
+               : llvm::StringRef{};
 }
 
 // Closed tagged storage for optional scalars and owning nullable Strings.
@@ -236,25 +237,24 @@ std::string mapValueSpelling(mlir::Type type) {
 }
 
 bool mapNeedsString(MapType type) {
-    return llvm::isa<StrType>(type.getKeyType()) ||
-           !nullableMapSpelling(type.getKeyType()).empty() ||
-           llvm::isa<StrType>(type.getValueType()) ||
-           !nullableMapSpelling(type.getValueType()).empty() ||
-           (llvm::isa<MapType>(type.getValueType()) &&
-            mapNeedsString(llvm::cast<MapType>(type.getValueType())));
+    return anyMapLevel(type, [](MapType level) {
+        return llvm::isa<StrType>(level.getKeyType()) ||
+               !nullableMapSpelling(level.getKeyType()).empty() ||
+               llvm::isa<StrType>(level.getValueType()) ||
+               !nullableMapSpelling(level.getValueType()).empty();
+    });
 }
 
 bool mapNeedsNullableString(MapType type) {
-    return !nullableMapSpelling(type.getKeyType()).empty() ||
-           !nullableMapSpelling(type.getValueType()).empty() ||
-           (llvm::isa<MapType>(type.getValueType()) &&
-            mapNeedsNullableString(llvm::cast<MapType>(type.getValueType())));
+    return anyMapLevel(type, [](MapType level) {
+        return !nullableMapSpelling(level.getKeyType()).empty() ||
+               !nullableMapSpelling(level.getValueType()).empty();
+    });
 }
 
 bool mapNeedsNullableStringKey(MapType type) {
-    return !nullableMapSpelling(type.getKeyType()).empty() ||
-           (llvm::isa<MapType>(type.getValueType()) &&
-            mapNeedsNullableStringKey(llvm::cast<MapType>(type.getValueType())));
+    return anyMapLevel(
+        type, [](MapType level) { return !nullableMapSpelling(level.getKeyType()).empty(); });
 }
 
 mlir::Type mapCarrierType(MapType type) {
@@ -270,13 +270,12 @@ mlir::Type mapCarrierType(MapType type) {
 }
 
 mlir::Type closureCarrierType(ClosureType type) {
-    return ec::OpaqueType::get(type.getContext(),
-                               "ctnative::ctn_env_" + cIdentifier(type.getTarget()));
+    return ec::OpaqueType::get(type.getContext(), "ctnative::" + environmentType(type.getTarget()));
 }
 
 mlir::Type methodTableCarrierType(MethodTableType type) {
-    return ec::OpaqueType::get(type.getContext(), "std::shared_ptr<ctnative::method_" +
-                                                      cIdentifier(type.getSite()) + ">");
+    return ec::OpaqueType::get(
+        type.getContext(), "std::shared_ptr<ctnative::" + methodTableClass(type.getSite()) + ">");
 }
 
 mlir::Type carrierType(mlir::MLIRContext * c, carrier which) {
@@ -285,30 +284,11 @@ mlir::Type carrierType(mlir::MLIRContext * c, carrier which) {
     // proved carrier must be refused by admission long before it gets here;
     // reaching this point means a rule let one through, and a crash naming
     // that is worth far more than a double that happens to verify.
-    switch (which) {
-    case carrier::domElement: return ec::OpaqueType::get(c, kDOMElementType);
-    case carrier::domElementVector: return ec::OpaqueType::get(c, kDOMElementVectorType);
-    case carrier::json: return ec::OpaqueType::get(c, kDOMJSONType);
-    case carrier::nullable: return ec::OpaqueType::get(c, kNullableType);
-    case carrier::booleanString: return ec::OpaqueType::get(c, kBooleanStringType);
-    case carrier::nullableBooleanString: return ec::OpaqueType::get(c, kNullableBooleanStringType);
-    case carrier::numberString: return ec::OpaqueType::get(c, kNumberStringType);
-    case carrier::nullableNumberString: return ec::OpaqueType::get(c, kNullableNumberStringType);
-    case carrier::nullableString: return ec::OpaqueType::get(c, kNullableStringType);
-    case carrier::objectValue: return ec::OpaqueType::get(c, kObjectValueType);
-    case carrier::objectIdentity: return ec::OpaqueType::get(c, kObjectIdentityType);
-    case carrier::methodTable:
+    if (which == carrier::methodTable) {
         llvm::report_fatal_error("method table carrier needs its proved schema");
-    case carrier::boolean: return ec::OpaqueType::get(c, kBooleanType);
-    case carrier::symbol: return ec::OpaqueType::get(c, kSymbolType);
-    case carrier::number: return ec::OpaqueType::get(c, kNumberType);
-    case carrier::string: return ec::OpaqueType::get(c, kStringType);
-    case carrier::structure:
-    case carrier::closure:
-    case carrier::map:
-    case carrier::vector:
-    case carrier::stringVector:
-    case carrier::none: break;
+    }
+    if (const auto spelling = carrierInfo(which).spelling; !spelling.empty()) {
+        return ec::OpaqueType::get(c, spelling);
     }
     llvm::report_fatal_error("ctnative lowering: asked for the C++ carrier of a value that has "
                              "none - admission should have refused it");
@@ -360,32 +340,26 @@ llvm::SmallVector<mlir::Value, 2> aliasesOf(const receiverGroups * groups, mlir:
 
 // PART 24 PHASE 63 STEP 7: a provenance comment above every generated
 // definition, so a C++ diagnostic on generated code maps back to the
-// JavaScript site. The importer fuses a NameLoc with the FileLineColLoc of
-// the site; the first file location found, at any depth, is the site.
+// JavaScript site (ctcompile::sourceSite).
+static std::string spelledSite(mlir::FileLineColLoc file) {
+    return file ? file.getFilename().str() + ":" + std::to_string(file.getLine()) + ":" +
+                      std::to_string(file.getColumn())
+                : std::string{"<no source location>"};
+}
 std::string siteOf(mlir::Location loc) {
-    std::string site;
-    loc->walk([&](mlir::Location l) {
-        if (auto file = llvm::dyn_cast<mlir::FileLineColLoc>(l)) {
-            site = file.getFilename().str() + ":" + std::to_string(file.getLine()) + ":" +
-                   std::to_string(file.getColumn());
-            return mlir::WalkResult::interrupt();
-        }
-        return mlir::WalkResult::advance();
-    });
-    return site.empty() ? std::string{"<no source location>"} : site;
+    return spelledSite(sourceSite(loc));
 }
 // The importer gives a ctjs.func no location of its own; its first located
 // operation is the function's site.
 std::string siteOfFunction(ctjs::FuncOp fn) {
-    std::string site = siteOf(fn.getLoc());
-    if (site != "<no source location>") { return site; }
-    fn.getBody().walk([&](mlir::Operation * o) {
-        const std::string here = siteOf(o->getLoc());
-        if (here == "<no source location>") { return mlir::WalkResult::advance(); }
-        site = here;
-        return mlir::WalkResult::interrupt();
-    });
-    return site;
+    auto site = sourceSite(fn.getLoc());
+    if (!site) {
+        fn.getBody().walk([&](mlir::Operation * o) {
+            site = sourceSite(o->getLoc());
+            return site ? mlir::WalkResult::interrupt() : mlir::WalkResult::advance();
+        });
+    }
+    return spelledSite(site);
 }
 
 std::string cIdentifier(llvm::StringRef symbol) {

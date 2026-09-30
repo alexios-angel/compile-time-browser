@@ -34,6 +34,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdint>
+#include <iterator>
 #include <limits>
 #include <optional>
 #include <set>
@@ -92,6 +93,52 @@ inline constexpr llvm::StringLiteral kDOMElementType = "ctbrowser::element_ref";
 inline constexpr llvm::StringLiteral kDOMElementVectorType = "std::vector<ctbrowser::element_ref>";
 // The lattice's json rung, carried by the shared Core parser's owning tree.
 inline constexpr llvm::StringLiteral kDOMJSONType = "ctbrowser::json_value";
+inline constexpr llvm::StringLiteral kObjectIdentityType =
+    "std::shared_ptr<ctnative::identity_object>";
+// ONE ROW PER CARRIER, in enum order: its C++ spelling (empty when the
+// carrier has no fixed one) and whether it is a String-union variant.
+struct carrierRow {
+    carrier which;
+    llvm::StringLiteral spelling;
+    bool stringUnion = false;
+};
+inline constexpr carrierRow kCarriers[] = {
+    {carrier::none, ""},
+    {carrier::boolean, kBooleanType},
+    {carrier::symbol, kSymbolType},
+    {carrier::number, kNumberType},
+    {carrier::nullable, kNullableType},
+    {carrier::string, kStringType},
+    {carrier::nullableString, kNullableStringType},
+    {carrier::booleanString, kBooleanStringType, true},
+    {carrier::nullableBooleanString, kNullableBooleanStringType, true},
+    {carrier::numberString, kNumberStringType, true},
+    {carrier::nullableNumberString, kNullableNumberStringType, true},
+    {carrier::map, ""},
+    {carrier::closure, ""},
+    {carrier::methodTable, ""},
+    {carrier::objectIdentity, kObjectIdentityType},
+    {carrier::objectValue, kObjectValueType},
+    {carrier::domElement, kDOMElementType},
+    {carrier::domElementVector, kDOMElementVectorType},
+    {carrier::json, kDOMJSONType},
+    {carrier::structure, ""},
+    {carrier::vector, ""},
+    {carrier::stringVector, ""},
+};
+static_assert(std::size(kCarriers) == static_cast<size_t>(carrier::stringVector) + 1,
+              "a carrier without a row");
+static_assert(
+    [] {
+        for (size_t i = 0; i < std::size(kCarriers); ++i) {
+            if (kCarriers[i].which != static_cast<carrier>(i)) { return false; }
+        }
+        return true;
+    }(),
+    "carrier rows out of enum order");
+inline const carrierRow & carrierInfo(carrier which) {
+    return kCarriers[static_cast<size_t>(which)];
+}
 bool isScalarCarrier(carrier value);
 bool isStringUnionCarrier(carrier value);
 bool isPrimitiveCarrier(carrier value);
@@ -129,8 +176,6 @@ bool isVectorCarrier(carrier value);
 bool stringConcatenation(mlir::Type left, mlir::Type right);
 bool stringEquality(mlir::Type left, mlir::Type right);
 bool isObjectCarrier(carrier value);
-inline constexpr llvm::StringLiteral kObjectIdentityType =
-    "std::shared_ptr<ctnative::identity_object>";
 inline bool isObjectValueCarrier(mlir::Type type) {
     return opaqueSpelling(type) == kObjectValueType;
 }
@@ -140,6 +185,14 @@ inline bool isIdentityCarrier(mlir::Type type) {
 bool isObjectValueType(mlir::Type type);
 bool identityOrAbsent(mlir::Type type);
 bool onlyAbsent(mlir::Type type);
+// A definite Number, Boolean or String lattice type.
+inline bool isPrimitive(mlir::Type type) {
+    return llvm::isa_and_nonnull<NumType, BoolType, StrType>(type);
+}
+// A definite primitive, or only null/undefined.
+inline bool primitiveOrAbsent(mlir::Type type) {
+    return isPrimitive(type) || onlyAbsent(type);
+}
 carrier carrierOf(mlir::Type type);
 mlir::Type vectorCarrierType(mlir::MLIRContext * context, bool strings = false);
 llvm::StringRef mixedMapSpelling(mlir::Type type);
@@ -161,6 +214,17 @@ llvm::SmallVector<mlir::Value, 2> aliasesOf(const receiverGroups * groups, mlir:
 std::string siteOf(mlir::Location loc);
 std::string siteOfFunction(ctjs::FuncOp fn);
 std::string cIdentifier(llvm::StringRef symbol);
+// The generated C++ names, each spelled once: a method table's class and a
+// closure's environment type (both in namespace ctnative), and its binder.
+inline std::string methodTableClass(llvm::StringRef site) {
+    return "method_" + cIdentifier(site);
+}
+inline std::string environmentType(llvm::StringRef target) {
+    return "ctn_env_" + cIdentifier(target);
+}
+inline std::string binderName(llvm::StringRef target) {
+    return "ctn_bind_" + cIdentifier(target);
+}
 mlir::FrozenRewritePatternSet declarativePatterns(mlir::MLIRContext * context);
 
 bool isScriptEntry(ctjs::FuncOp fn);

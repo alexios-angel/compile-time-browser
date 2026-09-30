@@ -22,6 +22,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "ctcompile/CTNative/Transforms/Passes.h"
+#include "ctcompile/Support/OpaqueType.h"
 
 #include "mlir/Dialect/EmitC/IR/EmitC.h"
 #include "mlir/IR/BuiltinAttributes.h"
@@ -75,8 +76,7 @@ template <typename Call> struct UnreadCallIsAStatement : mlir::OpRewritePattern<
 // unused, they are dead. A call, an assign, a variable are not on the list.
 bool isPureExpression(mlir::Operation * o) {
     if (auto call = llvm::dyn_cast<ec::MemberCallOpaqueOp>(o)) {
-        auto receiver = llvm::dyn_cast<ec::OpaqueType>(call.getReceiver().getType());
-        return receiver && receiver.getValue() == "ctnative::js_num" &&
+        return isOpaque(call.getReceiver().getType(), "ctnative::js_num") &&
                call.getCallee() == "value" && call.getArgOperands().empty() && !call.getArgs() &&
                !call.getTemplateArgs() && call.getNumResults() == 1 &&
                call.getResult(0).getType().isF64();
