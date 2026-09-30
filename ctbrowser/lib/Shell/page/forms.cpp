@@ -340,7 +340,9 @@ void form_store::toggle(const read_txn & txn, atom_table & atoms, node_id id, co
     };
     // An unnamed radio is its own group, per spec - so do not clear anything.
     if (!group.empty()) { walk(walk, txn.root_of_tree(id, false)); }
-    control.checked = true;
+    // LOOKED UP AGAIN: states_ is a flat_map, and the walk's state_of inserts a
+    // radio it has not seen - which can move every element, `control` too.
+    state_of(txn, atoms, id).checked = true;
 }
 
 void form_store::reset_form(const read_txn & txn, node_id form) {

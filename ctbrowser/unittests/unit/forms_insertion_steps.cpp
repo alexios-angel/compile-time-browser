@@ -9,6 +9,8 @@
 #include "check.hpp"
 #include "dom_probe.hpp"
 
+#include <string>
+
 namespace {
 
 void test_radios() {
@@ -80,10 +82,25 @@ void test_options() {
         "(s.options[1].removeAttribute('selected'), s.selectedIndex)", "0");
 }
 
+// UAF-021: clicking a radio BELOW the checked one in a big group. The toggle's
+// walk creates the state of every radio it has not seen, which rehashes the
+// store - and the clicked radio's own state, looked up before the walk, must
+// not be written through a reference the rehash moved.
+void test_a_click_in_a_big_group_checks_the_clicked_radio() {
+    std::string html = "<!DOCTYPE html><body><input type=radio name=g id=first checked>";
+    for (int i = 0; i < 300; ++i) { html += "<input type=radio name=g>"; }
+    html += "<input type=radio name=g id=last></body>";
+    ctbrowser_test::is_in(html,
+                          "(last.click(), [first.checked, last.checked,"
+                          " document.querySelectorAll('input:checked').length].join())",
+                          "false,true,1");
+}
+
 } // namespace
 
 int main() {
     test_radios();
+    test_a_click_in_a_big_group_checks_the_clicked_radio();
     test_options();
     REPORT("forms_insertion_steps");
 }
