@@ -264,13 +264,19 @@ struct object_object final : heap_object {
     }
 
     // The straight-line walk: definition order, data and accessors interleaved.
+    // Over a SNAPSHOT: a visitor may run a page getter (object spread reads
+    // each property) that adds or deletes properties here, reallocating the
+    // tables under a live iterator - and OwnPropertyKeys is a list taken once.
     template <typename Fn> void each_own_entry_in_order(Fn && visit) const {
+        std::vector<std::pair<std::string, std::uint8_t>> order;
+        order.reserve(props.size() + accessors.entries.size());
         for (std::size_t i = 0; i <= props.size(); ++i) {
             for (const accessor_entry & entry : accessors.entries) {
-                if (entry.after == i) { visit(entry.key, entry.attrs); }
+                if (entry.after == i) { order.emplace_back(entry.key, entry.attrs); }
             }
-            if (i < props.size()) { visit(props[i].first, attrs_at(i)); }
+            if (i < props.size()) { order.emplace_back(props[i].first, attrs_at(i)); }
         }
+        for (const auto & [key, a] : order) { visit(key, a); }
     }
 
     // Is this key an ARRAY INDEX - 0 .. 2^32-2, spelled canonically? "01" and
