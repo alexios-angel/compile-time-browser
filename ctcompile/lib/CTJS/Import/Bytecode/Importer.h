@@ -43,6 +43,7 @@ bool is_conditional_jump(op code);
 bool is_jump(op code);
 bool ends_a_block(op code);
 bool falls_through(op code);
+llvm::SmallVector<std::int64_t, 2> successors(std::size_t at, const instruction & in);
 
 using ctjs::arg_callee;
 using ctjs::arg_new_target;
@@ -139,6 +140,19 @@ struct function_importer {
         return constant(where, ctjs::UndefinedAttr::get(context));
     }
 
+    // A NAMED PROPERTY'S KEY, as the string constant a lookup takes.
+    [[nodiscard]] mlir::Value key(mlir::Location where, const std::string & name) {
+        return constant(where, ctjs::StringAttr::get(context, name));
+    }
+
+    // THE RETURNING PATH: the frame is released there and only there - on an
+    // unwound one it is already gone, and leaving again would pop somebody
+    // else's.
+    void emit_return(mlir::Location where, mlir::Value returned) {
+        ctjs::FrameExitOp::create(builder, where, frame);
+        ctjs::ReturnOp::create(builder, where, returned);
+    }
+
     // THE HANDLERS OPEN AT THIS POINT IN THE WALK, innermost last. Reset at
     // every reachable leader from the control-flow dataflow in import_program;
     // within a block, push_handler and pop_handler keep it.
@@ -188,6 +202,36 @@ struct function_importer {
     mlir::Block * block_at(std::int64_t target) const {
         const auto found = blocks.find(target);
         return found == blocks.end() ? nullptr : found->second;
+    }
+
+    // A CONDITIONAL TERMINATOR'S TWO SUCCESSORS - the jump's target and the
+    // instruction after it - or nothing after giving up because either is not
+    // a block leader.
+    [[nodiscard]] std::optional<std::pair<mlir::Block *, mlir::Block *>> branch_targets(
+        std::size_t at, const instruction & in, std::string reason) {
+        mlir::Block * taken = block_at(jump_target(at, in));
+        mlir::Block * next = block_at(static_cast<std::int64_t>(at) + 1);
+        if (taken == nullptr || next == nullptr) {
+            give_up(at, in.code, std::move(reason));
+            return std::nullopt;
+        }
+        return std::pair{taken, next};
+    }
+
+    // A BLOCK CARRYING THE WHOLE REGISTER FILE, its arguments located at `pc`.
+    mlir::Block * new_block(mlir::Region & body, std::size_t pc) {
+        mlir::Block * block = &body.emplaceBlock();
+        block->addArguments(
+            llvm::SmallVector<mlir::Type>(proto.frame_size, ctjs::ValueType::get(context)),
+            slot_locations(pc));
+        return block;
+    }
+
+    // THE REGISTER FILE, REBOUND to a block's arguments on entering it.
+    void bind(mlir::Block * block) {
+        for (std::size_t slot = 0; slot < proto.frame_size; ++slot) {
+            write(slot, block->getArgument(static_cast<unsigned>(slot)));
+        }
     }
 };
 

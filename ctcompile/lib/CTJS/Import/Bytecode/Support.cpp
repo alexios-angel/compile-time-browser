@@ -3,6 +3,8 @@
 
 #include "llvm/ADT/BitVector.h"
 
+#include <ctbrowser/script/type_record.hpp>
+
 #include <initializer_list>
 #include <string_view>
 
@@ -39,10 +41,10 @@ static_assert(std::size(opcode_may_suspend) == opcode_count,
     return index < std::size(opcode_may_suspend) && opcode_may_suspend[index];
 }
 
-// WHICH OF a, b AND c NAME A REGISTER, and whether a is written, from the same
-// .def columns - for the globals summary, which follows the global object
-// through registers and reads every register operand of an operation it does
-// not list.
+// WHICH OF a, b AND c NAME A REGISTER, from the same .def columns - for the
+// globals summary, which follows the global object through registers and reads
+// every register operand of an operation it does not list. Whether a is written
+// is ctbrowser::script::opcode_writes_a, read out of the same file.
 enum class operand {
     reg,
     kidx,
@@ -56,11 +58,10 @@ enum class operand {
 };
 struct operand_row {
     operand a, b, c;
-    bool writes_a;
 };
 #define CT_OPCODE(name_, a_kind_, b_kind_, c_kind_, writes_a_, allocates_, may_throw_,             \
                   may_reenter_, is_safepoint_, may_suspend_, resumable_, impl_)                    \
-    {operand::a_kind_, operand::b_kind_, operand::c_kind_, (writes_a_) != 0},
+    {operand::a_kind_, operand::b_kind_, operand::c_kind_},
 constexpr operand_row opcode_operands[] = {
 #include <ctbrowser/script/bytecode_opcodes.def>
 };
@@ -171,7 +172,7 @@ static_assert(std::size(opcode_operands) == opcode_count,
                           named(in.c, {"window", "globalThis", "self", "parent", "top", "frames"}));
             break;
         default:
-            if (opcode_operands[static_cast<std::size_t>(in.code)].writes_a) { set(in.a, false); }
+            if (opcode_writes_a(in.code)) { set(in.a, false); }
             break;
         }
         return after;
@@ -198,9 +199,7 @@ static_assert(std::size(opcode_operands) == opcode_count,
         for (std::size_t at = 0; at < length; ++at) {
             const llvm::BitVector after = transfer(at);
             anywhere |= after;
-            const op code = proto.code[at].code;
-            if (is_jump(code)) { flow(jump_target(at, proto.code[at]), after); }
-            if (falls_through(code)) { flow(static_cast<std::int64_t>(at) + 1, after); }
+            for (const std::int64_t to : successors(at, proto.code[at])) { flow(to, after); }
         }
         for (const std::size_t handler : handlers) {
             flow(static_cast<std::int64_t>(handler), anywhere);
@@ -264,7 +263,7 @@ static_assert(std::size(opcode_operands) == opcode_count,
         default: break;
         }
         const operand_row & row = opcode_operands[static_cast<std::size_t>(in.code)];
-        return (row.a == operand::reg && !row.writes_a && held(in.a)) ||
+        return (row.a == operand::reg && !opcode_writes_a(in.code) && held(in.a)) ||
                (row.b == operand::reg && held(in.b)) || (row.c == operand::reg && held(in.c));
     };
 
@@ -385,6 +384,18 @@ static_assert(std::size(opcode_operands) == opcode_count,
 [[nodiscard]] bool falls_through(op code) {
     return code != op::jump && code != op::ret && code != op::ret_undef && code != op::halt &&
            code != op::throw_value;
+}
+
+// WHERE CONTROL CAN GO NEXT WITHOUT THROWING: the jump's target, then the
+// instruction after. Neither is range-checked - a caller decides what a target
+// outside the code means. A push_handler's pad is not one of them: it is
+// entered by throwing, and the callers that care about it say so themselves.
+[[nodiscard]] llvm::SmallVector<std::int64_t, 2> successors(std::size_t at,
+                                                            const instruction & in) {
+    llvm::SmallVector<std::int64_t, 2> next;
+    if (is_jump(in.code)) { next.push_back(jump_target(at, in)); }
+    if (falls_through(in.code)) { next.push_back(static_cast<std::int64_t>(at) + 1); }
+    return next;
 }
 
 } // namespace ctcompile::js::bytecode_detail

@@ -23,6 +23,160 @@
 namespace ctcompile::js {
 using namespace bytecode_detail;
 
+namespace {
+// ---- leaders --------------------------------------------------------------
+//
+// EVERY INSTRUCTION A BLOCK STARTS AT, one past the end included; nothing when a
+// jump leaves the code.
+struct leaders {
+    std::vector<bool> at;
+    bool targets_zero = false;
+};
+std::optional<leaders> find_leaders(const function_proto & proto) {
+    leaders found{std::vector<bool>(proto.code.size() + 1, false)};
+    std::vector<bool> & leader = found.at;
+    if (!proto.code.empty()) { leader[0] = true; }
+    for (std::size_t at = 0; at < proto.code.size(); ++at) {
+        const instruction & in = proto.code[at];
+        if (is_jump(in.code) || in.code == op::push_handler) {
+            const std::int64_t target = jump_target(at, in);
+            if (target < 0 || target > static_cast<std::int64_t>(proto.code.size())) {
+                return std::nullopt;
+            }
+            leader[static_cast<std::size_t>(target)] = true;
+            // AND WHETHER ANYTHING BRANCHES BACK TO INSTRUCTION ZERO,
+            // which needs recording separately because leader[0] is true
+            // for every function whether or not anything targets it.
+            //
+            // INSIDE THE COMBINED PREDICATE ON PURPOSE, not under is_jump
+            // alone. op::push_handler computes its target the same way and
+            // is handled here for that reason; narrowing this to jumps
+            // would leave a handler whose pad is instruction 0 refusing
+            // forever, and no corpus would show it - there are zero
+            // push_handler targets of 0 across bootstrap, p5 and phaser.
+            if (target == 0) { found.targets_zero = true; }
+        }
+        if (ends_a_block(in.code) && at + 1 <= proto.code.size()) { leader[at + 1] = true; }
+    }
+    return found;
+}
+
+// ---- the refusals the walk cannot make -----------------------------------
+void refuse_unsupported_shape(function_importer & state) {
+    const function_proto & proto = state.proto;
+
+    // AND AT MOST ONE PROTECTED REGION PER FUNCTION, FOR NOW.
+    //
+    // Not because nesting is hard, but because TWO push_handlers is what
+    // try/FINALLY compiles to - compile_try_with_finally pushes its second
+    // one SEQUENTIALLY rather than nested, so a depth test would admit it -
+    // and finally brings a completion record, a rethrow through
+    // op::throw_value, and ctjs.resume_throw, which has no lowering. This
+    // refuses finally, nested try, and two sibling try blocks alike; the
+    // first is the one that would be WRONG rather than merely absent.
+    if (!state.gave_up) {
+        const auto pushes = llvm::count_if(
+            proto.code, [](const instruction & each) { return each.code == op::push_handler; });
+        if (pushes > 1) {
+            state.give_up(0, op::push_handler,
+                          "more than one protected region in a function, which is what "
+                          "try/finally and nested try both compile to");
+        }
+    }
+
+    // AND A SUSPENSION POINT REFUSES THE FUNCTION WITH ITS OWN REASON.
+    //
+    // BEFORE THE WALK RATHER THAN AS A `case`, for two reasons that both
+    // matter. First, a `case` label naming a suspending opcode is what
+    // ctcompile_importer_coverage reads as "the importer DISPATCHES this",
+    // and a refusal is not a dispatch - the ratchet would stop measuring
+    // anything. That test's own sanity check caught the first draft of THIS
+    // COMMENT, which spelled the label out and was therefore matched as
+    // one; it is deliberately paraphrased now, and the guard is load-
+    // bearing rather than decorative. Second, the reason belongs to the
+    // FUNCTION, not to the instruction: nothing in a body containing an
+    // `await` is compilable, including the parts before it.
+    //
+    // It reports the FIRST suspension point rather than instruction 0, so
+    // the offset in the diagnostic names something a person can go and
+    // read.
+    if (!state.gave_up) {
+        for (std::size_t at = 0; at < proto.code.size(); ++at) {
+            if (!may_suspend(proto.code[at].code)) { continue; }
+            state.give_up(at, proto.code[at].code,
+                          "a suspension point, which lifts the frame out of the register "
+                          "stack and puts it back later - a compiled body is a C++ stack "
+                          "frame with no register window to save, so this is Phase 14's "
+                          "design decision and not a missing importer case");
+            break;
+        }
+    }
+
+    // A generator with no yield still has a different invocation: calling
+    // it allocates an iterator and executes none of this body. Its source
+    // flag is not encoded by an instruction, so an otherwise ordinary
+    // literal return cannot become an eagerly callable ctjs.func. Retain
+    // the existing skipped-function/global-store accounting until the
+    // suspension ABI can represent this invocation kind.
+    if (!state.gave_up && proto.is_generator) {
+        state.give_up(0, proto.code.empty() ? op::ret_undef : proto.code.front().code,
+                      "a generator invocation creates a deferred iterator instead of "
+                      "executing the body, even without a suspension point - Phase 14");
+    }
+}
+
+// ---- the handlers open at each instruction --------------------------------
+using handler_stack = decltype(function_importer::handlers);
+std::vector<std::optional<handler_stack>> handlers_by_flow(function_importer & state) {
+    const function_proto & proto = state.proto;
+    // THE HANDLERS OPEN AT EACH INSTRUCTION, BY CONTROL FLOW rather than by
+    // instruction order. A `return`, `break` or `continue` leaving a try
+    // pops its handler on its own path before jumping (380ee61d5 made one
+    // routed into a finally do it too), so the try's normal-path pop comes
+    // LATER in the code with the region still open on its own path. Read
+    // in instruction order, that second pop found nothing open and every
+    // `try { return } finally {}` was refused.
+    //
+    // A pad starts with the handlers open at its push_handler, because the
+    // interpreter's unwinder pops the handler it lands from. Unreached code
+    // keeps what the walk had, and its pop is emitted as it stands.
+    std::vector<std::optional<handler_stack>> open_at(proto.code.size());
+    if (!state.gave_up && !proto.code.empty()) {
+        llvm::SmallVector<std::size_t> work{0};
+        open_at[0].emplace();
+        const auto reach = [&](std::size_t from, std::int64_t target, const handler_stack & open) {
+            // A target past the end has no block; the walk refuses it.
+            if (target < 0 || target >= static_cast<std::int64_t>(proto.code.size())) { return; }
+            std::optional<handler_stack> & known = open_at[static_cast<std::size_t>(target)];
+            if (!known) {
+                known = open;
+                work.push_back(static_cast<std::size_t>(target));
+            } else if (*known != open) {
+                state.give_up(from, proto.code[from].code,
+                              "paths into one instruction have different handlers open");
+            }
+        };
+        while (!work.empty() && !state.gave_up) {
+            const std::size_t at = work.pop_back_val();
+            const instruction & in = proto.code[at];
+            handler_stack open = *open_at[at];
+            if (in.code == op::push_handler) {
+                reach(at, jump_target(at, in), open);
+                open.push_back({state.block_at(jump_target(at, in)), in.a});
+            } else if (in.code == op::pop_handler) {
+                if (open.empty()) {
+                    state.give_up(at, in.code, "pop_handler with no open handler in this function");
+                    break;
+                }
+                open.pop_back();
+            }
+            for (const std::int64_t next : successors(at, in)) { reach(at, next, open); }
+        }
+    }
+    return open_at;
+}
+} // namespace
+
 import_result import_program(const program & from, llvm::StringRef program_id,
                              mlir::MLIRContext * context) {
     import_result out;
@@ -125,34 +279,8 @@ import_result import_program(const program & from, llvm::StringRef program_id,
         }
 
         // ---- leaders ------------------------------------------------------
-        std::vector<bool> leader(proto.code.size() + 1, false);
-        bool targets_zero = false;
-        if (!proto.code.empty()) { leader[0] = true; }
-        bool malformed = false;
-        for (std::size_t at = 0; at < proto.code.size(); ++at) {
-            const instruction & in = proto.code[at];
-            if (is_jump(in.code) || in.code == op::push_handler) {
-                const std::int64_t target = jump_target(at, in);
-                if (target < 0 || target > static_cast<std::int64_t>(proto.code.size())) {
-                    malformed = true;
-                    break;
-                }
-                leader[static_cast<std::size_t>(target)] = true;
-                // AND WHETHER ANYTHING BRANCHES BACK TO INSTRUCTION ZERO,
-                // which needs recording separately because leader[0] is true
-                // for every function whether or not anything targets it.
-                //
-                // INSIDE THE COMBINED PREDICATE ON PURPOSE, not under is_jump
-                // alone. op::push_handler computes its target the same way and
-                // is handled here for that reason; narrowing this to jumps
-                // would leave a handler whose pad is instruction 0 refusing
-                // forever, and no corpus would show it - there are zero
-                // push_handler targets of 0 across bootstrap, p5 and phaser.
-                if (target == 0) { targets_zero = true; }
-            }
-            if (ends_a_block(in.code) && at + 1 <= proto.code.size()) { leader[at + 1] = true; }
-        }
-        if (malformed) {
+        const std::optional<leaders> found = find_leaders(proto);
+        if (!found) {
             // THE THIRD REFUSAL SITE, AND THE ONLY ONE THAT IS DELIBERATELY
             // OPAQUE. The other two drop a function whose instruction stream is
             // well formed, so reading its op::set_globals back off that stream
@@ -174,8 +302,10 @@ import_result import_program(const program & from, llvm::StringRef program_id,
             continue;
         }
 
+        const std::vector<bool> & leader = found->at;
+        const bool targets_zero = found->targets_zero;
+
         // One block per leader, each carrying the whole register file.
-        llvm::SmallVector<mlir::Type> slot_types(proto.frame_size, value_type);
         for (std::size_t at = targets_zero ? 0 : 1; at < proto.code.size(); ++at) {
             // STRICTLY INSIDE THE CODE. `ret` marks its successor a leader, and
             // for the last instruction that successor is one past the end - a
@@ -205,9 +335,7 @@ import_result import_program(const program & from, llvm::StringRef program_id,
             // shape Import/loop-property.mlir already asserts for loops that
             // start one instruction later.
             if (!leader[at]) { continue; }
-            mlir::Block * block = &function.getBody().emplaceBlock();
-            block->addArguments(slot_types, state.slot_locations(at));
-            state.blocks[static_cast<std::int64_t>(at)] = block;
+            state.blocks[static_cast<std::int64_t>(at)] = state.new_block(function.getBody(), at);
         }
 
         // ---- the walk -----------------------------------------------------
@@ -223,15 +351,12 @@ import_result import_program(const program & from, llvm::StringRef program_id,
             // header was reachable only from its own back edge - a function
             // that verifies, prints plausibly, and returns undefined.
             mlir::Block * previous = into.getInsertionBlock();
-            if (previous != nullptr &&
-                (previous->empty() || !previous->back().hasTrait<mlir::OpTrait::IsTerminator>())) {
+            if (previous != nullptr && !previous->mightHaveTerminator()) {
                 into.setInsertionPointToEnd(previous);
                 mlir::cf::BranchOp::create(into, into.getUnknownLoc(), block, state.outgoing());
             }
             into.setInsertionPointToEnd(block);
-            for (std::size_t slot = 0; slot < proto.frame_size; ++slot) {
-                state.write(slot, block->getArgument(static_cast<unsigned>(slot)));
-            }
+            state.bind(block);
         };
 
         // WHICH REGISTER EACH PAD'S THROWN VALUE LANDS IN, collected before the
@@ -244,118 +369,8 @@ import_result import_program(const program & from, llvm::StringRef program_id,
             }
         }
 
-        // AND AT MOST ONE PROTECTED REGION PER FUNCTION, FOR NOW.
-        //
-        // Not because nesting is hard, but because TWO push_handlers is what
-        // try/FINALLY compiles to - compile_try_with_finally pushes its second
-        // one SEQUENTIALLY rather than nested, so a depth test would admit it -
-        // and finally brings a completion record, a rethrow through
-        // op::throw_value, and ctjs.resume_throw, which has no lowering. This
-        // refuses finally, nested try, and two sibling try blocks alike; the
-        // first is the one that would be WRONG rather than merely absent.
-        if (!state.gave_up) {
-            std::size_t pushes = 0;
-            for (const instruction & each : proto.code) {
-                if (each.code == op::push_handler) { ++pushes; }
-            }
-            if (pushes > 1) {
-                state.give_up(0, op::push_handler,
-                              "more than one protected region in a function, which is what "
-                              "try/finally and nested try both compile to");
-            }
-        }
-
-        // AND A SUSPENSION POINT REFUSES THE FUNCTION WITH ITS OWN REASON.
-        //
-        // BEFORE THE WALK RATHER THAN AS A `case`, for two reasons that both
-        // matter. First, a `case` label naming a suspending opcode is what
-        // ctcompile_importer_coverage reads as "the importer DISPATCHES this",
-        // and a refusal is not a dispatch - the ratchet would stop measuring
-        // anything. That test's own sanity check caught the first draft of THIS
-        // COMMENT, which spelled the label out and was therefore matched as
-        // one; it is deliberately paraphrased now, and the guard is load-
-        // bearing rather than decorative. Second, the reason belongs to the
-        // FUNCTION, not to the instruction: nothing in a body containing an
-        // `await` is compilable, including the parts before it.
-        //
-        // It reports the FIRST suspension point rather than instruction 0, so
-        // the offset in the diagnostic names something a person can go and
-        // read.
-        if (!state.gave_up) {
-            for (std::size_t at = 0; at < proto.code.size(); ++at) {
-                if (!may_suspend(proto.code[at].code)) { continue; }
-                state.give_up(at, proto.code[at].code,
-                              "a suspension point, which lifts the frame out of the register "
-                              "stack and puts it back later - a compiled body is a C++ stack "
-                              "frame with no register window to save, so this is Phase 14's "
-                              "design decision and not a missing importer case");
-                break;
-            }
-        }
-
-        // A generator with no yield still has a different invocation: calling
-        // it allocates an iterator and executes none of this body. Its source
-        // flag is not encoded by an instruction, so an otherwise ordinary
-        // literal return cannot become an eagerly callable ctjs.func. Retain
-        // the existing skipped-function/global-store accounting until the
-        // suspension ABI can represent this invocation kind.
-        if (!state.gave_up && proto.is_generator) {
-            state.give_up(0, proto.code.empty() ? op::ret_undef : proto.code.front().code,
-                          "a generator invocation creates a deferred iterator instead of "
-                          "executing the body, even without a suspension point - Phase 14");
-        }
-
-        // THE HANDLERS OPEN AT EACH INSTRUCTION, BY CONTROL FLOW rather than by
-        // instruction order. A `return`, `break` or `continue` leaving a try
-        // pops its handler on its own path before jumping (380ee61d5 made one
-        // routed into a finally do it too), so the try's normal-path pop comes
-        // LATER in the code with the region still open on its own path. Read
-        // in instruction order, that second pop found nothing open and every
-        // `try { return } finally {}` was refused.
-        //
-        // A pad starts with the handlers open at its push_handler, because the
-        // interpreter's unwinder pops the handler it lands from. Unreached code
-        // keeps what the walk had, and its pop is emitted as it stands.
-        using handler_stack = decltype(function_importer::handlers);
-        std::vector<std::optional<handler_stack>> open_at(proto.code.size());
-        if (!state.gave_up && !proto.code.empty()) {
-            llvm::SmallVector<std::size_t> work{0};
-            open_at[0].emplace();
-            const auto reach = [&](std::size_t from, std::int64_t target,
-                                   const handler_stack & open) {
-                // A target past the end has no block; the walk refuses it.
-                if (target < 0 || target >= static_cast<std::int64_t>(proto.code.size())) {
-                    return;
-                }
-                std::optional<handler_stack> & known = open_at[static_cast<std::size_t>(target)];
-                if (!known) {
-                    known = open;
-                    work.push_back(static_cast<std::size_t>(target));
-                } else if (*known != open) {
-                    state.give_up(from, proto.code[from].code,
-                                  "paths into one instruction have different handlers open");
-                }
-            };
-            while (!work.empty() && !state.gave_up) {
-                const std::size_t at = work.pop_back_val();
-                const instruction & in = proto.code[at];
-                handler_stack open = *open_at[at];
-                if (in.code == op::push_handler) {
-                    reach(at, jump_target(at, in), open);
-                    open.push_back({state.block_at(jump_target(at, in)), in.a});
-                } else if (in.code == op::pop_handler) {
-                    if (open.empty()) {
-                        state.give_up(at, in.code,
-                                      "pop_handler with no open handler in this function");
-                        break;
-                    }
-                    open.pop_back();
-                } else if (is_jump(in.code)) {
-                    reach(at, jump_target(at, in), open);
-                }
-                if (falls_through(in.code)) { reach(at, static_cast<std::int64_t>(at) + 1, open); }
-            }
-        }
+        refuse_unsupported_shape(state);
+        const std::vector<std::optional<handler_stack>> open_at = handlers_by_flow(state);
 
         for (std::size_t at = 0; at < proto.code.size() && !state.gave_up; ++at) {
             if (leader[at] && (at > 0 || targets_zero)) { enter_block(at); }
@@ -401,14 +416,11 @@ import_result import_program(const program & from, llvm::StringRef program_id,
             // the lowering that knows which operations became status calls.
             // NOT after a terminator: a second one does not verify.
             if (!state.gave_up && !state.handlers.empty() && !ends_a_block(in.code)) {
-                mlir::Block * fresh = &function.getBody().emplaceBlock();
-                fresh->addArguments(slot_types, state.slot_locations(at + 1));
+                mlir::Block * fresh = state.new_block(function.getBody(), at + 1);
                 ctjs::CheckOp::create(into, where, state.outgoing(), before_instruction, fresh,
                                       state.handlers.back().pad);
                 into.setInsertionPointToEnd(fresh);
-                for (std::size_t slot = 0; slot < proto.frame_size; ++slot) {
-                    state.write(slot, fresh->getArgument(static_cast<unsigned>(slot)));
-                }
+                state.bind(fresh);
             }
         }
 
@@ -417,14 +429,10 @@ import_result import_program(const program & from, llvm::StringRef program_id,
             // guarantees one only at the end of the function; a leader in the
             // middle can be reached by falling through.
             for (mlir::Block & block : function.getBody()) {
-                if (!block.empty() && block.back().hasTrait<mlir::OpTrait::IsTerminator>()) {
-                    continue;
-                }
+                if (block.mightHaveTerminator()) { continue; }
                 into.setInsertionPointToEnd(&block);
-                const mlir::Value returned = ctjs::ConstantOp::create(
-                    into, into.getUnknownLoc(), value_type, ctjs::UndefinedAttr::get(context));
-                ctjs::FrameExitOp::create(into, into.getUnknownLoc(), state.frame);
-                ctjs::ReturnOp::create(into, into.getUnknownLoc(), returned);
+                const mlir::Location nowhere = into.getUnknownLoc();
+                state.emit_return(nowhere, state.undefined(nowhere));
             }
         }
 

@@ -1,5 +1,7 @@
 #include "OperatorTables.h"
 
+#include "llvm/ADT/Sequence.h"
+
 namespace ctcompile::js::bytecode_detail {
 
 void importInstruction(function_importer & state, mlir::Block * entry, std::size_t at) {
@@ -245,13 +247,13 @@ void importInstruction(function_importer & state, mlir::Block * entry, std::size
         break;
     case op::get_prop:
         if (const std::string * name = state.name_at(at, in.code, in.c)) {
-            const mlir::Value key = state.constant(where, ctjs::StringAttr::get(context, *name));
+            const mlir::Value key = state.key(where, *name);
             set(in.a, ctjs::GetPropertyOp::create(into, where, value_type, reg(in.b), key));
         }
         break;
     case op::set_prop:
         if (const std::string * name = state.name_at(at, in.code, in.b)) {
-            const mlir::Value key = state.constant(where, ctjs::StringAttr::get(context, *name));
+            const mlir::Value key = state.key(where, *name);
             ctjs::SetPropertyOp::create(into, where, reg(in.a), key, reg(in.c));
         }
         break;
@@ -276,12 +278,9 @@ void importInstruction(function_importer & state, mlir::Block * entry, std::size
         ctjs::DeletePropertyOp::create(into, where, reg(in.a), reg(in.b));
         break;
     case op::push_handler: {
-        mlir::Block * pad = state.block_at(jump_target(at, in));
-        mlir::Block * body = state.block_at(static_cast<std::int64_t>(at) + 1);
-        if (pad == nullptr || body == nullptr) {
-            state.give_up(at, in.code, "handler target is not a block leader");
-            break;
-        }
+        const auto targets = state.branch_targets(at, in, "handler target is not a block leader");
+        if (!targets) { break; }
+        const auto [pad, body] = *targets;
         // AND THE PAD MUST BE REACHABLE ONLY BY THROWING.
         //
         // ct_aot_catch_land reads back what the unwinder wrote and then
@@ -304,15 +303,10 @@ void importInstruction(function_importer & state, mlir::Block * entry, std::size
         // test that only looked at the instruction above it let that
         // through.
         const std::int64_t landing = jump_target(at, in);
-        bool reachable_without_throwing =
-            landing > 0 && falls_through(proto.code[static_cast<std::size_t>(landing) - 1].code);
-        for (std::size_t other = 0; other < proto.code.size() && !reachable_without_throwing;
-             ++other) {
-            if (other == at || !is_jump(proto.code[other].code)) { continue; }
-            if (jump_target(other, proto.code[other]) == landing) {
-                reachable_without_throwing = true;
-            }
-        }
+        const bool reachable_without_throwing =
+            llvm::any_of(llvm::seq<std::size_t>(0, proto.code.size()), [&](std::size_t other) {
+                return llvm::is_contained(successors(other, proto.code[other]), landing);
+            });
         if (reachable_without_throwing) {
             state.give_up(at, in.code,
                           "the catch clause is reachable without throwing, which would "
@@ -425,7 +419,9 @@ void importInstruction(function_importer & state, mlir::Block * entry, std::size
     case op::delete_prop:
         // a IS THE TARGET, b NAMES THE PROPERTY, and nothing is
         // written back - the delete produces no value.
-        ctjs::DeleteNamedOp::create(into, where, reg(in.a), into.getStringAttr(proto.names[in.b]));
+        if (const std::string * name = state.name_at(at, in.code, in.b)) {
+            ctjs::DeleteNamedOp::create(into, where, reg(in.a), into.getStringAttr(*name));
+        }
         break;
     case op::own_keys:
         set(in.a, ctjs::OwnKeysOp::create(into, where, value_type, reg(in.b)));
@@ -443,10 +439,11 @@ void importInstruction(function_importer & state, mlir::Block * entry, std::size
         // a IS THE TARGET, b NAMES THE PROPERTY and c IS THE FUNCTION -
         // which half it is comes from the OPCODE and from nowhere else,
         // so it is resolved here and the operation carries both.
+        const std::string * name = state.name_at(at, in.code, in.b);
+        if (name == nullptr) { break; }
         const bool getter = in.code == op::define_getter;
         const mlir::Value nothing = state.undefined(where);
-        ctjs::DefineAccessorOp::create(into, where, reg(in.a),
-                                       into.getStringAttr(proto.names[in.b]),
+        ctjs::DefineAccessorOp::create(into, where, reg(in.a), into.getStringAttr(*name),
                                        getter ? reg(in.c) : nothing, getter ? nothing : reg(in.c));
         break;
     }
@@ -522,7 +519,7 @@ void importInstruction(function_importer & state, mlir::Block * entry, std::size
             // interpreter is explicit about: `s.split(...)` and
             // `var f = s.split; f(...)` must find the same function.
             receiver = reg(in.a);
-            const mlir::Value key = state.constant(where, ctjs::StringAttr::get(context, *name));
+            const mlir::Value key = state.key(where, *name);
             callee = ctjs::GetPropertyOp::create(into, where, value_type, receiver, key);
         } else if (in.code == op::call_computed) {
             receiver = reg(in.a);
@@ -544,12 +541,9 @@ void importInstruction(function_importer & state, mlir::Block * entry, std::size
     }
     case op::jump_if_not_nullish:
     case op::jump_if_defined: {
-        mlir::Block * taken = state.block_at(jump_target(at, in));
-        mlir::Block * fallthrough = state.block_at(static_cast<std::int64_t>(at) + 1);
-        if (taken == nullptr || fallthrough == nullptr) {
-            state.give_up(at, in.code, "branch target is not a block leader");
-            break;
-        }
+        const auto targets = state.branch_targets(at, in, "branch target is not a block leader");
+        if (!targets) { break; }
+        const auto [taken, fallthrough] = *targets;
         // NOT TRUTHINESS. `jump_if_defined` branches when the value is
         // not `undefined` - which 0, "" and false all are not - and
         // `jump_if_not_nullish` when it is neither null nor undefined.
@@ -582,35 +576,24 @@ void importInstruction(function_importer & state, mlir::Block * entry, std::size
     }
     case op::jump_if_false:
     case op::jump_if_true: {
-        mlir::Block * taken = state.block_at(jump_target(at, in));
-        mlir::Block * fallthrough = state.block_at(static_cast<std::int64_t>(at) + 1);
-        if (taken == nullptr || fallthrough == nullptr) {
-            state.give_up(at, in.code, "branch target is not a block leader");
-            break;
-        }
+        const auto targets = state.branch_targets(at, in, "branch target is not a block leader");
+        if (!targets) { break; }
+        const auto [taken, fallthrough] = *targets;
         // THE ONLY BRIDGE FROM A VALUE TO A BRANCH. cf.cond_br takes an
         // i1; ctjs.convert to_boolean would produce a JavaScript
         // boolean, which is a different thing.
         const mlir::Value bit = ctjs::TruthyOp::create(into, where, into.getI1Type(), reg(in.a));
         const auto operands = state.outgoing();
-        if (in.code == op::jump_if_true) {
-            mlir::cf::CondBranchOp::create(into, where, bit, taken, operands, fallthrough,
-                                           operands);
-        } else {
-            mlir::cf::CondBranchOp::create(into, where, bit, fallthrough, operands, taken,
-                                           operands);
-        }
+        const bool jumps_on_true = in.code == op::jump_if_true;
+        mlir::cf::CondBranchOp::create(into, where, bit, jumps_on_true ? taken : fallthrough,
+                                       operands, jumps_on_true ? fallthrough : taken, operands);
         break;
     }
     case op::ret:
     case op::ret_undef:
     case op::halt: {
         const mlir::Value returned = in.code == op::ret ? reg(in.a) : state.undefined(where);
-        // THE FRAME IS RELEASED ON THE RETURNING PATH ONLY. On an
-        // unwound one it is already gone, and leaving again would pop
-        // somebody else's.
-        ctjs::FrameExitOp::create(into, where, state.frame);
-        ctjs::ReturnOp::create(into, where, returned);
+        state.emit_return(where, returned);
         break;
     }
     case op::throw_value: ctjs::ThrowOp::create(into, where, reg(in.a)); break;
