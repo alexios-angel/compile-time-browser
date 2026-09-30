@@ -35,6 +35,23 @@ std::string page(const std::string & script) {
     return said("<html><body><script>" + churn + script + "</script></body></html>");
 }
 
+// localStorage's backing object was a deletable `__items` property and the
+// only heap reference to what six natives hold by pointer.
+void test_storage_backing_cannot_be_deleted() {
+    CHECK_EQ(page("localStorage.setItem('a', '1');"
+                  "delete localStorage.__items; churn(); churn();"
+                  "localStorage.setItem('b', '2');"
+                  "alert(localStorage.getItem('a') + localStorage.getItem('b') +"
+                  " localStorage.length);"
+                  "alert(Object.keys(localStorage).indexOf('__items'));"),
+             "122;-1");
+    // ...and a method the page kept holds it once the store itself is gone.
+    CHECK_EQ(page("var get = localStorage.getItem; localStorage.setItem('k', 'v');"
+                  "delete window.localStorage; delete globalThis.localStorage;"
+                  "churn(); churn(); alert(get.call(null, 'k'));"),
+             "v");
+}
+
 // Object spread reads each accessor, and this getter defines more accessors
 // on the object being walked - reallocating the table under the walk. What is
 // copied is the key list as it stood (CopyDataProperties takes it once).
@@ -74,6 +91,63 @@ void test_float32_store_out_of_range() {
              "Infinity,-Infinity,Infinity");
 }
 
+// new Blob(parts): a part's `__bytes` getter grows the page's own array under
+// the walk and collects; new File(parts, name): the name's toString collects
+// while the Blob the constructor made is only in a C++ local.
+void test_blob_and_file_constructors() {
+    CHECK_EQ(page("var parts = ['ab', {get __bytes() { for (var i = 0; i < 256; ++i)"
+                  " parts.push('zz'); churn(); return [1, 2]; }}, 'c'];"
+                  "alert(new Blob(parts, {get type() { churn(); return 'text/x'; }}).size);"
+                  "var f = new File(['abc'], {toString() { churn(); return 'n.txt'; }});"
+                  "alert(f.name + ':' + f.size);"),
+             "5;n.txt:3");
+}
+
+// new URLSearchParams(sequence): iterable_values hands back the page's own
+// arrays, and a toString can grow the outer one and empty a pair.
+void test_url_search_params_sequence() {
+    CHECK_EQ(page("var init = [['a', {toString() { init.push(['q', 'r']); init[0].length = 0;"
+                  " churn(); return '1'; }}], ['b', '2']];"
+                  "alert(new URLSearchParams(init).toString());"),
+             "a=1&b=2");
+}
+
+// Range.createContextualFragment in an XML document reads the list its
+// querySelectorAll call returns - here the page's own array - and walks each
+// entry through calls the page can use to drop the entry and collect.
+void test_contextual_fragment_holds_what_it_read() {
+    CHECK_EQ(page("var doc = new DOMParser().parseFromString("
+                  "'<html xmlns=\"http://www.w3.org/1999/xhtml\"><body><p/></body></html>',"
+                  " 'application/xhtml+xml');"
+                  "var range = doc.createRange(); range.selectNodeContents(doc.documentElement);"
+                  "var list = [];"
+                  "var probe = doc.createDocumentFragment();"
+                  "Object.getPrototypeOf(probe).querySelectorAll = function() {"
+                  "  list = [{namespaceURI: 'http://www.w3.org/1999/xhtml', n: 0,"
+                  "    parentNode: {insertBefore: function() { list.length = 0; churn(); }},"
+                  "    get firstChild() { return this.n++ < 2 ? {} : null; },"
+                  "    remove: function() { alert('removed:' + this.n); }}];"
+                  "  return list; };"
+                  "range.createContextualFragment('<b>x</b>'); alert('done');"),
+             "removed:3;done");
+}
+
+// Range.cloneContents holds the clone its `cloneNode` call returned while it
+// looks up `appendChild`. A bound Reflect.get is a NATIVE callee answering a
+// value read off a data property - nothing but the invoke pin holds it once
+// the getter clears the property and collects.
+void test_range_holds_a_native_callees_result() {
+    CHECK_EQ(page("var t = document.createTextNode('hello'); document.body.appendChild(t);"
+                  "var store = {c: {tag: 'ok'}};"
+                  "t.cloneNode = Reflect.get.bind(null, store, 'c');"
+                  "document.createDocumentFragment = function() { return {"
+                  "  get appendChild() { store.c = null; churn(); churn();"
+                  "    return function(x) { alert('got:' + x.tag + ':' + x.data); }; } }; };"
+                  "var r = document.createRange(); r.setStart(t, 1); r.setEnd(t, 3);"
+                  "r.cloneContents(); alert('done');"),
+             "got:ok:el;done");
+}
+
 // A module that dynamic-imports while it runs: the loader inserts into the
 // registry the running module's record lives in, and the record must stay
 // where run_module left it.
@@ -97,9 +171,14 @@ void test_dynamic_import_inside_a_running_module() {
 } // namespace
 
 int main() {
+    test_storage_backing_cannot_be_deleted();
     test_spread_walks_a_snapshot();
     test_refused_reentry_is_a_throw();
     test_float32_store_out_of_range();
+    test_blob_and_file_constructors();
+    test_url_search_params_sequence();
+    test_contextual_fragment_holds_what_it_read();
+    test_range_holds_a_native_callees_result();
     test_dynamic_import_inside_a_running_module();
     REPORT("bindings_rooting");
 }
