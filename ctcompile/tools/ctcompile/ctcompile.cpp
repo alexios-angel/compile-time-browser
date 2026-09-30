@@ -27,6 +27,7 @@
 //
 // The running plan is ctcompile/docs/plans/ctcompile.md.
 #include <ctcompile/Support/Manifest.hpp>
+#include <ctcompile/Support/Measure.hpp>
 #include <ctcompile/Support/Version.hpp>
 
 #include <ctbrowser.hpp>
@@ -35,7 +36,6 @@
 #include "llvm/Option/OptTable.h"
 #include "llvm/Support/Allocator.h"
 #include "llvm/Support/Error.h"
-#include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <bitset>
@@ -89,11 +89,7 @@ std::vector<std::byte> bytes_of(std::string_view text) {
     return {bytes.begin(), bytes.end()};
 }
 
-// A whole file, or empty when it cannot be read.
-std::string read_file(const std::filesystem::path & path) {
-    auto buffer = llvm::MemoryBuffer::getFile(path.string());
-    return buffer ? (*buffer)->getBuffer().str() : std::string{};
-}
+using ctcompile::read_file;
 
 bool write_file(const std::filesystem::path & path, std::span<const std::byte> bytes) {
     // LLVM writes a sibling temporary and renames only after a successful write.
@@ -117,6 +113,107 @@ bool same_file(const std::filesystem::path & left, const std::filesystem::path &
     }
     std::error_code error;
     return std::filesystem::equivalent(left, right, error);
+}
+
+// ASK THE ENGINE WHAT THIS APPLICATION IS, rather than working it out here.
+// The page is loaded once, headless, by the same browser that will run it -
+// and then it is asked two questions only it can answer: which scripts it
+// compiles, and which resources it went looking for. A packager that
+// re-derived either would be keeping a second copy of a rule that lives in
+// the engine, free to drift from the one that decides at run time.
+struct probed_page {
+    std::vector<std::string> scripts;
+    std::vector<std::string> modules;
+    std::vector<std::pair<std::string, std::vector<std::byte>>> resources;
+    std::string page_error;
+    std::string font_directory;
+    bool real_fonts = false;
+    std::size_t ticks = 0;
+};
+
+probed_page probe_page(const llvm::opt::InputArgList & options, const std::filesystem::path & entry,
+                       const std::string & html) {
+    probed_page page;
+    ctbrowser::browser probe{ctbrowser::browser_options{800, 600}};
+    // The page's own directory, so `<script src>` and an `<img src>` resolve
+    // exactly as they do when the page is opened from there.
+    probe.assets().set_base_path(entry.parent_path());
+
+    // REAL FONTS, BEFORE THE PAGE LOADS, exactly as run_app does it.
+    //
+    // Not a detail, and it was found by comparing renders: the vendored
+    // faces are loaded THROUGH the asset registry, and a packaged
+    // application's registry is sealed - so an application packaged without
+    // them silently drops to the built-in bitmap font. It exits 0, it
+    // renders, and it just looks worse, which is the failure this whole
+    // tool is built to refuse. Asking here puts the faces in `requested()`
+    // and the loop below packs them like any other resource.
+    //
+    // The DIRECTORY is recorded in the bundle because it is part of the
+    // name: the registry key is "<dir>/Tinos-Regular.ttf", so a run that
+    // resolved a different directory would ask for a name nothing carries.
+    page.font_directory = options.hasArg(OPT_fonts) ? options.getLastArgValue(OPT_fonts).str()
+                                                    : ctbrowser::browser::default_font_directory();
+    page.real_fonts = probe.use_real_fonts(page.font_directory);
+
+    probe.load_html(html);
+
+    // AND THEN LET IT RUN, because a load is not when a page asks for its
+    // resources. `fetch` and an `img.src =` assignment QUEUE the request and
+    // it is drained from `tick`; p5 loads in `preload` and Phaser in the
+    // first game step, both inside a callback. Asking straight after
+    // load_html sees the markup's resources and NOTHING a script wanted -
+    // which is every sprite, atlas and level in the applications this is
+    // for, packaged as a warning-free success and broken at run time.
+    //
+    // UNTIL IT STOPS ASKING, rather than for a fixed number of frames: a
+    // count is a guess about someone else's loading screen. Sixty frames is
+    // a ceiling on a page that asks for something new forever, not a
+    // target - a static page settles on the second one.
+    constexpr std::size_t frame_ceiling = 60;
+    std::size_t asked_for = probe.assets().requested().size();
+    for (; page.ticks < frame_ceiling; ++page.ticks) {
+        probe.tick(16.0);
+        const std::size_t now = probe.assets().requested().size();
+        if (now == asked_for && page.ticks > 0) { break; }
+        asked_for = now;
+    }
+
+    page.scripts = probe.script_sources();
+    page.modules = probe.module_sources();
+    page.page_error = probe.script_error();
+
+    // THE RESOURCES, THROUGH THE REGISTRY THAT ANSWERED THE PAGE. This used
+    // to build a fresh `asset_registry{}` with no base path, which probes
+    // the working directory and two levels above it - a DIFFERENT rule from
+    // the one the page was answered by, and the header of assets.hpp spends
+    // a paragraph explaining that a packager must not keep a second copy of
+    // it. It could resolve a name from ctcompile's own build tree that the
+    // page resolved from the application, and ship those bytes under the
+    // right name with nothing printed.
+    //
+    // The names are COPIED first: `load` records what it was asked for, so
+    // iterating the live list while calling it is iterating a vector that
+    // can grow underneath.
+    const std::vector<std::string> wanted = probe.assets().requested();
+    for (const std::string & name : wanted) {
+        page.resources.emplace_back(name, probe.assets().load(name));
+    }
+    return page;
+}
+
+// The launcher to build the executable from: --launcher, else ctrun BESIDE
+// THIS COMPILER, which is where a build puts them both, found through
+// /proc/self/exe rather than argv[0] so it still works when ctcompile was
+// reached through the PATH or a symlink. Empty when neither is known.
+std::filesystem::path resolve_launcher(const llvm::opt::InputArgList & options) {
+    std::filesystem::path launcher{options.getLastArgValue(OPT_launcher).str()};
+    if (launcher.empty()) {
+        std::error_code failed;
+        const std::filesystem::path self = std::filesystem::read_symlink("/proc/self/exe", failed);
+        if (!failed) { launcher = self.parent_path() / "ctrun"; }
+    }
+    return launcher;
 }
 
 int main(int argc, char ** argv) try {
@@ -202,12 +299,6 @@ int main(int argc, char ** argv) try {
     };
     if (aliases_input(entry)) { return 2; }
 
-    // ASK THE ENGINE WHAT THIS APPLICATION IS, rather than working it out here.
-    // The page is loaded once, headless, by the same browser that will run it -
-    // and then it is asked two questions only it can answer: which scripts it
-    // compiles, and which resources it went looking for. A packager that
-    // re-derived either would be keeping a second copy of a rule that lives in
-    // the engine, free to drift from the one that decides at run time.
     const std::string html = read_file(entry);
     if (html.empty()) {
         std::cerr << "ctcompile: " << entry << " is empty\n";
@@ -215,80 +306,8 @@ int main(int argc, char ** argv) try {
     }
 
     ctbrowser::shell::app_bundle bundle;
-    std::vector<std::string> scripts;
-    std::vector<std::string> modules;
-    std::vector<std::pair<std::string, std::vector<std::byte>>> resources;
-    std::string page_error;
-    std::string font_directory;
-    bool real_fonts = false;
-    std::size_t ticks = 0;
-    {
-        ctbrowser::browser probe{ctbrowser::browser_options{800, 600}};
-        // The page's own directory, so `<script src>` and an `<img src>` resolve
-        // exactly as they do when the page is opened from there.
-        probe.assets().set_base_path(entry.parent_path());
-
-        // REAL FONTS, BEFORE THE PAGE LOADS, exactly as run_app does it.
-        //
-        // Not a detail, and it was found by comparing renders: the vendored
-        // faces are loaded THROUGH the asset registry, and a packaged
-        // application's registry is sealed - so an application packaged without
-        // them silently drops to the built-in bitmap font. It exits 0, it
-        // renders, and it just looks worse, which is the failure this whole
-        // tool is built to refuse. Asking here puts the faces in `requested()`
-        // and the loop below packs them like any other resource.
-        //
-        // The DIRECTORY is recorded in the bundle because it is part of the
-        // name: the registry key is "<dir>/Tinos-Regular.ttf", so a run that
-        // resolved a different directory would ask for a name nothing carries.
-        font_directory = options.hasArg(OPT_fonts) ? options.getLastArgValue(OPT_fonts).str()
-                                                   : ctbrowser::browser::default_font_directory();
-        real_fonts = probe.use_real_fonts(font_directory);
-
-        probe.load_html(html);
-
-        // AND THEN LET IT RUN, because a load is not when a page asks for its
-        // resources. `fetch` and an `img.src =` assignment QUEUE the request and
-        // it is drained from `tick`; p5 loads in `preload` and Phaser in the
-        // first game step, both inside a callback. Asking straight after
-        // load_html sees the markup's resources and NOTHING a script wanted -
-        // which is every sprite, atlas and level in the applications this is
-        // for, packaged as a warning-free success and broken at run time.
-        //
-        // UNTIL IT STOPS ASKING, rather than for a fixed number of frames: a
-        // count is a guess about someone else's loading screen. Sixty frames is
-        // a ceiling on a page that asks for something new forever, not a
-        // target - a static page settles on the second one.
-        constexpr std::size_t frame_ceiling = 60;
-        std::size_t asked_for = probe.assets().requested().size();
-        for (; ticks < frame_ceiling; ++ticks) {
-            probe.tick(16.0);
-            const std::size_t now = probe.assets().requested().size();
-            if (now == asked_for && ticks > 0) { break; }
-            asked_for = now;
-        }
-
-        scripts = probe.script_sources();
-        modules = probe.module_sources();
-        page_error = probe.script_error();
-
-        // THE RESOURCES, THROUGH THE REGISTRY THAT ANSWERED THE PAGE. This used
-        // to build a fresh `asset_registry{}` with no base path, which probes
-        // the working directory and two levels above it - a DIFFERENT rule from
-        // the one the page was answered by, and the header of assets.hpp spends
-        // a paragraph explaining that a packager must not keep a second copy of
-        // it. It could resolve a name from ctcompile's own build tree that the
-        // page resolved from the application, and ship those bytes under the
-        // right name with nothing printed.
-        //
-        // The names are COPIED first: `load` records what it was asked for, so
-        // iterating the live list while calling it is iterating a vector that
-        // can grow underneath.
-        const std::vector<std::string> wanted = probe.assets().requested();
-        for (const std::string & name : wanted) {
-            resources.emplace_back(name, probe.assets().load(name));
-        }
-    }
+    auto [scripts, modules, resources, page_error, font_directory, real_fonts, ticks] =
+        probe_page(options, entry, html);
 
     // A PAGE THAT ALREADY FAILED IS NOT PACKAGED. The sharpest case is a
     // `<script src>` that did not resolve: the engine records it and then
@@ -438,16 +457,7 @@ int main(int argc, char ** argv) try {
     // toolchain, and this needs no linker.
     std::vector<std::byte> written = bytes;
     if (!bundle_only) {
-        std::filesystem::path launcher{options.getLastArgValue(OPT_launcher).str()};
-        if (launcher.empty()) {
-            // BESIDE THIS COMPILER, which is where a build puts them both, and
-            // found through /proc/self/exe rather than argv[0] so it still works
-            // when ctcompile was reached through the PATH or a symlink.
-            std::error_code failed;
-            const std::filesystem::path self =
-                std::filesystem::read_symlink("/proc/self/exe", failed);
-            if (!failed) { launcher = self.parent_path() / "ctrun"; }
-        }
+        const std::filesystem::path launcher = resolve_launcher(options);
         if (launcher.empty() || !std::filesystem::is_regular_file(launcher)) {
             std::cerr << "ctcompile: cannot find a launcher to build an executable from"
                       << (launcher.empty() ? std::string{} : " at " + launcher.string())

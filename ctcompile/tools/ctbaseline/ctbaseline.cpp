@@ -17,6 +17,7 @@
 // compiler, its flags, the CPU and the corpus sizes are recorded beside every
 // timing. The output is JSON on stdout; tools/check/baseline.py stores it.
 #include <ctcompile/Support/Manifest.hpp>
+#include <ctcompile/Support/Measure.hpp>
 
 #include <ctbrowser/core/atom.hpp>
 #include <ctbrowser/dom/document.hpp>
@@ -28,11 +29,8 @@
 #include <ctbrowser/style/engine.hpp>
 
 #include "llvm/Support/CommandLine.h"
-#include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
 
-#include <algorithm>
-#include <chrono>
 #include <cstdio>
 #include <string>
 #include <string_view>
@@ -40,30 +38,8 @@
 
 namespace {
 
-using clock_type = std::chrono::steady_clock;
-
-[[nodiscard]] std::string read_file(const std::string & path) {
-    auto buffer = llvm::MemoryBuffer::getFile(path);
-    return buffer ? (*buffer)->getBuffer().str() : std::string{};
-}
-
-// The median of several runs, not the mean and not the best.
-//
-// The mean is dragged by one scheduler hiccup and the best is a number the
-// machine produced once and will not reproduce - a baseline is for comparing
-// against later, so it has to be the number that comes back tomorrow.
-template <typename F> [[nodiscard]] double median_ms(int runs, F && once) {
-    std::vector<double> taken;
-    taken.reserve(static_cast<std::size_t>(runs));
-    for (int i = 0; i < runs; ++i) {
-        const auto start = clock_type::now();
-        once();
-        const auto end = clock_type::now();
-        taken.push_back(std::chrono::duration<double, std::milli>(end - start).count());
-    }
-    std::ranges::sort(taken);
-    return taken[taken.size() / 2];
-}
+using ctcompile::median_ms;
+using ctcompile::read_file;
 
 struct stage {
     std::string name;

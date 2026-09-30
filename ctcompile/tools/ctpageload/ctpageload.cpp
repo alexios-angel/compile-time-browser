@@ -9,38 +9,19 @@
 // It exits non-zero if the image was NOT used, because a run that quietly fell
 // back to compiling would report a saving of zero and look like a finding.
 #include <ctbrowser.hpp>
+#include <ctcompile/Support/Measure.hpp>
 
 #include "llvm/Support/CommandLine.h"
-#include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
 
-#include <algorithm>
-#include <chrono>
 #include <cstdio>
 #include <string>
 #include <vector>
 
 namespace {
 
-using clock_type = std::chrono::steady_clock;
-
-[[nodiscard]] std::string read_file(const std::string & path) {
-    auto buffer = llvm::MemoryBuffer::getFile(path);
-    return buffer ? (*buffer)->getBuffer().str() : std::string{};
-}
-
-template <typename F> [[nodiscard]] double median_ms(int runs, F && once) {
-    std::vector<double> taken;
-    taken.reserve(static_cast<std::size_t>(runs));
-    for (int i = 0; i < runs; ++i) {
-        const auto start = clock_type::now();
-        once();
-        taken.push_back(
-            std::chrono::duration<double, std::milli>(clock_type::now() - start).count());
-    }
-    std::ranges::sort(taken);
-    return taken[taken.size() / 2];
-}
+using ctcompile::median_ms;
+using ctcompile::read_file;
 
 // ONE LOAD FROM IMAGES, IN A FUNCTION WITH A NAME, so callgrind can be told to
 // collect only inside it:
@@ -72,7 +53,7 @@ int main(int argc, char ** argv) {
             &llvm::errs())) {
         return 2;
     }
-    const std::string page = read_file(input);
+    const std::string page = read_file(input.getValue());
     if (page.empty()) {
         std::fprintf(stderr, "ctpageload: cannot read %s\n", input.c_str());
         return 2;
