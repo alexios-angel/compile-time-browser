@@ -54,6 +54,10 @@ namespace ctbrowser::shell {
 [[nodiscard]] bool looks_like_png(std::span<const std::byte> data) noexcept;
 [[nodiscard]] bool looks_like_jpeg(std::span<const std::byte> data) noexcept;
 
+// Total-pixel budget for every decoder (2^26, 8192x8192), checked in 64-bit
+// BEFORE any allocation: a tiny header must not demand gigabytes.
+inline constexpr std::uint64_t max_decode_pixels = std::uint64_t{1} << 26;
+
 // Decode an uncompressed 24- or 32-bit BMP. An empty bitmap on any problem -
 // truncated, or a flavour this does not read.
 [[nodiscard]] inline paint::bitmap decode_bmp(std::span<const std::byte> data) {
@@ -70,8 +74,8 @@ namespace ctbrowser::shell {
     const auto raw_height = static_cast<std::int32_t>(u32(22));
     const std::uint32_t bits_per_pixel = u16(28);
     const std::uint32_t compression = u32(30);
-    if (width <= 0 || raw_height == 0 || (bits_per_pixel != 24 && bits_per_pixel != 32) ||
-        (compression != 0 && compression != 3)) {
+    if (width <= 0 || raw_height == 0 || raw_height == INT32_MIN ||
+        (bits_per_pixel != 24 && bits_per_pixel != 32) || (compression != 0 && compression != 3)) {
         return {};
     }
 
@@ -80,9 +84,16 @@ namespace ctbrowser::shell {
     const bool top_down = raw_height < 0;
     const std::int32_t height = top_down ? -raw_height : raw_height;
     const std::size_t bytes_per_pixel = bits_per_pixel / 8U;
+    if (static_cast<std::uint64_t>(width) * static_cast<std::uint64_t>(height) >
+        max_decode_pixels) {
+        return {};
+    }
     const std::size_t stride =
         (static_cast<std::size_t>(width) * bytes_per_pixel + 3U) & ~std::size_t{3};
-    if (data.size() < pixel_offset + stride * static_cast<std::size_t>(height)) { return {}; }
+    if (std::uint64_t{data.size()} <
+        std::uint64_t{pixel_offset} + std::uint64_t{stride} * static_cast<std::uint64_t>(height)) {
+        return {};
+    }
 
     paint::bitmap out{width, height};
     for (std::int32_t y = 0; y < height; ++y) {

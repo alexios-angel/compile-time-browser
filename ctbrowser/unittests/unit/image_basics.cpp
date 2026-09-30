@@ -538,9 +538,48 @@ void test_fetch_rejects() {
     CHECK(outcome.find("not baked in") != std::string::npos);
 }
 
+// Headers that claim enormous images must fail before any allocation.
+void test_decode_budget() {
+    const auto bytes = [](std::initializer_list<unsigned> v) {
+        std::vector<std::byte> out;
+        for (const unsigned b : v) { out.push_back(static_cast<std::byte>(b)); }
+        return out;
+    };
+    // PNG: signature + IHDR 65535x65535 RGB8 (valid CRC), no data.
+    const auto png =
+        bytes({0x89, 'P',  'N',  'G', 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 13, 'I',  'H',  'D',  'R', 0,
+               0,    0xFF, 0xFF, 0,   0,    0xFF, 0xFF, 8,    2, 0, 0, 0,  0x39, 0x67, 0x4E, 0x07});
+    CHECK(ctbrowser::shell::decode_png(png).empty());
+    // JPEG: SOI, SOF0 65535x65535 one component, SOS.
+    const auto jpg = bytes({0xFF, 0xD8, 0xFF, 0xC0, 0, 11, 8, 0xFF, 0xFF, 0xFF, 0xFF, 1, 1,
+                            0x11, 0,    0xFF, 0xDA, 0, 8,  1, 1,    0,    0,    63,   0});
+    CHECK(ctbrowser::shell::decode_jpeg(jpg).empty());
+    // BMP: 54-byte header, 24bpp; INT32_MIN height, then a huge square.
+    const auto bmp = [](std::uint32_t w, std::uint32_t h) {
+        std::vector<std::byte> out(54, std::byte{0});
+        const auto put = [&](std::size_t at, std::uint32_t v, int n) {
+            for (int i = 0; i < n; ++i) {
+                out[at + static_cast<std::size_t>(i)] = static_cast<std::byte>(v >> (8 * i));
+            }
+        };
+        out[0] = std::byte{'B'};
+        out[1] = std::byte{'M'};
+        put(10, 54, 4);
+        put(14, 40, 4);
+        put(18, w, 4);
+        put(22, h, 4);
+        put(28, 24, 2);
+        return out;
+    };
+    CHECK(ctbrowser::shell::decode_bmp(bmp(1, 0x80000000U)).empty());
+    CHECK(ctbrowser::shell::decode_bmp(bmp(65535, 65535)).empty());
+    CHECK(ctbrowser::shell::decode_bmp(bmp(0x7FFFFFFFU, 0x7FFFFFFFU)).empty());
+}
+
 } // namespace
 
 int main() {
+    test_decode_budget();
     test_decode();
     test_registry();
     test_img_element();

@@ -54,7 +54,8 @@ paint::bitmap decode_png(std::span<const std::byte> data) {
     // rather than wrapped into a small one.
     constexpr png_uint_32 coordinate_limit = 1U << 30;
     if (image.width == 0 || image.height == 0 || image.width >= coordinate_limit ||
-        image.height >= coordinate_limit) {
+        image.height >= coordinate_limit ||
+        std::uint64_t{image.width} * std::uint64_t{image.height} > max_decode_pixels) {
         png_image_free(&image);
         return {};
     }

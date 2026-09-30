@@ -68,6 +68,10 @@ paint::bitmap decode_jpeg(std::span<const std::byte> data) {
     // into a small one.
     constexpr int coordinate_limit = 1 << 30;
     if (width >= coordinate_limit || height >= coordinate_limit) { return {}; }
+    if (static_cast<std::uint64_t>(width) * static_cast<std::uint64_t>(height) >
+        max_decode_pixels) {
+        return {};
+    }
 
     // RGB, THREE BYTES, NOT TJPF_RGBA. TurboJPEG's RGBA pixel formats leave the
     // fourth byte UNDEFINED - the format has no alpha to put there - so asking
