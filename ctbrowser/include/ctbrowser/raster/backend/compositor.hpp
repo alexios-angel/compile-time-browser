@@ -49,8 +49,7 @@ inline void draw(software_backend & backend, const layer_tree & tree, scheduler 
                 ? rect{}
                 : rect{viewport.x - l.offset.x - margin, viewport.y - l.offset.y - margin,
                        viewport.width + 2 * margin, viewport.height + 2 * margin};
-        for (const tile & t : tiles_for(l.contents->bounds(), i, extent)) {
-            if (!visible.empty() && !t.area.intersects(visible)) { continue; }
+        for (const tile & t : tiles_for(l.contents->bounds(), i, extent, visible)) {
             tiles.push_back(t);
             lists.push_back(l.contents.get());
         }

@@ -173,6 +173,22 @@ void test_tiles_floor_at_negative_coordinates() {
           "tile columns floor toward -infinity at exact negative multiples");
 }
 
+// DOS-005: a 1e7px square is 1.5 billion tiles; only the visible ones are made,
+// still numbered from the content's first tile, and an absurd coordinate clamps
+// rather than overflowing the float-to-int cast.
+void test_tiles_are_culled_before_they_are_made() {
+    const rect huge{-1000, 0, 1e7f, 1e7f};
+    const auto seen = tiles_for(huge, 0, 256, rect{0, 0, 800, 600});
+    check(!seen.empty() && seen.size() <= 30, "only the visible tiles are enumerated");
+    bool anchored = false;
+    for (const tile & t : seen) {
+        anchored = anchored || (t.area.x == 0 && t.id.column == 4 && t.id.row == 0);
+    }
+    check(anchored, "tile ids still count from the content's first tile");
+    check(tiles_for(rect{1e30f, 1e30f, 1e30f, 1e30f}, 0, 256, rect{0, 0, 800, 600}).empty(),
+          "far-off content clamps and culls to nothing");
+}
+
 void test_tiling_does_not_change_the_image() {
     page p;
     p.load("<html><body><div class=a>alpha beta gamma delta</div>"
@@ -470,6 +486,7 @@ int main() {
     test_a_ring_is_hollow();
 
     test_tiles_floor_at_negative_coordinates();
+    test_tiles_are_culled_before_they_are_made();
     test_tiling_does_not_change_the_image();
     test_parallel_raster_matches_sequential();
 
