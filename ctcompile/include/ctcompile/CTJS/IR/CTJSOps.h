@@ -10,7 +10,9 @@
 #include "mlir/Interfaces/InferTypeOpInterface.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "llvm/ADT/StringSwitch.h"
+#include "llvm/ADT/bit.h"
 
+#include <cstdint>
 #include <optional>
 
 #include "ctcompile/CTJS/IR/CTJSAttrs.h"
@@ -32,12 +34,40 @@ inline constexpr unsigned arg_new_target = 1;
 inline constexpr unsigned arg_callee = 2;
 inline constexpr unsigned implicit_arguments = 3;
 
+// The entry block of `function` when it has one carrying the implicit
+// arguments, or null.
+inline mlir::Block * implicitEntry(FuncOp function) {
+    if (function.getBody().empty()) { return nullptr; }
+    mlir::Block & entry = function.getBody().front();
+    return entry.getNumArguments() >= implicit_arguments ? &entry : nullptr;
+}
+
+// The declared parameters of an entry block implicitEntry returned.
+inline unsigned parameterCount(mlir::Block & entry) {
+    return entry.getNumArguments() - implicit_arguments;
+}
+
+// DOES THIS BODY READ ITS RAW ARGUMENT WINDOW? `arguments` and a rest
+// parameter copy the frame's registers - every value the site passed, not the
+// declared ones - so padding a short call is visible to such a body.
+inline bool readsRawArguments(FuncOp function) {
+    return function
+        .walk([](mlir::Operation * op) {
+            return llvm::isa<MakeArgumentsOp, GatherRestOp>(op) ? mlir::WalkResult::interrupt()
+                                                                : mlir::WalkResult::advance();
+        })
+        .wasInterrupted();
+}
+
 // An object literal's own data property is op::define_data - DEFINED
 // (CreateDataPropertyOrThrow), not assigned - and the importer makes it the
 // ctjs.set_property every native proof already reads, carrying this marker.
 // The boxed backend lowers a marked store to ct_aot_define_data: assignment
 // would run an inherited setter and set the prototype for "__proto__".
 inline constexpr llvm::StringLiteral defineOwnMarker = "ctjs.define_own";
+
+// A ctjs.func the EmitC admission refused carries this, with the reason.
+inline constexpr llvm::StringLiteral notLoweredMarker = "ctjs.not_lowered";
 
 // The function index the importer put after the last `$` of the symbol - the
 // only link between a `ctjs.create_closure`'s `$function` attribute and the
@@ -51,11 +81,35 @@ inline std::optional<unsigned> functionIndex(FuncOp function) {
     return index;
 }
 
+// The function index a create_closure names, or none for a negative one.
+inline std::optional<unsigned> closureFunction(CreateClosureOp made) {
+    if (made.getFunction() < 0) { return std::nullopt; }
+    return static_cast<unsigned>(made.getFunction());
+}
+
 // The attribute of kind A a ctjs.constant operand carries, or null - for a
 // value no constant defines and a constant of another kind alike.
 template <class A> A constantAttr(mlir::Value value) {
     auto constant = value.getDefiningOp<ConstantOp>();
     return constant ? llvm::dyn_cast<A>(constant.getValue()) : A{};
+}
+
+// One of the attributes a ctjs.constant may carry (ConstantOp::verify).
+inline bool isConstantAttr(mlir::Attribute value) {
+    return llvm::isa<UndefinedAttr, NullAttr, BooleanAttr, NumberAttr, StringAttr, BigIntAttr>(
+        value);
+}
+
+// A #ctjs.number for `value`. The attribute stores the double's BITS, so the
+// uint64_t builder is never the one to call with a count.
+inline NumberAttr numberAttr(mlir::MLIRContext * context, double value) {
+    return NumberAttr::get(context, llvm::bit_cast<std::uint64_t>(value));
+}
+
+// The string attribute `name` on `op`, or empty.
+inline llvm::StringRef stringAttrOf(mlir::Operation * op, llvm::StringRef name) {
+    auto text = op->getAttrOfType<mlir::StringAttr>(name);
+    return text ? text.getValue() : llvm::StringRef{};
 }
 
 inline bool isUndefinedConstant(mlir::Value value) {
@@ -105,6 +159,43 @@ inline bool ordinaryKey(mlir::Value key) {
     return text && !reservedKey(text.getValue());
 }
 
+// The get_property a method call reads its callee from, or null.
+inline GetPropertyOp receiverMethod(CallOp call) {
+    return call.getCallee().getDefiningOp<GetPropertyOp>();
+}
+
+// The constant name of the method `call` invokes (`o.set(...)` is "set"), or
+// empty when the callee is not a constant-keyed get_property.
+inline llvm::StringRef methodKey(CallOp call) {
+    auto read = receiverMethod(call);
+    return read ? constantKey(read.getKey()) : llvm::StringRef{};
+}
+
+// The global a call's callee was loaded from (`f(...)` after `load_global
+// "f"`), or empty. For any op with a callee VALUE: CallOp, ConstructOp.
+template <class Call> llvm::StringRef calleeGlobalName(Call call) {
+    auto load = call.getCallee().template getDefiningOp<LoadGlobalOp>();
+    return load ? load.getName() : llvm::StringRef{};
+}
+
+// A ctjs.call or ctjs.call_direct read the same way: the callee value (the
+// direct call's callee_value), the receiver and the declared arguments.
+struct CallView {
+    mlir::Value callee;
+    mlir::Value receiver;
+    mlir::OperandRange args;
+};
+
+inline std::optional<CallView> callView(mlir::Operation * op) {
+    if (auto call = llvm::dyn_cast<CallOp>(op)) {
+        return CallView{call.getCallee(), call.getReceiver(), call.getArgs()};
+    }
+    if (auto direct = llvm::dyn_cast<CallDirectOp>(op)) {
+        return CallView{direct.getCalleeValue(), direct.getReceiver(), direct.getArgs()};
+    }
+    return std::nullopt;
+}
+
 // Truthy, unary Not/TypeOf/Void and StrictEq: total on any operand, and none
 // converts an object or calls user code.
 inline bool nonCoercing(mlir::Operation * op) {
@@ -129,31 +220,31 @@ inline mlir::Operation * ownClosureEscape(FuncOp function) {
     return nullptr;
 }
 
+// The one OpT under `scope` satisfying `matches`, or null when none or several
+// do.
+template <class OpT, class Pred> OpT uniqueOp(mlir::Operation * scope, Pred matches) {
+    OpT found;
+    unsigned count = 0;
+    scope->walk([&](OpT op) {
+        if (matches(op)) {
+            found = op;
+            ++count;
+        }
+    });
+    return count == 1 ? found : OpT{};
+}
+
 // The one ctjs.func under `scope` with function index `index`, or null when
 // none or several have it.
 inline FuncOp uniqueFunction(mlir::Operation * scope, unsigned index) {
-    FuncOp found;
-    unsigned matches = 0;
-    scope->walk([&](FuncOp function) {
-        if (functionIndex(function) == index) {
-            found = function;
-            ++matches;
-        }
-    });
-    return matches == 1 ? found : FuncOp{};
+    return uniqueOp<FuncOp>(scope,
+                            [&](FuncOp function) { return functionIndex(function) == index; });
 }
 
 // The one ctjs.store_global of `name` under `scope`, or null when none or
 // several store it.
 inline StoreGlobalOp uniqueGlobalStore(mlir::Operation * scope, llvm::StringRef name) {
-    StoreGlobalOp found;
-    unsigned matches = 0;
-    scope->walk([&](StoreGlobalOp store) {
-        if (store.getName() == name) {
-            found = store;
-            ++matches;
-        }
-    });
-    return matches == 1 ? found : StoreGlobalOp{};
+    return uniqueOp<StoreGlobalOp>(scope,
+                                   [&](StoreGlobalOp store) { return store.getName() == name; });
 }
 } // namespace ctcompile::ctjs

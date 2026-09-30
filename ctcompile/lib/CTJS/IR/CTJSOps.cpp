@@ -55,10 +55,7 @@ mlir::LogicalResult ConstantOp::verify() {
     // defines", which is a predicate over a C++ type rather than something a
     // TableGen constraint expresses.
     const mlir::Attribute value = getValue();
-    if (mlir::isa<UndefinedAttr, NullAttr, BooleanAttr, NumberAttr, StringAttr, BigIntAttr>(
-            value)) {
-        return mlir::success();
-    }
+    if (isConstantAttr(value)) { return mlir::success(); }
     return emitOpError("expects a CTJS constant attribute (undefined, null, boolean, number, "
                        "string or bigint), but got ")
            << value;
@@ -185,15 +182,20 @@ mlir::SuccessorOperands PushHandlerOp::getSuccessorOperands(unsigned index) {
                                               : getHandlerOperandsMutable());
 }
 
-mlir::LogicalResult PushHandlerOp::verify() {
-    // THE HANDLER TARGET MUST BE A BLOCK IN THE SAME REGION, which the plan
-    // asks for. A successor in another region is not something the unwinder
-    // could transfer to: a handler records a FRAME and an address within it.
-    mlir::Region * here = getOperation()->getParentRegion();
-    if (getHandler()->getParent() != here || getBody()->getParent() != here) {
-        return emitOpError("both successors must be blocks in the same region");
+// THE HANDLER TARGET MUST BE A BLOCK IN THE SAME REGION, which the plan asks
+// for. A successor in another region is not something the unwinder could
+// transfer to: a handler records a FRAME and an address within it.
+static mlir::LogicalResult verifySameRegionSuccessors(mlir::Operation * op) {
+    for (mlir::Block * successor : op->getSuccessors()) {
+        if (successor->getParent() != op->getParentRegion()) {
+            return op->emitOpError("both successors must be blocks in the same region");
+        }
     }
     return mlir::success();
+}
+
+mlir::LogicalResult PushHandlerOp::verify() {
+    return verifySameRegionSuccessors(*this);
 }
 
 // ctjs.check IS SHAPED LIKE push_handler AND MEANS THE OPPOSITE END OF THE SAME
@@ -224,11 +226,7 @@ mlir::LogicalResult BinaryStaticOp::verify() {
 }
 
 mlir::LogicalResult CheckOp::verify() {
-    mlir::Region * here = getOperation()->getParentRegion();
-    if (getHandler()->getParent() != here || getCont()->getParent() != here) {
-        return emitOpError("both successors must be blocks in the same region");
-    }
-    return mlir::success();
+    return verifySameRegionSuccessors(*this);
 }
 
 mlir::LogicalResult CatchLandOp::verify() {

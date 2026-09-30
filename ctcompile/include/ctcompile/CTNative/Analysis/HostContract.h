@@ -9,6 +9,7 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/Support/Error.h"
+#include "llvm/Support/ErrorHandling.h"
 
 #include <optional>
 #include <string>
@@ -59,6 +60,14 @@ struct HostContract {
         ctbrowserIntrinsics
     };
     Provider provider = Provider::closedSource;
+    // The two DOM entry providers: ctbrowserDOM and ctbrowserDOMSession.
+    [[nodiscard]] bool domProvider() const {
+        return provider == Provider::ctbrowserDOM || provider == Provider::ctbrowserDOMSession;
+    }
+    // Any provider with DOM inputs: the two above and ctbrowserDOMDataSession.
+    [[nodiscard]] bool isDOM() const {
+        return domProvider() || provider == Provider::ctbrowserDOMDataSession;
+    }
     std::string moduleSha256;
     std::string entry;
     // DOM providers invoke one ordinary function with borrowed elements.
@@ -209,6 +218,59 @@ enum class HostDOMMethod {
     stringLowercaseUnit
 };
 
+// What a HostDOMMethod call produces.
+enum class HostDOMResult {
+    none,
+    boolean,
+    optionalString,
+    element,
+    elementVector,
+    stringVector,
+    number,
+    symbol,
+    json,
+    string
+};
+
+// What a call of `method` produces. Every method is listed, so a new one is a
+// -Wswitch error rather than a silent Boolean.
+[[nodiscard]] inline HostDOMResult resultOf(HostDOMMethod method) {
+    switch (method) {
+    case HostDOMMethod::addClass:
+    case HostDOMMethod::removeClass:
+    case HostDOMMethod::setAttribute:
+    case HostDOMMethod::removeAttribute: return HostDOMResult::none;
+    case HostDOMMethod::toggleClass:
+    case HostDOMMethod::containsClass:
+    case HostDOMMethod::toggleAttribute:
+    case HostDOMMethod::hasAttribute:
+    case HostDOMMethod::contains:
+    case HostDOMMethod::matches:
+    case HostDOMMethod::startsWith: return HostDOMResult::boolean;
+    case HostDOMMethod::getAttribute: return HostDOMResult::optionalString;
+    case HostDOMMethod::closest:
+    case HostDOMMethod::querySelector:
+    case HostDOMMethod::documentQuerySelector: return HostDOMResult::element;
+    case HostDOMMethod::querySelectorAll:
+    case HostDOMMethod::documentQuerySelectorAll: return HostDOMResult::elementVector;
+    case HostDOMMethod::datasetKeys:
+    case HostDOMMethod::filterStrings: return HostDOMResult::stringVector;
+    case HostDOMMethod::number: return HostDOMResult::number;
+    case HostDOMMethod::symbol:
+    case HostDOMMethod::symbolValueOf: return HostDOMResult::symbol;
+    case HostDOMMethod::jsonParse: return HostDOMResult::json;
+    case HostDOMMethod::numberToString:
+    case HostDOMMethod::symbolToString:
+    case HostDOMMethod::decodeURIComponent:
+    case HostDOMMethod::removeStringPrefix:
+    case HostDOMMethod::replaceUppercase:
+    case HostDOMMethod::stringCharAt:
+    case HostDOMMethod::stringSlice:
+    case HostDOMMethod::stringLowercaseUnit: return HostDOMResult::string;
+    }
+    llvm_unreachable("unknown HostDOMMethod");
+}
+
 struct HostDOMCall {
     ctjs::CallOp operation;
     HostDOMMethod kind;
@@ -221,38 +283,23 @@ struct HostDOMCall {
     mlir::BlockArgument styleParameter{};
     // Mixed inputs retain their selected association through the same SSA edges.
     llvm::SmallVector<mlir::BlockArgument> styleParameters{};
-    [[nodiscard]] bool returnsElement() const {
-        return kind == HostDOMMethod::closest || kind == HostDOMMethod::querySelector ||
-               kind == HostDOMMethod::documentQuerySelector;
+    [[nodiscard]] HostDOMResult result() const { return resultOf(kind); }
+    [[nodiscard]] bool returnsElement() const { return result() == HostDOMResult::element; }
+    [[nodiscard]] bool returnsOptionalString() const {
+        return result() == HostDOMResult::optionalString;
     }
-    [[nodiscard]] bool returnsOptionalString() const { return kind == HostDOMMethod::getAttribute; }
     [[nodiscard]] bool returnsStringVector() const {
-        return kind == HostDOMMethod::datasetKeys || kind == HostDOMMethod::filterStrings;
+        return result() == HostDOMResult::stringVector;
     }
     [[nodiscard]] bool returnsElementVector() const {
-        return kind == HostDOMMethod::querySelectorAll ||
-               kind == HostDOMMethod::documentQuerySelectorAll;
+        return result() == HostDOMResult::elementVector;
     }
-    [[nodiscard]] bool returnsNumber() const { return kind == HostDOMMethod::number; }
-    [[nodiscard]] bool returnsSymbol() const {
-        return kind == HostDOMMethod::symbol || kind == HostDOMMethod::symbolValueOf;
-    }
+    [[nodiscard]] bool returnsNumber() const { return result() == HostDOMResult::number; }
+    [[nodiscard]] bool returnsSymbol() const { return result() == HostDOMResult::symbol; }
     // An owning ctbrowser::json_value tree, from the shared public Core parser.
-    [[nodiscard]] bool returnsJSON() const { return kind == HostDOMMethod::jsonParse; }
-    [[nodiscard]] bool returnsString() const {
-        return kind == HostDOMMethod::numberToString || kind == HostDOMMethod::symbolToString ||
-               kind == HostDOMMethod::decodeURIComponent ||
-               kind == HostDOMMethod::removeStringPrefix ||
-               kind == HostDOMMethod::replaceUppercase || kind == HostDOMMethod::stringCharAt ||
-               kind == HostDOMMethod::stringSlice || kind == HostDOMMethod::stringLowercaseUnit;
-    }
-    [[nodiscard]] bool returnsBoolean() const {
-        return !returnsOptionalString() && !returnsElement() && !returnsNumber() &&
-               !returnsSymbol() && !returnsString() && !returnsJSON() && !returnsStringVector() &&
-               !returnsElementVector() && kind != HostDOMMethod::setAttribute &&
-               kind != HostDOMMethod::removeAttribute && kind != HostDOMMethod::addClass &&
-               kind != HostDOMMethod::removeClass;
-    }
+    [[nodiscard]] bool returnsJSON() const { return result() == HostDOMResult::json; }
+    [[nodiscard]] bool returnsString() const { return result() == HostDOMResult::string; }
+    [[nodiscard]] bool returnsBoolean() const { return result() == HostDOMResult::boolean; }
     [[nodiscard]] bool usesStyle() const {
         return kind == HostDOMMethod::matches || returnsElement() || returnsElementVector();
     }
@@ -413,10 +460,7 @@ struct HostMethodParameters {
     ctjs::FuncOp function;
     std::vector<PrimitiveAlternatives> alternatives;
     std::vector<mlir::BlockArgument> objectKeys{};
-    bool operator==(const HostMethodParameters & other) const {
-        return function == other.function && alternatives == other.alternatives &&
-               objectKeys == other.objectKeys;
-    }
+    bool operator==(const HostMethodParameters &) const = default;
 };
 
 struct HostMethodArgument {
@@ -432,9 +476,7 @@ struct HostMethodArgument {
 struct HostChildMapEntry {
     mlir::Value key;
     PrimitiveAlternatives alternatives;
-    bool operator==(const HostChildMapEntry & other) const {
-        return key == other.key && alternatives == other.alternatives;
-    }
+    bool operator==(const HostChildMapEntry &) const = default;
 };
 
 // A Number category invariant over one initialized source global and every
@@ -443,10 +485,7 @@ struct HostMutableScalarGlobal {
     ctjs::StoreGlobalOp initialization;
     std::vector<ctjs::StoreGlobalOp> writes;
     std::vector<ctjs::LoadGlobalOp> reads;
-    bool operator==(const HostMutableScalarGlobal & other) const {
-        return initialization == other.initialization && writes == other.writes &&
-               reads == other.reads;
-    }
+    bool operator==(const HostMutableScalarGlobal &) const = default;
 };
 
 // A fixed own callable slot, with a complete scalar-only body/effect census.
@@ -463,12 +502,7 @@ struct HostScalarCallback {
     std::vector<mlir::Operation *> calls;
     std::vector<mlir::Operation *> operations;
     std::vector<HostMutableScalarGlobal> globals;
-    bool operator==(const HostScalarCallback & other) const {
-        return owner == other.owner && initialization == other.initialization &&
-               write == other.write && closure == other.closure && function == other.function &&
-               loads == other.loads && reads == other.reads && calls == other.calls &&
-               operations == other.operations && globals == other.globals;
-    }
+    bool operator==(const HostScalarCallback &) const = default;
 };
 
 // Exact caller allocation returned by one checked entry invocation. Neither
@@ -476,9 +510,7 @@ struct HostScalarCallback {
 struct HostReturnedLeaf {
     mlir::Operation * call = nullptr;
     ctjs::CreateObjectOp object;
-    bool operator==(const HostReturnedLeaf & other) const {
-        return call == other.call && object == other.object;
-    }
+    bool operator==(const HostReturnedLeaf &) const = default;
 };
 
 // Primitive alternatives of one checked entry invocation, independent of the
@@ -486,9 +518,7 @@ struct HostReturnedLeaf {
 struct HostReturnedScalar {
     mlir::Operation * call = nullptr;
     PrimitiveAlternatives alternatives;
-    bool operator==(const HostReturnedScalar & other) const {
-        return call == other.call && alternatives == other.alternatives;
-    }
+    bool operator==(const HostReturnedScalar &) const = default;
 };
 
 // One immutable environment slot owns this exact standard Map, constructed
@@ -503,21 +533,22 @@ struct HostReturnedScalar {
 // family promises no startup value or invocation result. Optional cell operations describe
 // the original binding; after lifting, the call reads its environment value.
 // Every handle is rederived from the current module, never from native markers.
-struct HostCapturedMap {
+// Every fact of a captured Map family - everything but the actual call's own
+// argument - so two edges of one family compare equal.
+struct HostCapturedMapFamily {
     ctjs::LoadGlobalOp intrinsic;
     ctjs::ConstructOp allocation;
     ctjs::CreateCellOp cell;
     ctjs::CellSetOp initialization;
     std::vector<ctjs::CreateClosureOp> closures;
     std::vector<HostMethodParameters> parameters;
-    // Complete family effects; argument below belongs to this actual call.
+    // Complete family effects; HostCapturedMap::argument belongs to this actual call.
     std::vector<ctjs::LoadUpvalueOp> upvalues;
     std::vector<ctjs::GetPropertyOp> reads;
     std::vector<ctjs::CallOp> calls;
     std::vector<ctjs::CreateObjectOp> leafObjects;
     std::vector<ctjs::SetPropertyOp> leafWrites;
     std::vector<ctjs::GetPropertyOp> leafReads;
-    ctjs::LoadUpvalueOp argument;
     std::vector<ctjs::ConstructOp> childMaps{};
     // Every outer set stores a checked fresh child, across the complete family.
     // This promises neither a returned child's identity nor its contents.
@@ -556,6 +587,12 @@ struct HostCapturedMap {
     // Explicit DOM entry inputs used exclusively through the outer-key formals
     // above. Complete source/use evidence only; no retained lifetime authority.
     std::vector<mlir::BlockArgument> outerKeyInputs{};
+    bool operator==(const HostCapturedMapFamily &) const = default;
+};
+
+struct HostCapturedMap : HostCapturedMapFamily {
+    // This actual call's argument, which differs between edges of one family.
+    ctjs::LoadUpvalueOp argument;
 };
 
 // Evidence for this actual call, not a promise about future exported callers

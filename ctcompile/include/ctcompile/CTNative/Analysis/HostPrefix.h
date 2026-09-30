@@ -111,6 +111,17 @@ struct HostPrefixProviderSummary {
     std::vector<HostPrefixProviderObjectOperation> objectOperations{};
 };
 
+// Which provider effects the prefix proof may follow past the entry. Each flag
+// needs the ones before it (HostEntryPrefixAnalysis refuses otherwise).
+struct HostPrefixFollow {
+    bool publication = false;
+    bool providerReads = false;
+    bool providerMutations = false;
+    bool providerDiagnostics = false;
+    bool providerCallbacks = false;
+    bool providerObjects = false;
+};
+
 // A narrower proof than HostContractAnalysis: only the executed prefix before
 // the first unknown effect is interpreted. Branch/call proofs belong to
 // functions with one closed invocation path. Later behavior remains unknown.
@@ -123,6 +134,12 @@ public:
                             bool followProviderDiagnostics = false,
                             bool followProviderCallbacks = false,
                             bool followProviderObjects = false);
+    HostEntryPrefixAnalysis(mlir::ModuleOp module, const HostContract & contract, unsigned maxSteps,
+                            HostPrefixFollow follow)
+        : HostEntryPrefixAnalysis(module, contract, maxSteps, follow.publication,
+                                  follow.providerReads, follow.providerMutations,
+                                  follow.providerDiagnostics, follow.providerCallbacks,
+                                  follow.providerObjects) {}
 
     [[nodiscard]] bool valid() const { return refusal.empty(); }
     [[nodiscard]] llvm::StringRef reason() const { return refusal; }

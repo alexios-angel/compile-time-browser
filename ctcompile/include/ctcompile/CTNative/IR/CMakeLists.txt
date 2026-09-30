@@ -23,6 +23,7 @@ mlir_tablegen(CTNativeEnums.cpp.inc -gen-enum-defs)
 add_public_tablegen_target(CTNativeEnumsIncGen)
 
 target_sources(CTNativeDialect PRIVATE
+  CTNativeAttrNames.h
   CTNativeBase.td
   CTNativeDialect.h
   CTNativeEnums.h
