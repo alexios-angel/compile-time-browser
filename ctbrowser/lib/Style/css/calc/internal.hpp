@@ -143,6 +143,26 @@ struct number_symbols_scope {
 };
 [[nodiscard]] bool is_number_symbol(std::string_view key) noexcept; // `$` + the ident
 
+// ONE STEP OF THE TEXT-LEVEL PASSES - simplify_math, fold_math and the tree
+// reader - which re-read their own nested functions: `min(min(min(...)))`
+// simplifies each argument more than one way, so a few dozen levels are
+// billions of calls. Every such call holds one of these; the count starts over
+// with the outermost, which is one declaration's value. Past max_math_steps
+// calls, or max_math_depth deep, a step is `exhausted` and answers with its
+// input, and the outermost gives back the author's text whole (fold_math: not
+// ok) rather than a value simplified in part.
+// ponytail: thread-local like number_symbols_scope, for the same reason.
+inline constexpr std::size_t max_math_steps = 16384;
+inline constexpr int max_math_depth = 128;
+struct math_step {
+    math_step() noexcept;
+    ~math_step();
+    math_step(const math_step &) = delete;
+    math_step & operator=(const math_step &) = delete;
+    [[nodiscard]] bool exhausted() const noexcept;
+    [[nodiscard]] bool outermost() const noexcept;
+};
+
 // A <calc-sum> THAT WILL NOT FOLD, simplified over its tree (CSS Values 4
 // §10.12) and written in §10.13's order, without a calc() around it:
 // `(min(10px, 20%) + max(1rem, 2%)) * 2` is `2 * (min(10px, 20%) + max(1rem,

@@ -298,6 +298,8 @@ constexpr std::string_view angle_functions[] = {"rotate(", "rotatex(", "rotatey(
 } // namespace
 
 std::string simplify_math(std::string_view value) {
+    const math_step step;
+    if (step.exhausted()) { return std::string{value}; }
     // The bases do not exist yet - that is what makes this the SPECIFIED value -
     // so `context_free` above is what decides whether a function may be touched
     // at all, and this context is only ever handed expressions that need none.
@@ -440,6 +442,7 @@ std::string simplify_math(std::string_view value) {
         // where `sibling-index()` and `nearest` land.
         out.append(simplified_arguments(name, inner));
     }
+    if (step.outermost() && step.exhausted()) { return std::string{value}; }
     return out;
 }
 

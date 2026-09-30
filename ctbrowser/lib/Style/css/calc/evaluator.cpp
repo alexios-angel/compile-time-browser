@@ -66,6 +66,25 @@ bool is_number_symbol(std::string_view key) noexcept {
     return key.starts_with('$');
 }
 
+namespace {
+thread_local int math_depth = 0;
+thread_local std::size_t math_steps = 0;
+} // namespace
+
+math_step::math_step() noexcept {
+    if (math_depth++ == 0) { math_steps = 0; }
+    ++math_steps;
+}
+math_step::~math_step() {
+    --math_depth;
+}
+bool math_step::exhausted() const noexcept {
+    return math_steps > max_math_steps || math_depth > max_math_depth;
+}
+bool math_step::outermost() const noexcept {
+    return math_depth == 1;
+}
+
 // One expression with NO bases at all - which is what a specified value is
 // written against - and its answer as a term rather than as a `calc_result`,
 // because a sum of units that could not be added has no single magnitude.

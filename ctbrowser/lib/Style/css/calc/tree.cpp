@@ -160,6 +160,8 @@ private:
     }
 
     [[nodiscard]] std::optional<node> value() {
+        const math_step step;
+        if (step.exhausted()) { return fail(); }
         skip_whitespace();
         const css_token & tok = peek();
         node out;
@@ -493,6 +495,8 @@ private:
 
 std::optional<std::string> simplify_sum_text(std::string_view expression,
                                              const length_context * ctx) {
+    const math_step step;
+    if (step.exhausted()) { return std::nullopt; }
     const token_stream ts = tokenize(expression);
     reader read{ts, ctx};
     std::optional<node> tree = read.read();

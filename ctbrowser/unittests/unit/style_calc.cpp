@@ -554,6 +554,45 @@ void test_cap_infinities_and_random_ordinals() {
     CHECK_EQ(fold_math("random(NaN, 100)", ctx).text, std::string{"0"});
 }
 
+// NESTING AND BLOW-UP ARE CAPPED, and past a cap the math is invalid or left
+// as written - never a stack overflow and never billions of steps.
+void test_math_nesting_and_budgets() {
+    using ctbrowser::style::css::check_declaration;
+    using ctbrowser::style::css::evaluate_math;
+    using ctbrowser::style::css::length_context;
+    using ctbrowser::style::css::math_outcome;
+    using ctbrowser::style::css::simplify_math;
+    const auto nest = [](std::string_view open, std::string_view inner, std::string_view close,
+                         int levels) {
+        std::string out;
+        for (int i = 0; i < levels; ++i) { out += open; }
+        out += inner;
+        for (int i = 0; i < levels; ++i) { out += close; }
+        return out;
+    };
+    const length_context ctx;
+    // Five thousand `(` inside one calc(): the evaluator recursed per level.
+    CHECK(evaluate_math(nest("(", "1px", ")", 5000), ctx).outcome == math_outcome::invalid);
+    CHECK(!check_declaration("width", "calc(" + nest("(", "1px", ")", 5000) + ")").valid);
+    // Within the cap it is still arithmetic.
+    CHECK(evaluate_math(nest("(", "1px", ")", 50), ctx).outcome == math_outcome::resolved);
+    // A 369-byte nest of calc()s around a sum that will not fold.
+    const std::string calcs = nest("calc(", "1px + 1em", " + 1vw)", 30);
+    CHECK(calcs.size() > 300);
+    CHECK(check_declaration("width", calcs).valid);
+    // Comparisons thirty deep simplify each argument more than one way: 2^30
+    // simplifications without the step budget.
+    const std::string mins = nest("min(", "1em", ", 2vw)", 30);
+    CHECK(!simplify_math(mins).empty());
+    CHECK(check_declaration("width", mins).valid);
+    // A function symbol times a sum of units, repeatedly, squares its symbols.
+    std::string product = "calc(sibling-index() * 1px";
+    for (int i = 0; i < 24; ++i) { product += " * (1em + 1vw) / 1px"; }
+    product += ")";
+    (void)check_declaration("width", product);
+    (void)simplify_math(product);
+}
+
 } // namespace
 
 int main() {
@@ -563,5 +602,6 @@ int main() {
     test_calc_in_the_cascade();
     test_the_line_height_units();
     test_cap_infinities_and_random_ordinals();
+    test_math_nesting_and_budgets();
     REPORT("style_calc");
 }

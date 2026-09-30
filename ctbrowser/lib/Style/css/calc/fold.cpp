@@ -353,6 +353,8 @@ bool math_uses_percentage(std::string_view value) {
 }
 
 folded_value fold_math(std::string_view value, const length_context & given, math_context accepts) {
+    const detail::math_step step;
+    if (step.exhausted()) { return folded_value{std::string{value}, false}; }
     std::string out;
     bool ok = true;
     std::size_t at = 0;
@@ -583,6 +585,7 @@ folded_value fold_math(std::string_view value, const length_context & given, mat
         out.append(whole);
         at = span.end;
     }
+    if (step.outermost() && step.exhausted()) { return folded_value{std::string{value}, false}; }
     return folded_value{std::move(out), ok};
 }
 

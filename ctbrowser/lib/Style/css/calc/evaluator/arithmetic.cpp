@@ -105,6 +105,13 @@ thread_local std::span<const std::string_view> number_symbols;
             })) {
             return {std::nullopt, true};
         }
+        // The product has one symbol per PAIR, and it is function-only again,
+        // so a chain of `* (1px + 1em + ...)` squares the count at every step.
+        // Past the cap the expression is invalid rather than a heap exhausted.
+        constexpr std::size_t max_symbols = 64;
+        if (fn.symbols.size() * std::max<std::size_t>(other.symbols.size(), 1) > max_symbols) {
+            return {};
+        }
         term out;
         for (std::size_t i = 0; i < out.dims.size(); ++i) {
             out.dims[i] = static_cast<std::int8_t>(fn.dims[i] + other.dims[i]);
