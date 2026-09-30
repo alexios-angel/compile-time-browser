@@ -103,6 +103,23 @@ void test_canvas_transform_and_paths() {
     }
 }
 
+// Coordinates near +-FLT_MAX overflow float differences to inf/NaN; the scanline
+// sort must not see a NaN crossing (QSORT-001).
+void test_huge_coordinate_fill() {
+    browser page{browser_options{200, 200}};
+    page.load_html(R"(<html><body><canvas id=c width=50 height=50></canvas><script>
+        const ctx = document.getElementById('c').getContext('2d');
+        ctx.beginPath();
+        for (let i = 0; i < 24; ++i) {
+            ctx.moveTo(-3e38, -3e38 + i); ctx.lineTo(3e38, 3e38 - i); ctx.lineTo(-3e38, 3e38);
+        }
+        ctx.fill();
+        ctx.fill('evenodd');
+        console.log('done');
+    </script></body></html>)");
+    check(page.script_error().empty(), "huge-coordinate fill ran: " + page.script_error());
+}
+
 // textAlign and textBaseline - where text sits relative to the point it was
 // given. The most-used canvas properties this engine did not have: p5.js sets
 // textAlign 229 times, and without them every label started at x on the
@@ -469,6 +486,34 @@ void test_raster_numeric_bounds() {
     fonts.draw_run(rect{0, 0, 16, 16}, text, {0, 0, 4, 4}, into);
     check(fonts.ascent(text.font_size, "", false, false) > 0,
           "large font scales remain defined and drawing visits only clipped pixels");
+}
+
+// bufferData(target, size) takes a page's number: NaN, negatives, infinities and 1e12
+// must set a GL error rather than crash, and Int32Array([-1]) uploads modularly.
+void test_webgl_buffer_data_sizes() {
+    browser page{browser_options{100, 100}};
+    page.load_html(R"(<html><body><script>
+        var gl = document.createElement('canvas').getContext('webgl');
+        var b = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, b);
+        var out = [];
+        [1e12, NaN, -1, Infinity, -Infinity].forEach(function (n) {
+            gl.getError(); gl.bufferData(gl.ARRAY_BUFFER, n, gl.STATIC_DRAW);
+            out.push(gl.getError());
+        });
+        gl.bufferData(gl.ARRAY_BUFFER, new Int32Array([-1]), gl.STATIC_DRAW);
+        gl.bufferData(gl.ARRAY_BUFFER, 16, gl.STATIC_DRAW);
+        console.log('sizes=' + out.join(',') + ',' + gl.getError());
+    </script></body></html>)");
+    check(page.script_error().empty(), "the page loaded: " + page.script_error());
+    bool found = false;
+    for (const std::string & line : log_of(page)) {
+        if (line.starts_with("sizes=")) {
+            found = true;
+            // OUT_OF_MEMORY, none (NaN is 0), INVALID_VALUE, OUT_OF_MEMORY, INVALID_VALUE, none
+            check(line == "sizes=1285,0,1281,1285,1281,0", "bufferData sizes: " + line);
+        }
+    }
+    check(found, "the sizes line was logged");
 }
 
 // WEBGL COMPILES AND CONSTRUCTS, AND REFUSES CLEANLY.
@@ -865,6 +910,7 @@ int main() {
     test_canvas_as_image_source();
     test_clip();
     test_webgl_is_constructible_and_refuses();
+    test_webgl_buffer_data_sizes();
     test_composite_operations();
     test_composite_clears_untouched_pixels();
     test_image_data();
@@ -873,5 +919,6 @@ int main() {
     test_fill_rule();
     test_text_alignment();
     test_canvas_transform_and_paths();
+    test_huge_coordinate_fill();
     REPORT("canvas_context");
 }

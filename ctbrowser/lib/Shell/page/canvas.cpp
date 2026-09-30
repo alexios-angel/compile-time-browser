@@ -157,8 +157,14 @@ void canvas_context::for_each_span(const canvas_path & path, fill_rule rule, int
         for (const std::size_t i : active) {
             const edge & e = edges[i];
             if (e.y0 > scan) { continue; }
+            // double: float differences at ~1e38 overflow to inf/NaN, which would break
+            // the sort's strict weak ordering.
+            const double x = static_cast<double>(e.x0) + (static_cast<double>(scan) - e.y0) /
+                                                             (static_cast<double>(e.y1) - e.y0) *
+                                                             (static_cast<double>(e.x1) - e.x0);
+            if (!std::isfinite(x)) { continue; }
             crossings.push_back(
-                crossing{e.x0 + (scan - e.y0) / (e.y1 - e.y0) * (e.x1 - e.x0), e.direction});
+                crossing{static_cast<float>(std::clamp(x, -3e38, 3e38)), e.direction});
         }
         std::ranges::sort(crossings, {}, &crossing::x);
         if (rule == fill_rule::even_odd) {

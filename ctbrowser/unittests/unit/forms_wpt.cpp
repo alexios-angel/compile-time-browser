@@ -192,6 +192,12 @@ void test_input_numbers_and_dates() {
        " h.willValidate, h.indeterminate]; h.value = 'w'; h.indeterminate = true;"
        " o.push(h.value, h.getAttribute('value'), h.indeterminate); return o.join(); })()",
        "q,,,false,false,w,w,true");
+    // A 30-digit year is an invalid value, not signed-overflow UB (INT-004).
+    is("(function () { var d = document.createElement('input'); d.type = 'date'; d.value = "
+       "'"
+       "123456789012345678901234567890-01-01'; return d.value === '' && isNaN(d.valueAsNumber); "
+       "})()",
+       "true");
     is("(function () { var d = document.createElement('input'); d.type = 'date'; d.value = "
        "'2020-02-29';"
        " var o = [d.valueAsNumber, d.valueAsDate.getUTCFullYear(), d.valueAsDate.getUTCDate()];"
