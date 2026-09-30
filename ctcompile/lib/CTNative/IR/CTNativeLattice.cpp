@@ -177,6 +177,14 @@ static Type finishUnion(MLIRContext * context, Alternatives & parts) {
     return OptType::get(context, result);
 }
 
+// Two single-element containers of kind T merge elementwise; anything else does
+// not merge.
+template <class T> static Type mergeElements(Type a, Type b) {
+    auto other = llvm::dyn_cast<T>(b);
+    if (!other) { return Type(); }
+    return T::get(a.getContext(), meet(llvm::cast<T>(a).getElementType(), other.getElementType()));
+}
+
 // Do these two types belong to one family with a widening between them? A null
 // answer means they do not, and the caller makes a union instead.
 //
@@ -208,16 +216,8 @@ static Type mergeSameFamily(Type a, Type b) {
         return StrViewType::get(context, wider);
     }
 
-    if (auto vectorA = llvm::dyn_cast<VecType>(a)) {
-        auto vectorB = llvm::dyn_cast<VecType>(b);
-        if (!vectorB) { return Type(); }
-        return VecType::get(context, meet(vectorA.getElementType(), vectorB.getElementType()));
-    }
-    if (auto setA = llvm::dyn_cast<SetType>(a)) {
-        auto setB = llvm::dyn_cast<SetType>(b);
-        if (!setB) { return Type(); }
-        return SetType::get(context, meet(setA.getElementType(), setB.getElementType()));
-    }
+    if (llvm::isa<VecType>(a)) { return mergeElements<VecType>(a, b); }
+    if (llvm::isa<SetType>(a)) { return mergeElements<SetType>(a, b); }
     if (auto mapA = llvm::dyn_cast<MapType>(a)) {
         auto mapB = llvm::dyn_cast<MapType>(b);
         if (!mapB) { return Type(); }
@@ -232,26 +232,17 @@ static Type mergeSameFamily(Type a, Type b) {
     // deliberately unordered against both - see CTNative_WeakType, and Stage
     // 55C, where silently unifying a strong and a weak reference is the
     // miscompile the whole rule exists to prevent.
-    if (auto ownedA = llvm::dyn_cast<OwnedType>(a)) {
-        if (auto ownedB = llvm::dyn_cast<OwnedType>(b)) {
-            return OwnedType::get(context, meet(ownedA.getPointeeType(), ownedB.getPointeeType()));
+    const auto pointeeOf = [](Type type) {
+        return llvm::isa<OwnedType>(type) ? llvm::cast<OwnedType>(type).getPointeeType()
+                                          : llvm::cast<SharedType>(type).getPointeeType();
+    };
+    if (llvm::isa<OwnedType, SharedType>(a)) {
+        if (!llvm::isa<OwnedType, SharedType>(b)) { return Type(); }
+        const Type pointee = meet(pointeeOf(a), pointeeOf(b));
+        if (llvm::isa<OwnedType>(a) && llvm::isa<OwnedType>(b)) {
+            return OwnedType::get(context, pointee);
         }
-        if (auto sharedB = llvm::dyn_cast<SharedType>(b)) {
-            return SharedType::get(context,
-                                   meet(ownedA.getPointeeType(), sharedB.getPointeeType()));
-        }
-        return Type();
-    }
-    if (auto sharedA = llvm::dyn_cast<SharedType>(a)) {
-        if (auto ownedB = llvm::dyn_cast<OwnedType>(b)) {
-            return SharedType::get(context,
-                                   meet(sharedA.getPointeeType(), ownedB.getPointeeType()));
-        }
-        if (auto sharedB = llvm::dyn_cast<SharedType>(b)) {
-            return SharedType::get(context,
-                                   meet(sharedA.getPointeeType(), sharedB.getPointeeType()));
-        }
-        return Type();
+        return SharedType::get(context, pointee);
     }
     if (auto weakA = llvm::dyn_cast<WeakType>(a)) {
         auto weakB = llvm::dyn_cast<WeakType>(b);
