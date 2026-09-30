@@ -212,17 +212,31 @@ void context::copy_own_properties(value target, value source) {
         //
         // ...and an accessor is READ rather than copied: the spec does a Get,
         // so what lands on the target is the getter's answer as a data property.
+        //
+        // EACH ANSWER IS ROOTED until it is stored: the next getter's call is a
+        // safepoint, and outside a native nothing else holds a fresh object a
+        // getter returned. Pushed onto `temporaries_` as it arrives (rooted_values
+        // takes a finished span); the guard drops exactly these again.
+        struct unroot {
+            context & cx;
+            std::size_t base;
+            ~unroot() { cx.temporaries_.resize(std::min(base, cx.temporaries_.size())); }
+        } const keep_entries{*this, temporaries_.size()};
         std::vector<std::pair<std::string, value>> entries;
         auto * from = static_cast<object_object *>(source.as_heap());
         from->each_own_entry([&](const std::string & name, std::uint8_t attrs) {
             if ((attrs & attr_enumerable) != 0) {
-                entries.emplace_back(name, lookup_property(source, name));
+                const value item = lookup_property(source, name);
+                temporaries_.push_back(item);
+                entries.emplace_back(name, item);
             }
         });
         for (const auto & [name, item] : entries) { into->set(name, item); }
     } else if (source.is_array()) {
         auto * arr = static_cast<array_object *>(source.as_heap());
         const std::vector<value> items = arr->items;
+        // Rooted: an index getter below can drop the rest from `arr` and collect.
+        const rooted_values keep_items{*this, items};
         for (std::size_t i = 0; i < items.size(); ++i) {
             if (!arr->element_attrs.empty() || arr->has_hole_run()) {
                 const std::uint8_t a = arr->element_attrs_at(static_cast<std::uint32_t>(i));

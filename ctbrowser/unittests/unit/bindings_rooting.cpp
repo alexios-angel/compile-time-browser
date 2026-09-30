@@ -65,6 +65,17 @@ void test_spread_walks_a_snapshot() {
              "k0,k1,k2,k3");
 }
 
+// A getter's answer lived only in copy_own_properties' C++ list while the next
+// getter ran, and that getter's native call collected.
+void test_spread_holds_getter_results() {
+    const std::string collect = "churn(); [0].forEach(function() {});";
+    CHECK_EQ(page("var o = {get a() { return {tag: 'kept'}; }, get b() { " + collect +
+                  " return 2; }};"
+                  "var s = {...o}; " +
+                  collect + " alert(s.a.tag + s.b);"),
+             "kept2");
+}
+
 // A re-entry refused AFTER its episode's one RangeError returned undefined with
 // nothing thrown, and the async-from-sync step cast that undefined to its pair
 // array. Each depth is tried, since which one lands on the refusal depends on
@@ -173,6 +184,7 @@ void test_dynamic_import_inside_a_running_module() {
 int main() {
     test_storage_backing_cannot_be_deleted();
     test_spread_walks_a_snapshot();
+    test_spread_holds_getter_results();
     test_refused_reentry_is_a_throw();
     test_float32_store_out_of_range();
     test_blob_and_file_constructors();
