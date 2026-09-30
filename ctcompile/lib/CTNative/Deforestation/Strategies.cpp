@@ -1,5 +1,6 @@
 #include "Strategies.h"
 
+#include "../Lowering/LoweringSupport.h"
 #include "ctcompile/CTNative/Analysis/WorkBudget.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallPtrSet.h"
@@ -8,8 +9,9 @@
 namespace ctcompile::ctnative::deforestation_detail {
 namespace {
 
-constexpr llvm::StringLiteral kVector = "std::vector<double>";
-constexpr llvm::StringLiteral kScalar = "ctnative::nullable_scalar";
+// The runtime spellings the lowering emits for a number vector and a scalar.
+using lowering_detail::kNullableType;
+using lowering_detail::kVectorType;
 
 bool opaque(mlir::Type type, llvm::StringRef name) {
     auto value = llvm::dyn_cast<ec::OpaqueType>(type);
@@ -18,11 +20,11 @@ bool opaque(mlir::Type type, llvm::StringRef name) {
 
 bool vector(mlir::Type type) {
     if (auto local = llvm::dyn_cast<ec::LValueType>(type)) { type = local.getValueType(); }
-    return opaque(type, kVector);
+    return opaque(type, kVectorType);
 }
 
 bool scalar(mlir::Type type) {
-    return llvm::isa<mlir::FloatType, mlir::IntegerType>(type) || opaque(type, kScalar) ||
+    return llvm::isa<mlir::FloatType, mlir::IntegerType>(type) || opaque(type, kNullableType) ||
            opaque(type, "ctnative::js_num");
 }
 
@@ -67,7 +69,7 @@ bool readOnly(mlir::Operation * op) {
         if (llvm::isa<mlir::FloatAttr, mlir::IntegerAttr>(constant.getValue())) { return true; }
         // An arbitrary opaque initializer is C++ code, not a pure constant.
         auto value = llvm::dyn_cast<ec::OpaqueAttr>(constant.getValue());
-        return value && opaque(constant.getResult().getType(), kScalar) &&
+        return value && opaque(constant.getResult().getType(), kNullableType) &&
                (value.getValue() == "ctnative::nullable_scalar{}" ||
                 value.getValue() == "ctnative::nullable_scalar::null()");
     }
@@ -181,7 +183,7 @@ struct constraints {
                 const bool index = call.getCallee() == "ctnative::vec_at" &&
                                    call.getNumOperands() == 2 &&
                                    scalar(call.getOperand(1).getType()) &&
-                                   opaque(call.getResult(0).getType(), kScalar);
+                                   opaque(call.getResult(0).getType(), kNullableType);
                 if (!length && !index) {
                     reason = "snapshot has an escaping or unsupported consumer bound";
                     return false;
@@ -197,7 +199,7 @@ struct constraints {
 
 bool isSnapshot(ec::CallOpaqueOp call) {
     if (!ordinaryCall(call) || call.getNumOperands() != 1 || call.getNumResults() != 1 ||
-        !opaque(call.getResult(0).getType(), kVector)) {
+        !opaque(call.getResult(0).getType(), kVectorType)) {
         return false;
     }
     auto map = llvm::dyn_cast<ec::OpaqueType>(call.getOperand(0).getType());

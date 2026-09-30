@@ -83,12 +83,9 @@ void checkNestedOwner(mlir::MLIRContext & context, const std::string & source, b
             const unsigned completion = query.steps();
             check(completion < 15000, "nested owner census remains bounded");
             if (completion >= 15000) { continue; }
-            for (unsigned budget = 0; budget < completion; ++budget) {
-                OwnedGlobalRoots limited(*module, contract, budget);
-                check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
-                          empty(*module, limited),
-                      "no partial invocation result becomes an owner at an incomplete budget");
-            }
+            checkBudgetsBelow(
+                *module, contract, completion,
+                "no partial invocation result becomes an owner at an incomplete budget");
             OwnedGlobalRoots exact(*module, contract, completion);
             check(exact.proved() && exact.steps() == completion,
                   "the exact nested owner budget reproduces every source method and call");

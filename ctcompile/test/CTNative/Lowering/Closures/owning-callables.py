@@ -5,7 +5,7 @@ import argparse
 from pathlib import Path
 import re
 
-from CTNative.harness import build_and_run, find_compilers, run
+from CTNative.harness import build_and_run, find_compilers, native_pipeline, run
 
 
 def main():
@@ -16,7 +16,6 @@ def main():
     parser.add_argument("--opt", required=True)
     args = parser.parse_args()
     args.work.mkdir(parents=True, exist_ok=True)
-    tests = Path(__file__).resolve().parents[3]
     compilers = find_compilers()
     fixtures = {
         "owning": "independentResult=101\nlifetimeResult=42\nloopResult=16\nmutationResult=42\nsharedResult=15\n",
@@ -26,18 +25,7 @@ def main():
     emitted = []
     for fixture, expected in fixtures.items():
         module = args.work / f"{fixture}.mlir"
-        run(
-            [
-                "cmake",
-                f"-DTRANSLATE={args.translate}",
-                f"-DOPT={args.opt}",
-                f"-DSOURCE={args.fixtures / (fixture + '.js')}",
-                f"-DOUTPUT={module}",
-                "-DOPTIMIZE=OFF",
-                "-P",
-                str(tests / "CTNative/Checks/pipeline.cmake"),
-            ]
-        )
+        native_pipeline(args, args.fixtures / (fixture + ".js"), module)
         deduced = args.work / f"{fixture}-deduced.mlir"
         run(
             [

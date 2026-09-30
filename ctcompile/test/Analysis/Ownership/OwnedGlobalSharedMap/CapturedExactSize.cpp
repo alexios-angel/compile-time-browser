@@ -212,12 +212,8 @@ void checkCapturedMapExactSizeOwner(mlir::MLIRContext & context, const std::stri
         const unsigned completion = complete.steps();
         check(complete.proved() && completion < 20000, "the exact-size proof has bounded work");
         if (!complete.proved() || completion >= 20000) { continue; }
-        for (unsigned budget = 0; budget < completion; ++budget) {
-            OwnedGlobalRoots limited(*module, contract, budget);
-            check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
-                      empty(*module, limited),
-                  "every incomplete exact-size budget withholds all ownership records");
-        }
+        checkBudgetsBelow(*module, contract, completion,
+                          "every incomplete exact-size budget withholds all ownership records");
         OwnedGlobalRoots exact(*module, contract, completion);
         check(exact.proved() && exact.steps() == completion,
               "the exact work budget reproduces complete current cardinality evidence");
@@ -253,12 +249,10 @@ void checkCapturedMapExactSizeOwner(mlir::MLIRContext & context, const std::stri
             first = branch;
         }
         snapshot->moveBefore(first);
-        OwnedGlobalRoots stale(*module, contract);
-        check(!stale.proved() && stale.reason().contains("fingerprint") && empty(*module, stale),
-              "moving the evaluated size invalidates the original fingerprint");
-        OwnedGlobalRoots fresh(*module, mapContractFor(*module));
-        check(!fresh.proved() && !fresh.exhausted() && empty(*module, fresh),
-              "fresh fingerprints and forged exact-size reports cannot prove the earlier read");
+        checkStaleAndRefused(
+            *module, contract, mapContractFor(*module),
+            "moving the evaluated size invalidates the original fingerprint",
+            "fresh fingerprints and forged exact-size reports cannot prove the earlier read");
         snapshot->moveBefore(restoreBefore);
         check(OwnedGlobalRoots(*module, contract).proved(),
               "restoring the read position restores independent exact cardinality");
@@ -423,12 +417,8 @@ void checkCapturedMapExactSizeOwner(mlir::MLIRContext & context, const std::stri
         check(complete.proved() && completion < 20000,
               "guard ownership has a complete bounded proof");
         if (!complete.proved() || completion >= 20000) { continue; }
-        for (unsigned budget = 0; budget < completion; ++budget) {
-            OwnedGlobalRoots limited(*guarded, contract, budget);
-            check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
-                      empty(*guarded, limited),
-                  "every incomplete guard budget withholds all ownership records");
-        }
+        checkBudgetsBelow(*guarded, contract, completion,
+                          "every incomplete guard budget withholds all ownership records");
         OwnedGlobalRoots exact(*guarded, contract, completion);
         check(exact.proved() && exact.steps() == completion,
               "the exact guard budget reproduces its complete current proof");
@@ -447,12 +437,10 @@ void checkCapturedMapExactSizeOwner(mlir::MLIRContext & context, const std::stri
         const auto operand = negation.getOperand();
         negation->setAttr("ctnative.map_present", mlir::UnitAttr::get(&context));
         negation->setOperand(0, wrong.getResult());
-        OwnedGlobalRoots stale(*guarded, contract);
-        check(!stale.proved() && stale.reason().contains("fingerprint") && empty(*guarded, stale),
-              "a changed guard operand invalidates the original source fingerprint");
-        OwnedGlobalRoots fresh(*guarded, mapContractFor(*guarded));
-        check(!fresh.proved() && !fresh.exhausted() && empty(*guarded, fresh),
-              "a fresh fingerprint and forged membership report cannot replace the live guard");
+        checkStaleAndRefused(
+            *guarded, contract, mapContractFor(*guarded),
+            "a changed guard operand invalidates the original source fingerprint",
+            "a fresh fingerprint and forged membership report cannot replace the live guard");
         negation->setOperand(0, operand);
         negation->removeAttr("ctnative.map_present");
         check(OwnedGlobalRoots(*guarded, contract).proved(),
@@ -485,12 +473,10 @@ void checkCapturedMapExactSizeOwner(mlir::MLIRContext & context, const std::stri
     leaving->setAttr("ctnative.host_frame_proved", attributes.getUnitAttr());
     for (mlir::Operation * changed : {leaving.getOperation(), rooted.getOperation()}) {
         changed->setOperand(0, other.getContext());
-        OwnedGlobalRoots stale(*module, contract);
-        check(!stale.proved() && stale.reason().contains("fingerprint") && empty(*module, stale),
-              "a foreign frame operand invalidates the original source fingerprint");
-        OwnedGlobalRoots fresh(*module, mapContractFor(*module));
-        check(!fresh.proved() && !fresh.exhausted() && empty(*module, fresh),
-              "fresh fingerprints and forged frame reports cannot authorize a foreign frame");
+        checkStaleAndRefused(
+            *module, contract, mapContractFor(*module),
+            "a foreign frame operand invalidates the original source fingerprint",
+            "fresh fingerprints and forged frame reports cannot authorize a foreign frame");
         changed->setOperand(0, original.getContext());
         check(OwnedGlobalRoots(*module, contract).proved(),
               "restoring the original frame operand restores its independent proof");

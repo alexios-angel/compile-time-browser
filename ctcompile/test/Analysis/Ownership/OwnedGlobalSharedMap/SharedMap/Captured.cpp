@@ -111,12 +111,8 @@ void checkCapturedStringSnapshots(mlir::MLIRContext & context, const std::string
             }
             if (budgets) {
                 const unsigned completion = query.steps();
-                for (unsigned budget : {0u, 1u, completion / 2, completion - 1}) {
-                    OwnedGlobalRoots limited(*module, contract, budget);
-                    check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
-                              empty(*module, limited),
-                          "incomplete String key budgets expose no partial family");
-                }
+                checkIncompleteBudgets(*module, contract, {0u, 1u, completion / 2, completion - 1},
+                                       "incomplete String key budgets expose no partial family");
                 OwnedGlobalRoots exact(*module, contract, completion);
                 check(exact.proved() && exact.steps() == completion,
                       "the exact String key budget rederives the whole family");
@@ -228,13 +224,10 @@ void checkCapturedStringSnapshots(mlir::MLIRContext & context, const std::string
             mlir::Builder attributes(&context);
             (*module)->setAttr("ctnative.host_owner_proved", attributes.getBoolAttr(true));
             operation->setAttr("ctnative.map_snapshot_string", attributes.getUnitAttr());
-            OwnedGlobalRoots stale(*module, contract);
-            check(!stale.proved() && stale.reason().contains("fingerprint") &&
-                      empty(*module, stale),
-                  "changed Concat or Root operands invalidate the old source report");
-            OwnedGlobalRoots fresh(*module, requested(*module));
-            check(!fresh.proved() && !fresh.exhausted() && empty(*module, fresh),
-                  "fresh fingerprints and forged String facts cannot cross source scopes");
+            checkStaleAndRefused(
+                *module, contract, requested(*module),
+                "changed Concat or Root operands invalidate the old source report",
+                "fresh fingerprints and forged String facts cannot cross source scopes");
             operation->setOperand(operand, saved);
             check(OwnedGlobalRoots(*module, requested(*module)).proved(),
                   "restored operands rederive ownership despite forged String reports");
@@ -317,12 +310,8 @@ void checkCapturedSnapshots(mlir::MLIRContext & context, const std::string & sou
         check(hostContractFingerprint(*module) == contract.moduleSha256,
               "snapshot ownership queries preserve every source operation");
         const unsigned completion = query.steps();
-        for (unsigned budget : {0u, 1u, completion / 2, completion - 1}) {
-            OwnedGlobalRoots limited(*module, contract, budget);
-            check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
-                      empty(*module, limited),
-                  "snapshot proof cutoffs expose no partial owner or operation index");
-        }
+        checkIncompleteBudgets(*module, contract, {0u, 1u, completion / 2, completion - 1},
+                               "snapshot proof cutoffs expose no partial owner or operation index");
         OwnedGlobalRoots exact(*module, contract, completion);
         check(exact.proved() && exact.steps() == completion,
               "the exact snapshot completion budget reproduces the whole family");
@@ -407,12 +396,10 @@ void checkCapturedSnapshots(mlir::MLIRContext & context, const std::string & sou
         mlir::Builder attributes(&context);
         (*module)->setAttr("ctnative.host_owner_proved", attributes.getBoolAttr(true));
         root->setAttr("ctnative.map_snapshot_copy", attributes.getUnitAttr());
-        OwnedGlobalRoots stale(*module, contract);
-        check(!stale.proved() && stale.reason().contains("fingerprint") && empty(*module, stale),
-              "foreign iterator roots invalidate the supplied source fingerprint");
-        OwnedGlobalRoots fresh(*module, requested(*module));
-        check(!fresh.proved() && !fresh.exhausted() && empty(*module, fresh),
-              "fresh reports and forged snapshot facts cannot authorize a foreign iterator root");
+        checkStaleAndRefused(
+            *module, contract, requested(*module),
+            "foreign iterator roots invalidate the supplied source fingerprint",
+            "fresh reports and forged snapshot facts cannot authorize a foreign iterator root");
         root->setOperand(1, saved);
         check(OwnedGlobalRoots(*module, requested(*module)).proved(),
               "restored source rederives its snapshot proof despite forged reports");
@@ -617,12 +604,10 @@ void checkScalarCallbacks(mlir::MLIRContext & context, const std::string & sourc
     check(!query.mutableScalarRead(callback.loads.front()),
           "callback ownership cannot supply a scalar category for its object");
     const unsigned completion = query.steps();
-    for (unsigned budget : {0u, 1u, completion / 2, completion - 1}) {
-        OwnedGlobalRoots limited(*module, contract, budget);
-        check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
-                  emptyEvidence(*module, limited),
-              "incomplete callback budgets expose no partial owner or scalar proof");
-    }
+    checkIncompleteBudgets(
+        *module, contract, {0u, 1u, completion / 2, completion - 1},
+        "incomplete callback budgets expose no partial owner or scalar proof",
+        [&](const OwnedGlobalRoots & limited) { return emptyEvidence(*module, limited); });
     OwnedGlobalRoots exact(*module, contract, completion);
     check(exact.proved() && exact.steps() == completion,
           "the exact completion budget rederives all callback arms and effects");

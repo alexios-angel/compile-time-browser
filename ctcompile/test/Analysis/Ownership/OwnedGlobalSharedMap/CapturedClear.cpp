@@ -315,13 +315,10 @@ void checkCapturedMapClearOwner(mlir::MLIRContext & context, const std::string &
                 change(clearer, 0, branchMap.getResult());
                 change(targetCall, 1, branchMap.getResult());
             }
-            OwnedGlobalRoots stale(*module, contract);
-            check(!stale.proved() && stale.reason().contains("fingerprint") &&
-                      empty(*module, stale),
-                  "a clear dependency scope edit invalidates old reports");
-            OwnedGlobalRoots fresh(*module, mapContractFor(*module));
-            check(!fresh.proved() && !fresh.exhausted() && empty(*module, fresh),
-                  "fresh reports cannot authorize a then-only clear dependency outside its scope");
+            checkStaleAndRefused(
+                *module, contract, mapContractFor(*module),
+                "a clear dependency scope edit invalidates old reports",
+                "fresh reports cannot authorize a then-only clear dependency outside its scope");
             for (const auto & edit : edits) { edit.op->setOperand(edit.operand, edit.original); }
             check(OwnedGlobalRoots(*module, contract).proved(),
                   "restoring dependency dominance restores clear's complete proof");
@@ -337,12 +334,8 @@ void checkCapturedMapClearOwner(mlir::MLIRContext & context, const std::string &
         const unsigned completion = query.steps();
         check(query.proved() && completion < 20000, "clear proof has bounded complete work");
         if (!query.proved() || completion >= 20000) { continue; }
-        for (unsigned budget = 0; budget < completion; ++budget) {
-            OwnedGlobalRoots limited(*module, contract, budget);
-            check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
-                      empty(*module, limited),
-                  "every incomplete clear budget withholds the complete published family");
-        }
+        checkBudgetsBelow(*module, contract, completion,
+                          "every incomplete clear budget withholds the complete published family");
         OwnedGlobalRoots exact(*module, contract, completion);
         check(exact.proved() && exact.steps() == completion,
               "the exact clear budget reproduces the whole source family");
@@ -377,13 +370,10 @@ void checkCapturedMapClearOwner(mlir::MLIRContext & context, const std::string &
         unsigned mutations = 0;
         const auto refuse = [&] {
             ++mutations;
-            OwnedGlobalRoots stale(*module, contract);
-            check(!stale.proved() && stale.reason().contains("fingerprint") &&
-                      empty(*module, stale),
-                  "live clear edits invalidate the prior fingerprint");
-            OwnedGlobalRoots fresh(*module, mapContractFor(*module));
-            check(!fresh.proved() && !fresh.exhausted() && empty(*module, fresh),
-                  "fresh fingerprints and forged empty reports cannot repair an invalid clear");
+            checkStaleAndRefused(
+                *module, contract, mapContractFor(*module),
+                "live clear edits invalidate the prior fingerprint",
+                "fresh fingerprints and forged empty reports cannot repair an invalid clear");
         };
         clearCall->setOperand(1, setter.getBody().front().getArgument(0));
         refuse();

@@ -72,6 +72,10 @@ struct admission {
 
     static bool namesObjectPrototypeMember(llvm::StringRef key);
 
+    // A string constant with uses, every one of which `key` accepts.
+    static bool stringConstantUsedOnlyAs(mlir::Operation * o,
+                                         llvm::function_ref<bool(mlir::OpOperand &)> key);
+
     static bool isKeyOnlyString(mlir::Operation * o);
 
     static bool isVectorSite(mlir::Value v);
@@ -82,6 +86,10 @@ struct admission {
 
     static std::string argumentReason(mlir::Value object);
 
+    // The escape routes an object and an array literal share, in one wording.
+    static std::optional<std::string> escapeRoute(llvm::StringRef literal, mlir::OpOperand & use);
+    static std::string escapesTo(llvm::StringRef literal, mlir::Operation * user);
+
     static std::string whyOpen(mlir::Value object);
 
     static std::string whyOpenReceiver(mlir::Value self);
@@ -89,6 +97,12 @@ struct admission {
     static bool lowersToNothing(mlir::Value v);
 
     bool op(mlir::Operation * o);
+    // op()'s larger arms, one member each.
+    std::optional<bool> domOperation(mlir::Operation * o);
+    bool nativeMapCall(mlir::Operation * o, llvm::StringRef action);
+    bool closedObject(ctjs::CreateObjectOp object);
+    bool directCall(ctjs::CallDirectOp call);
+    bool returned(ctjs::ReturnOp ret);
 
     bool function(ctjs::FuncOp fn);
     bool exceptionRegion(ctjs::TryOp attempt);

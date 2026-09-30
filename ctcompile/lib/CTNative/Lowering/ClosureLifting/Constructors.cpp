@@ -85,6 +85,12 @@ std::optional<std::string> closureLifter::whyConstructorReturnsAnObject(ctjs::Fu
     return bad;
 }
 
+bool closureLifter::isSelfConstruct(mlir::OpOperand & use, ctjs::CreateClosureOp c) {
+    auto made = llvm::dyn_cast<ctjs::ConstructOp>(use.getOwner());
+    return made && use.getOperandNumber() < 2 && made.getCallee() == c.getResult() &&
+           made.getNewTarget() == c.getResult();
+}
+
 // Recompute from live uses. Primitive defaults and immutable methods are safe
 // only when neither the prototype nor property ownership is observable.
 // ponytail: one same-block literal replacement; inheritance needs Stage 60A.
@@ -92,12 +98,9 @@ std::optional<closureLifter::prototypeFields> closureLifter::immutablePrototype(
     ctjs::CreateClosureOp c) {
     prototypeFields proof;
     for (mlir::OpOperand & use : c.getResult().getUses()) {
-        if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(use.getOwner())) {
-            if (use.getOperandNumber() < 2 && made.getCallee() == c.getResult() &&
-                made.getNewTarget() == c.getResult()) {
-                continue;
-            }
-            return std::nullopt;
+        if (llvm::isa<ctjs::ConstructOp>(use.getOwner())) {
+            if (!isSelfConstruct(use, c)) { return std::nullopt; }
+            continue;
         }
         auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(use.getOwner());
         if (!set || use.getOperandNumber() != 0 || ctjs::constantKey(set.getKey()) != "prototype" ||
@@ -161,33 +164,32 @@ std::optional<std::string> closureLifter::whyPrototypeIsTouched(ctjs::CreateClos
 std::optional<std::string> closureLifter::whyNotLiftableConstructor(ctjs::CreateClosureOp c) {
     if (auto why = whyConstructorSetupDoesNotLift(c)) { return why; }
     if (auto prototype = immutablePrototype(c)) {
+        // Closed instance uses cannot store, return or merge the receiver;
+        // only method/borrowed parameters can alias it. ponytail: a complete
+        // per-receiver proof could narrow this further; keep all formals
+        // conservative. Prototype observations retain the whole-module
+        // census, including aliases derived from those observations.
+        bool prototypeObserved = false;
+        module.walk([&](ctjs::GetPropertyOp read) {
+            const auto key = ctjs::constantKey(read.getKey());
+            prototypeObserved |= key == "__proto__" || key == "constructor" || key == "prototype";
+        });
+        const auto constructSites = constructsOfTarget.lookup(targetOf(c));
         for (ctjs::SetPropertyOp field : prototype->fields) {
             auto method = field.getValue().getDefiningOp<ctjs::CreateClosureOp>();
             if (!method) { continue; }
             if (!methodClosures.contains(method)) {
                 return "its prototype method is not an immutable direct-call binding";
             }
-            // Closed instance uses cannot store, return or merge the receiver;
-            // only method/borrowed parameters can alias it. ponytail: a complete
-            // per-receiver proof could narrow this further; keep all formals
-            // conservative. Prototype observations retain the whole-module
-            // census, including aliases derived from those observations.
-            bool prototypeObserved = false;
-            module.walk([&](ctjs::GetPropertyOp read) {
-                const auto key = ctjs::constantKey(read.getKey());
-                prototypeObserved |=
-                    key == "__proto__" || key == "constructor" || key == "prototype";
-            });
             bool calledOnly = true;
             module.walk([&](ctjs::GetPropertyOp read) {
                 const auto object = read.getObject();
                 if (!prototypeObserved && !llvm::isa<mlir::BlockArgument>(object) &&
                     object != prototype->attachment.getValue() &&
-                    llvm::none_of(
-                        constructsOfTarget.lookup(targetOf(c)), [&](ctjs::ConstructOp made) {
-                            return made.getResult() == object ||
-                                   llvm::is_contained(behind.lookup(object), made.getResult());
-                        })) {
+                    llvm::none_of(constructSites, [&](ctjs::ConstructOp made) {
+                        return made.getResult() == object ||
+                               llvm::is_contained(behind.lookup(object), made.getResult());
+                    })) {
                     return;
                 }
                 const auto key = ctjs::constantKey(field.getKey());
@@ -247,9 +249,7 @@ std::optional<std::string> closureLifter::whyConstructorSetupDoesNotLift(ctjs::C
     for (mlir::OpOperand & use : c.getResult().getUses()) {
         mlir::Operation * user = use.getOwner();
         if (prototype && user == prototype->attachment) { continue; }
-        auto made = llvm::dyn_cast<ctjs::ConstructOp>(user);
-        if (!made || use.getOperandNumber() >= 2 || made.getCallee() != c.getResult() ||
-            made.getNewTarget() != c.getResult()) {
+        if (!isSelfConstruct(use, c)) {
             return ("it is used as a constructor and also reaches `" +
                     user->getName().getStringRef() +
                     "` - one ctjs.func is one C++ signature, and a body that is a free "

@@ -16,12 +16,8 @@ void closureLifter::singleWriteCensus() {
         llvm::SmallVector<mlir::Operation *> mustFollow;
         for (mlir::OpOperand & use : cell.getResult().getUses()) {
             mlir::Operation * user = use.getOwner();
-            if (auto write = llvm::dyn_cast<ctjs::CellSetOp>(user)) {
-                // THE CELL AS THE BOX, NOT AS THE VALUE PUT IN ONE.
-                // `ctjs.cell_set %other, %cell` stores this cell INTO
-                // another and is not a write of it - and it is a use this
-                // rule does not carry, so it fails outright.
-                if (use.getOperandNumber() != 0) { return; }
+            switch (classify(use)) {
+            case cellUse::write:
                 // CONDITION 1: EXACTLY ONE. Two writes make the binding
                 // shared mutable state again, and which one a capture sees
                 // depends on the path taken to it.
@@ -29,25 +25,28 @@ void closureLifter::singleWriteCensus() {
                     whyNotWrittenOnce[cell.getOperation()] = "it is assigned more than once";
                     return;
                 }
-                store = write;
+                store = llvm::cast<ctjs::CellSetOp>(user);
+                continue;
+            case cellUse::read: mustFollow.push_back(user); continue;
+            case cellUse::capture: {
+                // CONDITION 4: the use list slice 1 already admits, word for
+                // word - isConstantCell asks the same of the same uses.
+                //
+                // AND THE CAPTURE IS NOT ASKED TO FOLLOW THE STORE. The
+                // create_closure is hoisted for a function declaration and the
+                // closure reads the box when it RUNS, so it is the CALL that
+                // has to follow - condition 3, asked by whyCapturesDoNotReach
+                // where the call sites are known.
+                ctjs::FuncOp target = targetOf(llvm::cast<ctjs::CreateClosureOp>(user));
+                if (!target || mutatesUpvalue.contains(target.getOperation())) { return; }
                 continue;
             }
-            if (llvm::isa<ctjs::CellGetOp>(user) && use.getOperandNumber() == 0) {
-                mustFollow.push_back(user);
-                continue;
+            // THE CELL AS THE BOX, NOT AS THE VALUE PUT IN ONE.
+            // `ctjs.cell_set %other, %cell` stores this cell INTO another and
+            // is not a write of it - and it is a use this rule does not
+            // carry, so it fails outright, as does every other use.
+            default: return;
             }
-            // CONDITION 4: the use list slice 1 already admits, word for
-            // word - isConstantCell asks the same of the same uses.
-            //
-            // AND THE CAPTURE IS NOT ASKED TO FOLLOW THE STORE. The
-            // create_closure is hoisted for a function declaration and the
-            // closure reads the box when it RUNS, so it is the CALL that
-            // has to follow - condition 3, asked by whyCapturesDoNotReach
-            // where the call sites are known.
-            auto made = llvm::dyn_cast<ctjs::CreateClosureOp>(user);
-            if (!made || use.getOperandNumber() < kFirstCapture) { return; }
-            ctjs::FuncOp target = targetOf(made);
-            if (!target || mutatesUpvalue.contains(target.getOperation())) { return; }
         }
         // NO STORE AT ALL IS SLICE 1'S CELL, whose value is its initial.
         // Nothing to record, and nothing to explain.
@@ -100,14 +99,13 @@ void closureLifter::sharedCellCensus() {
         if (isConstantCell(cell) && !byValueMissesACall(cell)) { return; }
         for (mlir::OpOperand & use : cell.getResult().getUses()) {
             mlir::Operation * user = use.getOwner();
-            if (llvm::isa<ctjs::CellGetOp>(user) && use.getOperandNumber() == 0) { continue; }
             // THE CELL AS THE BOX, NOT AS THE VALUE PUT IN ONE - the same
             // distinction singleWriteCensus draws, and for a stronger
             // reason here: `ctjs.cell_set %other, %cell` puts this box
             // inside another one, where a pointer to this frame would
             // outlive the frame.
-            if (llvm::isa<ctjs::CellSetOp>(user) && use.getOperandNumber() == 0) { continue; }
-            if (llvm::isa<ctjs::CreateClosureOp>(user) && use.getOperandNumber() >= kFirstCapture) {
+            const cellUse kind = classify(use);
+            if (kind == cellUse::read || kind == cellUse::write || kind == cellUse::capture) {
                 continue;
             }
             whyNotCarried[cell.getOperation()] =
@@ -167,15 +165,16 @@ bool closureLifter::writeReachesEveryRead(ctjs::CreateCellOp cell, ctjs::CellSet
     if (!owner || store->getParentOfType<ctjs::FuncOp>() != owner) { return false; }
     for (mlir::OpOperand & use : cell.getResult().getUses()) {
         mlir::Operation * user = use.getOwner();
-        if (llvm::isa<ctjs::CellGetOp>(user) && use.getOperandNumber() == 0) {
+        const cellUse kind = classify(use);
+        if (kind == cellUse::read) {
             // CONDITION 2.
             if (!dominance.properlyDominates(store.getOperation(), user)) { return false; }
             continue;
         }
         // ANOTHER WRITE ONLY WIDENS THE JOIN. It cannot restore the initial,
         // so it is not asked to follow anything.
-        if (llvm::isa<ctjs::CellSetOp>(user) && use.getOperandNumber() == 0) { continue; }
-        if (llvm::isa<ctjs::CreateClosureOp>(user) && use.getOperandNumber() >= kFirstCapture) {
+        if (kind == cellUse::write) { continue; }
+        if (kind == cellUse::capture) {
             // CONDITION 3, over every use of the closure VALUE and not only
             // over the calls. This census runs before `whyNotLiftable` has
             // said which of those uses are calls at all, and a use that is
@@ -194,8 +193,7 @@ bool closureLifter::writeReachesEveryRead(ctjs::CreateCellOp cell, ctjs::CellSet
                 // clause the recursive local function is refused by
                 // arithmetic rather than by an argument.
                 if (at == store.getOperation()) { continue; }
-                if (at->getParentOfType<ctjs::FuncOp>() != owner) { return false; }
-                if (!dominance.properlyDominates(store.getOperation(), at)) { return false; }
+                if (!reachesInFrame(store.getOperation(), at)) { return false; }
             }
             continue;
         }
@@ -233,9 +231,8 @@ bool closureLifter::byValueMissesACall(ctjs::CreateCellOp cell) {
     const mlir::Value value = constantValueOf(cell);
     ctjs::CellSetOp write = writtenOnce.lookup(cell.getOperation());
     for (mlir::OpOperand & use : cell.getResult().getUses()) {
-        auto made = llvm::dyn_cast<ctjs::CreateClosureOp>(use.getOwner());
-        if (!made || use.getOperandNumber() < kFirstCapture) { continue; }
-        for (mlir::Operation * at : made.getResult().getUsers()) {
+        if (classify(use) != cellUse::capture) { continue; }
+        for (mlir::Operation * at : use.getOwner()->getResult(0).getUsers()) {
             if (at->getParentOfType<ctjs::FuncOp>() != owner) { continue; }
             if (!dominance.properlyDominates(value, at)) { return true; }
             if (write && !dominance.properlyDominates(write.getOperation(), at)) { return true; }
@@ -269,10 +266,7 @@ bool closureLifter::slotIsCarried(ctjs::CreateClosureOp c, unsigned i) {
     if (k < 0) { return false; }
     auto enclosing = c->getParentOfType<ctjs::FuncOp>();
     if (!enclosing) { return false; }
-    auto listed = enclosing->getAttrOfType<mlir::DenseI32ArrayAttr>("ctnative.cell_args");
-    return listed &&
-           llvm::is_contained(listed.asArrayRef(),
-                              static_cast<int32_t>(captureArgument(static_cast<unsigned>(k))));
+    return listsSlot(enclosing, kNativeCellArgs, captureArgument(static_cast<unsigned>(k)));
 }
 
 // THE VALUE EVERY READ OF A CONSTANT CELL YIELDS. The cell's initial when
@@ -301,16 +295,15 @@ bool closureLifter::isConstantCell(ctjs::CreateCellOp cell) {
     ctjs::CellSetOp write = writtenOnce.lookup(cell.getOperation());
     for (mlir::OpOperand & use : cell.getResult().getUses()) {
         mlir::Operation * user = use.getOwner();
-        if (llvm::isa<ctjs::CellGetOp>(user) && use.getOperandNumber() == 0) { continue; }
+        const cellUse kind = classify(use);
         // THE ONE DOMINATING WRITE. `writtenOnce` holds it only when the
         // census proved conditions 1 to 4 of the rule beside it, so this
         // arm is admitting a store that has ALREADY been shown to come
         // before every read and every capture in the map's own walk - the
         // two walks ask the same question of the same use list.
-        if (write && user == write.getOperation()) { continue; }
-        auto made = llvm::dyn_cast<ctjs::CreateClosureOp>(user);
-        if (!made || use.getOperandNumber() < kFirstCapture) { return false; }
-        ctjs::FuncOp target = targetOf(made);
+        if (kind == cellUse::read || (write && user == write.getOperation())) { continue; }
+        if (kind != cellUse::capture) { return false; }
+        ctjs::FuncOp target = targetOf(llvm::cast<ctjs::CreateClosureOp>(user));
         if (!target || mutatesUpvalue.contains(target.getOperation())) { return false; }
     }
     return true;
@@ -329,20 +322,18 @@ bool closureLifter::isConstantCell(ctjs::CreateCellOp cell) {
 // it that has to be spelled twice - kept to one line: two copies of a rule
 // drift, two copies of a lookup cannot.
 bool closureLifter::namesACellArgument(mlir::Operation * call, mlir::OpOperand & use) {
-    auto listed = call->getAttrOfType<mlir::DenseI32ArrayAttr>("ctnative.cell_args");
-    return listed &&
-           llvm::is_contained(listed.asArrayRef(), static_cast<int32_t>(use.getOperandNumber()));
+    return listsSlot(call, kNativeCellArgs, use.getOperandNumber());
 }
 
 std::optional<std::string> closureLifter::whyCarriedCellStaysABox(ctjs::CreateCellOp cell) {
     for (mlir::OpOperand & use : cell.getResult().getUses()) {
         mlir::Operation * user = use.getOwner();
-        if (llvm::isa<ctjs::CellGetOp>(user) && use.getOperandNumber() == 0) { continue; }
-        if (llvm::isa<ctjs::CellSetOp>(user) && use.getOperandNumber() == 0) { continue; }
+        const cellUse kind = classify(use);
+        if (kind == cellUse::read || kind == cellUse::write) { continue; }
         if (llvm::isa<ctjs::CallDirectOp>(user) && namesACellArgument(user, use)) { continue; }
-        if (llvm::isa<ctjs::CreateClosureOp>(user) && use.getOperandNumber() >= kFirstCapture) {
-            if (user->hasAttr("ctnative.lifted")) { continue; }
-            auto reason = user->getAttrOfType<mlir::StringAttr>("ctnative.closure_reason");
+        if (kind == cellUse::capture) {
+            if (user->hasAttr(kNativeLifted)) { continue; }
+            auto reason = user->getAttrOfType<mlir::StringAttr>(kNativeClosureReason);
             return "the closure that shares it is not lifted, so the binding needs a real "
                    "box and not a variable in this frame" +
                    (reason ? " - " + reason.getValue().str() : std::string{});
@@ -363,9 +354,7 @@ std::optional<std::string> closureLifter::whyCarriedCellStaysABox(ctjs::CreateCe
 void closureLifter::eraseUnusedUnboxedCells() {
     llvm::SmallVector<ctjs::CreateCellOp> dead;
     module.walk([&](ctjs::CreateCellOp cell) {
-        if (cell->hasAttr("ctnative.unboxed") && cell.getResult().use_empty()) {
-            dead.push_back(cell);
-        }
+        if (cell->hasAttr(kNativeUnboxed) && cell.getResult().use_empty()) { dead.push_back(cell); }
     });
     for (ctjs::CreateCellOp cell : dead) { cell.erase(); }
 }
@@ -398,10 +387,10 @@ void closureLifter::unboxCells(liftReport & out, bool localObjectsOnly) {
         // name the binding rather than the operation.
         if (isCarried(cell)) {
             if (const std::optional<std::string> why = whyCarriedCellStaysABox(cell)) {
-                cell->setAttr("ctnative.cell_reason", mlir::StringAttr::get(context, *why));
+                cell->setAttr(kNativeCellReason, mlir::StringAttr::get(context, *why));
                 continue;
             }
-            cell->setAttr("ctnative.carried", mlir::UnitAttr::get(context));
+            cell->setAttr(kNativeCarried, mlir::UnitAttr::get(context));
             // PHASE 59 SLICE 2 STEP 3: AND WHETHER ITS INITIAL IS STILL
             // READABLE. The verdict is the census's - taken before the
             // lift, where the calls it asks about still exist - and this
@@ -422,16 +411,16 @@ void closureLifter::unboxCells(liftReport & out, bool localObjectsOnly) {
         std::optional<std::string> why;
         for (mlir::OpOperand & use : cell.getResult().getUses()) {
             mlir::Operation * user = use.getOwner();
-            if (llvm::isa<ctjs::CellGetOp>(user) && use.getOperandNumber() == 0) { continue; }
-            if (write && user == write.getOperation()) { continue; }
-            if (llvm::isa<ctjs::CreateClosureOp>(user) && use.getOperandNumber() >= kFirstCapture) {
-                if (user->hasAttr("ctnative.lifted")) { continue; }
-                auto reason = user->getAttrOfType<mlir::StringAttr>("ctnative.closure_reason");
+            const cellUse kind = classify(use);
+            if (kind == cellUse::read || (write && user == write.getOperation())) { continue; }
+            if (kind == cellUse::capture) {
+                if (user->hasAttr(kNativeLifted)) { continue; }
+                auto reason = user->getAttrOfType<mlir::StringAttr>(kNativeClosureReason);
                 why = "the closure that captures it is not lifted" +
                       (reason ? " - " + reason.getValue().str() : std::string{});
                 break;
             }
-            if (llvm::isa<ctjs::CellSetOp>(user)) {
+            if (kind == cellUse::write || kind == cellUse::storedInto) {
                 // A WRITE THE RULE ABOVE DID NOT TAKE, and the census knows
                 // which clause it failed. Without that sentence the message
                 // is the old one, which is true of a cell with two writes
@@ -453,7 +442,7 @@ void closureLifter::unboxCells(liftReport & out, bool localObjectsOnly) {
         // "`ctjs.create_cell` is not native yet" - a sentence that names
         // neither the binding nor what is wrong with it.
         if (why) {
-            cell->setAttr("ctnative.cell_reason", mlir::StringAttr::get(context, *why));
+            cell->setAttr(kNativeCellReason, mlir::StringAttr::get(context, *why));
             continue;
         }
         llvm::SmallVector<ctjs::CellGetOp> reads;
@@ -476,7 +465,7 @@ void closureLifter::unboxCells(liftReport & out, bool localObjectsOnly) {
         // uses and refuse the whole function for an operation with nothing
         // to do. Erased after the reads, because both use the cell.
         if (write) { write.erase(); }
-        cell->setAttr("ctnative.unboxed", mlir::UnitAttr::get(context));
+        cell->setAttr(kNativeUnboxed, mlir::UnitAttr::get(context));
         if (localObjectsOnly && cell.getResult().use_empty()) { cell.erase(); }
         ++out.cells;
     }

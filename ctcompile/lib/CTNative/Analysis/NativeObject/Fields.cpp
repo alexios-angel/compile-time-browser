@@ -28,21 +28,16 @@ bool scalarFieldOperation(mlir::Operation * op) {
                   ctjs::WrapPromiseOp, ctjs::SuspendOp, ctjs::ThrowOp, ctjs::ResumeThrowOp>(op)) {
         return false;
     }
-    if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) {
-        if (!ctjs::ordinaryKey(get.getKey())) { return false; }
-    }
-    if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(op)) {
-        if (!ctjs::ordinaryKey(set.getKey())) { return false; }
-    }
-    return true;
+    const mlir::Value key = ctjs::propertyKey(op);
+    return !key || ctjs::ordinaryKey(key);
 }
 
 bool scalarFieldEnvironment(mlir::ModuleOp module, const OwnedGlobalRoots * globals) {
     llvm::DenseSet<mlir::Operation *> snapshotReads;
     if (globals && globals->proved()) {
         for (const auto & root : globals->roots()) {
-            if (!root.methodTable || !root.methodTable->capturedMap) { continue; }
-            for (auto * op : root.methodTable->capturedMap->snapshotOperations) {
+            if (!root.capturedMap()) { continue; }
+            for (auto * op : root.capturedMap()->snapshotOperations) {
                 if (llvm::isa<ctjs::GetPropertyOp>(op)) { snapshotReads.insert(op); }
             }
         }
@@ -57,14 +52,8 @@ bool scalarFieldEnvironment(mlir::ModuleOp module, const OwnedGlobalRoots * glob
 }
 
 bool scalarFieldUse(mlir::OpOperand & use) {
-    if (use.getOperandNumber() != 0) { return false; }
-    if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(use.getOwner())) {
-        return ctjs::ordinaryKey(get.getKey());
-    }
-    if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(use.getOwner())) {
-        return ctjs::ordinaryKey(set.getKey());
-    }
-    return false;
+    const mlir::Value key = ctjs::propertyKey(use.getOwner());
+    return use.getOperandNumber() == 0 && key && ctjs::ordinaryKey(key);
 }
 
 } // namespace object_detail
@@ -113,8 +102,8 @@ struct fieldPresenceQuery {
     }
 
     mlir::Attribute key(mlir::Value value) const {
-        auto constant = value.getDefiningOp<ctjs::ConstantOp>();
-        return ctjs::ordinaryKey(value) ? constant.getValue() : mlir::Attribute{};
+        return ctjs::ordinaryKey(value) ? ctjs::constantAttr<ctjs::StringAttr>(value)
+                                        : mlir::Attribute{};
     }
 
     mlir::Value origin(mlir::Value value, mlir::Operation * at, const fieldState & state) {

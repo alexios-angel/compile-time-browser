@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Check associative lookup, ordered fallback, aliases, and owning Map values."""
 
-from pathlib import Path
 import re
 
-from CTNative.harness import build_and_run, native_args, native_tools, run
+from CTNative.harness import build_and_run, native_args, native_pipeline, native_tools, run
 from CTNative.Exports import boundary
 
 NODE_GLOBALS = r"""const fs = require('node:fs');
@@ -54,7 +53,6 @@ int main() {
 
 def main():
     args = native_args(__doc__, "fixtures")
-    tests = Path(__file__).resolve().parents[3]
     node, reference = args.node, args.reference
     compilers, nm = native_tools(reference)
     cases = [
@@ -84,18 +82,8 @@ def main():
         assert run([node, "-e", NODE_GLOBALS, str(js)]).stdout == expected
         assert run([str(reference), str(js)]).stdout == expected
         module = args.work / (name + ".mlir")
-        run(
-            [
-                "cmake",
-                f"-DTRANSLATE={args.translate}",
-                f"-DOPT={args.opt}",
-                f"-DSOURCE={args.fixtures / (fixture + '.js')}",
-                f"-DOUTPUT={module}",
-                "-DOPTIMIZE=OFF",
-                f"-DDEFOREST={'ON' if deforest else 'OFF'}",
-                "-P",
-                str(tests / "CTNative/Checks/pipeline.cmake"),
-            ]
+        native_pipeline(
+            args, args.fixtures / (fixture + ".js"), module, DEFOREST="ON" if deforest else "OFF"
         )
         if deforest:
             projection = "true" if fixture == "string-values" else "false"

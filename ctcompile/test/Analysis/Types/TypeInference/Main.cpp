@@ -462,8 +462,7 @@ int main() {
         auto module = mlir::parseSourceString<mlir::ModuleOp>(
             overwritePrefix + overwrite + overwriteRead, &context);
         if (!module) {
-            std::printf("FAIL live array overwrite mutation fixture did not parse\n");
-            ++ctbrowser_test_failures;
+            fail("live array overwrite mutation fixture did not parse");
         } else {
             check(*module, "own overwrite before live mutation", "!ctnative.num<i32>");
             ctcompile::ctjs::SetPropertyOp store;
@@ -662,8 +661,7 @@ int main() {
         auto module = mlir::parseSourceString<mlir::ModuleOp>(
             invokeModule(numericCompletion, "%returned", true), &context);
         if (!module) {
-            std::printf("FAIL invocation normal-flow mutation fixture did not parse\n");
-            ++ctbrowser_test_failures;
+            fail("invocation normal-flow mutation fixture did not parse");
         } else {
             check(*module, "invoke normal flow before live mutation", "!ctnative.num<i32>");
             auto helper = module->lookupSymbol<ctcompile::ctjs::FuncOp>("helper");
@@ -695,10 +693,7 @@ int main() {
                                             [](mlir::Diagnostic &) { return mlir::success(); }};
         mlir::OwningOpRef<mlir::ModuleOp> module =
             mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-        if (module) {
-            std::printf("FAIL ctjs.binary_static sub verified, and the helper has no arm for it\n");
-            ++ctbrowser_test_failures;
-        }
+        if (module) { fail("ctjs.binary_static sub verified, and the helper has no arm for it"); }
     }
 
     if (ctbrowser_test_failures != 0) {

@@ -5,7 +5,14 @@ import importlib.util
 from pathlib import Path
 import re
 
-from CTNative.harness import CORE_INCLUDE, RUNTIME_INCLUDE, build_and_run, native_args, native_tools
+from CTNative.harness import (
+    CORE_INCLUDE,
+    RUNTIME_INCLUDE,
+    build_and_run,
+    native_args,
+    native_pipeline,
+    native_tools,
+)
 
 spec = importlib.util.spec_from_file_location(
     "representation", Path(__file__).with_name("map-representation.py")
@@ -116,18 +123,7 @@ def check_scalar_payloads(args, node, reference, compilers, nm):
             assert run([node, "-e", representation.NODE_GLOBALS, str(js)]).stdout == expected, name
             assert run([str(reference), str(js)]).stdout == expected, name
             ir = args.work / f"{name}.mlir"
-            run(
-                [
-                    "cmake",
-                    f"-DTRANSLATE={args.translate}",
-                    f"-DOPT={args.opt}",
-                    f"-DSOURCE={js}",
-                    f"-DOUTPUT={ir}",
-                    "-DOPTIMIZE=OFF",
-                    "-P",
-                    str(Path(__file__).resolve().parents[3] / "CTNative/Checks/pipeline.cmake"),
-                ]
-            )
+            native_pipeline(args, js, ir)
             cpp = run([args.translate, "--mlir-to-cpp", str(ir)]).stdout
             assert ", ctnative::nullable_scalar>" in cpp, name
             assert "ctbrowser::script" not in cpp, name
@@ -176,18 +172,7 @@ def check_isolated_nullable_helpers(args, source, node, reference, compilers, nm
         if symbol == "mixedNullableRead":
             check_nullable_read_facts(args, js.read_text())
         ir = args.work / f"{name}.mlir"
-        run(
-            [
-                "cmake",
-                f"-DTRANSLATE={args.translate}",
-                f"-DOPT={args.opt}",
-                f"-DSOURCE={js}",
-                f"-DOUTPUT={ir}",
-                "-DOPTIMIZE=OFF",
-                "-P",
-                str(Path(__file__).resolve().parents[3] / "CTNative/Checks/pipeline.cmake"),
-            ]
-        )
+        native_pipeline(args, js, ir)
         cpp = run([args.translate, "--mlir-to-cpp", str(ir)]).stdout
         assert '#include "ctcompile/CTNative/Runtime/ctnative.hpp"' in cpp
         assert carrier in cpp
@@ -229,18 +214,7 @@ def main():
         assert run([node, "-e", representation.NODE_GLOBALS, str(js)]).stdout == expected
         assert run([str(reference), str(js)]).stdout == expected
         ir = args.work / f"{name}.mlir"
-        run(
-            [
-                "cmake",
-                f"-DTRANSLATE={args.translate}",
-                f"-DOPT={args.opt}",
-                f"-DSOURCE={js}",
-                f"-DOUTPUT={ir}",
-                "-DOPTIMIZE=OFF",
-                "-P",
-                str(Path(__file__).resolve().parents[3] / "CTNative/Checks/pipeline.cmake"),
-            ]
-        )
+        native_pipeline(args, js, ir)
         deduced = args.work / f"{name}-deduced.mlir"
         run([args.opt, "--ctnative-print-deduced", str(ir), "-o", str(deduced)])
         for label, module in [("plain", ir), ("deduced", deduced)]:

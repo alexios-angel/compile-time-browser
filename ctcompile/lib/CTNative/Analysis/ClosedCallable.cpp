@@ -10,6 +10,7 @@ static llvm::Expected<CallableObject> analyzeCallableObject(
     const auto error = [](llvm::StringRef message) {
         return llvm::createStringError(llvm::inconvertibleErrorCode(), message);
     };
+    const auto exhausted = [&] { return error("DOM helper work budget exhausted"); };
     const auto precedes = [&](mlir::Operation * definition, mlir::Operation * use) {
         // Immutable slots may be read in branches, loops and exception continuations.
         // The complete use census still requires unique unconditional stores;
@@ -48,7 +49,7 @@ static llvm::Expected<CallableObject> analyzeCallableObject(
         // graph if holders must be initialized after source calls. With no
         // reentry here, even transitive calls in other functions follow publication.
         for (mlir::Operation & op : entry.getBody().front()) {
-            if (!spend()) { return error("DOM helper work budget exhausted"); }
+            if (!spend()) { return exhausted(); }
             if (&op == publication.getOperation()) { break; }
             if (llvm::isa<ctjs::FrameEnterOp, ctjs::ConstantOp, ctjs::CreateClosureOp,
                           ctjs::StoreGlobalOp, ctjs::CreateObjectOp, ctjs::RootOp>(op)) {
@@ -76,14 +77,14 @@ static llvm::Expected<CallableObject> analyzeCallableObject(
                 }
                 return mlir::WalkResult::advance();
             });
-        if (walked.wasInterrupted()) { return error("DOM helper work budget exhausted"); }
+        if (walked.wasInterrupted()) { return exhausted(); }
         if (publications != 1) { return error("global callable holder binding is replaced"); }
         for (ctjs::LoadGlobalOp load : result.loads) {
-            if (!spend()) { return error("DOM helper work budget exhausted"); }
+            if (!spend()) { return exhausted(); }
             if (load->getParentOfType<ctjs::FuncOp>() == entry) {
                 auto * anchor = load.getOperation();
                 while (anchor->getParentOp() != entry) {
-                    if (!spend()) { return error("DOM helper work budget exhausted"); }
+                    if (!spend()) { return exhausted(); }
                     anchor = anchor->getParentOp();
                 }
                 if (!publication->isBeforeInBlock(anchor)) {
@@ -94,11 +95,7 @@ static llvm::Expected<CallableObject> analyzeCallableObject(
     }
     llvm::DenseMap<mlir::Attribute, ctjs::SetPropertyOp> slots;
     llvm::SmallVector<ctjs::GetPropertyOp> reads;
-    const auto key = [](mlir::Value value) {
-        auto constant = value.getDefiningOp<ctjs::ConstantOp>();
-        return constant ? llvm::dyn_cast<ctjs::StringAttr>(constant.getValue())
-                        : ctjs::StringAttr{};
-    };
+    const auto key = ctjs::constantAttr<ctjs::StringAttr>;
     // Callers prove standard Object.prototype and exclude prototype mutation,
     // unknown calls and script reentry. Only __proto__ has an inherited setter.
     llvm::SmallVector<mlir::Value> aliases{object.getResult()};
@@ -109,14 +106,14 @@ static llvm::Expected<CallableObject> analyzeCallableObject(
             uses = projectedUses(value);
         } else {
             for (mlir::OpOperand & use : value.getUses()) {
-                if (!spend()) { return error("DOM helper work budget exhausted"); }
+                if (!spend()) { return exhausted(); }
                 uses.push_back(&use);
             }
         }
         for (mlir::OpOperand * operand : uses) {
             auto & use = *operand;
             auto alias = use.get();
-            if (!spend()) { return error("DOM helper work budget exhausted"); }
+            if (!spend()) { return exhausted(); }
             auto * operation = use.getOwner();
             auto * definition = alias.getDefiningOp();
             if (!precedes(definition, operation)) {
@@ -157,7 +154,7 @@ static llvm::Expected<CallableObject> analyzeCallableObject(
     }
     if (slots.empty()) { return error("DOM helper object has no callable slots"); }
     for (ctjs::GetPropertyOp read : reads) {
-        if (!spend()) { return error("DOM helper work budget exhausted"); }
+        if (!spend()) { return exhausted(); }
         auto name = key(read.getKey());
         auto store = name ? slots.lookup(name) : ctjs::SetPropertyOp{};
         if (!store || (read.getObject() == object.getResult() && !precedes(store, read))) {
@@ -204,10 +201,8 @@ bool directCalleeUse(mlir::OpOperand & use, ctjs::FuncOp target) {
     if (entry.getNumArguments() < 3 || direct->getNumOperands() != entry.getNumArguments()) {
         return false;
     }
-    for (mlir::Operation * user : entry.getArgument(2).getUsers()) {
-        if (!llvm::isa<ctjs::RootOp>(user)) { return false; }
-    }
-    return !usesEnvironment(body);
+    return llvm::all_of(entry.getArgument(2).getUsers(), llvm::IsaPred<ctjs::RootOp>) &&
+           !usesEnvironment(body);
 }
 
 bool calleeSlotOnly(ctjs::LoadGlobalOp load, bool rooted) {
@@ -234,6 +229,11 @@ bool usesEnvironment(ctjs::FuncOp function) {
     return found;
 }
 
+// Whether `made` creates the function at `index`; a negative index names none.
+static bool createsFunction(ctjs::CreateClosureOp made, unsigned index) {
+    return made.getFunction() >= 0 && static_cast<unsigned>(made.getFunction()) == index;
+}
+
 bool hasAlternateCalleeCalls(ctjs::FuncOp function, mlir::ModuleOp module) {
     const auto index = functionIndex(function);
     if (!index) { return false; }
@@ -245,10 +245,7 @@ bool hasAlternateCalleeCalls(ctjs::FuncOp function, mlir::ModuleOp module) {
     };
     bool found = false;
     module.walk([&](ctjs::CreateClosureOp made) {
-        if (found || made.getFunction() < 0 ||
-            static_cast<unsigned>(made.getFunction()) != *index) {
-            return;
-        }
+        if (found || !createsFunction(made, *index)) { return; }
         found |= alternate(made.getResult());
         for (mlir::Operation * user : made.getResult().getUsers()) {
             auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(user);
@@ -307,10 +304,7 @@ std::string closedCallableProblem(ctjs::FuncOp function, mlir::ModuleOp module) 
     if (!index) { return {}; } // No numeric-index closure can name this symbol.
     std::string reason;
     module.walk([&](ctjs::CreateClosureOp made) {
-        if (!reason.empty() || made.getFunction() < 0 ||
-            static_cast<unsigned>(made.getFunction()) != *index) {
-            return;
-        }
+        if (!reason.empty() || !createsFunction(made, *index)) { return; }
         for (mlir::OpOperand & use : made.getResult().getUses()) {
             if (llvm::isa<ctjs::RootOp>(use.getOwner()) || directCalleeUse(use, function)) {
                 continue;

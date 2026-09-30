@@ -42,6 +42,24 @@ def emitted(args, module, name, *, optional_read=True, uri_call=False, callbacks
     return cpp, entries[0]
 
 
+def refuse_mutants(args, contract, prefix, variants):
+    """Write each variant as `prefix`-name.mlir, re-fingerprint it and require both providers
+    to refuse it as DOM source; a (text, reason) variant must also name its reason."""
+    for name, variant in variants.items():
+        text, reason = variant if isinstance(variant, tuple) else (variant, None)
+        mutated = args.work / f"{prefix}-{name}.mlir"
+        mutated.write_text(text)
+        checked = dict(contract, module_sha256=dom.fingerprint(args.opt, mutated))
+        for provider in dom.PROVIDERS:
+            dom.refuse(
+                args,
+                mutated,
+                dict(checked, provider=provider),
+                f"{prefix}-{name}-{provider}",
+                f"error: native DOM source: {reason}" if reason else "error: native DOM source:",
+            )
+
+
 def completion_provenance_checks(args, ir, contract):
     original = ir.read_text()
     helper = next(
@@ -92,26 +110,15 @@ def completion_provenance_checks(args, ir, contract):
             "      scf.yield %unvisited : !ctjs.value\n    }\n    default {",
         ),
     }
+    mutants = {}
     for name, (before, after) in variants.items():
         if before not in helper:
             raise RuntimeError(f"completion provenance anchor changed: {name}")
-        mutated = args.work / f"completion-{name}.mlir"
-        mutated.write_text(original.replace(helper, helper.replace(before, after, 1)))
-        checked = dict(contract, module_sha256=dom.fingerprint(args.opt, mutated))
-        for provider in dom.PROVIDERS:
-            dom.refuse(
-                args,
-                mutated,
-                dict(checked, provider=provider),
-                f"completion-{name}-{provider}",
-                "error: native DOM source:",
-            )
-    for budget in (0, 32, 128):
-        diagnostic = dom.lower(
-            args, ir, contract, f"completion-budget-{budget}", max_steps=budget, success=False
-        )
-        if "budget exhausted" not in diagnostic:
-            raise RuntimeError(f"completion budget {budget}: wrong refusal\n{diagnostic}")
+        mutants[name] = original.replace(helper, helper.replace(before, after, 1))
+    refuse_mutants(args, contract, "completion", mutants)
+    dom.exhaust(
+        args, ir, contract, "completion", (0, 32, 128), "completion budget {budget}: wrong refusal"
+    )
     return 4 * len(variants) + 7
 
 
@@ -318,28 +325,14 @@ def factory_provenance_checks(args, ir, contract, *, table=False):
                 ),
             }
         )
-    for name, text in variants.items():
-        mutated = args.work / f"{prefix}-provenance-{name}.mlir"
-        mutated.write_text(text)
-        checked = dict(contract, module_sha256=dom.fingerprint(args.opt, mutated))
-        for provider in dom.PROVIDERS:
-            dom.refuse(
-                args,
-                mutated,
-                dict(checked, provider=provider),
-                f"{prefix}-provenance-{name}-{provider}",
-                "error: native DOM source:",
-            )
+    refuse_mutants(args, contract, f"{prefix}-provenance", variants)
     indirect = args.work / f"{prefix}-indirect.mlir"
     indirect.write_text(original.replace(call, "ctjs.call %2(%4, %3)"))
     checked = dict(contract, module_sha256=dom.fingerprint(args.opt, indirect))
     dom.lower(args, indirect, checked, f"{prefix}-indirect")
-    for budget in (0, 1, 128):
-        diagnostic = dom.lower(
-            args, ir, contract, f"{prefix}-budget-{budget}", max_steps=budget, success=False
-        )
-        if "budget exhausted" not in diagnostic:
-            raise RuntimeError(f"factory initialization: missing budget refusal\n{diagnostic}")
+    dom.exhaust(
+        args, ir, contract, prefix, (0, 1, 128), "factory initialization: missing budget refusal"
+    )
     return len(variants) * 4 + 4
 
 
@@ -366,24 +359,10 @@ def host_provenance_checks(args, ir, contract):
             "@_script_$0(%arg0:", "@_script_$0(%extra: !ctjs.value, %arg0:"
         ),
     }
-    for name, text in variants.items():
-        mutated = args.work / f"host-provenance-{name}.mlir"
-        mutated.write_text(text)
-        checked = dict(contract, module_sha256=dom.fingerprint(args.opt, mutated))
-        for provider in dom.PROVIDERS:
-            dom.refuse(
-                args,
-                mutated,
-                dict(checked, provider=provider),
-                f"host-provenance-{name}-{provider}",
-                "error: native DOM source:",
-            )
-    for budget in (0, 1, 128):
-        diagnostic = dom.lower(
-            args, ir, contract, f"host-budget-{budget}", max_steps=budget, success=False
-        )
-        if "budget exhausted" not in diagnostic:
-            raise RuntimeError(f"host initialization: missing budget refusal\n{diagnostic}")
+    refuse_mutants(args, contract, "host-provenance", variants)
+    dom.exhaust(
+        args, ir, contract, "host", (0, 1, 128), "host initialization: missing budget refusal"
+    )
     return len(variants) * 4 + 3
 
 
@@ -438,21 +417,8 @@ def capture_provenance_checks(args, ir, contract, graph_ir, graph_contract):
             "DOM helper capture assignment does not precede its read",
         ),
     }
-    for name, (text, reason) in variants.items():
-        mutated = args.work / f"capture-provenance-{name}.mlir"
-        mutated.write_text(text)
-        checked = dict(contract, module_sha256=dom.fingerprint(args.opt, mutated))
-        for provider in dom.PROVIDERS:
-            dom.refuse(
-                args,
-                mutated,
-                dict(checked, provider=provider),
-                f"capture-provenance-{name}-{provider}",
-                f"error: native DOM source: {reason}",
-            )
-    diagnostic = dom.lower(args, ir, contract, "capture-budget", max_steps=128, success=False)
-    if "budget exhausted" not in diagnostic:
-        raise RuntimeError(f"capture query: missing work-budget refusal\n{diagnostic}")
+    refuse_mutants(args, contract, "capture-provenance", variants)
+    dom.exhaust(args, ir, contract, "capture", 128, "capture query: missing work-budget refusal")
     graph = graph_ir.read_text()
     cell = "    %3 = ctjs.create_cell %2\n"
     store = "    ctjs.cell_set %3, %5\n"
@@ -517,21 +483,10 @@ def forwarded_provenance_checks(args, ir, contract):
             "DOM helper forwarded capture identity is ambiguous",
         ),
     }
-    for name, (text, reason) in variants.items():
-        mutated = args.work / f"forwarded-provenance-{name}.mlir"
-        mutated.write_text(text)
-        checked = dict(contract, module_sha256=dom.fingerprint(args.opt, mutated))
-        for provider in dom.PROVIDERS:
-            dom.refuse(
-                args,
-                mutated,
-                dict(checked, provider=provider),
-                f"forwarded-provenance-{name}-{provider}",
-                f"error: native DOM source: {reason}",
-            )
-    diagnostic = dom.lower(args, ir, contract, "forwarded-budget", max_steps=128, success=False)
-    if "budget exhausted" not in diagnostic:
-        raise RuntimeError(f"forwarded capture: missing work-budget refusal\n{diagnostic}")
+    refuse_mutants(args, contract, "forwarded-provenance", variants)
+    dom.exhaust(
+        args, ir, contract, "forwarded", 128, "forwarded capture: missing work-budget refusal"
+    )
     return len(variants) * 4 + 1
 
 
@@ -631,12 +586,9 @@ def regexp_provenance_checks(args, ir, contract, *, prefix="replacement"):
                     stage = "entry" if name in ("factory", "matching", "flags") else "source"
                     if f"error: native DOM {stage}:" not in diagnostic:
                         raise RuntimeError(f"replacement {name}: wrong refusal\n{diagnostic}")
-    for budget in (0, 32, 64):
-        diagnostic = dom.lower(
-            args, ir, contract, f"{prefix}-budget-{budget}", max_steps=budget, success=False
-        )
-        if "budget exhausted" not in diagnostic:
-            raise RuntimeError(f"replacement budget {budget}: wrong refusal\n{diagnostic}")
+    dom.exhaust(
+        args, ir, contract, prefix, (0, 32, 64), "replacement budget {budget}: wrong refusal"
+    )
     return 4 * len(variants) + 3
 
 

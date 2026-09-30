@@ -14,9 +14,7 @@ struct flow;
 struct effectPath {
     unsigned argument = 0;
     llvm::SmallVector<mlir::StringAttr> fields;
-    bool operator==(const effectPath & other) const {
-        return argument == other.argument && fields == other.fields;
-    }
+    bool operator==(const effectPath &) const = default;
 };
 struct effectAccess {
     enum class kind {
@@ -28,16 +26,12 @@ struct effectAccess {
     effectPath object;
     mlir::StringAttr key;
     bool writes() const { return action == kind::objectWrite || action == kind::mapWrite; }
-    bool operator==(const effectAccess & other) const {
-        return action == other.action && object == other.object && key == other.key;
-    }
+    bool operator==(const effectAccess &) const = default;
 };
 struct effectSummary {
     bool known = false;
     llvm::SmallVector<effectAccess> accesses;
-    bool operator==(const effectSummary & other) const {
-        return known == other.known && accesses == other.accesses;
-    }
+    bool operator==(const effectSummary &) const = default;
 };
 
 class effectQueries {
@@ -52,6 +46,9 @@ private:
     bool closedEnvironment = false;
     llvm::DenseMap<mlir::Operation *, effectSummary> summaries;
     effectSummary summarize(ctjs::FuncOp function, unsigned & steps) const;
+    // The known summary of `call`'s matched callee when the call passes its
+    // whole entry-argument window, or null.
+    const effectSummary * knownSummary(ctjs::CallDirectOp call) const;
 };
 // Visits functions callees first, revisiting a function's callers whenever
 // `visit` reports a changed summary, until nothing is pending or the former

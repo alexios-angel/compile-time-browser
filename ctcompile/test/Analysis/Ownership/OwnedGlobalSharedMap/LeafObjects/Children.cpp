@@ -101,12 +101,9 @@ void checkChildMapOwner(mlir::MLIRContext & context, const std::string & source,
         const unsigned completion = query.steps();
         check(completion < 15000, "nested child owner proof stays within the fixture work bound");
         if (!cleared && completion < 15000) {
-            for (unsigned budget = 0; budget < completion; ++budget) {
-                OwnedGlobalRoots limited(*module, contract, budget);
-                check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
-                          empty(*module, limited),
-                      "every incomplete child owner budget withholds the complete owning family");
-            }
+            checkBudgetsBelow(
+                *module, contract, completion,
+                "every incomplete child owner budget withholds the complete owning family");
             OwnedGlobalRoots exact(*module, contract, completion);
             check(exact.proved() && exact.steps() == completion,
                   "the exact child owner budget reproduces the source ownership graph");
@@ -139,13 +136,10 @@ void checkChildMapOwner(mlir::MLIRContext & context, const std::string & source,
         const auto mutate = [&](mlir::Operation * operation, unsigned operand, mlir::Value value) {
             const auto saved = operation->getOperand(operand);
             operation->setOperand(operand, value);
-            OwnedGlobalRoots stale(*module, contract);
-            check(!stale.proved() && stale.reason().contains("fingerprint") &&
-                      empty(*module, stale),
-                  "a changed child source invalidates the original owner fingerprint");
-            OwnedGlobalRoots fresh(*module, mapContractFor(*module));
-            check(!fresh.proved() && !fresh.exhausted() && empty(*module, fresh),
-                  "fresh fingerprints and forged Map facts cannot authorize an unsafe child edge");
+            checkStaleAndRefused(
+                *module, contract, mapContractFor(*module),
+                "a changed child source invalidates the original owner fingerprint",
+                "fresh fingerprints and forged Map facts cannot authorize an unsafe child edge");
             operation->setOperand(operand, saved);
             check(OwnedGlobalRoots(*module, contract).proved(),
                   "restoring the original child source restores the independent owner proof");
@@ -556,12 +550,8 @@ void checkChildMapOwner(mlir::MLIRContext & context, const std::string & source,
         const unsigned completion = query.steps();
         check(completion < 20000, "nullable child owner proof remains bounded");
         if (completion >= 20000) { return; }
-        for (unsigned budget = 0; budget < completion; ++budget) {
-            OwnedGlobalRoots limited(*module, contract, budget);
-            check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
-                      empty(*module, limited),
-                  "every incomplete nullable child proof withholds all owning records");
-        }
+        checkBudgetsBelow(*module, contract, completion,
+                          "every incomplete nullable child proof withholds all owning records");
         check(OwnedGlobalRoots(*module, contract, completion).proved(),
               "the exact nullable child budget proves the complete family");
         module->walk([&](mlir::Operation * operation) {
@@ -837,12 +827,8 @@ void checkCallerPayloadOwner(mlir::MLIRContext & context, const std::string & so
     const unsigned completion = restored.steps();
     check(completion > 2 && completion < 20000, "caller ownership stays within its work bound");
     if (completion <= 2 || completion >= 20000) { return; }
-    for (unsigned budget : {0u, 1u, 2u, completion / 2, completion - 1}) {
-        OwnedGlobalRoots limited(*module, contract, budget);
-        check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
-                  empty(*module, limited),
-              "an incomplete caller use census withholds the entire owning family");
-    }
+    checkIncompleteBudgets(*module, contract, {0u, 1u, 2u, completion / 2, completion - 1},
+                           "an incomplete caller use census withholds the entire owning family");
     OwnedGlobalRoots exact(*module, contract, completion);
     check(exact.proved() && exact.steps() == completion,
           "the exact caller proof budget reproduces the complete family");

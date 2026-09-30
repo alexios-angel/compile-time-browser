@@ -7,7 +7,7 @@ from pathlib import Path
 import re
 
 from CTNative.HostContract import prefix
-from CTNative.harness import prepare_js
+from CTNative.harness import forge_module, prepare_js
 
 host = prefix.host
 
@@ -192,10 +192,9 @@ def main():
     unsafe = prepared["writable_capture"]
     forged = args.work / "forged.mlir"
     forged.write_text(
-        unsafe.read_text().replace(
-            "module attributes {",
-            "module attributes {ctnative.host_factory_proved = true, ctnative.host_capture_edges = 1 : i64, ",
-            1,
+        forge_module(
+            unsafe.read_text(),
+            "ctnative.host_factory_proved = true, ctnative.host_capture_edges = 1 : i64",
         )
     )
     forged_contract = dict(

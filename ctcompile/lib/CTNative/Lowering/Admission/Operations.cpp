@@ -23,62 +23,7 @@ bool admission::ownedTableField(ctjs::SetPropertyOp store) {
 
 bool admission::op(mlir::Operation * o) {
     using namespace ctjs;
-    if (domEntry) {
-        if (auto thrown = llvm::dyn_cast<ThrowOp>(o);
-            thrown && llvm::is_contained(domEntry->savedThrows(), thrown)) {
-            const auto type = typeOf(thrown.getValue());
-            const auto optional = llvm::dyn_cast_or_null<OptType>(type);
-            auto literal = thrown.getValue().getDefiningOp<ConstantOp>();
-            return llvm::isa_and_nonnull<NumType, BoolType, StrType>(type) ||
-                   (optional && llvm::isa<StrType>(optional.getElementType())) ||
-                   (literal && llvm::isa<NullAttr>(literal.getValue())) ||
-                   refuse("saved DOM throw lost its owning primitive carrier");
-        }
-        if (llvm::isa<mlir::scf::ExecuteRegionOp>(o) &&
-            llvm::any_of(domEntry->savedThrows(),
-                         [&](ThrowOp thrown) { return thrown->getParentOp() == o; })) {
-            return true;
-        }
-        if (auto read = llvm::dyn_cast<GetPropertyOp>(o);
-            read &&
-            (!domEntry->wellKnownSymbol(read).empty() || domEntry->isSymbolDescription(read) ||
-             domEntry->isStringVectorLength(read) || domEntry->isStringVectorIndex(read) ||
-             domEntry->isElementVectorLength(read) || domEntry->isElementVectorIndex(read) ||
-             domEntry->isDocumentElement(read) || domEntry->datasetValueElement(read))) {
-            return true;
-        }
-        if (domBookkeeping(*domEntry, o)) { return true; }
-        if (auto object = llvm::dyn_cast<CreateObjectOp>(o);
-            object && domEntry->jsonObject(object)) {
-            return true;
-        }
-        if (auto copy = llvm::dyn_cast<CopyPropsOp>(o); copy && domEntry->jsonCopy(copy)) {
-            return true;
-        }
-        if (auto write = llvm::dyn_cast<SetPropertyOp>(o);
-            write && domEntry->jsonAssignment(write)) {
-            return true;
-        }
-        if (auto unary = llvm::dyn_cast<UnaryOp>(o);
-            unary && unary.getKind() == UnaryKind::TypeOf &&
-            carrierOf(typeOf(unary.getOperand())) == carrier::json) {
-            return true;
-        }
-        if (auto call = llvm::dyn_cast<CallOp>(o); call && domEntry->call(call)) { return true; }
-        if (auto invoke = llvm::dyn_cast<InvokeOp>(o); invoke && domEntry->invocation(invoke)) {
-            return true;
-        }
-        if (llvm::isa<InvokeExitOp, InvokeYieldOp>(o)) {
-            auto invoke = llvm::dyn_cast<InvokeOp>(o->getParentOp());
-            if (invoke && domEntry->invocation(invoke)) { return true; }
-        }
-        if (auto compare = llvm::dyn_cast<CompareOp>(o);
-            compare && compare.getKind() == CompareKind::StrictEq &&
-            domEntry->isElementIdentity(compare.getLhs()) &&
-            domEntry->isElementIdentity(compare.getRhs())) {
-            return true;
-        }
-    }
+    if (auto admitted = domOperation(o)) { return *admitted; }
     if (ownedGlobals && ownedGlobals->lookup(o)) { return ownedGlobalOperation(o); }
     if (const auto * edge = ownedGlobals ? ownedGlobals->objectGlobal(o) : nullptr) {
         auto object = edge->object;
@@ -145,222 +90,15 @@ bool admission::op(mlir::Operation * o) {
                refuse("native Array.from requires a confined numeric or string Map snapshot");
     }
     if (const llvm::StringRef action = nativeMapAction(o); !action.empty()) {
-        if (action == "size") { return true; }
-        auto call = llvm::cast<CallOp>(o);
-        if (nativeMapRecordPayload(call.getReceiver())) {
-            // Record schema and exact read identity live in the same side
-            // proof as ordinary closed objects, never in a boxed carrier.
-            return ((action != "set" || isClosedObject(call.getArgs()[1])) &&
-                    (action != "get" || isClosedObject(call.getResult()))) ||
-                   refuse("native record Map requires closed record payloads and aliases");
-        }
-        if (carrierOf(typeOf(call.getReceiver())) != carrier::map) {
-            return refuse("native Map receiver has no supported key/value carrier");
-        }
-        const auto map = llvm::cast<MapType>(typeOf(call.getReceiver()));
-        const bool scalarKey = llvm::isa<OptType>(map.getKeyType()) &&
-                               carrierOf(map.getKeyType()) == carrier::nullable;
-        if (scalarKey && !call.getArgs().empty() &&
-            !isScalarCarrier(carrierOf(typeOf(call.getArgs()[0])))) {
-            return refuse("nullable scalar Map key requires Number, Boolean, Null or Undefined");
-        }
-        // Numeric vectors erase absent tags; a key snapshot must preserve them.
-        if (scalarKey && action == "keys") {
-            return refuse("nullable scalar Map key snapshot needs a tagged element carrier");
-        }
-        const auto typedAlternative = [&](mlir::Type schema, mlir::Value operand) {
-            const auto value = typeOf(operand);
-            auto alternatives = llvm::cast<VariantType>(schema).getAlternatives();
-            return llvm::any_of(alternatives, [&](mlir::Type alternative) {
-                return value == alternative ||
-                       (llvm::isa_and_nonnull<NumType>(value) && llvm::isa<NumType>(alternative));
-            });
-        };
-        const auto nullableAlternative = [&](mlir::Type schema, mlir::Value operand,
-                                             llvm::StringRef proofName) {
-            const auto value = typeOf(operand);
-            const auto c = carrierOf(value);
-            if (nullableMapSpelling(schema) == kNullableType) { return isScalarCarrier(c); }
-            const auto absent = llvm::dyn_cast_or_null<OptType>(value);
-            const auto element = llvm::cast<OptType>(schema).getElementType();
-            const bool allowsBoolean = !mixedMapSpelling(element).empty();
-            bool represented = c == carrier::string || c == carrier::nullableString ||
-                               (absent && llvm::isa<BottomType>(absent.getElementType())) ||
-                               (allowsBoolean && c == carrier::boolean);
-            // As with nonnullable mixed storage, a wider temporary may supply
-            // an exact scalar only through the rederived per-operation fact.
-            if (auto proof = o->getAttrOfType<mlir::StringAttr>(proofName)) {
-                represented |= (proof.getValue() == "string" && c == carrier::booleanString) ||
-                               (allowsBoolean && proof.getValue() == "bool" &&
-                                (c == carrier::booleanString || c == carrier::nullable));
-            }
-            return represented;
-        };
-        if (!nullableMapSpelling(map.getKeyType()).empty() && !call.getArgs().empty() &&
-            !nullableAlternative(map.getKeyType(), call.getArgs()[0], kNativeMapKeyType)) {
-            return refuse("nullable native Map key needs a proved scalar, String or absent "
-                          "alternative with an owning carrier");
-        }
-        // Whether the mixed variant `schema` has the alternative a proof tagged.
-        const auto tagInSchema = [](mlir::Type schema, llvm::StringRef tag) {
-            return llvm::any_of(llvm::cast<VariantType>(schema).getAlternatives(),
-                                [&](mlir::Type type) {
-                                    return (tag == "bool" && llvm::isa<BoolType>(type)) ||
-                                           (tag == "number" && llvm::isa<NumType>(type)) ||
-                                           (tag == "string" && carrierOf(type) == carrier::string);
-                                });
-        };
-        if (!mixedMapKeySpelling(map.getKeyType()).empty() && !call.getArgs().empty() &&
-            !typedAlternative(map.getKeyType(), call.getArgs()[0])) {
-            const auto proof = o->getAttrOfType<mlir::StringAttr>(kNativeMapKeyType);
-            const auto tag = proof ? proof.getValue() : llvm::StringRef{};
-            const auto c = carrierOf(typeOf(call.getArgs()[0]));
-            const bool represented =
-                (tag == "string" &&
-                 (c == carrier::nullableString || c == carrier::booleanString)) ||
-                (tag == "bool" && (c == carrier::nullable || c == carrier::booleanString)) ||
-                (tag == "number" && c == carrier::nullable);
-            if (!represented || !tagInSchema(map.getKeyType(), tag)) {
-                return refuse("mixed native Map key needs one proved scalar alternative");
-            }
-        }
-        if (!mixedMapSpelling(map.getValueType()).empty()) {
-            if (action == "set" && !typedAlternative(map.getValueType(), call.getArgs()[1])) {
-                // A path-sensitive proof can establish one actual tag even
-                // when upstream SCF inference retains a wider scalar union.
-                const auto proof = o->getAttrOfType<mlir::StringAttr>(kNativeMapWriteType);
-                const auto tag = proof ? proof.getValue() : llvm::StringRef{};
-                const auto c = carrierOf(typeOf(call.getArgs()[1]));
-                const bool represented = c == carrier::booleanString || c == carrier::nullable;
-                if (!represented || !tagInSchema(map.getValueType(), tag)) {
-                    return refuse("mixed native Map write needs one proved scalar alternative");
-                }
-            }
-            if (action == "get" && (!o->hasAttr(kNativeMapReadType) ||
-                                    !typedAlternative(map.getValueType(), call.getResult()))) {
-                return refuse(
-                    "mixed native Map read needs independent present payload type evidence");
-            }
-        }
-        if (!nullableMapSpelling(map.getValueType()).empty()) {
-            if (action == "set" &&
-                !nullableAlternative(map.getValueType(), call.getArgs()[1], kNativeMapWriteType)) {
-                return refuse("nullable native Map write needs a proved scalar, String or "
-                              "absent alternative with an owning carrier");
-            }
-            const auto element = llvm::cast<OptType>(map.getValueType()).getElementType();
-            const auto proof = o->getAttrOfType<mlir::StringAttr>(kNativeMapReadType);
-            const bool nullableRead =
-                proof && proof.getValue() == "nullable_string" &&
-                carrierOf(typeOf(call.getResult())) == carrier::nullableString;
-            if (action == "get" && nullableMapSpelling(map.getValueType()) != kNullableType &&
-                !mixedMapSpelling(element).empty() &&
-                (!proof || !o->hasAttr(kNativeMapPresent) ||
-                 (!nullableRead && !typedAlternative(element, call.getResult())))) {
-                return refuse(
-                    "mixed native Map read needs independent present payload type evidence");
-            }
-        }
-        if (action == "keys" || action == "values") {
-            if (action == "values" && nullableMapSpelling(map.getValueType()) == kNullableType) {
-                return refuse("nullable scalar Map value snapshot needs a tagged element carrier");
-            }
-            return (isVectorSite(call.getResult()) &&
-                    isVectorCarrier(carrierOf(typeOf(call.getResult())))) ||
-                   refuse("native Map snapshot requires confined numeric or string elements");
-        }
-        return true;
+        return nativeMapCall(o, action);
     }
     if (llvm::isa<FrameEnterOp, FrameExitOp, RootOp>(o)) { return true; }
     // THE METHOD FIELD'S STORE LOWERS TO NOTHING, with the closure in it.
     // Checked before the closed-shape arms below because the value it
     // stores is a closure, which has no carrier and would be refused as a
     // field the moment the literal is examined.
-    if (o->hasAttr("ctnative.method")) { return true; }
-    if (auto object = llvm::dyn_cast<CreateObjectOp>(o)) {
-        if (!isClosedObject(object.getResult())) { return refuse(whyOpen(object.getResult())); }
-        // EVERY ACCESS IN THE GROUP, NOT ONLY THE LITERAL'S OWN. A lifted
-        // method reaches these fields through its `%arg0`, in a different
-        // function, and those reads and writes are this shape's too - so
-        // `this.class = 1` has to be refused HERE, at the one place that
-        // checks a key, or it reaches the emitter as `self->class`.
-        llvm::SmallVector<mlir::Operation *> accesses;
-        for (mlir::Value alias : aliasesOf(groups, object.getResult())) {
-            for (mlir::OpOperand & use : alias.getUses()) {
-                if (use.getOperandNumber() == 0 &&
-                    llvm::isa<GetPropertyOp, SetPropertyOp>(use.getOwner())) {
-                    accesses.push_back(use.getOwner());
-                }
-            }
-        }
-        // The keys this literal is ever WRITTEN with. A read of one of
-        // them is an own property; a read of anything else falls through
-        // to the prototype, which is what makes an inherited name wrong.
-        llvm::StringSet<> written;
-        llvm::StringSet<> stringFields;
-        for (mlir::Operation * user : accesses) {
-            if (auto set = llvm::dyn_cast<SetPropertyOp>(user)) {
-                // A METHOD FIELD IS NOT A FIELD. Its store lowers to
-                // nothing and it takes no space in the class, so it is not
-                // a key that shadows an inherited name either.
-                if (!user->hasAttr("ctnative.method")) {
-                    written.insert(ctjs::constantKey(set.getKey()));
-                    if (carrierOf(typeOf(set.getValue())) == carrier::string) {
-                        stringFields.insert(ctjs::constantKey(set.getKey()));
-                    }
-                }
-            }
-        }
-        for (mlir::Operation * user : accesses) {
-            if (user->hasAttr("ctnative.method")) { continue; }
-            const llvm::StringRef key =
-                llvm::isa<GetPropertyOp>(user)
-                    ? ctjs::constantKey(llvm::cast<GetPropertyOp>(user).getKey())
-                    : ctjs::constantKey(llvm::cast<SetPropertyOp>(user).getKey());
-            if (!isCIdentifier(key)) {
-                return refuse(("field `" + key + "` is not a C identifier").str());
-            }
-            if (isReservedInCpp(key)) {
-                return refuse(("field `" + key +
-                               "` is a C++ keyword or a macro of <cmath>/<cstdio>, so the "
-                               "generated struct would not compile")
-                                  .str());
-            }
-            if (!written.contains(key) && namesObjectPrototypeMember(key)) {
-                return refuse(("field `" + key +
-                               "` is read but never written, and Object.prototype answers "
-                               "that name - the interpreter finds a function where this "
-                               "would find undefined")
-                                  .str());
-            }
-            // The existing shape census already spells one definite string as
-            // std::string. Mixed or possibly absent reads need a different join;
-            // do not route them through the numeric nullable carrier.
-            if (stringFields.contains(key)) {
-                auto set = llvm::dyn_cast<SetPropertyOp>(user);
-                auto value = set ? set.getValue() : llvm::cast<GetPropertyOp>(user).getResult();
-                if (carrierOf(typeOf(value)) != carrier::string) {
-                    return refuse("string field requires definite string reads and writes");
-                }
-            }
-            if (auto set = llvm::dyn_cast<SetPropertyOp>(user)) {
-                const carrier c = carrierOf(typeOf(set.getValue()));
-                if (c == carrier::methodTable) {
-                    if (!ownedTableField(set)) { return false; }
-                    continue;
-                }
-                if (!isScalarCarrier(c) && c != carrier::string) {
-                    return refuse(("field `" + key + "` is stored a " +
-                                   printed(typeOf(set.getValue())) + ", not a number or a boolean")
-                                      .str());
-                }
-                // The shape census joins all scalar writes before choosing
-                // storage, including a field nobody reads. Mixed boolean
-                // and number stores therefore retain their runtime tags.
-            }
-        }
-        return true;
-    }
+    if (o->hasAttr(kNativeMethod)) { return true; }
+    if (auto object = llvm::dyn_cast<CreateObjectOp>(o)) { return closedObject(object); }
     if (auto array = llvm::dyn_cast<CreateArrayOp>(o)) {
         if (!isVectorSite(array.getResult())) { return refuse(whyNotDense(array.getResult())); }
         // ONE FRAME SLOT, WHICH IS OBLIGATION O-4. A literal made inside an
@@ -438,73 +176,7 @@ bool admission::op(mlir::Operation * o) {
         load && feedsOnlyDirectCallees(load.getResult())) {
         return true;
     }
-    if (auto call = llvm::dyn_cast<CallDirectOp>(o)) {
-        if (o->hasAttr(kNativeStoredCall)) {
-            auto callable = llvm::dyn_cast_or_null<ClosureType>(typeOf(call.getCalleeValue()));
-            if (!callable || callable.getTarget() != call.getCallee()) {
-                return refuse("stored callable invocation has no single proved target");
-            }
-        }
-        // new.target and the callee value are dropped; each remaining
-        // argument needs a proved carrier. Whether the CALLEE is native is the fixpoint in
-        // runOnOperation, not a question for one function.
-        //
-        // THE RECEIVER IS NOT DROPPED WHEN THE LIFT MARKED THIS CALL. It
-        // is operand 0, it becomes the callee's first C++ parameter, and
-        // its carrier is the generated class - so what has to hold here is
-        // that it really is a closed-shape object and not some other
-        // value the lift never looked at.
-        const auto operands = call.getArgOperands();
-        if (o->hasAttr("ctnative.receiver") && !isClosedObject(call.getReceiver())) {
-            return refuse("a method call whose receiver is not a closed-shape object");
-        }
-        for (unsigned i = 3; i < operands.size(); ++i) {
-            // AN OBJECT ARGUMENT IS NOT A NUMBER AND MUST NOT BE ASKED TO
-            // BE ONE. The lift proved the literal closed before it wrote
-            // the index; this asks the same question of the IR that came
-            // out, exactly as the receiver arm above does, because a
-            // refusal since then can have opened it.
-            if (isObjectArg(o, i)) {
-                if (!isClosedObject(operands[i])) {
-                    return refuse("it passes an object whose shape is no longer closed to a "
-                                  "parameter this tier gave a pointer");
-                }
-                continue;
-            }
-            // A SHARED BINDING IS NOT A NUMBER EITHER: what is passed is
-            // the ADDRESS of a variable in this frame, so what has to hold
-            // is that the variable is still one this tier can spell and
-            // that the operand still names it. A carrier of `none` is
-            // refused at the box itself; this catches the operand that
-            // stopped being a box at all, which would be the lift and this
-            // check disagreeing.
-            if (isCellArg(o, i)) {
-                if (!namesASharedCell(operands[i])) {
-                    return refuse("it passes something that is not a shared binding of this "
-                                  "frame to a parameter this tier gave a pointer");
-                }
-                if (carrierOf(typeOf(operands[i])) == carrier::none) {
-                    return refuse("it passes a shared binding of type " +
-                                  printed(typeOf(operands[i])) + ", which has no native carrier");
-                }
-                continue;
-            }
-            if (carrierOf(typeOf(operands[i])) != carrier::methodTable &&
-                !(carrierOf(typeOf(operands[i])) == carrier::domElement && ownedGlobals &&
-                  ownedGlobals->proved() && !ownedGlobals->domInputs().empty()) &&
-                !isObjectCarrier(carrierOf(typeOf(operands[i]))) &&
-                carrierOf(typeOf(operands[i])) != carrier::closure &&
-                carrierOf(typeOf(operands[i])) != carrier::boolean &&
-                !isStringCarrier(carrierOf(typeOf(operands[i]))) &&
-                !isStringUnionCarrier(carrierOf(typeOf(operands[i]))) &&
-                !(carrierOf(typeOf(operands[i])) == carrier::map &&
-                  nativeMapGroup(operands[i]) >= 0) &&
-                !numeric(operands[i], "argument")) {
-                return false;
-            }
-        }
-        return true;
-    }
+    if (auto call = llvm::dyn_cast<CallDirectOp>(o)) { return directCall(call); }
     if (isDeclarationClosure(o) || isDeclarationStore(o)) { return true; }
     // PHASE 59 SLICE 1. A lifted closure and the constant cell it captured
     // are both gone by the time the emitter sees anything; a closure that
@@ -558,7 +230,7 @@ bool admission::op(mlir::Operation * o) {
         return true;
     }
     if (llvm::isa<CreateCellOp>(o)) {
-        auto why = o->getAttrOfType<mlir::StringAttr>("ctnative.cell_reason");
+        auto why = o->getAttrOfType<mlir::StringAttr>(kNativeCellReason);
         return refuse(why ? ("a captured binding that stays a cell: " + why.getValue()).str()
                           : std::string{"a captured binding that stays a cell - Phase 59"});
     }
@@ -734,26 +406,7 @@ bool admission::op(mlir::Operation * o) {
     }
     if (auto attempt = llvm::dyn_cast<TryOp>(o)) { return exceptionRegion(attempt); }
     if (llvm::isa<TryExitOp, TryYieldOp>(o)) { return true; }
-    if (auto ret = llvm::dyn_cast<ReturnOp>(o)) {
-        const carrier c = carrierOf(typeOf(ret.getValue()));
-        if (c == carrier::none) { return refuse("returns " + printed(typeOf(ret.getValue()))); }
-        returnedType =
-            returnedType ? meet(returnedType, typeOf(ret.getValue())) : typeOf(ret.getValue());
-        if (returns == carrier::none) { returns = c; }
-        if (returns != c) {
-            if (isStringUnionCarrier(carrierOf(returnedType))) {
-                returns = carrierOf(returnedType);
-            } else if (isScalarCarrier(returns) && isScalarCarrier(c)) {
-                returns = carrier::nullable;
-            } else if ((isObjectCarrier(returns) || isScalarCarrier(returns)) &&
-                       (isObjectCarrier(c) || isScalarCarrier(c))) {
-                returns = carrier::objectValue;
-            } else {
-                return refuse("returns different native carriers on different paths");
-            }
-        }
-        return true;
-    }
+    if (auto ret = llvm::dyn_cast<ReturnOp>(o)) { return returned(ret); }
     if (llvm::isa<mlir::scf::IfOp, mlir::scf::WhileOp, mlir::scf::ForOp, mlir::scf::ConditionOp,
                   mlir::scf::YieldOp>(o)) {
         return true;
@@ -762,6 +415,366 @@ bool admission::op(mlir::Operation * o) {
         return refuse("unstructured control flow - run --ctjs-lift-to-scf first");
     }
     return refuse(("`" + o->getName().getStringRef() + "` is not native yet").str());
+}
+
+// The DOM entry's own operations, or nullopt when `o` is not one of them.
+std::optional<bool> admission::domOperation(mlir::Operation * o) {
+    using namespace ctjs;
+    if (!domEntry) { return std::nullopt; }
+    if (auto thrown = llvm::dyn_cast<ThrowOp>(o);
+        thrown && llvm::is_contained(domEntry->savedThrows(), thrown)) {
+        const auto type = typeOf(thrown.getValue());
+        const auto optional = llvm::dyn_cast_or_null<OptType>(type);
+        auto literal = thrown.getValue().getDefiningOp<ConstantOp>();
+        return llvm::isa_and_nonnull<NumType, BoolType, StrType>(type) ||
+               (optional && llvm::isa<StrType>(optional.getElementType())) ||
+               (literal && llvm::isa<NullAttr>(literal.getValue())) ||
+               refuse("saved DOM throw lost its owning primitive carrier");
+    }
+    if (llvm::isa<mlir::scf::ExecuteRegionOp>(o) &&
+        llvm::any_of(domEntry->savedThrows(),
+                     [&](ThrowOp thrown) { return thrown->getParentOp() == o; })) {
+        return true;
+    }
+    if (auto read = llvm::dyn_cast<GetPropertyOp>(o);
+        read && (!domEntry->wellKnownSymbol(read).empty() || domEntry->isSymbolDescription(read) ||
+                 domEntry->isStringVectorLength(read) || domEntry->isStringVectorIndex(read) ||
+                 domEntry->isElementVectorLength(read) || domEntry->isElementVectorIndex(read) ||
+                 domEntry->isDocumentElement(read) || domEntry->datasetValueElement(read))) {
+        return true;
+    }
+    if (domBookkeeping(*domEntry, o)) { return true; }
+    if (auto object = llvm::dyn_cast<CreateObjectOp>(o); object && domEntry->jsonObject(object)) {
+        return true;
+    }
+    if (auto copy = llvm::dyn_cast<CopyPropsOp>(o); copy && domEntry->jsonCopy(copy)) {
+        return true;
+    }
+    if (auto write = llvm::dyn_cast<SetPropertyOp>(o); write && domEntry->jsonAssignment(write)) {
+        return true;
+    }
+    if (auto unary = llvm::dyn_cast<UnaryOp>(o);
+        unary && unary.getKind() == UnaryKind::TypeOf &&
+        carrierOf(typeOf(unary.getOperand())) == carrier::json) {
+        return true;
+    }
+    if (auto call = llvm::dyn_cast<CallOp>(o); call && domEntry->call(call)) { return true; }
+    if (auto invoke = llvm::dyn_cast<InvokeOp>(o); invoke && domEntry->invocation(invoke)) {
+        return true;
+    }
+    if (llvm::isa<InvokeExitOp, InvokeYieldOp>(o)) {
+        auto invoke = llvm::dyn_cast<InvokeOp>(o->getParentOp());
+        if (invoke && domEntry->invocation(invoke)) { return true; }
+    }
+    if (auto compare = llvm::dyn_cast<CompareOp>(o);
+        compare && compare.getKind() == CompareKind::StrictEq &&
+        domEntry->isElementIdentity(compare.getLhs()) &&
+        domEntry->isElementIdentity(compare.getRhs())) {
+        return true;
+    }
+    return std::nullopt;
+}
+
+// A native Map method call, named by its `action`.
+bool admission::nativeMapCall(mlir::Operation * o, llvm::StringRef action) {
+    using namespace ctjs;
+    if (action == "size") { return true; }
+    auto call = llvm::cast<CallOp>(o);
+    if (nativeMapRecordPayload(call.getReceiver())) {
+        // Record schema and exact read identity live in the same side
+        // proof as ordinary closed objects, never in a boxed carrier.
+        return ((action != "set" || isClosedObject(call.getArgs()[1])) &&
+                (action != "get" || isClosedObject(call.getResult()))) ||
+               refuse("native record Map requires closed record payloads and aliases");
+    }
+    if (carrierOf(typeOf(call.getReceiver())) != carrier::map) {
+        return refuse("native Map receiver has no supported key/value carrier");
+    }
+    const auto map = llvm::cast<MapType>(typeOf(call.getReceiver()));
+    const bool scalarKey =
+        llvm::isa<OptType>(map.getKeyType()) && carrierOf(map.getKeyType()) == carrier::nullable;
+    if (scalarKey && !call.getArgs().empty() &&
+        !isScalarCarrier(carrierOf(typeOf(call.getArgs()[0])))) {
+        return refuse("nullable scalar Map key requires Number, Boolean, Null or Undefined");
+    }
+    // Numeric vectors erase absent tags; a key snapshot must preserve them.
+    if (scalarKey && action == "keys") {
+        return refuse("nullable scalar Map key snapshot needs a tagged element carrier");
+    }
+    const auto typedAlternative = [&](mlir::Type schema, mlir::Value operand) {
+        const auto value = typeOf(operand);
+        auto alternatives = llvm::cast<VariantType>(schema).getAlternatives();
+        return llvm::any_of(alternatives, [&](mlir::Type alternative) {
+            return value == alternative ||
+                   (llvm::isa_and_nonnull<NumType>(value) && llvm::isa<NumType>(alternative));
+        });
+    };
+    const auto nullableAlternative = [&](mlir::Type schema, mlir::Value operand,
+                                         llvm::StringRef proofName) {
+        const auto value = typeOf(operand);
+        const auto c = carrierOf(value);
+        if (nullableMapSpelling(schema) == kNullableType) { return isScalarCarrier(c); }
+        const auto absent = llvm::dyn_cast_or_null<OptType>(value);
+        const auto element = llvm::cast<OptType>(schema).getElementType();
+        const bool allowsBoolean = !mixedMapSpelling(element).empty();
+        bool represented = c == carrier::string || c == carrier::nullableString ||
+                           (absent && llvm::isa<BottomType>(absent.getElementType())) ||
+                           (allowsBoolean && c == carrier::boolean);
+        // As with nonnullable mixed storage, a wider temporary may supply
+        // an exact scalar only through the rederived per-operation fact.
+        if (auto proof = o->getAttrOfType<mlir::StringAttr>(proofName)) {
+            represented |= (proof.getValue() == "string" && c == carrier::booleanString) ||
+                           (allowsBoolean && proof.getValue() == "bool" &&
+                            (c == carrier::booleanString || c == carrier::nullable));
+        }
+        return represented;
+    };
+    if (!nullableMapSpelling(map.getKeyType()).empty() && !call.getArgs().empty() &&
+        !nullableAlternative(map.getKeyType(), call.getArgs()[0], kNativeMapKeyType)) {
+        return refuse("nullable native Map key needs a proved scalar, String or absent "
+                      "alternative with an owning carrier");
+    }
+    // Whether the mixed variant `schema` has the alternative a proof tagged.
+    const auto tagInSchema = [](mlir::Type schema, llvm::StringRef tag) {
+        return llvm::any_of(llvm::cast<VariantType>(schema).getAlternatives(),
+                            [&](mlir::Type type) {
+                                return (tag == "bool" && llvm::isa<BoolType>(type)) ||
+                                       (tag == "number" && llvm::isa<NumType>(type)) ||
+                                       (tag == "string" && carrierOf(type) == carrier::string);
+                            });
+    };
+    if (!mixedMapKeySpelling(map.getKeyType()).empty() && !call.getArgs().empty() &&
+        !typedAlternative(map.getKeyType(), call.getArgs()[0])) {
+        const auto proof = o->getAttrOfType<mlir::StringAttr>(kNativeMapKeyType);
+        const auto tag = proof ? proof.getValue() : llvm::StringRef{};
+        const auto c = carrierOf(typeOf(call.getArgs()[0]));
+        const bool represented =
+            (tag == "string" && (c == carrier::nullableString || c == carrier::booleanString)) ||
+            (tag == "bool" && (c == carrier::nullable || c == carrier::booleanString)) ||
+            (tag == "number" && c == carrier::nullable);
+        if (!represented || !tagInSchema(map.getKeyType(), tag)) {
+            return refuse("mixed native Map key needs one proved scalar alternative");
+        }
+    }
+    if (!mixedMapSpelling(map.getValueType()).empty()) {
+        if (action == "set" && !typedAlternative(map.getValueType(), call.getArgs()[1])) {
+            // A path-sensitive proof can establish one actual tag even
+            // when upstream SCF inference retains a wider scalar union.
+            const auto proof = o->getAttrOfType<mlir::StringAttr>(kNativeMapWriteType);
+            const auto tag = proof ? proof.getValue() : llvm::StringRef{};
+            const auto c = carrierOf(typeOf(call.getArgs()[1]));
+            const bool represented = c == carrier::booleanString || c == carrier::nullable;
+            if (!represented || !tagInSchema(map.getValueType(), tag)) {
+                return refuse("mixed native Map write needs one proved scalar alternative");
+            }
+        }
+        if (action == "get" && (!o->hasAttr(kNativeMapReadType) ||
+                                !typedAlternative(map.getValueType(), call.getResult()))) {
+            return refuse("mixed native Map read needs independent present payload type evidence");
+        }
+    }
+    if (!nullableMapSpelling(map.getValueType()).empty()) {
+        if (action == "set" &&
+            !nullableAlternative(map.getValueType(), call.getArgs()[1], kNativeMapWriteType)) {
+            return refuse("nullable native Map write needs a proved scalar, String or "
+                          "absent alternative with an owning carrier");
+        }
+        const auto element = llvm::cast<OptType>(map.getValueType()).getElementType();
+        const auto proof = o->getAttrOfType<mlir::StringAttr>(kNativeMapReadType);
+        const bool nullableRead = proof && proof.getValue() == "nullable_string" &&
+                                  carrierOf(typeOf(call.getResult())) == carrier::nullableString;
+        if (action == "get" && nullableMapSpelling(map.getValueType()) != kNullableType &&
+            !mixedMapSpelling(element).empty() &&
+            (!proof || !o->hasAttr(kNativeMapPresent) ||
+             (!nullableRead && !typedAlternative(element, call.getResult())))) {
+            return refuse("mixed native Map read needs independent present payload type evidence");
+        }
+    }
+    if (action == "keys" || action == "values") {
+        if (action == "values" && nullableMapSpelling(map.getValueType()) == kNullableType) {
+            return refuse("nullable scalar Map value snapshot needs a tagged element carrier");
+        }
+        return (isVectorSite(call.getResult()) &&
+                isVectorCarrier(carrierOf(typeOf(call.getResult())))) ||
+               refuse("native Map snapshot requires confined numeric or string elements");
+    }
+    return true;
+}
+
+bool admission::closedObject(ctjs::CreateObjectOp object) {
+    using namespace ctjs;
+    if (!isClosedObject(object.getResult())) { return refuse(whyOpen(object.getResult())); }
+    // EVERY ACCESS IN THE GROUP, NOT ONLY THE LITERAL'S OWN. A lifted
+    // method reaches these fields through its `%arg0`, in a different
+    // function, and those reads and writes are this shape's too - so
+    // `this.class = 1` has to be refused HERE, at the one place that
+    // checks a key, or it reaches the emitter as `self->class`.
+    llvm::SmallVector<mlir::Operation *> accesses;
+    for (mlir::Value alias : aliasesOf(groups, object.getResult())) {
+        for (mlir::OpOperand & use : alias.getUses()) {
+            if (use.getOperandNumber() == 0 &&
+                llvm::isa<GetPropertyOp, SetPropertyOp>(use.getOwner())) {
+                accesses.push_back(use.getOwner());
+            }
+        }
+    }
+    // The keys this literal is ever WRITTEN with. A read of one of
+    // them is an own property; a read of anything else falls through
+    // to the prototype, which is what makes an inherited name wrong.
+    llvm::StringSet<> written;
+    llvm::StringSet<> stringFields;
+    for (mlir::Operation * user : accesses) {
+        if (auto set = llvm::dyn_cast<SetPropertyOp>(user)) {
+            // A METHOD FIELD IS NOT A FIELD. Its store lowers to
+            // nothing and it takes no space in the class, so it is not
+            // a key that shadows an inherited name either.
+            if (!user->hasAttr(kNativeMethod)) {
+                written.insert(ctjs::constantKey(set.getKey()));
+                if (carrierOf(typeOf(set.getValue())) == carrier::string) {
+                    stringFields.insert(ctjs::constantKey(set.getKey()));
+                }
+            }
+        }
+    }
+    for (mlir::Operation * user : accesses) {
+        if (user->hasAttr(kNativeMethod)) { continue; }
+        const llvm::StringRef key =
+            llvm::isa<GetPropertyOp>(user)
+                ? ctjs::constantKey(llvm::cast<GetPropertyOp>(user).getKey())
+                : ctjs::constantKey(llvm::cast<SetPropertyOp>(user).getKey());
+        if (!isCIdentifier(key)) {
+            return refuse(("field `" + key + "` is not a C identifier").str());
+        }
+        if (isReservedInCpp(key)) {
+            return refuse(("field `" + key +
+                           "` is a C++ keyword or a macro of <cmath>/<cstdio>, so the "
+                           "generated struct would not compile")
+                              .str());
+        }
+        if (!written.contains(key) && namesObjectPrototypeMember(key)) {
+            return refuse(("field `" + key +
+                           "` is read but never written, and Object.prototype answers "
+                           "that name - the interpreter finds a function where this "
+                           "would find undefined")
+                              .str());
+        }
+        // The existing shape census already spells one definite string as
+        // std::string. Mixed or possibly absent reads need a different join;
+        // do not route them through the numeric nullable carrier.
+        if (stringFields.contains(key)) {
+            auto set = llvm::dyn_cast<SetPropertyOp>(user);
+            auto value = set ? set.getValue() : llvm::cast<GetPropertyOp>(user).getResult();
+            if (carrierOf(typeOf(value)) != carrier::string) {
+                return refuse("string field requires definite string reads and writes");
+            }
+        }
+        if (auto set = llvm::dyn_cast<SetPropertyOp>(user)) {
+            const carrier c = carrierOf(typeOf(set.getValue()));
+            if (c == carrier::methodTable) {
+                if (!ownedTableField(set)) { return false; }
+                continue;
+            }
+            if (!isScalarCarrier(c) && c != carrier::string) {
+                return refuse(("field `" + key + "` is stored a " +
+                               printed(typeOf(set.getValue())) + ", not a number or a boolean")
+                                  .str());
+            }
+            // The shape census joins all scalar writes before choosing
+            // storage, including a field nobody reads. Mixed boolean
+            // and number stores therefore retain their runtime tags.
+        }
+    }
+    return true;
+}
+
+bool admission::directCall(ctjs::CallDirectOp call) {
+    using namespace ctjs;
+    mlir::Operation * o = call;
+    if (o->hasAttr(kNativeStoredCall)) {
+        auto callable = llvm::dyn_cast_or_null<ClosureType>(typeOf(call.getCalleeValue()));
+        if (!callable || callable.getTarget() != call.getCallee()) {
+            return refuse("stored callable invocation has no single proved target");
+        }
+    }
+    // new.target and the callee value are dropped; each remaining
+    // argument needs a proved carrier. Whether the CALLEE is native is the fixpoint in
+    // runOnOperation, not a question for one function.
+    //
+    // THE RECEIVER IS NOT DROPPED WHEN THE LIFT MARKED THIS CALL. It
+    // is operand 0, it becomes the callee's first C++ parameter, and
+    // its carrier is the generated class - so what has to hold here is
+    // that it really is a closed-shape object and not some other
+    // value the lift never looked at.
+    const auto operands = call.getArgOperands();
+    if (o->hasAttr(kNativeReceiver) && !isClosedObject(call.getReceiver())) {
+        return refuse("a method call whose receiver is not a closed-shape object");
+    }
+    for (unsigned i = 3; i < operands.size(); ++i) {
+        // AN OBJECT ARGUMENT IS NOT A NUMBER AND MUST NOT BE ASKED TO
+        // BE ONE. The lift proved the literal closed before it wrote
+        // the index; this asks the same question of the IR that came
+        // out, exactly as the receiver arm above does, because a
+        // refusal since then can have opened it.
+        if (isObjectArg(o, i)) {
+            if (!isClosedObject(operands[i])) {
+                return refuse("it passes an object whose shape is no longer closed to a "
+                              "parameter this tier gave a pointer");
+            }
+            continue;
+        }
+        // A SHARED BINDING IS NOT A NUMBER EITHER: what is passed is
+        // the ADDRESS of a variable in this frame, so what has to hold
+        // is that the variable is still one this tier can spell and
+        // that the operand still names it. A carrier of `none` is
+        // refused at the box itself; this catches the operand that
+        // stopped being a box at all, which would be the lift and this
+        // check disagreeing.
+        if (isCellArg(o, i)) {
+            if (!namesASharedCell(operands[i])) {
+                return refuse("it passes something that is not a shared binding of this "
+                              "frame to a parameter this tier gave a pointer");
+            }
+            if (carrierOf(typeOf(operands[i])) == carrier::none) {
+                return refuse("it passes a shared binding of type " + printed(typeOf(operands[i])) +
+                              ", which has no native carrier");
+            }
+            continue;
+        }
+        if (carrierOf(typeOf(operands[i])) != carrier::methodTable &&
+            !(carrierOf(typeOf(operands[i])) == carrier::domElement && ownedGlobals &&
+              ownedGlobals->proved() && !ownedGlobals->domInputs().empty()) &&
+            !isObjectCarrier(carrierOf(typeOf(operands[i]))) &&
+            carrierOf(typeOf(operands[i])) != carrier::closure &&
+            carrierOf(typeOf(operands[i])) != carrier::boolean &&
+            !isStringCarrier(carrierOf(typeOf(operands[i]))) &&
+            !isStringUnionCarrier(carrierOf(typeOf(operands[i]))) &&
+            !(carrierOf(typeOf(operands[i])) == carrier::map && nativeMapGroup(operands[i]) >= 0) &&
+            !numeric(operands[i], "argument")) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool admission::returned(ctjs::ReturnOp ret) {
+    const carrier c = carrierOf(typeOf(ret.getValue()));
+    if (c == carrier::none) { return refuse("returns " + printed(typeOf(ret.getValue()))); }
+    returnedType =
+        returnedType ? meet(returnedType, typeOf(ret.getValue())) : typeOf(ret.getValue());
+    if (returns == carrier::none) { returns = c; }
+    if (returns != c) {
+        if (isStringUnionCarrier(carrierOf(returnedType))) {
+            returns = carrierOf(returnedType);
+        } else if (isScalarCarrier(returns) && isScalarCarrier(c)) {
+            returns = carrier::nullable;
+        } else if ((isObjectCarrier(returns) || isScalarCarrier(returns)) &&
+                   (isObjectCarrier(c) || isScalarCarrier(c))) {
+            returns = carrier::objectValue;
+        } else {
+            return refuse("returns different native carriers on different paths");
+        }
+    }
+    return true;
 }
 
 } // namespace ctcompile::ctnative::lowering_detail

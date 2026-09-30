@@ -7,6 +7,10 @@ namespace {
 std::string fieldName(llvm::StringRef name) {
     return "field_" + llvm::toHex(name, /*LowerCase=*/true);
 }
+// The C++ type an identity field is stored as.
+llvm::StringRef fieldStorage(mlir::Type type) {
+    return isNullableStringCarrier(type) ? "nullable_string" : "nullable_scalar";
+}
 } // namespace
 
 llvm::StringMap<mlir::Type> identityFieldStoreTypes(mlir::DataFlowSolver & solver,
@@ -58,10 +62,7 @@ std::string lowering::identityDefinition() const {
         "namespace ctnative {\n// ctcompile: owning identity with proved scalar fields\n"
         "struct identity_object {\n";
     for (const std::string & name : identityFields) {
-        const auto type = isNullableStringCarrier(identityFieldTypes.lookup(name))
-                              ? "nullable_string"
-                              : "nullable_scalar";
-        out += "    " + std::string(type) + " " + name + ";\n";
+        out += "    " + fieldStorage(identityFieldTypes.lookup(name)).str() + " " + name + ";\n";
     }
     return out + "};\n}\n";
 }
@@ -74,9 +75,7 @@ std::string lowering::identityFieldHelpers() const {
         "inline identity_object & object_fields(const object_value & value) {\n"
         "    return *value.object;\n}\n";
     for (const std::string & name : identityFields) {
-        const std::string type = isNullableStringCarrier(identityFieldTypes.lookup(name))
-                                     ? "nullable_string"
-                                     : "nullable_scalar";
+        const std::string type = fieldStorage(identityFieldTypes.lookup(name)).str();
         out += "template <class Owner> inline " + type + " object_get_" + name +
                "(const Owner & value) {\n    return object_fields(value)." + name + ";\n}\n";
         out += "template <class Owner> inline void object_set_" + name + "(const Owner & value, " +

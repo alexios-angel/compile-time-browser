@@ -29,6 +29,25 @@ struct liftReport {
     unsigned callbackParameters = 0;
 };
 
+// WHAT ONE USE OF A `ctjs.create_cell` IS. The censuses and the rewrites
+// all ask the same four questions of a cell's use list; a cell_set at any
+// operand but 0 stores the box INTO something rather than writing it.
+enum class cellUse {
+    read,
+    write,
+    storedInto,
+    capture,
+    other
+};
+inline cellUse classify(mlir::OpOperand & use) {
+    mlir::Operation * user = use.getOwner();
+    const unsigned n = use.getOperandNumber();
+    if (llvm::isa<ctjs::CellGetOp>(user) && n == 0) { return cellUse::read; }
+    if (llvm::isa<ctjs::CellSetOp>(user)) { return n == 0 ? cellUse::write : cellUse::storedInto; }
+    if (llvm::isa<ctjs::CreateClosureOp>(user) && n >= kFirstCapture) { return cellUse::capture; }
+    return cellUse::other;
+}
+
 struct closureLifter {
     mlir::ModuleOp module;
     mlir::MLIRContext * context;
@@ -508,8 +527,6 @@ struct closureLifter {
     };
     static bool holdsAFunction(ctjs::CreateCellOp cell);
 
-    static bool readsRawArguments(ctjs::FuncOp target);
-
     std::optional<std::string> whyReadIsNotACall(mlir::Value read, ctjs::FuncOp target,
                                                  unsigned & calls);
 
@@ -569,6 +586,15 @@ struct closureLifter {
 
     mlir::Value liftedCapture(ctjs::CreateClosureOp c, unsigned i);
     llvm::SmallVector<mlir::Value> liftedCaptures(ctjs::CreateClosureOp c);
+    // A fresh `undefined` constant at `at`.
+    mlir::Value undefinedAt(mlir::OpBuilder & at, mlir::Location where);
+    // A lifted closure's mark and its report counts.
+    void markLifted(ctjs::CreateClosureOp c, liftReport & out, unsigned captures);
+    // `from` is in `at`'s ctjs.func AND properly dominates it. The function is
+    // compared first: builtin.module's body is a graph region, in which a bare
+    // `properlyDominates` answers yes for every pair of operations.
+    bool reachesInFrame(mlir::Value from, mlir::Operation * at);
+    bool reachesInFrame(mlir::Operation * from, mlir::Operation * at);
     // A ctjs.call_direct of `target` at `at`: `prefix` then `args`, padded
     // with `undefined` to `width`; its new.target is `undefined` too.
     ctjs::CallDirectOp directCall(mlir::OpBuilder & at, mlir::Location where, ctjs::FuncOp target,
@@ -618,8 +644,7 @@ struct closureLifter {
     bool retainedByLocalMap(mlir::OpOperand & use,
                             llvm::DenseMap<mlir::Value, mlir::Value> * reads = nullptr);
 
-    ctjs::FuncOp resolveMethod(ctjs::CallOp call, mlir::Value & receiverOut,
-                               ctjs::GetPropertyOp & loadOut);
+    std::optional<methodCall> resolveMethod(ctjs::CallOp call);
 
     std::string whyNotAMethodField(ctjs::SetPropertyOp set);
 
@@ -716,6 +741,9 @@ struct closureLifter {
     std::optional<std::string> whyConstructorReturnsAnObject(ctjs::FuncOp target);
 
     std::optional<std::string> whyPrototypeIsTouched(ctjs::CreateClosureOp c);
+
+    // `use` is `new c(...)` naming `c` as both its callee and its new.target.
+    static bool isSelfConstruct(mlir::OpOperand & use, ctjs::CreateClosureOp c);
 
     std::optional<std::string> whyNotLiftableConstructor(ctjs::CreateClosureOp c);
     std::optional<std::string> whyConstructorSetupDoesNotLift(ctjs::CreateClosureOp c);

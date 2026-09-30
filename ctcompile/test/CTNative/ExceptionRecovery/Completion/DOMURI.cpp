@@ -18,6 +18,20 @@ namespace ctcompile::test::exception_recovery {
 
 using ctcompile::ctnative::host_detail::projectInvocationContinuation;
 
+// A refused preparation leaves every contract field it could have written alone.
+static bool sameContract(const ctcompile::ctnative::HostContract & request,
+                         const ctcompile::ctnative::HostContract & before) {
+    return request.moduleSha256 == before.moduleSha256 &&
+           request.initialIntrinsics == before.initialIntrinsics &&
+           request.elementParameters == before.elementParameters &&
+           request.provider == before.provider && request.entry == before.entry;
+}
+
+static void checkRefused(llvm::Error error, bool unchanged, llvm::StringRef label) {
+    check(static_cast<bool>(error) && unchanged, label);
+    if (error) { llvm::consumeError(std::move(error)); }
+}
+
 static void testStructuredSourceOrdering(mlir::ModuleOp original) {
     auto module = mlir::OwningOpRef<mlir::ModuleOp>(original.clone());
     auto entry = module->lookupSymbol<ctjs::FuncOp>("entry$0");
@@ -322,7 +336,7 @@ static void testInertHelperCompletion(mlir::MLIRContext & context) {
   }
 })MLIR";
     const auto replace = [](std::string text, llvm::StringRef from, llvm::StringRef to) {
-        text.replace(text.find(from.str()), from.size(), to.str());
+        replaceOnce(text, from, to.str());
         return text;
     };
     auto original = mlir::parseSourceString<mlir::ModuleOp>(source, &context);
@@ -831,12 +845,11 @@ static void testHelperCatchSource(mlir::MLIRContext & context) {
     for (unsigned control = 0; control != 7; ++control) {
         auto text = source;
         if (control == 1) {
-            text.replace(text.find("'data-next'"), 11, "'bad name'");
+            replaceOnce(text, "'data-next'", "'bad name'");
         } else if (control == 2) {
             text.insert(text.find("    const done"), "    unknown();\n");
         } else if (control == 3) {
-            text.replace(text.find("result.done && result.value === anchor"), 38,
-                         "anchor.unproved");
+            replaceOnce(text, "result.done && result.value === anchor", "anchor.unproved");
         }
         auto module = import(context, text);
         if (!module) { continue; }
@@ -2879,7 +2892,7 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
     for (auto [method, structured] : {std::pair{false, false}, std::pair{true, false},
                                       std::pair{false, true}, std::pair{true, true}}) {
         auto source = getter;
-        if (method) { source.replace(source.find("get return()"), 12, "return()"); }
+        if (method) { replaceOnce(source, "get return()", "return()"); }
         auto module = import(context, source, structured);
         if (!module) { continue; }
         auto function = module->lookupSymbol<ctjs::FuncOp>("customElements$1");
@@ -3902,26 +3915,23 @@ static void testNumberAttributeOrigins(mlir::MLIRContext & context) {
          {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
         for (unsigned control = 0; control < 18; ++control) {
             auto text = source;
-            const auto replace = [&](llvm::StringRef from, llvm::StringRef to) {
-                text.replace(text.find(from.str()), from.size(), to.str());
-            };
             if (control == 1) {
-                replace("try {", "try { element.setAttribute('data-number', '99');");
+                replaceOnce(text, "try {", "try { element.setAttribute('data-number', '99');");
             }
             if (control == 2 || control == 16) {
-                replace("Number(element.getAttribute('data-number'))",
-                        control == 2 ? "element.hasAttribute('flag') ? "
-                                       "Number(element.getAttribute('data-number')) : 7.5"
-                                     : "element.hasAttribute('flag') ? "
-                                       "Number(element.getAttribute('data-number')) : element");
+                replaceOnce(text, "Number(element.getAttribute('data-number'))",
+                            control == 2 ? "element.hasAttribute('flag') ? "
+                                           "Number(element.getAttribute('data-number')) : 7.5"
+                                         : "element.hasAttribute('flag') ? "
+                                           "Number(element.getAttribute('data-number')) : element");
             }
             if (control == 10) {
-                replace("try {", "");
-                replace("const saved", "try { const saved");
+                replaceOnce(text, "try {", "");
+                replaceOnce(text, "const saved", "try { const saved");
             }
-            if (control == 11) { replace("const saved", "unknown(); const saved"); }
-            if (control == 12) { replace("data-written", "bad name"); }
-            if (control == 17) { replace("saved); throw", "saved + 1); throw"); }
+            if (control == 11) { replaceOnce(text, "const saved", "unknown(); const saved"); }
+            if (control == 12) { replaceOnce(text, "data-written", "bad name"); }
+            if (control == 17) { replaceOnce(text, "saved); throw", "saved + 1); throw"); }
             auto candidate = import(context, text, true);
             if (!candidate) { continue; }
             ctjs::LoadGlobalOp number;
@@ -3966,14 +3976,10 @@ static void testNumberAttributeOrigins(mlir::MLIRContext & context) {
                                          : control == 14 ? 500
                                                          : 100000);
             if (control >= 3 && control != 10 && control != 17) {
-                check(static_cast<bool>(error) && printed(*candidate) == original &&
-                          request.moduleSha256 == originalContract.moduleSha256 &&
-                          request.initialIntrinsics == originalContract.initialIntrinsics &&
-                          request.elementParameters == originalContract.elementParameters &&
-                          request.provider == originalContract.provider &&
-                          request.entry == originalContract.entry,
-                      "Number origin grants no binding, coercion, effect or budget authority");
-                if (error) { llvm::consumeError(std::move(error)); }
+                checkRefused(
+                    std::move(error),
+                    printed(*candidate) == original && sameContract(request, originalContract),
+                    "Number origin grants no binding, coercion, effect or budget authority");
                 continue;
             }
             if (!check(!error, "saved Number origin completes the original protected write")) {
@@ -4024,30 +4030,30 @@ static void testProtectedNumberReads(mlir::MLIRContext & context) {
          {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
         for (unsigned control = 0; control < 24; ++control) {
             auto text = source;
-            const auto replace = [&](llvm::StringRef from, llvm::StringRef to) {
-                text.replace(text.find(from.str()), from.size(), to.str());
-            };
             if (control == 1) {
-                replace("element.setAttribute('data-written'",
-                        "element.setAttribute('data-number', '99'); "
-                        "element.setAttribute('data-written'");
+                replaceOnce(text, "element.setAttribute('data-written'",
+                            "element.setAttribute('data-number', '99'); "
+                            "element.setAttribute('data-written'");
             }
-            if (control == 2) { replace("throw element;", "return true;"); }
+            if (control == 2) { replaceOnce(text, "throw element;", "return true;"); }
             if (control == 3 || control == 4) {
-                replace("element.getAttribute('data-number')", control == 3 ? "'7.5'" : "null");
+                replaceOnce(text, "element.getAttribute('data-number')",
+                            control == 3 ? "'7.5'" : "null");
             }
             if (control == 5 || control == 23) {
-                replace("element.getAttribute('data-number')",
-                        control == 5 ? "element.hasAttribute('flag') ? "
-                                       "element.getAttribute('data-number') : null"
-                                     : "element.hasAttribute('flag') ? "
-                                       "element.getAttribute('data-number') : element");
+                replaceOnce(text, "element.getAttribute('data-number')",
+                            control == 5 ? "element.hasAttribute('flag') ? "
+                                           "element.getAttribute('data-number') : null"
+                                         : "element.hasAttribute('flag') ? "
+                                           "element.getAttribute('data-number') : element");
             }
-            if (control == 12) { replace("getAttribute", "unknown"); }
-            if (control == 13) { replace("data-written", "bad name"); }
-            if (control == 17) { replace("'data-written', saved", "'data-written', element"); }
-            if (control == 18) { replace("try {", "Number = element; try {"); }
-            if (control == 19) { replace("const saved", "unknown(); const saved"); }
+            if (control == 12) { replaceOnce(text, "getAttribute", "unknown"); }
+            if (control == 13) { replaceOnce(text, "data-written", "bad name"); }
+            if (control == 17) {
+                replaceOnce(text, "'data-written', saved", "'data-written', element");
+            }
+            if (control == 18) { replaceOnce(text, "try {", "Number = element; try {"); }
+            if (control == 19) { replaceOnce(text, "const saved", "unknown(); const saved"); }
             auto candidate = import(context, text, true);
             if (!candidate) { continue; }
             auto function = guarded(*candidate);
@@ -4094,14 +4100,10 @@ static void testProtectedNumberReads(mlir::MLIRContext & context) {
                                                          : 100000);
             // Control 5 forwards the identical saved Number callee through both arms.
             if (control >= 6) {
-                check(static_cast<bool>(error) && printed(*candidate) == original &&
-                          request.moduleSha256 == originalContract.moduleSha256 &&
-                          request.initialIntrinsics == originalContract.initialIntrinsics &&
-                          request.elementParameters == originalContract.elementParameters &&
-                          request.provider == originalContract.provider &&
-                          request.entry == originalContract.entry,
-                      "protected conversion refuses incomplete identity, input, effect or budget");
-                if (error) { llvm::consumeError(std::move(error)); }
+                checkRefused(
+                    std::move(error),
+                    printed(*candidate) == original && sameContract(request, originalContract),
+                    "protected conversion refuses incomplete identity, input, effect or budget");
                 continue;
             }
             if (!check(!error, "protected read and conversion preserve original completion")) {
@@ -4150,43 +4152,43 @@ static void testConditionalNumberCallee(mlir::MLIRContext & context) {
                     throw element;
                 } catch (error) { return error === element; }
             })js";
-            const auto replace = [&](llvm::StringRef from, llvm::StringRef to) {
-                source.replace(source.find(from.str()), from.size(), to.str());
-            };
-            if (normalReturn) { replace("throw element;", "return true;"); }
+            if (normalReturn) { replaceOnce(source, "throw element;", "return true;"); }
             if (control == 2) {
-                replace("element.setAttribute('data-written'",
-                        "element.setAttribute('data-number', '99'); "
-                        "element.setAttribute('data-written'");
+                replaceOnce(source, "element.setAttribute('data-written'",
+                            "element.setAttribute('data-number', '99'); "
+                            "element.setAttribute('data-written'");
             }
             if (control == 3) {
-                replace("element.getAttribute('data-number')",
-                        "element.hasAttribute('nested') ? "
-                        "element.getAttribute('data-number') : '1'");
+                replaceOnce(source, "element.getAttribute('data-number')",
+                            "element.hasAttribute('nested') ? "
+                            "element.getAttribute('data-number') : '1'");
             }
             if (control == 4) {
-                replace("Number(element.hasAttribute('flag') ?",
-                        "(element.hasAttribute('flag') ? Number : element)(true ?");
+                replaceOnce(source, "Number(element.hasAttribute('flag') ?",
+                            "(element.hasAttribute('flag') ? Number : element)(true ?");
             }
             if (control == 5) {
-                replace("Number(element.hasAttribute('flag') ?",
-                        "(element.hasAttribute('flag') ? Number : Number)(true ?");
+                replaceOnce(source, "Number(element.hasAttribute('flag') ?",
+                            "(element.hasAttribute('flag') ? Number : Number)(true ?");
             }
-            if (control == 6) { replace("const saved", "Number = element; const saved"); }
-            if (control == 7) { replace(" : null", " : element"); }
+            if (control == 6) {
+                replaceOnce(source, "const saved", "Number = element; const saved");
+            }
+            if (control == 7) { replaceOnce(source, " : null", " : element"); }
             if (control == 8 || control == 9) {
-                replace(control == 8 ? "element.getAttribute('data-number')" : "null",
-                        control == 8 ? "(unknown(), element.getAttribute('data-number'))"
-                                     : "(unknown(), null)");
+                replaceOnce(source, control == 8 ? "element.getAttribute('data-number')" : "null",
+                            control == 8 ? "(unknown(), element.getAttribute('data-number'))"
+                                         : "(unknown(), null)");
             }
             if (control == 10) {
-                replace("element.getAttribute('data-number')", "(Number = element, '1')");
+                replaceOnce(source, "element.getAttribute('data-number')",
+                            "(Number = element, '1')");
             }
-            if (control == 11) { replace("getAttribute", "unknown"); }
-            if (control == 12) { replace("data-written", "bad name"); }
+            if (control == 11) { replaceOnce(source, "getAttribute", "unknown"); }
+            if (control == 12) { replaceOnce(source, "data-written", "bad name"); }
             if (control == 18) {
-                replace(
-                    "const saved = Number(",
+                replaceOnce(
+                    source, "const saved = Number(",
                     "let convert = Number; if (element.hasAttribute('other')) convert = element; "
                     "const saved = convert(");
             }
@@ -4220,14 +4222,10 @@ static void testConditionalNumberCallee(mlir::MLIRContext & context) {
                                          : control == 17 ? 500
                                                          : 100000);
             if (control >= 4) {
-                check(static_cast<bool>(error) && printed(*candidate) == original &&
-                          request.moduleSha256 == originalContract.moduleSha256 &&
-                          request.initialIntrinsics == originalContract.initialIntrinsics &&
-                          request.elementParameters == originalContract.elementParameters &&
-                          request.provider == originalContract.provider &&
-                          request.entry == originalContract.entry,
-                      "conditional callee refuses changed identity, effects and incomplete proof");
-                if (error) { llvm::consumeError(std::move(error)); }
+                checkRefused(
+                    std::move(error),
+                    printed(*candidate) == original && sameContract(request, originalContract),
+                    "conditional callee refuses changed identity, effects and incomplete proof");
                 continue;
             }
             if (!check(!error, "identical saved conditional callee completes its DOM proof")) {
@@ -4298,16 +4296,17 @@ static void testProtectedNumberArithmetic(mlir::MLIRContext & context) {
                     throw element;
                 } catch (error) { return error === element; }
             })js";
-            const auto replace = [&](llvm::StringRef from, llvm::StringRef to) {
-                source.replace(source.find(from.str()), from.size(), to.str());
-            };
-            if (control < expressions.size()) { replace("converted + 1", expressions[control]); }
-            if (control == 29) { replace("const converted", "unknown(); const converted"); }
-            if (control == 30) { replace("throw element;", "return true;"); }
+            if (control < expressions.size()) {
+                replaceOnce(source, "converted + 1", expressions[control]);
+            }
+            if (control == 29) {
+                replaceOnce(source, "const converted", "unknown(); const converted");
+            }
+            if (control == 30) { replaceOnce(source, "throw element;", "return true;"); }
             if (control == 31) {
-                replace("element.setAttribute('data-written'",
-                        "element.setAttribute('data-number', '99'); "
-                        "element.setAttribute('data-written'");
+                replaceOnce(source, "element.setAttribute('data-written'",
+                            "element.setAttribute('data-number', '99'); "
+                            "element.setAttribute('data-written'");
             }
             auto candidate = import(context, source, true);
             if (!candidate) { continue; }
@@ -4346,14 +4345,10 @@ static void testProtectedNumberArithmetic(mlir::MLIRContext & context) {
                                          : control == 28 ? 500
                                                          : 100000);
             if (control >= 16 && control < 30) {
-                check(static_cast<bool>(error) && printed(*candidate) == original &&
-                          request.moduleSha256 == originalContract.moduleSha256 &&
-                          request.initialIntrinsics == originalContract.initialIntrinsics &&
-                          request.elementParameters == originalContract.elementParameters &&
-                          request.provider == originalContract.provider &&
-                          request.entry == originalContract.entry,
-                      "protected arithmetic refuses coercion, effects, stale proofs and budgets");
-                if (error) { llvm::consumeError(std::move(error)); }
+                checkRefused(
+                    std::move(error),
+                    printed(*candidate) == original && sameContract(request, originalContract),
+                    "protected arithmetic refuses coercion, effects, stale proofs and budgets");
                 continue;
             }
             if (!check(!error, "exact Number arithmetic completes its protected source")) {
@@ -4414,26 +4409,24 @@ static void testBooleanNumberInputs(mlir::MLIRContext & context) {
                     return true;
                 } catch (error) { return error === anchor; }
             })js";
-            const auto replace = [&](llvm::StringRef from, llvm::StringRef to) {
-                source.replace(source.find(from.str()), from.size(), to.str());
-            };
             if (control < inputs.size()) {
-                replace("anchor.hasAttribute('flag')", inputs[control]);
+                replaceOnce(source, "anchor.hasAttribute('flag')", inputs[control]);
             }
             if (control == 18) {
-                replace("anchor.setAttribute('data-written'",
-                        "anchor.setAttribute('flag', ''); anchor.setAttribute('data-written'");
+                replaceOnce(source, "anchor.setAttribute('data-written'",
+                            "anchor.setAttribute('flag', ''); anchor.setAttribute('data-written'");
             }
             if (control == 19) {
-                replace("const saved = Number(anchor.hasAttribute('flag'));",
-                        "const present = anchor.hasAttribute('flag'); "
-                        "anchor.setAttribute('flag', ''); const saved = Number(present);");
+                replaceOnce(source, "const saved = Number(anchor.hasAttribute('flag'));",
+                            "const present = anchor.hasAttribute('flag'); "
+                            "anchor.setAttribute('flag', ''); const saved = Number(present);");
             }
-            if (control == 20) { replace("return true;", "throw anchor;"); }
-            if (control == 21) { replace("try {", "Number = anchor; try {"); }
-            if (control == 27) { replace("data-written", "bad name"); }
+            if (control == 20) { replaceOnce(source, "return true;", "throw anchor;"); }
+            if (control == 21) { replaceOnce(source, "try {", "Number = anchor; try {"); }
+            if (control == 27) { replaceOnce(source, "data-written", "bad name"); }
             if (control == 31) {
-                replace("anchor.hasAttribute('flag')", "anchor.hasAttribute('flag', unknown())");
+                replaceOnce(source, "anchor.hasAttribute('flag')",
+                            "anchor.hasAttribute('flag', unknown())");
             }
             auto candidate = import(context, source, true);
             if (!candidate) { continue; }
@@ -4476,14 +4469,10 @@ static void testBooleanNumberInputs(mlir::MLIRContext & context) {
                                                          : 100000);
             const bool admitted = control < 9 || (control >= 18 && control <= 20);
             if (!admitted) {
-                check(static_cast<bool>(error) && printed(*candidate) == original &&
-                          request.moduleSha256 == originalContract.moduleSha256 &&
-                          request.initialIntrinsics == originalContract.initialIntrinsics &&
-                          request.elementParameters == originalContract.elementParameters &&
-                          request.provider == originalContract.provider &&
-                          request.entry == originalContract.entry,
-                      "Boolean conversion refuses coercion, effects, invalid bindings and budgets");
-                if (error) { llvm::consumeError(std::move(error)); }
+                checkRefused(
+                    std::move(error),
+                    printed(*candidate) == original && sameContract(request, originalContract),
+                    "Boolean conversion refuses coercion, effects, invalid bindings and budgets");
                 continue;
             }
             if (!check(!error, "proved Boolean Number input completes its protected source")) {
@@ -4546,23 +4535,20 @@ static void testNumberNumberInputs(mlir::MLIRContext & context) {
                     return true;
                 } catch (error) { return error === anchor; }
             })js";
-            const auto replace = [&](llvm::StringRef from, llvm::StringRef to) {
-                source.replace(source.find(from.str()), from.size(), to.str());
-            };
             if (control < inputs.size()) {
-                replace("Number(anchor.hasAttribute('flag'))", inputs[control]);
+                replaceOnce(source, "Number(anchor.hasAttribute('flag'))", inputs[control]);
             }
             if (control == 10) {
-                replace("const saved = Number(Number(anchor.hasAttribute('flag')));",
-                        "const numeric = Number(anchor.hasAttribute('flag')); "
-                        "anchor.setAttribute('flag', ''); const saved = Number(numeric);");
+                replaceOnce(source, "const saved = Number(Number(anchor.hasAttribute('flag')));",
+                            "const numeric = Number(anchor.hasAttribute('flag')); "
+                            "anchor.setAttribute('flag', ''); const saved = Number(numeric);");
             }
-            if (control == 11) { replace("return true;", "throw anchor;"); }
-            if (control == 12) { replace("try {", "Number = anchor; try {"); }
-            if (control == 18) { replace("data-written", "bad name"); }
+            if (control == 11) { replaceOnce(source, "return true;", "throw anchor;"); }
+            if (control == 12) { replaceOnce(source, "try {", "Number = anchor; try {"); }
+            if (control == 18) { replaceOnce(source, "data-written", "bad name"); }
             if (control == 23) {
-                replace("const saved = Number(",
-                        "const saved = (anchor.hasAttribute('other') ? Number : anchor)(");
+                replaceOnce(source, "const saved = Number(",
+                            "const saved = (anchor.hasAttribute('other') ? Number : anchor)(");
             }
             auto candidate = import(context, source, true);
             if (!candidate) { continue; }
@@ -4607,14 +4593,10 @@ static void testNumberNumberInputs(mlir::MLIRContext & context) {
                                                          : 100000);
             const bool admitted = control < 6 || control == 10 || control == 11;
             if (!admitted) {
-                check(static_cast<bool>(error) && printed(*candidate) == original &&
-                          request.moduleSha256 == originalContract.moduleSha256 &&
-                          request.initialIntrinsics == originalContract.initialIntrinsics &&
-                          request.elementParameters == originalContract.elementParameters &&
-                          request.provider == originalContract.provider &&
-                          request.entry == originalContract.entry,
-                      "Number input refuses coercion, effects, invalid bindings and budgets");
-                if (error) { llvm::consumeError(std::move(error)); }
+                checkRefused(
+                    std::move(error),
+                    printed(*candidate) == original && sameContract(request, originalContract),
+                    "Number input refuses coercion, effects, invalid bindings and budgets");
                 continue;
             }
             if (!check(!error, "exact Number input completes its protected source")) {
@@ -4666,31 +4648,34 @@ static void testProtectedNumberStrings(mlir::MLIRContext & context) {
                     return true;
                 } catch (error) { return error === anchor; }
             })js";
-            const auto replace = [&](llvm::StringRef from, llvm::StringRef to) {
-                source.replace(source.find(from.str()), from.size(), to.str());
-            };
             if (control == 1 || control == 2) {
-                replace("anchor.setAttribute('data-written', saved);",
-                        "anchor.setAttribute('data-number', '99'); "
-                        "anchor.setAttribute('data-written', saved);");
+                replaceOnce(source, "anchor.setAttribute('data-written', saved);",
+                            "anchor.setAttribute('data-number', '99'); "
+                            "anchor.setAttribute('data-written', saved);");
             }
             if (control == 2) {
-                replace("Number(anchor.getAttribute('data-number')).toString()",
-                        "anchor.getAttribute('data-number')");
+                replaceOnce(source, "Number(anchor.getAttribute('data-number')).toString()",
+                            "anchor.getAttribute('data-number')");
             }
             if (control == 3) {
-                replace("Number(anchor.getAttribute('data-number'))",
-                        "(1 / Number(anchor.getAttribute('data-number')))");
+                replaceOnce(source, "Number(anchor.getAttribute('data-number'))",
+                            "(1 / Number(anchor.getAttribute('data-number')))");
             }
-            if (control == 4) { replace("return true;", "throw anchor;"); }
-            if (control == 5) { replace(".toString()", ".toString(16)"); }
-            if (control == 6) { replace(".toString()", ".toString(anchor)"); }
-            if (control == 7) { replace("anchor.getAttribute('data-number')", "anchor"); }
-            if (control == 8) { replace("try {", "Number = anchor; try {"); }
-            if (control == 9) { replace("try {", "Number.prototype.toString = anchor; try {"); }
-            if (control == 10) { replace("const saved =", "unknown(); const saved ="); }
-            if (control == 11) { replace("data-written", "bad name"); }
-            if (control == 12) { replace("data-written', saved", "data-written', null"); }
+            if (control == 4) { replaceOnce(source, "return true;", "throw anchor;"); }
+            if (control == 5) { replaceOnce(source, ".toString()", ".toString(16)"); }
+            if (control == 6) { replaceOnce(source, ".toString()", ".toString(anchor)"); }
+            if (control == 7) {
+                replaceOnce(source, "anchor.getAttribute('data-number')", "anchor");
+            }
+            if (control == 8) { replaceOnce(source, "try {", "Number = anchor; try {"); }
+            if (control == 9) {
+                replaceOnce(source, "try {", "Number.prototype.toString = anchor; try {");
+            }
+            if (control == 10) { replaceOnce(source, "const saved =", "unknown(); const saved ="); }
+            if (control == 11) { replaceOnce(source, "data-written", "bad name"); }
+            if (control == 12) {
+                replaceOnce(source, "data-written', saved", "data-written', null");
+            }
             if (beforeTry) {
                 const auto begin = source.find("const saved =");
                 const auto end = source.find(';', begin) + 1;
@@ -4698,7 +4683,7 @@ static void testProtectedNumberStrings(mlir::MLIRContext & context) {
                 source.erase(begin, end - begin);
                 source.insert(source.find("try {"), saved + " ");
             }
-            if (control == 19) { replace("const saved =", "unknown(); const saved ="); }
+            if (control == 19) { replaceOnce(source, "const saved =", "unknown(); const saved ="); }
             auto candidate = import(context, source, true);
             if (!candidate) { continue; }
             auto function = guarded(*candidate);
@@ -4728,14 +4713,10 @@ static void testProtectedNumberStrings(mlir::MLIRContext & context) {
                                          : control == 18 ? 500
                                                          : 100000);
             if (control >= 5) {
-                check(static_cast<bool>(error) && printed(*candidate) == original &&
-                          request.moduleSha256 == originalContract.moduleSha256 &&
-                          request.initialIntrinsics == originalContract.initialIntrinsics &&
-                          request.elementParameters == originalContract.elementParameters &&
-                          request.provider == originalContract.provider &&
-                          request.entry == originalContract.entry,
-                      "Number String refusal preserves source and contract despite forged proof");
-                if (error) { llvm::consumeError(std::move(error)); }
+                checkRefused(
+                    std::move(error),
+                    printed(*candidate) == original && sameContract(request, originalContract),
+                    "Number String refusal preserves source and contract despite forged proof");
                 continue;
             }
             if (!check(!error, "protected Number method and saved String complete")) {
@@ -4782,38 +4763,42 @@ static void testSavedAttributeStrings(mlir::MLIRContext & context) {
                     return true;
                 } catch (error) { return error === anchor; }
             })js";
-            const auto replace = [&](llvm::StringRef from, llvm::StringRef to) {
-                source.replace(source.find(from.str()), from.size(), to.str());
-            };
             if (control == 1) {
-                replace("try {", "try { anchor.setAttribute('data-number', '99');");
+                replaceOnce(source, "try {", "try { anchor.setAttribute('data-number', '99');");
             }
             if (control == 2) {
-                replace("try {", "anchor.setAttribute('data-number', '99'); try {");
+                replaceOnce(source, "try {", "anchor.setAttribute('data-number', '99'); try {");
             }
             if (control == 3) {
-                replace("try {", "const alias = anchor; "
-                                 "alias.setAttribute('data-number', '99'); try {");
+                replaceOnce(source, "try {",
+                            "const alias = anchor; "
+                            "alias.setAttribute('data-number', '99'); try {");
             }
-            if (control == 4) { replace("return true;", "throw anchor;"); }
-            if (control == 5) { replace("anchor.getAttribute('data-number')", "unknown()"); }
-            if (control == 6) { replace("const saved =", "unknown(); const saved ="); }
-            if (control == 7) { replace("try {", "try { unknown();"); }
+            if (control == 4) { replaceOnce(source, "return true;", "throw anchor;"); }
+            if (control == 5) {
+                replaceOnce(source, "anchor.getAttribute('data-number')", "unknown()");
+            }
+            if (control == 6) { replaceOnce(source, "const saved =", "unknown(); const saved ="); }
+            if (control == 7) { replaceOnce(source, "try {", "try { unknown();"); }
             if (control == 8) {
-                replace("anchor.getAttribute('data-number')",
-                        "(unknown(), anchor.getAttribute('data-number'))");
+                replaceOnce(source, "anchor.getAttribute('data-number')",
+                            "(unknown(), anchor.getAttribute('data-number'))");
             }
             if (control == 9) {
-                replace("const saved =", "anchor.getAttribute = anchor; const saved =");
+                replaceOnce(source, "const saved =", "anchor.getAttribute = anchor; const saved =");
             }
-            if (control == 10) { replace("data-written", "bad name"); }
-            if (control == 11) { replace("data-written', saved", "data-written', null"); }
-            if (control == 16) { replace(".getAttribute(", ".unknown("); }
-            if (control == 21) { replace("try {", "anchor = false; try {"); }
-            if (control == 22) { replace("getAttribute('data-number')", "getAttribute(anchor)"); }
+            if (control == 10) { replaceOnce(source, "data-written", "bad name"); }
+            if (control == 11) {
+                replaceOnce(source, "data-written', saved", "data-written', null");
+            }
+            if (control == 16) { replaceOnce(source, ".getAttribute(", ".unknown("); }
+            if (control == 21) { replaceOnce(source, "try {", "anchor = false; try {"); }
+            if (control == 22) {
+                replaceOnce(source, "getAttribute('data-number')", "getAttribute(anchor)");
+            }
             if (control == 23) {
-                replace("const saved =", "let saved =");
-                replace("try {", "saved = anchor; try {");
+                replaceOnce(source, "const saved =", "let saved =");
+                replaceOnce(source, "try {", "saved = anchor; try {");
             }
             auto candidate = import(context, source, true);
             if (!candidate) { continue; }
@@ -4848,14 +4833,10 @@ static void testSavedAttributeStrings(mlir::MLIRContext & context) {
                                          : control == 20 ? 500
                                                          : 100000);
             if (control >= 5) {
-                check(static_cast<bool>(error) && printed(*candidate) == original &&
-                          request.moduleSha256 == originalContract.moduleSha256 &&
-                          request.initialIntrinsics == originalContract.initialIntrinsics &&
-                          request.elementParameters == originalContract.elementParameters &&
-                          request.provider == originalContract.provider &&
-                          request.entry == originalContract.entry,
-                      "saved attribute refusal preserves source and contract despite forged proof");
-                if (error) { llvm::consumeError(std::move(error)); }
+                checkRefused(
+                    std::move(error),
+                    printed(*candidate) == original && sameContract(request, originalContract),
+                    "saved attribute refusal preserves source and contract despite forged proof");
                 continue;
             }
             if (!check(!error, "saved nullable attribute completes its original protected write")) {
@@ -4901,41 +4882,40 @@ static void testSelectedAttributeStrings(mlir::MLIRContext & context) {
                     return true;
                 } catch (error) { return error === anchor; }
             })js";
-            const auto replace = [&](llvm::StringRef from, llvm::StringRef to) {
-                source.replace(source.find(from.str()), from.size(), to.str());
-            };
             if (control == 1) {
-                replace("try {", "try { anchor.setAttribute('data-number', '99');");
+                replaceOnce(source, "try {", "try { anchor.setAttribute('data-number', '99');");
             }
             if (control == 2) {
-                replace("try {", "anchor.setAttribute('data-number', '99'); try {");
+                replaceOnce(source, "try {", "anchor.setAttribute('data-number', '99'); try {");
             }
             if (control == 3) {
-                replace("anchor.getAttribute('data-number') : null",
-                        "null : anchor.getAttribute('data-number')");
+                replaceOnce(source, "anchor.getAttribute('data-number') : null",
+                            "null : anchor.getAttribute('data-number')");
             }
             if (control == 4 || control == 22) {
-                replace(
-                    "anchor.getAttribute('data-number')",
+                replaceOnce(
+                    source, "anchor.getAttribute('data-number')",
                     "(anchor.hasAttribute('inner') ? anchor.getAttribute('data-number') : null)");
-                if (control == 22) { replace(": null)", ": anchor)"); }
+                if (control == 22) { replaceOnce(source, ": null)", ": anchor)"); }
             }
-            if (control == 5) { replace(": null", ": anchor.getAttribute('other')"); }
-            if (control == 6) { replace("return true;", "throw anchor;"); }
-            if (control == 7) { replace("anchor.getAttribute('data-number')", "anchor"); }
-            if (control == 8) { replace(": null", ": anchor"); }
-            if (control == 9) { replace("anchor.hasAttribute('flag')", "unknown()"); }
+            if (control == 5) { replaceOnce(source, ": null", ": anchor.getAttribute('other')"); }
+            if (control == 6) { replaceOnce(source, "return true;", "throw anchor;"); }
+            if (control == 7) {
+                replaceOnce(source, "anchor.getAttribute('data-number')", "anchor");
+            }
+            if (control == 8) { replaceOnce(source, ": null", ": anchor"); }
+            if (control == 9) { replaceOnce(source, "anchor.hasAttribute('flag')", "unknown()"); }
             if (control == 10) {
-                replace("anchor.getAttribute('data-number')",
-                        "(unknown(), anchor.getAttribute('data-number'))");
+                replaceOnce(source, "anchor.getAttribute('data-number')",
+                            "(unknown(), anchor.getAttribute('data-number'))");
             }
-            if (control == 11) { replace(": null", ": (unknown(), null)"); }
-            if (control == 12) { replace("try {", "try { unknown();"); }
+            if (control == 11) { replaceOnce(source, ": null", ": (unknown(), null)"); }
+            if (control == 12) { replaceOnce(source, "try {", "try { unknown();"); }
             if (control == 13) {
-                replace("const saved =", "anchor.getAttribute = anchor; const saved =");
+                replaceOnce(source, "const saved =", "anchor.getAttribute = anchor; const saved =");
             }
-            if (control == 14) { replace("data-written", "bad name"); }
-            if (control == 23) { replace(": null", ": (anchor = false, null)"); }
+            if (control == 14) { replaceOnce(source, "data-written", "bad name"); }
+            if (control == 23) { replaceOnce(source, ": null", ": (anchor = false, null)"); }
             auto candidate = import(context, source, true);
             if (!candidate) { continue; }
             auto function = guarded(*candidate);
@@ -4967,14 +4947,10 @@ static void testSelectedAttributeStrings(mlir::MLIRContext & context) {
                                          : control == 21 ? 500
                                                          : 100000);
             if (control >= 7) {
-                check(static_cast<bool>(error) && printed(*candidate) == original &&
-                          request.moduleSha256 == originalContract.moduleSha256 &&
-                          request.initialIntrinsics == originalContract.initialIntrinsics &&
-                          request.elementParameters == originalContract.elementParameters &&
-                          request.provider == originalContract.provider &&
-                          request.entry == originalContract.entry,
-                      "selected attribute refusal preserves both arms and the whole transaction");
-                if (error) { llvm::consumeError(std::move(error)); }
+                checkRefused(
+                    std::move(error),
+                    printed(*candidate) == original && sameContract(request, originalContract),
+                    "selected attribute refusal preserves both arms and the whole transaction");
                 continue;
             }
             if (!check(!error, "selected nullable attribute completes its protected write")) {
@@ -5036,56 +5012,60 @@ static void testSavedAttributePredicates(mlir::MLIRContext & context, SavedSelec
                     return true;
                 } catch (error) { return error === anchor; }
             })js";
-            const auto replace = [&](llvm::StringRef from, llvm::StringRef to) {
-                source.replace(source.find(from.str()), from.size(), to.str());
-            };
             if (control == 1) {
-                replace("anchor.hasAttribute('flag') ? anchor.hasAttribute('data-number') : false",
-                        "anchor.hasAttribute('data-number')");
+                replaceOnce(
+                    source,
+                    "anchor.hasAttribute('flag') ? anchor.hasAttribute('data-number') : false",
+                    "anchor.hasAttribute('data-number')");
             }
             if (control == 2) {
-                replace("anchor.hasAttribute('data-number') : false",
-                        "false : anchor.hasAttribute('data-number')");
+                replaceOnce(source, "anchor.hasAttribute('data-number') : false",
+                            "false : anchor.hasAttribute('data-number')");
             }
             if (control == 3 || control == 11) {
-                replace(
-                    "anchor.hasAttribute('data-number')",
+                replaceOnce(
+                    source, "anchor.hasAttribute('data-number')",
                     "(anchor.hasAttribute('inner') ? anchor.hasAttribute('data-number') : false)");
-                if (control == 11) { replace(": false)", ": anchor)"); }
+                if (control == 11) { replaceOnce(source, ": false)", ": anchor)"); }
             }
-            if (control == 4) { replace(": false", ": anchor.hasAttribute('other')"); }
+            if (control == 4) { replaceOnce(source, ": false", ": anchor.hasAttribute('other')"); }
             if (control == 5) {
-                replace("try {", "try { anchor.setAttribute('data-number', '99');");
+                replaceOnce(source, "try {", "try { anchor.setAttribute('data-number', '99');");
             }
             if (control == 6) {
-                replace("try {", "anchor.setAttribute('data-number', '99'); try {");
+                replaceOnce(source, "try {", "anchor.setAttribute('data-number', '99'); try {");
             }
             if (control == 7) {
-                replace("try {", "const alias = anchor; "
-                                 "alias.setAttribute('data-number', '99'); try {");
+                replaceOnce(source, "try {",
+                            "const alias = anchor; "
+                            "alias.setAttribute('data-number', '99'); try {");
             }
-            if (control == 8) { replace("return true;", "throw anchor;"); }
-            if (control == 9) { replace("anchor.hasAttribute('data-number')", "anchor"); }
-            if (control == 10) { replace(": false", ": anchor"); }
-            if (control == 12) { replace("anchor.hasAttribute('flag')", "unknown()"); }
+            if (control == 8) { replaceOnce(source, "return true;", "throw anchor;"); }
+            if (control == 9) {
+                replaceOnce(source, "anchor.hasAttribute('data-number')", "anchor");
+            }
+            if (control == 10) { replaceOnce(source, ": false", ": anchor"); }
+            if (control == 12) { replaceOnce(source, "anchor.hasAttribute('flag')", "unknown()"); }
             if (control == 13) {
-                replace("anchor.hasAttribute('data-number')",
-                        "(unknown(), anchor.hasAttribute('data-number'))");
+                replaceOnce(source, "anchor.hasAttribute('data-number')",
+                            "(unknown(), anchor.hasAttribute('data-number'))");
             }
-            if (control == 14) { replace(": false", ": (unknown(), false)"); }
-            if (control == 15) { replace("try {", "try { unknown();"); }
+            if (control == 14) { replaceOnce(source, ": false", ": (unknown(), false)"); }
+            if (control == 15) { replaceOnce(source, "try {", "try { unknown();"); }
             if (control == 16) {
-                replace("const saved =", "anchor.hasAttribute = anchor; const saved =");
+                replaceOnce(source, "const saved =", "anchor.hasAttribute = anchor; const saved =");
             }
-            if (control == 17) { replace("data-written", "bad name"); }
+            if (control == 17) { replaceOnce(source, "data-written", "bad name"); }
             if (control == 18) {
-                replace("anchor.hasAttribute('data-number')", "anchor.unknown('data-number')");
+                replaceOnce(source, "anchor.hasAttribute('data-number')",
+                            "anchor.unknown('data-number')");
             }
             if (control == 19) {
-                replace("anchor.hasAttribute('data-number')", "anchor.hasAttribute(anchor)");
+                replaceOnce(source, "anchor.hasAttribute('data-number')",
+                            "anchor.hasAttribute(anchor)");
             }
-            if (control == 28) { replace(": false", ": (anchor = false, false)"); }
-            if (control == 29) { replace("const saved =", "unknown(); const saved ="); }
+            if (control == 28) { replaceOnce(source, ": false", ": (anchor = false, false)"); }
+            if (control == 29) { replaceOnce(source, "const saved =", "unknown(); const saved ="); }
             if (nullable) {
                 for (auto offset = source.find("false"); offset != std::string::npos;
                      offset = source.find("false", offset + 4)) {
@@ -5093,17 +5073,18 @@ static void testSavedAttributePredicates(mlir::MLIRContext & context, SavedSelec
                 }
             }
             if (number) {
-                replace("anchor.hasAttribute('data-number')", "42");
-                if (control == 30) { replace("? 42", "? (40 + 2)"); }
+                replaceOnce(source, "anchor.hasAttribute('data-number')", "42");
+                if (control == 30) { replaceOnce(source, "? 42", "? (40 + 2)"); }
                 if (control == 31) {
-                    replace(": null", ": (anchor.hasAttribute('inner') ? null : -7)");
+                    replaceOnce(source, ": null", ": (anchor.hasAttribute('inner') ? null : -7)");
                 }
                 if (control == 32) {
-                    replace("'data-written', saved", "'data-written', saved.toString()");
+                    replaceOnce(source, "'data-written', saved",
+                                "'data-written', saved.toString()");
                 }
-                if (control == 33) { replace("? 42", "? -anchor"); }
-                if (control == 34) { replace(": null", ": 'text'"); }
-                if (control == 35) { replace(": null", ": undefined"); }
+                if (control == 33) { replaceOnce(source, "? 42", "? -anchor"); }
+                if (control == 34) { replaceOnce(source, ": null", ": 'text'"); }
+                if (control == 35) { replaceOnce(source, ": null", ": undefined"); }
             }
             auto candidate = import(context, source, true);
             if (!candidate) { continue; }
@@ -5139,14 +5120,10 @@ static void testSavedAttributePredicates(mlir::MLIRContext & context, SavedSelec
                                          : control == 27 ? 500
                                                          : 100000);
             if (control >= 9 && control != 30 && control != 31) {
-                check(static_cast<bool>(error) && printed(*candidate) == original &&
-                          request.moduleSha256 == originalContract.moduleSha256 &&
-                          request.initialIntrinsics == originalContract.initialIntrinsics &&
-                          request.elementParameters == originalContract.elementParameters &&
-                          request.provider == originalContract.provider &&
-                          request.entry == originalContract.entry,
-                      "saved predicate refusal preserves both arms and the whole transaction");
-                if (error) { llvm::consumeError(std::move(error)); }
+                checkRefused(
+                    std::move(error),
+                    printed(*candidate) == original && sameContract(request, originalContract),
+                    "saved predicate refusal preserves both arms and the whole transaction");
                 continue;
             }
             if (!check(!error, "saved Boolean predicate completes its protected write")) {
@@ -5212,18 +5189,13 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
         std::string source = "function guarded(element) { try { throw element; } "
                              "catch (error) { return error === element; } }";
         if (control == 1) {
-            source.replace(source.find("error === element"), 17,
-                           "error.hasAttribute('data-closed')");
+            replaceOnce(source, "error === element", "error.hasAttribute('data-closed')");
         }
         if (control == 2) {
             source.insert(source.find("throw element"), "element.hasAttribute('data-before'); ");
         }
-        if (control == 3) {
-            source.replace(source.find("return error === element;"), 25, "throw error;");
-        }
-        if (control == 4) {
-            source.replace(source.find("return error === element;"), 25, "return error;");
-        }
+        if (control == 3) { replaceOnce(source, "return error === element;", "throw error;"); }
+        if (control == 4) { replaceOnce(source, "return error === element;", "return error;"); }
         if (control == 5) { source.insert(source.find("throw element"), "if (element) "); }
         if (control >= 7) {
             source = "function guarded(element) { "
@@ -5232,19 +5204,17 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                      "else { throw element; } } catch (error) { "
                      "return error === element && saved; } }";
             if (control == 8) {
-                source.replace(source.find("error === element && saved"), 26,
-                               "saved && error.hasAttribute('flag')");
+                replaceOnce(source, "error === element && saved",
+                            "saved && error.hasAttribute('flag')");
             }
             if (control == 9) {
                 source.insert(source.find("saved = true"), "element.hasAttribute('inside'); ");
             }
             if (control == 10) {
-                source.replace(source.find("return error === element && saved;"), 34,
-                               "throw error;");
+                replaceOnce(source, "return error === element && saved;", "throw error;");
             }
             if (control == 11) {
-                source.replace(source.find("return error === element && saved;"), 34,
-                               "return error;");
+                replaceOnce(source, "return error === element && saved;", "return error;");
             }
         }
         if (control >= 12) {
@@ -5253,25 +5223,20 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                      "try { if (flag) { saved = true; throw element; } "
                      "else { saved = true; } } catch (error) { "
                      "return error === element && saved; } return !saved; }";
-            if (control == 13) { source.replace(source.find("if (flag)"), 9, "if (!flag)"); }
+            if (control == 13) { replaceOnce(source, "if (flag)", "if (!flag)"); }
             if (control == 14) {
-                source.replace(source.find("throw element;"), 14,
-                               "if (flag) { throw element; } return false;");
+                replaceOnce(source, "throw element;", "if (flag) { throw element; } return false;");
             }
             if (control == 15) {
                 source.insert(source.find("else { saved") + 7, "element.hasAttribute('inside'); ");
             }
             if (control == 16) {
-                source.replace(source.find("return error === element && saved;"), 34,
-                               "throw error;");
+                replaceOnce(source, "return error === element && saved;", "throw error;");
             }
             if (control == 17) {
-                source.replace(source.find("return error === element && saved;"), 34,
-                               "return error;");
+                replaceOnce(source, "return error === element && saved;", "return error;");
             }
-            if (control == 18) {
-                source.replace(source.find("return !saved;"), 14, "return element;");
-            }
+            if (control == 18) { replaceOnce(source, "return !saved;", "return element;"); }
         }
         if (control >= 20) {
             source = "function guarded(element) { "
@@ -5280,21 +5245,19 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                      "try { if (flag) { saved = true; if (inner) { throw element; } } "
                      "else { saved = true; } } catch (error) { "
                      "return error === element && saved; } return !saved; }";
-            if (control == 21) { source.replace(source.find("if (inner)"), 10, "if (!inner)"); }
+            if (control == 21) { replaceOnce(source, "if (inner)", "if (!inner)"); }
             if (control == 22) {
-                source.replace(source.find("error === element && saved"), 26,
-                               "saved && error.hasAttribute('flag')");
+                replaceOnce(source, "error === element && saved",
+                            "saved && error.hasAttribute('flag')");
             }
             if (control == 23) {
                 source.insert(source.find("else { saved") + 7, "element.hasAttribute('inside'); ");
             }
             if (control == 24) {
-                source.replace(source.find("return error === element && saved;"), 34,
-                               "return error;");
+                replaceOnce(source, "return error === element && saved;", "return error;");
             }
             if (control == 25) {
-                source.replace(source.find("return error === element && saved;"), 34,
-                               "throw error;");
+                replaceOnce(source, "return error === element && saved;", "throw error;");
             }
         }
         if (control >= 28) {
@@ -5302,13 +5265,12 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                      "saved = element.hasAttribute('flag'); if (saved) throw element; "
                      "} catch (error) { return error === element && saved; } return saved; }";
             if (control == 29) {
-                source.replace(source.find("element.hasAttribute('flag')"), 28,
-                               "({hasAttribute() { throw false; }}).hasAttribute('flag')");
+                replaceOnce(source, "element.hasAttribute('flag')",
+                            "({hasAttribute() { throw false; }}).hasAttribute('flag')");
             }
-            if (control == 30) { source.replace(source.find("'flag'"), 6, "42"); }
+            if (control == 30) { replaceOnce(source, "'flag'", "42"); }
             if (control == 31) {
-                source.replace(source.find("element.hasAttribute('flag')"), 28,
-                               "decodeURIComponent('%')");
+                replaceOnce(source, "element.hasAttribute('flag')", "decodeURIComponent('%')");
             }
         }
         if (control >= 33) {
@@ -5316,16 +5278,15 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                      "saved = element.hasAttribute('flag'); return saved; "
                      "} catch (error) { return error === element && saved; } }";
             if (control == 34) {
-                source.replace(source.find("return saved;"), 13,
-                               "return saved && element.hasAttribute('second');");
+                replaceOnce(source, "return saved;",
+                            "return saved && element.hasAttribute('second');");
             }
             if (control == 35) {
-                source.replace(source.find("saved = element"), 15, "if (element) saved = element");
+                replaceOnce(source, "saved = element", "if (element) saved = element");
             }
-            if (control == 36) { source.replace(source.find("'flag'"), 6, "42"); }
+            if (control == 36) { replaceOnce(source, "'flag'", "42"); }
             if (control == 37) {
-                source.replace(source.find("element.hasAttribute('flag')"), 28,
-                               "decodeURIComponent('%')");
+                replaceOnce(source, "element.hasAttribute('flag')", "decodeURIComponent('%')");
             }
         }
         if (control >= 40) {
@@ -5333,21 +5294,17 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                      "element.setAttribute('data-written', 'yes'); "
                      "saved = element.hasAttribute('data-written'); throw element; "
                      "} catch (error) { return error === element && saved; } }";
-            if (control == 41) {
-                source.replace(source.find("throw element;"), 14, "return saved;");
-            }
+            if (control == 41) { replaceOnce(source, "throw element;", "return saved;"); }
             if (control == 42) {
-                source.replace(source.find("element.setAttribute"), 20,
-                               "if (element.hasAttribute('flag')) element.setAttribute");
+                replaceOnce(source, "element.setAttribute",
+                            "if (element.hasAttribute('flag')) element.setAttribute");
             }
-            if (control == 43) { source.replace(source.find("'data-written'"), 14, "'bad name'"); }
-            if (control == 44) { source.replace(source.find("'yes'"), 5, "42"); }
-            if (control == 45) {
-                source.replace(source.find("'yes'"), 5, "element.getAttribute('value')");
-            }
+            if (control == 43) { replaceOnce(source, "'data-written'", "'bad name'"); }
+            if (control == 44) { replaceOnce(source, "'yes'", "42"); }
+            if (control == 45) { replaceOnce(source, "'yes'", "element.getAttribute('value')"); }
             if (control == 46) {
-                source.replace(source.find("element.setAttribute"), 20,
-                               "({setAttribute() { throw false; }}).setAttribute");
+                replaceOnce(source, "element.setAttribute",
+                            "({setAttribute() { throw false; }}).setAttribute");
             }
             if (control == 49) {
                 source.insert(source.find("element.setAttribute"),
@@ -5363,7 +5320,7 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
             if (control == 53) {
                 source.insert(source.find("try {"), "if (element) return false; ");
             }
-            if (control == 54) { source.replace(source.find(" : -0"), 5, " : element"); }
+            if (control == 54) { replaceOnce(source, " : -0", " : element"); }
             if (control == 55) { source.insert(source.find("try {"), "element.unknown(); "); }
             if (control == 56) {
                 source.insert(source.find("try {"), "if (saved) element = false; ");
@@ -5422,24 +5379,20 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                 return saved === H.second(element, 'x') && element.getAttribute(shape.key) === null;
             })js";
             if (control == 1) {
-                source.replace(source.find("H.second(element, 'x')"), 22, "H.second(element, 'X')");
+                replaceOnce(source, "H.second(element, 'x')", "H.second(element, 'X')");
             }
             if (control == 2) {
-                source.replace(source.find("H.second(element, 'x')"), 22,
-                               "H.second(element, element.getAttribute('key'))");
+                replaceOnce(source, "H.second(element, 'x')",
+                            "H.second(element, element.getAttribute('key'))");
             }
             if (control == 3) { source.insert(source.find("return saved"), "element.unknown(); "); }
             if (control >= 6) {
-                source.replace(source.find("H.first(element, 'x')"), 21, "H.first(element, 'ÉAZ')");
+                replaceOnce(source, "H.first(element, 'x')", "H.first(element, 'ÉAZ')");
             }
-            if (control == 7) {
-                source.replace(source.find("t.toLowerCase()"), 15, "t.toUpperCase()");
-            }
-            if (control == 8) { source.replace(source.find("t.toLowerCase()"), 15, "unknown(t)"); }
-            if (control == 9) { source.replace(source.find("t.toLowerCase()"), 15, "t.length"); }
-            if (control == 10) {
-                source.replace(source.find("t.toLowerCase()"), 15, "arguments[0]");
-            }
+            if (control == 7) { replaceOnce(source, "t.toLowerCase()", "t.toUpperCase()"); }
+            if (control == 8) { replaceOnce(source, "t.toLowerCase()", "unknown(t)"); }
+            if (control == 9) { replaceOnce(source, "t.toLowerCase()", "t.length"); }
+            if (control == 10) { replaceOnce(source, "t.toLowerCase()", "arguments[0]"); }
             auto candidate = import(context, source, true);
             if (!candidate) { continue; }
             const auto original = printed(*candidate);
@@ -5456,11 +5409,7 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
             if (control != 0 && control != 1 && control != 6) {
                 check(static_cast<bool>(error), "every sibling input and effect needs proof");
                 llvm::consumeError(std::move(error));
-                check(printed(*candidate) == original &&
-                          request.moduleSha256 == before.moduleSha256 &&
-                          request.initialIntrinsics == before.initialIntrinsics &&
-                          request.elementParameters == before.elementParameters &&
-                          request.provider == before.provider && request.entry == before.entry,
+                check(printed(*candidate) == original && sameContract(request, before),
                       "sibling-call refusal preserves the original source and contract");
             } else {
                 if (error) { llvm::errs() << llvm::toString(std::move(error)) << '\n'; }
@@ -5479,19 +5428,17 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
                 for (const key of Object.keys(element.dataset)) result = result + F(key);
                 return result;
             })js";
-            if (control == 1) {
-                source.replace(source.find("t.toLowerCase()"), 15, "t.toUpperCase()");
-            }
+            if (control == 1) { replaceOnce(source, "t.toLowerCase()", "t.toUpperCase()"); }
             if (control == 2) {
                 source.insert(source.find("return result;"), "F(element.getAttribute('key')); ");
             }
             if (control == 3) {
                 source.insert(source.find("var result"), "String.prototype.toLowerCase = F; ");
             }
-            if (control == 6) { source.replace(source.find("/[A-Z]/g"), 8, "/[A-Z]/i"); }
+            if (control == 6) { replaceOnce(source, "/[A-Z]/g", "/[A-Z]/i"); }
             if (control == 7) {
-                source.replace(source.find("t => `-${t.toLowerCase()}`"), 26,
-                               "t => { unknown(t); return `-${t.toLowerCase()}`; }");
+                replaceOnce(source, "t => `-${t.toLowerCase()}`",
+                            "t => { unknown(t); return `-${t.toLowerCase()}`; }");
             }
             auto candidate = import(context, source, true);
             if (!candidate) { continue; }

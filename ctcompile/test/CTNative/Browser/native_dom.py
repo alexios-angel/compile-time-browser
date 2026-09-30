@@ -626,6 +626,16 @@ def refuse(args, ir, manifest, label, reason=None):
             raise RuntimeError(f"{name}: the refusal does not name {reason!r}\n{diagnostic}")
 
 
+def exhaust(args, ir, manifest, label, budgets, message):
+    """Lower `ir` under each step budget as `label`-budget-N (one int budget: `label`-budget);
+    each must refuse as budget exhausted, else raise `message` formatted with the budget."""
+    for budget in (budgets,) if isinstance(budgets, int) else budgets:
+        name = f"{label}-budget" if isinstance(budgets, int) else f"{label}-budget-{budget}"
+        diagnostic = lower(args, ir, manifest, name, max_steps=budget, success=False)
+        if "budget exhausted" not in diagnostic:
+            raise RuntimeError(message.format(budget=budget) + f"\n{diagnostic}")
+
+
 def link_options(args, *, selectors=False, core_only=False):
     cache = dict(
         re.findall(

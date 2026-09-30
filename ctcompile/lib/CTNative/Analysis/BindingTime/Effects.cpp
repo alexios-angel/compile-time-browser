@@ -20,14 +20,8 @@ struct operand {
     effectPath path;
     llvm::StringRef method;
 };
-bool ordinaryCall(ctjs::CallDirectOp call) {
-    auto target = call.getNewTarget().getDefiningOp<ctjs::ConstantOp>();
-    return target && llvm::isa<ctjs::UndefinedAttr>(target.getValue());
-}
 mlir::StringAttr propertyKey(mlir::Value value) {
-    auto constant = value.getDefiningOp<ctjs::ConstantOp>();
-    auto key =
-        constant ? llvm::dyn_cast<ctjs::StringAttr>(constant.getValue()) : ctjs::StringAttr{};
+    auto key = ctjs::constantAttr<ctjs::StringAttr>(value);
     return key && safeEffectKey(key.getValue())
                ? mlir::StringAttr::get(value.getContext(), key.getValue())
                : mlir::StringAttr{};
@@ -166,14 +160,9 @@ effectSummary effectQueries::summarize(ctjs::FuncOp function, unsigned & steps) 
                 output.tag = operand::kind::primitive;
             }
         } else if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(op)) {
-            if (wrote || !ordinaryCall(call) || !effectCalleeMatches(call, module)) { return {}; }
-            auto target = call.getTarget();
-            const auto found = summaries.find(target);
-            if (!target || found == summaries.end() || !found->second.known ||
-                call->getNumOperands() != target.getBody().front().getNumArguments()) {
-                return {};
-            }
-            for (const auto & dependency : found->second.accesses) {
+            const effectSummary * summary = wrote ? nullptr : knownSummary(call);
+            if (!summary) { return {}; }
+            for (const auto & dependency : summary->accesses) {
                 auto actual = values.lookup(call->getOperand(dependency.object.argument));
                 if (actual.tag != operand::kind::reference) { return {}; }
                 effectAccess mapped = dependency;

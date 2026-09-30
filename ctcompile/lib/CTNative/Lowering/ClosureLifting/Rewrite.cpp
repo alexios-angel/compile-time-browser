@@ -252,10 +252,10 @@ liftReport closureLifter::run() {
     // closure used as a value" is a true sentence about `{f: function(){}}`
     // that sends a reader to the wrong slice.
     for (const auto & [op, why] : reasonOf) {
-        op->setAttr("ctnative.closure_reason",
+        op->setAttr(kNativeClosureReason,
                     mlir::StringAttr::get(context, finalReason(finalReason, op, 0)));
         if (methodClosures.contains(op)) {
-            op->setAttr("ctnative.method_refusal", mlir::UnitAttr::get(context));
+            op->setAttr(kNativeMethodRefusal, mlir::UnitAttr::get(context));
         }
     }
     unboxCells(out);
@@ -302,6 +302,11 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
     const auto carriedSlot = [&](unsigned k) {
         return llvm::is_contained(cellArgs, static_cast<int32_t>(captureArgument(k)));
     };
+    // The slot lists a rewritten call carries, beside its callee's.
+    const auto tagSlots = [&](mlir::Operation * site) {
+        if (!cellArgs.empty()) { site->setAttr(kNativeCellArgs, cellSlots); }
+        if (!objectArgs.empty()) { site->setAttr(kNativeObjectArgs, objectSlots); }
+    };
 
     // THE CAPTURES BECOME LEADING PARAMETERS, inserted after the three
     // implicit arguments so that ctjs.call_direct's operand order - which
@@ -318,7 +323,7 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
     // off this function to decide whether its own slot is a pointer -
     // slice 1b, one indirection out.
     if (!cellArgs.empty()) {
-        target->setAttr("ctnative.cell_args", cellSlots);
+        target->setAttr(kNativeCellArgs, cellSlots);
         out.carried += static_cast<unsigned>(cellArgs.size());
     }
 
@@ -369,17 +374,15 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
     // NO UPVALUES LEFT, and the attribute says so: after this the function
     // reads its bindings out of its own frame like any other parameter.
     target->setAttr("upvalue_count", mlir::Builder(context).getI32IntegerAttr(0));
-    target->setAttr("ctnative.captures",
+    target->setAttr(kNativeCaptures,
                     mlir::Builder(context).getI32IntegerAttr(static_cast<int>(captures)));
     if (!objectArgs.empty()) {
-        target->setAttr("ctnative.object_args", objectSlots);
+        target->setAttr(kNativeObjectArgs, objectSlots);
         // Calls made by bindLocalFunctions have no closure-value use for the
         // ordinary rewrite below to visit. Their targets have no captures.
         if (captures == 0) {
             module.walk([&](ctjs::CallDirectOp call) {
-                if (call.getTarget() == target) {
-                    call->setAttr("ctnative.object_args", objectSlots);
-                }
+                if (call.getTarget() == target) { call->setAttr(kNativeObjectArgs, objectSlots); }
             });
         }
         out.objects += static_cast<unsigned>(objectArgs.size());
@@ -424,7 +427,7 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
     const bool carriesReceiver =
         (method || constructor) && (preserveReceiver || !entry.getArgument(0).use_empty());
     if (carriesReceiver) {
-        target->setAttr("ctnative.receiver", mlir::UnitAttr::get(context));
+        target->setAttr(kNativeReceiver, mlir::UnitAttr::get(context));
         ++out.receivers;
     }
 
@@ -446,18 +449,13 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
         // Host preparation retains the exact source callable for independent
         // proof of the rewritten graph. Ordinary local lifting may erase it;
         // native emission drops this unobserved implicit argument in both cases.
-        for (ctjs::CreateClosureOp c : made) {
-            c->setAttr("ctnative.lifted", mlir::UnitAttr::get(context));
-            ++out.closures;
-            out.captures += captures;
-        }
+        for (ctjs::CreateClosureOp c : made) { markLifted(c, out, captures); }
         ctjs::CreateClosureOp only = made.front();
         auto prototype = immutablePrototype(only);
         const auto captured = liftedCaptures(only);
         for (ctjs::ConstructOp built : constructsOfTarget[target.getOperation()]) {
             mlir::OpBuilder at(built);
-            const mlir::Value undefined = ctjs::ConstantOp::create(
-                at, built.getLoc(), valueType, ctjs::UndefinedAttr::get(context));
+            const mlir::Value undefined = undefinedAt(at, built.getLoc());
             // THE INSTANCE. An empty literal: every field it has, the
             // constructor writes through `this`, and `fieldsOf` collects
             // those over the alias group the receiver mark creates.
@@ -475,14 +473,12 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
                                      carriesReceiver ? instance.getResult() : undefined,
                                      preserveReceiver ? built.getCallee() : undefined, undefined,
                                      captured, built.getArgs(), captures + parameters);
-            if (carriesReceiver) {
-                direct->setAttr("ctnative.receiver", mlir::UnitAttr::get(context));
-            }
+            if (carriesReceiver) { direct->setAttr(kNativeReceiver, mlir::UnitAttr::get(context)); }
             // AND WHICH OF ITS ARGUMENTS IS AN ADDRESS. On the CALL as
             // well as the callee, for the reason the receiver mark is on
             // both: `replace()` reads it once per operand and a symbol
             // lookup there would be a lookup per argument per call.
-            if (!cellArgs.empty()) { direct->setAttr("ctnative.cell_args", cellSlots); }
+            if (!cellArgs.empty()) { direct->setAttr(kNativeCellArgs, cellSlots); }
             // AND `new` EVALUATES TO THE INSTANCE, NOT TO THE CALL. That is
             // the whole of context::construct's last line for a body this
             // rule admits: `produced.is_object_like() ? produced : self`,
@@ -510,12 +506,10 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
         // long before it meets the call.
         for (ctjs::CreateClosureOp c : made) {
             for (mlir::Operation * user : c.getResult().getUsers()) {
-                user->setAttr("ctnative.method", mlir::UnitAttr::get(context));
+                user->setAttr(kNativeMethod, mlir::UnitAttr::get(context));
             }
-            c->setAttr("ctnative.lifted", mlir::UnitAttr::get(context));
-            ++out.closures;
+            markLifted(c, out, captures);
             ++out.methods;
-            out.captures += captures;
         }
         const auto captured = liftedCaptures(made.front());
         for (methodCall at : callsOfTarget[target.getOperation()]) {
@@ -523,8 +517,7 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
             // Constructor lifting may already have replaced and erased the
             // receiver recorded by the census. The live call tracks that RAUW.
             at.receiver = at.call.getReceiver();
-            const mlir::Value undefined = ctjs::ConstantOp::create(
-                builder, at.call.getLoc(), valueType, ctjs::UndefinedAttr::get(context));
+            const mlir::Value undefined = undefinedAt(builder, at.call.getLoc());
             // THE RECEIVER IS OPERAND 0 AND ALWAYS WAS. ctjs.call_direct's
             // operands ARE the callee's entry block in order, so passing
             // the object here is the whole of "the receiver is a
@@ -541,14 +534,12 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
             auto direct = directCall(builder, at.call.getLoc(), target,
                                      carriesReceiver ? at.receiver : undefined, undefined,
                                      undefined, captured, at.call.getArgs(), captures + parameters);
-            if (carriesReceiver) {
-                direct->setAttr("ctnative.receiver", mlir::UnitAttr::get(context));
-            }
+            if (carriesReceiver) { direct->setAttr(kNativeReceiver, mlir::UnitAttr::get(context)); }
             // AND WHICH OF ITS ARGUMENTS IS AN ADDRESS. On the CALL as
             // well as the callee, for the reason the receiver mark is on
             // both: `replace()` reads it once per operand and a symbol
             // lookup there would be a lookup per argument per call.
-            if (!cellArgs.empty()) { direct->setAttr("ctnative.cell_args", cellSlots); }
+            if (!cellArgs.empty()) { direct->setAttr(kNativeCellArgs, cellSlots); }
             at.call.getResult().replaceAllUsesWith(direct.getResult());
             at.call.erase();
             // AND THE METHOD LOAD GOES WITH IT. Leaving it would keep a
@@ -588,10 +579,7 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
                 }
                 arguments.append(site.call.getArgs().begin(), site.call.getArgs().end());
                 site.call.getArgsMutable().assign(arguments);
-                if (!cellArgs.empty()) { site.call->setAttr("ctnative.cell_args", cellSlots); }
-                if (!objectArgs.empty()) {
-                    site.call->setAttr("ctnative.object_args", objectSlots);
-                }
+                tagSlots(site.call);
             }
         }
     }
@@ -640,8 +628,7 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
                     "take the address of this frame out of it");
             }
             mlir::OpBuilder at(user);
-            const mlir::Value undefined = ctjs::ConstantOp::create(
-                at, user->getLoc(), valueType, ctjs::UndefinedAttr::get(context));
+            const mlir::Value undefined = undefinedAt(at, user->getLoc());
             // The resolver's own padding rule: op::call fills a missing
             // parameter with undefined, so a short call becomes a full one.
             auto direct = directCall(at, user->getLoc(), target,
@@ -652,15 +639,12 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
             // receiver mark is: `TypeInference::hasClosedShape` is asked
             // once per property access per solver visit, and a symbol
             // lookup there would be quadratic in the module.
-            if (!objectArgs.empty()) { direct->setAttr("ctnative.object_args", objectSlots); }
-            if (!cellArgs.empty()) { direct->setAttr("ctnative.cell_args", cellSlots); }
+            tagSlots(direct);
             user->getResult(0).replaceAllUsesWith(direct.getResult());
             user->erase();
             ++out.calls;
         }
-        c->setAttr("ctnative.lifted", mlir::UnitAttr::get(context));
-        ++out.closures;
-        out.captures += captures;
+        markLifted(c, out, captures);
     }
 }
 

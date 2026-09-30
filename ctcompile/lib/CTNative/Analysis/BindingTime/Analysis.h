@@ -25,11 +25,15 @@ struct fact {
     BindingTime time = BindingTime::Dynamic;
     mlir::Attribute literal;
     llvm::SmallVector<mlir::Operation *> nodes;
+    static fact staticPrimitive(mlir::Attribute literal = {}) {
+        return {kind::primitive, BindingTime::Static, literal, {}};
+    }
+    bool operator==(const fact &) const = default;
 };
 struct heap {
     bool dynamic = false;
     llvm::StringMap<fact> fields;
-    fact contents{fact::kind::primitive, BindingTime::Static, {}, {}};
+    fact contents = fact::staticPrimitive();
     // Conservatively retained graph edges not represented by ordinary fields:
     // Map keys and closure captures. Deleted keys may remain in this superset.
     llvm::SmallVector<fact> retained;
@@ -43,6 +47,10 @@ struct decision {
     std::string reason;
 };
 fact join(fact left, const fact & right, bool staticControl);
+// The static-control join of `part` over `nodes`: the default fact for none,
+// null as soon as `part` has no fact for a node.
+std::optional<fact> joinAcross(llvm::ArrayRef<mlir::Operation *> nodes,
+                               llvm::function_ref<const fact *(mlir::Operation *)> part);
 // A static reference whose every heap node is still tracked and not dynamic.
 bool clean(const fact & value, const flow & state);
 void invalidate(flow & state);

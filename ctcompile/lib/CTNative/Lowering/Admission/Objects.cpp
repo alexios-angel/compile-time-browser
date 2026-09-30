@@ -76,9 +76,29 @@ bool admission::isClosedObject(mlir::Value v) {
 // meets the escape has only the use.
 std::string admission::argumentReason(mlir::Value object) {
     mlir::Operation * literal = object.getDefiningOp();
-    auto why =
-        literal ? literal->getAttrOfType<mlir::StringAttr>("ctnative.object_reason") : nullptr;
+    auto why = literal ? literal->getAttrOfType<mlir::StringAttr>(kNativeObjectReason) : nullptr;
     return why ? "an object literal that escapes - " + why.getValue().str() : std::string{};
+}
+
+std::optional<std::string> admission::escapeRoute(llvm::StringRef literal, mlir::OpOperand & use) {
+    mlir::Operation * user = use.getOwner();
+    if (llvm::isa<ctjs::SetPropertyOp>(user) && use.getOperandNumber() == 2) {
+        return (literal + " that escapes - it is stored into another object").str();
+    }
+    if (llvm::isa<mlir::scf::WhileOp, mlir::scf::YieldOp, mlir::scf::ConditionOp>(user)) {
+        return (literal + " that is loop-carried - more than one value reaches the variable "
+                          "that holds it (assigned again inside a loop, or on only one path "
+                          "before it)")
+            .str();
+    }
+    if (llvm::isa<ctjs::ReturnOp>(user)) {
+        return (literal + " that escapes - it is returned").str();
+    }
+    return std::nullopt;
+}
+
+std::string admission::escapesTo(llvm::StringRef literal, mlir::Operation * user) {
+    return (literal + " that escapes - it reaches `" + user->getName().getStringRef() + "`").str();
 }
 
 std::string admission::whyOpen(mlir::Value object) {
@@ -93,17 +113,7 @@ std::string admission::whyOpen(mlir::Value object) {
         if (ctjs::propertyKey(user) && use.getOperandNumber() == 0) {
             return "an object literal reached through a dynamic key";
         }
-        if (llvm::isa<ctjs::SetPropertyOp>(user) && use.getOperandNumber() == 2) {
-            return "an object literal that escapes - it is stored into another object";
-        }
-        if (llvm::isa<mlir::scf::WhileOp, mlir::scf::YieldOp, mlir::scf::ConditionOp>(user)) {
-            return "an object literal that is loop-carried - more than one value reaches "
-                   "the variable that holds it (assigned again inside a loop, or on only "
-                   "one path before it)";
-        }
-        if (llvm::isa<ctjs::ReturnOp>(user)) {
-            return "an object literal that escapes - it is returned";
-        }
+        if (auto why = escapeRoute("an object literal", use)) { return *why; }
         if (auto call = llvm::dyn_cast<ctjs::CallOp>(user)) {
             // A METHOD CALL THE RECEIVER LIFT DID NOT TAKE. It is still a
             // ctjs.call, so the object is passed to a dispatcher this tier
@@ -124,7 +134,7 @@ std::string admission::whyOpen(mlir::Value object) {
         if (llvm::isa<ctjs::CallDirectOp>(user)) {
             // A DIRECT CALL CARRIES A RECEIVER AND ANY PARAMETER THE LIFT
             // LISTED; anything else in an operand is still an escape.
-            if (use.getOperandNumber() == 0 && user->hasAttr("ctnative.receiver")) { continue; }
+            if (use.getOperandNumber() == 0 && user->hasAttr(kNativeReceiver)) { continue; }
             if (isObjectArg(user, use.getOperandNumber())) { continue; }
             // AND THIS IS WHERE THE ARGUMENT REASON USUALLY LANDS, NOT THE
             // ctjs.call ARM ABOVE. A callee whose parameter this rule
@@ -136,9 +146,7 @@ std::string admission::whyOpen(mlir::Value object) {
             return "an object literal passed to a direct call as an argument - only a "
                    "receiver and a parameter the lift proved read-only are carried";
         }
-        return ("an object literal that escapes - it reaches `" + user->getName().getStringRef() +
-                "`")
-            .str();
+        return escapesTo("an object literal", user);
     }
     return "an object literal whose shape is not closed";
 }
@@ -159,7 +167,7 @@ std::string admission::whyOpenReceiver(mlir::Value self) {
             continue;
         }
         if (llvm::isa<ctjs::CallDirectOp>(user) && use.getOperandNumber() == 0 &&
-            user->hasAttr("ctnative.receiver")) {
+            user->hasAttr(kNativeReceiver)) {
             continue;
         }
         if (llvm::isa<ctjs::CallDirectOp>(user) && isObjectArg(user, use.getOperandNumber())) {

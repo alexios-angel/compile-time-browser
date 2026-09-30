@@ -30,6 +30,14 @@ struct fact {
     }
 };
 
+// Keeps only the entries `other` records with the same value.
+template <class Map> void keepAgreeing(Map & mine, const Map & other) {
+    for (const auto & [key, value] : llvm::make_early_inc_range(mine)) {
+        const auto found = other.find(key);
+        if (found == other.end() || value != found->second) { mine.erase(key); }
+    }
+}
+
 struct state {
     llvm::SmallVector<fact> entries;
     // A has result is a snapshot. Erasure invalidates its implication even
@@ -62,6 +70,11 @@ struct state {
                 found == exactSizes.end() ? std::nullopt : std::optional(found->second)};
     }
 
+    // How two keys compare under this state's size evidence.
+    PrimitiveMapKeyRelation relate(mlir::Value left, mlir::Value right) const {
+        return comparePrimitiveMapKeys(left, right, keyEvidence(left), keyEvidence(right));
+    }
+
     struct size_fact {
         unsigned lower = 0;
         std::optional<unsigned> exact;
@@ -76,9 +89,7 @@ struct state {
             if (!value.present || value.instance != instance) { continue; }
             if (candidates++ == kMaxPrimitiveMapSizeCandidates) { break; }
             if (llvm::all_of(distinct, [&](mlir::Value previous) {
-                    return comparePrimitiveMapKeys(previous, value.key, keyEvidence(previous),
-                                                   keyEvidence(value.key)) ==
-                           PrimitiveMapKeyRelation::Distinct;
+                    return relate(previous, value.key) == PrimitiveMapKeyRelation::Distinct;
                 })) {
                 distinct.push_back(value.key);
             }
@@ -88,9 +99,7 @@ struct state {
             llvm::SmallVector<mlir::Value> possible;
             for (mlir::Value key : found->second) {
                 if (llvm::none_of(possible, [&](mlir::Value previous) {
-                        return comparePrimitiveMapKeys(previous, key, keyEvidence(previous),
-                                                       keyEvidence(key)) ==
-                               PrimitiveMapKeyRelation::Same;
+                        return relate(previous, key) == PrimitiveMapKeyRelation::Same;
                     })) {
                     possible.push_back(key);
                 }
@@ -115,17 +124,14 @@ struct state {
         // only an alias upper bound and cannot prove this key's membership.
         const bool present = llvm::any_of(entries, [&](const fact & old) {
             return old.present && old.instance == value.instance &&
-                   comparePrimitiveMapKeys(old.key, value.key, keyEvidence(old.key),
-                                           keyEvidence(value.key)) == PrimitiveMapKeyRelation::Same;
+                   relate(old.key, value.key) == PrimitiveMapKeyRelation::Same;
         });
         if (present) {
             if (!erase) { return size->second; }
             return size->second ? std::optional(size->second - 1) : std::nullopt;
         }
         const bool absent = llvm::all_of(possible->second, [&](mlir::Value key) {
-            return comparePrimitiveMapKeys(key, value.key, keyEvidence(key),
-                                           keyEvidence(value.key)) ==
-                   PrimitiveMapKeyRelation::Distinct;
+            return relate(key, value.key) == PrimitiveMapKeyRelation::Distinct;
         });
         if (!absent) { return std::nullopt; }
         if (erase) { return size->second; }
@@ -154,12 +160,7 @@ struct state {
         entries.push_back(value);
     }
     void intersect(const state & other) {
-        for (const auto & [instance, exact] : llvm::make_early_inc_range(currentSizes)) {
-            const auto found = other.currentSizes.find(instance);
-            if (found == other.currentSizes.end() || exact != found->second) {
-                currentSizes.erase(instance);
-            }
-        }
+        keepAgreeing(currentSizes, other.currentSizes);
         for (auto & [instance, possible] : llvm::make_early_inc_range(possibleKeys)) {
             const auto found = other.possibleKeys.find(instance);
             if (found == other.possibleKeys.end() ||
@@ -169,12 +170,7 @@ struct state {
                 possible.append(found->second);
             }
         }
-        for (const auto & [value, exact] : llvm::make_early_inc_range(exactSizes)) {
-            const auto found = other.exactSizes.find(value);
-            if (found == other.exactSizes.end() || exact != found->second) {
-                exactSizes.erase(value);
-            }
-        }
+        keepAgreeing(exactSizes, other.exactSizes);
         llvm::erase_if(entries, [&](const fact & value) { return !other.contains(value); });
         for (fact & value : entries) {
             const auto found = llvm::find_if(
@@ -304,8 +300,8 @@ struct presenceAnalysis {
     void collectPublications(const OwnedGlobalRoots * globals) {
         if (!globals || !globals->proved()) { return; }
         for (const auto & root : globals->roots()) {
-            if (!root.methodTable || !root.methodTable->capturedMap) { continue; }
-            const auto & captured = *root.methodTable->capturedMap;
+            if (!root.capturedMap()) { continue; }
+            const auto & captured = *root.capturedMap();
             auto allocation = captured.allocation;
             for (ctjs::CallOp call : captured.calls) {
                 if (actions.lookup(call) == "set" &&
@@ -319,8 +315,8 @@ struct presenceAnalysis {
     void proveRetainedEntries(const OwnedGlobalRoots * globals) {
         if (!globals || !globals->proved()) { return; }
         for (const auto & root : globals->roots()) {
-            if (!root.methodTable || !root.methodTable->capturedMap) { continue; }
-            const auto & captured = *root.methodTable->capturedMap;
+            if (!root.capturedMap()) { continue; }
+            const auto & captured = *root.capturedMap();
             if (captured.childMaps.empty()) { continue; }
             auto allocation = captured.allocation;
             const auto outer = familyOf(allocation.getResult());
@@ -340,10 +336,9 @@ struct presenceAnalysis {
                     break;
                 }
                 if (action != "set") { continue; }
-                auto constant = call.getArgs()[0].getDefiningOp<ctjs::ConstantOp>();
                 const auto payload = storedPayloads.lookup(call);
                 const auto tag = payload.tag();
-                if (!constant || !llvm::isa<ctjs::StringAttr>(constant.getValue()) ||
+                if (!ctjs::constantAttr<ctjs::StringAttr>(call.getArgs()[0]) ||
                     (tag != mlir::TypeID::get<ctjs::BooleanAttr>() &&
                      tag != mlir::TypeID::get<ctjs::NumberAttr>() &&
                      tag != mlir::TypeID::get<ctjs::StringAttr>())) {
@@ -447,12 +442,17 @@ struct presenceAnalysis {
         }
     }
 
+    // A mutation of `instance` leaves no saved size of any Map it may alias.
+    void forgetSizes(state & current, mlir::Value instance) const {
+        for (const auto & [other, exact] : llvm::make_early_inc_range(current.currentSizes)) {
+            if (mayAlias(other, instance)) { current.currentSizes.erase(other); }
+        }
+    }
+
     void eraseKey(state & current, ctjs::CallOp call) const {
         const auto affected = entry(call, current);
         const auto nextSize = current.sizeAfterMutation(affected, true);
-        for (const auto & [instance, exact] : llvm::make_early_inc_range(current.currentSizes)) {
-            if (mayAlias(instance, affected.instance)) { current.currentSizes.erase(instance); }
-        }
+        forgetSizes(current, affected.instance);
         // Only this runtime instance definitely lost the erased key. Other
         // Maps in its schema family may alias it, so their upper bounds remain
         // unchanged while mayErase below invalidates definite membership.
@@ -460,18 +460,14 @@ struct presenceAnalysis {
         if (auto found = current.possibleKeys.find(affected.instance);
             found != current.possibleKeys.end()) {
             llvm::erase_if(found->second, [&](mlir::Value key) {
-                return comparePrimitiveMapKeys(key, affected.key, current.keyEvidence(key),
-                                               current.keyEvidence(affected.key)) ==
-                       PrimitiveMapKeyRelation::Same;
+                return current.relate(key, affected.key) == PrimitiveMapKeyRelation::Same;
             });
         }
         const auto mayErase = [&](fact value) {
             // A schema family may contain several runtime instances. Without
             // an independent disjointness proof, any of them may be this Map.
             return mayAlias(value.instance, affected.instance) &&
-                   comparePrimitiveMapKeys(value.key, affected.key, current.keyEvidence(value.key),
-                                           current.keyEvidence(affected.key)) !=
-                       PrimitiveMapKeyRelation::Distinct;
+                   current.relate(value.key, affected.key) != PrimitiveMapKeyRelation::Distinct;
         };
         for (fact & value : current.entries) {
             if (mayErase(value)) { value.present = false; }
@@ -498,9 +494,7 @@ struct presenceAnalysis {
             }
         }
         const auto nextSize = current.sizeAfterMutation(added, false);
-        for (const auto & [instance, exact] : llvm::make_early_inc_range(current.currentSizes)) {
-            if (mayAlias(instance, added.instance)) { current.currentSizes.erase(instance); }
-        }
+        forgetSizes(current, added.instance);
         for (auto & [instance, possible] : llvm::make_early_inc_range(current.possibleKeys)) {
             if (!mayAlias(instance, added.instance)) { continue; }
             if (instance == added.instance && possible.size() < kMaxPrimitiveMapSizeCandidates) {
@@ -515,9 +509,7 @@ struct presenceAnalysis {
         storedOrigins[call] = added.storedOrigin;
         for (fact & previous : current.entries) {
             if (!mayAlias(previous.instance, added.instance)) { continue; }
-            const auto relation =
-                comparePrimitiveMapKeys(previous.key, added.key, current.keyEvidence(previous.key),
-                                        current.keyEvidence(added.key));
+            const auto relation = current.relate(previous.key, added.key);
             if (relation == PrimitiveMapKeyRelation::Distinct) { continue; }
             if (previous.instance == added.instance && relation == PrimitiveMapKeyRelation::Same) {
                 previous.payload = added.payload;
@@ -643,9 +635,7 @@ struct presenceAnalysis {
                 const auto wanted = entry(call, current);
                 for (fact & value : current.entries) {
                     if (!value.present || value.instance != wanted.instance ||
-                        comparePrimitiveMapKeys(
-                            value.key, wanted.key, current.keyEvidence(value.key),
-                            current.keyEvidence(wanted.key)) != PrimitiveMapKeyRelation::Same) {
+                        current.relate(value.key, wanted.key) != PrimitiveMapKeyRelation::Same) {
                         continue;
                     }
                     proved.insert(op);

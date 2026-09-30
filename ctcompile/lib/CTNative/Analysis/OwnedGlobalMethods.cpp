@@ -12,16 +12,19 @@ namespace ctcompile::ctnative {
 void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContract & contract,
                                           const HostContractAnalysis & host, unsigned maxSteps) {
     const auto spend = [&] {
-        if (workSteps == maxSteps) {
-            budgetExhausted = true;
-            refusal = "owned global method analysis work budget exhausted";
-            return false;
-        }
-        ++workSteps;
-        return true;
+        return this->spend(maxSteps, "owned global method analysis work budget exhausted");
     };
     const auto reject = [&](llvm::StringRef why) {
         if (refusal.empty()) { refusal = why.str(); }
+    };
+    // Charges one step per item of `range` before handing it to `use`; false
+    // once the budget is spent.
+    const auto chargeAll = [&](auto && range, auto && use) {
+        for (auto && item : range) {
+            if (!spend()) { return false; }
+            use(item);
+        }
+        return true;
     };
     const auto & slot = host.slots().front();
     auto owner = slot.owner;
@@ -188,27 +191,16 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
                 reject("scalar callback disagrees with its complete source ownership proof");
                 return;
             }
-            for (mlir::Operation * operation : callback.operations) {
-                if (!spend()) { return; }
+            const auto record = [&](mlir::Operation * operation) {
                 callbackOperations.insert(operation);
-            }
-            for (mlir::Operation * operation :
-                 {callback.owner.getOperation(), callback.initialization.getOperation(),
-                  callback.write.getOperation(), callback.closure.getOperation()}) {
-                if (!spend()) { return; }
-                callbackOperations.insert(operation);
-            }
-            for (ctjs::LoadGlobalOp load : callback.loads) {
-                if (!spend()) { return; }
-                callbackOperations.insert(load);
-            }
-            for (ctjs::GetPropertyOp read : callback.reads) {
-                if (!spend()) { return; }
-                callbackOperations.insert(read);
-            }
-            for (mlir::Operation * call : callback.calls) {
-                if (!spend()) { return; }
-                callbackOperations.insert(call);
+            };
+            const std::initializer_list<mlir::Operation *> sources{
+                callback.owner.getOperation(), callback.initialization.getOperation(),
+                callback.write.getOperation(), callback.closure.getOperation()};
+            if (!chargeAll(callback.operations, record) || !chargeAll(sources, record) ||
+                !chargeAll(callback.loads, record) || !chargeAll(callback.reads, record) ||
+                !chargeAll(callback.calls, record)) {
+                return;
             }
         }
     }
@@ -248,9 +240,8 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
             auto intrinsic = made.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
             auto function = made->getParentOfType<ctjs::FuncOp>();
             if (!childMaps.insert(made).second || made == capture->allocation ||
-                !methodFunctions.contains(function) || !intrinsic || intrinsic.getName() != "Map" ||
+                !methodFunctions.contains(function) || !plainMapConstruction(made) ||
                 intrinsic->getParentOfType<ctjs::FuncOp>() != function ||
-                made.getNewTarget() != intrinsic.getResult() || !made.getArgs().empty() ||
                 !dominance.dominates(intrinsic.getResult(), made)) {
                 reject("owned child Map requires its exact empty method-local constructor");
                 return;
@@ -322,12 +313,8 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
                 return;
             }
             const auto action = ctjs::constantKey(read.getKey());
-            static const llvm::StringMap<unsigned> arities{{"set", 2}, {"clear", 0}, {"keys", 0}};
-            const auto method = action.size() <= 5 ? arities.find(action) : arities.end();
-            const unsigned arity = method != arities.end() ? method->second : 1U;
-            if ((action != "set" && action != "get" && action != "has" && action != "delete" &&
-                 action != "clear" && action != "keys") ||
-                call.getArgs().size() != arity) {
+            const auto arity = action == "keys" ? std::optional(0U) : mapMethodArity(action);
+            if (!arity || call.getArgs().size() != *arity) {
                 reject("owned child Map call has another method or arity");
                 return;
             }
@@ -409,9 +396,9 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
         if (!capture->childEntries.empty()) {
             if (!spend()) { return; }
             const auto & entry = capture->childEntries.front();
-            auto literal = entry.key.getDefiningOp<ctjs::ConstantOp>();
+            auto literal = ctjs::constantAttr<ctjs::StringAttr>(entry.key);
             if (!capture->childMapContents || capture->childEntries.size() != 1 || !literal ||
-                !llvm::isa<ctjs::StringAttr>(literal.getValue()) || !entry.alternatives.tag()) {
+                !entry.alternatives.tag()) {
                 reject("owned child invariant lacks its exact scalar key and category");
                 return;
             }
@@ -427,8 +414,7 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
                         return;
                     }
                     if (action != "set") { continue; }
-                    auto key = call.getArgs()[0].getDefiningOp<ctjs::ConstantOp>();
-                    if (!key || key.getValue() != literal.getValue() ||
+                    if (ctjs::constantAttr<ctjs::StringAttr>(call.getArgs()[0]) != literal ||
                         !(scalar(call.getArgs()[1]) == entry.alternatives.categories())) {
                         reject("owned child mutation does not preserve its required entry");
                         return;
@@ -479,6 +465,19 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
     }
 
     llvm::DenseSet<mlir::Operation *> observations;
+    // Records every scf.if between `read` and the entry as an observation
+    // region; false, rejecting `why` for any other control, when that fails.
+    const auto ifChain = [&](mlir::Operation * read, llvm::StringRef why) {
+        for (auto * parent = read->getParentOp(); parent != entry; parent = parent->getParentOp()) {
+            if (!spend()) { return false; }
+            if (!llvm::isa<mlir::scf::IfOp>(parent)) {
+                reject(why);
+                return false;
+            }
+            observations.insert(parent);
+        }
+        return true;
+    };
     llvm::DenseMap<mlir::Value, PrimitiveAlternatives> returnedScalars;
     if (capture) {
         llvm::DenseSet<mlir::Operation *> returnedCalls;
@@ -516,15 +515,7 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
         for (ctjs::GetPropertyOp read : capture->leafReads) {
             if (!spend()) { return; }
             if (read->getParentOfType<ctjs::FuncOp>() != entry) { continue; }
-            for (auto * parent = read->getParentOp(); parent != entry;
-                 parent = parent->getParentOp()) {
-                if (!spend()) { return; }
-                if (!llvm::isa<mlir::scf::IfOp>(parent)) {
-                    reject("owning entry field read has unsupported control");
-                    return;
-                }
-                observations.insert(parent);
-            }
+            if (!ifChain(read, "owning entry field read has unsupported control")) { return; }
         }
     }
     // The fresh complete host proof also closes entry-local records and Maps.
@@ -547,14 +538,7 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
         localOperations.insert(operation);
         auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation);
         if (!read || read->getParentOfType<ctjs::FuncOp>() != entry) { continue; }
-        for (auto * parent = read->getParentOp(); parent != entry; parent = parent->getParentOp()) {
-            if (!spend()) { return; }
-            if (!llvm::isa<mlir::scf::IfOp>(parent)) {
-                reject("owned local record read has unsupported control");
-                return;
-            }
-            observations.insert(parent);
-        }
+        if (!ifChain(read, "owned local record read has unsupported control")) { return; }
     }
     llvm::SmallVector<mlir::Operation *> operations;
     unsigned functions = 0;
@@ -719,8 +703,7 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
         }
         if (auto returned = llvm::dyn_cast<ctjs::ReturnOp>(operation);
             wrapper && returned && returned->getParentOp() == wrapper) {
-            auto value = returned.getValue().getDefiningOp<ctjs::ConstantOp>();
-            if (wrapperReturn || !value || !llvm::isa<ctjs::UndefinedAttr>(value.getValue())) {
+            if (wrapperReturn || !ctjs::isUndefinedConstant(returned.getValue())) {
                 reject("owned global wrapper must return undefined after publication");
             }
             wrapperReturn = returned;
@@ -975,14 +958,10 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
         factoryCall, factory, table, std::move(methods), {}, wrapper, wrapperCall, capture});
     result.methodTable->calls.append(host.callables().begin(), host.callables().end());
     llvm::DenseMap<mlir::Operation *, unsigned> committed;
-    for (ctjs::LoadGlobalOp load : result.loads) {
-        if (!spend()) { return; }
-        committed[load] = 0;
-    }
-    for (ctjs::GetPropertyOp read : result.reads) {
-        if (!spend()) { return; }
-        committed[read] = 0;
-    }
+    const auto commit = [&](unsigned index) {
+        return [&committed, index](mlir::Operation * operation) { committed[operation] = index; };
+    };
+    if (!chargeAll(result.loads, commit(0)) || !chargeAll(result.reads, commit(0))) { return; }
     if (!spend()) { return; }
     committed[owner] = 0;
     committed[initialization] = 0;
@@ -1004,19 +983,12 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
                                  callback.function};
             root.loads.append(callback.loads.begin(), callback.loads.end());
             root.reads.append(callback.reads.begin(), callback.reads.end());
-            for (mlir::Operation * operation :
-                 {callback.owner.getOperation(), callback.initialization.getOperation(),
-                  callback.write.getOperation()}) {
-                if (!spend()) { return; }
-                committed[operation] = index;
-            }
-            for (ctjs::LoadGlobalOp load : callback.loads) {
-                if (!spend()) { return; }
-                committed[load] = index;
-            }
-            for (ctjs::GetPropertyOp read : callback.reads) {
-                if (!spend()) { return; }
-                committed[read] = index;
+            const std::initializer_list<mlir::Operation *> sources{
+                callback.owner.getOperation(), callback.initialization.getOperation(),
+                callback.write.getOperation()};
+            if (!chargeAll(sources, commit(index)) || !chargeAll(callback.loads, commit(index)) ||
+                !chargeAll(callback.reads, commit(index))) {
+                return;
             }
             roots.push_back(std::move(root));
         }

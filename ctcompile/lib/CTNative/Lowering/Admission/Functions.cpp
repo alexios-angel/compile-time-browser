@@ -28,7 +28,7 @@ bool admission::function(ctjs::FuncOp fn) {
     // same question of the IR that came out, because the lift's proof was
     // made before its own rewrite ran and a later refusal - the callee of
     // a `this.other()` that was not lifted - can have opened it since.
-    const bool carriesReceiver = fn->hasAttr("ctnative.receiver");
+    const bool carriesReceiver = fn->hasAttr(kNativeReceiver);
     if (carriesReceiver && !isClosedObject(entry.getArgument(0))) {
         return refuse("its `this` is no longer a closed-shape receiver - " +
                       whyOpenReceiver(entry.getArgument(0)));
@@ -77,7 +77,7 @@ bool admission::function(ctjs::FuncOp fn) {
     // not have. `ctnative.captures` is written by the lift; it is 0 on
     // every function that was not lifted, which is the shape below
     // unchanged.
-    const auto capturesAttr = fn->getAttrOfType<mlir::IntegerAttr>("ctnative.captures");
+    const auto capturesAttr = fn->getAttrOfType<mlir::IntegerAttr>(kNativeCaptures);
     const unsigned captures = capturesAttr ? static_cast<unsigned>(capturesAttr.getInt()) : 0u;
     for (unsigned i = 3; i < entry.getNumArguments(); ++i) {
         // THE OBJECT PARAMETERS, ASKED THE RECEIVER'S QUESTION. Their
@@ -135,19 +135,15 @@ bool admission::function(ctjs::FuncOp fn) {
         if (o == fn.getOperation()) { return; }
         ok = op(o);
         if (!ok) { return; }
-        // A declaration closure's result is dropped with its store, and
-        // so is a load_global that only names a direct call's callee;
-        // neither has a carrier and neither needs one.
-        if (isDeclarationClosure(o) || isLiftedClosure(o) || isUnboxedCell(o)) { return; }
+        // A result that lowers to nothing needs no carrier: lowersToNothing's
+        // list, plus the bookkeeping, literal and owned-global rows here.
+        // Map bookkeeping is asked of the operation, which may have no result.
         if (isNativeMapBookkeeping(o)) { return; }
         if (domEntry && domBookkeeping(*domEntry, o)) { return; }
-        if (o->getName().getStringRef() == "ub.poison") { return; }
-        if (llvm::isa<ctjs::CreateObjectOp>(o) || isKeyOnlyString(o) || isVectorKeyString(o)) {
-            return;
-        }
+        if (o->getNumResults() == 1 && lowersToNothing(o->getResult(0))) { return; }
+        if (llvm::isa<ctjs::CreateObjectOp>(o)) { return; }
         if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(o);
-            load &&
-            (feedsOnlyDirectCallees(load.getResult()) || ownedGlobalValue(load.getResult()))) {
+            load && ownedGlobalValue(load.getResult())) {
             return;
         }
         // EVERY JAVASCRIPT VALUE THIS OPERATION DEFINES OR CARRIES has a

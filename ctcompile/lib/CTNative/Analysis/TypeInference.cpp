@@ -421,84 +421,80 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
                                                   llvm::ArrayRef<const TypeLattice *> operands,
                                                   llvm::ArrayRef<TypeLattice *> results) {
     mlir::MLIRContext * c = op->getContext();
+    // Answers `type` for the first result; this visit is done.
+    const auto answer = [&](mlir::Type type) {
+        propagateIfChanged(results[0], results[0]->join(TypeValue{type}));
+        return mlir::success();
+    };
+    // Answers `value`'s type, subscribing to it; nothing while it is pending.
+    const auto forward = [&](mlir::Value value) {
+        const auto * source = getLatticeElementFor(getProgramPointAfter(op), value);
+        if (!source->getValue().isUninitialized()) {
+            propagateIfChanged(results[0], results[0]->join(source->getValue()));
+        }
+        return mlir::success();
+    };
 
     if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
         read && domEntry_ && domEntry_->isSymbolDescription(read)) {
-        propagateIfChanged(results[0], results[0]->join(TypeValue{
-                                           OptType::get(c, StrType::get(c, StrEncoding::UTF8))}));
-        return mlir::success();
+        return answer(OptType::get(c, stringType(c)));
     }
 
     if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
         read && domEntry_ && !domEntry_->wellKnownSymbol(read).empty()) {
-        propagateIfChanged(results[0], results[0]->join(TypeValue{SymbolType::get(c)}));
-        return mlir::success();
+        return answer(SymbolType::get(c));
     }
 
     if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
         read && domEntry_ &&
         (domEntry_->isElementVectorIndex(read) || domEntry_->isDocumentElement(read))) {
-        propagateIfChanged(results[0], results[0]->join(TypeValue{DOMElementType::get(c)}));
-        return mlir::success();
+        return answer(DOMElementType::get(c));
     }
 
     if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
         read && domEntry_ &&
         (domEntry_->isStringVectorIndex(read) || domEntry_->datasetValueElement(read))) {
-        propagateIfChanged(results[0],
-                           results[0]->join(TypeValue{StrType::get(c, StrEncoding::UTF8)}));
-        return mlir::success();
+        return answer(stringType(c));
     }
 
     if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
         read && domEntry_ &&
         (domEntry_->isStringVectorLength(read) || domEntry_->isElementVectorLength(read))) {
-        propagateIfChanged(results[0], results[0]->join(TypeValue{doubleType(c)}));
-        return mlir::success();
+        return answer(doubleType(c));
     }
 
     if (auto object = llvm::dyn_cast<ctjs::CreateObjectOp>(op);
         object && domEntry_ && domEntry_->jsonObject(object)) {
-        propagateIfChanged(results[0], results[0]->join(TypeValue{JsonType::get(c)}));
-        return mlir::success();
+        return answer(JsonType::get(c));
     }
 
     if (auto call = llvm::dyn_cast<ctjs::CallOp>(op); call && domEntry_) {
         if (const auto * edge = domEntry_->call(call)) {
             const mlir::Type type =
-                edge->returnsOptionalString()
-                    ? mlir::Type(OptType::get(c, StrType::get(c, StrEncoding::UTF8)))
-                : edge->returnsNumber()  ? doubleType(c)
-                : edge->returnsSymbol()  ? mlir::Type(SymbolType::get(c))
-                : edge->returnsString()  ? mlir::Type(StrType::get(c, StrEncoding::UTF8))
-                : edge->returnsElement() ? mlir::Type(DOMElementType::get(c))
-                : edge->returnsStringVector()
-                    ? mlir::Type(VecType::get(c, StrType::get(c, StrEncoding::UTF8)))
+                edge->returnsOptionalString()  ? mlir::Type(OptType::get(c, stringType(c)))
+                : edge->returnsNumber()        ? doubleType(c)
+                : edge->returnsSymbol()        ? mlir::Type(SymbolType::get(c))
+                : edge->returnsString()        ? mlir::Type(stringType(c))
+                : edge->returnsElement()       ? mlir::Type(DOMElementType::get(c))
+                : edge->returnsStringVector()  ? mlir::Type(VecType::get(c, stringType(c)))
                 : edge->returnsElementVector() ? mlir::Type(VecType::get(c, DOMElementType::get(c)))
                 : edge->returnsJSON()          ? mlir::Type(JsonType::get(c))
                 : edge->returnsBoolean()       ? boolType(c)
                                                : absentType(c);
-            propagateIfChanged(results[0], results[0]->join(TypeValue{type}));
-            return mlir::success();
+            return answer(type);
         }
     }
 
     if (const auto * root = ownedRoots_ ? ownedRoots_->lookup(op) : nullptr) {
         if (llvm::isa<ctjs::CreateObjectOp, ctjs::LoadGlobalOp>(op)) {
-            propagateIfChanged(
-                results[0], results[0]->join(TypeValue{GlobalObjectType::get(c, root->binding)}));
-            return mlir::success();
+            return answer(GlobalObjectType::get(c, root->binding));
         }
         if (llvm::isa<ctjs::GetPropertyOp>(op)) {
             // This exact write precedes every read in the complete live
             // proof. Subscribe to its value; no absent or prototype arm is
             // possible, even when the receiver came from a global load.
             auto write = root->fieldInitialization;
-            const auto * stored = getLatticeElementFor(getProgramPointAfter(op), write.getValue());
-            if (!stored->getValue().isUninitialized()) {
-                propagateIfChanged(results[0], results[0]->join(stored->getValue()));
-            }
-            return mlir::success();
+            return forward(write.getValue());
         }
     }
 
@@ -508,28 +504,18 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
             // The owner proof establishes this exact allocation/store/load
             // edge. Its type still comes from the original live allocation.
             auto object = edge->object;
-            const auto * stored =
-                getLatticeElementFor(getProgramPointAfter(op), object.getResult());
-            if (!stored->getValue().isUninitialized()) {
-                propagateIfChanged(results[0], results[0]->join(stored->getValue()));
-            }
-            return mlir::success();
+            return forward(object.getResult());
         }
     }
     if (llvm::isa<ctjs::CreateObjectOp>(op) && op->hasAttr(kNativeObjectIdentity)) {
-        propagateIfChanged(results[0], results[0]->join(TypeValue{ObjectIdentityType::get(c)}));
-        return mlir::success();
+        return answer(ObjectIdentityType::get(c));
     }
     if (auto object = llvm::dyn_cast<ctjs::CreateObjectOp>(op);
         object && !methodTableName(op).empty()) {
-        propagateIfChanged(
-            results[0], results[0]->join(TypeValue{MethodTableType::get(c, methodTableName(op))}));
-        return mlir::success();
+        return answer(MethodTableType::get(c, methodTableName(op)));
     }
     if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op); read && !methodTableName(op).empty()) {
-        propagateIfChanged(results[0],
-                           results[0]->join(TypeValue{ClosureType::get(c, environmentTarget(op))}));
-        return mlir::success();
+        return answer(ClosureType::get(c, environmentTarget(op)));
     }
 
     // The callable's nominal identity is known before any capture type. Its
@@ -537,9 +523,7 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
     // all capture types first would deadlock Map inference through a closure.
     if (auto made = llvm::dyn_cast<ctjs::CreateClosureOp>(op);
         made && !environmentTarget(op).empty()) {
-        propagateIfChanged(results[0],
-                           results[0]->join(TypeValue{ClosureType::get(c, environmentTarget(op))}));
-        return mlir::success();
+        return answer(ClosureType::get(c, environmentTarget(op)));
     }
     if (auto read = llvm::dyn_cast<ctjs::LoadUpvalueOp>(op);
         read && op->hasAttr(kNativeEnvironmentRead)) {
@@ -548,12 +532,7 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
             static_cast<size_t>(read.getIndex()) >= at->second.size()) {
             return op->emitError("native environment read has no proved capture");
         }
-        const auto * captured = getLatticeElementFor(
-            getProgramPointAfter(op), at->second[static_cast<size_t>(read.getIndex())]);
-        if (!captured->getValue().isUninitialized()) {
-            propagateIfChanged(results[0], results[0]->join(captured->getValue()));
-        }
-        return mlir::success();
+        return forward(at->second[static_cast<size_t>(read.getIndex())]);
     }
 
     // AN UNINITIALIZED OPERAND MEANS "NOT YET", NOT "UNKNOWN". The framework
@@ -572,8 +551,7 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
     }
     if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
         read && isProvedString(operands[0]) && constantKey(read.getKey()) == "length") {
-        propagateIfChanged(results[0], results[0]->join(TypeValue{doubleType(c)}));
-        return mlir::success();
+        return answer(doubleType(c));
     }
 
     mlir::Type mapAnswer;
@@ -693,12 +671,10 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
     // THE CLOSED-WORLD GLOBAL: see TypeInference.h. getLatticeElementFor
     // subscribes this load to every store's operand, so a store whose type
     // widens later re-visits the load.
-    mlir::Type global{};
-    bool globalKnown = false;
+    std::optional<mlir::Type> global;
     if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op)) {
         const auto stores = globalStores_.find(load.getName());
         if (!globalsAreDynamic_ && stores != globalStores_.end() && !stores->second.empty()) {
-            globalKnown = true;
             // A global can be read before its first store. Only the complete
             // live owner proof can remove that implicit absence for an exact
             // scalar load. Check its edge against this module's store index;
@@ -711,26 +687,24 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
                 if (initialization && initialization.getName() == load.getName() &&
                     initialization.getValue() == scalar->value &&
                     stores->second.front() == scalar->value) {
-                    global = {};
+                    global = mlir::Type{};
                 }
             }
-            global = joinLattices(op, stores->second, global);
+            global = joinLattices(op, stores->second, *global);
             // A proved initialized load may precede its producer in solver
             // order. Keep it pending until that subscription produces a type;
             // boxed here would permanently absorb the eventual native type.
-            if (global == nullptr) { return mlir::success(); }
+            if (!*global) { return mlir::success(); }
         }
     }
 
     // THE CLOSED-SHAPE FIELD READ: the join over the stores of that key to
     // that object, from undefined. Same mechanism as the global rule, with
     // getLatticeElementFor subscribing this read to every store.
-    mlir::Type field{};
-    bool fieldKnown = false;
+    std::optional<mlir::Type> field;
     if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) {
         const int64_t identityGroup = nativeObjectFieldGroup(op);
         if (identityGroup >= 0) {
-            fieldKnown = true;
             // The schema joins all stored value types, including explicit
             // Undefined. Only an independent live per-read allocation and
             // initialization proof can remove implicit field absence.
@@ -740,15 +714,14 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
             const auto stores =
                 identityFieldStores_.find({identityGroup, constantKey(get.getKey())});
             if (stores != identityFieldStores_.end()) {
-                field = joinLattices(op, stores->second, field);
+                field = joinLattices(op, stores->second, *field);
             }
             // With absence proved impossible, stored-value lattices may all
             // still be pending. Subscriptions above revisit this read; boxed
             // here would irreversibly absorb the eventual scalar type.
-            if (field == nullptr) { return mlir::success(); }
+            if (!*field) { return mlir::success(); }
         } else if (hasClosedShape(get.getObject())) {
             const llvm::StringRef key = constantKey(get.getKey());
-            fieldKnown = true;
             // AND THE SEED IS DROPPED WHERE A STORE DOMINATES - PHASE 59 SLICE
             // 2 STEP 3, the field half. "Nothing orders the read after a store"
             // is true of a field in general and false of THIS read when a
@@ -761,7 +734,7 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
             // can.
             field = fieldIsAssignedBefore(get.getObject(), key, op) ? mlir::Type{} : absentType(c);
             const auto stores = fieldStores_.find({get.getObject(), key});
-            if (stores != fieldStores_.end()) { field = joinLattices(op, stores->second, field); }
+            if (stores != fieldStores_.end()) { field = joinLattices(op, stores->second, *field); }
             // AN EMPTY JOIN IS "NOT YET", NOT `boxed` - the reason spelled at
             // the carried cell below, and reachable here for the same reason:
             // with the `undefined` seed dropped, every member of this join is a
@@ -769,7 +742,7 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
             // can never also be a dense array (`hasClosedShape` demands a
             // `ctjs.create_object` or an object parameter), so returning here
             // skips no other row.
-            if (field == nullptr) { return mlir::success(); }
+            if (!*field) { return mlir::success(); }
         }
     }
 
@@ -777,11 +750,9 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
     // `vec<element>`; a read of `length` is a Number; a read through an index
     // is the element type. Same mechanism as the two rules above -
     // getLatticeElementFor subscribes the read to every appended value.
-    mlir::Type vector{};
-    bool vectorKnown = false;
+    std::optional<mlir::Type> vector;
     if (auto array = llvm::dyn_cast<ctjs::CreateArrayOp>(op)) {
         if (isDenseVectorSite(array.getResult())) {
-            vectorKnown = true;
             vector = VecType::get(c, elementTypeOf(op, array.getResult()));
         }
     } else if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) {
@@ -791,7 +762,6 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
                 // is a uint32, which does not fit an int32, and nothing here
                 // proves this one is small. `f64` is exact for every length
                 // there is.
-                vectorKnown = true;
                 vector = doubleType(c);
             } else if (isProvedNumeric(operands[1])) {
                 // THE KEY HAS TO BE PROVED A NUMBER, and not merely "not a
@@ -801,13 +771,12 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
                 // appends and index reads. A boolean, undefined or null key
                 // names a property nothing wrote, which is `undefined` - and
                 // undefined is where the join below starts.
-                vectorKnown = true;
                 if (const auto found = arrayReadValues_.find(op); found != arrayReadValues_.end()) {
                     // Unlike the storage schema, this read sees only its exact
                     // current origins. No undefined seed: every path owns this
                     // index. Subscribe to all origins and wait for the first type.
-                    vector = joinLattices(op, found->second, vector);
-                    if (!vector) { return mlir::success(); }
+                    vector = joinLattices(op, found->second, mlir::Type{});
+                    if (!*vector) { return mlir::success(); }
                 } else {
                     vector = elementTypeOf(op, get.getObject());
                 }
@@ -818,11 +787,9 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
     // THE SHARED BINDING (part 24 Phase 59 slice 2 step 2). The box and every
     // read of it answer the join over everything ever assigned to it, from its
     // initial - one type for one `double`, whichever of the two spellings asks.
-    mlir::Type cell{};
-    bool cellKnown = false;
+    std::optional<mlir::Type> cell;
     if (auto made = llvm::dyn_cast<ctjs::CreateCellOp>(op)) {
         if (made->hasAttr("ctnative.carried")) {
-            cellKnown = true;
             cell = cellTypeOf(op, made.getResult());
             // AND AN EMPTY JOIN IS "NOT YET", NOT `boxed` - the same
             // distinction the operand loop at the top of this function draws,
@@ -833,24 +800,21 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
             // through would answer `boxed`, which absorbs, and the binding
             // would never recover - `n = n + 1` is exactly the cycle, since the
             // stored value reads the box.
-            if (cell == nullptr) { return mlir::success(); }
+            if (!*cell) { return mlir::success(); }
         }
     } else if (auto read = llvm::dyn_cast<ctjs::CellGetOp>(op)) {
         // THE OPERAND'S OWN TYPE, not a second join: `operands[0]` is the box
         // in this frame or the pointer a lifted call handed us, and either
         // already carries the answer the row above computed. A second walk
         // here would be a second chance for the two to disagree.
-        if (namesACarriedCell(read.getCell())) {
-            cellKnown = true;
-            cell = operands[0]->getValue().getType();
-        }
+        if (namesACarriedCell(read.getCell())) { cell = operands[0]->getValue().getType(); }
     }
 
-    const mlir::Type fromOperation = cellKnown     ? cell
-                                     : vectorKnown ? vector
-                                     : fieldKnown  ? field
-                                     : globalKnown
-                                         ? global
+    const mlir::Type fromOperation = cell     ? *cell
+                                     : vector ? *vector
+                                     : field  ? *field
+                                     : global
+                                         ? *global
                                          : (numeric != nullptr ? numeric : staticResultType(op));
     for (TypeLattice * result : results) {
         const mlir::Type answer = fromOperation != nullptr ? fromOperation : BoxedType::get(c);

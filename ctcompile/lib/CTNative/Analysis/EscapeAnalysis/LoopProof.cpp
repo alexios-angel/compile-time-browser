@@ -310,6 +310,37 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
     const auto endpointNumber = [](const ContentsValue & endpoint) {
         return *endpoint.signedNumber();
     };
+    // Whether `value` has an exact Number, taking its original literal's
+    // bounded value when no exact fact is recorded yet.
+    const auto exactOrLiteral = [](ContentsValue & value) {
+        if (!value.exactNumber()) {
+            value.integerNumber = boundedNumber(value.origin());
+            if (!value.integerNumber) {
+                value.negativeIntegerNumber = boundedNumber(value.origin(), true);
+            }
+        }
+        return value.exactNumber();
+    };
+    // One proved value, or at most two lattice points (no interior visit).
+    const auto singleton = [&](const IndexRange & range) {
+        return endpointNumber(range.first) == endpointNumber(range.last);
+    };
+    const auto twoPoint = [&](const IndexRange & range) {
+        return endpointNumber(range.last) - endpointNumber(range.first) <=
+               static_cast<std::int64_t>(range.stride);
+    };
+    // Replaces both endpoints by `transfer`'s exact image, charging each;
+    // false when a charge or an image fails.
+    const auto mapEndpoints = [&](IndexRange & range, mlir::Value operand, auto && transfer) {
+        for (ContentsValue * endpoint : {&range.first, &range.last}) {
+            if (!charge()) { return false; }
+            ContentsValue result{operand, ContentsKind::NonBigInt};
+            transfer(*endpoint, result);
+            if (!result.exactNumber()) { return false; }
+            *endpoint = result;
+        }
+        return true;
+    };
     const auto boundEndpointPair = [&](IndexRange & range) {
         if (endpointNumber(range.first) > endpointNumber(range.last)) {
             std::swap(range.first, range.last);
@@ -378,20 +409,10 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                     }
                     auto scalar = invariant(invariant, input, 0);
                     if (!scalar || !scalar->origin()) { return std::nullopt; }
-                    if (!scalar->integerNumber && !scalar->negativeIntegerNumber) {
-                        scalar->integerNumber = boundedNumber(scalar->origin());
-                        if (!scalar->integerNumber) {
-                            scalar->negativeIntegerNumber = boundedNumber(scalar->origin(), true);
-                        }
-                    }
-                    if (!scalar->integerNumber && !scalar->negativeIntegerNumber) {
-                        return std::nullopt;
-                    }
+                    if (!exactOrLiteral(*scalar)) { return std::nullopt; }
                     range = IndexRange{*scalar, *scalar, 1};
                 }
-                if (endpointNumber(range->first) != endpointNumber(range->last)) {
-                    period = std::gcd(period, range->stride);
-                }
+                if (!singleton(*range)) { period = std::gcd(period, range->stride); }
                 if (joined) {
                     const auto displacement =
                         endpointNumber(range->first) - endpointNumber(joined->first);
@@ -437,7 +458,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             if (!key) { return std::nullopt; }
             // ponytail: refine varying keys to singletons; table image lattices
             // can replace subdivision if the shared proof budget needs them.
-            if (endpointNumber(key->first) != endpointNumber(key->last)) {
+            if (!singleton(*key)) {
                 refinableEnclosure = true;
                 return std::nullopt;
             }
@@ -468,13 +489,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                     positive ? std::nullopt : boundedConvertedNumber(result, true);
                 result = {operand, ContentsKind::NonBigInt, positive, negative};
             }
-            if (!result.integerNumber && !result.negativeIntegerNumber) {
-                result.integerNumber = boundedNumber(result.origin());
-                if (!result.integerNumber) {
-                    result.negativeIntegerNumber = boundedNumber(result.origin(), true);
-                }
-            }
-            if (!result.integerNumber && !result.negativeIntegerNumber) { return std::nullopt; }
+            if (!exactOrLiteral(result)) { return std::nullopt; }
             return IndexRange{result, result, 1, key->mixedShift};
         }
         if (auto unary = llvm::dyn_cast_or_null<ctjs::UnaryOp>(expression);
@@ -538,9 +553,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                 if (unary.getKind() == ctjs::UnaryKind::BitNot) {
                     ContentsValue result{operand, ContentsKind::NonBigInt};
                     boundedNumberComplement(*endpoint, result);
-                    if (!result.integerNumber && !result.negativeIntegerNumber) {
-                        return std::nullopt;
-                    }
+                    if (!result.exactNumber()) { return std::nullopt; }
                     *endpoint = result;
                 } else if (unary.getKind() == ctjs::UnaryKind::Neg) {
                     if (endpoint->integerNumber != 0) {
@@ -666,14 +679,14 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             // An invariant left operand still needs its original operand order.
             // Refine varying divisors/counts to singleton values, then reuse the
             // exact scalar transfer; bounds and fractional checks remain intact.
-            if (endpointNumber(range->first) != endpointNumber(range->last)) {
+            if (!singleton(*range)) {
                 refinableEnclosure = true;
                 return std::nullopt;
             }
             if (!charge()) { return std::nullopt; }
             ContentsValue result{operand, ContentsKind::NonBigInt};
             boundedNumberBinary(kind, *offset, range->first, result);
-            if (!result.integerNumber && !result.negativeIntegerNumber) { return std::nullopt; }
+            if (!result.exactNumber()) { return std::nullopt; }
             return IndexRange{result, result, 1, range->mixedShift};
         }
         // A varying offset, factor, divisor, shift count or mask may have one exact bounded value.
@@ -684,10 +697,9 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             invariantFailure != ArrayContentsFailure::WorkLimit) {
             const auto other =
                 self(self, expression->getOperand(offsetOperand), depth + 1, operandUse);
-            if (other && endpointNumber(other->first) == endpointNumber(other->last)) {
+            if (other && singleton(*other)) {
                 offset = other->first;
-            } else if (other && (bitAnd || bitOr || bitXor) &&
-                       endpointNumber(range->first) == endpointNumber(range->last)) {
+            } else if (other && (bitAnd || bitOr || bitXor) && singleton(*range)) {
                 offset = range->first;
                 range = other;
                 offsetOperand = 1U - offsetOperand;
@@ -704,9 +716,9 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         // A syntactically varying operand can still have one proved value.
         // Reuse the invariant power transfer; its producers and reloads remain
         // subject to the complete census and ordinary replay below.
-        if (exponent && endpointNumber(exponent->first) == endpointNumber(exponent->last)) {
+        if (exponent && singleton(*exponent)) {
             offset = exponent->first;
-        } else if (exponent && endpointNumber(range->first) == endpointNumber(range->last)) {
+        } else if (exponent && singleton(*range)) {
             offset = range->first;
             range = exponent;
             offsetOperand = 0;
@@ -746,9 +758,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             if (!exponent->first.integerNumber && zeroBase) { return std::nullopt; }
             // Every combination is an exact scalar identity. An odd exponent
             // can retain a negative unit; zero to zero must still include one.
-            const bool varyingParity =
-                endpointNumber(exponent->first) != endpointNumber(exponent->last) &&
-                exponent->stride % 2 != 0;
+            const bool varyingParity = !singleton(*exponent) && exponent->stride % 2 != 0;
             const bool odd = endpointNumber(exponent->first) % 2 != 0 || varyingParity;
             const bool even = endpointNumber(exponent->first) % 2 == 0 || varyingParity;
             ContentsValue first{operand, ContentsKind::NonBigInt, zeroBase ? 0U : 1U};
@@ -769,20 +779,17 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         if (!offset) { return std::nullopt; }
         // At most two varying values need only their exact scalar power proofs;
         // no interior value can introduce another extremum or unproved power.
-        const bool twoPointPower =
-            power && endpointNumber(range->last) - endpointNumber(range->first) <=
-                         static_cast<std::int64_t>(range->stride);
+        const bool twoPointPower = power && twoPoint(*range);
         if (power && !twoPointPower) {
             if (!charge()) { return std::nullopt; }
             if (offsetOperand == 0 && boundedConvertedNumber(*offset, true) == 1) {
                 ContentsValue result{operand, ContentsKind::NonBigInt};
                 boundedNumberPower(*offset, range->first, result);
-                if (!result.integerNumber && !result.negativeIntegerNumber) { return std::nullopt; }
+                if (!result.exactNumber()) { return std::nullopt; }
                 // Even strides preserve parity, including negative exponents.
                 // Odd strides may alternate despite equal endpoint powers;
                 // enclose both signs and keep the unwritten zero gap.
-                if (range->stride % 2 == 0 ||
-                    endpointNumber(range->first) == endpointNumber(range->last)) {
+                if (range->stride % 2 == 0 || singleton(*range)) {
                     return IndexRange{result, result, 1, range->mixedShift};
                 }
                 result.integerNumber.reset();
@@ -797,7 +804,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                 // map it to zero; even powers otherwise have equal endpoints.
                 ContentsValue first{operand, ContentsKind::NonBigInt};
                 boundedNumberPower(range->first, *offset, first);
-                if (!first.integerNumber && !first.negativeIntegerNumber) { return std::nullopt; }
+                if (!first.exactNumber()) { return std::nullopt; }
                 if (first.integerNumber) { first.integerNumber = 0; }
                 return IndexRange{
                     first, {operand, ContentsKind::NonBigInt, 1}, 1, range->mixedShift};
@@ -827,14 +834,10 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             // Between consecutive multiples, remainder is affine, including
             // the central band across zero. Preserve the enclosing lattice.
             if (quotient(range->first) == quotient(range->last)) {
-                for (ContentsValue * endpoint : {&range->first, &range->last}) {
-                    if (!charge()) { return std::nullopt; }
-                    ContentsValue result{operand, ContentsKind::NonBigInt};
-                    boundedNumberDivision(*endpoint, *offset, true, result);
-                    if (!result.integerNumber && !result.negativeIntegerNumber) {
-                        return std::nullopt;
-                    }
-                    *endpoint = result;
+                if (!mapEndpoints(*range, operand, [&](const auto & endpoint, auto & result) {
+                        boundedNumberDivision(endpoint, *offset, true, result);
+                    })) {
+                    return std::nullopt;
                 }
                 return range;
             }
@@ -869,8 +872,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             // With no interior lattice point, both endpoint images enclose
             // every visit even across a ToInt32 discontinuity. Magnitudes are
             // bounded by 2^32-1, so their signed difference fits int64_t.
-            const bool twoPoints = endpointNumber(range->last) - endpointNumber(range->first) <=
-                                   static_cast<std::int64_t>(range->stride);
+            const bool twoPoints = twoPoint(*range);
             const auto inputStride = std::size_t{1} << std::countr_zero(range->stride);
             const auto fixed = static_cast<std::uint32_t>(inputStride - 1);
             const auto lower = numberBits(range->first);
@@ -899,14 +901,10 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
                     range->mixedShift |= range->stride % roundedStride != 0;
                     range->stride = roundedStride;
                 }
-                for (ContentsValue * endpoint : {&range->first, &range->last}) {
-                    if (!charge()) { return std::nullopt; }
-                    ContentsValue result{operand, ContentsKind::NonBigInt};
-                    boundedNumberBitwise(*endpoint, *offset, *bitwise, result);
-                    if (!result.integerNumber && !result.negativeIntegerNumber) {
-                        return std::nullopt;
-                    }
-                    *endpoint = result;
+                if (!mapEndpoints(*range, operand, [&](const auto & endpoint, auto & result) {
+                        boundedNumberBitwise(endpoint, *offset, *bitwise, result);
+                    })) {
+                    return std::nullopt;
                 }
                 if (twoPoints) {
                     boundEndpointPair(*range);
@@ -964,8 +962,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         }
         // Two input points need no monotone conversion or output band. Their
         // exact images also retain gaps lost by uneven right-shift rounding.
-        const bool twoPoints = endpointNumber(range->last) - endpointNumber(range->first) <=
-                               static_cast<std::int64_t>(range->stride);
+        const bool twoPoints = twoPoint(*range);
         const bool twoPointShift = shift && twoPoints;
         const bool twoPointProduct = multiply && twoPoints;
         std::int64_t roundedIntervals = 0;
@@ -1036,19 +1033,19 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             if (!divisor) { divisor = boundedConvertedNumber(*offset, true); }
             const auto first = range->first.integerNumber ? range->first.integerNumber
                                                           : range->first.negativeIntegerNumber;
-            const bool singleton = endpointNumber(range->first) == endpointNumber(range->last);
+            const bool single = singleton(*range);
             // Divide the positive stride magnitude; divisor sign only reverses
             // endpoint order. Distinct endpoints can hide fractional positions;
             // a singleton has no adjacent visit whose stride needs dividing.
             if (!divisor || *divisor == 0 || *first % *divisor != 0 ||
-                (!singleton && range->stride % *divisor != 0)) {
+                (!single && range->stride % *divisor != 0)) {
                 // Correlated unions can include fractional quotients absent
                 // from every actual visit. Only subdivision may discharge this
                 // failure; no fractional value becomes an integer range fact.
                 refinableEnclosure |= divisor && *divisor != 0 && range->mixedShift;
                 return std::nullopt;
             }
-            range->stride = singleton ? 1 : range->stride / *divisor;
+            range->stride = single ? 1 : range->stride / *divisor;
         }
         // Preserve each source operation: reassociating (i + large) - large
         // could hide an inexact intermediate. Signed bounded intermediates are
@@ -1060,7 +1057,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             const bool swapped = offsetOperand == 0 && (power || subtract);
             boundedNumberBinary(kind, swapped ? *offset : *endpoint, swapped ? *endpoint : *offset,
                                 result);
-            if (!result.integerNumber && !result.negativeIntegerNumber) {
+            if (!result.exactNumber()) {
                 // A mixed enclosure may overstate an actual intermediate. Only
                 // subdivision can discharge it; every visited scalar must pass.
                 refinableEnclosure |= range->mixedShift;
@@ -1070,7 +1067,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         }
         if (multiply && !twoPointProduct) {
             if (!charge()) { return std::nullopt; }
-            if (endpointNumber(range->first) == endpointNumber(range->last)) {
+            if (singleton(*range)) {
                 // Proven singleton products have no adjacent visit to scale.
                 range->stride = 1;
             } else {

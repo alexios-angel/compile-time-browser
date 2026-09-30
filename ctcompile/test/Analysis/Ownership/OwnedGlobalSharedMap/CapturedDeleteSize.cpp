@@ -438,13 +438,10 @@ void checkCapturedMapDeleteSizeOwner(mlir::MLIRContext & context, const std::str
         });
         contract = mapContractFor(*mutated);
         const auto refuse = [&] {
-            OwnedGlobalRoots stale(*mutated, contract);
-            check(!stale.proved() && stale.reason().contains("fingerprint") &&
-                      empty(*mutated, stale),
-                  "live known-mutation edits invalidate their original fingerprint");
-            OwnedGlobalRoots fresh(*mutated, mapContractFor(*mutated));
-            check(!fresh.proved() && !fresh.exhausted() && empty(*mutated, fresh),
-                  "fresh fingerprints and forged reports cannot prove changed key relations");
+            checkStaleAndRefused(
+                *mutated, contract, mapContractFor(*mutated),
+                "live known-mutation edits invalidate their original fingerprint",
+                "fresh fingerprints and forged reports cannot prove changed key relations");
         };
         const auto key = mutation.getArgs().front();
         mutation->setOperand(2, one.getResult());
@@ -512,13 +509,10 @@ void checkCapturedMapDeleteSizeOwner(mlir::MLIRContext & context, const std::str
                 });
                 joinedContract = mapContractFor(*joinedModule);
                 const auto refused = [&] {
-                    OwnedGlobalRoots stale(*joinedModule, joinedContract);
-                    check(!stale.proved() && stale.reason().contains("fingerprint") &&
-                              empty(*joinedModule, stale),
-                          "a live join edit invalidates the former ownership fingerprint");
-                    OwnedGlobalRoots fresh(*joinedModule, mapContractFor(*joinedModule));
-                    check(!fresh.proved() && !fresh.exhausted() && empty(*joinedModule, fresh),
-                          "fresh fingerprints and forged size reports cannot hide unequal arms");
+                    checkStaleAndRefused(
+                        *joinedModule, joinedContract, mapContractFor(*joinedModule),
+                        "a live join edit invalidates the former ownership fingerprint",
+                        "fresh fingerprints and forged size reports cannot hide unequal arms");
                 };
                 snapshot->moveBefore(joined);
                 refused();
@@ -551,12 +545,8 @@ void checkCapturedMapDeleteSizeOwner(mlir::MLIRContext & context, const std::str
         const unsigned completion = complete.steps();
         check(complete.proved() && completion < 20000, "delete-size complete proof is bounded");
         if (!complete.proved() || completion >= 20000) { continue; }
-        for (unsigned budget = 0; budget < completion; ++budget) {
-            OwnedGlobalRoots limited(*module, contract, budget);
-            check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
-                      empty(*module, limited),
-                  "every incomplete delete-size budget withholds the complete owner proof");
-        }
+        checkBudgetsBelow(*module, contract, completion,
+                          "every incomplete delete-size budget withholds the complete owner proof");
         OwnedGlobalRoots exact(*module, contract, completion);
         check(exact.proved() && exact.steps() == completion,
               "the exact charged deletion budget reproduces complete ownership");
@@ -583,13 +573,10 @@ void checkCapturedMapDeleteSizeOwner(mlir::MLIRContext & context, const std::str
         });
         contract = mapContractFor(*module);
         const auto refused = [&] {
-            OwnedGlobalRoots stale(*module, contract);
-            check(!stale.proved() && stale.reason().contains("fingerprint") &&
-                      empty(*module, stale),
-                  "live deletion edits invalidate the original owner fingerprint");
-            OwnedGlobalRoots fresh(*module, mapContractFor(*module));
-            check(!fresh.proved() && !fresh.exhausted() && empty(*module, fresh),
-                  "fresh fingerprints and forged reports cannot repair changed deletion evidence");
+            checkStaleAndRefused(
+                *module, contract, mapContractFor(*module),
+                "live deletion edits invalidate the original owner fingerprint",
+                "fresh fingerprints and forged reports cannot repair changed deletion evidence");
         };
         snapshot->moveBefore(deletion);
         refused();

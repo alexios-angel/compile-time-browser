@@ -7,7 +7,7 @@ from pathlib import Path
 import re
 
 from CTNative.HostContract import contract as host
-from CTNative.harness import prepare_js
+from CTNative.harness import forge_module, prepare_js
 
 
 def specialize(opt, ir, contract, prefix, *, success=True, options=""):
@@ -316,11 +316,7 @@ def main():
         raise RuntimeError("exhausted discovery retained candidate rewrites")
     unknown = prepared["unknown_before"]
     forged = args.work / "forged.mlir"
-    forged.write_text(
-        unknown.read_text().replace(
-            "module attributes {", "module attributes {ctnative.host_prefix_proved = true, ", 1
-        )
-    )
+    forged.write_text(forge_module(unknown.read_text(), "ctnative.host_prefix_proved = true"))
     report, _, _ = specialize(
         args.opt, forged, host.manifest(args.opt, unknown), args.work / "forged-check"
     )
@@ -451,11 +447,7 @@ def main():
                 raise RuntimeError("intrinsic identity declaration became a complete effect proof")
             forged_resource = args.work / "forged-resource.mlir"
             forged_resource.write_text(
-                ir.read_text().replace(
-                    "module attributes {",
-                    'module attributes {ctnative.host_intrinsics = ["Map", "Array"], ',
-                    1,
-                )
+                forge_module(ir.read_text(), 'ctnative.host_intrinsics = ["Map", "Array"]')
             )
             opaque, _, _ = specialize(
                 args.opt,
@@ -564,10 +556,9 @@ def main():
             raise RuntimeError("realm work exhaustion retained a proof")
         forged = args.work / f"{name}-forged.mlir"
         forged.write_text(
-            ir.read_text().replace(
-                "module attributes {",
-                'module attributes {ctnative.host_entry_receiver = "classic-script-realm", ctnative.host_realm_slots = ["slot"], ',
-                1,
+            forge_module(
+                ir.read_text(),
+                'ctnative.host_entry_receiver = "classic-script-realm", ctnative.host_realm_slots = ["slot"]',
             )
         )
         no_receiver = dict(realm_contract)

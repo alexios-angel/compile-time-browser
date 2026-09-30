@@ -64,21 +64,20 @@ struct closedValueFlow {
     // Other flow consumers must not acquire new escape permissions implicitly.
     void connectOwnedMethodTableSlots(const OwnedMethodTableSlots & slots) {
         for (const OwnedMethodTableSlot & slot : slots.slots()) {
-            auto initialization = slot.initialization;
-            for (ctjs::GetPropertyOp read : slot.reads) {
-                join(initialization.getValue(), read.getResult());
-            }
+            joinReads(slot.initialization, slot.reads);
         }
     }
     // Only a complete live global-owner query can connect an exported
     // field. This does not turn arbitrary global loads into local aliases.
     void connectOwnedGlobalMethodTables(const OwnedGlobalRoots & roots) {
         for (const OwnedGlobalRoot & root : roots.roots()) {
-            if (!root.methodTable) { continue; }
-            auto initialization = root.fieldInitialization;
-            for (ctjs::GetPropertyOp read : root.reads) {
-                join(initialization.getValue(), read.getResult());
-            }
+            if (root.methodTable) { joinReads(root.fieldInitialization, root.reads); }
+        }
+    }
+    // Every read of a slot yields the value its initialization stored.
+    void joinReads(ctjs::SetPropertyOp initialization, llvm::ArrayRef<ctjs::GetPropertyOp> reads) {
+        for (ctjs::GetPropertyOp read : reads) {
+            join(initialization.getValue(), read.getResult());
         }
     }
     // Opt-in edges from the native closure proof, not generic flow permission.

@@ -84,8 +84,7 @@ void checkSavedScalarGlobalTypes(mlir::MLIRContext & context) {
     using fixtures::replaced;
     const auto require = [](bool condition, const char * message) {
         if (condition) { return; }
-        std::printf("FAIL scalar global inference: %s\n", message);
-        ++ctbrowser_test_failures;
+        fail("scalar global inference: {}", message);
     };
     const auto requested = [](mlir::ModuleOp module) {
         auto contract = fixtures::mapContractFor(module);

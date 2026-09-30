@@ -14,8 +14,7 @@ void checkComparisonIdentityPreparation(mlir::ModuleOp module, const char * what
     std::vector<mlir::Operation *> after;
     module.walk([&](mlir::Operation * op) { after.push_back(op); });
     if (after != operations) {
-        std::printf("FAIL %s: identity preparation changed source operations\n", what);
-        ++ctbrowser_test_failures;
+        fail("{}: identity preparation changed source operations", what);
         return;
     }
     std::vector<std::pair<int64_t, int64_t>> groups;
@@ -24,44 +23,34 @@ void checkComparisonIdentityPreparation(mlir::ModuleOp module, const char * what
     for (size_t index = 0; index < operations.size(); ++index) {
         auto * op = operations[index];
         if (!llvm::equal(op->getOperands(), operands[index])) {
-            std::printf("FAIL %s: identity preparation changed a source operand\n", what);
-            ++ctbrowser_test_failures;
+            fail("{}: identity preparation changed a source operand", what);
         }
         if (auto object = llvm::dyn_cast<ctjs::CreateObjectOp>(op)) {
             ++allocations;
             auto expected = op->getAttrOfType<mlir::BoolAttr>("test_identity");
             if (!expected || op->hasAttr(ctnative::kNativeObjectIdentity) != expected.getValue()) {
-                std::printf("FAIL %s: fresh allocation %u has the wrong identity proof\n", what,
-                            allocations);
-                ++ctbrowser_test_failures;
+                fail("{}: fresh allocation {} has the wrong identity proof", what, allocations);
             }
             typed |= expected && expected.getValue() && op->hasAttr("check");
         } else if (op->hasAttr(ctnative::kNativeObjectIdentity)) {
-            std::printf("FAIL %s: a non-allocation producer retained a forged identity\n", what);
-            ++ctbrowser_test_failures;
+            fail("{}: a non-allocation producer retained a forged identity", what);
         }
         if (auto expected = op->getAttrOfType<mlir::IntegerAttr>("test_field_family")) {
             const int64_t group = ctnative::nativeObjectFieldGroup(op);
             if ((group >= 0) != (expected.getInt() >= 0)) {
-                std::printf("FAIL %s: scalar field has the wrong family proof\n", what);
-                ++ctbrowser_test_failures;
+                fail("{}: scalar field has the wrong family proof", what);
             }
             if (expected.getInt() >= 0 && group >= 0) {
                 for (const auto & [source, previous] : groups) {
                     if ((source == expected.getInt()) != (previous == group)) {
-                        std::printf("FAIL %s: comparison changed scalar field family identity\n",
-                                    what);
-                        ++ctbrowser_test_failures;
+                        fail("{}: comparison changed scalar field family identity", what);
                     }
                 }
                 groups.emplace_back(expected.getInt(), group);
             }
         }
     }
-    if (allocations == 0) {
-        std::printf("FAIL %s: identity fixture contains no fresh allocation\n", what);
-        ++ctbrowser_test_failures;
-    }
+    if (allocations == 0) { fail("{}: identity fixture contains no fresh allocation", what); }
     if (typed) { check(module, what, "!ctnative.object_identity"); }
 }
 
@@ -259,8 +248,7 @@ ctjs.func private @identity(%receiver: !ctjs.value, %new_target: !ctjs.value,
     for (const auto & r : rows) {
         auto module = mlir::parseSourceString<mlir::ModuleOp>(r.source, &context);
         if (!module) {
-            std::printf("FAIL %s: comparison identity fixture did not parse\n", r.what);
-            ++ctbrowser_test_failures;
+            fail("{}: comparison identity fixture did not parse", r.what);
             continue;
         }
         checkComparisonIdentityPreparation(*module, r.what);
@@ -323,8 +311,7 @@ module {
 )mlir",
                                                           &context);
     if (!module) {
-        std::printf("FAIL comparison identity mutation fixture did not parse\n");
-        ++ctbrowser_test_failures;
+        fail("comparison identity mutation fixture did not parse");
         return;
     }
     auto caller = module->lookupSymbol<ctjs::FuncOp>("caller");
@@ -338,8 +325,7 @@ module {
     caller.walk([&](ctjs::SetPropertyOp found) { store = found; });
     caller.walk([&](ctjs::CreateObjectOp found) { object = found; });
     if (!caller || !helper || !call || !comparison || !store || !object) {
-        std::printf("FAIL comparison identity mutation fixture lost source operations\n");
-        ++ctbrowser_test_failures;
+        fail("comparison identity mutation fixture lost source operations");
         return;
     }
     liveAndFresh(*module, "closed comparison alias before live mutations", true);
@@ -423,8 +409,7 @@ ctjs.func @scoped(%receiver: !ctjs.value, %new_target: !ctjs.value,
     for (bool sibling : {false, true}) {
         auto source = mlir::parseSourceString<mlir::ModuleOp>(scoped, &context);
         if (!source) {
-            std::printf("FAIL comparison identity source-scope fixture did not parse\n");
-            ++ctbrowser_test_failures;
+            fail("comparison identity source-scope fixture did not parse");
             continue;
         }
         ctjs::CreateObjectOp scopedObject;
@@ -434,8 +419,7 @@ ctjs.func @scoped(%receiver: !ctjs.value, %new_target: !ctjs.value,
         source->walk([&](ctjs::CompareOp found) { scopedComparison = found; });
         source->walk([&](mlir::scf::IfOp found) { branch = found; });
         if (!scopedObject || !scopedComparison || !branch) {
-            std::printf("FAIL comparison identity scope fixture lost source positions\n");
-            ++ctbrowser_test_failures;
+            fail("comparison identity scope fixture lost source positions");
             continue;
         }
         liveAndFresh(*source, "scoped comparison before live source mutation", true);
@@ -478,8 +462,7 @@ ctjs.func @scoped(%receiver: !ctjs.value, %new_target: !ctjs.value,
         for (bool sibling : {false, true}) {
             auto source = mlir::parseSourceString<mlir::ModuleOp>(environment, &context);
             if (!source) {
-                std::printf("FAIL comparison field-environment scope fixture did not parse\n");
-                ++ctbrowser_test_failures;
+                fail("comparison field-environment scope fixture did not parse");
                 continue;
             }
             mlir::Operation * other = nullptr;
@@ -491,8 +474,7 @@ ctjs.func @scoped(%receiver: !ctjs.value, %new_target: !ctjs.value,
                 if (auto found = llvm::dyn_cast<mlir::scf::IfOp>(op)) { branch = found; }
             });
             if (!other || !read || !branch) {
-                std::printf("FAIL comparison field-environment fixture lost source positions\n");
-                ++ctbrowser_test_failures;
+                fail("comparison field-environment fixture lost source positions");
                 continue;
             }
             liveAndFresh(*source, "independent field environment before source mutation", true);

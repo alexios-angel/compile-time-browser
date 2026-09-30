@@ -241,12 +241,8 @@ void checkObjectKeyArguments(mlir::MLIRContext & context, const std::string & so
     const unsigned completion = owner.steps();
     check(completion < 10000, "the object actual ownership proof remains bounded");
     if (completion >= 10000) { return; }
-    for (unsigned budget = 0; budget < completion; ++budget) {
-        OwnedGlobalRoots limited(*module, contract, budget);
-        check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
-                  empty(*module, limited),
-              "every incomplete object argument budget withholds the entire owning family");
-    }
+    checkBudgetsBelow(*module, contract, completion,
+                      "every incomplete object argument budget withholds the entire owning family");
     OwnedGlobalRoots exact(*module, contract, completion);
     check(exact.proved() && exact.steps() == completion,
           "the exact object argument budget reproduces the complete source owner");

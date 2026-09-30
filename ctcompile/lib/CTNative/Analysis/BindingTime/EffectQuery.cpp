@@ -13,8 +13,7 @@ bool safeEffectKey(llvm::StringRef name) {
 }
 
 bool effectCalleeMatches(ctjs::CallDirectOp call, mlir::ModuleOp module) {
-    auto newTarget = call.getNewTarget().getDefiningOp<ctjs::ConstantOp>();
-    if (!newTarget || !llvm::isa<ctjs::UndefinedAttr>(newTarget.getValue())) { return false; }
+    if (!ctjs::isUndefinedConstant(call.getNewTarget())) { return false; }
     auto target = call.getTarget();
     if (!target) { return false; }
     auto index = functionIndex(target);
@@ -22,10 +21,7 @@ bool effectCalleeMatches(ctjs::CallDirectOp call, mlir::ModuleOp module) {
     // Handwritten native-only functions have no bytecode identity. Preserve
     // their inert undefined callee slot, but never accept an actual callable
     // value for a different function on the strength of the symbolic target.
-    if (!index) {
-        auto constant = value.getDefiningOp<ctjs::ConstantOp>();
-        return constant && llvm::isa<ctjs::UndefinedAttr>(constant.getValue());
-    }
+    if (!index) { return ctjs::isUndefinedConstant(value); }
     ctjs::CreateClosureOp made = value.getDefiningOp<ctjs::CreateClosureOp>();
     if (auto load = value.getDefiningOp<ctjs::LoadGlobalOp>()) {
         auto store = ctjs::uniqueGlobalStore(module, load.getName());
@@ -57,8 +53,9 @@ bool closedEffectEnvironment(mlir::ModuleOp module) {
                 return;
             }
             for (unsigned i = 0; i < 2; ++i) {
-                for (mlir::Operation * use : entry.getArgument(i).getUsers()) {
-                    if (!llvm::isa<ctjs::RootOp, ctjs::CreateClosureOp>(use)) { safe = false; }
+                if (!llvm::all_of(entry.getArgument(i).getUsers(),
+                                  llvm::IsaPred<ctjs::RootOp, ctjs::CreateClosureOp>)) {
+                    safe = false;
                 }
             }
             return;
@@ -86,13 +83,8 @@ bool closedEffectEnvironment(mlir::ModuleOp module) {
                    ctjs::uniqueFunction(module, static_cast<unsigned>(made.getFunction()));
             return;
         }
-        mlir::Value key;
-        if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) { key = read.getKey(); }
-        if (auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(op)) { key = write.getKey(); }
-        if (key) {
-            auto constant = key.getDefiningOp<ctjs::ConstantOp>();
-            auto name = constant ? llvm::dyn_cast<ctjs::StringAttr>(constant.getValue())
-                                 : ctjs::StringAttr{};
+        if (mlir::Value key = ctjs::propertyKey(op)) {
+            auto name = ctjs::constantAttr<ctjs::StringAttr>(key);
             safe = name && safeEffectKey(name.getValue());
             return;
         }
@@ -120,36 +112,38 @@ bool local(const fact & value, ctjs::FuncOp caller) {
 }
 } // namespace
 
-bool effectQueries::invalidateCall(ctjs::CallDirectOp call, flow & state) const {
-    if (!closedEnvironment || !effectCalleeMatches(call, module)) { return false; }
+const effectSummary * effectQueries::knownSummary(ctjs::CallDirectOp call) const {
+    // effectCalleeMatches also requires an undefined new.target.
+    if (!effectCalleeMatches(call, module)) { return nullptr; }
     auto target = call.getTarget();
     const auto found = summaries.find(target);
-    auto newTarget = call.getNewTarget().getDefiningOp<ctjs::ConstantOp>();
-    if (!target || found == summaries.end() || !found->second.known || !newTarget ||
-        !llvm::isa<ctjs::UndefinedAttr>(newTarget.getValue()) ||
+    if (found == summaries.end() || !found->second.known ||
         call->getNumOperands() != target.getBody().front().getNumArguments()) {
-        return false;
+        return nullptr;
     }
+    return &found->second;
+}
+
+bool effectQueries::invalidateCall(ctjs::CallDirectOp call, flow & state) const {
+    const effectSummary * summary = closedEnvironment ? knownSummary(call) : nullptr;
+    if (!summary) { return false; }
     auto caller = call->getParentOfType<ctjs::FuncOp>();
     unsigned steps = 0;
     llvm::SmallVector<mlir::Operation *> pending;
-    for (const auto & access : found->second.accesses) {
+    for (const auto & access : summary->accesses) {
         fact receiver = state.values.lookup(call->getOperand(access.object.argument));
         for (mlir::StringAttr field : access.object.fields) {
             if (++steps > maxQuerySteps || receiver.domain != fact::kind::object ||
                 !clean(receiver, state) || !local(receiver, caller)) {
                 return false;
             }
-            fact next;
-            bool first = true;
-            for (mlir::Operation * id : receiver.nodes) {
+            auto next = joinAcross(receiver.nodes, [&](mlir::Operation * id) -> const fact * {
                 const auto & fields = state.heaps.find(id)->second.fields;
                 auto entry = fields.find(field.getValue());
-                if (entry == fields.end()) { return false; }
-                next = first ? entry->second : join(next, entry->second, true);
-                first = false;
-            }
-            receiver = std::move(next);
+                return entry == fields.end() ? nullptr : &entry->second;
+            });
+            if (!next) { return false; }
+            receiver = std::move(*next);
         }
         if (++steps > maxQuerySteps || !clean(receiver, state) || !local(receiver, caller)) {
             return false;

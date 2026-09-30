@@ -360,12 +360,12 @@ void checkSavedScalarReads(mlir::MLIRContext & context, const std::string & sour
               "complete saved scalar host evidence is bounded");
         if (!complete.proved() || complete.steps() >= 18000) { return; }
         const unsigned completion = complete.steps();
-        for (unsigned budget = 0; budget < completion; ++budget) {
-            HostContractAnalysis limited(*module, contract, budget);
-            check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
-                      scalarReadsEmpty(*module, limited),
-                  "every incomplete host budget withholds every saved scalar edge");
-        }
+        checkBudgetsBelow<HostContractAnalysis>(
+            *module, contract, completion,
+            "every incomplete host budget withholds every saved scalar edge",
+            [&](const HostContractAnalysis & limited) {
+                return scalarReadsEmpty(*module, limited);
+            });
         HostContractAnalysis exact(*module, contract, completion);
         OwnedGlobalRoots original(*module, contract);
         check(exact.proved() && exact.steps() == completion && original.proved(),

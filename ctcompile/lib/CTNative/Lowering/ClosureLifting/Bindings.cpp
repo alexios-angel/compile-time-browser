@@ -8,31 +8,11 @@ namespace ctcompile::ctnative::lowering_detail {
 // closures - and so that `whyNotAFunctionBinding` has an entry for every
 // cell the refusal below can land on.
 bool closureLifter::holdsAFunction(ctjs::CreateCellOp cell) {
-    for (mlir::OpOperand & use : cell.getResult().getUses()) {
-        auto write = llvm::dyn_cast<ctjs::CellSetOp>(use.getOwner());
-        if (write != nullptr && use.getOperandNumber() == 0 &&
-            write.getValue().getDefiningOp<ctjs::CreateClosureOp>() != nullptr) {
-            return true;
-        }
-    }
-    return false;
-}
-
-// A BODY THAT READS ITS RAW ARGUMENT WINDOW, which is the one thing the pad
-// below may not change: `op::call` fills a short call's REGISTERS with
-// undefined, and `make_arguments_object` copies the raw window whose length
-// is argc - so `function f(a, b) { return arguments.length; } f(1)` is 1 in
-// the interpreter and would be 2 through a padded direct call. The same
-// question ResolveGlobals asks (`reads_raw_arguments`), asked here because
-// this step writes call sites of its own.
-bool closureLifter::readsRawArguments(ctjs::FuncOp target) {
-    return target
-        .walk([](mlir::Operation * o) {
-            return llvm::isa<ctjs::MakeArgumentsOp, ctjs::GatherRestOp>(o)
-                       ? mlir::WalkResult::interrupt()
-                       : mlir::WalkResult::advance();
-        })
-        .wasInterrupted();
+    return llvm::any_of(cell.getResult().getUses(), [](mlir::OpOperand & use) {
+        return classify(use) == cellUse::write && llvm::cast<ctjs::CellSetOp>(use.getOwner())
+                                                      .getValue()
+                                                      .getDefiningOp<ctjs::CreateClosureOp>();
+    });
 }
 
 // CONDITION 4, ASKED OF ONE READ. `read` is the value the binding was read
@@ -54,7 +34,7 @@ std::optional<std::string> closureLifter::whyReadIsNotACall(mlir::Value read, ct
         // CallDirectOp::verifySymbolUses holds the operand count equal to
         // the entry block's, so a surplus call has to be refused HERE; a
         // short one is padded, as VM_CASE(call) pads.
-        if (call.getArgs().size() < parameters && readsRawArguments(target)) {
+        if (call.getArgs().size() < parameters && ctjs::readsRawArguments(target)) {
             return "a call passes " + std::to_string(call.getArgs().size()) + " argument(s) to " +
                    std::to_string(parameters) +
                    " parameter(s) and the callee reads its raw argument window, which the "
@@ -187,28 +167,25 @@ std::optional<std::string> closureLifter::examineFunctionBinding(ctjs::CreateCel
     // when the walk ends.
     for (mlir::OpOperand & use : cell.getResult().getUses()) {
         mlir::Operation * user = use.getOwner();
-        if (auto write = llvm::dyn_cast<ctjs::CellSetOp>(user)) {
-            // THE BOX, NOT THE VALUE PUT IN ONE - the same line the two
-            // censuses above draw, and for the same reason.
-            if (use.getOperandNumber() != 0) {
-                return std::string{"the box itself is put inside another binding"};
-            }
+        switch (classify(use)) {
+        // THE BOX, NOT THE VALUE PUT IN ONE - the same line the two
+        // censuses above draw, and for the same reason.
+        case cellUse::storedInto:
+            return std::string{"the box itself is put inside another binding"};
+        case cellUse::write:
             if (plan.store) { return std::string{"it is assigned more than once"}; }
-            plan.store = write;
+            plan.store = llvm::cast<ctjs::CellSetOp>(user);
             continue;
-        }
-        if (llvm::isa<ctjs::CellGetOp>(user) && use.getOperandNumber() == 0) {
-            plan.reads.push_back(llvm::cast<ctjs::CellGetOp>(user));
-            continue;
-        }
-        if (llvm::isa<ctjs::CreateClosureOp>(user) && use.getOperandNumber() >= kFirstCapture) {
+        case cellUse::read: plan.reads.push_back(llvm::cast<ctjs::CellGetOp>(user)); continue;
+        case cellUse::capture:
             plan.captured.emplace_back(llvm::cast<ctjs::CreateClosureOp>(user),
                                        use.getOperandNumber() - kFirstCapture);
             continue;
+        case cellUse::other:
+            return ("the box reaches `" + user->getName().getStringRef() +
+                    "`, so something other than a name holds it")
+                .str();
         }
-        return ("the box reaches `" + user->getName().getStringRef() +
-                "`, so something other than a name holds it")
-            .str();
     }
     if (!plan.store) { return std::string{"nothing is ever assigned to it"}; }
     plan.closure = plan.store.getValue().getDefiningOp<ctjs::CreateClosureOp>();
@@ -270,9 +247,7 @@ void closureLifter::makeBoundCallDirect(ctjs::CallOp call, ctjs::FuncOp target,
     const unsigned parameters =
         target.getBody().front().getNumArguments() - ctjs::implicit_arguments;
     mlir::OpBuilder at(call);
-    const auto valueType = ctjs::ValueType::get(context);
-    const mlir::Value undefined =
-        ctjs::ConstantOp::create(at, call.getLoc(), valueType, ctjs::UndefinedAttr::get(context));
+    const mlir::Value undefined = undefinedAt(at, call.getLoc());
     auto direct = directCall(at, call.getLoc(), target, call.getReceiver(), undefined, undefined,
                              {}, call.getArgs(), parameters);
     boundCaptureCalls[target.getOperation()].push_back({direct, holder});
@@ -296,6 +271,7 @@ void closureLifter::makeBoundCallDirect(ctjs::CallOp call, ctjs::FuncOp target,
 void closureLifter::removeCaptureSlots(ctjs::CreateClosureOp c, llvm::ArrayRef<unsigned> slots) {
     ctjs::FuncOp target = targetOf(c);
     const auto captures = static_cast<unsigned>(c.getUpvalues().size());
+    mlir::Builder builder(context);
     llvm::SmallVector<bool> gone(captures, false);
     for (const unsigned slot : slots) { gone[slot] = true; }
     llvm::SmallVector<std::int32_t> renumbered(captures, -1);
@@ -311,7 +287,7 @@ void closureLifter::removeCaptureSlots(ctjs::CreateClosureOp c, llvm::ArrayRef<u
         if (rest.empty()) {
             c->removeAttr("enclosing_indices");
         } else {
-            c->setAttr("enclosing_indices", mlir::Builder(context).getDenseI32ArrayAttr(rest));
+            c->setAttr("enclosing_indices", builder.getDenseI32ArrayAttr(rest));
         }
     }
     llvm::BitVector drop(c->getNumOperands(), false);
@@ -319,8 +295,7 @@ void closureLifter::removeCaptureSlots(ctjs::CreateClosureOp c, llvm::ArrayRef<u
         if (gone[i]) { drop.set(kFirstCapture + i); }
     }
     c->eraseOperands(drop);
-    target->setAttr("upvalue_count",
-                    mlir::Builder(context).getI32IntegerAttr(static_cast<int>(kept)));
+    target->setAttr("upvalue_count", builder.getI32IntegerAttr(static_cast<int>(kept)));
     const auto move = [&](std::int32_t index) -> std::int32_t {
         if (index < 0 || static_cast<unsigned>(index) >= captures ||
             renumbered[static_cast<unsigned>(index)] < 0) {
@@ -333,14 +308,9 @@ void closureLifter::removeCaptureSlots(ctjs::CreateClosureOp c, llvm::ArrayRef<u
         return renumbered[static_cast<unsigned>(index)];
     };
     target.getBody().walk([&](mlir::Operation * o) {
-        if (auto read = llvm::dyn_cast<ctjs::LoadUpvalueOp>(o)) {
-            o->setAttr("index", mlir::Builder(context).getI32IntegerAttr(
-                                    move(static_cast<std::int32_t>(read.getIndex()))));
-            return;
-        }
-        if (auto write = llvm::dyn_cast<ctjs::StoreUpvalueOp>(o)) {
-            o->setAttr("index", mlir::Builder(context).getI32IntegerAttr(
-                                    move(static_cast<std::int32_t>(write.getIndex()))));
+        if (llvm::isa<ctjs::LoadUpvalueOp, ctjs::StoreUpvalueOp>(o)) {
+            const auto index = o->getAttrOfType<mlir::IntegerAttr>("index").getInt();
+            o->setAttr("index", builder.getI32IntegerAttr(move(static_cast<std::int32_t>(index))));
             return;
         }
         if (auto nested = llvm::dyn_cast<ctjs::CreateClosureOp>(o)) {
@@ -350,7 +320,7 @@ void closureLifter::removeCaptureSlots(ctjs::CreateClosureOp c, llvm::ArrayRef<u
             for (const std::int32_t index : indices.asArrayRef()) {
                 moved.push_back(index < 0 ? index : move(index));
             }
-            o->setAttr("enclosing_indices", mlir::Builder(context).getDenseI32ArrayAttr(moved));
+            o->setAttr("enclosing_indices", builder.getDenseI32ArrayAttr(moved));
         }
     });
 }

@@ -40,6 +40,11 @@ struct OwnedGlobalRoot {
     std::string property;
     std::optional<OwnedGlobalMethodTable> methodTable;
     ctjs::FuncOp scalarCallback{};
+
+    // The captured Map family of this root's method table, or null.
+    [[nodiscard]] const HostCapturedMap * capturedMap() const {
+        return methodTable && methodTable->capturedMap ? &*methodTable->capturedMap : nullptr;
+    }
 };
 
 // Borrows the current IR and validates the driver's exact fingerprint. Rebuild
@@ -85,6 +90,8 @@ public:
 private:
     void analyzeMethodTable(mlir::ModuleOp module, const HostContract & contract,
                             const HostContractAnalysis & host, unsigned maxSteps);
+    // Spends one step of `maxSteps`; on exhaustion records `why` and fails.
+    bool spend(unsigned maxSteps, llvm::StringRef why);
     llvm::SmallVector<OwnedGlobalRoot, 1> checked;
     llvm::DenseMap<mlir::Operation *, unsigned> edges;
     llvm::SmallVector<HostScalarGlobalRead> checkedScalarReads;

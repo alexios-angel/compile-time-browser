@@ -2,6 +2,7 @@
 #include "ClosureLifter.h"
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
 #include "llvm/ADT/StringMap.h"
+#include "llvm/ADT/StringSwitch.h"
 
 namespace ctcompile::ctnative::lowering_detail {
 
@@ -82,18 +83,21 @@ bool closureLifter::retainedByLocalMap(mlir::OpOperand & use,
         if (!method || mapUse.getOperandNumber() != 0) { return false; }
         auto key = ctjs::constantKey(method.getKey());
         if (key == "size") { continue; }
-        static const llvm::StringMap<unsigned> arities{{"set", 2}, {"clear", 0}};
-        const auto foundArity = key.size() <= 5 ? arities.find(key) : arities.end();
-        const unsigned arity = foundArity != arities.end() ? foundArity->second : 1U;
-        if (key != "set" && key != "get" && key != "has" && key != "delete" && key != "clear") {
-            return false;
-        }
+        const auto arity = llvm::StringSwitch<std::optional<unsigned>>(key)
+                               .Case("set", 2)
+                               .Case("clear", 0)
+                               .Case("get", 1)
+                               .Case("has", 1)
+                               .Case("delete", 1)
+                               .Default(std::nullopt);
+        if (!arity) { return false; }
         for (mlir::OpOperand & methodUse : method.getResult().getUses()) {
             if (work-- == 0) { return false; }
             auto call = llvm::dyn_cast<ctjs::CallOp>(methodUse.getOwner());
             if (!call || methodUse.getOperandNumber() != 0 ||
                 call.getReceiver() != map.getResult() || call->getBlock() != map->getBlock() ||
-                call.getArgs().size() != arity || (key == "set" && !call.getResult().use_empty())) {
+                call.getArgs().size() != *arity ||
+                (key == "set" && !call.getResult().use_empty())) {
                 return false;
             }
             calls.insert(call);
@@ -102,10 +106,7 @@ bool closureLifter::retainedByLocalMap(mlir::OpOperand & use,
     if (!calls.contains(selected)) { return false; }
     auto method = selected.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
     if (ctjs::constantKey(method.getKey()) != "set") { return false; }
-    llvm::StringSet<> selectors;
-    selectors.insert("__proto__");
-    selectors.insert("constructor");
-    selectors.insert("prototype");
+    llvm::StringSet<> selectors{"__proto__", "constructor", "prototype"};
     if (auto prototype = immutablePrototype(closure)) {
         for (ctjs::SetPropertyOp field : prototype->fields) {
             if (field.getValue().getDefiningOp<ctjs::CreateClosureOp>()) {
@@ -119,8 +120,7 @@ bool closureLifter::retainedByLocalMap(mlir::OpOperand & use,
         if (work-- == 0) { return false; }
         auto call = llvm::dyn_cast<ctjs::CallOp>(operation);
         if (!call || !calls.contains(call)) { continue; }
-        auto action =
-            ctjs::constantKey(call.getCallee().getDefiningOp<ctjs::GetPropertyOp>().getKey());
+        auto action = ctjs::methodKey(call);
         if (action == "clear") {
             entries.clear();
             continue;
@@ -249,29 +249,26 @@ bool closureLifter::carriesObjectArgument(mlir::OpOperand & use) {
 // CONDITION 2: the one function a method call reaches, or null. Every
 // literal the receiver may name must bind the key exactly once, and all of
 // them must name the SAME ctjs.func - one target is one C++ signature.
-ctjs::FuncOp closureLifter::resolveMethod(ctjs::CallOp call, mlir::Value & receiverOut,
-                                          ctjs::GetPropertyOp & loadOut) {
+std::optional<closureLifter::methodCall> closureLifter::resolveMethod(ctjs::CallOp call) {
     auto load = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
-    if (!load || !load.getResult().hasOneUse()) { return {}; }
+    if (!load || !load.getResult().hasOneUse()) { return std::nullopt; }
     const mlir::Value receiver = load.getObject();
-    if (receiver != call.getReceiver()) { return {}; }
+    if (receiver != call.getReceiver()) { return std::nullopt; }
     const llvm::StringRef key = ctjs::constantKey(load.getKey());
-    if (key.empty()) { return {}; }
+    if (key.empty()) { return std::nullopt; }
     const auto objects = behind.find(receiver);
-    if (objects == behind.end() || objects->second.empty()) { return {}; }
+    if (objects == behind.end() || objects->second.empty()) { return std::nullopt; }
     ctjs::FuncOp target;
     for (mlir::Value object : objects->second) {
         const auto fields = methodsOf.find(object);
-        if (fields == methodsOf.end()) { return {}; }
+        if (fields == methodsOf.end()) { return std::nullopt; }
         const auto field = fields->second.find(key);
-        if (field == fields->second.end()) { return {}; }
+        if (field == fields->second.end()) { return std::nullopt; }
         ctjs::FuncOp named = targetOf(field->second.closure);
-        if (!named || (target && named != target)) { return {}; }
+        if (!named || (target && named != target)) { return std::nullopt; }
         target = named;
     }
-    receiverOut = receiver;
-    loadOut = load;
-    return target;
+    return methodCall{call, load, receiver, target};
 }
 
 // WHY A CLOSURE STORED INTO AN OBJECT IS NOT A METHOD FIELD. Three routes,
@@ -543,8 +540,8 @@ void closureLifter::argumentCensus() {
         }
         if (indices.empty()) { return; }
         auto attribute = mlir::Builder(context).getDenseI32ArrayAttr(indices);
-        function->setAttr("ctnative.object_args", attribute);
-        for (const auto & site : sitesOf()) { site.op->setAttr("ctnative.object_args", attribute); }
+        function->setAttr(kNativeObjectArgs, attribute);
+        for (const auto & site : sitesOf()) { site.op->setAttr(kNativeObjectArgs, attribute); }
     };
     for (const auto & [function, sites] : directCalls) {
         publish(function, function, [&]() -> const auto & { return sites; });
@@ -570,7 +567,7 @@ void closureLifter::argumentCensus() {
             mlir::Operation * literal = argument.getDefiningOp();
             if (!llvm::isa_and_nonnull<ctjs::CreateObjectOp>(literal)) { continue; }
             if (made && slotCarriesAnObject(made, static_cast<unsigned>(j))) { continue; }
-            literal->setAttr("ctnative.object_reason",
+            literal->setAttr(kNativeObjectReason,
                              mlir::StringAttr::get(
                                  context, whyNotAnObjectArgument(site, static_cast<unsigned>(j))));
         }
@@ -744,16 +741,14 @@ void closureLifter::methodCensus() {
     for (bool changed = true; changed;) {
         changed = false;
         for (ctjs::CallOp call : allCalls) {
-            mlir::Value receiver;
-            ctjs::GetPropertyOp load;
-            ctjs::FuncOp target = resolveMethod(call, receiver, load);
-            if (!target || target.getBody().empty() ||
-                target.getBody().front().getNumArguments() < 3) {
+            auto resolved = resolveMethod(call);
+            if (!resolved || resolved->target.getBody().empty() ||
+                resolved->target.getBody().front().getNumArguments() < 3) {
                 continue;
             }
             llvm::SmallVector<mlir::Value, 2> & named =
-                behind[target.getBody().front().getArgument(0)];
-            for (mlir::Value object : behind.lookup(receiver)) {
+                behind[resolved->target.getBody().front().getArgument(0)];
+            for (mlir::Value object : behind.lookup(resolved->receiver)) {
                 if (!llvm::is_contained(named, object)) {
                     named.push_back(object);
                     changed = true;
@@ -763,13 +758,12 @@ void closureLifter::methodCensus() {
     }
     // AND THE CALLS THEMSELVES, once `behind` has stopped moving.
     for (ctjs::CallOp call : allCalls) {
-        mlir::Value receiver;
-        ctjs::GetPropertyOp load;
-        ctjs::FuncOp target = resolveMethod(call, receiver, load);
-        if (!target || target.getBody().empty() || target.getBody().front().getNumArguments() < 3) {
+        auto resolved = resolveMethod(call);
+        if (!resolved || resolved->target.getBody().empty() ||
+            resolved->target.getBody().front().getNumArguments() < 3) {
             continue;
         }
-        callsOfTarget[target.getOperation()].push_back(methodCall{call, load, receiver, target});
+        callsOfTarget[resolved->target.getOperation()].push_back(*resolved);
     }
     for (const auto & entry : methodsOf) {
         for (const auto & field : entry.second) {
@@ -822,9 +816,7 @@ std::optional<std::string> closureLifter::whyThisLeaks(ctjs::FuncOp target) {
             // `this.other()`: the receiver of a call this rewrite also
             // makes direct. Any other position is `this` passed as an
             // argument, which has no call site to move it to.
-            mlir::Value receiver;
-            ctjs::GetPropertyOp load;
-            if (use.getOperandNumber() == 1 && resolveMethod(call, receiver, load)) { continue; }
+            if (use.getOperandNumber() == 1 && resolveMethod(call)) { continue; }
             return "it passes `this` to a call this rewrite cannot make direct";
         }
         // AND A CALL --ctjs-resolve-globals ALREADY MADE DIRECT, which is

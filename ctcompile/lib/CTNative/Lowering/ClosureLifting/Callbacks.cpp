@@ -22,7 +22,7 @@ void closureLifter::specializeCallbacks(liftReport & out) {
         const auto refuse = [&](llvm::StringRef reason) {
             wrapper->setAttr("ctnative.callback_refusal", mlir::StringAttr::get(context, reason));
         };
-        if (readsRawArguments(wrapper)) {
+        if (ctjs::readsRawArguments(wrapper)) {
             refuse("the wrapper reads its raw argument window");
             continue;
         }
@@ -101,7 +101,7 @@ void closureLifter::specializeCallbacks(liftReport & out) {
             }
             const unsigned arity =
                 callback.getBody().front().getNumArguments() - ctjs::implicit_arguments;
-            const bool callbackReadsArguments = readsRawArguments(callback);
+            const bool callbackReadsArguments = ctjs::readsRawArguments(callback);
             mlir::BlockArgument argument = entry.getArgument(parameter);
             llvm::SmallVector<closureCall> calls;
             bool callOnly = !argument.use_empty();
@@ -134,9 +134,7 @@ void closureLifter::specializeCallbacks(liftReport & out) {
             mlir::Value callee = argument;
             if (removable) {
                 mlir::OpBuilder at(&entry, entry.begin());
-                auto undefined = ctjs::ConstantOp::create(at, supplied.front().getLoc(),
-                                                          ctjs::ValueType::get(context),
-                                                          ctjs::UndefinedAttr::get(context));
+                const mlir::Value undefined = undefinedAt(at, supplied.front().getLoc());
                 mlir::Operation * moved = at.clone(*supplied.front().getOperation());
                 moved->setOperand(0, entry.getArgument(2));
                 moved->setOperand(1, undefined);
@@ -153,15 +151,8 @@ void closureLifter::specializeCallbacks(liftReport & out) {
                 }
                 auto call = llvm::cast<ctjs::CallOp>(site.op);
                 mlir::OpBuilder at(call);
-                const auto valueType = ctjs::ValueType::get(context);
-                auto undefined = ctjs::ConstantOp::create(at, call.getLoc(), valueType,
-                                                          ctjs::UndefinedAttr::get(context));
-                llvm::SmallVector<mlir::Value> arguments(call.getArgs());
-                while (arguments.size() < arity) { arguments.push_back(undefined); }
-                auto direct = ctjs::CallDirectOp::create(
-                    at, call.getLoc(), valueType,
-                    mlir::FlatSymbolRefAttr::get(callback.getSymNameAttr()), call.getReceiver(),
-                    undefined, callee, arguments, nullptr, nullptr);
+                auto direct = directCall(at, call.getLoc(), callback, call.getReceiver(), callee,
+                                         undefinedAt(at, call.getLoc()), {}, call.getArgs(), arity);
                 direct->setAttr("ctnative.callback", mlir::UnitAttr::get(context));
                 call.getResult().replaceAllUsesWith(direct.getResult());
                 call.erase();

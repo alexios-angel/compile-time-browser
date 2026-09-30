@@ -212,7 +212,7 @@ void closureLifter::returnedMethodTableCensus(const OwnedGlobalRoots * globals) 
             returnedClosures[operation] = std::move(plan);
         }
         if (!reason.empty()) {
-            object->setAttr("ctnative.object_reason", mlir::StringAttr::get(context, reason));
+            object->setAttr(kNativeObjectReason, mlir::StringAttr::get(context, reason));
             continue;
         }
         const auto name = mlir::StringAttr::get(context, site);

@@ -71,12 +71,9 @@ void checkLeafOwner(mlir::MLIRContext & context, const std::string & source, boo
         const unsigned completion = query.steps();
         check(completion < 15000, "leaf owner proof stays within the fixture work bound");
         if (completion >= 15000) { continue; }
-        for (unsigned budget = 0; budget < completion; ++budget) {
-            OwnedGlobalRoots limited(*module, contract, budget);
-            check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
-                      empty(*module, limited),
-                  "every incomplete leaf owner budget withholds the whole published family");
-        }
+        checkBudgetsBelow(
+            *module, contract, completion,
+            "every incomplete leaf owner budget withholds the whole published family");
         OwnedGlobalRoots exact(*module, contract, completion);
         check(exact.proved() && exact.steps() == completion,
               "the exact leaf owner budget reproduces the entire publication chain");
@@ -111,13 +108,10 @@ void checkLeafOwner(mlir::MLIRContext & context, const std::string & source, boo
                                   mlir::Value value) {
             const auto saved = operation->getOperand(operand);
             operation->setOperand(operand, value);
-            OwnedGlobalRoots stale(*module, contract);
-            check(!stale.proved() && stale.reason().contains("fingerprint") &&
-                      empty(*module, stale),
-                  "a changed leaf source invalidates the original owner fingerprint");
-            OwnedGlobalRoots fresh(*module, mapContractFor(*module));
-            check(!fresh.proved() && !fresh.exhausted() && empty(*module, fresh),
-                  "forged object reports cannot restore ownership of an unsafe fresh source");
+            checkStaleAndRefused(
+                *module, contract, mapContractFor(*module),
+                "a changed leaf source invalidates the original owner fingerprint",
+                "forged object reports cannot restore ownership of an unsafe fresh source");
             operation->setOperand(operand, saved);
             check(OwnedGlobalRoots(*module, contract).proved(),
                   "restoring the source restores its independently checked leaf owner");

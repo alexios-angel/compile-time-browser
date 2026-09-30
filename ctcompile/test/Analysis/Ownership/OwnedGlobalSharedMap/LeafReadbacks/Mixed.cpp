@@ -98,12 +98,10 @@ void checkExactScalarReturns(mlir::MLIRContext & context, const std::string & di
         const unsigned completion = owner.steps();
         check(completion > 2 && completion < 100000, "exact scalar proof has a bounded census");
         if (completion <= 2 || completion >= 100000) { return; }
-        for (unsigned budget : {0u, 1u, completion / 2, completion - 1}) {
-            OwnedGlobalRoots limited(*module, contract, budget);
-            check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
-                      noResults(limited),
-                  "incomplete owner budgets expose no exact scalar or leaf result");
-        }
+        checkIncompleteBudgets(
+            *module, contract, {0u, 1u, completion / 2, completion - 1},
+            "incomplete owner budgets expose no exact scalar or leaf result",
+            [&](const OwnedGlobalRoots & limited) { return noResults(limited); });
         OwnedGlobalRoots exact(*module, contract, completion);
         check(exact.proved() && exact.steps() == completion && matches(exact),
               "the exact budget publishes both independently checked invocation results");
@@ -531,16 +529,15 @@ void checkMixedChildReadbacks(mlir::MLIRContext & context, const std::string & s
         check(completion > 2 && completion < 100000,
               "object-key and size invocation proof completes within its ordinary budget");
         if (completion <= 2 || completion >= 100000) { return; }
-        for (unsigned budget : {0u, 1u, completion / 2, completion - 1}) {
-            OwnedGlobalRoots limited(*module, contract, budget);
-            check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
-                      empty(*module, limited) &&
-                      llvm::all_of(capture.returnedLeaves,
-                                   [&](const auto & leaf) {
-                                       return !limited.returnedLeaf(leaf.call->getResult(0));
-                                   }),
-                  "incomplete invocation budgets withhold every owner and exact result");
-        }
+        checkIncompleteBudgets(
+            *module, contract, {0u, 1u, completion / 2, completion - 1},
+            "incomplete invocation budgets withhold every owner and exact result",
+            [&](const OwnedGlobalRoots & limited) {
+                return empty(*module, limited) &&
+                       llvm::all_of(capture.returnedLeaves, [&](const auto & leaf) {
+                           return !limited.returnedLeaf(leaf.call->getResult(0));
+                       });
+            });
         OwnedGlobalRoots exact(*module, contract, completion);
         check(exact.proved() && exact.steps() == completion && returnedPayload(exact),
               "the exact invocation budget publishes both independently returned leaves");
@@ -663,14 +660,14 @@ void checkMixedChildReadbacks(mlir::MLIRContext & context, const std::string & s
         const unsigned completion = owner.steps();
         check(completion > 2 && completion < 100000, "owning return proof has a bounded census");
         if (completion <= 2 || completion >= 100000) { return; }
-        for (unsigned budget : {0u, 1u, completion / 2, completion - 1}) {
-            OwnedGlobalRoots limited(*module, contract, budget);
-            check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
-                      empty(*module, limited) &&
-                      llvm::all_of(calls,
-                                   [&](mlir::Value call) { return !limited.returnedLeaf(call); }),
-                  "incomplete owning return work publishes no partial ownership");
-        }
+        checkIncompleteBudgets(*module, contract, {0u, 1u, completion / 2, completion - 1},
+                               "incomplete owning return work publishes no partial ownership",
+                               [&](const OwnedGlobalRoots & limited) {
+                                   return empty(*module, limited) &&
+                                          llvm::all_of(calls, [&](mlir::Value call) {
+                                              return !limited.returnedLeaf(call);
+                                          });
+                               });
         OwnedGlobalRoots exact(*module, contract, completion);
         check(exact.proved() && exact.steps() == completion &&
                   llvm::all_of(
@@ -763,12 +760,9 @@ void checkMixedChildReadbacks(mlir::MLIRContext & context, const std::string & s
     const unsigned completion = owner.steps();
     check(completion > 2 && completion < 30000, "mixed child proof has a bounded complete census");
     if (completion <= 2 || completion >= 30000) { return; }
-    for (unsigned budget : {0u, 1u, 2u, completion / 2, completion - 1}) {
-        OwnedGlobalRoots limited(*module, contract, budget);
-        check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
-                  empty(*module, limited),
-              "an incomplete child write census publishes no category or owner records");
-    }
+    checkIncompleteBudgets(
+        *module, contract, {0u, 1u, 2u, completion / 2, completion - 1},
+        "an incomplete child write census publishes no category or owner records");
     OwnedGlobalRoots exact(*module, contract, completion);
     check(exact.proved() && exact.steps() == completion,
           "the exact mixed child budget publishes the complete source family");

@@ -114,8 +114,7 @@ void checkRetainedChildPresence(mlir::MLIRContext & context) {
     for (const auto & [what, program, present] : rows) {
         auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
         if (!module) {
-            std::printf("FAIL %s: retained presence fixture did not parse\n", what);
-            ++ctbrowser_test_failures;
+            fail("{}: retained presence fixture did not parse", what);
             continue;
         }
         for (const bool clone : {false, true}) {
@@ -131,9 +130,8 @@ void checkRetainedChildPresence(mlir::MLIRContext & context) {
             if (!owner.proved() || owner.roots().size() != 1 ||
                 !owner.roots().front().methodTable ||
                 !owner.roots().front().methodTable->capturedMap) {
-                std::printf("FAIL %s: %s owner must hold independently: %s\n", what,
-                            clone ? "fresh" : "reused", owner.reason().str().c_str());
-                ++ctbrowser_test_failures;
+                fail("{}: {} owner must hold independently: {}", what, clone ? "fresh" : "reused",
+                     owner.reason().str().c_str());
                 continue;
             }
             const auto & capture = *owner.roots().front().methodTable->capturedMap;
@@ -181,13 +179,11 @@ void checkRetainedChildPresence(mlir::MLIRContext & context) {
                 const bool expected = present && census;
                 if (!reason.empty() || observed->hasAttr(ctnative::kNativeMapPresent) != expected ||
                     (tag ? tag.getValue() : llvm::StringRef{}) != (expected ? "number" : "")) {
-                    std::printf("FAIL %s: %s retained presence differs, census=%d\n", what,
-                                clone ? "fresh" : "reused", static_cast<int>(census));
-                    ++ctbrowser_test_failures;
+                    fail("{}: {} retained presence differs, census={}", what,
+                         clone ? "fresh" : "reused", static_cast<int>(census));
                 }
                 if (sourceFingerprint(current) != sourceBefore) {
-                    std::printf("FAIL %s: retained presence changed executable source\n", what);
-                    ++ctbrowser_test_failures;
+                    fail("{}: retained presence changed executable source", what);
                 }
             }
         }
@@ -325,8 +321,7 @@ ctjs.func private @clearChild(%this: !ctjs.value, %new: !ctjs.value, %callee: !c
                                                              : "");
         auto module = mlir::parseSourceString<mlir::ModuleOp>(source, &context);
         if (!module) {
-            std::printf("FAIL %s: stored-alias fixture did not parse\n", row.what);
-            ++ctbrowser_test_failures;
+            fail("{}: stored-alias fixture did not parse", row.what);
             continue;
         }
         for (const bool clone : {false, true}) {
@@ -355,9 +350,8 @@ ctjs.func private @clearChild(%this: !ctjs.value, %new: !ctjs.value, %callee: !c
             if (!observed || ctnative::nativeMapAction(observed) != "get" ||
                 observed->hasAttr(ctnative::kNativeMapPresent) != present ||
                 (tag ? tag.getValue() : llvm::StringRef{}) != row.tag) {
-                std::printf("FAIL %s: %s stored alias presence/type differs from %s\n", row.what,
-                            clone ? "fresh" : "reused", present ? row.tag : "unproved");
-                ++ctbrowser_test_failures;
+                fail("{}: {} stored alias presence/type differs from {}", row.what,
+                     clone ? "fresh" : "reused", present ? row.tag : "unproved");
             }
             std::vector<mlir::Operation *> after;
             current.walk([&](mlir::Operation * op) { after.push_back(op); });
@@ -366,9 +360,7 @@ ctjs.func private @clearChild(%this: !ctjs.value, %new: !ctjs.value, %callee: !c
                 intact &= llvm::equal(before[index]->getOperands(), operands[index]);
             }
             if (!intact) {
-                std::printf("FAIL %s: stored-alias preparation changed executable source\n",
-                            row.what);
-                ++ctbrowser_test_failures;
+                fail("{}: stored-alias preparation changed executable source", row.what);
             }
         }
     }
@@ -406,8 +398,7 @@ void checkMapZeroSizePresence(mlir::MLIRContext & context) {
     const auto replace = [](std::string text, llvm::StringRef from, llvm::StringRef to) {
         const auto position = text.find(from.str());
         if (position == std::string::npos) {
-            std::printf("FAIL exact-zero fixture replacement did not match\n");
-            ++ctbrowser_test_failures;
+            fail("exact-zero fixture replacement did not match");
             return text;
         }
         text.replace(position, from.size(), to.str());
@@ -490,9 +481,8 @@ void checkMapZeroSizePresence(mlir::MLIRContext & context) {
             auto * observed = marked(current, "check");
             if (!observed || ctnative::nativeMapAction(observed) != "get" ||
                 observed->hasAttr(ctnative::kNativeMapPresent) != expected) {
-                std::printf("FAIL %s: %s current Map membership differs from %d\n", what,
-                            clone ? "fresh" : "reused", static_cast<int>(expected));
-                ++ctbrowser_test_failures;
+                fail("{}: {} current Map membership differs from {}", what,
+                     clone ? "fresh" : "reused", static_cast<int>(expected));
             }
             std::vector<mlir::Operation *> after;
             current.walk([&](mlir::Operation * op) { after.push_back(op); });
@@ -500,10 +490,7 @@ void checkMapZeroSizePresence(mlir::MLIRContext & context) {
             for (size_t index = 0; intact && index < before.size(); ++index) {
                 intact &= llvm::equal(before[index]->getOperands(), operands[index]);
             }
-            if (!intact) {
-                std::printf("FAIL %s: exact-zero preparation changed executable source\n", what);
-                ++ctbrowser_test_failures;
-            }
+            if (!intact) { fail("{}: exact-zero preparation changed executable source", what); }
             check(current, what,
                   !mixed ? "!ctnative.opt<!ctnative.num<i32>>"
                   : expected
@@ -521,16 +508,14 @@ void checkMapZeroSizePresence(mlir::MLIRContext & context) {
         auto homogeneous = mlir::parseSourceString<mlir::ModuleOp>(
             prologue() + prelude + r.body + "  ctjs.return %observed\n}\n", &context);
         if (!homogeneous) {
-            std::printf("FAIL %s: homogeneous zero-size fixture did not parse\n", r.what);
-            ++ctbrowser_test_failures;
+            fail("{}: homogeneous zero-size fixture did not parse", r.what);
             continue;
         }
         verify(*homogeneous, r.what, false, false);
         auto module = mlir::parseSourceString<mlir::ModuleOp>(
             prologue() + prelude + r.body + mixedSuffix + "  ctjs.return %observed\n}\n", &context);
         if (!module) {
-            std::printf("FAIL %s: zero-size presence fixture did not parse\n", r.what);
-            ++ctbrowser_test_failures;
+            fail("{}: zero-size presence fixture did not parse", r.what);
             continue;
         }
         mlir::Builder attrs(&context);
@@ -550,16 +535,14 @@ void checkMapZeroSizePresence(mlir::MLIRContext & context) {
                                                               "  ctjs.return %observed\n}\n",
                                                           &context);
     if (!module) {
-        std::printf("FAIL live exact-zero presence fixture did not parse\n");
-        ++ctbrowser_test_failures;
+        fail("live exact-zero presence fixture did not parse");
         return;
     }
     auto * snapshot = marked(*module, "snapshot");
     auto * clearing = marked(*module, "mutate_clear");
     auto * storing = marked(*module, "mutate_store");
     if (!snapshot || !clearing || !storing) {
-        std::printf("FAIL live exact-zero presence fixture lost its source positions\n");
-        ++ctbrowser_test_failures;
+        fail("live exact-zero presence fixture lost its source positions");
         return;
     }
     verify(*module, "live zero-size source before mutation", true);
@@ -622,8 +605,7 @@ void checkMapExactSizePresence(mlir::MLIRContext & context) {
     const auto replace = [](std::string text, llvm::StringRef from, llvm::StringRef to) {
         const auto position = text.find(from.str());
         if (position == std::string::npos) {
-            std::printf("FAIL exact-size fixture replacement did not match\n");
-            ++ctbrowser_test_failures;
+            fail("exact-size fixture replacement did not match");
             return text;
         }
         text.replace(position, from.size(), to.str());
@@ -746,9 +728,8 @@ void checkMapExactSizePresence(mlir::MLIRContext & context) {
             auto * observed = marked(current, "check");
             if (!observed || ctnative::nativeMapAction(observed) != "get" ||
                 observed->hasAttr(ctnative::kNativeMapPresent) != expected) {
-                std::printf("FAIL %s: %s exact-size membership differs from %d\n", what,
-                            clone ? "fresh" : "reused", static_cast<int>(expected));
-                ++ctbrowser_test_failures;
+                fail("{}: {} exact-size membership differs from {}", what,
+                     clone ? "fresh" : "reused", static_cast<int>(expected));
             }
             std::vector<mlir::Operation *> after;
             current.walk([&](mlir::Operation * op) { after.push_back(op); });
@@ -756,10 +737,7 @@ void checkMapExactSizePresence(mlir::MLIRContext & context) {
             for (size_t index = 0; intact && index < before.size(); ++index) {
                 intact &= llvm::equal(before[index]->getOperands(), operands[index]);
             }
-            if (!intact) {
-                std::printf("FAIL %s: exact-size preparation changed executable source\n", what);
-                ++ctbrowser_test_failures;
-            }
+            if (!intact) { fail("{}: exact-size preparation changed executable source", what); }
             check(current, what,
                   !mixed ? "!ctnative.opt<!ctnative.num<i32>>"
                   : expected
@@ -775,8 +753,7 @@ void checkMapExactSizePresence(mlir::MLIRContext & context) {
                     "  ctjs.return %observed\n}\n",
                 &context);
             if (!module) {
-                std::printf("FAIL %s: exact-size presence fixture did not parse\n", r.what);
-                ++ctbrowser_test_failures;
+                fail("{}: exact-size presence fixture did not parse", r.what);
                 continue;
             }
             // A homogeneous local Number read retains its optional public
@@ -789,8 +766,7 @@ void checkMapExactSizePresence(mlir::MLIRContext & context) {
                                                               "  ctjs.return %observed\n}\n",
                                                           &context);
     if (!module) {
-        std::printf("FAIL live exact-size presence fixture did not parse\n");
-        ++ctbrowser_test_failures;
+        fail("live exact-size presence fixture did not parse");
         return;
     }
     auto * snapshot = marked(*module, "snapshot");
@@ -800,8 +776,7 @@ void checkMapExactSizePresence(mlir::MLIRContext & context) {
     auto * storing = marked(*module, "mutate_store");
     auto * observed = marked(*module, "check");
     if (!snapshot || !seeded || !growth || !resetting || !storing || !observed) {
-        std::printf("FAIL live exact-size presence fixture lost its marked operations\n");
-        ++ctbrowser_test_failures;
+        fail("live exact-size presence fixture lost its marked operations");
         return;
     }
     verify(*module, "current saved one before growth", true);

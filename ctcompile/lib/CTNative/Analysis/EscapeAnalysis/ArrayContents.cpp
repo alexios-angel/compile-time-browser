@@ -25,8 +25,7 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
     // A binary result charges once for a Number fact: Add only for its
     // converted bits, every other kind for any fact.
     const auto numberFact = [](ctjs::BinaryKind kind, const ContentsValue & result) {
-        return result.convertedBits || (kind != ctjs::BinaryKind::Add &&
-                                        (result.integerNumber || result.negativeIntegerNumber));
+        return result.convertedBits || (kind != ctjs::BinaryKind::Add && result.exactNumber());
     };
     if (function.getBody().empty() || function.getBody().front().empty()) {
         return refuse(ArrayContentsFailure::UnsupportedControlFlow, function);
@@ -109,794 +108,737 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
         return failure;
     };
     LoopProof loopProof{function, state, spend};
+    bool returned = false;
+    const auto step = [&](mlir::Operation & op) -> ArrayContentsFailure {
+        if ((op.getNumRegions() != 0 && !llvm::isa<mlir::scf::IfOp, mlir::scf::WhileOp>(&op)) ||
+            (op.getNumSuccessors() != 0 &&
+             !llvm::isa<mlir::cf::BranchOp, mlir::cf::CondBranchOp, mlir::cf::SwitchOp>(&op))) {
+            return ArrayContentsFailure::UnsupportedControlFlow;
+        }
+        if (auto entered = llvm::dyn_cast<ctjs::FrameEnterOp>(&op)) {
+            // The importer enters before seeding registers or allocating any
+            // tracked object. Its depth failure is real, but on that path no
+            // object from these sites exists. This is NOT an effect proof that
+            // permits erasing entry or treating it as pure/nonthrowing.
+            if (&op != &function.getBody().front().front() || state.frame ||
+                entered.getRegCountAttr().getInt() < 0) {
+                return ArrayContentsFailure::InvalidFrame;
+            }
+            state.frame = entered;
+            state.values[state.frame.getResult()] = {state.frame.getResult()};
+            return ArrayContentsFailure::None;
+        }
+        if (auto exited = llvm::dyn_cast<ctjs::FrameExitOp>(&op)) {
+            if (!state.frame || state.frameExited ||
+                origin(exited->getOperand(0)) != state.frame.getResult() ||
+                !llvm::isa_and_nonnull<ctjs::ReturnOp>(op.getNextNode())) {
+                return ArrayContentsFailure::InvalidFrame;
+            }
+            state.frameExited = true;
+            return ArrayContentsFailure::None;
+        }
+        if (auto root = llvm::dyn_cast<ctjs::RootOp>(&op)) {
+            // RootOp parks only in THIS frame's window (Frames.td). The exact
+            // matching exit kills that window; no call, suspension or unknown
+            // effect in this query can keep it or expose its contents.
+            if (!state.frame || state.frameExited ||
+                origin(root->getOperand(0)) != state.frame.getResult()) {
+                return ArrayContentsFailure::InvalidFrame;
+            }
+            if (!origin(root.getValue())) { return ArrayContentsFailure::UnknownValue; }
+            return ArrayContentsFailure::None;
+        }
+        if (state.frameExited && !llvm::isa<ctjs::ReturnOp>(&op)) {
+            return ArrayContentsFailure::InvalidFrame;
+        }
+        if (auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(&op)) {
+            auto condition = loop.getConditionOp();
+            auto failure = transport(state, loop.getBeforeArguments(), loop.getInits());
+            if (failure != ArrayContentsFailure::None) { return failure; }
+            failure = loopProof.countedLoop(&loop.getBefore().front(), &loop.getAfter().front(),
+                                            loop.getInits(), condition.getCondition(),
+                                            condition.getArgs(), loop.getYieldOp().getOperands());
+            if (failure != ArrayContentsFailure::None) { return failure; }
+            state.current = &loop.getBefore().front().front();
+            return ArrayContentsFailure::None;
+        }
+        if (auto condition = llvm::dyn_cast<mlir::scf::ConditionOp>(&op)) {
+            auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(condition->getParentOp());
+            if (!loop || !state.loop || state.loop->header != op.getBlock()) {
+                return ArrayContentsFailure::UnsupportedControlFlow;
+            }
+            const auto continued = loopProof.loopContinues();
+            if (!continued) { return ArrayContentsFailure::UnsupportedControlFlow; }
+            const auto failure = transport(state,
+                                           *continued ? mlir::ValueRange(loop.getAfterArguments())
+                                                      : mlir::ValueRange(loop.getResults()),
+                                           condition.getArgs());
+            if (failure != ArrayContentsFailure::None) { return failure; }
+            state.current = *continued ? &loop.getAfter().front().front() : loop->getNextNode();
+            if (!*continued) { state.loop.reset(); }
+            return ArrayContentsFailure::None;
+        }
+        if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(&op)) {
+            if (!origin(branch.getCondition())) { return ArrayContentsFailure::UnknownValue; }
+            // ponytail: single-block structured arms only; nested CFG
+            // needs its own lifetime/transport proof. The first choice runs
+            // both arms in separate states, including an implicit empty else.
+            // One charge per arm.
+            if (!spend(2)) { return ArrayContentsFailure::WorkLimit; }
+            // The census admits every nested If only for one body visit.
+            // No-result branches retain full structural replay.
+            const bool correlated = state.loop && branch.getNumResults() != 0;
+            const auto [choiceKey, negated] = conditionChoiceKey(branch.getCondition(), spend);
+            if (!choiceKey) { return ArrayContentsFailure::WorkLimit; }
+            const auto choice = held(choiceKey).conditionChoice;
+            if (correlated && choice) {
+                auto & region =
+                    *choice != negated ? branch.getThenRegion() : branch.getElseRegion();
+                if (!region.empty()) { state.current = &region.front().front(); }
+                return ArrayContentsFailure::None;
+            }
+            auto copy = snapshot();
+            if (!copy) { return ArrayContentsFailure::WorkLimit; }
+            if (correlated) {
+                state.values[choiceKey].conditionChoice = !negated;
+                copy->values[choiceKey].conditionChoice = negated;
+            }
+            if (!branch.getElseRegion().empty()) {
+                copy->current = &branch.getElseRegion().front().front();
+            }
+            alternatives.push_back(std::move(*copy));
+            state.current = &branch.getThenRegion().front().front();
+            return ArrayContentsFailure::None;
+        }
+        if (auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(&op)) {
+            if (auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(yield->getParentOp())) {
+                if (!state.loop || state.loop->body != op.getBlock()) {
+                    return ArrayContentsFailure::UnsupportedControlFlow;
+                }
+                const auto failure =
+                    transport(state, loop.getBeforeArguments(), yield.getOperands());
+                if (failure != ArrayContentsFailure::None) { return failure; }
+                state.current = &loop.getBefore().front().front();
+                return ArrayContentsFailure::None;
+            }
+            auto branch = llvm::dyn_cast<mlir::scf::IfOp>(yield->getParentOp());
+            if (!branch) { return ArrayContentsFailure::UnsupportedControlFlow; }
+            const auto failure = transport(state, branch.getResults(), yield.getOperands());
+            if (failure != ArrayContentsFailure::None) { return failure; }
+            state.current = branch->getNextNode();
+            return ArrayContentsFailure::None;
+        }
+        if (auto branch = llvm::dyn_cast<mlir::cf::BranchOp>(&op)) {
+            return forward(state, op.getBlock(), branch.getDest(), branch.getDestOperands());
+        }
+        if (auto branch = llvm::dyn_cast<mlir::cf::CondBranchOp>(&op)) {
+            if (!origin(branch.getCondition())) { return ArrayContentsFailure::UnknownValue; }
+            if (!state.loop && !branch.getTrueDest()->empty()) {
+                auto latch =
+                    llvm::dyn_cast<mlir::cf::BranchOp>(branch.getTrueDest()->getTerminator());
+                if (latch && latch.getDest() == op.getBlock()) {
+                    const auto failure = loopProof.cfgCountedLoop(branch, latch);
+                    if (failure != ArrayContentsFailure::None) { return failure; }
+                }
+            }
+            if (state.loop && state.loop->header == op.getBlock()) {
+                const auto continued = loopProof.loopContinues();
+                if (!continued) { return ArrayContentsFailure::UnsupportedControlFlow; }
+                // Only this independently checked finite guard selects an
+                // edge. Exact replay records every actual element alternative;
+                // all unrelated conditions retain both structural paths.
+                if (!*continued) { state.loop.reset(); }
+                return forward(
+                    state, op.getBlock(), *continued ? branch.getTrueDest() : branch.getFalseDest(),
+                    *continued ? branch.getTrueDestOperands() : branch.getFalseDestOperands());
+            }
+            const auto failure =
+                alternative(op.getBlock(), branch.getFalseDest(), branch.getFalseDestOperands());
+            if (failure != ArrayContentsFailure::None) { return failure; }
+            return forward(state, op.getBlock(), branch.getTrueDest(),
+                           branch.getTrueDestOperands());
+        }
+        if (auto branch = llvm::dyn_cast<mlir::cf::SwitchOp>(&op)) {
+            if (!origin(branch.getFlag())) { return ArrayContentsFailure::UnknownValue; }
+            // The flag selects an edge without JS coercion. Prove every
+            // structural edge, so neither case values nor exhaustiveness
+            // supply a liveness fact. Repeated destinations still carry
+            // their own operands. Push in reverse for default/case order.
+            for (unsigned i = branch->getNumSuccessors() - 1; i != 0; --i) {
+                const auto failure = alternative(op.getBlock(), branch.getCaseDestinations()[i - 1],
+                                                 branch.getCaseOperands(i - 1));
+                if (failure != ArrayContentsFailure::None) { return failure; }
+            }
+            return forward(state, op.getBlock(), branch.getDefaultDestination(),
+                           branch.getDefaultOperands());
+        }
+        // Branch folding can leave an arith predicate constant behind.
+        // It has no heap effects; preserve its identity for structural
+        // branch traversal without using its value to prune either arm.
+        if (auto constant = llvm::dyn_cast<mlir::arith::ConstantOp>(&op)) {
+            state.values[constant.getResult()] = {constant.getResult()};
+            return ArrayContentsFailure::None;
+        }
+        // Truthy is total, noncapturing and nonthrowing (Operators.td). An
+        // external input remains unknown for every other use; only its i1
+        // result can be carried as a predicate. Neither branch is pruned.
+        if (auto constant = llvm::dyn_cast<ctjs::ConstantOp>(&op)) {
+            ContentsKind kind = ContentsKind::Identity;
+            if (llvm::isa<ctjs::StringAttr>(constant.getValue())) {
+                kind = ContentsKind::String;
+            } else if (llvm::isa<ctjs::BigIntAttr>(constant.getValue())) {
+                kind = ContentsKind::BigInt;
+            } else if (llvm::isa<ctjs::UndefinedAttr, ctjs::NullAttr, ctjs::BooleanAttr,
+                                 ctjs::NumberAttr>(constant.getValue())) {
+                kind = ContentsKind::NonBigInt;
+            }
+            state.values[constant.getResult()] = {constant.getResult(), kind};
+            return ArrayContentsFailure::None;
+        }
+        if (auto truthy = llvm::dyn_cast<ctjs::TruthyOp>(&op)) {
+            state.values[truthy.getResult()] = {truthy.getResult()};
+            return ArrayContentsFailure::None;
+        }
+        if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(&op)) {
+            // Strict equality reads primitive contents or object identity;
+            // it cannot coerce, call, throw or retain either operand
+            // (Operators.td, value::strict_equals). The independent Boolean
+            // result is known even when an operand is an opaque entry.
+            // Every coercing kind needs BOTH original primitive origins.
+            // Mixed BigInt comparisons have separate VM value-semantics
+            // gaps, but no primitive conversion calls an object hook or
+            // retains an input identity. Every structural arm is checked;
+            // this query never infers a value, key or liveness fact.
+            switch (compare.getKind()) {
+            case ctjs::CompareKind::StrictEq: break;
+            case ctjs::CompareKind::Eq:
+            case ctjs::CompareKind::Lt:
+            case ctjs::CompareKind::Le:
+            case ctjs::CompareKind::Gt:
+            case ctjs::CompareKind::Ge: {
+                const ContentsValue left = held(compare.getLhs());
+                const ContentsValue right = held(compare.getRhs());
+                const mlir::Value lhs = left.origin();
+                const mlir::Value rhs = right.origin();
+                if (!lhs || !rhs) { return ArrayContentsFailure::UnsupportedOperation; }
+                if ((!left.nonBigInt() && !left.bigInt()) ||
+                    (!right.nonBigInt() && !right.bigInt())) {
+                    return ArrayContentsFailure::UnsupportedOperation;
+                }
+                // loose_equals uses digits, String parsing and static
+                // numeric conversions. Its BigInt/Boolean arm additionally
+                // enters to_primitive's guard; all relational kinds do so.
+                // Primitive inputs return before any lookup or user call.
+                // The guard's independent Error cannot expose this whole
+                // frame's unpublished fresh locals. Calls, handlers and
+                // publication still refuse. Retention supplies no normal
+                // completion, allocation-success or no-throw contract.
+                break;
+            }
+            default: return ArrayContentsFailure::UnsupportedOperation;
+            }
+            state.values[compare.getResult()] = {compare.getResult(), ContentsKind::NonBigInt};
+            return ArrayContentsFailure::None;
+        }
+        if (auto convert = llvm::dyn_cast<ctjs::ConvertOp>(&op)) {
+            // ToBoolean, like Truthy, is total and noncapturing, but returns
+            // a !ctjs.value Boolean. Its primitive result carries no heap
+            // alias; this does not turn its input into a known origin.
+            if (convert.getKind() != ctjs::ConvertKind::ToBoolean) {
+                return ArrayContentsFailure::UnsupportedOperation;
+            }
+            state.values[convert.getResult()] = {convert.getResult(), ContentsKind::NonBigInt};
+            return ArrayContentsFailure::None;
+        }
+        if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(&op)) {
+            // Not/TypeOf/Void never invoke user code or retain their
+            // already-evaluated operand (Operators.td, VM coerce.cpp).
+            // Not yields a Boolean; TypeOf yields a String; Void yields
+            // Undefined. TypeOf's VM String allocation may hit the fatal
+            // allocation ceiling, but carries no operand object identity.
+            // This is a contents proof, not a no-allocation/effect claim.
+            // Keep an independent primitive origin without a value, key,
+            // operand alias or structural-edge liveness fact.
+            ContentsValue result{unary.getResult(), ContentsKind::NonBigInt};
+            switch (unary.getKind()) {
+            case ctjs::UnaryKind::Not:
+            case ctjs::UnaryKind::Void: break;
+            case ctjs::UnaryKind::TypeOf: result.kind = ContentsKind::String; break;
+            case ctjs::UnaryKind::Neg:
+            case ctjs::UnaryKind::Plus:
+            case ctjs::UnaryKind::BitNot: {
+                const ContentsValue input = held(unary.getOperand());
+                if (input.bigInt()) {
+                    if (unary.getKind() == ctjs::UnaryKind::Plus) {
+                        // to_number_value rejects BigInt before any lookup
+                        // or user conversion. Its TypeError (or depth-guard
+                        // Error) has no input/local object edge. The entire
+                        // frame still excludes calls, handlers and publication.
+                        // Keep the independent Number carrier used by the VM
+                        // and inspect EVERY structural continuation; neither
+                        // successful completion nor dead code follows here.
+                        break;
+                    }
+                    // negate_value/bit_not_value allocate independent BigInt
+                    // digits before any conversion or user callback. Record
+                    // the actual category, never a Number or concrete value.
+                    // No allocation-success/native effect claim follows.
+                    if (!spend()) { return ArrayContentsFailure::WorkLimit; }
+                    result.kind = ContentsKind::BigInt;
+                    break;
+                }
+                if (!input.nonBigInt()) { return ArrayContentsFailure::UnsupportedOperation; }
+                // Known primitive non-BigInt inputs cannot invoke object
+                // conversion or reach Plus's catchable BigInt TypeError.
+                // All three return an independent Number. BitNot uses the
+                // VM's static conversion, but objects stay outside this
+                // common source-compatible proof. String parsing may
+                // allocate C++ temporaries; allocation success is unproved.
+                // Neg/Plus still enter a recursion guard that may throw an
+                // unrelated RangeError. This whole-frame retention query
+                // rejects publication, calls and handlers, so that early
+                // exit cannot expose its fresh locals. This is NOT proof
+                // of normal completion or an effect/no-throw contract.
+                if (unary.getKind() != ctjs::UnaryKind::BitNot) {
+                    // Preserve held signed Numbers through Plus/Neg, keeping
+                    // negative magnitudes separate from own-index facts.
+                    // Canonical original Strings share the exact decimal
+                    // conversion used by Sub; zero stays nonnegative.
+                    result.integerNumber = boundedConvertedNumber(input);
+                    result.negativeIntegerNumber =
+                        result.integerNumber ? std::nullopt : boundedConvertedNumber(input, true);
+                    if (unary.getKind() == ctjs::UnaryKind::Neg && result.integerNumber != 0) {
+                        std::swap(result.integerNumber, result.negativeIntegerNumber);
+                    }
+                    if (result.exactNumber() && !spend()) {
+                        return ArrayContentsFailure::WorkLimit;
+                    }
+                    result.unaryDepth = std::min(input.unaryDepth + 1, 65U);
+                    if (!result.exactNumber() && result.unaryDepth <= 64) {
+                        // ToUint32(-x) is -ToUint32(x) modulo 2^32. Keep
+                        // the read-time conversion without inventing an exact
+                        // Number for subsequent arithmetic or property access.
+                        if (!spend()) { return ArrayContentsFailure::WorkLimit; }
+                        result.convertedBits = boundedConvertedBits(input);
+                        if (result.convertedBits && unary.getKind() == ctjs::UnaryKind::Neg) {
+                            *result.convertedBits = 0U - *result.convertedBits;
+                        }
+                    }
+                } else {
+                    boundedNumberComplement(input, result);
+                    if (result.exactNumber() && !spend()) {
+                        return ArrayContentsFailure::WorkLimit;
+                    }
+                }
+                break;
+            }
+            default: return ArrayContentsFailure::UnsupportedOperation;
+            }
+            if (unary.getKind() == ctjs::UnaryKind::Plus ||
+                unary.getKind() == ctjs::UnaryKind::Neg) {
+                boundedNumberUnary(held(unary.getOperand()),
+                                   unary.getKind() == ctjs::UnaryKind::Neg, result);
+                if (result.arithmeticNumber && !spend()) { return ArrayContentsFailure::WorkLimit; }
+            }
+            state.values[unary.getResult()] = result;
+            return ArrayContentsFailure::None;
+        }
+        if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(&op);
+            binary && !ctjs::isBitwise(binary.getKind())) {
+            if (!ctjs::isArithmetic(binary.getKind()) &&
+                binary.getKind() != ctjs::BinaryKind::Concat) {
+                return ArrayContentsFailure::UnsupportedOperation;
+            }
+            const ContentsValue left = held(binary.getLhs());
+            const ContentsValue right = held(binary.getRhs());
+            const mlir::Value lhs = left.origin();
+            const mlir::Value rhs = right.origin();
+            if (lhs && rhs && (left.nonBigInt() || left.bigInt()) &&
+                (right.nonBigInt() || right.bigInt()) &&
+                (binary.getKind() == ctjs::BinaryKind::Concat ||
+                 (binary.getKind() == ctjs::BinaryKind::Add &&
+                  (left.string() || right.string())))) {
+                // Concat converts both primitives before bigint_binary;
+                // Add selects its String arm before mixed-BigInt errors.
+                // BigInt conversion copies digits, never an input object
+                // or a user callback. Only an independently proved String
+                // permits Add: a generic non-BigInt result can be Number.
+                // Add's guarded ToPrimitive still has an unrelated Error
+                // exit. The entire frame's call/publication/handler refusals
+                // apply; this proves neither completion nor native effects.
+                if (binary.getKind() == ctjs::BinaryKind::Add) {
+                    if (!spend()) { return ArrayContentsFailure::WorkLimit; }
+                }
+                state.values[binary.getResult()] = {binary.getResult(), ContentsKind::String};
+                return ArrayContentsFailure::None;
+            }
+            if (lhs && rhs && left.bigInt() && right.bigInt() &&
+                ctjs::isArithmetic(binary.getKind())) {
+                // bigint_binary combines digits into a fresh independent
+                // BigInt. Add first enters to_primitive's depth guard;
+                // Div/Mod raise an independent RangeError for zero divisors,
+                // and Pow for negative or VM-capped oversized exponents.
+                // bigint_pow checks those bounds before computing digits,
+                // including the VM's unconditional cap for small bases.
+                // No user conversion or local object edge enters those
+                // errors. The whole-frame exclusion of calls,
+                // handlers and publication keeps either early exit from
+                // exposing unpublished fresh objects. The normal result's
+                // category proves neither allocation success nor normal
+                // completion or no-throw/native effects. Mixed inputs remain
+                // a separate boundary even on observed success.
+                if (!spend()) { return ArrayContentsFailure::WorkLimit; }
+                state.values[binary.getResult()] = {binary.getResult(), ContentsKind::BigInt};
+                return ArrayContentsFailure::None;
+            }
+            if (ctjs::isArithmetic(binary.getKind()) && lhs && rhs &&
+                ((left.bigInt() && right.nonBigInt()) || (left.nonBigInt() && right.bigInt()))) {
+                // Mixed original primitives cannot retain local objects:
+                // bigint_binary returns an independent TypeError/Undefined.
+                // Add first makes both operands primitive and may concatenate
+                // Strings instead; neither that result nor its depth-guard
+                // Error aliases an input. Only the separate String proof
+                // above supplies that category; this result is never BigInt.
+                // Calls, handlers and publication remain excluded across
+                // the whole frame. Check EVERY structural continuation:
+                // retention proves no successful completion or native effect.
+                state.values[binary.getResult()] = {binary.getResult(), ContentsKind::NonBigInt};
+                return ArrayContentsFailure::None;
+            }
+            if (!lhs || !rhs || !left.nonBigInt() || !right.nonBigInt()) {
+                return ArrayContentsFailure::UnsupportedOperation;
+            }
+            // With primitive non-BigInt originals, binary_op cannot call
+            // object conversions or return an operand object. Sub/Mul/Div/
+            // Mod/Pow return Number via to_number_value. Add uses guarded
+            // to_primitive followed by static Number/String operations;
+            // Concat uses primitive to_string. Their result is independent,
+            // without a Number/String tag, value, index or key inference
+            // except for bounded exact Number arithmetic below.
+            // Add and numeric conversions have a depth guard that may
+            // throw an unrelated RangeError. This whole-frame query refuses
+            // calls, handlers and publication, so it cannot retain fresh
+            // locals on that exit. This is retention-only evidence, never
+            // a normal-completion or no-throw/effect contract. String
+            // results allocate in the VM and static conversions can allocate
+            // C++ temporaries; absence/success of allocation is unproved.
+            ContentsValue result{binary.getResult(), ContentsKind::NonBigInt};
+            boundedNumberBinary(binary.getKind(), left, right, result);
+            if (binary.getKind() == ctjs::BinaryKind::Sub && !result.exactNumber() &&
+                boundedConvertedNumber(right) == 0 && left.unaryDepth <= 64) {
+                // ToNumber(x) - 0 preserves ToUint32(x), including signed
+                // zero and nonfinite inputs. This is no exact Number fact.
+                result.convertedBits = boundedConvertedBits(left);
+                result.unaryDepth = left.unaryDepth;
+            }
+            if (numberFact(binary.getKind(), result) && !spend()) {
+                return ArrayContentsFailure::WorkLimit;
+            }
+            state.values[binary.getResult()] = result;
+            return ArrayContentsFailure::None;
+        }
+        // THE STATIC FAMILY, AND A BITWISE ctjs.binary. Every arm below first
+        // requires original primitives, on which ToNumeric is the identity,
+        // so binary_op answers as binary_op_static does - bar a Symbol's
+        // TypeError, one more exit this retention-only evidence never claims.
+        if (llvm::isa<ctjs::BinaryOp, ctjs::BinaryStaticOp>(&op)) {
+            const ctjs::BinaryKind kind = llvm::isa<ctjs::BinaryOp>(&op)
+                                              ? llvm::cast<ctjs::BinaryOp>(&op).getKind()
+                                              : llvm::cast<ctjs::BinaryStaticOp>(&op).getKind();
+            const mlir::Value produced = op.getResult(0);
+            if (kind != ctjs::BinaryKind::Add && !ctjs::isBitwise(kind)) {
+                return ArrayContentsFailure::UnsupportedOperation;
+            }
+            const ContentsValue left = held(op.getOperand(0));
+            const ContentsValue right = held(op.getOperand(1));
+            const mlir::Value lhs = left.origin();
+            const mlir::Value rhs = right.origin();
+            if (!lhs || !rhs) { return ArrayContentsFailure::UnknownValue; }
+            if ((left.bigInt() && right.nonBigInt()) || (left.nonBigInt() && right.bigInt()) ||
+                (kind == ctjs::BinaryKind::UShr && left.bigInt() && right.bigInt())) {
+                // bigint_binary rejects mixed original primitives, or two
+                // BigInts for UShr, before conversion. Its independent
+                // TypeError/Undefined carrier has no operand/local edge or
+                // BigInt category. Keep all continuations and whole-frame
+                // exclusions; normal completion/native effects are unproved.
+                state.values[produced] = {produced, ContentsKind::NonBigInt};
+                return ArrayContentsFailure::None;
+            }
+            if (left.bigInt() && right.bigInt() &&
+                (kind == ctjs::BinaryKind::Add || kind == ctjs::BinaryKind::BitAnd ||
+                 kind == ctjs::BinaryKind::BitOr || kind == ctjs::BinaryKind::BitXor ||
+                 kind == ctjs::BinaryKind::Shl || kind == ctjs::BinaryKind::Shr)) {
+                // These exact bigint_binary arms allocate independent digits
+                // before static Number conversion, with no input alias or
+                // user conversion. Signed shifts may instead raise an
+                // independent RangeError for an oversized left shift,
+                // including a negative right-shift count. The whole-frame
+                // exclusion of calls, handlers and publication prevents
+                // that early exit from retaining unpublished local objects.
+                // Keep the normal result's separate per-path category; this
+                // proves neither allocation success nor normal completion
+                // or no-throw/native effects.
+                if (!spend()) { return ArrayContentsFailure::WorkLimit; }
+                state.values[produced] = {produced, ContentsKind::BigInt};
+                return ArrayContentsFailure::None;
+            }
+            if (!left.nonBigInt() || !right.nonBigInt()) {
+                return ArrayContentsFailure::UnsupportedOperation;
+            }
+            // Independent primitive origins exclude source user conversion.
+            // Fresh objects/arrays are insufficient: inherited valueOf or
+            // toString can retain them or their contents - the VM's bitwise
+            // handlers ToNumeric an object. Only bounded exact primitive
+            // conversions or saved Number facts supply an index.
+            ContentsValue result{produced, ContentsKind::NonBigInt};
+            boundedNumberBinary(kind, left, right, result);
+            if (numberFact(kind, result) && !spend()) { return ArrayContentsFailure::WorkLimit; }
+            state.values[produced] = result;
+            return ArrayContentsFailure::None;
+        }
+        if (auto object = llvm::dyn_cast<ctjs::CreateObjectOp>(&op)) {
+            if (objectSites.insert(&op).second) { out.objects.push_back(&op); }
+            state.objects.try_emplace(&op);
+            state.values[object.getResult()] = {object.getResult()};
+            return ArrayContentsFailure::None;
+        }
+        if (auto array = llvm::dyn_cast<ctjs::CreateArrayOp>(&op)) {
+            if (arraySites.insert(&op).second) { out.arrays.push_back(&op); }
+            auto & elements = state.arrays[&op];
+            for (unsigned position = 0; position < array.getElements().size(); ++position) {
+                if (!spend()) { return ArrayContentsFailure::WorkLimit; }
+                const ContentsValue value = held(array.getElements()[position]);
+                if (!value.origin()) { return ArrayContentsFailure::UnknownValue; }
+                elements.push_back(value);
+                out.writes.push_back({&op, position, &op, position, value.original});
+            }
+            state.values[array.getResult()] = {array.getResult()};
+            return ArrayContentsFailure::None;
+        }
+        if (auto copy = llvm::dyn_cast<ctjs::CopyPropsOp>(&op)) {
+            const mlir::Value source = origin(copy.getSource());
+            const mlir::Value target = origin(copy.getTarget());
+            mlir::Operation * from = source ? source.getDefiningOp() : nullptr;
+            mlir::Operation * into = target ? target.getDefiningOp() : nullptr;
+            auto sourceObject = state.objects.find(from);
+            auto targetObject = state.objects.find(into);
+            if (sourceObject == state.objects.end() || targetObject == state.objects.end()) {
+                return ArrayContentsFailure::UnsupportedOperation;
+            }
+            // The live runtime copies enumerable own entries through property
+            // lookup, which can invoke getters in general (objects/chain.cpp).
+            // This complete query admits only fresh own data with attr_default:
+            // no accessors, prototypes, descriptors or unknown effects occur.
+            // Snapshot before writes, including when both exact aliases name
+            // one object. Charge the allocation and each subsequent copy edge.
+            if (!spend(sourceObject->second.size())) { return ArrayContentsFailure::WorkLimit; }
+            const HeldProperties snapshot = sourceObject->second;
+            for (const auto & [key, value] : snapshot) {
+                if (!spend()) { return ArrayContentsFailure::WorkLimit; }
+                targetObject->second[key] = value;
+                out.propertyCopies.push_back({&op, from, into, key, value.original});
+            }
+            return ArrayContentsFailure::None;
+        }
+        if (llvm::isa<ctjs::DeletePropertyOp, ctjs::DeleteNamedOp>(&op)) {
+            const mlir::Value base = origin(op.getOperand(0));
+            mlir::Operation * container = base ? base.getDefiningOp() : nullptr;
+            auto object = state.objects.find(container);
+            if (object == state.objects.end()) {
+                // Array deletion has different hole behavior in JS and the VM.
+                // This proof covers only fresh ordinary own data properties.
+                return ArrayContentsFailure::UnsupportedOperation;
+            }
+            mlir::StringAttr key;
+            if (auto named = llvm::dyn_cast<ctjs::DeleteNamedOp>(&op)) {
+                key = ownObjectKey(named.getNameAttr());
+            } else {
+                const mlir::Value keyValue = origin(op.getOperand(1));
+                if (keyValue) { key = ownObjectKey(keyValue); }
+            }
+            if (!key) { return ArrayContentsFailure::UnknownPropertyKey; }
+            auto & properties = object->second;
+            auto found = properties.find(key);
+            const mlir::Value removed =
+                found == properties.end() ? mlir::Value{} : found->second.original;
+            if (removed) {
+                // Fresh set_property fields are configurable (value.hpp's
+                // attr_default). delete_own_property erases exactly that own
+                // field; no prototype walk or accessor can occur in this subset.
+                // MapVector erase shifts fields and repairs its index. Charge
+                // the complete field set before mutating even a single entry.
+                if (!spend(properties.size())) { return ArrayContentsFailure::WorkLimit; }
+                properties.erase(key);
+            }
+            out.propertyDeletions.push_back({&op, container, key, removed});
+            return ArrayContentsFailure::None;
+        }
+        if (llvm::isa<ctjs::AppendOp, ctjs::SetPropertyOp, ctjs::GetPropertyOp>(&op)) {
+            if (auto load = llvm::dyn_cast<ctjs::GetPropertyOp>(&op)) {
+                if (const auto string = boundedStringRead(
+                        held(load.getObject()), held(op.getOperand(1)), load.getResult())) {
+                    if (!spend()) { return ArrayContentsFailure::WorkLimit; }
+                    state.values[load.getResult()] = *string;
+                    return ArrayContentsFailure::None;
+                }
+            }
+            const mlir::Value base = origin(op.getOperand(0));
+            mlir::Operation * container = base ? base.getDefiningOp() : nullptr;
+            auto object = state.objects.find(container);
+            if (object != state.objects.end() && !llvm::isa<ctjs::AppendOp>(&op)) {
+                // The implicit prototype can intercept even a first write
+                // and retain its value. Until an own-data/prototype proof
+                // exists, an assignment cannot establish object contents.
+                if (llvm::isa<ctjs::SetPropertyOp>(&op)) {
+                    return ArrayContentsFailure::UnsupportedOperation;
+                }
+                const mlir::Value keyValue = origin(op.getOperand(1));
+                const auto key = keyValue ? ownObjectKey(keyValue) : mlir::StringAttr{};
+                if (!key) { return ArrayContentsFailure::UnknownPropertyKey; }
+                auto & properties = object->second;
+                auto found = properties.find(key);
+                if (found == properties.end()) { return ArrayContentsFailure::MissingProperty; }
+                state.values[op.getResult(0)] = found->second;
+                out.propertyReads.push_back({&op, container, key, found->second.original});
+                return ArrayContentsFailure::None;
+            }
+            auto found = state.arrays.find(container);
+            if (found == state.arrays.end()) { return ArrayContentsFailure::UnknownArray; }
+            auto & elements = found->second;
+            if (auto append = llvm::dyn_cast<ctjs::AppendOp>(&op)) {
+                const ContentsValue value = held(append.getElement());
+                if (!value.origin()) { return ArrayContentsFailure::UnknownValue; }
+                if (elements.size() >= 4294967295ULL) {
+                    return ArrayContentsFailure::MissingElement;
+                }
+                out.writes.push_back({&op, 1, container, elements.size(), value.original});
+                elements.push_back(value);
+                return ArrayContentsFailure::None;
+            }
+            const ContentsValue keyValue = held(op.getOperand(1));
+            const mlir::Value key = keyValue.origin();
+            if (llvm::isa<ctjs::GetPropertyOp>(&op)) {
+                const auto name = key ? ownObjectKey(key) : mlir::StringAttr{};
+                if (name && name.getValue() == "length") {
+                    // lookup_property returns js_length as Number before any
+                    // prototype lookup. This exact tracked array admits no
+                    // sparse writes/deletion/accessors. Snapshot this read;
+                    // a saved origin must survive later array appends unchanged.
+                    if (elements.size() > 4294967295ULL) {
+                        return ArrayContentsFailure::MissingElement;
+                    }
+                    if (!spend()) { return ArrayContentsFailure::WorkLimit; }
+                    state.values[op.getResult(0)] = {op.getResult(0), ContentsKind::NonBigInt,
+                                                     elements.size()};
+                    return ArrayContentsFailure::None;
+                }
+            } else if (auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(&op)) {
+                const auto name = key ? ownObjectKey(key) : mlir::StringAttr{};
+                if (name && name.getValue() == "length") {
+                    const ContentsValue target = held(store.getValue());
+                    const mlir::Value value = target.origin();
+                    auto wanted = target.integerNumber;
+                    if (!wanted && value && ctjs::constantAttr<ctjs::NumberAttr>(value)) {
+                        wanted = ownArrayIndex(value);
+                    }
+                    if (!wanted) { return ArrayContentsFailure::UnknownIndex; }
+                    if (*wanted > elements.size()) { return ArrayContentsFailure::MissingElement; }
+                    // Fresh dense arrays own writable length and configurable
+                    // elements; an exact Number runs no coercion hook. Keep
+                    // saved origins/lengths and every historical cycle edge.
+                    // ponytail: non-growing lengths only; growth needs hole evidence.
+                    if (!spend(elements.size() - *wanted)) {
+                        return ArrayContentsFailure::WorkLimit;
+                    }
+                    elements.resize(*wanted);
+                    return ArrayContentsFailure::None;
+                }
+            }
+            auto index = ownArrayIndex(keyValue);
+            // The loop guard independently bounded every key before replay.
+            // Retain its exact Number snapshot without generalizing scalar
+            // contents, length writes or conversion facts.
+            if (!index && state.loop) { index = arithmeticArrayIndex(keyValue); }
+            if (!index) { return ArrayContentsFailure::UnknownIndex; }
+            // Overwrite only. Extending with set_property can leave holes or
+            // consult a prototype setter; literal append has neither behavior.
+            if (*index >= elements.size()) { return ArrayContentsFailure::MissingElement; }
+            if (auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(&op)) {
+                const ContentsValue value = held(store.getValue());
+                if (!value.origin()) { return ArrayContentsFailure::UnknownValue; }
+                elements[*index] = value;
+                out.writes.push_back({&op, 2, container, *index, value.original});
+            } else {
+                state.values[op.getResult(0)] = elements[*index];
+                out.reads.push_back({&op, container, *index, elements[*index].original});
+            }
+            return ArrayContentsFailure::None;
+        }
+        if (llvm::isa<ctjs::ReturnOp>(&op)) {
+            if (state.frame && !state.frameExited) { return ArrayContentsFailure::InvalidFrame; }
+            const mlir::Value value = origin(op.getOperand(0));
+            if (!value) { return ArrayContentsFailure::UnknownValue; }
+            ArrayContentsExit exit;
+            exit.by = &op;
+            exit.value = value;
+            llvm::SmallVector<mlir::Value, 8> pending{value};
+            llvm::SmallPtrSet<mlir::Operation *, 8> visited;
+            while (!pending.empty()) {
+                if (!spend()) { return ArrayContentsFailure::WorkLimit; }
+                mlir::Operation * site = pending.pop_back_val().getDefiningOp();
+                if (!isTrackedSite(site) || !visited.insert(site).second) { continue; }
+                exit.reachableSites.push_back(site);
+                auto array = state.arrays.find(site);
+                if (array != state.arrays.end()) {
+                    for (const ContentsValue & element : array->second) {
+                        if (!spend()) { return ArrayContentsFailure::WorkLimit; }
+                        pending.push_back(element.original);
+                    }
+                }
+                auto object = state.objects.find(site);
+                if (object != state.objects.end()) {
+                    for (const auto & [key, element] : object->second) {
+                        (void)key;
+                        if (!spend()) { return ArrayContentsFailure::WorkLimit; }
+                        pending.push_back(element.original);
+                    }
+                }
+            }
+            // Public evidence keeps original producers, never private scalar facts.
+            // Charge the projection before copying each container and its values.
+            for (const auto & [array, elements] : state.arrays) {
+                if (!spend() || !spend(elements.size())) { return ArrayContentsFailure::WorkLimit; }
+                auto & originals = exit.arrays[array];
+                for (const ContentsValue & element : elements) {
+                    originals.push_back(element.original);
+                }
+            }
+            for (const auto & [object, properties] : state.objects) {
+                if (!spend() || !spend(properties.size())) {
+                    return ArrayContentsFailure::WorkLimit;
+                }
+                auto & originals = exit.objects[object];
+                for (const auto & [key, element] : properties) {
+                    originals[key] = element.original;
+                }
+            }
+            out.exits.push_back(std::move(exit));
+            returned = true;
+            return ArrayContentsFailure::None;
+        }
+        // Throw is intentionally outside the subset: uncaught diagnostic
+        // formatting may reenter JavaScript through toString/prototype hooks.
+        return ArrayContentsFailure::UnsupportedOperation;
+    };
     while (true) {
-        bool returned = false;
+        returned = false;
         while (state.current != nullptr) {
             mlir::Operation & op = *state.current;
             state.current = op.getNextNode();
             if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-            if ((op.getNumRegions() != 0 && !llvm::isa<mlir::scf::IfOp, mlir::scf::WhileOp>(&op)) ||
-                (op.getNumSuccessors() != 0 &&
-                 !llvm::isa<mlir::cf::BranchOp, mlir::cf::CondBranchOp, mlir::cf::SwitchOp>(&op))) {
-                return refuse(ArrayContentsFailure::UnsupportedControlFlow, &op);
+            if (const auto failure = step(op); failure != ArrayContentsFailure::None) {
+                return refuse(failure, &op);
             }
-            if (auto entered = llvm::dyn_cast<ctjs::FrameEnterOp>(&op)) {
-                // The importer enters before seeding registers or allocating any
-                // tracked object. Its depth failure is real, but on that path no
-                // object from these sites exists. This is NOT an effect proof that
-                // permits erasing entry or treating it as pure/nonthrowing.
-                if (&op != &function.getBody().front().front() || state.frame ||
-                    entered.getRegCountAttr().getInt() < 0) {
-                    return refuse(ArrayContentsFailure::InvalidFrame, &op);
-                }
-                state.frame = entered;
-                state.values[state.frame.getResult()] = {state.frame.getResult()};
-                continue;
-            }
-            if (auto exited = llvm::dyn_cast<ctjs::FrameExitOp>(&op)) {
-                if (!state.frame || state.frameExited ||
-                    origin(exited->getOperand(0)) != state.frame.getResult() ||
-                    !llvm::isa_and_nonnull<ctjs::ReturnOp>(op.getNextNode())) {
-                    return refuse(ArrayContentsFailure::InvalidFrame, &op);
-                }
-                state.frameExited = true;
-                continue;
-            }
-            if (auto root = llvm::dyn_cast<ctjs::RootOp>(&op)) {
-                // RootOp parks only in THIS frame's window (Frames.td). The exact
-                // matching exit kills that window; no call, suspension or unknown
-                // effect in this query can keep it or expose its contents.
-                if (!state.frame || state.frameExited ||
-                    origin(root->getOperand(0)) != state.frame.getResult()) {
-                    return refuse(ArrayContentsFailure::InvalidFrame, &op);
-                }
-                if (!origin(root.getValue())) {
-                    return refuse(ArrayContentsFailure::UnknownValue, &op);
-                }
-                continue;
-            }
-            if (state.frameExited && !llvm::isa<ctjs::ReturnOp>(&op)) {
-                return refuse(ArrayContentsFailure::InvalidFrame, &op);
-            }
-            if (auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(&op)) {
-                auto condition = loop.getConditionOp();
-                auto failure = transport(state, loop.getBeforeArguments(), loop.getInits());
-                if (failure != ArrayContentsFailure::None) { return refuse(failure, &op); }
-                failure = loopProof.countedLoop(
-                    &loop.getBefore().front(), &loop.getAfter().front(), loop.getInits(),
-                    condition.getCondition(), condition.getArgs(), loop.getYieldOp().getOperands());
-                if (failure != ArrayContentsFailure::None) { return refuse(failure, &op); }
-                state.current = &loop.getBefore().front().front();
-                continue;
-            }
-            if (auto condition = llvm::dyn_cast<mlir::scf::ConditionOp>(&op)) {
-                auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(condition->getParentOp());
-                if (!loop || !state.loop || state.loop->header != op.getBlock()) {
-                    return refuse(ArrayContentsFailure::UnsupportedControlFlow, &op);
-                }
-                const auto continued = loopProof.loopContinues();
-                if (!continued) {
-                    return refuse(ArrayContentsFailure::UnsupportedControlFlow, &op);
-                }
-                const auto failure =
-                    transport(state,
-                              *continued ? mlir::ValueRange(loop.getAfterArguments())
-                                         : mlir::ValueRange(loop.getResults()),
-                              condition.getArgs());
-                if (failure != ArrayContentsFailure::None) { return refuse(failure, &op); }
-                state.current = *continued ? &loop.getAfter().front().front() : loop->getNextNode();
-                if (!*continued) { state.loop.reset(); }
-                continue;
-            }
-            if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(&op)) {
-                if (!origin(branch.getCondition())) {
-                    return refuse(ArrayContentsFailure::UnknownValue, &op);
-                }
-                // ponytail: single-block structured arms only; nested CFG
-                // needs its own lifetime/transport proof. The first choice runs
-                // both arms in separate states, including an implicit empty else.
-                // One charge per arm.
-                if (!spend(2)) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                // The census admits every nested If only for one body visit.
-                // No-result branches retain full structural replay.
-                const bool correlated = state.loop && branch.getNumResults() != 0;
-                const auto [choiceKey, negated] = conditionChoiceKey(branch.getCondition(), spend);
-                if (!choiceKey) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                const auto choice = held(choiceKey).conditionChoice;
-                if (correlated && choice) {
-                    auto & region =
-                        *choice != negated ? branch.getThenRegion() : branch.getElseRegion();
-                    if (!region.empty()) { state.current = &region.front().front(); }
-                    continue;
-                }
-                auto copy = snapshot();
-                if (!copy) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                if (correlated) {
-                    state.values[choiceKey].conditionChoice = !negated;
-                    copy->values[choiceKey].conditionChoice = negated;
-                }
-                if (!branch.getElseRegion().empty()) {
-                    copy->current = &branch.getElseRegion().front().front();
-                }
-                alternatives.push_back(std::move(*copy));
-                state.current = &branch.getThenRegion().front().front();
-                continue;
-            }
-            if (auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(&op)) {
-                if (auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(yield->getParentOp())) {
-                    if (!state.loop || state.loop->body != op.getBlock()) {
-                        return refuse(ArrayContentsFailure::UnsupportedControlFlow, &op);
-                    }
-                    const auto failure =
-                        transport(state, loop.getBeforeArguments(), yield.getOperands());
-                    if (failure != ArrayContentsFailure::None) { return refuse(failure, &op); }
-                    state.current = &loop.getBefore().front().front();
-                    continue;
-                }
-                auto branch = llvm::dyn_cast<mlir::scf::IfOp>(yield->getParentOp());
-                if (!branch) { return refuse(ArrayContentsFailure::UnsupportedControlFlow, &op); }
-                const auto failure = transport(state, branch.getResults(), yield.getOperands());
-                if (failure != ArrayContentsFailure::None) { return refuse(failure, &op); }
-                state.current = branch->getNextNode();
-                continue;
-            }
-            if (auto branch = llvm::dyn_cast<mlir::cf::BranchOp>(&op)) {
-                const auto failure =
-                    forward(state, op.getBlock(), branch.getDest(), branch.getDestOperands());
-                if (failure != ArrayContentsFailure::None) { return refuse(failure, &op); }
-                continue;
-            }
-            if (auto branch = llvm::dyn_cast<mlir::cf::CondBranchOp>(&op)) {
-                if (!origin(branch.getCondition())) {
-                    return refuse(ArrayContentsFailure::UnknownValue, &op);
-                }
-                if (!state.loop && !branch.getTrueDest()->empty()) {
-                    auto latch =
-                        llvm::dyn_cast<mlir::cf::BranchOp>(branch.getTrueDest()->getTerminator());
-                    if (latch && latch.getDest() == op.getBlock()) {
-                        const auto failure = loopProof.cfgCountedLoop(branch, latch);
-                        if (failure != ArrayContentsFailure::None) { return refuse(failure, &op); }
-                    }
-                }
-                if (state.loop && state.loop->header == op.getBlock()) {
-                    const auto continued = loopProof.loopContinues();
-                    if (!continued) {
-                        return refuse(ArrayContentsFailure::UnsupportedControlFlow, &op);
-                    }
-                    // Only this independently checked finite guard selects an
-                    // edge. Exact replay records every actual element alternative;
-                    // all unrelated conditions retain both structural paths.
-                    if (!*continued) { state.loop.reset(); }
-                    const auto failure = forward(
-                        state, op.getBlock(),
-                        *continued ? branch.getTrueDest() : branch.getFalseDest(),
-                        *continued ? branch.getTrueDestOperands() : branch.getFalseDestOperands());
-                    if (failure != ArrayContentsFailure::None) { return refuse(failure, &op); }
-                    continue;
-                }
-                auto failure = alternative(op.getBlock(), branch.getFalseDest(),
-                                           branch.getFalseDestOperands());
-                if (failure != ArrayContentsFailure::None) { return refuse(failure, &op); }
-                failure = forward(state, op.getBlock(), branch.getTrueDest(),
-                                  branch.getTrueDestOperands());
-                if (failure != ArrayContentsFailure::None) { return refuse(failure, &op); }
-                continue;
-            }
-            if (auto branch = llvm::dyn_cast<mlir::cf::SwitchOp>(&op)) {
-                if (!origin(branch.getFlag())) {
-                    return refuse(ArrayContentsFailure::UnknownValue, &op);
-                }
-                // The flag selects an edge without JS coercion. Prove every
-                // structural edge, so neither case values nor exhaustiveness
-                // supply a liveness fact. Repeated destinations still carry
-                // their own operands. Push in reverse for default/case order.
-                for (unsigned i = branch->getNumSuccessors() - 1; i != 0; --i) {
-                    const auto failure =
-                        alternative(op.getBlock(), branch.getCaseDestinations()[i - 1],
-                                    branch.getCaseOperands(i - 1));
-                    if (failure != ArrayContentsFailure::None) { return refuse(failure, &op); }
-                }
-                const auto failure = forward(state, op.getBlock(), branch.getDefaultDestination(),
-                                             branch.getDefaultOperands());
-                if (failure != ArrayContentsFailure::None) { return refuse(failure, &op); }
-                continue;
-            }
-            // Branch folding can leave an arith predicate constant behind.
-            // It has no heap effects; preserve its identity for structural
-            // branch traversal without using its value to prune either arm.
-            if (auto constant = llvm::dyn_cast<mlir::arith::ConstantOp>(&op)) {
-                state.values[constant.getResult()] = {constant.getResult()};
-                continue;
-            }
-            // Truthy is total, noncapturing and nonthrowing (Operators.td). An
-            // external input remains unknown for every other use; only its i1
-            // result can be carried as a predicate. Neither branch is pruned.
-            if (auto constant = llvm::dyn_cast<ctjs::ConstantOp>(&op)) {
-                ContentsKind kind = ContentsKind::Identity;
-                if (llvm::isa<ctjs::StringAttr>(constant.getValue())) {
-                    kind = ContentsKind::String;
-                } else if (llvm::isa<ctjs::BigIntAttr>(constant.getValue())) {
-                    kind = ContentsKind::BigInt;
-                } else if (llvm::isa<ctjs::UndefinedAttr, ctjs::NullAttr, ctjs::BooleanAttr,
-                                     ctjs::NumberAttr>(constant.getValue())) {
-                    kind = ContentsKind::NonBigInt;
-                }
-                state.values[constant.getResult()] = {constant.getResult(), kind};
-                continue;
-            }
-            if (auto truthy = llvm::dyn_cast<ctjs::TruthyOp>(&op)) {
-                state.values[truthy.getResult()] = {truthy.getResult()};
-                continue;
-            }
-            if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(&op)) {
-                // Strict equality reads primitive contents or object identity;
-                // it cannot coerce, call, throw or retain either operand
-                // (Operators.td, value::strict_equals). The independent Boolean
-                // result is known even when an operand is an opaque entry.
-                // Every coercing kind needs BOTH original primitive origins.
-                // Mixed BigInt comparisons have separate VM value-semantics
-                // gaps, but no primitive conversion calls an object hook or
-                // retains an input identity. Every structural arm is checked;
-                // this query never infers a value, key or liveness fact.
-                switch (compare.getKind()) {
-                case ctjs::CompareKind::StrictEq: break;
-                case ctjs::CompareKind::Eq:
-                case ctjs::CompareKind::Lt:
-                case ctjs::CompareKind::Le:
-                case ctjs::CompareKind::Gt:
-                case ctjs::CompareKind::Ge: {
-                    const ContentsValue left = held(compare.getLhs());
-                    const ContentsValue right = held(compare.getRhs());
-                    const mlir::Value lhs = left.origin();
-                    const mlir::Value rhs = right.origin();
-                    if (!lhs || !rhs) {
-                        return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
-                    }
-                    if ((!left.nonBigInt() && !left.bigInt()) ||
-                        (!right.nonBigInt() && !right.bigInt())) {
-                        return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
-                    }
-                    // loose_equals uses digits, String parsing and static
-                    // numeric conversions. Its BigInt/Boolean arm additionally
-                    // enters to_primitive's guard; all relational kinds do so.
-                    // Primitive inputs return before any lookup or user call.
-                    // The guard's independent Error cannot expose this whole
-                    // frame's unpublished fresh locals. Calls, handlers and
-                    // publication still refuse. Retention supplies no normal
-                    // completion, allocation-success or no-throw contract.
-                    break;
-                }
-                default: return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
-                }
-                state.values[compare.getResult()] = {compare.getResult(), ContentsKind::NonBigInt};
-                continue;
-            }
-            if (auto convert = llvm::dyn_cast<ctjs::ConvertOp>(&op)) {
-                // ToBoolean, like Truthy, is total and noncapturing, but returns
-                // a !ctjs.value Boolean. Its primitive result carries no heap
-                // alias; this does not turn its input into a known origin.
-                if (convert.getKind() != ctjs::ConvertKind::ToBoolean) {
-                    return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
-                }
-                state.values[convert.getResult()] = {convert.getResult(), ContentsKind::NonBigInt};
-                continue;
-            }
-            if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(&op)) {
-                // Not/TypeOf/Void never invoke user code or retain their
-                // already-evaluated operand (Operators.td, VM coerce.cpp).
-                // Not yields a Boolean; TypeOf yields a String; Void yields
-                // Undefined. TypeOf's VM String allocation may hit the fatal
-                // allocation ceiling, but carries no operand object identity.
-                // This is a contents proof, not a no-allocation/effect claim.
-                // Keep an independent primitive origin without a value, key,
-                // operand alias or structural-edge liveness fact.
-                ContentsKind kind = ContentsKind::NonBigInt;
-                std::optional<std::size_t> integerNumber;
-                std::optional<std::size_t> negativeIntegerNumber;
-                std::optional<std::uint32_t> convertedBits;
-                unsigned unaryDepth = 0;
-                switch (unary.getKind()) {
-                case ctjs::UnaryKind::Not:
-                case ctjs::UnaryKind::Void: break;
-                case ctjs::UnaryKind::TypeOf: kind = ContentsKind::String; break;
-                case ctjs::UnaryKind::Neg:
-                case ctjs::UnaryKind::Plus:
-                case ctjs::UnaryKind::BitNot: {
-                    const ContentsValue input = held(unary.getOperand());
-                    if (input.bigInt()) {
-                        if (unary.getKind() == ctjs::UnaryKind::Plus) {
-                            // to_number_value rejects BigInt before any lookup
-                            // or user conversion. Its TypeError (or depth-guard
-                            // Error) has no input/local object edge. The entire
-                            // frame still excludes calls, handlers and publication.
-                            // Keep the independent Number carrier used by the VM
-                            // and inspect EVERY structural continuation; neither
-                            // successful completion nor dead code follows here.
-                            break;
-                        }
-                        // negate_value/bit_not_value allocate independent BigInt
-                        // digits before any conversion or user callback. Record
-                        // the actual category, never a Number or concrete value.
-                        // No allocation-success/native effect claim follows.
-                        if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                        kind = ContentsKind::BigInt;
-                        break;
-                    }
-                    if (!input.nonBigInt()) {
-                        return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
-                    }
-                    // Known primitive non-BigInt inputs cannot invoke object
-                    // conversion or reach Plus's catchable BigInt TypeError.
-                    // All three return an independent Number. BitNot uses the
-                    // VM's static conversion, but objects stay outside this
-                    // common source-compatible proof. String parsing may
-                    // allocate C++ temporaries; allocation success is unproved.
-                    // Neg/Plus still enter a recursion guard that may throw an
-                    // unrelated RangeError. This whole-frame retention query
-                    // rejects publication, calls and handlers, so that early
-                    // exit cannot expose its fresh locals. This is NOT proof
-                    // of normal completion or an effect/no-throw contract.
-                    if (unary.getKind() != ctjs::UnaryKind::BitNot) {
-                        // Preserve held signed Numbers through Plus/Neg, keeping
-                        // negative magnitudes separate from own-index facts.
-                        // Canonical original Strings share the exact decimal
-                        // conversion used by Sub; zero stays nonnegative.
-                        integerNumber = boundedConvertedNumber(input);
-                        negativeIntegerNumber =
-                            integerNumber ? std::nullopt : boundedConvertedNumber(input, true);
-                        if (unary.getKind() == ctjs::UnaryKind::Neg && integerNumber != 0) {
-                            std::swap(integerNumber, negativeIntegerNumber);
-                        }
-                        if ((integerNumber || negativeIntegerNumber) && !spend()) {
-                            return refuse(ArrayContentsFailure::WorkLimit, &op);
-                        }
-                        unaryDepth = std::min(input.unaryDepth + 1, 65U);
-                        if (!integerNumber && !negativeIntegerNumber && unaryDepth <= 64) {
-                            // ToUint32(-x) is -ToUint32(x) modulo 2^32. Keep
-                            // the read-time conversion without inventing an exact
-                            // Number for subsequent arithmetic or property access.
-                            if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                            convertedBits = boundedConvertedBits(input);
-                            if (convertedBits && unary.getKind() == ctjs::UnaryKind::Neg) {
-                                *convertedBits = 0U - *convertedBits;
-                            }
-                        }
-                    } else {
-                        ContentsValue result;
-                        boundedNumberComplement(input, result);
-                        integerNumber = result.integerNumber;
-                        negativeIntegerNumber = result.negativeIntegerNumber;
-                        if ((integerNumber || negativeIntegerNumber) && !spend()) {
-                            return refuse(ArrayContentsFailure::WorkLimit, &op);
-                        }
-                    }
-                    break;
-                }
-                default: return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
-                }
-                state.values[unary.getResult()] = {
-                    unary.getResult(), kind,          integerNumber, negativeIntegerNumber,
-                    std::nullopt,      convertedBits, unaryDepth};
-                if (unary.getKind() == ctjs::UnaryKind::Plus ||
-                    unary.getKind() == ctjs::UnaryKind::Neg) {
-                    auto & result = state.values[unary.getResult()];
-                    boundedNumberUnary(held(unary.getOperand()),
-                                       unary.getKind() == ctjs::UnaryKind::Neg, result);
-                    if (result.arithmeticNumber && !spend()) {
-                        return refuse(ArrayContentsFailure::WorkLimit, &op);
-                    }
-                }
-                continue;
-            }
-            if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(&op);
-                binary && !ctjs::isBitwise(binary.getKind())) {
-                if (!ctjs::isArithmetic(binary.getKind()) &&
-                    binary.getKind() != ctjs::BinaryKind::Concat) {
-                    return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
-                }
-                const ContentsValue left = held(binary.getLhs());
-                const ContentsValue right = held(binary.getRhs());
-                const mlir::Value lhs = left.origin();
-                const mlir::Value rhs = right.origin();
-                if (lhs && rhs && (left.nonBigInt() || left.bigInt()) &&
-                    (right.nonBigInt() || right.bigInt()) &&
-                    (binary.getKind() == ctjs::BinaryKind::Concat ||
-                     (binary.getKind() == ctjs::BinaryKind::Add &&
-                      (left.string() || right.string())))) {
-                    // Concat converts both primitives before bigint_binary;
-                    // Add selects its String arm before mixed-BigInt errors.
-                    // BigInt conversion copies digits, never an input object
-                    // or a user callback. Only an independently proved String
-                    // permits Add: a generic non-BigInt result can be Number.
-                    // Add's guarded ToPrimitive still has an unrelated Error
-                    // exit. The entire frame's call/publication/handler refusals
-                    // apply; this proves neither completion nor native effects.
-                    if (binary.getKind() == ctjs::BinaryKind::Add) {
-                        if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                    }
-                    state.values[binary.getResult()] = {binary.getResult(), ContentsKind::String};
-                    continue;
-                }
-                if (lhs && rhs && left.bigInt() && right.bigInt() &&
-                    ctjs::isArithmetic(binary.getKind())) {
-                    // bigint_binary combines digits into a fresh independent
-                    // BigInt. Add first enters to_primitive's depth guard;
-                    // Div/Mod raise an independent RangeError for zero divisors,
-                    // and Pow for negative or VM-capped oversized exponents.
-                    // bigint_pow checks those bounds before computing digits,
-                    // including the VM's unconditional cap for small bases.
-                    // No user conversion or local object edge enters those
-                    // errors. The whole-frame exclusion of calls,
-                    // handlers and publication keeps either early exit from
-                    // exposing unpublished fresh objects. The normal result's
-                    // category proves neither allocation success nor normal
-                    // completion or no-throw/native effects. Mixed inputs remain
-                    // a separate boundary even on observed success.
-                    if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                    state.values[binary.getResult()] = {binary.getResult(), ContentsKind::BigInt};
-                    continue;
-                }
-                if (ctjs::isArithmetic(binary.getKind()) && lhs && rhs &&
-                    ((left.bigInt() && right.nonBigInt()) ||
-                     (left.nonBigInt() && right.bigInt()))) {
-                    // Mixed original primitives cannot retain local objects:
-                    // bigint_binary returns an independent TypeError/Undefined.
-                    // Add first makes both operands primitive and may concatenate
-                    // Strings instead; neither that result nor its depth-guard
-                    // Error aliases an input. Only the separate String proof
-                    // above supplies that category; this result is never BigInt.
-                    // Calls, handlers and publication remain excluded across
-                    // the whole frame. Check EVERY structural continuation:
-                    // retention proves no successful completion or native effect.
-                    state.values[binary.getResult()] = {binary.getResult(),
-                                                        ContentsKind::NonBigInt};
-                    continue;
-                }
-                if (!lhs || !rhs || !left.nonBigInt() || !right.nonBigInt()) {
-                    return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
-                }
-                // With primitive non-BigInt originals, binary_op cannot call
-                // object conversions or return an operand object. Sub/Mul/Div/
-                // Mod/Pow return Number via to_number_value. Add uses guarded
-                // to_primitive followed by static Number/String operations;
-                // Concat uses primitive to_string. Their result is independent,
-                // without a Number/String tag, value, index or key inference
-                // except for bounded exact Number arithmetic below.
-                // Add and numeric conversions have a depth guard that may
-                // throw an unrelated RangeError. This whole-frame query refuses
-                // calls, handlers and publication, so it cannot retain fresh
-                // locals on that exit. This is retention-only evidence, never
-                // a normal-completion or no-throw/effect contract. String
-                // results allocate in the VM and static conversions can allocate
-                // C++ temporaries; absence/success of allocation is unproved.
-                ContentsValue result{binary.getResult(), ContentsKind::NonBigInt};
-                boundedNumberBinary(binary.getKind(), left, right, result);
-                if (binary.getKind() == ctjs::BinaryKind::Sub && !result.integerNumber &&
-                    !result.negativeIntegerNumber && boundedConvertedNumber(right) == 0 &&
-                    left.unaryDepth <= 64) {
-                    // ToNumber(x) - 0 preserves ToUint32(x), including signed
-                    // zero and nonfinite inputs. This is no exact Number fact.
-                    result.convertedBits = boundedConvertedBits(left);
-                    result.unaryDepth = left.unaryDepth;
-                }
-                if (numberFact(binary.getKind(), result) && !spend()) {
-                    return refuse(ArrayContentsFailure::WorkLimit, &op);
-                }
-                state.values[binary.getResult()] = result;
-                continue;
-            }
-            // THE STATIC FAMILY, AND A BITWISE ctjs.binary. Every arm below first
-            // requires original primitives, on which ToNumeric is the identity,
-            // so binary_op answers as binary_op_static does - bar a Symbol's
-            // TypeError, one more exit this retention-only evidence never claims.
-            if (llvm::isa<ctjs::BinaryOp, ctjs::BinaryStaticOp>(&op)) {
-                const ctjs::BinaryKind kind = llvm::isa<ctjs::BinaryOp>(&op)
-                                                  ? llvm::cast<ctjs::BinaryOp>(&op).getKind()
-                                                  : llvm::cast<ctjs::BinaryStaticOp>(&op).getKind();
-                const mlir::Value produced = op.getResult(0);
-                if (kind != ctjs::BinaryKind::Add && !ctjs::isBitwise(kind)) {
-                    return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
-                }
-                const ContentsValue left = held(op.getOperand(0));
-                const ContentsValue right = held(op.getOperand(1));
-                const mlir::Value lhs = left.origin();
-                const mlir::Value rhs = right.origin();
-                if (!lhs || !rhs) { return refuse(ArrayContentsFailure::UnknownValue, &op); }
-                if ((left.bigInt() && right.nonBigInt()) || (left.nonBigInt() && right.bigInt()) ||
-                    (kind == ctjs::BinaryKind::UShr && left.bigInt() && right.bigInt())) {
-                    // bigint_binary rejects mixed original primitives, or two
-                    // BigInts for UShr, before conversion. Its independent
-                    // TypeError/Undefined carrier has no operand/local edge or
-                    // BigInt category. Keep all continuations and whole-frame
-                    // exclusions; normal completion/native effects are unproved.
-                    state.values[produced] = {produced, ContentsKind::NonBigInt};
-                    continue;
-                }
-                if (left.bigInt() && right.bigInt() &&
-                    (kind == ctjs::BinaryKind::Add || kind == ctjs::BinaryKind::BitAnd ||
-                     kind == ctjs::BinaryKind::BitOr || kind == ctjs::BinaryKind::BitXor ||
-                     kind == ctjs::BinaryKind::Shl || kind == ctjs::BinaryKind::Shr)) {
-                    // These exact bigint_binary arms allocate independent digits
-                    // before static Number conversion, with no input alias or
-                    // user conversion. Signed shifts may instead raise an
-                    // independent RangeError for an oversized left shift,
-                    // including a negative right-shift count. The whole-frame
-                    // exclusion of calls, handlers and publication prevents
-                    // that early exit from retaining unpublished local objects.
-                    // Keep the normal result's separate per-path category; this
-                    // proves neither allocation success nor normal completion
-                    // or no-throw/native effects.
-                    if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                    state.values[produced] = {produced, ContentsKind::BigInt};
-                    continue;
-                }
-                if (!left.nonBigInt() || !right.nonBigInt()) {
-                    return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
-                }
-                // Independent primitive origins exclude source user conversion.
-                // Fresh objects/arrays are insufficient: inherited valueOf or
-                // toString can retain them or their contents - the VM's bitwise
-                // handlers ToNumeric an object. Only bounded exact primitive
-                // conversions or saved Number facts supply an index.
-                ContentsValue result{produced, ContentsKind::NonBigInt};
-                boundedNumberBinary(kind, left, right, result);
-                if (numberFact(kind, result) && !spend()) {
-                    return refuse(ArrayContentsFailure::WorkLimit, &op);
-                }
-                state.values[produced] = result;
-                continue;
-            }
-            if (auto object = llvm::dyn_cast<ctjs::CreateObjectOp>(&op)) {
-                if (objectSites.insert(&op).second) { out.objects.push_back(&op); }
-                state.objects.try_emplace(&op);
-                state.values[object.getResult()] = {object.getResult()};
-                continue;
-            }
-            if (auto array = llvm::dyn_cast<ctjs::CreateArrayOp>(&op)) {
-                if (arraySites.insert(&op).second) { out.arrays.push_back(&op); }
-                auto & elements = state.arrays[&op];
-                for (unsigned position = 0; position < array.getElements().size(); ++position) {
-                    if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                    const ContentsValue value = held(array.getElements()[position]);
-                    if (!value.origin()) { return refuse(ArrayContentsFailure::UnknownValue, &op); }
-                    elements.push_back(value);
-                    out.writes.push_back({&op, position, &op, position, value.original});
-                }
-                state.values[array.getResult()] = {array.getResult()};
-                continue;
-            }
-            if (auto copy = llvm::dyn_cast<ctjs::CopyPropsOp>(&op)) {
-                const mlir::Value source = origin(copy.getSource());
-                const mlir::Value target = origin(copy.getTarget());
-                mlir::Operation * from = source ? source.getDefiningOp() : nullptr;
-                mlir::Operation * into = target ? target.getDefiningOp() : nullptr;
-                auto sourceObject = state.objects.find(from);
-                auto targetObject = state.objects.find(into);
-                if (sourceObject == state.objects.end() || targetObject == state.objects.end()) {
-                    return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
-                }
-                // The live runtime copies enumerable own entries through property
-                // lookup, which can invoke getters in general (objects/chain.cpp).
-                // This complete query admits only fresh own data with attr_default:
-                // no accessors, prototypes, descriptors or unknown effects occur.
-                // Snapshot before writes, including when both exact aliases name
-                // one object. Charge the allocation and each subsequent copy edge.
-                if (!spend(sourceObject->second.size())) {
-                    return refuse(ArrayContentsFailure::WorkLimit, &op);
-                }
-                const HeldProperties snapshot = sourceObject->second;
-                for (const auto & [key, value] : snapshot) {
-                    if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                    targetObject->second[key] = value;
-                    out.propertyCopies.push_back({&op, from, into, key, value.original});
-                }
-                continue;
-            }
-            if (llvm::isa<ctjs::DeletePropertyOp, ctjs::DeleteNamedOp>(&op)) {
-                const mlir::Value base = origin(op.getOperand(0));
-                mlir::Operation * container = base ? base.getDefiningOp() : nullptr;
-                auto object = state.objects.find(container);
-                if (object == state.objects.end()) {
-                    // Array deletion has different hole behavior in JS and the VM.
-                    // This proof covers only fresh ordinary own data properties.
-                    return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
-                }
-                mlir::StringAttr key;
-                if (auto named = llvm::dyn_cast<ctjs::DeleteNamedOp>(&op)) {
-                    key = ownObjectKey(named.getNameAttr());
-                } else {
-                    const mlir::Value keyValue = origin(op.getOperand(1));
-                    if (keyValue) { key = ownObjectKey(keyValue); }
-                }
-                if (!key) { return refuse(ArrayContentsFailure::UnknownPropertyKey, &op); }
-                auto & properties = object->second;
-                auto found = properties.find(key);
-                const mlir::Value removed =
-                    found == properties.end() ? mlir::Value{} : found->second.original;
-                if (removed) {
-                    // Fresh set_property fields are configurable (value.hpp's
-                    // attr_default). delete_own_property erases exactly that own
-                    // field; no prototype walk or accessor can occur in this subset.
-                    // MapVector erase shifts fields and repairs its index. Charge
-                    // the complete field set before mutating even a single entry.
-                    if (!spend(properties.size())) {
-                        return refuse(ArrayContentsFailure::WorkLimit, &op);
-                    }
-                    properties.erase(key);
-                }
-                out.propertyDeletions.push_back({&op, container, key, removed});
-                continue;
-            }
-            if (llvm::isa<ctjs::AppendOp, ctjs::SetPropertyOp, ctjs::GetPropertyOp>(&op)) {
-                if (auto load = llvm::dyn_cast<ctjs::GetPropertyOp>(&op)) {
-                    if (const auto string = boundedStringRead(
-                            held(load.getObject()), held(op.getOperand(1)), load.getResult())) {
-                        if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                        state.values[load.getResult()] = *string;
-                        continue;
-                    }
-                }
-                const mlir::Value base = origin(op.getOperand(0));
-                mlir::Operation * container = base ? base.getDefiningOp() : nullptr;
-                auto object = state.objects.find(container);
-                if (object != state.objects.end() && !llvm::isa<ctjs::AppendOp>(&op)) {
-                    // The implicit prototype can intercept even a first write
-                    // and retain its value. Until an own-data/prototype proof
-                    // exists, an assignment cannot establish object contents.
-                    if (llvm::isa<ctjs::SetPropertyOp>(&op)) {
-                        return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
-                    }
-                    const mlir::Value keyValue = origin(op.getOperand(1));
-                    const auto key = keyValue ? ownObjectKey(keyValue) : mlir::StringAttr{};
-                    if (!key) { return refuse(ArrayContentsFailure::UnknownPropertyKey, &op); }
-                    auto & properties = object->second;
-                    auto found = properties.find(key);
-                    if (found == properties.end()) {
-                        return refuse(ArrayContentsFailure::MissingProperty, &op);
-                    }
-                    state.values[op.getResult(0)] = found->second;
-                    out.propertyReads.push_back({&op, container, key, found->second.original});
-                    continue;
-                }
-                auto found = state.arrays.find(container);
-                if (found == state.arrays.end()) {
-                    return refuse(ArrayContentsFailure::UnknownArray, &op);
-                }
-                auto & elements = found->second;
-                if (auto append = llvm::dyn_cast<ctjs::AppendOp>(&op)) {
-                    const ContentsValue value = held(append.getElement());
-                    if (!value.origin()) { return refuse(ArrayContentsFailure::UnknownValue, &op); }
-                    if (elements.size() >= 4294967295ULL) {
-                        return refuse(ArrayContentsFailure::MissingElement, &op);
-                    }
-                    out.writes.push_back({&op, 1, container, elements.size(), value.original});
-                    elements.push_back(value);
-                    continue;
-                }
-                const ContentsValue keyValue = held(op.getOperand(1));
-                const mlir::Value key = keyValue.origin();
-                if (llvm::isa<ctjs::GetPropertyOp>(&op)) {
-                    const auto name = key ? ownObjectKey(key) : mlir::StringAttr{};
-                    if (name && name.getValue() == "length") {
-                        // lookup_property returns js_length as Number before any
-                        // prototype lookup. This exact tracked array admits no
-                        // sparse writes/deletion/accessors. Snapshot this read;
-                        // a saved origin must survive later array appends unchanged.
-                        if (elements.size() > 4294967295ULL) {
-                            return refuse(ArrayContentsFailure::MissingElement, &op);
-                        }
-                        if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                        state.values[op.getResult(0)] = {op.getResult(0), ContentsKind::NonBigInt,
-                                                         elements.size()};
-                        continue;
-                    }
-                } else if (auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(&op)) {
-                    const auto name = key ? ownObjectKey(key) : mlir::StringAttr{};
-                    if (name && name.getValue() == "length") {
-                        const ContentsValue target = held(store.getValue());
-                        const mlir::Value value = target.origin();
-                        auto literal =
-                            value ? value.getDefiningOp<ctjs::ConstantOp>() : ctjs::ConstantOp{};
-                        auto wanted = target.integerNumber;
-                        if (!wanted && literal && llvm::isa<ctjs::NumberAttr>(literal.getValue())) {
-                            wanted = ownArrayIndex(value);
-                        }
-                        if (!wanted) { return refuse(ArrayContentsFailure::UnknownIndex, &op); }
-                        if (*wanted > elements.size()) {
-                            return refuse(ArrayContentsFailure::MissingElement, &op);
-                        }
-                        // Fresh dense arrays own writable length and configurable
-                        // elements; an exact Number runs no coercion hook. Keep
-                        // saved origins/lengths and every historical cycle edge.
-                        // ponytail: non-growing lengths only; growth needs hole evidence.
-                        if (!spend(elements.size() - *wanted)) {
-                            return refuse(ArrayContentsFailure::WorkLimit, &op);
-                        }
-                        elements.resize(*wanted);
-                        continue;
-                    }
-                }
-                auto index = ownArrayIndex(keyValue);
-                // The loop guard independently bounded every key before replay.
-                // Retain its exact Number snapshot without generalizing scalar
-                // contents, length writes or conversion facts.
-                if (!index && state.loop) { index = arithmeticArrayIndex(keyValue); }
-                if (!index) { return refuse(ArrayContentsFailure::UnknownIndex, &op); }
-                // Overwrite only. Extending with set_property can leave holes or
-                // consult a prototype setter; literal append has neither behavior.
-                if (*index >= elements.size()) {
-                    return refuse(ArrayContentsFailure::MissingElement, &op);
-                }
-                if (auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(&op)) {
-                    const ContentsValue value = held(store.getValue());
-                    if (!value.origin()) { return refuse(ArrayContentsFailure::UnknownValue, &op); }
-                    elements[*index] = value;
-                    out.writes.push_back({&op, 2, container, *index, value.original});
-                } else {
-                    state.values[op.getResult(0)] = elements[*index];
-                    out.reads.push_back({&op, container, *index, elements[*index].original});
-                }
-                continue;
-            }
-            if (llvm::isa<ctjs::ReturnOp>(&op)) {
-                if (state.frame && !state.frameExited) {
-                    return refuse(ArrayContentsFailure::InvalidFrame, &op);
-                }
-                const mlir::Value value = origin(op.getOperand(0));
-                if (!value) { return refuse(ArrayContentsFailure::UnknownValue, &op); }
-                ArrayContentsExit exit;
-                exit.by = &op;
-                exit.value = value;
-                llvm::SmallVector<mlir::Value, 8> pending{value};
-                llvm::SmallPtrSet<mlir::Operation *, 8> visited;
-                while (!pending.empty()) {
-                    if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                    mlir::Operation * site = pending.pop_back_val().getDefiningOp();
-                    if (!isTrackedSite(site) || !visited.insert(site).second) { continue; }
-                    exit.reachableSites.push_back(site);
-                    auto array = state.arrays.find(site);
-                    if (array != state.arrays.end()) {
-                        for (const ContentsValue & element : array->second) {
-                            if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                            pending.push_back(element.original);
-                        }
-                    }
-                    auto object = state.objects.find(site);
-                    if (object != state.objects.end()) {
-                        for (const auto & [key, element] : object->second) {
-                            (void)key;
-                            if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                            pending.push_back(element.original);
-                        }
-                    }
-                }
-                // Public evidence keeps original producers, never private scalar facts.
-                // Charge the projection before copying each container and its values.
-                for (const auto & [array, elements] : state.arrays) {
-                    if (!spend() || !spend(elements.size())) {
-                        return refuse(ArrayContentsFailure::WorkLimit, &op);
-                    }
-                    auto & originals = exit.arrays[array];
-                    for (const ContentsValue & element : elements) {
-                        originals.push_back(element.original);
-                    }
-                }
-                for (const auto & [object, properties] : state.objects) {
-                    if (!spend() || !spend(properties.size())) {
-                        return refuse(ArrayContentsFailure::WorkLimit, &op);
-                    }
-                    auto & originals = exit.objects[object];
-                    for (const auto & [key, element] : properties) {
-                        originals[key] = element.original;
-                    }
-                }
-                out.exits.push_back(std::move(exit));
-                returned = true;
-                continue;
-            }
-            // Throw is intentionally outside the subset: uncaught diagnostic
-            // formatting may reenter JavaScript through toString/prototype hooks.
-            return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
         }
         if (!returned) { return refuse(ArrayContentsFailure::UnsupportedControlFlow, function); }
         if (alternatives.empty()) { break; }

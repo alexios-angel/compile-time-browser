@@ -226,12 +226,10 @@ void checkDefiniteMapAbsenceOwner(mlir::MLIRContext & context, const std::string
                                   : setter.getBody().front().getTerminator();
         const auto original = consumer->getOperand(0);
         consumer->setOperand(0, inside.getResult());
-        OwnedGlobalRoots stale(*module, contract);
-        check(!stale.proved() && stale.reason().contains("fingerprint") && empty(*module, stale),
-              "an out-of-scope absent value invalidates the previous fingerprint");
-        OwnedGlobalRoots fresh(*module, mapContractFor(*module));
-        check(!fresh.proved() && !fresh.exhausted() && empty(*module, fresh),
-              "fresh fingerprints and forged absence cannot authorize a then-only SSA value");
+        checkStaleAndRefused(
+            *module, contract, mapContractFor(*module),
+            "an out-of-scope absent value invalidates the previous fingerprint",
+            "fresh fingerprints and forged absence cannot authorize a then-only SSA value");
         consumer->setOperand(0, original);
         check(OwnedGlobalRoots(*module, contract).proved(),
               "restoring source dominance restores the independent absent-read proof");
@@ -327,13 +325,10 @@ void checkDefiniteMapAbsenceOwner(mlir::MLIRContext & context, const std::string
                 change(reader, 0, branchMap.getResult());
                 change(targetCall, 1, branchMap.getResult());
             }
-            OwnedGlobalRoots stale(*module, contract);
-            check(!stale.proved() && stale.reason().contains("fingerprint") &&
-                      empty(*module, stale),
-                  "a live dependency scope edit invalidates the old absence fingerprint");
-            OwnedGlobalRoots fresh(*module, mapContractFor(*module));
-            check(!fresh.proved() && !fresh.exhausted() && empty(*module, fresh),
-                  "fresh reports cannot authorize then-only method, flag or fluent Map values");
+            checkStaleAndRefused(
+                *module, contract, mapContractFor(*module),
+                "a live dependency scope edit invalidates the old absence fingerprint",
+                "fresh reports cannot authorize then-only method, flag or fluent Map values");
             for (const auto & edit : edits) { edit.op->setOperand(edit.operand, edit.original); }
             check(OwnedGlobalRoots(*module, contract).proved(),
                   "restoring every dependency operand restores the valid absence proof");
@@ -349,12 +344,8 @@ void checkDefiniteMapAbsenceOwner(mlir::MLIRContext & context, const std::string
         const unsigned completion = query.steps();
         check(query.proved() && completion < 20000, "definite absence proof has bounded work");
         if (!query.proved() || completion >= 20000) { continue; }
-        for (unsigned budget = 0; budget < completion; ++budget) {
-            OwnedGlobalRoots limited(*module, contract, budget);
-            check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
-                      empty(*module, limited),
-                  "every incomplete absence budget withholds the whole published owner");
-        }
+        checkBudgetsBelow(*module, contract, completion,
+                          "every incomplete absence budget withholds the whole published owner");
         OwnedGlobalRoots exact(*module, contract, completion);
         check(exact.proved() && exact.steps() == completion,
               "the exact absence completion budget reproduces the complete family");
@@ -397,13 +388,10 @@ void checkDefiniteMapAbsenceOwner(mlir::MLIRContext & context, const std::string
             ++mutations;
             const auto original = operation->getOperand(operand);
             operation->setOperand(operand, value);
-            OwnedGlobalRoots stale(*module, contract);
-            check(!stale.proved() && stale.reason().contains("fingerprint") &&
-                      empty(*module, stale),
-                  "a live absence mutation invalidates the old source fingerprint");
-            OwnedGlobalRoots fresh(*module, mapContractFor(*module));
-            check(!fresh.proved() && !fresh.exhausted() && empty(*module, fresh),
-                  "a fresh contract and forged reports cannot repair the missing source proof");
+            checkStaleAndRefused(
+                *module, contract, mapContractFor(*module),
+                "a live absence mutation invalidates the old source fingerprint",
+                "a fresh contract and forged reports cannot repair the missing source proof");
             operation->setOperand(operand, original);
             check(OwnedGlobalRoots(*module, contract).proved(),
                   "restoring exact deletion restores its independent absence proof");

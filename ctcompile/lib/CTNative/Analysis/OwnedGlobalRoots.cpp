@@ -6,6 +6,26 @@
 #include <utility>
 
 namespace ctcompile::ctnative {
+namespace {
+// The element `edges` indexes for `key`, or null.
+template <class T>
+const T * indexed(const llvm::DenseMap<mlir::Operation *, unsigned> & edges,
+                  llvm::ArrayRef<T> values, mlir::Operation * key) {
+    const auto found = edges.find(key);
+    return found == edges.end() ? nullptr : &values[found->second];
+}
+} // namespace
+
+bool OwnedGlobalRoots::spend(unsigned maxSteps, llvm::StringRef why) {
+    if (workSteps == maxSteps) {
+        budgetExhausted = true;
+        refusal = why.str();
+        return false;
+    }
+    ++workSteps;
+    return true;
+}
+
 OwnedGlobalRoots::OwnedGlobalRoots(mlir::ModuleOp module, const HostContract & contract,
                                    unsigned maxSteps) {
     // The complete environment proof is mandatory, even if its diagnostic
@@ -18,13 +38,7 @@ OwnedGlobalRoots::OwnedGlobalRoots(mlir::ModuleOp module, const HostContract & c
         return;
     }
     const auto spend = [&] {
-        if (workSteps == maxSteps) {
-            budgetExhausted = true;
-            refusal = "owned global root analysis work budget exhausted";
-            return false;
-        }
-        ++workSteps;
-        return true;
+        return this->spend(maxSteps, "owned global root analysis work budget exhausted");
     };
     if (!spend()) { return; }
     if (contract.roots.size() != 1 || contract.roots.front().properties.size() != 1 ||
@@ -196,20 +210,18 @@ OwnedGlobalRoots::OwnedGlobalRoots(mlir::ModuleOp module, const HostContract & c
 }
 
 const OwnedGlobalRoot * OwnedGlobalRoots::lookup(mlir::Operation * operation) const {
-    const auto found = edges.find(operation);
-    return found == edges.end() ? nullptr : &checked[found->second];
+    return indexed<OwnedGlobalRoot>(edges, checked, operation);
 }
 
 const HostScalarGlobalRead * OwnedGlobalRoots::scalarRead(ctjs::LoadGlobalOp read) const {
-    const auto found = scalarEdges.find(read);
-    return found == scalarEdges.end() ? nullptr : &checkedScalarReads[found->second];
+    return indexed<HostScalarGlobalRead>(scalarEdges, checkedScalarReads, read);
 }
 
 bool OwnedGlobalRoots::mutableScalarRead(ctjs::LoadGlobalOp read) const {
     if (!proved()) { return false; }
     for (const auto & root : checked) {
-        if (!root.methodTable || !root.methodTable->capturedMap) { continue; }
-        for (const auto & callback : root.methodTable->capturedMap->scalarCallbacks) {
+        if (!root.capturedMap()) { continue; }
+        for (const auto & callback : root.capturedMap()->scalarCallbacks) {
             for (const auto & global : callback.globals) {
                 if (llvm::is_contained(global.reads, read)) { return true; }
             }
@@ -219,16 +231,15 @@ bool OwnedGlobalRoots::mutableScalarRead(ctjs::LoadGlobalOp read) const {
 }
 
 const HostObjectGlobalRead * OwnedGlobalRoots::objectGlobal(mlir::Operation * operation) const {
-    const auto found = objectEdges.find(operation);
-    return found == objectEdges.end() ? nullptr : &checkedObjectReads[found->second];
+    return indexed<HostObjectGlobalRead>(objectEdges, checkedObjectReads, operation);
 }
 
 ctjs::CreateObjectOp OwnedGlobalRoots::returnedLeaf(mlir::Value value) const {
     auto * call = value ? value.getDefiningOp() : nullptr;
     if (!proved() || !call) { return {}; }
     for (const auto & root : checked) {
-        if (!root.methodTable || !root.methodTable->capturedMap) { continue; }
-        for (const auto & leaf : root.methodTable->capturedMap->returnedLeaves) {
+        if (!root.capturedMap()) { continue; }
+        for (const auto & leaf : root.capturedMap()->returnedLeaves) {
             if (leaf.call == call) { return leaf.object; }
         }
     }

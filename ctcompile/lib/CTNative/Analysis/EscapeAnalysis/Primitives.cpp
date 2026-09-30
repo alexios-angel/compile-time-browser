@@ -17,10 +17,7 @@ std::optional<std::size_t> boundedNumber(mlir::Value value, bool negate) {
             return boundedNumber(unary.getOperand());
         }
     }
-    auto constant = value.getDefiningOp<ctjs::ConstantOp>();
-    auto number =
-        constant ? llvm::dyn_cast<ctjs::NumberAttr>(constant.getValue()) : ctjs::NumberAttr{};
-    if (number) {
+    if (auto number = ctjs::constantAttr<ctjs::NumberAttr>(value)) {
         const double integer = negate ? -number.getDouble() : number.getDouble();
         if (std::isfinite(integer) && integer >= 0 && integer <= 4294967295.0 &&
             std::floor(integer) == integer) {
@@ -36,15 +33,13 @@ std::optional<std::size_t> boundedNumber(mlir::Value value, bool negate) {
 std::optional<std::size_t> ownArrayIndex(mlir::Value value) {
     if (auto binary = value.getDefiningOp<ctjs::BinaryOp>();
         binary && binary.getKind() == ctjs::BinaryKind::Sub) {
-        auto lhs = binary.getLhs().getDefiningOp<ctjs::ConstantOp>();
-        auto rhs = binary.getRhs().getDefiningOp<ctjs::ConstantOp>();
-        if (!lhs || !rhs || !llvm::isa<ctjs::BigIntAttr>(lhs.getValue()) ||
-            !llvm::isa<ctjs::BigIntAttr>(rhs.getValue())) {
+        if (!ctjs::constantAttr<ctjs::BigIntAttr>(binary.getLhs()) ||
+            !ctjs::constantAttr<ctjs::BigIntAttr>(binary.getRhs())) {
             return std::nullopt;
         }
         // ponytail: two literal parses only; loaded operands/chains need charged provenance.
-        const auto left = ownArrayIndex(lhs.getResult());
-        const auto right = ownArrayIndex(rhs.getResult());
+        const auto left = ownArrayIndex(binary.getLhs());
+        const auto right = ownArrayIndex(binary.getRhs());
         if (left && right && *left >= *right) { return *left - *right; }
         return std::nullopt;
     }
@@ -86,13 +81,11 @@ mlir::StringAttr ownObjectKey(mlir::StringAttr key) {
 }
 
 mlir::StringAttr ownObjectKey(mlir::Value value) {
-    auto constant = value.getDefiningOp<ctjs::ConstantOp>();
-    if (!constant) { return {}; }
-    auto string = llvm::dyn_cast<ctjs::StringAttr>(constant.getValue());
+    auto string = ctjs::constantAttr<ctjs::StringAttr>(value);
     if (!string || string.getValue().size() > 256 || string.getValue() == "__proto__") {
         return {};
     }
-    return mlir::StringAttr::get(constant.getContext(), string.getValue());
+    return mlir::StringAttr::get(value.getContext(), string.getValue());
 }
 
 std::optional<std::size_t> ownArrayIndex(const ContentsValue & key) {
@@ -120,9 +113,7 @@ std::optional<std::size_t> arithmeticArrayIndex(const ContentsValue & key) {
 std::optional<ContentsValue> boundedStringRead(const ContentsValue & base,
                                                const ContentsValue & key, mlir::Value result) {
     if (!base.string() || !base.origin() || !key.origin()) { return std::nullopt; }
-    auto literal = base.origin().getDefiningOp<ctjs::ConstantOp>();
-    auto string =
-        literal ? llvm::dyn_cast<ctjs::StringAttr>(literal.getValue()) : ctjs::StringAttr{};
+    auto string = ctjs::constantAttr<ctjs::StringAttr>(base.origin());
     if (!string && !base.asciiCharacter) { return std::nullopt; }
     const auto text = string ? string.getValue() : llvm::StringRef{};
     // ponytail: bound the scan to 256 original ASCII bytes. Wider/computed Strings
@@ -149,9 +140,7 @@ namespace {
 
 std::optional<double> boundedStringNumber(const ContentsValue & input) {
     if (!input.string() || !input.origin() || input.asciiCharacter) { return std::nullopt; }
-    auto literal = input.origin().getDefiningOp<ctjs::ConstantOp>();
-    auto string =
-        literal ? llvm::dyn_cast<ctjs::StringAttr>(literal.getValue()) : ctjs::StringAttr{};
+    auto string = ctjs::constantAttr<ctjs::StringAttr>(input.origin());
     // ponytail: uncharged provenance queries keep the 32-byte bound; wider
     // Strings need the caller's shared work budget threaded through this path.
     if (!string || string.getValue().size() > 32) { return std::nullopt; }
@@ -181,12 +170,10 @@ std::optional<std::size_t> boundedConvertedNumber(const ContentsValue & input, b
         return std::nullopt;
     }
     if (negate) { return std::nullopt; }
-    if (auto literal = origin.getDefiningOp<ctjs::ConstantOp>()) {
-        if (auto boolean = llvm::dyn_cast<ctjs::BooleanAttr>(literal.getValue())) {
-            return boolean.getValue() ? 1 : 0;
-        }
-        if (llvm::isa<ctjs::NullAttr>(literal.getValue())) { return 0; }
+    if (auto boolean = ctjs::constantAttr<ctjs::BooleanAttr>(origin)) {
+        return boolean.getValue() ? 1 : 0;
     }
+    if (ctjs::constantAttr<ctjs::NullAttr>(origin)) { return 0; }
     return std::nullopt;
 }
 
@@ -224,15 +211,13 @@ std::optional<std::uint32_t> boundedConvertedBits(const ContentsValue & input) {
         negate ^= unary.getKind() == ctjs::UnaryKind::Neg;
         origin = unary.getOperand();
     }
-    auto literal = origin.getDefiningOp<ctjs::ConstantOp>();
-    const auto number =
-        literal ? llvm::dyn_cast<ctjs::NumberAttr>(literal.getValue()) : ctjs::NumberAttr{};
+    const auto number = ctjs::constantAttr<ctjs::NumberAttr>(origin);
     // Core maps nonfinite Numbers to zero and reduces finite Numbers before integer conversion.
     if (number) {
         return ctbrowser::number_to_uint32(negate ? -number.getDouble() : number.getDouble());
     }
     if (origin == input.origin()) { return std::nullopt; }
-    if (literal && llvm::isa<ctjs::UndefinedAttr>(literal.getValue())) {
+    if (ctjs::isUndefinedConstant(origin)) {
         return ctbrowser::number_to_uint32(std::numeric_limits<double>::quiet_NaN());
     }
     if (const auto converted = boundedStringNumber({origin, ContentsKind::String})) {
@@ -277,10 +262,8 @@ namespace {
 
 std::optional<double> arithmeticNumber(const ContentsValue & input) {
     if (input.arithmeticNumber) { return input.arithmeticNumber; }
-    auto literal =
-        input.origin() ? input.origin().getDefiningOp<ctjs::ConstantOp>() : ctjs::ConstantOp{};
     const auto value =
-        literal ? llvm::dyn_cast<ctjs::NumberAttr>(literal.getValue()) : ctjs::NumberAttr{};
+        input.origin() ? ctjs::constantAttr<ctjs::NumberAttr>(input.origin()) : ctjs::NumberAttr{};
     return value ? std::optional<double>{value.getDouble()} : std::nullopt;
 }
 
@@ -335,21 +318,14 @@ void boundedNumberUnary(const ContentsValue & input, bool negate, ContentsValue 
 void boundedNumberProduct(const ContentsValue & left, const ContentsValue & right,
                           ContentsValue & result) {
     boundedNumberArithmetic(left, right, ctjs::BinaryKind::Mul, result);
-    auto a = boundedConvertedNumber(left);
-    auto b = boundedConvertedNumber(right);
-    const bool negative = a.has_value() != b.has_value();
-    if (!a) { a = boundedConvertedNumber(left, true); }
-    if (!b) { b = boundedConvertedNumber(right, true); }
+    const auto a = signedConvertedNumber(left);
+    const auto b = signedConvertedNumber(right);
     // Original Boolean/null and canonical Strings share unary's exact
     // conversion. A bounded product excludes rounding and wrap; zero keeps
     // its original signed value as the origin.
-    if (a && b && (*b == 0 || *a <= 4294967295ULL / *b)) {
-        const auto product = *a * *b;
-        if (negative && product != 0) {
-            result.negativeIntegerNumber = product;
-        } else {
-            result.integerNumber = product;
-        }
+    if (a && b &&
+        (*b == 0 || std::abs(*a) <= static_cast<std::int64_t>(4294967295ULL) / std::abs(*b))) {
+        result.setSigned(*a * *b);
     }
 }
 
@@ -357,22 +333,14 @@ void boundedNumberDivision(const ContentsValue & left, const ContentsValue & rig
                            ContentsValue & result) {
     boundedNumberArithmetic(left, right, remainder ? ctjs::BinaryKind::Mod : ctjs::BinaryKind::Div,
                             result);
-    auto a = boundedConvertedNumber(left);
-    auto b = boundedConvertedNumber(right);
-    const bool negative = remainder ? !a : a.has_value() != b.has_value();
-    if (!a) { a = boundedConvertedNumber(left, true); }
-    if (!b) { b = boundedConvertedNumber(right, true); }
+    const auto a = signedConvertedNumber(left);
+    const auto b = signedConvertedNumber(right);
     // Original Boolean/null and canonical Strings share unary's exact
     // conversion. Bounded operands give an exact remainder; division also
-    // needs zero remainder. Mod keeps the dividend's sign, regardless of
-    // divisor sign. Keep the original signed zero.
+    // needs zero remainder. C++'s % keeps the dividend's sign, as Mod does,
+    // regardless of divisor sign. Keep the original signed zero.
     if (a && b && *b != 0 && (remainder || *a % *b == 0)) {
-        const auto magnitude = remainder ? *a % *b : *a / *b;
-        if (negative && magnitude != 0) {
-            result.negativeIntegerNumber = magnitude;
-        } else {
-            result.integerNumber = magnitude;
-        }
+        result.setSigned(remainder ? *a % *b : *a / *b);
     }
 }
 
@@ -442,6 +410,263 @@ void boundedNumberBinary(ctjs::BinaryKind kind, const ContentsValue & left,
     case ctjs::BinaryKind::Pow: return boundedNumberPower(left, right, result);
     default: return boundedNumberBitwise(left, right, kind, result);
     }
+}
+
+std::pair<mlir::Value, bool> conditionChoiceKey(mlir::Value condition,
+                                                llvm::function_ref<bool(std::size_t)> spend) {
+    // Truthy, ToBoolean and logical Not are total, without object conversion. The flag
+    // records whether the branch reverses the exact input's truthiness.
+    auto truthy = condition.getDefiningOp<ctjs::TruthyOp>();
+    if (!truthy) { return {condition, false}; }
+    const auto directBoolean = [](mlir::Value value) {
+        auto comparison = value.getDefiningOp<ctjs::CompareOp>();
+        auto conversion = value.getDefiningOp<ctjs::ConvertOp>();
+        auto unary = value.getDefiningOp<ctjs::UnaryOp>();
+        return (comparison && comparison.getKind() == ctjs::CompareKind::StrictEq) ||
+               (conversion && conversion.getKind() == ctjs::ConvertKind::ToBoolean) ||
+               (unary && unary.getKind() == ctjs::UnaryKind::Not) ||
+               ctjs::constantAttr<ctjs::BooleanAttr>(value);
+    };
+    const auto stripIdentity = [&](mlir::Value value) -> mlir::Value {
+        while (true) {
+            // The shared budget bounds traversal; exhaustion supplies no partial key.
+            if (!spend(1)) { return {}; }
+            if (!value.getDefiningOp<mlir::scf::IfOp>()) { return value; }
+            mlir::Value common;
+            for (mlir::Value arm : armYields(llvm::cast<mlir::OpResult>(value))) {
+                if (!spend(1)) { return {}; }
+                if (common && common != arm) {
+                    common = {};
+                    break;
+                }
+                common = arm;
+            }
+            // An identical saved SSA value keeps its tag and snapshot.
+            // Every arm effect is checked separately.
+            if (common) {
+                value = common;
+                continue;
+            }
+            // Nested selections may forward one saved SSA leaf through
+            // different immediate results. Keep exact identity only; every
+            // arm's producers and effects still require census and replay.
+            const auto walked = ifLeaves(value, spend, [&](mlir::Value leaf) {
+                if (common && common != leaf) { return false; }
+                common = leaf;
+                return true;
+            });
+            if (!walked) { return {}; }
+            return *walked && common ? common : value;
+        }
+    };
+    const auto stripBoolean = [&](mlir::Value value) -> std::pair<mlir::Value, bool> {
+        bool negated = false;
+        while (true) {
+            value = stripIdentity(value);
+            if (!value) { return {}; }
+            if (auto convert = value.getDefiningOp<ctjs::ConvertOp>();
+                convert && convert.getKind() == ctjs::ConvertKind::ToBoolean) {
+                value = convert.getOperand();
+                continue;
+            }
+            if (auto compare = value.getDefiningOp<ctjs::CompareOp>();
+                compare && compare.getKind() == ctjs::CompareKind::StrictEq) {
+                for (bool reversed : {false, true}) {
+                    auto input = reversed ? compare.getRhs() : compare.getLhs();
+                    ctjs::BooleanAttr boolean;
+                    bool exactBoolean = true;
+                    for (bool literalSide : {true, false}) {
+                        if (!exactBoolean) { break; }
+                        const auto walked = ifLeaves(
+                            literalSide ? (reversed ? compare.getLhs() : compare.getRhs()) : input,
+                            spend, [&](mlir::Value leaf) {
+                                if (!literalSide) { return directBoolean(leaf); }
+                                auto literal = ctjs::constantAttr<ctjs::BooleanAttr>(leaf);
+                                if (!literal || (boolean && boolean != literal)) { return false; }
+                                boolean = literal;
+                                return true;
+                            });
+                        if (!walked) { return {}; }
+                        exactBoolean = *walked;
+                    }
+                    // Equality with a Boolean preserves or reverses truthiness
+                    // only when the other operand is already exactly Boolean.
+                    // An opaque value, Number or read cannot borrow that tag.
+                    // Literal leaves must agree on one exact Boolean attribute;
+                    // no arm-local SSA value becomes a dominating representative.
+                    // Every nested input carrier leaf must prove its Boolean tag;
+                    // correspondence and all arm effects are checked separately.
+                    if (exactBoolean && boolean) {
+                        value = input;
+                        negated ^= !boolean.getValue();
+                        break;
+                    }
+                }
+                if (value != compare.getResult()) { continue; }
+            }
+            auto unary = value.getDefiningOp<ctjs::UnaryOp>();
+            if (!unary || unary.getKind() != ctjs::UnaryKind::Not) { break; }
+            value = unary.getOperand();
+            negated = !negated;
+        }
+        return {value, negated};
+    };
+    bool complete = true;
+    const auto sameOperand = [&](mlir::Value left, mlir::Value right) {
+        if (left == right) { return true; }
+        left = stripIdentity(left);
+        right = stripIdentity(right);
+        if (!left || !right) {
+            complete = false;
+            return false;
+        }
+        // Strict comparison operands keep their exact value; Boolean conversion
+        // and logical Not cannot be stripped here.
+        if (left == right) { return true; }
+        // One exact SSA leaf or immutable primitive attribute supplies the same input.
+        // No snapshot, coercion, signed-zero or BigInt spelling equivalence is inferred.
+        // All selected leaves must agree; no arm-local SSA representative escapes.
+        // The census and replay still validate every arm's producers and effects.
+        mlir::Attribute common;
+        mlir::Value identity;
+        const auto leaf = [&](mlir::Value current) {
+            if (auto literal = current.getDefiningOp<ctjs::ConstantOp>()) {
+                auto attribute = literal.getValue();
+                if (identity ||
+                    !llvm::isa<ctjs::UndefinedAttr, ctjs::NullAttr, ctjs::BooleanAttr,
+                               ctjs::NumberAttr, ctjs::StringAttr, ctjs::BigIntAttr>(attribute) ||
+                    (common && common != attribute)) {
+                    return false;
+                }
+                common = attribute;
+                return true;
+            }
+            if (common || (identity && identity != current)) { return false; }
+            identity = current;
+            return true;
+        };
+        // Right's leaves first, as one stack seeded {left, right} visited them.
+        auto walked = ifLeaves(right, spend, leaf);
+        if (walked && *walked) { walked = ifLeaves(left, spend, leaf); }
+        if (!walked) {
+            complete = false;
+            return false;
+        }
+        return *walked && (bool(common) || bool(identity));
+    };
+    const auto sameComparison = [&](mlir::Value left, mlir::Value right) {
+        auto first = left.getDefiningOp<ctjs::CompareOp>();
+        auto second = right.getDefiningOp<ctjs::CompareOp>();
+        return first && second && first.getKind() == ctjs::CompareKind::StrictEq &&
+               second.getKind() == ctjs::CompareKind::StrictEq &&
+               ((sameOperand(first.getLhs(), second.getLhs()) &&
+                 sameOperand(first.getRhs(), second.getRhs())) ||
+                (sameOperand(first.getLhs(), second.getRhs()) &&
+                 sameOperand(first.getRhs(), second.getLhs())));
+    };
+    const auto booleanInput = [&](mlir::Value operand) -> std::pair<mlir::Value, bool> {
+        auto [value, negated] = stripBoolean(operand);
+        if (!value) { return {}; }
+        const bool inputNegated = negated;
+        auto compare = value.getDefiningOp<ctjs::CompareOp>();
+        if (compare && compare.getKind() == ctjs::CompareKind::StrictEq) {
+            // Strict equality is total and noncoercing, including opaque objects.
+            // Prefixes before enclosing Ifs dominate this producer. Choose the
+            // outermost first match, so local duplicates share its replay snapshot.
+            // An earlier If result can also represent matching comparisons in
+            // both arms. Its completed result owns the choice, not a sibling op.
+            // Never cross a loop or borrow a following producer's choice.
+            // ponytail: linear prefix scans; cache keys only if profiling warrants it.
+            mlir::Operation * boundary = compare;
+            while (true) {
+                for (mlir::Operation & operation : *boundary->getBlock()) {
+                    if (!spend(1)) { return {}; }
+                    if (&operation == boundary) { break; }
+                    auto previous = llvm::dyn_cast<ctjs::CompareOp>(operation);
+                    if (previous && sameComparison(previous.getResult(), compare.getResult())) {
+                        value = previous.getResult();
+                        negated = inputNegated;
+                        break;
+                    }
+                    auto selected = llvm::dyn_cast<mlir::scf::IfOp>(operation);
+                    if (!selected) { continue; }
+                    for (mlir::OpResult result : selected.getResults()) {
+                        std::optional<bool> polarity;
+                        for (mlir::Value arm : armYields(result)) {
+                            if (!spend(1)) { return {}; }
+                            const auto incoming = stripBoolean(arm);
+                            if (!incoming.first) { return {}; }
+                            if (!sameComparison(incoming.first, compare.getResult()) ||
+                                (polarity && *polarity != incoming.second)) {
+                                polarity.reset();
+                                break;
+                            }
+                            polarity = incoming.second;
+                        }
+                        if (polarity) {
+                            value = result;
+                            negated = inputNegated != *polarity;
+                            break;
+                        }
+                    }
+                    if (value.getDefiningOp() == selected) { break; }
+                }
+                auto enclosing = llvm::dyn_cast<mlir::scf::IfOp>(boundary->getParentOp());
+                if (!enclosing) { break; }
+                boundary = enclosing;
+            }
+        }
+        return {value, negated};
+    };
+    mlir::Value input = truthy.getValue();
+    bool negated = false;
+    while (true) {
+        const auto [value, reversed] = booleanInput(input);
+        if (!value) { return {}; }
+        input = value;
+        negated ^= reversed;
+        if (auto branch = input.getDefiningOp<mlir::scf::IfOp>()) {
+            // Both incoming chains must retain one SSA representative and polarity.
+            // This selects no arm: census and replay still check every effect.
+            std::pair<mlir::Value, bool> common;
+            for (mlir::Value arm : armYields(llvm::cast<mlir::OpResult>(input))) {
+                if (!spend(1)) { return {}; }
+                const auto incoming = booleanInput(arm);
+                if (!incoming.first) { return {}; }
+                if (common.first && common != incoming) {
+                    auto thenValue = ctjs::constantAttr<ctjs::BooleanAttr>(common.first);
+                    auto elseValue = ctjs::constantAttr<ctjs::BooleanAttr>(incoming.first);
+                    // Complementary Boolean yields encode the condition itself.
+                    // Keep exact Boolean literals; numeric truthiness proves nothing here.
+                    if (thenValue && elseValue &&
+                        (thenValue.getValue() != common.second) !=
+                            (elseValue.getValue() != incoming.second)) {
+                        auto guard = branch.getCondition().getDefiningOp<ctjs::TruthyOp>();
+                        common = {guard ? mlir::Value(guard.getValue())
+                                        : mlir::Value(branch.getCondition()),
+                                  thenValue.getValue() == common.second};
+                    } else if (common.second == incoming.second &&
+                               sameComparison(common.first, incoming.first)) {
+                        // Both arms compute this same Boolean. Retain the If
+                        // result as a dominating snapshot for later comparisons.
+                        common = {input, false};
+                    } else {
+                        common = {};
+                    }
+                    break;
+                }
+                common = incoming;
+            }
+            if (common.first && common.first != input) {
+                input = common.first;
+                negated ^= common.second;
+                continue;
+            }
+        }
+        break;
+    }
+    if (!complete) { return {}; }
+    return {input, negated};
 }
 
 } // namespace ctcompile::ctnative::escape_detail

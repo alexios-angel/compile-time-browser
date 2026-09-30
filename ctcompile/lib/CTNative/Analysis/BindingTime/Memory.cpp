@@ -15,6 +15,18 @@ fact join(fact left, const fact & right, bool staticControl) {
     }
     return left;
 }
+std::optional<fact> joinAcross(llvm::ArrayRef<mlir::Operation *> nodes,
+                               llvm::function_ref<const fact *(mlir::Operation *)> part) {
+    fact result;
+    bool first = true;
+    for (mlir::Operation * id : nodes) {
+        const fact * next = part(id);
+        if (!next) { return std::nullopt; }
+        result = first ? *next : join(std::move(result), *next, true);
+        first = false;
+    }
+    return result;
+}
 void invalidate(flow & state) {
     for (auto & item : state.heaps) { item.second.dynamic = true; }
 }
@@ -35,7 +47,6 @@ BindingTimeAnalysis::Impl::fact BindingTimeAnalysis::Impl::memory(mlir::Operatio
     const auto clean = [&](const fact & object) {
         return binding_time_detail::clean(object, state);
     };
-    const auto primitive = [] { return fact{kind::primitive, BindingTime::Static, {}, {}}; };
     if (llvm::isa<ctjs::CreateObjectOp>(op) ||
         (llvm::isa<ctjs::ConstructOp>(op) && op->hasAttr(kNativeMapSite))) {
         fact result{llvm::isa<ctjs::CreateObjectOp>(op) ? kind::object : kind::map,
@@ -124,20 +135,19 @@ BindingTimeAnalysis::Impl::fact BindingTimeAnalysis::Impl::memory(mlir::Operatio
         }
         if (object.domain == kind::map && nativeMapAction(op) == "size") {
             eligible = true;
-            return primitive();
+            return fact::staticPrimitive();
         }
         auto text = llvm::dyn_cast_or_null<ctjs::StringAttr>(key.literal);
         if (object.domain != kind::object || !text) { return {}; }
-        fact result;
-        bool first = true;
-        for (auto * id : object.nodes) {
-            auto found = state.heaps[id].fields.find(text.getValue());
-            if (found == state.heaps[id].fields.end()) { return {}; }
-            result = first ? found->second : binding_time_detail::join(result, found->second, true);
-            first = false;
-        }
-        eligible = result.time == BindingTime::Static;
-        return result;
+        auto result = binding_time_detail::joinAcross(
+            object.nodes, [&](mlir::Operation * id) -> const fact * {
+                auto & fields = state.heaps[id].fields;
+                auto found = fields.find(text.getValue());
+                return found == fields.end() ? nullptr : &found->second;
+            });
+        if (!result) { return {}; }
+        eligible = result->time == BindingTime::Static;
+        return *result;
     }
     if (auto call = llvm::dyn_cast<ctjs::CallOp>(op)) {
         const auto action = nativeMapAction(op);
@@ -169,20 +179,15 @@ BindingTimeAnalysis::Impl::fact BindingTimeAnalysis::Impl::memory(mlir::Operatio
                 if (action == "clear" && eligible) {
                     target.fields.clear();
                     target.retained.clear();
-                    target.contents = primitive();
+                    target.contents = fact::staticPrimitive();
                 }
             }
         }
         if (!eligible) { return {}; }
         if (action == "set") { return object; }
         if (action == "get") {
-            fact result;
-            bool first = true;
-            for (auto * id : object.nodes) {
-                auto data = state.heaps[id].contents;
-                result = first ? data : binding_time_detail::join(result, data, true);
-                first = false;
-            }
+            fact result = *binding_time_detail::joinAcross(
+                object.nodes, [&](mlir::Operation * id) { return &state.heaps[id].contents; });
             // Contents summarize all stored payloads, not membership at this
             // particular key. A missing or deleted entry yields undefined;
             // do not infer an exact literal or a definite object from payloads.
@@ -190,7 +195,9 @@ BindingTimeAnalysis::Impl::fact BindingTimeAnalysis::Impl::memory(mlir::Operatio
             if (result.domain != kind::primitive) { result.domain = kind::unknown; }
             return result;
         }
-        if (action == "has" || action == "delete" || action == "clear") { return primitive(); }
+        if (action == "has" || action == "delete" || action == "clear") {
+            return fact::staticPrimitive();
+        }
         // Snapshot iteration is still runtime work in the evaluator.
         eligible = false;
         return {};

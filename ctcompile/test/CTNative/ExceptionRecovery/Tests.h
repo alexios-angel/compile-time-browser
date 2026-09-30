@@ -38,6 +38,10 @@ using ctcompile::ctnative::lowering_detail::ExceptionRecoveryMode;
 using ctcompile::ctnative::lowering_detail::recoverPrimitiveExceptionRegion;
 
 bool check(bool condition, llvm::StringRef label);
+// Replaces the first occurrence of `from`, which must be present.
+inline void replaceOnce(std::string & text, llvm::StringRef from, llvm::StringRef to) {
+    text.replace(text.find(from.str()), from.size(), to.str());
+}
 std::string printed(mlir::Operation * operation);
 ctjs::FuncOp guarded(mlir::ModuleOp module);
 ctjs::CallDirectOp firstCall(ctjs::FuncOp function);

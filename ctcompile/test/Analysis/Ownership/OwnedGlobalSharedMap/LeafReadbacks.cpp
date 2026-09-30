@@ -216,12 +216,10 @@ void checkLeafReadbackOwner(mlir::MLIRContext & context, const std::string & sou
         const unsigned operand = alias ? 0u : 1u;
         const auto original = compared->getOperand(operand);
         compared->setOperand(operand, alias ? get.getResult() : leaf.getResult());
-        OwnedGlobalRoots stale(*module, contract);
-        check(!stale.proved() && stale.reason().contains("fingerprint") && empty(*module, stale),
-              "a cross-scope identity operand invalidates the previous source fingerprint");
-        OwnedGlobalRoots fresh(*module, mapContractFor(*module));
-        check(!fresh.proved() && !fresh.exhausted() && empty(*module, fresh),
-              "forged origin reports cannot authorize a then-only object outside its SSA scope");
+        checkStaleAndRefused(
+            *module, contract, mapContractFor(*module),
+            "a cross-scope identity operand invalidates the previous source fingerprint",
+            "forged origin reports cannot authorize a then-only object outside its SSA scope");
         compared->setOperand(operand, original);
         check(OwnedGlobalRoots(*module, contract).proved(),
               "restoring the actual in-scope operand restores the independent object proof");
@@ -239,12 +237,8 @@ void checkLeafReadbackOwner(mlir::MLIRContext & context, const std::string & sou
         const unsigned completion = query.steps();
         check(query.proved() && completion < 25000, "the complete readback owner proof is bounded");
         if (!query.proved() || completion >= 25000) { continue; }
-        for (unsigned budget = 0; budget < completion; ++budget) {
-            OwnedGlobalRoots limited(*module, contract, budget);
-            check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
-                      empty(*module, limited),
-                  "every incomplete readback owner budget withholds the whole publication");
-        }
+        checkBudgetsBelow(*module, contract, completion,
+                          "every incomplete readback owner budget withholds the whole publication");
         OwnedGlobalRoots exact(*module, contract, completion);
         check(exact.proved() && exact.steps() == completion,
               "the exact readback owner budget retains the entire source family");
@@ -285,13 +279,10 @@ void checkLeafReadbackOwner(mlir::MLIRContext & context, const std::string & sou
             ++mutations;
             const auto original = operation->getOperand(operand);
             operation->setOperand(operand, value);
-            OwnedGlobalRoots stale(*module, contract);
-            check(!stale.proved() && stale.reason().contains("fingerprint") &&
-                      empty(*module, stale),
-                  "changing a live readback source invalidates the old owner fingerprint");
-            OwnedGlobalRoots fresh(*module, mapContractFor(*module));
-            check(!fresh.proved() && !fresh.exhausted() && empty(*module, fresh),
-                  "a fresh fingerprint cannot turn forged object origin reports into an owner");
+            checkStaleAndRefused(
+                *module, contract, mapContractFor(*module),
+                "changing a live readback source invalidates the old owner fingerprint",
+                "a fresh fingerprint cannot turn forged object origin reports into an owner");
             operation->setOperand(operand, original);
             check(OwnedGlobalRoots(*module, contract).proved(),
                   "restoring the actual source restores the entire independent owner");

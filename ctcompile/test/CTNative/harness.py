@@ -82,6 +82,26 @@ def run(command, *, success=True, environment=None, input_text=None):
     return result
 
 
+PIPELINE = Path(__file__).resolve().parent / "Checks/pipeline.cmake"
+
+
+def native_pipeline(args, source, output, **defines):
+    """Lower `source` into `output` with the build's own script, Checks/pipeline.cmake."""
+    run(
+        [
+            "cmake",
+            f"-DTRANSLATE={args.translate}",
+            f"-DOPT={args.opt}",
+            f"-DSOURCE={source}",
+            f"-DOUTPUT={output}",
+            "-DOPTIMIZE=OFF",
+            *(f"-D{name}={value}" for name, value in defines.items()),
+            "-P",
+            str(PIPELINE),
+        ]
+    )
+
+
 def without_intrinsic(manifest, name):
     """`manifest` with the intrinsic `name` withheld from its initial_intrinsics."""
     kept = [item for item in manifest["initial_intrinsics"] if item != name]

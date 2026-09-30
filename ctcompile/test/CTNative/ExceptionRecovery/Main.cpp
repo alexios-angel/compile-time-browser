@@ -12,11 +12,8 @@ int main(int argc, char ** argv) {
     auto file = llvm::MemoryBuffer::getFile(argv[1]);
     if (!file) { return 1; }
     mlir::MLIRContext context;
-    context.getOrLoadDialect<ctjs::CTJSDialect>();
-    context.getOrLoadDialect<mlir::arith::ArithDialect>();
-    context.getOrLoadDialect<mlir::cf::ControlFlowDialect>();
-    context.getOrLoadDialect<mlir::scf::SCFDialect>();
-    context.getOrLoadDialect<mlir::ub::UBDialect>();
+    context.loadDialect<ctjs::CTJSDialect, mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
+                        mlir::scf::SCFDialect, mlir::ub::UBDialect>();
     const auto source = [&](llvm::StringRef name) {
         auto tail = (*file)->getBuffer().split(("//--- " + name + ".js\n").str()).second;
         return tail.split("//--- ").first;

@@ -163,12 +163,8 @@ void checkCapturedMapZeroSizeOwner(mlir::MLIRContext & context, const std::strin
         const unsigned completion = query.steps();
         check(query.proved() && completion < 20000, "exact-zero complete proof is bounded");
         if (!query.proved() || completion >= 20000) { continue; }
-        for (unsigned budget = 0; budget < completion; ++budget) {
-            OwnedGlobalRoots limited(*module, contract, budget);
-            check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
-                      empty(*module, limited),
-                  "every incomplete exact-zero budget withholds all published ownership");
-        }
+        checkBudgetsBelow(*module, contract, completion,
+                          "every incomplete exact-zero budget withholds all published ownership");
         OwnedGlobalRoots exact(*module, contract, completion);
         check(exact.proved() && exact.steps() == completion,
               "the exact work budget reproduces the complete saved-zero proof");
@@ -195,12 +191,10 @@ void checkCapturedMapZeroSizeOwner(mlir::MLIRContext & context, const std::strin
         if (!snapshot || !growth) { continue; }
         auto * restoreBefore = snapshot->getNextNode();
         snapshot->moveAfter(growth);
-        OwnedGlobalRoots stale(*module, contract);
-        check(!stale.proved() && stale.reason().contains("fingerprint") && empty(*module, stale),
-              "moving the actual size read invalidates its old fingerprint");
-        OwnedGlobalRoots fresh(*module, mapContractFor(*module));
-        check(!fresh.proved() && !fresh.exhausted() && empty(*module, fresh),
-              "fresh fingerprints and forged zero reports cannot repair a post-growth read");
+        checkStaleAndRefused(
+            *module, contract, mapContractFor(*module),
+            "moving the actual size read invalidates its old fingerprint",
+            "fresh fingerprints and forged zero reports cannot repair a post-growth read");
         snapshot->moveBefore(restoreBefore);
         check(OwnedGlobalRoots(*module, contract).proved(),
               "restoring read-time emptiness restores the independent saved-zero proof");

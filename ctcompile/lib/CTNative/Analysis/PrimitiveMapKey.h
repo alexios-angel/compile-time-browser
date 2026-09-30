@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdint>
 #include <optional>
+#include <utility>
 
 namespace ctcompile::ctnative {
 
@@ -51,24 +52,23 @@ inline PrimitiveMapKeyRelation comparePrimitiveMapKeys(mlir::Value left, mlir::V
                                                        PrimitiveMapKeyEvidence leftEvidence = {},
                                                        PrimitiveMapKeyEvidence rightEvidence = {}) {
     if (left == right) { return PrimitiveMapKeyRelation::Same; }
-    const auto literal = [](mlir::Value value) -> mlir::Attribute {
+    // A key's primitive literal, else its exact size as a Number, and the tag
+    // that attribute implies (the evidence's tag without one).
+    const auto resolve = [](mlir::Value value, const PrimitiveMapKeyEvidence & evidence)
+        -> std::pair<mlir::Attribute, std::optional<mlir::TypeID>> {
         auto constant = value.getDefiningOp<ctjs::ConstantOp>();
-        if (!constant || !ctjs::isPrimitiveAttr(constant.getValue())) { return {}; }
-        return constant.getValue();
+        mlir::Attribute literal = constant && ctjs::isPrimitiveAttr(constant.getValue())
+                                      ? constant.getValue()
+                                      : mlir::Attribute{};
+        if (!literal && evidence.exactSize) {
+            literal = ctjs::NumberAttr::get(
+                value.getContext(),
+                llvm::bit_cast<uint64_t>(static_cast<double>(*evidence.exactSize)));
+        }
+        return {literal, literal ? std::optional(literal.getTypeID()) : evidence.tag};
     };
-    auto lhs = literal(left), rhs = literal(right);
-    if (!lhs && leftEvidence.exactSize) {
-        lhs = ctjs::NumberAttr::get(left.getContext(), llvm::bit_cast<uint64_t>(static_cast<double>(
-                                                           *leftEvidence.exactSize)));
-    }
-    if (!rhs && rightEvidence.exactSize) {
-        rhs = ctjs::NumberAttr::get(
-            right.getContext(),
-            llvm::bit_cast<uint64_t>(static_cast<double>(*rightEvidence.exactSize)));
-    }
-    auto leftTag = leftEvidence.tag, rightTag = rightEvidence.tag;
-    if (lhs) { leftTag = lhs.getTypeID(); }
-    if (rhs) { rightTag = rhs.getTypeID(); }
+    const auto [lhs, leftTag] = resolve(left, leftEvidence);
+    const auto [rhs, rightTag] = resolve(right, rightEvidence);
     if (leftTag && rightTag && leftTag != rightTag) { return PrimitiveMapKeyRelation::Distinct; }
     const auto outsideSizeBound = [](mlir::Attribute value, unsigned lowerBound) {
         auto number = llvm::dyn_cast_if_present<ctjs::NumberAttr>(value);

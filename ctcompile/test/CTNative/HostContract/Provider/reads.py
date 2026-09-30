@@ -6,7 +6,7 @@ from pathlib import Path
 import re
 
 from CTNative.HostContract import prefix
-from CTNative.harness import prepare_js
+from CTNative.harness import forge_module, prepare_js
 
 host = prefix.host
 OPTIONS = "follow-publication=true follow-provider-reads=true"
@@ -212,10 +212,9 @@ def main():
     unsafe = prepared["write_after_read"]
     forged = args.work / "forged.mlir"
     forged.write_text(
-        unsafe.read_text().replace(
-            "module attributes {",
-            "module attributes {ctnative.host_empty_map = true, ctnative.host_provider_reads = 99 : i64, ",
-            1,
+        forge_module(
+            unsafe.read_text(),
+            "ctnative.host_empty_map = true, ctnative.host_provider_reads = 99 : i64",
         )
     )
     forged_contract = dict(

@@ -99,12 +99,8 @@ enum class keyRelation {
 
 keyRelation relate(mlir::Value left, mlir::Value right) {
     if (left == right) { return keyRelation::same; }
-    const auto text = [](mlir::Value key) {
-        auto constant = key.getDefiningOp<ctjs::ConstantOp>();
-        return constant ? llvm::dyn_cast<ctjs::StringAttr>(constant.getValue())
-                        : ctjs::StringAttr{};
-    };
-    const auto left_text = text(left), right_text = text(right);
+    const auto left_text = ctjs::constantAttr<ctjs::StringAttr>(left),
+               right_text = ctjs::constantAttr<ctjs::StringAttr>(right);
     if (!left_text || !right_text) { return keyRelation::unknown; }
     return left_text.getValue() == right_text.getValue() ? keyRelation::same
                                                          : keyRelation::distinct;
@@ -455,15 +451,14 @@ std::string provePayloads(mlir::ModuleOp module, llvm::ArrayRef<plan> plans,
     llvm::DenseMap<mlir::Value, PrimitiveAlternatives> parameters;
     if (globals && globals->proved()) {
         for (const auto & root : globals->roots()) {
-            if (!root.methodTable || !root.methodTable->capturedMap) { continue; }
-            for (ctjs::CallOp call : root.methodTable->capturedMap->calls) {
-                publishedCalls.insert(call);
-            }
+            const auto * captured = root.capturedMap();
+            if (!captured) { continue; }
+            for (ctjs::CallOp call : captured->calls) { publishedCalls.insert(call); }
             // These are current semantic actual/formal facts from the complete
             // host body worklist, not solver types or input annotations. They
             // may seed primitive alternatives. Only a checked write of that
             // value can establish a payload fact, never the signature alone.
-            for (const HostMethodParameters & method : root.methodTable->capturedMap->parameters) {
+            for (const HostMethodParameters & method : captured->parameters) {
                 auto function = method.function;
                 auto & body = function.getBody().front();
                 const auto offset = body.getNumArguments() - method.alternatives.size();

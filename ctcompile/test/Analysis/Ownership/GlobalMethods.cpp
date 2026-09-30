@@ -212,12 +212,8 @@ void checkCapturedMap(mlir::MLIRContext & context) {
         check(completion > host.steps() && completion < 10000,
               "capture ownership charges bounded work after its host proof");
         if (completion >= 10000) { continue; }
-        for (unsigned budget = 0; budget < completion; ++budget) {
-            OwnedGlobalRoots limited(*module, contract, budget);
-            check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
-                      empty(*module, limited),
-                  "every incomplete capture budget withholds all owning source edges");
-        }
+        checkBudgetsBelow(*module, contract, completion,
+                          "every incomplete capture budget withholds all owning source edges");
         check(proved(OwnedGlobalRoots(*module, contract, completion), lifted),
               "exact capture completion budget publishes its source graph");
         check(!OwnedGlobalRoots(*module, contractFor(*module)).proved(),
@@ -445,12 +441,8 @@ int main() {
     check(completion > host.steps() && completion <= 10000,
           "owner census charges additional bounded work after the complete host proof");
     if (completion > 10000) { return 1; }
-    for (unsigned budget = 0; budget < completion; ++budget) {
-        OwnedGlobalRoots limited(*module, contract, budget);
-        check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
-                  empty(*module, limited),
-              "every incomplete budget withholds the entire owning table plan");
-    }
+    checkBudgetsBelow(*module, contract, completion,
+                      "every incomplete budget withholds the entire owning table plan");
     check(complete(OwnedGlobalRoots(*module, contract, completion)),
           "exact completion budget publishes the complete owner and callable graph");
     auto root = query.roots().front();

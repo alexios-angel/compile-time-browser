@@ -85,10 +85,8 @@ bool testClassTransactions(mlir::MLIRContext & context) {
                 if (control == 34) {
                     source.insert(source.find("return shape.read()"), "Error = 9; ");
                 }
-                if (control == 28) { source.replace(source.find("throw new"), 9, "return new"); }
-                if (control == 29) {
-                    source.replace(source.find("'unused NAME'"), 13, "unknown()");
-                }
+                if (control == 28) { replaceOnce(source, "throw new", "return new"); }
+                if (control == 29) { replaceOnce(source, "'unused NAME'", "unknown()"); }
             }
             if (control >= 35) {
                 source =
@@ -134,22 +132,20 @@ bool testClassTransactions(mlir::MLIRContext & context) {
                 }
                 if (control == 49) { source += " JSON = 9;"; }
                 if (control == 50) {
-                    source.replace(source.find("return t }"), 10, "element.unknown(); return t }");
+                    replaceOnce(source, "return t }", "element.unknown(); return t }");
                 }
                 if (control == 51) {
                     source.insert(source.find("return typeof M"), "if (false) element.unknown(); ");
                 }
-                if (control == 52) { source.replace(source.find("M(shape.read())"), 15, "M({})"); }
+                if (control == 52) { replaceOnce(source, "M(shape.read())", "M({})"); }
                 if (control == 53) {
                     source.insert(source.find("class Shape"),
                                   "const unused = { bad() { Number({}); } }; ");
                 }
-                if (control == 54) {
-                    source.replace(source.find("M(shape.read())"), 15, "shape.read()");
-                }
+                if (control == 54) { replaceOnce(source, "M(shape.read())", "shape.read()"); }
                 if (control == 56) {
-                    source.replace(source.find("M(shape.read())"), 15,
-                                   "M(shape.read() === null ? '%7B%7D' : '%')");
+                    replaceOnce(source, "M(shape.read())",
+                                "M(shape.read() === null ? '%7B%7D' : '%')");
                 }
                 if (control == 57) {
                     source.replace(source.find("function M"),
@@ -158,10 +154,9 @@ bool testClassTransactions(mlir::MLIRContext & context) {
                                    "return Number(identity(t)).toString(); } ");
                 }
                 if (control >= 58) {
-                    source.replace(source.find("M(shape.read())"), 15, "shape.read()");
+                    replaceOnce(source, "M(shape.read())", "shape.read()");
                     const std::string read = "return this.element.getAttribute('x');";
-                    source.replace(source.find(read), read.size(),
-                                   "return M(this.element.getAttribute('x'));");
+                    replaceOnce(source, read, "return M(this.element.getAttribute('x'));");
                     if (control == 58) {
                         source.replace(source.find("function M"),
                                        source.find("class Shape") - source.find("function M"),
@@ -190,9 +185,7 @@ bool testClassTransactions(mlir::MLIRContext & context) {
                                       "unused() { M(this.element.getAttribute('x')); "
                                       "this.element.unknown(); } ");
                     }
-                    if (control == 66) {
-                        source.replace(source.find("return t }"), 10, "return unknown(t) }");
-                    }
+                    if (control == 66) { replaceOnce(source, "return t }", "return unknown(t) }"); }
                     if (control == 67) {
                         source.replace(source.find("function M"),
                                        source.find("class Shape") - source.find("function M"),
@@ -215,23 +208,21 @@ bool testClassTransactions(mlir::MLIRContext & context) {
                     source.insert(source.find("return shape"), "shape.read('toggle'); ");
                 }
                 if (control == 72) {
-                    source.replace(source.find("shape.read('config')"), 20, "shape.read('Config')");
+                    replaceOnce(source, "shape.read('config')", "shape.read('Config')");
                 }
                 if (control == 73 || control == 74) {
                     source.insert(source.find("return shape"),
                                   control == 73 ? "shape.read('Config'); "
                                                 : "shape.read(element.getAttribute('x')); ");
                 }
-                if (control == 75) {
-                    source.replace(source.find("t.toLowerCase()"), 15, "unknown(t)");
-                }
+                if (control == 75) { replaceOnce(source, "t.toLowerCase()", "unknown(t)"); }
                 if (control == 76) {
                     source.insert(source.find("const shape"), "F = function(t) { return t; }; ");
                 }
                 if (control == 77) {
                     source.insert(source.find("read(key)"), "unused() { return F('Config'); } ");
                 }
-                if (control == 78) { source.replace(source.find("return F(key)"), 13, "return F"); }
+                if (control == 78) { replaceOnce(source, "return F(key)", "return F"); }
                 if (control == 79) { source += " __ctbrowser_regexp = 9;"; }
                 if (control == 80) {
                     source.insert(source.find("return shape"), "element.unknown(); ");
@@ -259,7 +250,7 @@ bool testClassTransactions(mlir::MLIRContext & context) {
                         : control == 86
                             ? "function(t) { return this; }"
                             : "t => { function hidden() { return t; } return hidden(); }";
-                    source.replace(source.find(predicate), predicate.size(), changed);
+                    replaceOnce(source, predicate, changed);
                 }
                 if (control == 88) {
                     source.insert(
@@ -299,9 +290,7 @@ bool testClassTransactions(mlir::MLIRContext & context) {
                     source.insert(source.find("const count"),
                                   "element.setAttribute('leak', holder); ");
                 }
-                if (control == 99) {
-                    source.replace(source.find("t.startsWith(\"bs\")"), 18, "unknown(t)");
-                }
+                if (control == 99) { replaceOnce(source, "t.startsWith(\"bs\")", "unknown(t)"); }
                 if (control == 100) {
                     source.insert(source.find("const count"), "holder.keys(element); ");
                 }
@@ -333,9 +322,7 @@ bool testClassTransactions(mlir::MLIRContext & context) {
                                   control == 106 ? "M = function(t) { return t; }; "
                                                  : "F = function(t) { return t; }; ");
                 }
-                if (control == 108) {
-                    source.replace(source.find("t.toLowerCase()"), 15, "unknown(t)");
-                }
+                if (control == 108) { replaceOnce(source, "t.toLowerCase()", "unknown(t)"); }
                 if (control == 109) {
                     source.insert(source.find("return typeof"),
                                   "element.setAttribute('leak', H); ");
@@ -350,18 +337,18 @@ bool testClassTransactions(mlir::MLIRContext & context) {
             }
             if (control >= 116) {
                 const std::string oldClass = "class Shape { read() { return 'x'; } }";
-                source.replace(source.find(oldClass), oldClass.size(),
-                               "class Shape { read(element, key) { "
-                               "return H.getDataAttribute(element, key); } }");
-                source.replace(source.find("element.getAttribute(shape.read())"), 34,
-                               "element.getAttribute('x')");
-                source.replace(source.find("typeof H.getDataAttribute(element, 'config')"), 44,
-                               "typeof shape.read(element, 'config')");
+                replaceOnce(source, oldClass,
+                            "class Shape { read(element, key) { "
+                            "return H.getDataAttribute(element, key); } }");
+                replaceOnce(source, "element.getAttribute(shape.read())",
+                            "element.getAttribute('x')");
+                replaceOnce(source, "typeof H.getDataAttribute(element, 'config')",
+                            "typeof shape.read(element, 'config')");
                 if (control == 117) {
                     source.insert(source.find("return typeof"), "shape.read(element, 'config'); ");
                 }
                 if (control == 118) {
-                    source.replace(source.find("const H"), 7, "let H");
+                    replaceOnce(source, "const H", "let H");
                     source.insert(source.find("const shape"), "H = {}; ");
                 }
                 if (control == 119) {
@@ -378,9 +365,7 @@ bool testClassTransactions(mlir::MLIRContext & context) {
                 if (control == 122) {
                     source.insert(source.find("return typeof"), "shape.read(element, 'Config'); ");
                 }
-                if (control == 123) {
-                    source.replace(source.find("t.toLowerCase()"), 15, "unknown(t)");
-                }
+                if (control == 123) { replaceOnce(source, "t.toLowerCase()", "unknown(t)"); }
                 if (control == 126) {
                     source.insert(source.find("return typeof"), "shape.read({}, 'config'); ");
                 }
@@ -411,17 +396,14 @@ bool testClassTransactions(mlir::MLIRContext & context) {
                 })js";
                 if (control == 129 || control == 130) {
                     const std::string original = "read() { return 'x'; }";
-                    source.replace(source.find(original), original.size(),
-                                   "read(t, key) { return H.read(t, key); }");
-                    source.replace(source.find("H.read(element, shape.read())"), 29,
-                                   "shape.read(element, 'x')");
+                    replaceOnce(source, original, "read(t, key) { return H.read(t, key); }");
+                    replaceOnce(source, "H.read(element, shape.read())",
+                                "shape.read(element, 'x')");
                 }
                 if (control == 130) {
                     source.insert(source.find("return shape.read"), "shape.read(element, 'x'); ");
                 }
-                if (control == 131) {
-                    source.replace(source.find("t.startsWith(\"bs\")"), 18, "unknown(t)");
-                }
+                if (control == 131) { replaceOnce(source, "t.startsWith(\"bs\")", "unknown(t)"); }
                 if (control == 132) {
                     source.insert(source.find("const saved"), "t.setAttribute('leak', M); ");
                 }
@@ -437,8 +419,7 @@ bool testClassTransactions(mlir::MLIRContext & context) {
                 if (control == 136) {
                     const std::string predicate =
                         "t => t.startsWith(\"bs\") && !t.startsWith(\"bsConfig\")";
-                    source.replace(source.find(predicate), predicate.size(),
-                                   "function(t) { return this; }");
+                    replaceOnce(source, predicate, "function(t) { return this; }");
                 }
             }
             if (control >= 140) {
@@ -462,26 +443,23 @@ bool testClassTransactions(mlir::MLIRContext & context) {
                     source.insert(source.find("return typeof"), "element.unknown(); ");
                 }
                 if (control == 150) {
-                    source.replace(source.find("return typeof H.read(element)"), 29,
-                                   "return typeof H.read({})");
+                    replaceOnce(source, "return typeof H.read(element)",
+                                "return typeof H.read({})");
                 }
                 if (control == 142) {
                     source.insert(source.find("for (const"),
                                   "t.setAttribute('data-bs-new', 'x'); ");
                 }
-                if (control == 143) {
-                    source.replace(source.find("t.dataset[n]"), 12, "t.dataset[n + '']");
-                }
-                if (control == 144) { source.replace(source.find("result[n]"), 9, "result[{}]"); }
+                if (control == 143) { replaceOnce(source, "t.dataset[n]", "t.dataset[n + '']"); }
+                if (control == 144) { replaceOnce(source, "result[n]", "result[{}]"); }
                 if (control == 145) {
                     source.insert(source.find("result[n]"), "result[n] = null; ");
                 }
                 if (control == 148) {
                     const std::string constructor = "constructor() { this.key = 'x'; }";
-                    source.replace(source.find(constructor), constructor.size(),
-                                   constructor + " read(t) { return H.read(t); }");
-                    source.replace(source.find("typeof H.read(element)"), 22,
-                                   "typeof shape.read(element)");
+                    replaceOnce(source, constructor,
+                                constructor + " read(t) { return H.read(t); }");
+                    replaceOnce(source, "typeof H.read(element)", "typeof shape.read(element)");
                 }
             }
             if (control >= 151) {
@@ -499,7 +477,7 @@ bool testClassTransactions(mlir::MLIRContext & context) {
                 })js";
                 if (control == 152) {
                     const std::string early = "return '';";
-                    source.replace(source.find(early), early.size(), "{ unknown(); return ''; }");
+                    replaceOnce(source, early, "{ unknown(); return ''; }");
                 }
                 if (control == 155) {
                     source.insert(
@@ -534,16 +512,16 @@ bool testClassTransactions(mlir::MLIRContext & context) {
                 }
                 if (control == 160 || control == 161) {
                     const std::string call = "return saved + readDataset(element)";
-                    source.replace(source.find(call), call.size(),
-                                   control == 160 ? "return saved + readDataset({})"
-                                                  : "return saved + readDataset(element, 1)");
+                    replaceOnce(source, call,
+                                control == 160 ? "return saved + readDataset({})"
+                                               : "return saved + readDataset(element, 1)");
                 }
                 if (control == 162) {
                     source.insert(source.find("return saved"),
                                   "element.setAttribute('leak', readDataset); ");
                 }
                 if (control == 163) {
-                    source.replace(source.find("let joined = '';"), 16, "let joined = this;");
+                    replaceOnce(source, "let joined = '';", "let joined = this;");
                 }
             }
             if (control >= 165) {
@@ -560,7 +538,7 @@ bool testClassTransactions(mlir::MLIRContext & context) {
                                                : control == 169 ? "t.value"
                                                : control == 170 ? "element"
                                                                 : "t";
-                source.replace(source.find("return t;"), 9, "return " + expression + ";");
+                replaceOnce(source, "return t;", "return " + expression + ";");
             }
             if (control >= 172 && control < 181) {
                 const std::string expression = control == 173   ? "t ? (e ? typeof t : !e) : void t"
@@ -571,7 +549,7 @@ bool testClassTransactions(mlir::MLIRContext & context) {
                                                : control == 178 ? "t ? e : +t"
                                                : control == 179 ? "false ? (e(), t) : t"
                                                                 : "t ? e : t";
-                source.replace(source.find("return t;"), 9, "return " + expression + ";");
+                replaceOnce(source, "return t;", "return " + expression + ";");
             }
             if (control >= 181 && control < 189) {
                 const std::string body =
@@ -582,7 +560,7 @@ bool testClassTransactions(mlir::MLIRContext & context) {
                     : control == 186 ? "if (t) return e.value; return t;"
                     : control == 187 ? "if (false) { e(); return t; } return e;"
                                      : "if (t) return e; return t;";
-                source.replace(source.find("return t;"), 9, body);
+                replaceOnce(source, "return t;", body);
             }
             if (control >= 189) {
                 const std::string body =
@@ -597,7 +575,7 @@ bool testClassTransactions(mlir::MLIRContext & context) {
                         ? "function hidden(t) { return t; } return typeof t;"
                         : "function hidden(t) { return t; } t = e; "
                           "if (t) t = !e; else t = typeof e; return t;";
-                source.replace(source.find("return t;"), 9, body);
+                replaceOnce(source, "return t;", body);
             }
             auto candidate = import(context, source, true);
             if (!candidate) { return false; }
@@ -707,19 +685,12 @@ bool testClassTransactions(mlir::MLIRContext & context) {
                                                    : control == 4 || control == 17      ? 1000
                                                    : control >= 47                      ? 1000000
                                                                                         : 100000);
-            if (control != 0 && control != 2 && control != 5 && control != 8 && control != 13 &&
-                control != 19 && control != 23 && control != 25 && control != 35 && control != 38 &&
-                control != 46 && control != 47 && control != 56 && control != 58 && control != 59 &&
-                control != 60 && control != 70 && control != 71 && control != 72 && control != 73 &&
-                control != 77 && control != 82 && control != 92 && control != 93 &&
-                control != 121 && control != 100 && control != 104 && control != 105 &&
-                control != 114 && control != 116 && control != 117 && control != 122 &&
-                control != 128 && control != 129 && control != 130 && control != 140 &&
-                control != 141 && control != 148 && control != 151 && control != 157 &&
-                control != 158 && control != 165 && control != 166 && control != 167 &&
-                control != 172 && control != 173 && control != 174 && control != 181 &&
-                control != 182 && control != 183 && control != 189 && control != 190 &&
-                control != 191) {
+            static const llvm::DenseSet<unsigned> admittedControls{
+                0,   2,   5,   8,   13,  19,  23,  25,  35,  38,  46,  47,  56,  58,
+                59,  60,  70,  71,  72,  73,  77,  82,  92,  93,  121, 100, 104, 105,
+                114, 116, 117, 122, 128, 129, 130, 140, 141, 148, 151, 157, 158, 165,
+                166, 167, 172, 173, 174, 181, 182, 183, 189, 190, 191};
+            if (!admittedControls.contains(control)) {
                 if (!error) {
                     llvm::errs() << "unexpected class/DOM admission: " << control << '\n';
                 }
@@ -807,27 +778,26 @@ bool testClassTransactions(mlir::MLIRContext & context) {
                 const shape = new Shape();
                 return typeof H.read(element) === 'object' && element.hasAttribute(shape.key);
             })js";
-            if (control == 1) { source.replace(source.find("i.slice(1)"), 10, "n.slice(1)"); }
-            if (control == 2) { source.replace(source.find("t.dataset[n]"), 12, "t.dataset[i]"); }
+            if (control == 1) { replaceOnce(source, "i.slice(1)", "n.slice(1)"); }
+            if (control == 2) { replaceOnce(source, "t.dataset[n]", "t.dataset[i]"); }
             if (control == 3) {
                 source.insert(source.find("return result;"), "result.other = 'second writer'; ");
             }
             if (control == 4) {
-                source.replace(source.find("i.charAt(0).toLowerCase()"), 25, "i.toLowerCase()");
+                replaceOnce(source, "i.charAt(0).toLowerCase()", "i.toLowerCase()");
             }
             if (control >= 7) {
                 const std::string original = "class Shape { constructor() { this.key = 'x'; } }";
-                source.replace(source.find(original), original.size(),
-                               "class Shape { read(element) { return typeof H.read(element) === "
-                               "'object'; } }");
+                replaceOnce(source, original,
+                            "class Shape { read(element) { return typeof H.read(element) === "
+                            "'object'; } }");
                 const std::string observation = "return typeof H.read(element) === 'object' && "
                                                 "element.hasAttribute(shape.key);";
-                source.replace(source.find(observation), observation.size(),
-                               "return shape.read(element);");
+                replaceOnce(source, observation, "return shape.read(element);");
             }
             if (control == 8) {
-                source.replace(source.find("const result = {};"), 18,
-                               "const fresh = {}; const result = fresh;");
+                replaceOnce(source, "const result = {};",
+                            "const fresh = {}; const result = fresh;");
             }
             if (control == 9) {
                 source.insert(source.find("return shape.read"),

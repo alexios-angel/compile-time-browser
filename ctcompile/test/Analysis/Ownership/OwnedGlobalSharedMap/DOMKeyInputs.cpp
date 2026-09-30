@@ -378,20 +378,20 @@ void checkDOMKeyInputs(mlir::MLIRContext & context, const std::string & source,
         HostContractAnalysis host(*localModule, manifest);
         OwnedGlobalRoots owner(*localModule, manifest);
         if (host.proved() && owner.proved()) {
-            for (unsigned budget : {0u, host.steps() - 1}) {
-                HostContractAnalysis limited(*localModule, manifest, budget);
-                check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
-                          limited.localRecords().constructors.empty() &&
-                          limited.localRecords().operations.empty() &&
-                          !limited.localRecords().primitiveFields && limited.callables().empty(),
-                      "an incomplete provider budget publishes no local record graph");
-            }
-            for (unsigned budget : {0u, host.steps(), owner.steps() - 1}) {
-                OwnedGlobalRoots limited(*localModule, manifest, budget);
-                check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
-                          empty(*localModule, limited) && limited.domInputs().empty(),
-                      "an incomplete owner budget publishes no local storage authority");
-            }
+            checkIncompleteBudgets<HostContractAnalysis>(
+                *localModule, manifest, {0u, host.steps() - 1},
+                "an incomplete provider budget publishes no local record graph",
+                [&](const HostContractAnalysis & limited) {
+                    return limited.localRecords().constructors.empty() &&
+                           limited.localRecords().operations.empty() &&
+                           !limited.localRecords().primitiveFields && limited.callables().empty();
+                });
+            checkIncompleteBudgets(
+                *localModule, manifest, {0u, host.steps(), owner.steps() - 1},
+                "an incomplete owner budget publishes no local storage authority",
+                [&](const OwnedGlobalRoots & limited) {
+                    return empty(*localModule, limited) && limited.domInputs().empty();
+                });
             check(HostContractAnalysis(*localModule, manifest, host.steps()).proved() &&
                       OwnedGlobalRoots(*localModule, manifest, owner.steps()).proved(),
                   "exact budgets restore both complete source and ownership proofs");
@@ -607,12 +607,10 @@ void checkDOMKeyInputs(mlir::MLIRContext & context, const std::string & source,
           "DOM Data inputs do not permit a captured entry activation");
     entry->setAttr("upvalue_count", attributes.getI32IntegerAttr(0));
     const unsigned completion = host.steps();
-    for (unsigned budget : {0u, 1u, completion / 2, completion - 1}) {
-        HostContractAnalysis limited(*module, contract, budget);
-        check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
-                  limited.callables().empty(),
-              "incomplete DOM input censuses expose no partial family proof");
-    }
+    checkIncompleteBudgets<HostContractAnalysis>(
+        *module, contract, {0u, 1u, completion / 2, completion - 1},
+        "incomplete DOM input censuses expose no partial family proof",
+        [&](const HostContractAnalysis & limited) { return limited.callables().empty(); });
     HostContractAnalysis exact(*module, contract, completion);
     check(exact.proved() && exact.steps() == completion,
           "the exact input proof budget rederives complete provenance");

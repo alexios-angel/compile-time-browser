@@ -26,8 +26,7 @@ void check(mlir::ModuleOp module, const char * what, const char * expected,
     solver.load<mlir::dataflow::SparseConstantPropagation>();
     solver.load<TypeInference>(owner);
     if (failed(solver.initializeAndRun(module))) {
-        std::printf("FAIL %s: the solver did not converge\n", what);
-        ++ctbrowser_test_failures;
+        fail("{}: the solver did not converge", what);
         return;
     }
 
@@ -36,8 +35,7 @@ void check(mlir::ModuleOp module, const char * what, const char * expected,
         if (op->hasAttr("check")) { marked = op; }
     });
     if (marked == nullptr || marked->getNumResults() != 1) {
-        std::printf("FAIL %s: no single-result operation carried `check`\n", what);
-        ++ctbrowser_test_failures;
+        fail("{}: no single-result operation carried `check`", what);
         return;
     }
 
@@ -49,10 +47,7 @@ void check(mlir::ModuleOp module, const char * what, const char * expected,
         llvm::raw_string_ostream os{got};
         lattice->getValue().print(os);
     }
-    if (got != expected) {
-        std::printf("FAIL %s\n  expected %s\n  got      %s\n", what, expected, got.c_str());
-        ++ctbrowser_test_failures;
-    }
+    if (got != expected) { fail("{}\n  expected {}\n  got      {}", what, expected, got.c_str()); }
 }
 
 void check(mlir::MLIRContext & context, const row & r) {
@@ -60,8 +55,7 @@ void check(mlir::MLIRContext & context, const row & r) {
     mlir::OwningOpRef<mlir::ModuleOp> module =
         mlir::parseSourceString<mlir::ModuleOp>(text, &context);
     if (!module) {
-        std::printf("FAIL %s: the module did not parse\n%s\n", r.what, text.c_str());
-        ++ctbrowser_test_failures;
+        fail("{}: the module did not parse\n{}", r.what, text.c_str());
         return;
     }
     check(*module, r.what, r.expected);
@@ -72,9 +66,8 @@ void check(mlir::MLIRContext & context, const row & r) {
         });
         const auto proof = ctcompile::ctnative::queryNativeObjectFieldPresence(read);
         if (proof.exhausted || proof.assigned != (r.fieldAssigned != 0)) {
-            std::printf("FAIL %s: live field presence=%d exhausted=%d\n", r.what,
-                        static_cast<int>(proof.assigned), static_cast<int>(proof.exhausted));
-            ++ctbrowser_test_failures;
+            fail("{}: live field presence={} exhausted={}", r.what,
+                 static_cast<int>(proof.assigned), static_cast<int>(proof.exhausted));
         }
     }
 }

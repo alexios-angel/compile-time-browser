@@ -40,7 +40,9 @@
 #include "mlir/Parser/Parser.h"
 
 #include <cstdio>
+#include <format>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "check.hpp"
@@ -49,6 +51,11 @@ namespace ctcompile::test::type_inference {
 
 using ctcompile::ctnative::TypeInference;
 using ctcompile::ctnative::TypeLattice;
+
+// check()'s FAIL line for a message that needs arguments.
+template <typename... Args> void fail(std::format_string<Args...> format, Args &&... args) {
+    ::check(false, std::format(format, std::forward<Args>(args)...));
+}
 
 // One row: a ctjs function, and what the operation marked `check` must infer.
 // `body` OWNS ITS TEXT rather than pointing at it. Several rows build their

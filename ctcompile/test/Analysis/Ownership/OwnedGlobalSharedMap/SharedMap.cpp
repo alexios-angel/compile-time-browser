@@ -162,12 +162,9 @@ void checkSharedMap(mlir::MLIRContext & context) {
         const unsigned completion = query.steps();
         check(completion < 10000, "shared Map source proof is bounded");
         if (completion < 10000) {
-            for (unsigned budget = 0; budget < completion; ++budget) {
-                OwnedGlobalRoots limited(*module, contract, budget);
-                check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
-                          empty(*module, limited),
-                      "every incomplete shared-owner budget exposes no partial source graph");
-            }
+            checkBudgetsBelow(
+                *module, contract, completion,
+                "every incomplete shared-owner budget exposes no partial source graph");
             check(OwnedGlobalRoots(*module, contract, completion).proved(),
                   "exact shared-owner completion budget reproduces all methods");
         }
@@ -540,12 +537,8 @@ void checkSharedMap(mlir::MLIRContext & context) {
             const unsigned completion = query.steps();
             check(completion < 10000, "result dependency proof remains bounded");
             if (completion < 10000) {
-                for (unsigned budget = 0; budget < completion; ++budget) {
-                    OwnedGlobalRoots limited(*module, contract, budget);
-                    check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
-                              empty(*module, limited),
-                          "every incomplete result budget withholds the whole family");
-                }
+                checkBudgetsBelow(*module, contract, completion,
+                                  "every incomplete result budget withholds the whole family");
                 check(OwnedGlobalRoots(*module, contract, completion).proved(),
                       "the exact result dependency completion budget reproduces all calls");
             }

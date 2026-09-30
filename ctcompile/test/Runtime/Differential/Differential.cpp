@@ -44,6 +44,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include "check.hpp"
 
@@ -193,6 +194,32 @@ int main() {
 
     context cx;
     ctbrowser::script::install_builtins(cx);
+    // ARMS 50 AND 51 READ A PROMISE'S STATE as `__value`/`__settled`/
+    // `__rejected`. Those slots are PRIVATE now (TYPE-001: a page could forge
+    // or rewrite them), so this harness - and only this harness - hangs
+    // getters by those names on %Promise.prototype% that read the private
+    // slots back, and the pinned answers stay what they were.
+    if (ctbrowser::script::object_object * promise_proto =
+            cx.prototype(context::proto_kind::promise)) {
+        const std::pair<const char *, std::string_view> peeks[] = {
+            {"__value", ctbrowser::script::promise_result_key},
+            {"__settled", ctbrowser::script::promise_settled_key},
+            {"__rejected", ctbrowser::script::promise_rejected_key},
+        };
+        for (const auto & [name, key] : peeks) {
+            const value getter = value::object(cx.allocate<ctbrowser::script::native_object>(
+                name, [key](context & c, std::span<value>) {
+                    const value self = c.current_this();
+                    const value * held =
+                        self.is_object()
+                            ? static_cast<ctbrowser::script::object_object *>(self.as_heap())
+                                  ->find(key)
+                            : nullptr;
+                    return held == nullptr ? value::undefined() : *held;
+                }));
+            cx.define_accessor(value::object(promise_proto), name, getter, value::undefined());
+        }
+    }
     if (!cx.run(compiled).ok) {
         std::printf("the fixture did not run\n");
         return 1;

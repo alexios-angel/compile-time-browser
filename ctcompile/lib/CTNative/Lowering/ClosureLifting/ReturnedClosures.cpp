@@ -17,8 +17,7 @@ void closureLifter::returnedClosureCensus() {
     }
     for (ctjs::CreateClosureOp c : closures) { ++creations[targetOf(c)]; }
     for (ctjs::CreateClosureOp c : closures) {
-        if (c->hasAttr("ctnative.lifted") || !environmentTarget(c).empty() ||
-            isDeclarationClosure(c)) {
+        if (c->hasAttr(kNativeLifted) || !environmentTarget(c).empty() || isDeclarationClosure(c)) {
             continue;
         }
         const auto root = flow.find(c.getResult());
@@ -130,15 +129,14 @@ void closureLifter::liftReturnedClosure(ctjs::CreateClosureOp c, ctjs::FuncOp ta
         c->setAttr(kNativeStoredCallable, mlir::UnitAttr::get(context));
         target->setAttr(kNativeStoredCallable, mlir::UnitAttr::get(context));
     }
-    c->removeAttr("ctnative.closure_reason");
+    c->removeAttr(kNativeClosureReason);
     const auto valueType = ctjs::ValueType::get(context);
     for (mlir::Operation * site : returnedClosures.find(c)->second.calls) {
         mlir::OpBuilder at(site);
         auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(site);
         const auto closure =
             direct ? direct.getCalleeValue() : llvm::cast<ctjs::CallOp>(site).getCallee();
-        const mlir::Value undefined = ctjs::ConstantOp::create(at, site->getLoc(), valueType,
-                                                               ctjs::UndefinedAttr::get(context));
+        const mlir::Value undefined = undefinedAt(at, site->getLoc());
         llvm::SmallVector<mlir::Value> args;
         for (unsigned i = 0; i < captures; ++i) {
             auto read = ctjs::LoadUpvalueOp::create(at, site->getLoc(), valueType, closure, i);

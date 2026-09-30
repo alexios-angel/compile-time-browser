@@ -11,20 +11,17 @@ BindingTimeAnalysis::Impl::fact BindingTimeAnalysis::Impl::scalar(mlir::Operatio
     using kind = fact::kind;
     if (auto constant = llvm::dyn_cast<ctjs::ConstantOp>(op)) {
         if (ctjs::isPrimitiveAttr(constant.getValue())) {
-            return {kind::primitive, BindingTime::Static, constant.getValue(), {}};
+            return fact::staticPrimitive(constant.getValue());
         }
     }
     if (auto constant = llvm::dyn_cast<mlir::arith::ConstantOp>(op)) {
         if (llvm::isa<mlir::IntegerAttr>(constant.getValue())) {
-            return {kind::primitive, BindingTime::Static, constant.getValue(), {}};
+            return fact::staticPrimitive(constant.getValue());
         }
     }
     if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(op);
         unary && unary.getKind() == ctjs::UnaryKind::Void) {
-        return {kind::primitive,
-                BindingTime::Static,
-                ctjs::UndefinedAttr::get(module.getContext()),
-                {}};
+        return fact::staticPrimitive(ctjs::UndefinedAttr::get(module.getContext()));
     }
     bool known = true, primitives = true;
     for (mlir::Value value : op->getOperands()) {
@@ -44,7 +41,7 @@ BindingTimeAnalysis::Impl::fact BindingTimeAnalysis::Impl::scalar(mlir::Operatio
     } else if (llvm::isa<ctjs::TruthyOp>(op)) {
         supported = true;
     }
-    return supported ? fact{kind::primitive, BindingTime::Static, {}, {}} : fact{};
+    return supported ? fact::staticPrimitive() : fact{};
 }
 
 bool BindingTimeAnalysis::Impl::operation(mlir::Operation * op, flow & state, bool control) {

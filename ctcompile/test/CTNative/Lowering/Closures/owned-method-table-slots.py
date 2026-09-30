@@ -6,7 +6,15 @@ from pathlib import Path
 import re
 
 from CTNative.Exports.boundary import FUNCTION as CTJS_FUNCTION, NATIVE as NATIVE_FUNCTION
-from CTNative.harness import REFUSAL, VM_SYMBOL, build_and_run, native_tools, prepare_js, run
+from CTNative.harness import (
+    REFUSAL,
+    VM_SYMBOL,
+    build_and_run,
+    native_pipeline,
+    native_tools,
+    prepare_js,
+    run,
+)
 
 
 def prepare(args, source, name):
@@ -134,7 +142,6 @@ def main():
     parser.add_argument("--work", type=Path, required=True)
     args = parser.parse_args()
     args.work.mkdir(parents=True, exist_ok=True)
-    tests = Path(__file__).resolve().parents[3]
     reference = args.reference
     compilers, nm = native_tools(reference)
 
@@ -161,18 +168,7 @@ def main():
                 f"{name}: interpreter disagrees with fixture oracle\n{oracle.stdout}"
             )
         module = args.work / f"{name}.emitc.mlir"
-        run(
-            [
-                "cmake",
-                f"-DTRANSLATE={args.translate}",
-                f"-DOPT={args.opt}",
-                f"-DSOURCE={js}",
-                f"-DOUTPUT={module}",
-                "-DOPTIMIZE=OFF",
-                "-P",
-                str(tests / "CTNative/Checks/pipeline.cmake"),
-            ]
-        )
+        native_pipeline(args, js, module)
         native = module.read_text()
         if (
             CTJS_FUNCTION.search(native)

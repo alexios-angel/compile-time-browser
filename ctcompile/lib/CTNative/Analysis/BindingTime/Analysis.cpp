@@ -127,7 +127,7 @@ void BindingTimeAnalysis::Impl::analyze(ctjs::FuncOp fn) {
     flow state;
     llvm::SmallVector<fact> inputs;
     for (mlir::Attribute arg : arguments[fn]) {
-        inputs.push_back(arg ? fact{fact::kind::primitive, BindingTime::Static, arg, {}} : fact{});
+        inputs.push_back(arg ? fact::staticPrimitive(arg) : fact{});
     }
     const bool eligible = region(fn.getBody(), state, true, inputs);
     fact result;

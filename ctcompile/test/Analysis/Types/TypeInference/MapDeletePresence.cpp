@@ -38,8 +38,7 @@ void checkMapDeleteSizePresence(mlir::MLIRContext & context) {
     const auto replace = [](std::string text, llvm::StringRef from, llvm::StringRef to) {
         const auto position = text.find(from.str());
         if (position == std::string::npos) {
-            std::printf("FAIL delete-size fixture replacement did not match\n");
-            ++ctbrowser_test_failures;
+            fail("delete-size fixture replacement did not match");
             return text;
         }
         text.replace(position, from.size(), to.str());
@@ -360,9 +359,8 @@ void checkMapDeleteSizePresence(mlir::MLIRContext & context) {
             auto * observed = marked(current, "check");
             if (!observed || ctnative::nativeMapAction(observed) != (supported ? "get" : "") ||
                 observed->hasAttr(ctnative::kNativeMapPresent) != expected) {
-                std::printf("FAIL %s: %s delete-size membership differs from %d\n", what,
-                            clone ? "fresh" : "reused", static_cast<int>(expected));
-                ++ctbrowser_test_failures;
+                fail("{}: {} delete-size membership differs from {}", what,
+                     clone ? "fresh" : "reused", static_cast<int>(expected));
             }
             std::vector<mlir::Operation *> after;
             current.walk([&](mlir::Operation * op) { after.push_back(op); });
@@ -370,13 +368,9 @@ void checkMapDeleteSizePresence(mlir::MLIRContext & context) {
             for (size_t index = 0; intact && index < before.size(); ++index) {
                 intact &= llvm::equal(before[index]->getOperands(), operands[index]);
             }
-            if (!intact) {
-                std::printf("FAIL %s: delete-size preparation changed executable source\n", what);
-                ++ctbrowser_test_failures;
-            }
+            if (!intact) { fail("{}: delete-size preparation changed executable source", what); }
             if (!supported && observed && observed->hasAttr(ctnative::kNativeMapReadType)) {
-                std::printf("FAIL %s: unsupported Map kept forged read-type evidence\n", what);
-                ++ctbrowser_test_failures;
+                fail("{}: unsupported Map kept forged read-type evidence", what);
             }
             check(current, what,
                   !supported ? "!ctnative.boxed"
@@ -394,8 +388,7 @@ void checkMapDeleteSizePresence(mlir::MLIRContext & context) {
                     "  ctjs.return %observed\n}\n",
                 &context);
             if (!module) {
-                std::printf("FAIL %s: delete-size presence fixture did not parse\n", r.what);
-                ++ctbrowser_test_failures;
+                fail("{}: delete-size presence fixture did not parse", r.what);
                 continue;
             }
             // A homogeneous local Number read retains its optional public
@@ -408,8 +401,7 @@ void checkMapDeleteSizePresence(mlir::MLIRContext & context) {
                                                     mixedSuffix + "  ctjs.return %observed\n}\n",
                                                 &context);
     if (!joinedModule) {
-        std::printf("FAIL live joined-size fixture did not parse\n");
-        ++ctbrowser_test_failures;
+        fail("live joined-size fixture did not parse");
     } else {
         auto * snapshot = marked(*joinedModule, "snapshot");
         auto * deletion = marked(*joinedModule, "join_erase");
@@ -423,8 +415,7 @@ void checkMapDeleteSizePresence(mlir::MLIRContext & context) {
             if (number && number.getBits() == 4613937818241073152ULL) { wrong = op; }
         });
         if (!snapshot || !deletion || !resetting || !observed || !branchOp || !wrong) {
-            std::printf("FAIL live joined-size fixture lost a marked source operation\n");
-            ++ctbrowser_test_failures;
+            fail("live joined-size fixture lost a marked source operation");
         } else {
             verify(*joinedModule, "live exact joined size", true);
             snapshot->moveBefore(branchOp);
@@ -457,8 +448,7 @@ void checkMapDeleteSizePresence(mlir::MLIRContext & context) {
             prologue() + prelude + body + suffixBody + mixedSuffix + "  ctjs.return %observed\n}\n",
             &context);
         if (!mutated) {
-            std::printf("FAIL live joined-mutation fixture did not parse\n");
-            ++ctbrowser_test_failures;
+            fail("live joined-mutation fixture did not parse");
             continue;
         }
         auto * mutation = marked(*mutated, "mutation");
@@ -472,8 +462,7 @@ void checkMapDeleteSizePresence(mlir::MLIRContext & context) {
             if (number && number.getBits() == 4613937818241073152ULL) { three = op; }
         });
         if (!mutation || !snapshot || !resetting || !one || !three) {
-            std::printf("FAIL live joined-mutation fixture lost a marked source operation\n");
-            ++ctbrowser_test_failures;
+            fail("live joined-mutation fixture lost a marked source operation");
             continue;
         }
         verify(*mutated, "live known mutation updates the independently joined size", true);
@@ -500,8 +489,7 @@ void checkMapDeleteSizePresence(mlir::MLIRContext & context) {
                                                               "  ctjs.return %observed\n}\n",
                                                           &context);
     if (!module) {
-        std::printf("FAIL live delete-size fixture did not parse\n");
-        ++ctbrowser_test_failures;
+        fail("live delete-size fixture did not parse");
         return;
     }
     auto * snapshot = marked(*module, "snapshot");
@@ -511,8 +499,7 @@ void checkMapDeleteSizePresence(mlir::MLIRContext & context) {
     auto * storing = marked(*module, "mutate_store");
     auto * observed = marked(*module, "check");
     if (!snapshot || !seeded || !deletion || !resetting || !storing || !observed) {
-        std::printf("FAIL live delete-size fixture lost its marked operations\n");
-        ++ctbrowser_test_failures;
+        fail("live delete-size fixture lost its marked operations");
         return;
     }
     verify(*module, "current post-delete zero snapshot", true);

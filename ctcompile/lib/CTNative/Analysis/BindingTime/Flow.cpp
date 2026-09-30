@@ -17,11 +17,7 @@ flow merge(flow left, const flow & right, bool control) {
         target.dynamic |= item.second.dynamic || !control;
         target.contents = binding_time_detail::join(target.contents, item.second.contents, control);
         for (const auto & edge : item.second.retained) {
-            const bool present = llvm::any_of(target.retained, [&](const fact & other) {
-                return edge.domain == other.domain && edge.time == other.time &&
-                       edge.literal == other.literal && edge.nodes == other.nodes;
-            });
-            if (!present) { target.retained.push_back(edge); }
+            if (!llvm::is_contained(target.retained, edge)) { target.retained.push_back(edge); }
         }
         llvm::SmallVector<std::string> remove;
         for (auto & field : target.fields) {

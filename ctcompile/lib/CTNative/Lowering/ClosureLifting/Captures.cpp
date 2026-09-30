@@ -75,16 +75,14 @@ mlir::Value closureLifter::siblingCapturedValue(ctjs::CreateClosureOp closure, u
     if (!lifted.contains(holder.getOperation())) { return {}; }
     const auto slot = siblingCaptureSlot(closure, index, holder);
     auto target = targetOf(holder);
-    const auto captures = target ? target->getAttrOfType<mlir::IntegerAttr>("ctnative.captures")
-                                 : mlir::IntegerAttr{};
+    const auto captures =
+        target ? target->getAttrOfType<mlir::IntegerAttr>(kNativeCaptures) : mlir::IntegerAttr{};
     if (!slot || !captures || static_cast<int64_t>(*slot) >= captures.getInt() ||
         target.getBody().empty()) {
         return {};
     }
     const unsigned argument = captureArgument(*slot);
-    const auto cells = target->getAttrOfType<mlir::DenseI32ArrayAttr>("ctnative.cell_args");
-    const bool carried =
-        cells && llvm::is_contained(cells.asArrayRef(), static_cast<int32_t>(argument));
+    const bool carried = listsSlot(target, kNativeCellArgs, argument);
     if (argument >= target.getBody().front().getNumArguments() ||
         slotIsCarried(closure, index) != carried) {
         return {};
@@ -131,7 +129,7 @@ mlir::Value closureLifter::capturedValue(ctjs::CreateClosureOp c, unsigned i) {
     if (k < 0) { return {}; }
     auto enclosing = c->getParentOfType<ctjs::FuncOp>();
     if (!enclosing || enclosing.getBody().empty()) { return {}; }
-    const auto captures = enclosing->getAttrOfType<mlir::IntegerAttr>("ctnative.captures");
+    const auto captures = enclosing->getAttrOfType<mlir::IntegerAttr>(kNativeCaptures);
     if (!captures || k >= captures.getInt()) { return {}; }
     // 3 + captures ARGUMENTS AT LEAST, which lift() guarantees by inserting
     // them into a block that already had three. Asked anyway, because this
@@ -157,6 +155,28 @@ llvm::SmallVector<mlir::Value> closureLifter::liftedCaptures(ctjs::CreateClosure
         values.push_back(liftedCapture(c, i));
     }
     return values;
+}
+
+mlir::Value closureLifter::undefinedAt(mlir::OpBuilder & at, mlir::Location where) {
+    return ctjs::ConstantOp::create(at, where, ctjs::ValueType::get(context),
+                                    ctjs::UndefinedAttr::get(context));
+}
+
+void closureLifter::markLifted(ctjs::CreateClosureOp c, liftReport & out, unsigned captures) {
+    c->setAttr(kNativeLifted, mlir::UnitAttr::get(context));
+    ++out.closures;
+    out.captures += captures;
+}
+
+bool closureLifter::reachesInFrame(mlir::Value from, mlir::Operation * at) {
+    return from.getParentRegion()->getParentOfType<ctjs::FuncOp>() ==
+               at->getParentOfType<ctjs::FuncOp>() &&
+           dominance.properlyDominates(from, at);
+}
+
+bool closureLifter::reachesInFrame(mlir::Operation * from, mlir::Operation * at) {
+    return from->getParentOfType<ctjs::FuncOp>() == at->getParentOfType<ctjs::FuncOp>() &&
+           dominance.properlyDominates(from, at);
 }
 
 ctjs::CallDirectOp closureLifter::directCall(mlir::OpBuilder & at, mlir::Location where,
@@ -316,7 +336,7 @@ std::optional<std::string> closureLifter::whyCapturesDoNotLift(ctjs::CreateClosu
                    shared->second;
         }
         if (capturedValue(c, i)) { continue; }
-        if (enclosingIndex(c, i) >= 0 && enclosing && !enclosing->hasAttr("ctnative.captures")) {
+        if (enclosingIndex(c, i) >= 0 && enclosing && !enclosing->hasAttr(kNativeCaptures)) {
             chainedThrough[c.getOperation()] = enclosing;
             return "capture " + std::to_string(i) +
                    " is filled from the enclosing closure, which did not lift";
@@ -404,10 +424,7 @@ std::optional<std::string> closureLifter::whyNotLiftable(ctjs::CreateClosureOp c
         for (const boundCaptureCall & site : found->second) {
             for (unsigned i = 0; i < c.getUpvalues().size(); ++i) {
                 mlir::Value value = siblingCapturedValue(c, i, site.holder);
-                if (!value ||
-                    value.getParentRegion()->getParentOfType<ctjs::FuncOp>() !=
-                        site.call->getParentOfType<ctjs::FuncOp>() ||
-                    !dominance.properlyDominates(value, site.call.operator->())) {
+                if (!value || !reachesInFrame(value, site.call)) {
                     return "a sibling caller has not lifted the identical captured binding";
                 }
             }

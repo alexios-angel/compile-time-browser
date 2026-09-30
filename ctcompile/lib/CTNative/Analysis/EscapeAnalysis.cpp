@@ -35,6 +35,7 @@
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -102,12 +103,9 @@ void AliasValue::print(llvm::raw_ostream & os) const {
         return;
     }
     os << '{';
-    bool first = true;
-    for (mlir::Operation * site : sites_) {
-        os << (first ? "" : ", ") << site->getName().getStringRef();
-        first = false;
-    }
-    if (external_) { os << (first ? "" : ", ") << "external"; }
+    llvm::ListSeparator separator;
+    for (mlir::Operation * site : sites_) { os << separator << site->getName().getStringRef(); }
+    if (external_) { os << separator << "external"; }
     os << '}';
 }
 
@@ -130,6 +128,41 @@ EscapeReason reasonOf(mlir::SideEffects::Resource * route) {
 }
 
 using EscapeInstance = mlir::SideEffects::EffectInstance<ctjs::EscapeEffects::Effect>;
+
+llvm::SmallVector<EscapeInstance, 6> escapeEffects(ctjs::EscapeEffectOpInterface roles) {
+    llvm::SmallVector<EscapeInstance, 6> effects;
+    roles.getEffects(effects);
+    return effects;
+}
+
+// The operands of `roles`' effects of kind E, in effect order.
+template <class E>
+llvm::SmallVector<mlir::OpOperand *, 2> operandsWith(ctjs::EscapeEffectOpInterface roles) {
+    llvm::SmallVector<mlir::OpOperand *, 2> out;
+    for (const EscapeInstance & effect : escapeEffects(roles)) {
+        auto * on = effect.getEffectValue<mlir::OpOperand *>();
+        if (llvm::isa<E>(effect.getEffect()) && on != nullptr) { out.push_back(on); }
+    }
+    return out;
+}
+
+bool isLive(mlir::DataFlowSolver & solver, mlir::Block * block) {
+    const auto * executable =
+        solver.lookupState<mlir::dataflow::Executable>(solver.getProgramPointBefore(block));
+    return executable != nullptr && executable->isLive();
+}
+
+AliasValue aliasOf(const mlir::DataFlowSolver & solver, mlir::Value value) {
+    const AliasLattice * lattice = solver.lookupState<AliasLattice>(value);
+    return lattice != nullptr ? lattice->getValue() : AliasValue{};
+}
+
+// Spend one unit of `work` against `limit`; false once it is exhausted.
+bool spendUsed(std::size_t & work, std::size_t limit) {
+    if (work == limit) { return false; }
+    ++work;
+    return true;
+}
 
 // THE KIND SWITCH - the only operation-name-specific C++ the design allows,
 // and only because a kind ATTRIBUTE decides the role, which an Arg decorator
@@ -173,10 +206,8 @@ RoleOf operandRole(mlir::Operation * op, unsigned index) {
     if (const std::optional<RoleOf> refined = kindSwitch(op)) { return *refined; }
 
     if (auto roles = llvm::dyn_cast<ctjs::EscapeEffectOpInterface>(op)) {
-        llvm::SmallVector<EscapeInstance, 6> effects;
-        roles.getEffects(effects);
         RoleOf out = neither;
-        for (const EscapeInstance & effect : effects) {
+        for (const EscapeInstance & effect : escapeEffects(roles)) {
             mlir::OpOperand * on = effect.getEffectValue<mlir::OpOperand *>();
             if (on == nullptr || on->getOperandNumber() != index) { continue; }
             if (llvm::isa<ctjs::EscapeEffects::Sink>(effect.getEffect())) {
@@ -209,9 +240,7 @@ RoleOf operandRole(mlir::Operation * op, unsigned index) {
 bool isBoxedSite(mlir::Operation * op, EscapeReason & reason) {
     auto roles = llvm::dyn_cast<ctjs::EscapeEffectOpInterface>(op);
     if (!roles) { return false; }
-    llvm::SmallVector<EscapeInstance, 6> effects;
-    roles.getEffects(effects);
-    for (const EscapeInstance & effect : effects) {
+    for (const EscapeInstance & effect : escapeEffects(roles)) {
         if (!llvm::isa<ctjs::EscapeEffects::BoxedSite>(effect.getEffect())) { continue; }
         reason = reasonOf(effect.getResource());
         return true;
@@ -263,12 +292,7 @@ mlir::LogicalResult EscapeAnalysis::visitOperation(mlir::Operation * op,
         // fresh array on every non-array arm. An interface operation with no
         // carry is external, like everything else.
         answer = AliasValue::external();
-        llvm::SmallVector<EscapeInstance, 6> effects;
-        roles.getEffects(effects);
-        for (const EscapeInstance & effect : effects) {
-            if (!llvm::isa<ctjs::EscapeEffects::Carry>(effect.getEffect())) { continue; }
-            mlir::OpOperand * on = effect.getEffectValue<mlir::OpOperand *>();
-            if (on == nullptr) { continue; }
+        for (mlir::OpOperand * on : operandsWith<ctjs::EscapeEffects::Carry>(roles)) {
             answer = AliasValue::join(answer, operands[on->getOperandNumber()]->getValue());
         }
     } else {
@@ -303,11 +327,7 @@ mlir::Value storageTargetValue(const Verdict & verdict) {
 
 bool structuredRetentionInputs(const mlir::DataFlowSolver & solver, ctjs::FuncOp function,
                                std::size_t & work, std::size_t workLimit) {
-    const auto spend = [&]() {
-        if (work == workLimit) { return false; }
-        ++work;
-        return true;
-    };
+    const auto spend = [&]() { return spendUsed(work, workLimit); };
     const auto initialized = [&](mlir::Value value) {
         if (!spend() || !value) { return false; }
         if (!isValueTyped(value)) { return true; }
@@ -395,11 +415,7 @@ void refineArrayRetention(EscapeVerdicts & verdicts, const mlir::DataFlowSolver 
         computeArrayContents(function, workLimit - verdicts.arrayRetentionWork);
     verdicts.arrayRetentionWork += contents.work;
     if (!contents.complete) { return; }
-    const auto spend = [&]() {
-        if (verdicts.arrayRetentionWork == workLimit) { return false; }
-        ++verdicts.arrayRetentionWork;
-        return true;
-    };
+    const auto spend = [&]() { return spendUsed(verdicts.arrayRetentionWork, workLimit); };
 
     // This increment discharges no cycle ownership obligation. Reject cycles
     // in the union of ALL writes, not just final contents: even a cycle that
@@ -488,19 +504,12 @@ void refineArrayRetention(EscapeVerdicts & verdicts, const mlir::DataFlowSolver 
 AliasValue directStorageTarget(const mlir::DataFlowSolver & solver, const Verdict & verdict) {
     const mlir::Value target = storageTargetValue(verdict);
     if (!target) { return {}; }
-    const AliasLattice * lattice = solver.lookupState<AliasLattice>(target);
-    return lattice != nullptr ? lattice->getValue() : AliasValue{};
+    return aliasOf(solver, target);
 }
 
 EscapeVerdicts computeVerdicts(mlir::DataFlowSolver & solver, ctjs::FuncOp function,
                                std::size_t arrayRetentionWorkLimit) {
     EscapeVerdicts out;
-
-    const auto blockIsLive = [&](mlir::Block & block) {
-        const auto * executable =
-            solver.lookupState<mlir::dataflow::Executable>(solver.getProgramPointBefore(&block));
-        return executable != nullptr && executable->isLive();
-    };
 
     // PASS 1: inventory every site under live top-level blocks. Nested regions
     // have no instance/control-flow proof here, so even their dead arms remain
@@ -511,7 +520,7 @@ EscapeVerdicts computeVerdicts(mlir::DataFlowSolver & solver, ctjs::FuncOp funct
     llvm::SmallVector<mlir::Block *, 8> live;
     for (mlir::Block & block : function.getBody()) {
         ++out.blocks;
-        if (!blockIsLive(block)) {
+        if (!isLive(solver, &block)) {
             for (mlir::Operation & op : block) {
                 op.walk([&](mlir::Operation * nested) {
                     if (isTrackedSite(nested)) { ++out.deadSites; }
@@ -618,16 +627,15 @@ EscapeVerdicts computeVerdicts(mlir::DataFlowSolver & solver, ctjs::FuncOp funct
     // one pass is the fixpoint.
     const auto sink = [&](mlir::Value value, EscapeReason reason, mlir::Operation * by,
                           unsigned position) {
-        const AliasLattice * lattice = solver.lookupState<AliasLattice>(value);
+        const AliasValue aliases = aliasOf(solver, value);
         if (reason == EscapeReason::Stored) {
-            const AliasValue aliases = lattice != nullptr ? lattice->getValue() : AliasValue{};
             const AliasValue target = directStorageTarget(solver, Verdict{reason, by, position});
             out.directStorage.writes.push_back({by, position, aliases, target});
             if (aliases.isUninitialized() || target.isUninitialized()) {
                 out.directStorage.complete = false;
             }
         }
-        if (lattice == nullptr || lattice->getValue().isUninitialized()) {
+        if (aliases.isUninitialized()) {
             // A gap: the solver never told us what this operand may denote,
             // so it may denote anything - every site of the function.
             ++out.unvisitedOperands;
@@ -636,9 +644,7 @@ EscapeVerdicts computeVerdicts(mlir::DataFlowSolver & solver, ctjs::FuncOp funct
             }
             return;
         }
-        for (mlir::Operation * site : lattice->getValue().getSites()) {
-            mark(site, reason, by, position);
-        }
+        for (mlir::Operation * site : aliases.getSites()) { mark(site, reason, by, position); }
     };
     for (mlir::Block * block : live) {
         for (mlir::Operation & op : *block) {
@@ -685,8 +691,7 @@ EscapeVerdicts computeVerdicts(mlir::DataFlowSolver & solver, ctjs::FuncOp funct
             if (!load) { continue; }
             DirectPropertyRead read;
             read.by = &op;
-            const AliasLattice * lattice = solver.lookupState<AliasLattice>(load.getObject());
-            if (lattice != nullptr) { read.base = lattice->getValue(); }
+            read.base = aliasOf(solver, load.getObject());
             if (read.base.isUninitialized()) { out.directLoads.complete = false; }
             for (mlir::Operation * site : read.base.getSites()) {
                 const auto found = writesByTarget.find(site);
@@ -695,9 +700,8 @@ EscapeVerdicts computeVerdicts(mlir::DataFlowSolver & solver, ctjs::FuncOp funct
                 }
             }
             llvm::sort(read.candidateWrites);
-            read.candidateWrites.erase(
-                std::unique(read.candidateWrites.begin(), read.candidateWrites.end()),
-                read.candidateWrites.end());
+            read.candidateWrites.erase(llvm::unique(read.candidateWrites),
+                                       read.candidateWrites.end());
             out.directLoads.reads.push_back(std::move(read));
         }
     }
@@ -719,8 +723,7 @@ LoadProvenanceEvidence computeLoadProvenance(mlir::DataFlowSolver & solver, ctjs
         }
         auto found = values.find(value);
         if (found != values.end()) { return found->second; }
-        const AliasLattice * lattice = solver.lookupState<AliasLattice>(value);
-        const AliasValue initial = lattice != nullptr ? lattice->getValue() : AliasValue{};
+        const AliasValue initial = aliasOf(solver, value);
         if (initial.isUninitialized()) { out.inputsComplete = false; }
         values.insert({value, initial});
         return initial;
@@ -732,12 +735,6 @@ LoadProvenanceEvidence computeLoadProvenance(mlir::DataFlowSolver & solver, ctjs
         values[value] = joined;
         return true;
     };
-    const auto live = [&](mlir::Block * block) {
-        const auto * executable =
-            solver.lookupState<mlir::dataflow::Executable>(solver.getProgramPointBefore(block));
-        return executable != nullptr && executable->isLive();
-    };
-
     // Branch copies are edge-specific, including duplicate successor blocks.
     // If both blocks are live we retain the edge conservatively, even when
     // another edge made the successor live. This can add candidates, not erase
@@ -745,12 +742,12 @@ LoadProvenanceEvidence computeLoadProvenance(mlir::DataFlowSolver & solver, ctjs
     llvm::SmallVector<std::pair<mlir::Value, mlir::Value>, 0> copies;
     llvm::SmallVector<EscapeExposure, 0> sinks;
     for (mlir::Block & block : function.getBody()) {
-        if (!live(&block)) { continue; }
+        if (!isLive(solver, &block)) { continue; }
         for (mlir::Operation & op : block) {
             if (auto branch = llvm::dyn_cast<mlir::BranchOpInterface>(&op)) {
                 for (unsigned index = 0; index < op.getNumSuccessors(); ++index) {
                     mlir::Block * target = op.getSuccessor(index);
-                    if (!live(target)) { continue; }
+                    if (!isLive(solver, target)) { continue; }
                     mlir::SuccessorOperands passed = branch.getSuccessorOperands(index);
                     for (mlir::BlockArgument argument : target->getArguments()) {
                         if (!isValueTyped(argument)) { continue; }
@@ -772,12 +769,7 @@ LoadProvenanceEvidence computeLoadProvenance(mlir::DataFlowSolver & solver, ctjs
                 }
             }
             if (auto roles = llvm::dyn_cast<ctjs::EscapeEffectOpInterface>(&op)) {
-                llvm::SmallVector<EscapeInstance, 6> effects;
-                roles.getEffects(effects);
-                for (const EscapeInstance & effect : effects) {
-                    if (!llvm::isa<ctjs::EscapeEffects::Carry>(effect.getEffect())) { continue; }
-                    auto * on = effect.getEffectValue<mlir::OpOperand *>();
-                    if (on == nullptr) { continue; }
+                for (mlir::OpOperand * on : operandsWith<ctjs::EscapeEffects::Carry>(roles)) {
                     for (mlir::Value result : op.getResults()) {
                         if (isValueTyped(result)) { copies.emplace_back(on->get(), result); }
                     }
@@ -791,65 +783,43 @@ LoadProvenanceEvidence computeLoadProvenance(mlir::DataFlowSolver & solver, ctjs
     // store contributes to every known target site, irrespective of key/order;
     // every load imports that site's recorded candidates. Repeated instances,
     // overwrites and cycles are unions, never strong updates or copied objects.
-    const auto spend = [&]() {
-        if (out.work == workLimit) { return false; }
-        ++out.work;
+    const auto spend = [&]() { return spendUsed(out.work, workLimit); };
+    out.converged = [&] {
+        bool changed = true;
+        while (changed) {
+            changed = false;
+            for (const auto & [source, target] : copies) {
+                if (!spend()) { return false; }
+                changed |= mergeValue(target, aliases(source));
+            }
+            for (const DirectStorageWrite & write : verdicts.directStorage.writes) {
+                if (!spend()) { return false; }
+                const AliasValue value = aliases(write.by->getOperand(write.position));
+                const AliasValue target =
+                    aliases(storageTargetValue({EscapeReason::Stored, write.by, write.position}));
+                for (mlir::Operation * site : target.getSites()) {
+                    if (!spend()) { return false; }
+                    AliasValue & before = contents[site];
+                    const AliasValue joined = AliasValue::join(before, value);
+                    changed |= !(before == joined);
+                    before = joined;
+                }
+            }
+            for (const DirectPropertyRead & read : verdicts.directLoads.reads) {
+                if (!spend()) { return false; }
+                auto load = llvm::cast<ctjs::GetPropertyOp>(read.by);
+                const AliasValue base = aliases(load.getObject());
+                for (mlir::Operation * site : base.getSites()) {
+                    if (!spend()) { return false; }
+                    const auto found = contents.find(site);
+                    if (found != contents.end()) {
+                        changed |= mergeValue(load.getResult(), found->second);
+                    }
+                }
+            }
+        }
         return true;
-    };
-    bool exhausted = false;
-    bool changed = true;
-    while (changed && !exhausted) {
-        changed = false;
-        for (const auto & [source, target] : copies) {
-            if (!spend()) {
-                exhausted = true;
-                break;
-            }
-            changed |= mergeValue(target, aliases(source));
-        }
-        if (exhausted) { break; }
-        for (const DirectStorageWrite & write : verdicts.directStorage.writes) {
-            if (!spend()) {
-                exhausted = true;
-                break;
-            }
-            const AliasValue value = aliases(write.by->getOperand(write.position));
-            const AliasValue target =
-                aliases(storageTargetValue({EscapeReason::Stored, write.by, write.position}));
-            for (mlir::Operation * site : target.getSites()) {
-                if (!spend()) {
-                    exhausted = true;
-                    break;
-                }
-                AliasValue & before = contents[site];
-                const AliasValue joined = AliasValue::join(before, value);
-                changed |= !(before == joined);
-                before = joined;
-            }
-            if (exhausted) { break; }
-        }
-        if (exhausted) { break; }
-        for (const DirectPropertyRead & read : verdicts.directLoads.reads) {
-            if (!spend()) {
-                exhausted = true;
-                break;
-            }
-            auto load = llvm::cast<ctjs::GetPropertyOp>(read.by);
-            const AliasValue base = aliases(load.getObject());
-            for (mlir::Operation * site : base.getSites()) {
-                if (!spend()) {
-                    exhausted = true;
-                    break;
-                }
-                const auto found = contents.find(site);
-                if (found != contents.end()) {
-                    changed |= mergeValue(load.getResult(), found->second);
-                }
-            }
-            if (exhausted) { break; }
-        }
-    }
-    out.converged = !exhausted;
+    }();
 
     // Keep all records even on budget exhaustion. They describe the partial
     // candidate graph; the original verdicts remain the only escape claims.

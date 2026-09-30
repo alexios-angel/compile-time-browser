@@ -61,9 +61,7 @@ METHODS = r"""function methods() {
     (typeof first === 'symbol' ? ':type' : ':wrong');
 }
 """
-METHOD_TRANSCRIPT = (
-    "copy:fresh:loop:value:absent:text:undefined:empty:nul:unicode:known:distinct:truthy:type"
-)
+METHOD_TRANSCRIPT = "copy:fresh:loop:value:absent:text:undefined:empty:nul:unicode:known:distinct:truthy:type"
 DESCRIPTIONS = r"""function descriptions() {
   let key = Symbol('saved');
   const saved = key.description;
@@ -106,7 +104,9 @@ PARAMETER_STATE = """function parameterState(first, second, text, count, enabled
   return enabled ? Symbol(text) : key;
 }
 """
-PARAMETER_DESCRIPTION = "function parameterDescription(key) { return key.description; }\n"
+PARAMETER_DESCRIPTION = (
+    "function parameterDescription(key) { return key.description; }\n"
+)
 PARAMETER_TEXT = "function parameterText(text) { return text; }\n"
 PARAMETER_NUMBER = "function parameterNumber(value) { return value; }\n"
 PARAMETER_BOOLEAN = "function parameterBoolean(value) { return value; }\n"
@@ -180,7 +180,9 @@ HELPER_EQUALITY = """function helperEquality(number, flag, count) {
 }
 """
 # Preserve the complete former global-helper refusal as its first positive.
-GLOBAL_HELPER = "function helper() { return Symbol.iterator; } function bad() { return helper(); }"
+GLOBAL_HELPER = (
+    "function helper() { return Symbol.iterator; } function bad() { return helper(); }"
+)
 GLOBAL_STATE = """function globalState(first, second, text, count, enabled) {
   const key = cycleGlobal(first, second, count);
   return enabled ? makeGlobal(text) : selectGlobal(key, first, false);
@@ -1464,7 +1466,10 @@ PARAMETER_TYPES = {
     "string-negated-primitive-indices": ["string", "string", "string", "string"],
     "description-capture-negated-primitive-index": ["symbol"],
     **{
-        name: ["string", "boolean" if name.startswith("negated-primitive-") else "number"]
+        name: [
+            "string",
+            "boolean" if name.startswith("negated-primitive-") else "number",
+        ]
         for name in DOUBLE_NEGATED_WITNESSES
     },
     "string-double-negated-indices": ["string", "string", "string", "string"],
@@ -2153,7 +2158,9 @@ def number_escape_check(call, value):
     if math.isnan(value):
         return f"std::isnan({call}.value())"
     # Compare the sign too: -0 must stay -0.
-    magnitude = "std::numeric_limits<double>::infinity()" if math.isinf(value) else abs(value)
+    magnitude = (
+        "std::numeric_limits<double>::infinity()" if math.isinf(value) else abs(value)
+    )
     negative = math.copysign(1, value) < 0
     return (
         f"{call}.value() == {'-' if negative else ''}{magnitude} && "
@@ -2162,7 +2169,9 @@ def number_escape_check(call, value):
 
 
 for name, (source, expected) in NUMBER_ESCAPE_WITNESSES.items():
-    result = {bool: "js_boolean_t", str: "js_string", float: "ctnative::js_num"}[type(expected[0])]
+    result = {bool: "js_boolean_t", str: "js_string", float: "ctnative::js_num"}[
+        type(expected[0])
+    ]
     CASES[name] = (
         source,
         f"""
@@ -2220,7 +2229,9 @@ for name, (source, _) in UNDEFINED_WITNESSES.items():
     method = "charat" if name == "default-index-charat-undefined" else "slice"
     checks = CASES[f"string-index-{method}-missing"][1]
     if len(PARAMETER_TYPES[name]) == 1:
-        checks = checks.replace(", ctnative::js_num)", ")").replace(", ctnative::js_num{0.0}", "")
+        checks = checks.replace(", ctnative::js_num)", ")").replace(
+            ", ctnative::js_num{0.0}", ""
+        )
     CASES[name] = source, checks, "true\n"
 CASES["string-undefined-indices"] = (
     UNDEFINED_INDICES["string-undefined-indices"],
@@ -2335,7 +2346,11 @@ CASES["number-nested-add"] = (
 )
 for name, (source, expected) in NEGATED_PRIMITIVE_WITNESSES.items():
     parameter = "js_boolean_t" if name.startswith("primitive-") else "ctnative::js_num"
-    argument = "js_boolean_t{false}" if name.startswith("primitive-") else "ctnative::js_num{0.0}"
+    argument = (
+        "js_boolean_t{false}"
+        if name.startswith("primitive-")
+        else "ctnative::js_num{0.0}"
+    )
     CASES[name] = (
         source,
         "    using namespace ctnative;\n"
@@ -2388,6 +2403,35 @@ for name, body, expected in (
         f'assert(@ENTRY@().value() == "{expected}"); std::cout << "true\\n";',
         "true\n",
     )
+# Families whose accepted cases need the String intrinsic; the first group also
+# gets a missing-String refusal control.
+MISSING_STRING = (
+    DESCRIPTION_GUARDS,
+    STRING_METHODS,
+    STRING_INDICES,
+    STRING_SLICES,
+    SIGNED_SLICES,
+    SIGNED_CHARAT,
+    FRACTIONAL_INDICES,
+    WIDE_INDICES,
+    DEFAULT_INDICES,
+    UNDEFINED_INDICES,
+    PRIMITIVE_INDICES,
+    DIVISION_INDICES,
+    SUBTRACTION_INDICES,
+    MULTIPLICATION_INDICES,
+    REMAINDER_INDICES,
+    ADDITION_INDICES,
+    POWER_INDICES,
+    NEGATED_INDICES,
+)
+STRING_ONLY = (
+    SIGNED_OPERAND_INDICES,
+    NESTED_INDICES,
+    NEGATED_PRIMITIVE_INDICES,
+    DOUBLE_NEGATED_INDICES,
+    NUMBER_ESCAPE_WITNESSES,
+)
 REFUSALS = {
     "global-replacement": "Symbol=0; return Symbol.iterator;",
     "member-replacement": "Symbol.hasInstance=Symbol.iterator; return false;",
@@ -2438,6 +2482,40 @@ def prepare(args, name, source, *, entry_name=None, parameter_types=None):
     return ir, contract
 
 
+def index_observers(name, start):
+    """The String, captured-description and UTF-16 observations of one index family."""
+    s, d = f"string{name}Indices", f"descriptionCapture{name}Index"
+    return f"""var symbol{start}String{name}Indices = {s}('', '', '', '') &&
+  {s}('a', 'a', '', '') && {s}('abcd', 'a', 'b', 'cd') &&
+  {s}('a\\u0000b', 'a', '\\u0000', 'b') &&
+  !{s}('abc', 'a', 'bc', 'c') && !{s}('abc', 'a', 'b', 'bc');
+var symbol{start + 1}DescriptionCapture{name}Index = {d}(Symbol()) === ':absent' &&
+  {d}(Symbol(undefined)) === ':absent' &&
+  {d}(Symbol('')) === '' &&
+  {d}(Symbol('Ab')) === 'Ab' &&
+  {d}(Symbol('a\\u0000b')) === 'a\\u0000b' &&
+  {d}(Symbol('\\ud800')) === '\\ud800' &&
+  {d}(Symbol.iterator) === 'Symbol.iterator';
+var symbol{start + 2}StringUTF16{name}Indices = {s}('\\u00c9xy', '\\u00c9', 'x', 'y') &&
+  {s}('\\ud801\\udc00x', '\\ud801', '\\udc00', 'x') &&
+  {s}('\\ud800xy', '\\ud800', 'x', 'y') &&
+  {s}('A\\udc00x', 'A', '\\udc00', 'x');
+"""
+
+
+def witnesses(kind, cases, start, argument=", 0"):
+    """One observer per witness, checking its results for "", "a" and "abc"."""
+    return "".join(
+        f"\nfunction observe{kind}{i}() {{ {body}\nreturn "
+        + " && ".join(
+            f"bad({json.dumps(text)}{argument}) === {json.dumps(value)}"
+            for text, value in zip(("", "a", "abc"), expected, strict=True)
+        )
+        + f"; }}\nvar symbol{i}{kind}Witness{i} = observe{kind}{i}();\n"
+        for i, (body, expected) in enumerate(cases.values(), start)
+    )
+
+
 def oracle(args):
     source = (
         STATE
@@ -2469,30 +2547,56 @@ def oracle(args):
         + CAPTURE_DESCRIPTION
         + "".join(DESCRIPTION_GUARDS.values())
         + "".join(
-            body for name, body in STRING_METHODS.items() if name not in NESTED_PREFIX_WITNESSES
+            body
+            for name, body in STRING_METHODS.items()
+            if name not in NESTED_PREFIX_WITNESSES
         )
         + "".join(STRING_INDICES.values())
-        + "".join(body for name, body in STRING_SLICES.items() if name != "string-slice-end")
+        + "".join(
+            body for name, body in STRING_SLICES.items() if name != "string-slice-end"
+        )
         + "".join(
             body
             for name, body in SIGNED_SLICES.items()
             if name not in ("string-slice-negative", "string-slice-end-negative")
         )
-        + "".join(body for name, body in SIGNED_CHARAT.items() if name != "string-charat-negative")
         + "".join(
-            body for name, body in FRACTIONAL_INDICES.items() if name not in FRACTIONAL_WITNESSES
-        )
-        + "".join(body for name, body in WIDE_INDICES.items() if name not in WIDE_WITNESSES)
-        + "".join(body for name, body in DEFAULT_INDICES.items() if name not in DEFAULT_WITNESSES)
-        + "".join(
-            body for name, body in UNDEFINED_INDICES.items() if name not in UNDEFINED_WITNESSES
+            body
+            for name, body in SIGNED_CHARAT.items()
+            if name != "string-charat-negative"
         )
         + "".join(
-            body for name, body in PRIMITIVE_INDICES.items() if name not in PRIMITIVE_WITNESSES
+            body
+            for name, body in FRACTIONAL_INDICES.items()
+            if name not in FRACTIONAL_WITNESSES
         )
-        + "".join(body for name, body in DIVISION_INDICES.items() if name not in DIVISION_WITNESSES)
         + "".join(
-            body for name, body in SUBTRACTION_INDICES.items() if name not in SUBTRACTION_WITNESSES
+            body for name, body in WIDE_INDICES.items() if name not in WIDE_WITNESSES
+        )
+        + "".join(
+            body
+            for name, body in DEFAULT_INDICES.items()
+            if name not in DEFAULT_WITNESSES
+        )
+        + "".join(
+            body
+            for name, body in UNDEFINED_INDICES.items()
+            if name not in UNDEFINED_WITNESSES
+        )
+        + "".join(
+            body
+            for name, body in PRIMITIVE_INDICES.items()
+            if name not in PRIMITIVE_WITNESSES
+        )
+        + "".join(
+            body
+            for name, body in DIVISION_INDICES.items()
+            if name not in DIVISION_WITNESSES
+        )
+        + "".join(
+            body
+            for name, body in SUBTRACTION_INDICES.items()
+            if name not in SUBTRACTION_WITNESSES
         )
         + "".join(
             body
@@ -2500,17 +2604,33 @@ def oracle(args):
             if name not in MULTIPLICATION_WITNESSES
         )
         + "".join(
-            body for name, body in REMAINDER_INDICES.items() if name not in REMAINDER_WITNESSES
+            body
+            for name, body in REMAINDER_INDICES.items()
+            if name not in REMAINDER_WITNESSES
         )
-        + "".join(body for name, body in ADDITION_INDICES.items() if name not in ADDITION_WITNESSES)
-        + "".join(body for name, body in POWER_INDICES.items() if name not in POWER_WITNESSES)
-        + "".join(body for name, body in NEGATED_INDICES.items() if name not in NEGATED_WITNESSES)
+        + "".join(
+            body
+            for name, body in ADDITION_INDICES.items()
+            if name not in ADDITION_WITNESSES
+        )
+        + "".join(
+            body for name, body in POWER_INDICES.items() if name not in POWER_WITNESSES
+        )
+        + "".join(
+            body
+            for name, body in NEGATED_INDICES.items()
+            if name not in NEGATED_WITNESSES
+        )
         + "".join(
             body
             for name, body in SIGNED_OPERAND_INDICES.items()
             if name not in SIGNED_OPERAND_WITNESSES
         )
-        + "".join(body for name, body in NESTED_INDICES.items() if name not in NESTED_WITNESSES)
+        + "".join(
+            body
+            for name, body in NESTED_INDICES.items()
+            if name not in NESTED_WITNESSES
+        )
         + "".join(
             body
             for name, body in NEGATED_PRIMITIVE_INDICES.items()
@@ -2758,31 +2878,9 @@ var symbol68StringUTF16SignedCharAt = stringSignedCharAt('\u00c9xy', '\u00c9') &
   descriptionCaptureSignedCharAt(Symbol('\u00c9xy')) === '\u00c9' &&
   descriptionCaptureSignedCharAt(Symbol('\ud801\udc00x')) === '\ud801' &&
   descriptionCaptureSignedCharAt(Symbol('\ud800xy')) === '\ud800';
-var symbol69StringFractionalIndices = stringFractionalIndices('', '', '', '') &&
-  stringFractionalIndices('a', 'a', '', '') && stringFractionalIndices('abcd', 'a', 'b', 'cd') &&
-  stringFractionalIndices('a\u0000b', 'a', '\u0000', 'b') &&
-  !stringFractionalIndices('abc', 'a', 'bc', 'c') && !stringFractionalIndices('abc', 'a', 'b', 'bc');
-var symbol70DescriptionCaptureFractionalIndex = descriptionCaptureFractionalIndex(Symbol()) === ':absent' &&
-  descriptionCaptureFractionalIndex(Symbol(undefined)) === ':absent' &&
-  descriptionCaptureFractionalIndex(Symbol('')) === '' &&
-  descriptionCaptureFractionalIndex(Symbol('Ab')) === 'Ab' &&
-  descriptionCaptureFractionalIndex(Symbol('a\u0000b')) === 'a\u0000b' &&
-  descriptionCaptureFractionalIndex(Symbol('\ud800')) === '\ud800' &&
-  descriptionCaptureFractionalIndex(Symbol.iterator) === 'Symbol.iterator';
-var symbol71StringUTF16FractionalIndices = stringFractionalIndices('\u00c9xy', '\u00c9', 'x', 'y') &&
-  stringFractionalIndices('\ud801\udc00x', '\ud801', '\udc00', 'x') &&
-  stringFractionalIndices('\ud800xy', '\ud800', 'x', 'y') &&
-  stringFractionalIndices('A\udc00x', 'A', '\udc00', 'x');
 """
-        + "".join(
-            f"\nfunction observeFractional{i}() {{ {body}\nreturn "
-            + " && ".join(
-                f"bad({json.dumps(text)}, 0) === {json.dumps(value)}"
-                for text, value in zip(("", "a", "abc"), expected, strict=True)
-            )
-            + f"; }}\nvar symbol{i}FractionalWitness{i} = observeFractional{i}();\n"
-            for i, (body, expected) in enumerate(FRACTIONAL_WITNESSES.values(), 72)
-        )
+        + index_observers("Fractional", 69)
+        + witnesses("Fractional", FRACTIONAL_WITNESSES, 72)
         + r"""
 var symbol79StringWideIndices = stringWideIndices('') && stringWideIndices('a') &&
   stringWideIndices('abc') && stringWideIndices('a\u0000b') && stringWideIndices('\u00c9xy') &&
@@ -2794,24 +2892,8 @@ var symbol80DescriptionCaptureWideIndex = descriptionCaptureWideIndex(Symbol()) 
   descriptionCaptureWideIndex(Symbol('\ud800')) === '\ud800' &&
   descriptionCaptureWideIndex(Symbol.iterator) === 'Symbol.iterator';
 """
-        + "".join(
-            f"\nfunction observeWide{i}() {{ {body}\nreturn "
-            + " && ".join(
-                f"bad({json.dumps(text)}, 0) === {json.dumps(value)}"
-                for text, value in zip(("", "a", "abc"), expected, strict=True)
-            )
-            + f"; }}\nvar symbol{i}WideWitness{i} = observeWide{i}();\n"
-            for i, (body, expected) in enumerate(WIDE_WITNESSES.values(), 81)
-        )
-        + "".join(
-            f"\nfunction observeDefault{i}() {{ {body}\nreturn "
-            + " && ".join(
-                f"bad({json.dumps(text)}, 0) === {json.dumps(value)}"
-                for text, value in zip(("", "a", "abc"), expected, strict=True)
-            )
-            + f"; }}\nvar symbol{i}DefaultWitness{i} = observeDefault{i}();\n"
-            for i, (body, expected) in enumerate(DEFAULT_WITNESSES.values(), 97)
-        )
+        + witnesses("Wide", WIDE_WITNESSES, 81)
+        + witnesses("Default", DEFAULT_WITNESSES, 97)
         + r"""
 var symbol99StringDefaultIndices = stringDefaultIndices('', '') &&
   stringDefaultIndices('a', 'a') && stringDefaultIndices('abc', 'a') &&
@@ -2828,292 +2910,51 @@ var symbol101StringUTF16DefaultIndices = stringDefaultIndices('\u00c9xy', '\u00c
   stringDefaultIndices('\ud801\udc00x', '\ud801') && stringDefaultIndices('\ud800xy', '\ud800') &&
   stringDefaultIndices('\udc00xy', '\udc00');
 """
-        + "".join(
-            f"\nfunction observeUndefined{i}() {{ {body}\nreturn "
-            + " && ".join(
-                f"bad({json.dumps(text)}, 0) === {json.dumps(value)}"
-                for text, value in zip(("", "a", "abc"), expected, strict=True)
-            )
-            + f"; }}\nvar symbol{i}UndefinedWitness{i} = observeUndefined{i}();\n"
-            for i, (body, expected) in enumerate(UNDEFINED_WITNESSES.values(), 102)
-        )
+        + witnesses("Undefined", UNDEFINED_WITNESSES, 102)
         + r"""
-var symbol105StringUndefinedIndices = stringUndefinedIndices('', '', '', '') &&
-  stringUndefinedIndices('a', 'a', '', '') && stringUndefinedIndices('abcd', 'a', 'b', 'cd') &&
-  stringUndefinedIndices('a\u0000b', 'a', '\u0000', 'b') &&
-  !stringUndefinedIndices('abc', 'a', 'bc', 'c') && !stringUndefinedIndices('abc', 'a', 'b', 'bc');
-var symbol106DescriptionCaptureUndefinedIndex = descriptionCaptureUndefinedIndex(Symbol()) === ':absent' &&
-  descriptionCaptureUndefinedIndex(Symbol(undefined)) === ':absent' &&
-  descriptionCaptureUndefinedIndex(Symbol('')) === '' &&
-  descriptionCaptureUndefinedIndex(Symbol('Ab')) === 'Ab' &&
-  descriptionCaptureUndefinedIndex(Symbol('a\u0000b')) === 'a\u0000b' &&
-  descriptionCaptureUndefinedIndex(Symbol('\ud800')) === '\ud800' &&
-  descriptionCaptureUndefinedIndex(Symbol.iterator) === 'Symbol.iterator';
-var symbol107StringUTF16UndefinedIndices = stringUndefinedIndices('\u00c9xy', '\u00c9', 'x', 'y') &&
-  stringUndefinedIndices('\ud801\udc00x', '\ud801', '\udc00', 'x') &&
-  stringUndefinedIndices('\ud800xy', '\ud800', 'x', 'y') &&
-  stringUndefinedIndices('A\udc00x', 'A', '\udc00', 'x');
 """
-        + "".join(
-            f"\nfunction observePrimitive{i}() {{ {body}\nreturn "
-            + " && ".join(
-                f"bad({json.dumps(text)}) === {json.dumps(value)}"
-                for text, value in zip(("", "a", "abc"), expected, strict=True)
-            )
-            + f"; }}\nvar symbol{i}PrimitiveWitness{i} = observePrimitive{i}();\n"
-            for i, (body, expected) in enumerate(PRIMITIVE_WITNESSES.values(), 108)
-        )
+        + index_observers("Undefined", 105)
+        + witnesses("Primitive", PRIMITIVE_WITNESSES, 108, argument="")
         + r"""
-var symbol110StringPrimitiveIndices = stringPrimitiveIndices('', '', '', '') &&
-  stringPrimitiveIndices('a', 'a', '', '') && stringPrimitiveIndices('abcd', 'a', 'b', 'cd') &&
-  stringPrimitiveIndices('a\u0000b', 'a', '\u0000', 'b') &&
-  !stringPrimitiveIndices('abc', 'a', 'bc', 'c') && !stringPrimitiveIndices('abc', 'a', 'b', 'bc');
-var symbol111DescriptionCapturePrimitiveIndex = descriptionCapturePrimitiveIndex(Symbol()) === ':absent' &&
-  descriptionCapturePrimitiveIndex(Symbol(undefined)) === ':absent' &&
-  descriptionCapturePrimitiveIndex(Symbol('')) === '' &&
-  descriptionCapturePrimitiveIndex(Symbol('Ab')) === 'Ab' &&
-  descriptionCapturePrimitiveIndex(Symbol('a\u0000b')) === 'a\u0000b' &&
-  descriptionCapturePrimitiveIndex(Symbol('\ud800')) === '\ud800' &&
-  descriptionCapturePrimitiveIndex(Symbol.iterator) === 'Symbol.iterator';
-var symbol112StringUTF16PrimitiveIndices = stringPrimitiveIndices('\u00c9xy', '\u00c9', 'x', 'y') &&
-  stringPrimitiveIndices('\ud801\udc00x', '\ud801', '\udc00', 'x') &&
-  stringPrimitiveIndices('\ud800xy', '\ud800', 'x', 'y') &&
-  stringPrimitiveIndices('A\udc00x', 'A', '\udc00', 'x');
 """
-        + "".join(
-            f"\nfunction observeDivision{i}() {{ {body}\nreturn "
-            + " && ".join(
-                f"bad({json.dumps(text)}, 0) === {json.dumps(value)}"
-                for text, value in zip(("", "a", "abc"), expected, strict=True)
-            )
-            + f"; }}\nvar symbol{i}DivisionWitness{i} = observeDivision{i}();\n"
-            for i, (body, expected) in enumerate(DIVISION_WITNESSES.values(), 113)
-        )
+        + index_observers("Primitive", 110)
+        + witnesses("Division", DIVISION_WITNESSES, 113)
         + r"""
-var symbol115StringDivisionIndices = stringDivisionIndices('', '', '', '') &&
-  stringDivisionIndices('a', 'a', '', '') && stringDivisionIndices('abcd', 'a', 'b', 'cd') &&
-  stringDivisionIndices('a\u0000b', 'a', '\u0000', 'b') &&
-  !stringDivisionIndices('abc', 'a', 'bc', 'c') && !stringDivisionIndices('abc', 'a', 'b', 'bc');
-var symbol116DescriptionCaptureDivisionIndex = descriptionCaptureDivisionIndex(Symbol()) === ':absent' &&
-  descriptionCaptureDivisionIndex(Symbol(undefined)) === ':absent' &&
-  descriptionCaptureDivisionIndex(Symbol('')) === '' &&
-  descriptionCaptureDivisionIndex(Symbol('Ab')) === 'Ab' &&
-  descriptionCaptureDivisionIndex(Symbol('a\u0000b')) === 'a\u0000b' &&
-  descriptionCaptureDivisionIndex(Symbol('\ud800')) === '\ud800' &&
-  descriptionCaptureDivisionIndex(Symbol.iterator) === 'Symbol.iterator';
-var symbol117StringUTF16DivisionIndices = stringDivisionIndices('\u00c9xy', '\u00c9', 'x', 'y') &&
-  stringDivisionIndices('\ud801\udc00x', '\ud801', '\udc00', 'x') &&
-  stringDivisionIndices('\ud800xy', '\ud800', 'x', 'y') &&
-  stringDivisionIndices('A\udc00x', 'A', '\udc00', 'x');
 """
-        + "".join(
-            f"\nfunction observeSubtraction{i}() {{ {body}\nreturn "
-            + " && ".join(
-                f"bad({json.dumps(text)}, 0) === {json.dumps(value)}"
-                for text, value in zip(("", "a", "abc"), expected, strict=True)
-            )
-            + f"; }}\nvar symbol{i}SubtractionWitness{i} = observeSubtraction{i}();\n"
-            for i, (body, expected) in enumerate(SUBTRACTION_WITNESSES.values(), 118)
-        )
+        + index_observers("Division", 115)
+        + witnesses("Subtraction", SUBTRACTION_WITNESSES, 118)
         + r"""
-var symbol119StringSubtractionIndices = stringSubtractionIndices('', '', '', '') &&
-  stringSubtractionIndices('a', 'a', '', '') && stringSubtractionIndices('abcd', 'a', 'b', 'cd') &&
-  stringSubtractionIndices('a\u0000b', 'a', '\u0000', 'b') &&
-  !stringSubtractionIndices('abc', 'a', 'bc', 'c') && !stringSubtractionIndices('abc', 'a', 'b', 'bc');
-var symbol120DescriptionCaptureSubtractionIndex = descriptionCaptureSubtractionIndex(Symbol()) === ':absent' &&
-  descriptionCaptureSubtractionIndex(Symbol(undefined)) === ':absent' &&
-  descriptionCaptureSubtractionIndex(Symbol('')) === '' &&
-  descriptionCaptureSubtractionIndex(Symbol('Ab')) === 'Ab' &&
-  descriptionCaptureSubtractionIndex(Symbol('a\u0000b')) === 'a\u0000b' &&
-  descriptionCaptureSubtractionIndex(Symbol('\ud800')) === '\ud800' &&
-  descriptionCaptureSubtractionIndex(Symbol.iterator) === 'Symbol.iterator';
-var symbol121StringUTF16SubtractionIndices = stringSubtractionIndices('\u00c9xy', '\u00c9', 'x', 'y') &&
-  stringSubtractionIndices('\ud801\udc00x', '\ud801', '\udc00', 'x') &&
-  stringSubtractionIndices('\ud800xy', '\ud800', 'x', 'y') &&
-  stringSubtractionIndices('A\udc00x', 'A', '\udc00', 'x');
 """
-        + "".join(
-            f"\nfunction observeMultiplication{i}() {{ {body}\nreturn "
-            + " && ".join(
-                f"bad({json.dumps(text)}, 0) === {json.dumps(value)}"
-                for text, value in zip(("", "a", "abc"), expected, strict=True)
-            )
-            + f"; }}\nvar symbol{i}MultiplicationWitness{i} = observeMultiplication{i}();\n"
-            for i, (body, expected) in enumerate(MULTIPLICATION_WITNESSES.values(), 122)
-        )
+        + index_observers("Subtraction", 119)
+        + witnesses("Multiplication", MULTIPLICATION_WITNESSES, 122)
         + r"""
-var symbol123StringMultiplicationIndices = stringMultiplicationIndices('', '', '', '') &&
-  stringMultiplicationIndices('a', 'a', '', '') && stringMultiplicationIndices('abcd', 'a', 'b', 'cd') &&
-  stringMultiplicationIndices('a\u0000b', 'a', '\u0000', 'b') &&
-  !stringMultiplicationIndices('abc', 'a', 'bc', 'c') && !stringMultiplicationIndices('abc', 'a', 'b', 'bc');
-var symbol124DescriptionCaptureMultiplicationIndex = descriptionCaptureMultiplicationIndex(Symbol()) === ':absent' &&
-  descriptionCaptureMultiplicationIndex(Symbol(undefined)) === ':absent' &&
-  descriptionCaptureMultiplicationIndex(Symbol('')) === '' &&
-  descriptionCaptureMultiplicationIndex(Symbol('Ab')) === 'Ab' &&
-  descriptionCaptureMultiplicationIndex(Symbol('a\u0000b')) === 'a\u0000b' &&
-  descriptionCaptureMultiplicationIndex(Symbol('\ud800')) === '\ud800' &&
-  descriptionCaptureMultiplicationIndex(Symbol.iterator) === 'Symbol.iterator';
-var symbol125StringUTF16MultiplicationIndices = stringMultiplicationIndices('\u00c9xy', '\u00c9', 'x', 'y') &&
-  stringMultiplicationIndices('\ud801\udc00x', '\ud801', '\udc00', 'x') &&
-  stringMultiplicationIndices('\ud800xy', '\ud800', 'x', 'y') &&
-  stringMultiplicationIndices('A\udc00x', 'A', '\udc00', 'x');
 """
-        + "".join(
-            f"\nfunction observeRemainder{i}() {{ {body}\nreturn "
-            + " && ".join(
-                f"bad({json.dumps(text)}, 0) === {json.dumps(value)}"
-                for text, value in zip(("", "a", "abc"), expected, strict=True)
-            )
-            + f"; }}\nvar symbol{i}RemainderWitness{i} = observeRemainder{i}();\n"
-            for i, (body, expected) in enumerate(REMAINDER_WITNESSES.values(), 126)
-        )
+        + index_observers("Multiplication", 123)
+        + witnesses("Remainder", REMAINDER_WITNESSES, 126)
         + r"""
-var symbol127StringRemainderIndices = stringRemainderIndices('', '', '', '') &&
-  stringRemainderIndices('a', 'a', '', '') && stringRemainderIndices('abcd', 'a', 'b', 'cd') &&
-  stringRemainderIndices('a\u0000b', 'a', '\u0000', 'b') &&
-  !stringRemainderIndices('abc', 'a', 'bc', 'c') && !stringRemainderIndices('abc', 'a', 'b', 'bc');
-var symbol128DescriptionCaptureRemainderIndex = descriptionCaptureRemainderIndex(Symbol()) === ':absent' &&
-  descriptionCaptureRemainderIndex(Symbol(undefined)) === ':absent' &&
-  descriptionCaptureRemainderIndex(Symbol('')) === '' &&
-  descriptionCaptureRemainderIndex(Symbol('Ab')) === 'Ab' &&
-  descriptionCaptureRemainderIndex(Symbol('a\u0000b')) === 'a\u0000b' &&
-  descriptionCaptureRemainderIndex(Symbol('\ud800')) === '\ud800' &&
-  descriptionCaptureRemainderIndex(Symbol.iterator) === 'Symbol.iterator';
-var symbol129StringUTF16RemainderIndices = stringRemainderIndices('\u00c9xy', '\u00c9', 'x', 'y') &&
-  stringRemainderIndices('\ud801\udc00x', '\ud801', '\udc00', 'x') &&
-  stringRemainderIndices('\ud800xy', '\ud800', 'x', 'y') &&
-  stringRemainderIndices('A\udc00x', 'A', '\udc00', 'x');
 """
-        + "".join(
-            f"\nfunction observeAddition{i}() {{ {body}\nreturn "
-            + " && ".join(
-                f"bad({json.dumps(text)}, 0) === {json.dumps(value)}"
-                for text, value in zip(("", "a", "abc"), expected, strict=True)
-            )
-            + f"; }}\nvar symbol{i}AdditionWitness{i} = observeAddition{i}();\n"
-            for i, (body, expected) in enumerate(ADDITION_WITNESSES.values(), 130)
-        )
+        + index_observers("Remainder", 127)
+        + witnesses("Addition", ADDITION_WITNESSES, 130)
         + r"""
-var symbol131StringAdditionIndices = stringAdditionIndices('', '', '', '') &&
-  stringAdditionIndices('a', 'a', '', '') && stringAdditionIndices('abcd', 'a', 'b', 'cd') &&
-  stringAdditionIndices('a\u0000b', 'a', '\u0000', 'b') &&
-  !stringAdditionIndices('abc', 'a', 'bc', 'c') && !stringAdditionIndices('abc', 'a', 'b', 'bc');
-var symbol132DescriptionCaptureAdditionIndex = descriptionCaptureAdditionIndex(Symbol()) === ':absent' &&
-  descriptionCaptureAdditionIndex(Symbol(undefined)) === ':absent' &&
-  descriptionCaptureAdditionIndex(Symbol('')) === '' &&
-  descriptionCaptureAdditionIndex(Symbol('Ab')) === 'Ab' &&
-  descriptionCaptureAdditionIndex(Symbol('a\u0000b')) === 'a\u0000b' &&
-  descriptionCaptureAdditionIndex(Symbol('\ud800')) === '\ud800' &&
-  descriptionCaptureAdditionIndex(Symbol.iterator) === 'Symbol.iterator';
-var symbol133StringUTF16AdditionIndices = stringAdditionIndices('\u00c9xy', '\u00c9', 'x', 'y') &&
-  stringAdditionIndices('\ud801\udc00x', '\ud801', '\udc00', 'x') &&
-  stringAdditionIndices('\ud800xy', '\ud800', 'x', 'y') &&
-  stringAdditionIndices('A\udc00x', 'A', '\udc00', 'x');
 """
-        + "".join(
-            f"\nfunction observePower{i}() {{ {body}\nreturn "
-            + " && ".join(
-                f"bad({json.dumps(text)}, 0) === {json.dumps(value)}"
-                for text, value in zip(("", "a", "abc"), expected, strict=True)
-            )
-            + f"; }}\nvar symbol{i}PowerWitness{i} = observePower{i}();\n"
-            for i, (body, expected) in enumerate(POWER_WITNESSES.values(), 134)
-        )
+        + index_observers("Addition", 131)
+        + witnesses("Power", POWER_WITNESSES, 134)
         + r"""
-var symbol135StringPowerIndices = stringPowerIndices('', '', '', '') &&
-  stringPowerIndices('a', 'a', '', '') && stringPowerIndices('abcd', 'a', 'b', 'cd') &&
-  stringPowerIndices('a\u0000b', 'a', '\u0000', 'b') &&
-  !stringPowerIndices('abc', 'a', 'bc', 'c') && !stringPowerIndices('abc', 'a', 'b', 'bc');
-var symbol136DescriptionCapturePowerIndex = descriptionCapturePowerIndex(Symbol()) === ':absent' &&
-  descriptionCapturePowerIndex(Symbol(undefined)) === ':absent' &&
-  descriptionCapturePowerIndex(Symbol('')) === '' &&
-  descriptionCapturePowerIndex(Symbol('Ab')) === 'Ab' &&
-  descriptionCapturePowerIndex(Symbol('a\u0000b')) === 'a\u0000b' &&
-  descriptionCapturePowerIndex(Symbol('\ud800')) === '\ud800' &&
-  descriptionCapturePowerIndex(Symbol.iterator) === 'Symbol.iterator';
-var symbol137StringUTF16PowerIndices = stringPowerIndices('\u00c9xy', '\u00c9', 'x', 'y') &&
-  stringPowerIndices('\ud801\udc00x', '\ud801', '\udc00', 'x') &&
-  stringPowerIndices('\ud800xy', '\ud800', 'x', 'y') &&
-  stringPowerIndices('A\udc00x', 'A', '\udc00', 'x');
 """
-        + "".join(
-            f"\nfunction observeNegated{i}() {{ {body}\nreturn "
-            + " && ".join(
-                f"bad({json.dumps(text)}, 0) === {json.dumps(value)}"
-                for text, value in zip(("", "a", "abc"), expected, strict=True)
-            )
-            + f"; }}\nvar symbol{i}NegatedWitness{i} = observeNegated{i}();\n"
-            for i, (body, expected) in enumerate(NEGATED_WITNESSES.values(), 138)
-        )
+        + index_observers("Power", 135)
+        + witnesses("Negated", NEGATED_WITNESSES, 138)
         + r"""
-var symbol144StringNegatedIndices = stringNegatedIndices('', '', '', '') &&
-  stringNegatedIndices('a', 'a', '', '') && stringNegatedIndices('abcd', 'a', 'b', 'cd') &&
-  stringNegatedIndices('a\u0000b', 'a', '\u0000', 'b') &&
-  !stringNegatedIndices('abc', 'a', 'bc', 'c') && !stringNegatedIndices('abc', 'a', 'b', 'bc');
-var symbol145DescriptionCaptureNegatedIndex = descriptionCaptureNegatedIndex(Symbol()) === ':absent' &&
-  descriptionCaptureNegatedIndex(Symbol(undefined)) === ':absent' &&
-  descriptionCaptureNegatedIndex(Symbol('')) === '' &&
-  descriptionCaptureNegatedIndex(Symbol('Ab')) === 'Ab' &&
-  descriptionCaptureNegatedIndex(Symbol('a\u0000b')) === 'a\u0000b' &&
-  descriptionCaptureNegatedIndex(Symbol('\ud800')) === '\ud800' &&
-  descriptionCaptureNegatedIndex(Symbol.iterator) === 'Symbol.iterator';
-var symbol146StringUTF16NegatedIndices = stringNegatedIndices('\u00c9xy', '\u00c9', 'x', 'y') &&
-  stringNegatedIndices('\ud801\udc00x', '\ud801', '\udc00', 'x') &&
-  stringNegatedIndices('\ud800xy', '\ud800', 'x', 'y') &&
-  stringNegatedIndices('A\udc00x', 'A', '\udc00', 'x');
 """
-        + "".join(
-            f"\nfunction observeSignedOperand{i}() {{ {body}\nreturn "
-            + " && ".join(
-                f"bad({json.dumps(text)}, 0) === {json.dumps(value)}"
-                for text, value in zip(("", "a", "abc"), expected, strict=True)
-            )
-            + f"; }}\nvar symbol{i}SignedOperandWitness{i} = observeSignedOperand{i}();\n"
-            for i, (body, expected) in enumerate(SIGNED_OPERAND_WITNESSES.values(), 147)
-        )
+        + index_observers("Negated", 144)
+        + witnesses("SignedOperand", SIGNED_OPERAND_WITNESSES, 147)
         + r"""
-var symbol158StringSignedOperandIndices = stringSignedOperandIndices('', '', '', '') &&
-  stringSignedOperandIndices('a', 'a', '', '') && stringSignedOperandIndices('abcd', 'a', 'b', 'cd') &&
-  stringSignedOperandIndices('a\u0000b', 'a', '\u0000', 'b') &&
-  !stringSignedOperandIndices('abc', 'a', 'bc', 'c') && !stringSignedOperandIndices('abc', 'a', 'b', 'bc');
-var symbol159DescriptionCaptureSignedOperandIndex = descriptionCaptureSignedOperandIndex(Symbol()) === ':absent' &&
-  descriptionCaptureSignedOperandIndex(Symbol(undefined)) === ':absent' &&
-  descriptionCaptureSignedOperandIndex(Symbol('')) === '' &&
-  descriptionCaptureSignedOperandIndex(Symbol('Ab')) === 'Ab' &&
-  descriptionCaptureSignedOperandIndex(Symbol('a\u0000b')) === 'a\u0000b' &&
-  descriptionCaptureSignedOperandIndex(Symbol('\ud800')) === '\ud800' &&
-  descriptionCaptureSignedOperandIndex(Symbol.iterator) === 'Symbol.iterator';
-var symbol160StringUTF16SignedOperandIndices = stringSignedOperandIndices('\u00c9xy', '\u00c9', 'x', 'y') &&
-  stringSignedOperandIndices('\ud801\udc00x', '\ud801', '\udc00', 'x') &&
-  stringSignedOperandIndices('\ud800xy', '\ud800', 'x', 'y') &&
-  stringSignedOperandIndices('A\udc00x', 'A', '\udc00', 'x');
 """
-        + "".join(
-            f"\nfunction observeNested{i}() {{ {body}\nreturn "
-            + " && ".join(
-                f"bad({json.dumps(text)}, 0) === {json.dumps(value)}"
-                for text, value in zip(("", "a", "abc"), expected, strict=True)
-            )
-            + f"; }}\nvar symbol{i}NestedWitness{i} = observeNested{i}();\n"
-            for i, (body, expected) in enumerate(NESTED_WITNESSES.values(), 161)
-        )
+        + index_observers("SignedOperand", 158)
+        + witnesses("Nested", NESTED_WITNESSES, 161)
         + r"""
-var symbol171StringNestedIndices = stringNestedIndices('', '', '', '') &&
-  stringNestedIndices('a', 'a', '', '') && stringNestedIndices('abcd', 'a', 'b', 'cd') &&
-  stringNestedIndices('a\u0000b', 'a', '\u0000', 'b') &&
-  !stringNestedIndices('abc', 'a', 'bc', 'c') && !stringNestedIndices('abc', 'a', 'b', 'bc');
-var symbol172DescriptionCaptureNestedIndex = descriptionCaptureNestedIndex(Symbol()) === ':absent' &&
-  descriptionCaptureNestedIndex(Symbol(undefined)) === ':absent' &&
-  descriptionCaptureNestedIndex(Symbol('')) === '' &&
-  descriptionCaptureNestedIndex(Symbol('Ab')) === 'Ab' &&
-  descriptionCaptureNestedIndex(Symbol('a\u0000b')) === 'a\u0000b' &&
-  descriptionCaptureNestedIndex(Symbol('\ud800')) === '\ud800' &&
-  descriptionCaptureNestedIndex(Symbol.iterator) === 'Symbol.iterator';
-var symbol173StringUTF16NestedIndices = stringNestedIndices('\u00c9xy', '\u00c9', 'x', 'y') &&
-  stringNestedIndices('\ud801\udc00x', '\ud801', '\udc00', 'x') &&
-  stringNestedIndices('\ud800xy', '\ud800', 'x', 'y') &&
-  stringNestedIndices('A\udc00x', 'A', '\udc00', 'x');
-var symbol174StringConcatenatedPrefix = stringConcatenatedPrefix('') === 'other:empty:plain' &&
+"""
+        + index_observers("Nested", 171)
+        + r"""var symbol174StringConcatenatedPrefix = stringConcatenatedPrefix('') === 'other:empty:plain' &&
   stringConcatenatedPrefix('bs') === 'prefix:empty:plain' &&
   stringConcatenatedPrefix('a\u0000b') === 'other:empty:nul' &&
   stringConcatenatedPrefix('a') === 'other:empty:plain' &&
@@ -3166,63 +3007,23 @@ var symbol183StringUnicodeNestedPrefix = stringNestedPrefix('bs\u00e9') === 'pre
   stringNestedPrefix('\ud801\udc00') === 'other:empty:plain' &&
   stringNestedPrefix('\ud800') === 'other:empty:plain';
 """
-        + "".join(
-            f"\nfunction observeNegatedPrimitive{i}() {{ {body}\nreturn "
-            + " && ".join(
-                f"bad({json.dumps(text)}, false) === {json.dumps(value)}"
-                for text, value in zip(("", "a", "abc"), expected, strict=True)
-            )
-            + f"; }}\nvar symbol{i}NegatedPrimitiveWitness{i} = observeNegatedPrimitive{i}();\n"
-            for i, (body, expected) in enumerate(NEGATED_PRIMITIVE_WITNESSES.values(), 184)
+        + witnesses(
+            "NegatedPrimitive", NEGATED_PRIMITIVE_WITNESSES, 184, argument=", false"
         )
         + r"""
-var symbol188StringNegatedPrimitiveIndices = stringNegatedPrimitiveIndices('', '', '', '') &&
-  stringNegatedPrimitiveIndices('a', 'a', '', '') && stringNegatedPrimitiveIndices('abcd', 'a', 'b', 'cd') &&
-  stringNegatedPrimitiveIndices('a\u0000b', 'a', '\u0000', 'b') &&
-  !stringNegatedPrimitiveIndices('abc', 'a', 'bc', 'c') && !stringNegatedPrimitiveIndices('abc', 'a', 'b', 'bc');
-var symbol189DescriptionCaptureNegatedPrimitiveIndex = descriptionCaptureNegatedPrimitiveIndex(Symbol()) === ':absent' &&
-  descriptionCaptureNegatedPrimitiveIndex(Symbol(undefined)) === ':absent' &&
-  descriptionCaptureNegatedPrimitiveIndex(Symbol('')) === '' &&
-  descriptionCaptureNegatedPrimitiveIndex(Symbol('Ab')) === 'Ab' &&
-  descriptionCaptureNegatedPrimitiveIndex(Symbol('a\u0000b')) === 'a\u0000b' &&
-  descriptionCaptureNegatedPrimitiveIndex(Symbol('\ud800')) === '\ud800' &&
-  descriptionCaptureNegatedPrimitiveIndex(Symbol.iterator) === 'Symbol.iterator';
-var symbol190StringUTF16NegatedPrimitiveIndices = stringNegatedPrimitiveIndices('\u00c9xy', '\u00c9', 'x', 'y') &&
-  stringNegatedPrimitiveIndices('\ud801\udc00x', '\ud801', '\udc00', 'x') &&
-  stringNegatedPrimitiveIndices('\ud800xy', '\ud800', 'x', 'y') &&
-  stringNegatedPrimitiveIndices('A\udc00x', 'A', '\udc00', 'x');
 """
-        + "".join(
-            f"\nfunction observeDoubleNegated{i}() {{ {body}\nreturn "
-            + " && ".join(
-                f"bad({json.dumps(text)}, false) === {json.dumps(value)}"
-                for text, value in zip(("", "a", "abc"), expected, strict=True)
-            )
-            + f"; }}\nvar symbol{i}DoubleNegatedWitness{i} = observeDoubleNegated{i}();\n"
-            for i, (body, expected) in enumerate(DOUBLE_NEGATED_WITNESSES.values(), 191)
-        )
+        + index_observers("NegatedPrimitive", 188)
+        + witnesses("DoubleNegated", DOUBLE_NEGATED_WITNESSES, 191, argument=", false")
         + r"""
-var symbol195StringDoubleNegatedIndices = stringDoubleNegatedIndices('', '', '', '') &&
-  stringDoubleNegatedIndices('a', 'a', '', '') && stringDoubleNegatedIndices('abcd', 'a', 'b', 'cd') &&
-  stringDoubleNegatedIndices('a\u0000b', 'a', '\u0000', 'b') &&
-  !stringDoubleNegatedIndices('abc', 'a', 'bc', 'c') && !stringDoubleNegatedIndices('abc', 'a', 'b', 'bc');
-var symbol196DescriptionCaptureDoubleNegatedIndex = descriptionCaptureDoubleNegatedIndex(Symbol()) === ':absent' &&
-  descriptionCaptureDoubleNegatedIndex(Symbol(undefined)) === ':absent' &&
-  descriptionCaptureDoubleNegatedIndex(Symbol('')) === '' &&
-  descriptionCaptureDoubleNegatedIndex(Symbol('Ab')) === 'Ab' &&
-  descriptionCaptureDoubleNegatedIndex(Symbol('a\u0000b')) === 'a\u0000b' &&
-  descriptionCaptureDoubleNegatedIndex(Symbol('\ud800')) === '\ud800' &&
-  descriptionCaptureDoubleNegatedIndex(Symbol.iterator) === 'Symbol.iterator';
-var symbol197StringUTF16DoubleNegatedIndices = stringDoubleNegatedIndices('\u00c9xy', '\u00c9', 'x', 'y') &&
-  stringDoubleNegatedIndices('\ud801\udc00x', '\ud801', '\udc00', 'x') &&
-  stringDoubleNegatedIndices('\ud800xy', '\ud800', 'x', 'y') &&
-  stringDoubleNegatedIndices('A\udc00x', 'A', '\udc00', 'x');
 """
+        + index_observers("DoubleNegated", 195)
         + "".join(
             f"\nfunction observeNumberEscape{i}() {{ {body}return "
             + " && ".join(
                 f"Object.is(bad({json.dumps(text)}, {index}), {json.dumps(value)})"
-                for (text, index), value in zip(NUMBER_ESCAPE_INPUTS, expected, strict=True)
+                for (text, index), value in zip(
+                    NUMBER_ESCAPE_INPUTS, expected, strict=True
+                )
             )
             + f"; }}\nvar symbol{i}NumberEscapeWitness{i} = observeNumberEscape{i}();\n"
             for i, (body, expected) in enumerate(NUMBER_ESCAPE_WITNESSES.values(), 198)
@@ -3368,7 +3169,9 @@ var symbol197StringUTF16DoubleNegatedIndices = stringDoubleNegatedIndices('\u00c
         "StringUTF16DoubleNegatedIndices",
         *(f"NumberEscapeWitness{i}" for i in range(198, 228)),
     )
-    expected = "".join(f"symbol{i:02}{name}=true\n" for i, name in enumerate(observations, 1))
+    expected = "".join(
+        f"symbol{i:02}{name}=true\n" for i, name in enumerate(observations, 1)
+    )
     actual = run([args.reference, str(vm)]).stdout
     # The VM has matched Node here since its Unicode casing (8f61dcf9c) and
     # UTF-16 String indices (2b710a0d2); native uses the same Core API.
@@ -3396,7 +3199,9 @@ def standalone(args, native, name, checks, expected, compilers, includes, librar
         or dom.FUNCTION.search(text)
         or "ctnative.not_native" in text
     ):
-        raise RuntimeError(f"{name}: expected one typed native export without a launcher")
+        raise RuntimeError(
+            f"{name}: expected one typed native export without a launcher"
+        )
     deduced = args.work / f"{name}.deduced.mlir"
     run([args.opt, str(native), "--ctnative-print-deduced", "-o", str(deduced)])
     client = (
@@ -3407,21 +3212,33 @@ def standalone(args, native, name, checks, expected, compilers, includes, librar
     for mode, ir in (("explicit", native), ("deduced", deduced)):
         cpp = run([args.translate, "--mlir-to-cpp", str(ir)]).stdout
         if FORBIDDEN.search(cpp) or re.search(r"\bmain\s*\(", cpp):
-            raise RuntimeError(f"{name}/{mode}: intrinsic export acquired a DOM/VM dependency")
+            raise RuntimeError(
+                f"{name}/{mode}: intrinsic export acquired a DOM/VM dependency"
+            )
         source = args.work / f"{name}.{mode}.cpp"
         source.write_text(cpp + client)
         for index, compiler in enumerate(compilers):
             binary = args.work / f"{name}.{mode}.{index}"
             flags = [*FLAGS, *includes]
             observed = build_and_run(
-                compiler, source, binary, flags=flags, libraries=libraries, nm=args.nm, vm=FORBIDDEN
+                compiler,
+                source,
+                binary,
+                flags=flags,
+                libraries=libraries,
+                nm=args.nm,
+                vm=FORBIDDEN,
             )
             if observed.stdout != expected:
                 raise RuntimeError(f"{name}/{mode}: native Symbol observations differ")
             if name == "absent-description-False" and mode == "explicit" and index == 0:
-                mutant, count = re.subn(r"ctnative::undefined_t\{\}", "ctnative::js_null_t{}", cpp)
+                mutant, count = re.subn(
+                    r"ctnative::undefined_t\{\}", "ctnative::js_null_t{}", cpp
+                )
                 if not count:
-                    raise RuntimeError("description absence mutation did not replace undefined")
+                    raise RuntimeError(
+                        "description absence mutation did not replace undefined"
+                    )
                 mutant_source = args.work / "null-description.cpp"
                 mutant_binary = args.work / "null-description"
                 mutant_source.write_text(mutant + client)
@@ -3446,7 +3263,9 @@ def standalone(args, native, name, checks, expected, compilers, includes, librar
             if name == "construct-False" and mode == "explicit" and index == 0:
                 mutant, count = re.subn(r"\bctnative::Symbol\(", "symbol_mutant(", cpp)
                 if count != 1:
-                    raise RuntimeError("fresh identity mutation did not replace one construction")
+                    raise RuntimeError(
+                        "fresh identity mutation did not replace one construction"
+                    )
                 mutant_source = args.work / "shared-identity.cpp"
                 mutant_binary = args.work / "shared-identity"
                 mutant_source.write_text(
@@ -3467,8 +3286,13 @@ def standalone(args, native, name, checks, expected, compilers, includes, librar
                         str(mutant_binary),
                     ]
                 )
-                if "first != second" not in run([str(mutant_binary)], success=False).stderr:
-                    raise RuntimeError("fresh identity mutation failed for an unrelated reason")
+                if (
+                    "first != second"
+                    not in run([str(mutant_binary)], success=False).stderr
+                ):
+                    raise RuntimeError(
+                        "fresh identity mutation failed for an unrelated reason"
+                    )
 
 
 def main():
@@ -3490,32 +3314,7 @@ def main():
             entry_name=entry_name,
             parameter_types=PARAMETER_TYPES.get(name),
         )
-        if (
-            name
-            in DESCRIPTION_GUARDS
-            | STRING_METHODS
-            | STRING_INDICES
-            | STRING_SLICES
-            | SIGNED_SLICES
-            | SIGNED_CHARAT
-            | FRACTIONAL_INDICES
-            | WIDE_INDICES
-            | DEFAULT_INDICES
-            | UNDEFINED_INDICES
-            | PRIMITIVE_INDICES
-            | DIVISION_INDICES
-            | SUBTRACTION_INDICES
-            | MULTIPLICATION_INDICES
-            | REMAINDER_INDICES
-            | ADDITION_INDICES
-            | POWER_INDICES
-            | NEGATED_INDICES
-            | SIGNED_OPERAND_INDICES
-            | NESTED_INDICES
-            | NEGATED_PRIMITIVE_INDICES
-            | DOUBLE_NEGATED_INDICES
-            | NUMBER_ESCAPE_WITNESSES
-        ):
+        if any(name in family for family in (*MISSING_STRING, *STRING_ONLY)):
             contract["initial_intrinsics"] = ["Symbol", "String"]
         accepted[name] = ir, contract
         for optimize in (False, True):
@@ -3540,8 +3339,55 @@ def main():
         refusals += 1
         return result
 
+    def family(prefix, params, types, bodies, *, string=False, expect=None):
+        for name, body in bodies.items():
+            ir, contract = prepare(
+                args,
+                prefix + name,
+                f"function bad({params}) {{ {body} }}\n",
+                entry_name="bad",
+                parameter_types=types,
+            )
+            if string:
+                contract["initial_intrinsics"] = ["Symbol", "String"]
+            for optimize in (False, True):
+                reason = refuse(
+                    ir, contract, f"{prefix}{name}-{optimize}", optimize=optimize
+                )
+                if expect and name == expect[0] and expect[1] not in reason:
+                    raise RuntimeError(
+                        f"{prefix}{name}-{optimize}: other refusal\n{reason}"
+                    )
+
+    def stale(
+        label,
+        what=None,
+        *,
+        part="method",
+        old='"slice"',
+        new='"charAt"',
+        budgets=(0, 1, 100),
+        case=None,
+        noun=None,
+    ):
+        what = what or label.replace("-", " ")
+        ir, contract = accepted[case or "description-capture-" + label]
+        if isinstance(budgets, int):
+            refuse(ir, contract, f"{label}-budget", max_steps=budgets)
+        else:
+            for budget in budgets:
+                refuse(ir, contract, f"{label}-budget-{budget}", max_steps=budget)
+        changed = args.work / f"{label}-stale.mlir"
+        changed.write_text(ir.read_text().replace(old, new, 1))
+        if changed.read_text() == ir.read_text():
+            raise RuntimeError(f"{what} fingerprint control did not change its {part}")
+        if "fingerprint mismatch" not in refuse(changed, contract, f"{label}-stale"):
+            raise RuntimeError(f"changed {noun or what} accepted a stale fingerprint")
+
     for name, body in REFUSALS.items():
-        ir, contract = prepare(args, name, f"function bad() {{ {body} }}\n", entry_name="bad")
+        ir, contract = prepare(
+            args, name, f"function bad() {{ {body} }}\n", entry_name="bad"
+        )
         for optimize in (False, True):
             refuse(ir, contract, name + str(optimize), optimize=optimize)
     source_refusals = {
@@ -3596,16 +3442,7 @@ def main():
         "unused-effect": "function helper(value) { unknown(); return value; } return key;",
         "shadowed-intrinsic": "function helper(Symbol) { return Symbol.iterator; } return helper(key);",
     }
-    for name, body in helper_refusals.items():
-        ir, contract = prepare(
-            args,
-            "helper-" + name,
-            f"function bad(key) {{ {body} }}\n",
-            entry_name="bad",
-            parameter_types=["symbol"],
-        )
-        for optimize in (False, True):
-            refuse(ir, contract, f"helper-{name}-{optimize}", optimize=optimize)
+    family("helper-", "key", ["symbol"], helper_refusals)
     for name, body in {
         "receiver": "function local(input) { return this; } return local(value);",
         "unused-receiver": "function local(input) { return this; } return value;",
@@ -3618,36 +3455,33 @@ def main():
         ir, contract = prepare(
             args,
             "global-local-" + name,
-            "function bad(key) { return helper(key); }\n" f"function helper(value) {{ {body} }}\n",
+            "function bad(key) { return helper(key); }\n"
+            f"function helper(value) {{ {body} }}\n",
             entry_name="bad",
             parameter_types=["symbol"],
         )
         for optimize in (False, True):
             refuse(ir, contract, f"global-local-{name}-{optimize}", optimize=optimize)
-    for name, body in {
-        "outer-write": "let value=key; function helper() { return value; } const saved=helper(); value=Symbol.iterator; return saved === helper();",
-        "inner-write": "function helper() { key=Symbol.iterator; return key; } return helper();",
-        "sibling-write": "function read() { return key; } function write() { key=Symbol.iterator; } write(); return read();",
-        "early-call": "function helper() { return value; } const saved=helper(); const value=key; return saved;",
-        "escape": "function helper() { return key; } return helper;",
-        "identity": "function helper() { return key; } return helper === helper;",
-        "receiver": "function helper() { return this || key; } return helper();",
-        "recursive": "function helper() { return key && helper(); } return helper();",
-        "unused": "function helper() { return key; } return key;",
-        "unused-effect": "function helper() { unknown(); return key; } return key;",
-        "discarded-argument": "function helper(value) { return key; } return helper(unknown());",
-        "coercion": "function helper() { return +key; } return helper();",
-        "shadowed-intrinsic": "const Symbol=key; function helper() { return Symbol.iterator; } return helper();",
-    }.items():
-        ir, contract = prepare(
-            args,
-            "capture-" + name,
-            f"function bad(key) {{ {body} }}\n",
-            entry_name="bad",
-            parameter_types=["symbol"],
-        )
-        for optimize in (False, True):
-            refuse(ir, contract, f"capture-{name}-{optimize}", optimize=optimize)
+    family(
+        "capture-",
+        "key",
+        ["symbol"],
+        {
+            "outer-write": "let value=key; function helper() { return value; } const saved=helper(); value=Symbol.iterator; return saved === helper();",
+            "inner-write": "function helper() { key=Symbol.iterator; return key; } return helper();",
+            "sibling-write": "function read() { return key; } function write() { key=Symbol.iterator; } write(); return read();",
+            "early-call": "function helper() { return value; } const saved=helper(); const value=key; return saved;",
+            "escape": "function helper() { return key; } return helper;",
+            "identity": "function helper() { return key; } return helper === helper;",
+            "receiver": "function helper() { return this || key; } return helper();",
+            "recursive": "function helper() { return key && helper(); } return helper();",
+            "unused": "function helper() { return key; } return key;",
+            "unused-effect": "function helper() { unknown(); return key; } return key;",
+            "discarded-argument": "function helper(value) { return key; } return helper(unknown());",
+            "coercion": "function helper() { return +key; } return helper();",
+            "shadowed-intrinsic": "const Symbol=key; function helper() { return Symbol.iterator; } return helper();",
+        },
+    )
     for name, source, entry, types in (
         ("capture-selected", CAPTURE_SELECTED, "captureState", "capture-state"),
         (
@@ -3662,85 +3496,66 @@ def main():
         )
         for optimize in (False, True):
             refuse(ir, contract, f"{name}-{optimize}", optimize=optimize)
-    for name, body in {
-        "strict-symbol": "return number === Symbol.iterator;",
-        "loose-symbol": "return number == Symbol.iterator;",
-        "strict-string": "return number === '1';",
-        "loose-string": "return number == '1';",
-        "loose-undefined": "return number == undefined;",
-        "strict-null": "return number === null;",
-        "loose-null": "return number == null;",
-        "description": "return Symbol().description == number;",
-        "object": "return {valueOf() { return 1; }} == number;",
-        "mixed-join": "return (flag ? number : flag) == number;",
-    }.items():
-        ir, contract = prepare(
-            args,
-            "equality-" + name,
-            f"function bad(number, flag) {{ {body} }}\n",
-            entry_name="bad",
-            parameter_types=["number", "boolean"],
-        )
-        for optimize in (False, True):
-            refuse(ir, contract, f"equality-{name}-{optimize}", optimize=optimize)
+    family(
+        "equality-",
+        "number, flag",
+        ["number", "boolean"],
+        {
+            "strict-symbol": "return number === Symbol.iterator;",
+            "loose-symbol": "return number == Symbol.iterator;",
+            "strict-string": "return number === '1';",
+            "loose-string": "return number == '1';",
+            "loose-undefined": "return number == undefined;",
+            "strict-null": "return number === null;",
+            "loose-null": "return number == null;",
+            "description": "return Symbol().description == number;",
+            "object": "return {valueOf() { return 1; }} == number;",
+            "mixed-join": "return (flag ? number : flag) == number;",
+        },
+    )
     ir, contract = accepted["helper-state"]
     for budget in (0, 1, 100, 500):
         refuse(ir, contract, f"helper-budget-{budget}", max_steps=budget)
-    ir, contract = accepted["global-helper"]
-    for budget in (0, 1, 100):
-        refuse(ir, contract, f"global-budget-{budget}", max_steps=budget)
-    changed = args.work / "global-stale.mlir"
-    changed.write_text(ir.read_text().replace('"iterator"', '"hasInstance"', 1))
-    if changed.read_text() == ir.read_text():
-        raise RuntimeError("global helper fingerprint control did not change its body")
-    if "fingerprint mismatch" not in refuse(changed, contract, "global-stale"):
-        raise RuntimeError("changed global helper body accepted a stale fingerprint")
-    ir, contract = accepted["global-local-declaration"]
-    for budget in (0, 1, 100, 500):
-        refuse(ir, contract, f"global-local-budget-{budget}", max_steps=budget)
-    changed = args.work / "global-local-stale.mlir"
-    changed.write_text(ir.read_text().replace('"iterator"', '"hasInstance"', 1))
-    if changed.read_text() == ir.read_text():
-        raise RuntimeError("global local helper fingerprint control did not change its body")
-    if "fingerprint mismatch" not in refuse(changed, contract, "global-local-stale"):
-        raise RuntimeError("changed global local helper body accepted a stale fingerprint")
-    ir, contract = accepted["capture-types"]
-    for budget in (0, 1, 100, 500):
-        refuse(ir, contract, f"capture-budget-{budget}", max_steps=budget)
-    changed = args.work / "capture-stale.mlir"
-    changed.write_text(ir.read_text().replace('"symbol"', '"changed"', 1))
-    if changed.read_text() == ir.read_text():
-        raise RuntimeError("capture helper fingerprint control did not change its body")
-    if "fingerprint mismatch" not in refuse(changed, contract, "capture-stale"):
-        raise RuntimeError("changed captured helper body accepted a stale fingerprint")
+    stale(
+        "global",
+        "global helper",
+        part="body",
+        old='"iterator"',
+        new='"hasInstance"',
+        case="global-helper",
+        noun="global helper body",
+    )
+    stale(
+        "global-local",
+        "global local helper",
+        part="body",
+        old='"iterator"',
+        new='"hasInstance"',
+        budgets=(0, 1, 100, 500),
+        case="global-local-declaration",
+        noun="global local helper body",
+    )
+    stale(
+        "capture",
+        "capture helper",
+        part="body",
+        old='"symbol"',
+        new='"changed"',
+        budgets=(0, 1, 100, 500),
+        case="capture-types",
+        noun="captured helper body",
+    )
     ir, contract = accepted["capture-witness-local"]
     captures = [
-        name for name in dom.FUNCTION.findall(ir.read_text()) if name.rsplit("$", 1)[0] == "helper"
+        name
+        for name in dom.FUNCTION.findall(ir.read_text())
+        if name.rsplit("$", 1)[0] == "helper"
     ]
     if len(captures) != 1:
         raise RuntimeError("captured entry control did not find the source helper")
     refuse(ir, dict(contract, entry=captures[0], parameter_types=[]), "captured-entry")
 
-    for name in (
-        *DESCRIPTION_GUARDS,
-        *STRING_METHODS,
-        *STRING_INDICES,
-        *STRING_SLICES,
-        *SIGNED_SLICES,
-        *SIGNED_CHARAT,
-        *FRACTIONAL_INDICES,
-        *WIDE_INDICES,
-        *DEFAULT_INDICES,
-        *UNDEFINED_INDICES,
-        *PRIMITIVE_INDICES,
-        *DIVISION_INDICES,
-        *SUBTRACTION_INDICES,
-        *MULTIPLICATION_INDICES,
-        *REMAINDER_INDICES,
-        *ADDITION_INDICES,
-        *POWER_INDICES,
-        *NEGATED_INDICES,
-    ):
+    for name in (name for family in MISSING_STRING for name in family):
         ir, contract = accepted[name]
         for optimize in (False, True):
             refuse(
@@ -3749,360 +3564,270 @@ def main():
                 f"{name}-missing-string-{optimize}",
                 optimize=optimize,
             )
-    for name, body in {
-        "unguarded": "return key.description.charAt(0);",
-        "absent-arm": "const text=key.description; return text === undefined ? text.charAt(0) : '';",
-        "wrong-typeof": "const text=key.description; return typeof text === 'object' ? '' : text.charAt(0);",
-        "false-truthy": "const text=key.description; return !text ? text.charAt(0) : '';",
-        "different-read": "const text=key.description; return typeof text === 'string' ? key.description.charAt(0) : '';",
-        "after-guard": "const text=key.description; const first=typeof text === 'string' ? text.charAt(0) : ''; return text.slice(1);",
-        "prototype-write": "String.prototype.charAt=0; const text=key.description; return typeof text === 'string' ? text.charAt(0) : '';",
-        "implicit-coercion": "const text=key.description; return typeof text === 'string' ? text.charAt(key) : '';",
-    }.items():
-        ir, contract = prepare(
-            args,
-            "description-guard-" + name,
-            f"function bad(key) {{ {body} }}\n",
-            entry_name="bad",
-            parameter_types=["symbol"],
-        )
-        contract["initial_intrinsics"] = ["Symbol", "String"]
-        for optimize in (False, True):
-            refuse(ir, contract, f"description-guard-{name}-{optimize}", optimize=optimize)
-    ir, contract = accepted["description-type-guard"]
-    refuse(ir, contract, "description-guard-budget", max_steps=100)
-    changed = args.work / "description-guard-stale.mlir"
-    changed.write_text(ir.read_text().replace('"string"', '"object"', 1))
-    if changed.read_text() == ir.read_text():
-        raise RuntimeError("description guard fingerprint control did not change its predicate")
-    if "fingerprint mismatch" not in refuse(changed, contract, "description-guard-stale"):
-        raise RuntimeError("changed description guard accepted a stale fingerprint")
+    family(
+        "description-guard-",
+        "key",
+        ["symbol"],
+        {
+            "unguarded": "return key.description.charAt(0);",
+            "absent-arm": "const text=key.description; return text === undefined ? text.charAt(0) : '';",
+            "wrong-typeof": "const text=key.description; return typeof text === 'object' ? '' : text.charAt(0);",
+            "false-truthy": "const text=key.description; return !text ? text.charAt(0) : '';",
+            "different-read": "const text=key.description; return typeof text === 'string' ? key.description.charAt(0) : '';",
+            "after-guard": "const text=key.description; const first=typeof text === 'string' ? text.charAt(0) : ''; return text.slice(1);",
+            "prototype-write": "String.prototype.charAt=0; const text=key.description; return typeof text === 'string' ? text.charAt(0) : '';",
+            "implicit-coercion": "const text=key.description; return typeof text === 'string' ? text.charAt(key) : '';",
+        },
+        string=True,
+    )
+    stale(
+        "description-guard",
+        part="predicate",
+        old='"string"',
+        new='"object"',
+        budgets=100,
+        case="description-type-guard",
+    )
 
-    for name, body in {
-        "prefix-coercion": "return text.startsWith(key);",
-        "prefix-unicode": "return text.startsWith('é');",
-        "prefix-position": "return text.startsWith('bs', 1);",
-        "detached-prefix": "const method=text.startsWith; return method('bs');",
-        "prefix-prototype-write": "String.prototype.startsWith=0; return text.startsWith('bs');",
-        "lowercase-prototype-write": "String.prototype.toLowerCase=0; return text.charAt(0).toLowerCase();",
-        "lowercase-whole-string": "return text.toLowerCase();",
-        "lowercase-argument": "return text.charAt(0).toLowerCase('unused');",
-        "description-unguarded": "return key.description.startsWith('bs');",
-        "description-absent-arm": "const saved=key.description; return saved === undefined ? saved.startsWith('bs') : false;",
-        "description-different-read": "const saved=key.description; return typeof saved === 'string' ? key.description.startsWith('bs') : false;",
-        "description-after-guard": "const saved=key.description; const prefix=typeof saved === 'string' ? saved.startsWith('bs') : false; return saved.startsWith('bs');",
-        "charat-index": "return text.charAt(1).toLowerCase();",
-        "slice-index": "return text.slice(0).toLowerCase();",
-    }.items():
-        ir, contract = prepare(
-            args,
-            "string-method-" + name,
-            f"function bad(key, text) {{ {body} }}\n",
-            entry_name="bad",
-            parameter_types=["symbol", "string"],
-        )
-        contract["initial_intrinsics"] = ["Symbol", "String"]
-        for optimize in (False, True):
-            refuse(ir, contract, f"string-method-{name}-{optimize}", optimize=optimize)
-    ir, contract = accepted["description-capture-prefix"]
-    refuse(ir, contract, "string-method-budget", max_steps=100)
-    changed = args.work / "string-method-stale.mlir"
-    changed.write_text(ir.read_text().replace('"bs"', '"other"', 1))
-    if changed.read_text() == ir.read_text():
-        raise RuntimeError("String method fingerprint control did not change its prefix")
-    if "fingerprint mismatch" not in refuse(changed, contract, "string-method-stale"):
-        raise RuntimeError("changed String method accepted a stale fingerprint")
+    family(
+        "string-method-",
+        "key, text",
+        ["symbol", "string"],
+        {
+            "prefix-coercion": "return text.startsWith(key);",
+            "prefix-unicode": "return text.startsWith('é');",
+            "prefix-position": "return text.startsWith('bs', 1);",
+            "detached-prefix": "const method=text.startsWith; return method('bs');",
+            "prefix-prototype-write": "String.prototype.startsWith=0; return text.startsWith('bs');",
+            "lowercase-prototype-write": "String.prototype.toLowerCase=0; return text.charAt(0).toLowerCase();",
+            "lowercase-whole-string": "return text.toLowerCase();",
+            "lowercase-argument": "return text.charAt(0).toLowerCase('unused');",
+            "description-unguarded": "return key.description.startsWith('bs');",
+            "description-absent-arm": "const saved=key.description; return saved === undefined ? saved.startsWith('bs') : false;",
+            "description-different-read": "const saved=key.description; return typeof saved === 'string' ? key.description.startsWith('bs') : false;",
+            "description-after-guard": "const saved=key.description; const prefix=typeof saved === 'string' ? saved.startsWith('bs') : false; return saved.startsWith('bs');",
+            "charat-index": "return text.charAt(1).toLowerCase();",
+            "slice-index": "return text.slice(0).toLowerCase();",
+        },
+        string=True,
+    )
+    stale(
+        "string-method",
+        "String method",
+        part="prefix",
+        old='"bs"',
+        new='"other"',
+        budgets=100,
+        case="description-capture-prefix",
+    )
 
-    for name, body in {
-        "unicode-left": "return text.startsWith('\u00e9' + 's');",
-        "unicode-right": "return text.startsWith('b' + '\u00e9');",
-        "surrogate": "return text.startsWith('b' + '\\ud800');",
-        "dynamic-string": "return text.startsWith('b' + text);",
-        "number": "return text.startsWith('b' + 1);",
-        "boolean": "return text.startsWith('b' + true);",
-        "null": "return text.startsWith('b' + null);",
-        "undefined": "return text.startsWith('b' + undefined);",
-        "symbol": "return text.startsWith('b' + key);",
-        "optional-description": "return text.startsWith('b' + key.description);",
-        "detached": "const method=text.startsWith; return method('b' + 's');",
-        "prototype-write": "String.prototype.startsWith=0; return text.startsWith('b' + 's');",
-        "discarded-effect": "unknown(); return text.startsWith('b' + 's');",
-        "prefix-publication": "const prefix='b' + 's'; saved=prefix; return text.startsWith(prefix);",
-        "position": "return text.startsWith('b' + 's', 0);",
-    }.items():
-        ir, contract = prepare(
-            args,
-            "concatenated-prefix-" + name,
-            f"function bad(key, text) {{ {body} }}\n",
-            entry_name="bad",
-            parameter_types=["symbol", "string"],
-        )
-        contract["initial_intrinsics"] = ["Symbol", "String"]
-        for optimize in (False, True):
-            refuse(ir, contract, f"concatenated-prefix-{name}-{optimize}", optimize=optimize)
-    ir, contract = accepted["description-capture-concatenated-prefix"]
-    for budget in (0, 1, 100):
-        refuse(ir, contract, f"concatenated-prefix-budget-{budget}", max_steps=budget)
-    changed = args.work / "concatenated-prefix-stale.mlir"
-    changed.write_text(ir.read_text().replace('"b"', '"other"', 1))
-    if changed.read_text() == ir.read_text():
-        raise RuntimeError("concatenated prefix fingerprint control did not change its operand")
-    if "fingerprint mismatch" not in refuse(changed, contract, "concatenated-prefix-stale"):
-        raise RuntimeError("changed concatenated prefix accepted a stale fingerprint")
+    family(
+        "concatenated-prefix-",
+        "key, text",
+        ["symbol", "string"],
+        {
+            "unicode-left": "return text.startsWith('\u00e9' + 's');",
+            "unicode-right": "return text.startsWith('b' + '\u00e9');",
+            "surrogate": "return text.startsWith('b' + '\\ud800');",
+            "dynamic-string": "return text.startsWith('b' + text);",
+            "number": "return text.startsWith('b' + 1);",
+            "boolean": "return text.startsWith('b' + true);",
+            "null": "return text.startsWith('b' + null);",
+            "undefined": "return text.startsWith('b' + undefined);",
+            "symbol": "return text.startsWith('b' + key);",
+            "optional-description": "return text.startsWith('b' + key.description);",
+            "detached": "const method=text.startsWith; return method('b' + 's');",
+            "prototype-write": "String.prototype.startsWith=0; return text.startsWith('b' + 's');",
+            "discarded-effect": "unknown(); return text.startsWith('b' + 's');",
+            "prefix-publication": "const prefix='b' + 's'; saved=prefix; return text.startsWith(prefix);",
+            "position": "return text.startsWith('b' + 's', 0);",
+        },
+        string=True,
+    )
+    stale("concatenated-prefix", part="operand", old='"b"', new='"other"')
 
-    for name, body in {
-        "deeper-left": "return text.startsWith((('b' + 's') + 'Con') + 'fig');",
-        "deeper-right": "return text.startsWith('b' + ('s' + ('Con' + 'fig')));",
-        "deeper-shared": "const part='b' + 's'; const pair=part + part; return text.startsWith(pair + pair);",
-        "unicode-first": "return text.startsWith(('\u00e9' + 's') + ('C' + 'fg'));",
-        "unicode-second": "return text.startsWith(('b' + '\u00e9') + ('C' + 'fg'));",
-        "unicode-third": "return text.startsWith(('b' + 's') + ('\u00e9' + 'fg'));",
-        "unicode-fourth": "return text.startsWith(('b' + 's') + ('C' + '\u00e9'));",
-        "surrogate": "return text.startsWith(('b' + 's') + ('C' + '\\ud800'));",
-        "dynamic-string": "return text.startsWith(('b' + 's') + ('' + text));",
-        "number": "return text.startsWith(('b' + 's') + (1 + 2));",
-        "coercion": "return text.startsWith(('b' + 's') + ('' + {toString() { return 'Config'; }}));",
-        "optional-description": "return text.startsWith(('b' + 's') + ('' + key.description));",
-        "conditional": "const part=text ? 'b' : 's'; return text.startsWith((part + '') + ('' + 's'));",
-        "detached": "const method=text.startsWith; return method(('b' + 's') + ('Con' + 'fig'));",
-        "prototype-write": "String.prototype.startsWith=0; return text.startsWith(('b' + 's') + ('Con' + 'fig'));",
-        "discarded-effect": "unknown(); return text.startsWith(('b' + 's') + ('Con' + 'fig'));",
-        "prefix-publication": "const prefix=('b' + 's') + ('Con' + 'fig'); saved=prefix; return text.startsWith(prefix);",
-        "position": "return text.startsWith(('b' + 's') + ('Con' + 'fig'), 0);",
-    }.items():
-        ir, contract = prepare(
-            args,
-            "nested-prefix-" + name,
-            f"function bad(key, text) {{ {body} }}\n",
-            entry_name="bad",
-            parameter_types=["symbol", "string"],
-        )
-        contract["initial_intrinsics"] = ["Symbol", "String"]
-        for optimize in (False, True):
-            refuse(ir, contract, f"nested-prefix-{name}-{optimize}", optimize=optimize)
-    ir, contract = accepted["description-capture-nested-prefix"]
-    for budget in (0, 1, 100):
-        refuse(ir, contract, f"nested-prefix-budget-{budget}", max_steps=budget)
-    changed = args.work / "nested-prefix-stale.mlir"
-    changed.write_text(ir.read_text().replace('"b"', '"other"', 1))
-    if changed.read_text() == ir.read_text():
-        raise RuntimeError("nested prefix fingerprint control did not change its operand")
-    if "fingerprint mismatch" not in refuse(changed, contract, "nested-prefix-stale"):
-        raise RuntimeError("changed nested prefix accepted a stale fingerprint")
+    family(
+        "nested-prefix-",
+        "key, text",
+        ["symbol", "string"],
+        {
+            "deeper-left": "return text.startsWith((('b' + 's') + 'Con') + 'fig');",
+            "deeper-right": "return text.startsWith('b' + ('s' + ('Con' + 'fig')));",
+            "deeper-shared": "const part='b' + 's'; const pair=part + part; return text.startsWith(pair + pair);",
+            "unicode-first": "return text.startsWith(('\u00e9' + 's') + ('C' + 'fg'));",
+            "unicode-second": "return text.startsWith(('b' + '\u00e9') + ('C' + 'fg'));",
+            "unicode-third": "return text.startsWith(('b' + 's') + ('\u00e9' + 'fg'));",
+            "unicode-fourth": "return text.startsWith(('b' + 's') + ('C' + '\u00e9'));",
+            "surrogate": "return text.startsWith(('b' + 's') + ('C' + '\\ud800'));",
+            "dynamic-string": "return text.startsWith(('b' + 's') + ('' + text));",
+            "number": "return text.startsWith(('b' + 's') + (1 + 2));",
+            "coercion": "return text.startsWith(('b' + 's') + ('' + {toString() { return 'Config'; }}));",
+            "optional-description": "return text.startsWith(('b' + 's') + ('' + key.description));",
+            "conditional": "const part=text ? 'b' : 's'; return text.startsWith((part + '') + ('' + 's'));",
+            "detached": "const method=text.startsWith; return method(('b' + 's') + ('Con' + 'fig'));",
+            "prototype-write": "String.prototype.startsWith=0; return text.startsWith(('b' + 's') + ('Con' + 'fig'));",
+            "discarded-effect": "unknown(); return text.startsWith(('b' + 's') + ('Con' + 'fig'));",
+            "prefix-publication": "const prefix=('b' + 's') + ('Con' + 'fig'); saved=prefix; return text.startsWith(prefix);",
+            "position": "return text.startsWith(('b' + 's') + ('Con' + 'fig'), 0);",
+        },
+        string=True,
+    )
+    stale("nested-prefix", part="operand", old='"b"', new='"other"')
 
-    for name, body in {
-        "charat-dynamic": "return text.charAt(index);",
-        "slice-dynamic": "return text.slice(index);",
-        "charat-coercion": "return text.charAt('1');",
-        "slice-coercion": "return text.slice('2');",
-        "charat-extra": "return text.charAt(1, 2);",
-        "slice-prototype-write": "String.prototype.slice=0; return text.slice(2);",
-    }.items():
-        ir, contract = prepare(
-            args,
-            "string-index-" + name,
-            f"function bad(text, index) {{ {body} }}\n",
-            entry_name="bad",
-            parameter_types=["string", "number"],
-        )
-        contract["initial_intrinsics"] = ["Symbol", "String"]
-        for optimize in (False, True):
-            refuse(ir, contract, f"string-index-{name}-{optimize}", optimize=optimize)
-    ir, contract = accepted["description-capture-index"]
-    refuse(ir, contract, "string-index-budget", max_steps=100)
-    changed = args.work / "string-index-stale.mlir"
+    family(
+        "string-index-",
+        "text, index",
+        ["string", "number"],
+        {
+            "charat-dynamic": "return text.charAt(index);",
+            "slice-dynamic": "return text.slice(index);",
+            "charat-coercion": "return text.charAt('1');",
+            "slice-coercion": "return text.slice('2');",
+            "charat-extra": "return text.charAt(1, 2);",
+            "slice-prototype-write": "String.prototype.slice=0; return text.slice(2);",
+        },
+        string=True,
+    )
     # Number attributes store IEEE-754 bits: change the literal 2 to 1.
-    changed.write_text(
-        ir.read_text().replace(
-            "#ctjs.number<4611686018427387904>", "#ctjs.number<4607182418800017408>", 1
-        )
+    stale(
+        "string-index",
+        "String index",
+        part="index",
+        old="#ctjs.number<4611686018427387904>",
+        new="#ctjs.number<4607182418800017408>",
+        budgets=100,
+        case="description-capture-index",
     )
-    if changed.read_text() == ir.read_text():
-        raise RuntimeError("String index fingerprint control did not change its index")
-    if "fingerprint mismatch" not in refuse(changed, contract, "string-index-stale"):
-        raise RuntimeError("changed String index accepted a stale fingerprint")
 
-    for name, body in {
-        "end-dynamic": "return text.slice(0, index);",
-        "end-coercion": "return text.slice(0, '2');",
-        "end-object": "return text.slice(0, {valueOf() { return 2; }});",
-        "end-effect": "return text.slice(0, unknown());",
-        "start-dynamic": "return text.slice(index, 2);",
-        "extra": "return text.slice(0, 2, 3);",
-        "detached": "const method=text.slice; return method(0, 2);",
-        "replacement": "String.prototype.slice=0; return text.slice(0, 2);",
-        "first-unit-authority": "return text.slice(0, 1).toLowerCase();",
-    }.items():
-        ir, contract = prepare(
-            args,
-            "string-slice-" + name,
-            f"function bad(text, index) {{ {body} }}\n",
-            entry_name="bad",
-            parameter_types=["string", "number"],
-        )
-        contract["initial_intrinsics"] = ["Symbol", "String"]
-        for optimize in (False, True):
-            refuse(ir, contract, f"string-slice-{name}-{optimize}", optimize=optimize)
-    ir, contract = accepted["description-capture-slice"]
-    for budget in (0, 1, 100):
-        refuse(ir, contract, f"string-slice-budget-{budget}", max_steps=budget)
-    changed = args.work / "string-slice-stale.mlir"
+    family(
+        "string-slice-",
+        "text, index",
+        ["string", "number"],
+        {
+            "end-dynamic": "return text.slice(0, index);",
+            "end-coercion": "return text.slice(0, '2');",
+            "end-object": "return text.slice(0, {valueOf() { return 2; }});",
+            "end-effect": "return text.slice(0, unknown());",
+            "start-dynamic": "return text.slice(index, 2);",
+            "extra": "return text.slice(0, 2, 3);",
+            "detached": "const method=text.slice; return method(0, 2);",
+            "replacement": "String.prototype.slice=0; return text.slice(0, 2);",
+            "first-unit-authority": "return text.slice(0, 1).toLowerCase();",
+        },
+        string=True,
+    )
     # Change only the literal end bound from 3 to 2, preserving the start.
-    changed.write_text(
-        ir.read_text().replace(
-            "#ctjs.number<4613937818241073152>", "#ctjs.number<4611686018427387904>", 1
-        )
+    stale(
+        "string-slice",
+        "String slice",
+        part="end",
+        old="#ctjs.number<4613937818241073152>",
+        new="#ctjs.number<4611686018427387904>",
+        case="description-capture-slice",
     )
-    if changed.read_text() == ir.read_text():
-        raise RuntimeError("String slice fingerprint control did not change its end")
-    if "fingerprint mismatch" not in refuse(changed, contract, "string-slice-stale"):
-        raise RuntimeError("changed String slice accepted a stale fingerprint")
 
-    for name, body in {
-        "start-dynamic": "return text.slice(-index);",
-        "end-dynamic": "return text.slice(0, -index);",
-        "start-coercion": "return text.slice(-'1');",
-        "end-object": "return text.slice(0, -{valueOf() { return 1; }});",
-        # negation-escape is a Number witness now; a negated Boolean still
-        # escapes the literal index census.
-        "primitive-negation-escape": "const bound=-true; text.slice(bound); return bound;",
-        "replacement": "String.prototype.slice=0; return text.slice(-1);",
-        "first-unit-authority": "return text.slice(-1).toLowerCase();",
-    }.items():
-        ir, contract = prepare(
-            args,
-            "signed-slice-" + name,
-            f"function bad(text, index) {{ {body} }}\n",
-            entry_name="bad",
-            parameter_types=["string", "number"],
-        )
-        contract["initial_intrinsics"] = ["Symbol", "String"]
-        for optimize in (False, True):
-            reason = refuse(ir, contract, f"signed-slice-{name}-{optimize}", optimize=optimize)
-            if name == "primitive-negation-escape" and "escapes its bounds" not in reason:
-                raise RuntimeError(f"signed-slice-{name}-{optimize}: other refusal\n{reason}")
-    ir, contract = accepted["description-capture-signed-slice"]
-    for budget in (0, 1, 100):
-        refuse(ir, contract, f"signed-slice-budget-{budget}", max_steps=budget)
-    changed = args.work / "signed-slice-stale.mlir"
+    family(
+        "signed-slice-",
+        "text, index",
+        ["string", "number"],
+        {
+            "start-dynamic": "return text.slice(-index);",
+            "end-dynamic": "return text.slice(0, -index);",
+            "start-coercion": "return text.slice(-'1');",
+            "end-object": "return text.slice(0, -{valueOf() { return 1; }});",
+            # negation-escape is a Number witness now; a negated Boolean still
+            # escapes the literal index census.
+            "primitive-negation-escape": "const bound=-true; text.slice(bound); return bound;",
+            "replacement": "String.prototype.slice=0; return text.slice(-1);",
+            "first-unit-authority": "return text.slice(-1).toLowerCase();",
+        },
+        string=True,
+        expect=("primitive-negation-escape", "escapes its bounds"),
+    )
     # Source -3 is an original literal 3 followed by its own Neg operation.
-    changed.write_text(
-        ir.read_text().replace(
-            "#ctjs.number<4613937818241073152>", "#ctjs.number<4611686018427387904>", 1
-        )
+    stale(
+        "signed-slice",
+        "signed String slice",
+        part="start",
+        old="#ctjs.number<4613937818241073152>",
+        new="#ctjs.number<4611686018427387904>",
     )
-    if changed.read_text() == ir.read_text():
-        raise RuntimeError("signed String slice fingerprint control did not change its start")
-    if "fingerprint mismatch" not in refuse(changed, contract, "signed-slice-stale"):
-        raise RuntimeError("changed signed String slice accepted a stale fingerprint")
 
-    for name, body in {
-        "dynamic": "return text.charAt(-index);",
-        "coercion": "return text.charAt(-'1');",
-        "object": "return text.charAt(-{valueOf() { return 1; }});",
-        "replacement": "String.prototype.charAt=0; return text.charAt(-1);",
-        "first-unit-authority": "return text.charAt(-1).toLowerCase();",
-        "negative-zero-authority": "return text.charAt(-0).toLowerCase();",
-        "extra-bound": "return text.charAt(0, -1);",
-        "extra-argument": "return text.charAt(-1, 0);",
-        "detached": "const method=text.charAt; return method(-1);",
-    }.items():
-        ir, contract = prepare(
-            args,
-            "signed-charat-" + name,
-            f"function bad(text, index) {{ {body} }}\n",
-            entry_name="bad",
-            parameter_types=["string", "number"],
-        )
-        contract["initial_intrinsics"] = ["Symbol", "String"]
-        for optimize in (False, True):
-            refuse(ir, contract, f"signed-charat-{name}-{optimize}", optimize=optimize)
-    ir, contract = accepted["description-capture-signed-charat"]
-    for budget in (0, 1, 100):
-        refuse(ir, contract, f"signed-charat-budget-{budget}", max_steps=budget)
-    changed = args.work / "signed-charat-stale.mlir"
+    family(
+        "signed-charat-",
+        "text, index",
+        ["string", "number"],
+        {
+            "dynamic": "return text.charAt(-index);",
+            "coercion": "return text.charAt(-'1');",
+            "object": "return text.charAt(-{valueOf() { return 1; }});",
+            "replacement": "String.prototype.charAt=0; return text.charAt(-1);",
+            "first-unit-authority": "return text.charAt(-1).toLowerCase();",
+            "negative-zero-authority": "return text.charAt(-0).toLowerCase();",
+            "extra-bound": "return text.charAt(0, -1);",
+            "extra-argument": "return text.charAt(-1, 0);",
+            "detached": "const method=text.charAt; return method(-1);",
+        },
+        string=True,
+    )
     # Change the literal magnitude 1 to 2 while retaining its original Neg.
-    changed.write_text(
-        ir.read_text().replace(
-            "#ctjs.number<4607182418800017408>", "#ctjs.number<4611686018427387904>", 1
-        )
+    stale(
+        "signed-charat",
+        "signed charAt",
+        part="index",
+        old="#ctjs.number<4607182418800017408>",
+        new="#ctjs.number<4611686018427387904>",
     )
-    if changed.read_text() == ir.read_text():
-        raise RuntimeError("signed charAt fingerprint control did not change its index")
-    if "fingerprint mismatch" not in refuse(changed, contract, "signed-charat-stale"):
-        raise RuntimeError("changed signed charAt accepted a stale fingerprint")
 
-    for name, body in {
-        "charat-coercion": "return text.charAt('1.5');",
-        "slice-coercion": "return text.slice(-'1.5');",
-        "charat-dynamic": "return text.charAt(index + 0.5);",
-        "slice-dynamic": "return text.slice(0, index - 0.5);",
-        "extra-argument": "return text.charAt(0, -0.5);",
-        "detached": "const method=text.slice; return method(-0.5);",
-        "first-unit-authority": "return text.charAt(0.5).toLowerCase();",
-        "negative-zero-authority": "return text.charAt(-0.5).toLowerCase();",
-        "description-unguarded": "return Symbol(text).description.charAt(-0.5);",
-    }.items():
-        ir, contract = prepare(
-            args,
-            "fractional-index-" + name,
-            f"function bad(text, index) {{ {body} }}\n",
-            entry_name="bad",
-            parameter_types=["string", "number"],
-        )
-        contract["initial_intrinsics"] = ["Symbol", "String"]
-        for optimize in (False, True):
-            refuse(ir, contract, f"fractional-index-{name}-{optimize}", optimize=optimize)
-    ir, contract = accepted["description-capture-fractional-index"]
-    for budget in (0, 1, 100):
-        refuse(ir, contract, f"fractional-index-budget-{budget}", max_steps=budget)
-    changed = args.work / "fractional-index-stale.mlir"
+    family(
+        "fractional-index-",
+        "text, index",
+        ["string", "number"],
+        {
+            "charat-coercion": "return text.charAt('1.5');",
+            "slice-coercion": "return text.slice(-'1.5');",
+            "charat-dynamic": "return text.charAt(index + 0.5);",
+            "slice-dynamic": "return text.slice(0, index - 0.5);",
+            "extra-argument": "return text.charAt(0, -0.5);",
+            "detached": "const method=text.slice; return method(-0.5);",
+            "first-unit-authority": "return text.charAt(0.5).toLowerCase();",
+            "negative-zero-authority": "return text.charAt(-0.5).toLowerCase();",
+            "description-unguarded": "return Symbol(text).description.charAt(-0.5);",
+        },
+        string=True,
+    )
     # Change only the literal 0.75 to 1.5 under its original Neg operation.
-    changed.write_text(
-        ir.read_text().replace(
-            "#ctjs.number<4604930618986332160>", "#ctjs.number<4609434218613702656>", 1
-        )
+    stale(
+        "fractional-index",
+        part="magnitude",
+        old="#ctjs.number<4604930618986332160>",
+        new="#ctjs.number<4609434218613702656>",
     )
-    if changed.read_text() == ir.read_text():
-        raise RuntimeError("fractional index fingerprint control did not change its magnitude")
-    if "fingerprint mismatch" not in refuse(changed, contract, "fractional-index-stale"):
-        raise RuntimeError("changed fractional index accepted a stale fingerprint")
 
-    for name, body in {
-        "charat-nan-global": "return text.charAt(NaN);",
-        "slice-nan-global": "return text.slice(0, NaN);",
-        "charat-infinity-global": "return text.charAt(Infinity);",
-        "slice-infinity-global": "return text.slice(-Infinity);",
-        "coercion": "return text.charAt('1e999');",
-        "object": "return text.slice(0, {valueOf() { return 1e999; }});",
-        "extra-bound": "return text.charAt(0, -1e999);",
-        "first-unit-authority": "return text.charAt(1e999).toLowerCase();",
-        "slice-authority": "return text.slice(-1e999).toLowerCase();",
-    }.items():
-        ir, contract = prepare(
-            args,
-            "wide-index-" + name,
-            f"function bad(text, index) {{ {body} }}\n",
-            entry_name="bad",
-            parameter_types=["string", "number"],
-        )
-        contract["initial_intrinsics"] = ["Symbol", "String"]
-        for optimize in (False, True):
-            refuse(ir, contract, f"wide-index-{name}-{optimize}", optimize=optimize)
-    ir, contract = accepted["description-capture-wide-index"]
-    for budget in (0, 1, 100):
-        refuse(ir, contract, f"wide-index-budget-{budget}", max_steps=budget)
-    changed = args.work / "wide-index-stale.mlir"
-    # Replace literal +infinity with 1, retaining the original Neg operation.
-    changed.write_text(
-        ir.read_text().replace(
-            "#ctjs.number<9218868437227405312>", "#ctjs.number<4607182418800017408>", 1
-        )
+    family(
+        "wide-index-",
+        "text, index",
+        ["string", "number"],
+        {
+            "charat-nan-global": "return text.charAt(NaN);",
+            "slice-nan-global": "return text.slice(0, NaN);",
+            "charat-infinity-global": "return text.charAt(Infinity);",
+            "slice-infinity-global": "return text.slice(-Infinity);",
+            "coercion": "return text.charAt('1e999');",
+            "object": "return text.slice(0, {valueOf() { return 1e999; }});",
+            "extra-bound": "return text.charAt(0, -1e999);",
+            "first-unit-authority": "return text.charAt(1e999).toLowerCase();",
+            "slice-authority": "return text.slice(-1e999).toLowerCase();",
+        },
+        string=True,
     )
-    if changed.read_text() == ir.read_text():
-        raise RuntimeError("wide index fingerprint control did not change its infinity")
-    if "fingerprint mismatch" not in refuse(changed, contract, "wide-index-stale"):
-        raise RuntimeError("changed wide index accepted a stale fingerprint")
+    # Replace literal +infinity with 1, retaining the original Neg operation.
+    stale(
+        "wide-index",
+        part="infinity",
+        old="#ctjs.number<9218868437227405312>",
+        new="#ctjs.number<4607182418800017408>",
+    )
     ir, contract = accepted["string-index-charat-infinity"]
     changed = args.work / "wide-index-nan.mlir"
     changed.write_text(
@@ -4114,531 +3839,360 @@ def main():
         raise RuntimeError("wide index NaN control did not replace its infinity")
     contract = dict(contract, module_sha256=fingerprint(args.opt, changed))
     for optimize in (False, True):
-        refuse(changed, contract, f"wide-index-nan-literal-{optimize}", optimize=optimize)
-
-    for name, body in {
-        "charat-detached": "const method=text.charAt; return method();",
-        "slice-detached": "const method=text.slice; return method();",
-        "charat-replacement": "String.prototype.charAt=0; return text.charAt();",
-        "slice-replacement": "String.prototype.slice=0; return text.slice();",
-        "charat-authority": "return text.charAt().toLowerCase();",
-        "slice-authority": "return text.slice().toLowerCase();",
-        "description-unguarded": "return Symbol(text).description.charAt();",
-        "description-different-read": "const key=Symbol(text); const saved=key.description; return saved !== undefined ? key.description.slice() : '';",
-    }.items():
-        ir, contract = prepare(
-            args,
-            "default-index-" + name,
-            f"function bad(text) {{ {body} }}\n",
-            entry_name="bad",
-            parameter_types=["string"],
+        refuse(
+            changed, contract, f"wide-index-nan-literal-{optimize}", optimize=optimize
         )
-        contract["initial_intrinsics"] = ["Symbol", "String"]
-        for optimize in (False, True):
-            refuse(ir, contract, f"default-index-{name}-{optimize}", optimize=optimize)
-    ir, contract = accepted["description-capture-default-index"]
-    for budget in (0, 1, 100):
-        refuse(ir, contract, f"default-index-budget-{budget}", max_steps=budget)
-    changed = args.work / "default-index-stale.mlir"
-    changed.write_text(ir.read_text().replace('"slice"', '"charAt"', 1))
-    if changed.read_text() == ir.read_text():
-        raise RuntimeError("default index fingerprint control did not change its method")
-    if "fingerprint mismatch" not in refuse(changed, contract, "default-index-stale"):
-        raise RuntimeError("changed default index accepted a stale fingerprint")
 
-    for name, body in {
-        "end-dynamic": "return text.slice(undefined, text);",
-        "extra": "return text.slice(undefined, undefined, 1);",
-        "charat-authority": "return text.charAt(undefined).toLowerCase();",
-        "slice-authority": "return text.slice(1, undefined).toLowerCase();",
-        "charat-detached": "const method=text.charAt; return method(undefined);",
-        "slice-replacement": "String.prototype.slice=0; return text.slice(undefined);",
-        "changed-local": "let index=undefined; index=text; return text.slice(index);",
-        "dead-effect": "function unused() { unknown(); } return text.slice(undefined);",
-        "description-unguarded": "return Symbol(text).description.slice(undefined);",
-        "description-different-read": "const key=Symbol(text); const saved=key.description; return saved !== undefined ? key.description.slice(undefined) : '';",
-    }.items():
-        ir, contract = prepare(
-            args,
-            "undefined-index-" + name,
-            f"function bad(text) {{ {body} }}\n",
-            entry_name="bad",
-            parameter_types=["string"],
-        )
-        contract["initial_intrinsics"] = ["Symbol", "String"]
-        for optimize in (False, True):
-            refuse(ir, contract, f"undefined-index-{name}-{optimize}", optimize=optimize)
-    ir, contract = accepted["description-capture-undefined-index"]
-    for budget in (0, 1, 100):
-        refuse(ir, contract, f"undefined-index-budget-{budget}", max_steps=budget)
-    changed = args.work / "undefined-index-stale.mlir"
-    changed.write_text(ir.read_text().replace('"slice"', '"charAt"', 1))
-    if changed.read_text() == ir.read_text():
-        raise RuntimeError("undefined index fingerprint control did not change its method")
-    if "fingerprint mismatch" not in refuse(changed, contract, "undefined-index-stale"):
-        raise RuntimeError("changed undefined index accepted a stale fingerprint")
+    family(
+        "default-index-",
+        "text",
+        ["string"],
+        {
+            "charat-detached": "const method=text.charAt; return method();",
+            "slice-detached": "const method=text.slice; return method();",
+            "charat-replacement": "String.prototype.charAt=0; return text.charAt();",
+            "slice-replacement": "String.prototype.slice=0; return text.slice();",
+            "charat-authority": "return text.charAt().toLowerCase();",
+            "slice-authority": "return text.slice().toLowerCase();",
+            "description-unguarded": "return Symbol(text).description.charAt();",
+            "description-different-read": "const key=Symbol(text); const saved=key.description; return saved !== undefined ? key.description.slice() : '';",
+        },
+        string=True,
+    )
+    stale("default-index")
 
-    for name, body in {
-        "charat-dynamic": "return text.charAt(flag);",
-        "end-dynamic": "return text.slice(null, flag);",
-        "computed-boolean": "return text.charAt(text === 'a');",
-        "coercion": "return text.slice(null, '1');",
-        "object-coercion": "return text.charAt({valueOf() { return true; }});",
-        "null-authority": "return text.charAt(null).toLowerCase();",
-        "false-authority": "return text.charAt(false).toLowerCase();",
-        "true-authority": "return text.slice(true).toLowerCase();",
-        "extra-argument": "return text.charAt(null, false);",
-        "detached": "const method=text.slice; return method(null, true);",
-        "replacement": "String.prototype.charAt=0; return text.charAt(false);",
-        "mutable-capture": "let index=false; function part() { return text.charAt(index); } index=true; return part();",
-        "dead-effect": "function unused() { unknown(); } return text.slice(null, true);",
-        "description-unguarded": "return Symbol(text).description.charAt(null);",
-        "description-different-read": "const key=Symbol(text); const saved=key.description; return saved !== undefined ? key.description.slice(true) : '';",
-    }.items():
-        ir, contract = prepare(
-            args,
-            "primitive-index-" + name,
-            f"function bad(text, flag) {{ {body} }}\n",
-            entry_name="bad",
-            parameter_types=["string", "boolean"],
-        )
-        contract["initial_intrinsics"] = ["Symbol", "String"]
-        for optimize in (False, True):
-            refuse(ir, contract, f"primitive-index-{name}-{optimize}", optimize=optimize)
-    ir, contract = accepted["description-capture-primitive-index"]
-    for budget in (0, 1, 100):
-        refuse(ir, contract, f"primitive-index-budget-{budget}", max_steps=budget)
-    changed = args.work / "primitive-index-stale.mlir"
-    changed.write_text(ir.read_text().replace('"slice"', '"charAt"', 1))
-    if changed.read_text() == ir.read_text():
-        raise RuntimeError("primitive index fingerprint control did not change its method")
-    if "fingerprint mismatch" not in refuse(changed, contract, "primitive-index-stale"):
-        raise RuntimeError("changed primitive index accepted a stale fingerprint")
+    family(
+        "undefined-index-",
+        "text",
+        ["string"],
+        {
+            "end-dynamic": "return text.slice(undefined, text);",
+            "extra": "return text.slice(undefined, undefined, 1);",
+            "charat-authority": "return text.charAt(undefined).toLowerCase();",
+            "slice-authority": "return text.slice(1, undefined).toLowerCase();",
+            "charat-detached": "const method=text.charAt; return method(undefined);",
+            "slice-replacement": "String.prototype.slice=0; return text.slice(undefined);",
+            "changed-local": "let index=undefined; index=text; return text.slice(index);",
+            "dead-effect": "function unused() { unknown(); } return text.slice(undefined);",
+            "description-unguarded": "return Symbol(text).description.slice(undefined);",
+            "description-different-read": "const key=Symbol(text); const saved=key.description; return saved !== undefined ? key.description.slice(undefined) : '';",
+        },
+        string=True,
+    )
+    stale("undefined-index")
 
-    for name, body in {
-        "dynamic-dividend": "return text.charAt(index / 0);",
-        "dynamic-divisor": "return text.slice(0 / index);",
-        "coercion": "return text.charAt('0' / 0);",
-        "object-coercion": "return text.slice(0, {valueOf() { return 0; }} / 0);",
-        "extra-argument": "return text.charAt(0, 0 / 0);",
-        "charat-authority": "return text.charAt(0 / 0).toLowerCase();",
-        "slice-authority": "return text.slice(1 / 1).toLowerCase();",
-        "replacement": "String.prototype.slice=0; return text.slice(0 / 0);",
-        "detached": "const method=text.charAt; return method(0 / 0);",
-        "dead-effect": "function unused() { unknown(); } return text.slice(0 / 0);",
-        "description-unguarded": "return Symbol(text).description.charAt(0 / 0);",
-    }.items():
-        ir, contract = prepare(
-            args,
-            "division-index-" + name,
-            f"function bad(text, index) {{ {body} }}\n",
-            entry_name="bad",
-            parameter_types=["string", "number"],
-        )
-        contract["initial_intrinsics"] = ["Symbol", "String"]
-        for optimize in (False, True):
-            refuse(ir, contract, f"division-index-{name}-{optimize}", optimize=optimize)
-    ir, contract = accepted["description-capture-division-index"]
-    for budget in (0, 1, 100):
-        refuse(ir, contract, f"division-index-budget-{budget}", max_steps=budget)
-    changed = args.work / "division-index-stale.mlir"
-    changed.write_text(ir.read_text().replace('"slice"', '"charAt"', 1))
-    if changed.read_text() == ir.read_text():
-        raise RuntimeError("division index fingerprint control did not change its method")
-    if "fingerprint mismatch" not in refuse(changed, contract, "division-index-stale"):
-        raise RuntimeError("changed division index accepted a stale fingerprint")
+    family(
+        "primitive-index-",
+        "text, flag",
+        ["string", "boolean"],
+        {
+            "charat-dynamic": "return text.charAt(flag);",
+            "end-dynamic": "return text.slice(null, flag);",
+            "computed-boolean": "return text.charAt(text === 'a');",
+            "coercion": "return text.slice(null, '1');",
+            "object-coercion": "return text.charAt({valueOf() { return true; }});",
+            "null-authority": "return text.charAt(null).toLowerCase();",
+            "false-authority": "return text.charAt(false).toLowerCase();",
+            "true-authority": "return text.slice(true).toLowerCase();",
+            "extra-argument": "return text.charAt(null, false);",
+            "detached": "const method=text.slice; return method(null, true);",
+            "replacement": "String.prototype.charAt=0; return text.charAt(false);",
+            "mutable-capture": "let index=false; function part() { return text.charAt(index); } index=true; return part();",
+            "dead-effect": "function unused() { unknown(); } return text.slice(null, true);",
+            "description-unguarded": "return Symbol(text).description.charAt(null);",
+            "description-different-read": "const key=Symbol(text); const saved=key.description; return saved !== undefined ? key.description.slice(true) : '';",
+        },
+        string=True,
+    )
+    stale("primitive-index")
 
-    for name, body in {
-        "dynamic-left": "return text.charAt(index - 0);",
-        "dynamic-right": "return text.slice(0 - index);",
-        "coercion": "return text.charAt('0' - 0);",
-        "object-coercion": "return text.slice(0, {valueOf() { return 0; }} - 0);",
-        "extra-argument": "return text.charAt(0, 1 - 1);",
-        "charat-authority": "return text.charAt(1 - 1).toLowerCase();",
-        "slice-authority": "return text.slice(2 - 1).toLowerCase();",
-        "replacement": "String.prototype.slice=0; return text.slice(1 - 1);",
-        "detached": "const method=text.charAt; return method(1 - 1);",
-        "dead-effect": "function unused() { unknown(); } return text.slice(1 - 1);",
-        "description-unguarded": "return Symbol(text).description.charAt(1 - 1);",
-        "mutable-capture": "let bound=1 - 1; function part() { return text.charAt(bound); } bound=2; return part();",
-    }.items():
-        ir, contract = prepare(
-            args,
-            "subtraction-index-" + name,
-            f"function bad(text, index) {{ {body} }}\n",
-            entry_name="bad",
-            parameter_types=["string", "number"],
-        )
-        contract["initial_intrinsics"] = ["Symbol", "String"]
-        for optimize in (False, True):
-            refuse(ir, contract, f"subtraction-index-{name}-{optimize}", optimize=optimize)
-    ir, contract = accepted["description-capture-subtraction-index"]
-    for budget in (0, 1, 100):
-        refuse(ir, contract, f"subtraction-index-budget-{budget}", max_steps=budget)
-    changed = args.work / "subtraction-index-stale.mlir"
-    changed.write_text(ir.read_text().replace('"slice"', '"charAt"', 1))
-    if changed.read_text() == ir.read_text():
-        raise RuntimeError("subtraction index fingerprint control did not change its method")
-    if "fingerprint mismatch" not in refuse(changed, contract, "subtraction-index-stale"):
-        raise RuntimeError("changed subtraction index accepted a stale fingerprint")
+    family(
+        "division-index-",
+        "text, index",
+        ["string", "number"],
+        {
+            "dynamic-dividend": "return text.charAt(index / 0);",
+            "dynamic-divisor": "return text.slice(0 / index);",
+            "coercion": "return text.charAt('0' / 0);",
+            "object-coercion": "return text.slice(0, {valueOf() { return 0; }} / 0);",
+            "extra-argument": "return text.charAt(0, 0 / 0);",
+            "charat-authority": "return text.charAt(0 / 0).toLowerCase();",
+            "slice-authority": "return text.slice(1 / 1).toLowerCase();",
+            "replacement": "String.prototype.slice=0; return text.slice(0 / 0);",
+            "detached": "const method=text.charAt; return method(0 / 0);",
+            "dead-effect": "function unused() { unknown(); } return text.slice(0 / 0);",
+            "description-unguarded": "return Symbol(text).description.charAt(0 / 0);",
+        },
+        string=True,
+    )
+    stale("division-index")
 
-    for name, body in {
-        "dynamic-left": "return text.charAt(index * 0);",
-        "dynamic-right": "return text.slice(0 * index);",
-        "coercion": "return text.charAt('0' * 1);",
-        "object-coercion": "return text.slice(0, {valueOf() { return 0; }} * 1);",
-        "nan-global": "return text.charAt(NaN * 0);",
-        "extra-argument": "return text.charAt(0, 0 * 1);",
-        "charat-authority": "return text.charAt(0 * 1).toLowerCase();",
-        "slice-authority": "return text.slice(1 * 1).toLowerCase();",
-        "replacement": "String.prototype.slice=0; return text.slice(0 * 1);",
-        "detached": "const method=text.charAt; return method(0 * 1);",
-        "dead-effect": "function unused() { unknown(); } return text.slice(0 * 1);",
-        "description-unguarded": "return Symbol(text).description.charAt(0 * 1);",
-        "mutable-capture": "let bound=0 * 1; function part() { return text.charAt(bound); } bound=2; return part();",
-    }.items():
-        ir, contract = prepare(
-            args,
-            "multiplication-index-" + name,
-            f"function bad(text, index) {{ {body} }}\n",
-            entry_name="bad",
-            parameter_types=["string", "number"],
-        )
-        contract["initial_intrinsics"] = ["Symbol", "String"]
-        for optimize in (False, True):
-            refuse(
-                ir,
-                contract,
-                f"multiplication-index-{name}-{optimize}",
-                optimize=optimize,
-            )
-    ir, contract = accepted["description-capture-multiplication-index"]
-    for budget in (0, 1, 100):
-        refuse(ir, contract, f"multiplication-index-budget-{budget}", max_steps=budget)
-    changed = args.work / "multiplication-index-stale.mlir"
-    changed.write_text(ir.read_text().replace('"slice"', '"charAt"', 1))
-    if changed.read_text() == ir.read_text():
-        raise RuntimeError("multiplication index fingerprint control did not change its method")
-    if "fingerprint mismatch" not in refuse(changed, contract, "multiplication-index-stale"):
-        raise RuntimeError("changed multiplication index accepted a stale fingerprint")
+    family(
+        "subtraction-index-",
+        "text, index",
+        ["string", "number"],
+        {
+            "dynamic-left": "return text.charAt(index - 0);",
+            "dynamic-right": "return text.slice(0 - index);",
+            "coercion": "return text.charAt('0' - 0);",
+            "object-coercion": "return text.slice(0, {valueOf() { return 0; }} - 0);",
+            "extra-argument": "return text.charAt(0, 1 - 1);",
+            "charat-authority": "return text.charAt(1 - 1).toLowerCase();",
+            "slice-authority": "return text.slice(2 - 1).toLowerCase();",
+            "replacement": "String.prototype.slice=0; return text.slice(1 - 1);",
+            "detached": "const method=text.charAt; return method(1 - 1);",
+            "dead-effect": "function unused() { unknown(); } return text.slice(1 - 1);",
+            "description-unguarded": "return Symbol(text).description.charAt(1 - 1);",
+            "mutable-capture": "let bound=1 - 1; function part() { return text.charAt(bound); } bound=2; return part();",
+        },
+        string=True,
+    )
+    stale("subtraction-index")
 
-    for name, body in {
-        "dynamic-left": "return text.charAt(index % 1);",
-        "dynamic-right": "return text.slice(1 % index);",
-        "coercion": "return text.charAt('0' % 1);",
-        "object-coercion": "return text.slice(0, {valueOf() { return 0; }} % 1);",
-        "nan-global": "return text.charAt(NaN % 1);",
-        "infinity-global": "return text.slice(1 % Infinity);",
-        "extra-argument": "return text.charAt(0, 0 % 1);",
-        "charat-authority": "return text.charAt(0 % 1).toLowerCase();",
-        "slice-authority": "return text.slice(1 % 2).toLowerCase();",
-        "replacement": "String.prototype.slice=0; return text.slice(0 % 1);",
-        "detached": "const method=text.charAt; return method(0 % 1);",
-        "dead-effect": "function unused() { unknown(); } return text.slice(0 % 1);",
-        "description-unguarded": "return Symbol(text).description.charAt(0 % 1);",
-        "mutable-capture": "let bound=0 % 1; function part() { return text.charAt(bound); } bound=2; return part();",
-    }.items():
-        ir, contract = prepare(
-            args,
-            "remainder-index-" + name,
-            f"function bad(text, index) {{ {body} }}\n",
-            entry_name="bad",
-            parameter_types=["string", "number"],
-        )
-        contract["initial_intrinsics"] = ["Symbol", "String"]
-        for optimize in (False, True):
-            refuse(ir, contract, f"remainder-index-{name}-{optimize}", optimize=optimize)
-    ir, contract = accepted["description-capture-remainder-index"]
-    for budget in (0, 1, 100):
-        refuse(ir, contract, f"remainder-index-budget-{budget}", max_steps=budget)
-    changed = args.work / "remainder-index-stale.mlir"
-    changed.write_text(ir.read_text().replace('"slice"', '"charAt"', 1))
-    if changed.read_text() == ir.read_text():
-        raise RuntimeError("remainder index fingerprint control did not change its method")
-    if "fingerprint mismatch" not in refuse(changed, contract, "remainder-index-stale"):
-        raise RuntimeError("changed remainder index accepted a stale fingerprint")
+    family(
+        "multiplication-index-",
+        "text, index",
+        ["string", "number"],
+        {
+            "dynamic-left": "return text.charAt(index * 0);",
+            "dynamic-right": "return text.slice(0 * index);",
+            "coercion": "return text.charAt('0' * 1);",
+            "object-coercion": "return text.slice(0, {valueOf() { return 0; }} * 1);",
+            "nan-global": "return text.charAt(NaN * 0);",
+            "extra-argument": "return text.charAt(0, 0 * 1);",
+            "charat-authority": "return text.charAt(0 * 1).toLowerCase();",
+            "slice-authority": "return text.slice(1 * 1).toLowerCase();",
+            "replacement": "String.prototype.slice=0; return text.slice(0 * 1);",
+            "detached": "const method=text.charAt; return method(0 * 1);",
+            "dead-effect": "function unused() { unknown(); } return text.slice(0 * 1);",
+            "description-unguarded": "return Symbol(text).description.charAt(0 * 1);",
+            "mutable-capture": "let bound=0 * 1; function part() { return text.charAt(bound); } bound=2; return part();",
+        },
+        string=True,
+    )
+    stale("multiplication-index")
 
-    for name, body in {
-        "dynamic-left": "return text.charAt(index + 1);",
-        "dynamic-right": "return text.slice(1 + index);",
-        "coercion": "return text.charAt('0' + 1);",
-        "boolean": "return text.charAt(false + 0);",
-        "null": "return text.slice(0 + null);",
-        "object-coercion": "return text.slice(0, {valueOf() { return 0; }} + 1);",
-        "nan-global": "return text.charAt(NaN + 1);",
-        "infinity-global": "return text.slice(1 + Infinity);",
-        "extra-argument": "return text.charAt(0, 0 + 1);",
-        "charat-authority": "return text.charAt(0 + 0).toLowerCase();",
-        "slice-authority": "return text.slice(0 + 1).toLowerCase();",
-        "replacement": "String.prototype.slice=0; return text.slice(0 + 1);",
-        "detached": "const method=text.charAt; return method(0 + 1);",
-        "dead-effect": "function unused() { unknown(); } return text.slice(0 + 1);",
-        "description-unguarded": "return Symbol(text).description.charAt(0 + 1);",
-        "mutable-capture": "let bound=0 + 1; function part() { return text.charAt(bound); } bound=2; return part();",
-    }.items():
-        ir, contract = prepare(
-            args,
-            "addition-index-" + name,
-            f"function bad(text, index) {{ {body} }}\n",
-            entry_name="bad",
-            parameter_types=["string", "number"],
-        )
-        contract["initial_intrinsics"] = ["Symbol", "String"]
-        for optimize in (False, True):
-            refuse(ir, contract, f"addition-index-{name}-{optimize}", optimize=optimize)
-    ir, contract = accepted["description-capture-addition-index"]
-    for budget in (0, 1, 100):
-        refuse(ir, contract, f"addition-index-budget-{budget}", max_steps=budget)
-    changed = args.work / "addition-index-stale.mlir"
-    changed.write_text(ir.read_text().replace('"slice"', '"charAt"', 1))
-    if changed.read_text() == ir.read_text():
-        raise RuntimeError("addition index fingerprint control did not change its method")
-    if "fingerprint mismatch" not in refuse(changed, contract, "addition-index-stale"):
-        raise RuntimeError("changed addition index accepted a stale fingerprint")
+    family(
+        "remainder-index-",
+        "text, index",
+        ["string", "number"],
+        {
+            "dynamic-left": "return text.charAt(index % 1);",
+            "dynamic-right": "return text.slice(1 % index);",
+            "coercion": "return text.charAt('0' % 1);",
+            "object-coercion": "return text.slice(0, {valueOf() { return 0; }} % 1);",
+            "nan-global": "return text.charAt(NaN % 1);",
+            "infinity-global": "return text.slice(1 % Infinity);",
+            "extra-argument": "return text.charAt(0, 0 % 1);",
+            "charat-authority": "return text.charAt(0 % 1).toLowerCase();",
+            "slice-authority": "return text.slice(1 % 2).toLowerCase();",
+            "replacement": "String.prototype.slice=0; return text.slice(0 % 1);",
+            "detached": "const method=text.charAt; return method(0 % 1);",
+            "dead-effect": "function unused() { unknown(); } return text.slice(0 % 1);",
+            "description-unguarded": "return Symbol(text).description.charAt(0 % 1);",
+            "mutable-capture": "let bound=0 % 1; function part() { return text.charAt(bound); } bound=2; return part();",
+        },
+        string=True,
+    )
+    stale("remainder-index")
 
-    for name, body in {
-        "dynamic-left": "return text.charAt(index ** 1);",
-        "dynamic-right": "return text.slice(1 ** index);",
-        "coercion": "return text.charAt('0' ** 1);",
-        "boolean": "return text.charAt(false ** 0);",
-        "null": "return text.slice(0 ** null);",
-        "object-coercion": "return text.slice(0, {valueOf() { return 0; }} ** 1);",
-        "nan-global": "return text.charAt(NaN ** 1);",
-        "infinity-global": "return text.slice(1 ** Infinity);",
-        "extra-argument": "return text.charAt(0, 0 ** 1);",
-        "charat-authority": "return text.charAt(0 ** 1).toLowerCase();",
-        "slice-authority": "return text.slice(1 ** 0).toLowerCase();",
-        "replacement": "String.prototype.slice=0; return text.slice(0 ** 1);",
-        "detached": "const method=text.charAt; return method(0 ** 1);",
-        "dead-effect": "function unused() { unknown(); } return text.slice(0 ** 1);",
-        "description-unguarded": "return Symbol(text).description.charAt(0 ** 1);",
-        "mutable-capture": "let bound=0 ** 1; function part() { return text.charAt(bound); } bound=2; return part();",
-    }.items():
-        ir, contract = prepare(
-            args,
-            "power-index-" + name,
-            f"function bad(text, index) {{ {body} }}\n",
-            entry_name="bad",
-            parameter_types=["string", "number"],
-        )
-        contract["initial_intrinsics"] = ["Symbol", "String"]
-        for optimize in (False, True):
-            refuse(ir, contract, f"power-index-{name}-{optimize}", optimize=optimize)
-    ir, contract = accepted["description-capture-power-index"]
-    for budget in (0, 1, 100):
-        refuse(ir, contract, f"power-index-budget-{budget}", max_steps=budget)
-    changed = args.work / "power-index-stale.mlir"
-    changed.write_text(ir.read_text().replace('"slice"', '"charAt"', 1))
-    if changed.read_text() == ir.read_text():
-        raise RuntimeError("power index fingerprint control did not change its method")
-    if "fingerprint mismatch" not in refuse(changed, contract, "power-index-stale"):
-        raise RuntimeError("changed power index accepted a stale fingerprint")
+    family(
+        "addition-index-",
+        "text, index",
+        ["string", "number"],
+        {
+            "dynamic-left": "return text.charAt(index + 1);",
+            "dynamic-right": "return text.slice(1 + index);",
+            "coercion": "return text.charAt('0' + 1);",
+            "boolean": "return text.charAt(false + 0);",
+            "null": "return text.slice(0 + null);",
+            "object-coercion": "return text.slice(0, {valueOf() { return 0; }} + 1);",
+            "nan-global": "return text.charAt(NaN + 1);",
+            "infinity-global": "return text.slice(1 + Infinity);",
+            "extra-argument": "return text.charAt(0, 0 + 1);",
+            "charat-authority": "return text.charAt(0 + 0).toLowerCase();",
+            "slice-authority": "return text.slice(0 + 1).toLowerCase();",
+            "replacement": "String.prototype.slice=0; return text.slice(0 + 1);",
+            "detached": "const method=text.charAt; return method(0 + 1);",
+            "dead-effect": "function unused() { unknown(); } return text.slice(0 + 1);",
+            "description-unguarded": "return Symbol(text).description.charAt(0 + 1);",
+            "mutable-capture": "let bound=0 + 1; function part() { return text.charAt(bound); } bound=2; return part();",
+        },
+        string=True,
+    )
+    stale("addition-index")
 
-    for name, body in {
-        "dynamic-left": "return text.charAt(-(index / 0));",
-        "dynamic-right": "return text.slice(-(1 / index));",
-        "coercion": "return text.charAt(-('0' / 0));",
-        "boolean": "return text.charAt(-(false + 0));",
-        "null": "return text.slice(-(0 + null));",
-        "object-coercion": "return text.slice(-(0 / {valueOf() { return 0; }}));",
-        "double-negation": "return text.slice(-(-(0 / 0)));",
-        "number-global": "return text.charAt(-(NaN / 0));",
-        "extra-argument": "return text.charAt(0, -(0 / 0));",
-        "charat-authority": "return text.charAt(-(0 / 0)).toLowerCase();",
-        "slice-authority": "return text.slice(-(0 - 1)).toLowerCase();",
-        "replacement": "String.prototype.slice=0; return text.slice(-(0 / 0));",
-        "detached": "const method=text.charAt; return method(-(0 / 0));",
-        "dead-effect": "function unused() { unknown(); } return text.slice(-(0 / 0));",
-        "description-unguarded": "return Symbol(text).description.charAt(-(0 / 0));",
-        "mutable-capture": "let bound=-(0 / 0); function part() { return text.charAt(bound); } bound=2; return part();",
-    }.items():
-        ir, contract = prepare(
-            args,
-            "negated-index-" + name,
-            f"function bad(text, index) {{ {body} }}\n",
-            entry_name="bad",
-            parameter_types=["string", "number"],
-        )
-        contract["initial_intrinsics"] = ["Symbol", "String"]
-        for optimize in (False, True):
-            refuse(ir, contract, f"negated-index-{name}-{optimize}", optimize=optimize)
-    ir, contract = accepted["description-capture-negated-index"]
-    for budget in (0, 1, 100):
-        refuse(ir, contract, f"negated-index-budget-{budget}", max_steps=budget)
-    changed = args.work / "negated-index-stale.mlir"
-    changed.write_text(ir.read_text().replace('"slice"', '"charAt"', 1))
-    if changed.read_text() == ir.read_text():
-        raise RuntimeError("negated index fingerprint control did not change its method")
-    if "fingerprint mismatch" not in refuse(changed, contract, "negated-index-stale"):
-        raise RuntimeError("changed negated index accepted a stale fingerprint")
+    family(
+        "power-index-",
+        "text, index",
+        ["string", "number"],
+        {
+            "dynamic-left": "return text.charAt(index ** 1);",
+            "dynamic-right": "return text.slice(1 ** index);",
+            "coercion": "return text.charAt('0' ** 1);",
+            "boolean": "return text.charAt(false ** 0);",
+            "null": "return text.slice(0 ** null);",
+            "object-coercion": "return text.slice(0, {valueOf() { return 0; }} ** 1);",
+            "nan-global": "return text.charAt(NaN ** 1);",
+            "infinity-global": "return text.slice(1 ** Infinity);",
+            "extra-argument": "return text.charAt(0, 0 ** 1);",
+            "charat-authority": "return text.charAt(0 ** 1).toLowerCase();",
+            "slice-authority": "return text.slice(1 ** 0).toLowerCase();",
+            "replacement": "String.prototype.slice=0; return text.slice(0 ** 1);",
+            "detached": "const method=text.charAt; return method(0 ** 1);",
+            "dead-effect": "function unused() { unknown(); } return text.slice(0 ** 1);",
+            "description-unguarded": "return Symbol(text).description.charAt(0 ** 1);",
+            "mutable-capture": "let bound=0 ** 1; function part() { return text.charAt(bound); } bound=2; return part();",
+        },
+        string=True,
+    )
+    stale("power-index")
 
-    for name, body in {
-        "dynamic-left": "return text.charAt(-index / 2);",
-        "dynamic-right": "return text.slice(-1 + index);",
-        "coercion": "return text.charAt(-'1' * -1);",
-        "object-coercion": "return text.slice(-{valueOf() { return 0; }} / 1);",
-        "number-global": "return text.charAt(-NaN / 1);",
-        "infinity-global": "return text.slice(-Infinity / 1);",
-        "extra-argument": "return text.charAt(0, -1 + 1);",
-        "charat-authority": "return text.charAt(-1 + 1).toLowerCase();",
-        "slice-authority": "return text.slice(-1 * -1).toLowerCase();",
-        "replacement": "String.prototype.slice=0; return text.slice(-1 + 1);",
-        "detached": "const method=text.charAt; return method(-1 + 1);",
-        "dead-effect": "function unused() { unknown(); } return text.slice(-1 + 1);",
-        "description-unguarded": "return Symbol(text).description.charAt(-1 + 1);",
-        "mutable-capture": "let bound=-1 + 1; function part() { return text.charAt(bound); } bound=2; return part();",
-    }.items():
-        ir, contract = prepare(
-            args,
-            "signed-operand-index-" + name,
-            f"function bad(text, index) {{ {body} }}\n",
-            entry_name="bad",
-            parameter_types=["string", "number"],
-        )
-        contract["initial_intrinsics"] = ["Symbol", "String"]
-        for optimize in (False, True):
-            refuse(ir, contract, f"signed-operand-index-{name}-{optimize}", optimize=optimize)
-    ir, contract = accepted["description-capture-signed-operand-index"]
-    for budget in (0, 1, 100):
-        refuse(ir, contract, f"signed-operand-index-budget-{budget}", max_steps=budget)
-    changed = args.work / "signed-operand-index-stale.mlir"
-    changed.write_text(ir.read_text().replace('"slice"', '"charAt"', 1))
-    if changed.read_text() == ir.read_text():
-        raise RuntimeError("signed operand index fingerprint control did not change its method")
-    if "fingerprint mismatch" not in refuse(changed, contract, "signed-operand-index-stale"):
-        raise RuntimeError("changed signed operand index accepted a stale fingerprint")
+    family(
+        "negated-index-",
+        "text, index",
+        ["string", "number"],
+        {
+            "dynamic-left": "return text.charAt(-(index / 0));",
+            "dynamic-right": "return text.slice(-(1 / index));",
+            "coercion": "return text.charAt(-('0' / 0));",
+            "boolean": "return text.charAt(-(false + 0));",
+            "null": "return text.slice(-(0 + null));",
+            "object-coercion": "return text.slice(-(0 / {valueOf() { return 0; }}));",
+            "double-negation": "return text.slice(-(-(0 / 0)));",
+            "number-global": "return text.charAt(-(NaN / 0));",
+            "extra-argument": "return text.charAt(0, -(0 / 0));",
+            "charat-authority": "return text.charAt(-(0 / 0)).toLowerCase();",
+            "slice-authority": "return text.slice(-(0 - 1)).toLowerCase();",
+            "replacement": "String.prototype.slice=0; return text.slice(-(0 / 0));",
+            "detached": "const method=text.charAt; return method(-(0 / 0));",
+            "dead-effect": "function unused() { unknown(); } return text.slice(-(0 / 0));",
+            "description-unguarded": "return Symbol(text).description.charAt(-(0 / 0));",
+            "mutable-capture": "let bound=-(0 / 0); function part() { return text.charAt(bound); } bound=2; return part();",
+        },
+        string=True,
+    )
+    stale("negated-index")
 
-    for name, body in {
-        "third-level-left": "return text.charAt(((0 / 0) / 1) / 1);",
-        "third-level-right": "return text.charAt(1 + (1 + (0 / 0)));",
-        "third-level-both": "return text.charAt((1 + (0 / 0)) + (0 / 0));",
-        "third-level-signed": "return text.charAt(-(((-1 + 1) * 1) + 1));",
-        "dynamic-left": "return text.charAt((index / 1) + 1);",
-        "dynamic-right": "return text.slice(1 + (1 / index));",
-        "coercion": "return text.charAt(('0' / 1) + 1);",
-        "boolean": "return text.charAt((false + 0) * 1);",
-        "null": "return text.slice((0 + null) * 1);",
-        "object-coercion": "return text.slice(({valueOf() { return 0; }} / 1) + 1);",
-        "number-global": "return text.charAt((NaN / 1) + 1);",
-        "infinity-global": "return text.slice(1 + (Infinity / 1));",
-        "extra-argument": "return text.charAt(0, (0 / 0) + 1);",
-        "charat-authority": "return text.charAt((0 / 0) + 1).toLowerCase();",
-        "slice-authority": "return text.slice((0 - 1) * -1).toLowerCase();",
-        "add-charat-authority": "return text.charAt((0 + 0) + 0).toLowerCase();",
-        "add-slice-authority": "return text.slice((0 + 0) + 1).toLowerCase();",
-        "replacement": "String.prototype.slice=0; return text.slice((0 / 0) + 1);",
-        "detached": "const method=text.charAt; return method((0 / 0) + 1);",
-        "dead-effect": "function unused() { unknown(); } return text.slice((0 / 0) + 1);",
-        "description-unguarded": "return Symbol(text).description.charAt((0 / 0) + 1);",
-        "mutable-capture": "let bound=(0 / 0) + 1; function part() { return text.charAt(bound); } bound=2; return part();",
-    }.items():
-        ir, contract = prepare(
-            args,
-            "nested-index-" + name,
-            f"function bad(text, index) {{ {body} }}\n",
-            entry_name="bad",
-            parameter_types=["string", "number"],
-        )
-        contract["initial_intrinsics"] = ["Symbol", "String"]
-        for optimize in (False, True):
-            refuse(ir, contract, f"nested-index-{name}-{optimize}", optimize=optimize)
-    ir, contract = accepted["description-capture-nested-index"]
-    for budget in (0, 1, 100):
-        refuse(ir, contract, f"nested-index-budget-{budget}", max_steps=budget)
-    changed = args.work / "nested-index-stale.mlir"
-    changed.write_text(ir.read_text().replace('"slice"', '"charAt"', 1))
-    if changed.read_text() == ir.read_text():
-        raise RuntimeError("nested index fingerprint control did not change its method")
-    if "fingerprint mismatch" not in refuse(changed, contract, "nested-index-stale"):
-        raise RuntimeError("changed nested index accepted a stale fingerprint")
+    family(
+        "signed-operand-index-",
+        "text, index",
+        ["string", "number"],
+        {
+            "dynamic-left": "return text.charAt(-index / 2);",
+            "dynamic-right": "return text.slice(-1 + index);",
+            "coercion": "return text.charAt(-'1' * -1);",
+            "object-coercion": "return text.slice(-{valueOf() { return 0; }} / 1);",
+            "number-global": "return text.charAt(-NaN / 1);",
+            "infinity-global": "return text.slice(-Infinity / 1);",
+            "extra-argument": "return text.charAt(0, -1 + 1);",
+            "charat-authority": "return text.charAt(-1 + 1).toLowerCase();",
+            "slice-authority": "return text.slice(-1 * -1).toLowerCase();",
+            "replacement": "String.prototype.slice=0; return text.slice(-1 + 1);",
+            "detached": "const method=text.charAt; return method(-1 + 1);",
+            "dead-effect": "function unused() { unknown(); } return text.slice(-1 + 1);",
+            "description-unguarded": "return Symbol(text).description.charAt(-1 + 1);",
+            "mutable-capture": "let bound=-1 + 1; function part() { return text.charAt(bound); } bound=2; return part();",
+        },
+        string=True,
+    )
+    stale("signed-operand-index")
 
-    for name, body in {
-        "dynamic-boolean": "return text.charAt(-flag);",
-        "computed-boolean": "return text.charAt(-(text === 'a'));",
-        "coercion": "return text.charAt(-'0');",
-        "object-coercion": "return text.charAt(-{valueOf() { return false; }});",
-        "undefined": "return text.charAt(-undefined);",
-        "bare-boolean": "return text.charAt(-true + false);",
-        "bare-null": "return text.charAt(null - -false);",
-        "third-level": "return text.charAt(((-true + 1) * 1) + 0);",
-        "leaf-escape": "const bound=-false; text.charAt(bound + 0); return bound;",
-        "result-escape": "const bound=-null + 1; text.charAt(bound); return bound;",
-        "result-comparison": "const bound=-false; return text.charAt(bound) === text && bound === 0;",
-        "unused-result": "const bound=-false; return text.charAt(0);",
-        "unused-intermediate": "const bound=-true; const unused=bound + 1; return text.slice(bound);",
-        "extra-argument": "return text.charAt(0, -false);",
-        "charat-authority": "return text.charAt(-null).toLowerCase();",
-        "slice-authority": "return text.slice(-true * -true).toLowerCase();",
-        "detached": "const method=text.charAt; return method(-null);",
-        "replacement": "String.prototype.slice=0; return text.slice(-true);",
-        "dead-effect": "function unused() { unknown(); } return text.slice(-true);",
-        "description-unguarded": "return Symbol(text).description.charAt(-false);",
-        "mutable-capture": "let bound=-false; function part() { return text.charAt(bound); } bound=1; return part();",
-    }.items():
-        ir, contract = prepare(
-            args,
-            "negated-primitive-index-" + name,
-            f"function bad(text, flag) {{ {body} }}\n",
-            entry_name="bad",
-            parameter_types=["string", "boolean"],
-        )
-        contract["initial_intrinsics"] = ["Symbol", "String"]
-        for optimize in (False, True):
-            refuse(ir, contract, f"negated-primitive-index-{name}-{optimize}", optimize=optimize)
-    ir, contract = accepted["description-capture-negated-primitive-index"]
-    for budget in (0, 1, 100):
-        refuse(ir, contract, f"negated-primitive-index-budget-{budget}", max_steps=budget)
-    changed = args.work / "negated-primitive-index-stale.mlir"
-    changed.write_text(ir.read_text().replace('"slice"', '"charAt"', 1))
-    if changed.read_text() == ir.read_text():
-        raise RuntimeError("negated primitive fingerprint control did not change its method")
-    if "fingerprint mismatch" not in refuse(changed, contract, "negated-primitive-index-stale"):
-        raise RuntimeError("changed negated primitive accepted a stale fingerprint")
+    family(
+        "nested-index-",
+        "text, index",
+        ["string", "number"],
+        {
+            "third-level-left": "return text.charAt(((0 / 0) / 1) / 1);",
+            "third-level-right": "return text.charAt(1 + (1 + (0 / 0)));",
+            "third-level-both": "return text.charAt((1 + (0 / 0)) + (0 / 0));",
+            "third-level-signed": "return text.charAt(-(((-1 + 1) * 1) + 1));",
+            "dynamic-left": "return text.charAt((index / 1) + 1);",
+            "dynamic-right": "return text.slice(1 + (1 / index));",
+            "coercion": "return text.charAt(('0' / 1) + 1);",
+            "boolean": "return text.charAt((false + 0) * 1);",
+            "null": "return text.slice((0 + null) * 1);",
+            "object-coercion": "return text.slice(({valueOf() { return 0; }} / 1) + 1);",
+            "number-global": "return text.charAt((NaN / 1) + 1);",
+            "infinity-global": "return text.slice(1 + (Infinity / 1));",
+            "extra-argument": "return text.charAt(0, (0 / 0) + 1);",
+            "charat-authority": "return text.charAt((0 / 0) + 1).toLowerCase();",
+            "slice-authority": "return text.slice((0 - 1) * -1).toLowerCase();",
+            "add-charat-authority": "return text.charAt((0 + 0) + 0).toLowerCase();",
+            "add-slice-authority": "return text.slice((0 + 0) + 1).toLowerCase();",
+            "replacement": "String.prototype.slice=0; return text.slice((0 / 0) + 1);",
+            "detached": "const method=text.charAt; return method((0 / 0) + 1);",
+            "dead-effect": "function unused() { unknown(); } return text.slice((0 / 0) + 1);",
+            "description-unguarded": "return Symbol(text).description.charAt((0 / 0) + 1);",
+            "mutable-capture": "let bound=(0 / 0) + 1; function part() { return text.charAt(bound); } bound=2; return part();",
+        },
+        string=True,
+    )
+    stale("nested-index")
 
-    for name, body in {
-        "dynamic": "return text.charAt(-(-flag));",
-        "comparison": "return text.charAt(-(-(text === 'a')));",
-        "string": "return text.charAt(-(-'1'));",
-        "object": "return text.slice(-(-{valueOf() { return 1; }}));",
-        "undefined": "return text.charAt(-(-undefined));",
-        "global": "return text.slice(-(-Infinity));",
-        "third-negation": "return text.charAt(-(-(-1)));",
-        "negated-arithmetic": "return text.charAt(-(-(1 + 0)));",
-        "third-binary": "return text.charAt(((-(-true) + 1) * 1) + 0);",
-        "bare-boolean": "return text.charAt(-(-true) + false);",
-        "bare-null": "return text.charAt(-(-true) + null);",
-        "inner-escape": "const inner=-true; text.charAt(-inner); return inner;",
-        "outer-escape": "const bound=-(-true); text.charAt(bound); return bound;",
-        "outer-comparison": "const bound=-(-false); return text.charAt(bound) === text && bound === 0;",
-        "unused-intermediate": "const bound=-(-true); const unused=bound + 1; return text.slice(bound);",
-        "extra-argument": "return text.charAt(0, -(-false));",
-        "charat-authority": "return text.charAt(-(-null)).toLowerCase();",
-        "slice-authority": "return text.slice(-(-true)).toLowerCase();",
-        "detached": "const method=text.charAt; return method(-(-null));",
-        "replacement": "String.prototype.slice=0; return text.slice(-(-true));",
-        "dead-effect": "function unused() { unknown(); } return text.slice(-(-true));",
-        "description-unguarded": "return Symbol(text).description.charAt(-(-false));",
-        "mutable-capture": "let bound=-(-false); function part() { return text.charAt(bound); } bound=1; return part();",
-    }.items():
-        ir, contract = prepare(
-            args,
-            "double-negated-index-" + name,
-            f"function bad(text, flag) {{ {body} }}\n",
-            entry_name="bad",
-            parameter_types=["string", "boolean"],
-        )
-        contract["initial_intrinsics"] = ["Symbol", "String"]
-        for optimize in (False, True):
-            refuse(ir, contract, f"double-negated-index-{name}-{optimize}", optimize=optimize)
-    ir, contract = accepted["description-capture-double-negated-index"]
-    for budget in (0, 1, 100):
-        refuse(ir, contract, f"double-negated-index-budget-{budget}", max_steps=budget)
-    changed = args.work / "double-negated-index-stale.mlir"
-    changed.write_text(ir.read_text().replace('"slice"', '"charAt"', 1))
-    if changed.read_text() == ir.read_text():
-        raise RuntimeError("double negated fingerprint control did not change its method")
-    if "fingerprint mismatch" not in refuse(changed, contract, "double-negated-index-stale"):
-        raise RuntimeError("changed double negated index accepted a stale fingerprint")
+    family(
+        "negated-primitive-index-",
+        "text, flag",
+        ["string", "boolean"],
+        {
+            "dynamic-boolean": "return text.charAt(-flag);",
+            "computed-boolean": "return text.charAt(-(text === 'a'));",
+            "coercion": "return text.charAt(-'0');",
+            "object-coercion": "return text.charAt(-{valueOf() { return false; }});",
+            "undefined": "return text.charAt(-undefined);",
+            "bare-boolean": "return text.charAt(-true + false);",
+            "bare-null": "return text.charAt(null - -false);",
+            "third-level": "return text.charAt(((-true + 1) * 1) + 0);",
+            "leaf-escape": "const bound=-false; text.charAt(bound + 0); return bound;",
+            "result-escape": "const bound=-null + 1; text.charAt(bound); return bound;",
+            "result-comparison": "const bound=-false; return text.charAt(bound) === text && bound === 0;",
+            "unused-result": "const bound=-false; return text.charAt(0);",
+            "unused-intermediate": "const bound=-true; const unused=bound + 1; return text.slice(bound);",
+            "extra-argument": "return text.charAt(0, -false);",
+            "charat-authority": "return text.charAt(-null).toLowerCase();",
+            "slice-authority": "return text.slice(-true * -true).toLowerCase();",
+            "detached": "const method=text.charAt; return method(-null);",
+            "replacement": "String.prototype.slice=0; return text.slice(-true);",
+            "dead-effect": "function unused() { unknown(); } return text.slice(-true);",
+            "description-unguarded": "return Symbol(text).description.charAt(-false);",
+            "mutable-capture": "let bound=-false; function part() { return text.charAt(bound); } bound=1; return part();",
+        },
+        string=True,
+    )
+    stale("negated-primitive-index", "negated primitive")
+
+    family(
+        "double-negated-index-",
+        "text, flag",
+        ["string", "boolean"],
+        {
+            "dynamic": "return text.charAt(-(-flag));",
+            "comparison": "return text.charAt(-(-(text === 'a')));",
+            "string": "return text.charAt(-(-'1'));",
+            "object": "return text.slice(-(-{valueOf() { return 1; }}));",
+            "undefined": "return text.charAt(-(-undefined));",
+            "global": "return text.slice(-(-Infinity));",
+            "third-negation": "return text.charAt(-(-(-1)));",
+            "negated-arithmetic": "return text.charAt(-(-(1 + 0)));",
+            "third-binary": "return text.charAt(((-(-true) + 1) * 1) + 0);",
+            "bare-boolean": "return text.charAt(-(-true) + false);",
+            "bare-null": "return text.charAt(-(-true) + null);",
+            "inner-escape": "const inner=-true; text.charAt(-inner); return inner;",
+            "outer-escape": "const bound=-(-true); text.charAt(bound); return bound;",
+            "outer-comparison": "const bound=-(-false); return text.charAt(bound) === text && bound === 0;",
+            "unused-intermediate": "const bound=-(-true); const unused=bound + 1; return text.slice(bound);",
+            "extra-argument": "return text.charAt(0, -(-false));",
+            "charat-authority": "return text.charAt(-(-null)).toLowerCase();",
+            "slice-authority": "return text.slice(-(-true)).toLowerCase();",
+            "detached": "const method=text.charAt; return method(-(-null));",
+            "replacement": "String.prototype.slice=0; return text.slice(-(-true));",
+            "dead-effect": "function unused() { unknown(); } return text.slice(-(-true));",
+            "description-unguarded": "return Symbol(text).description.charAt(-(-false));",
+            "mutable-capture": "let bound=-(-false); function part() { return text.charAt(bound); } bound=1; return part();",
+        },
+        string=True,
+    )
+    stale("double-negated-index", "double negated", noun="double negated index")
 
     ir, contract = accepted["state"]
     refuse(ir, dict(contract, entry="_script_$0"), "script-entry")
@@ -4675,9 +4229,13 @@ def main():
     if "fingerprint mismatch" not in refuse(stale, contract, "stale"):
         raise RuntimeError("changed Symbol identity accepted a stale fingerprint")
 
-    forged, manifest = prepare(args, "forged", "function bad() { return typeof Symbol.for('x'); }")
+    forged, manifest = prepare(
+        args, "forged", "function bad() { return typeof Symbol.for('x'); }"
+    )
     forged.write_text(
-        forge_module(forged.read_text(), 'ctnative.host_proved = true, ctnative.host_reason = ""')
+        forge_module(
+            forged.read_text(), 'ctnative.host_proved = true, ctnative.host_reason = ""'
+        )
     )
     manifest["module_sha256"] = fingerprint(args.opt, forged)
     refuse(forged, manifest, "forged-refused")

@@ -433,12 +433,10 @@ void checkEntryNumericOwner(mlir::MLIRContext & context, const std::string & sha
             check(complete.proved() && completion < 18000,
                   "numeric dependency proof is bounded and complete");
             if (!complete.proved() || completion >= 18000) { continue; }
-            for (unsigned budget = 0; budget < completion; ++budget) {
-                OwnedGlobalRoots limited(*module, contract, budget);
-                check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
-                          withheld(*module, limited),
-                      "every incomplete numeric budget withholds the entire callable family");
-            }
+            checkBudgetsBelow(
+                *module, contract, completion,
+                "every incomplete numeric budget withholds the entire callable family",
+                [&](const OwnedGlobalRoots & limited) { return withheld(*module, limited); });
             OwnedGlobalRoots exact(*module, contract, completion);
             check(exact.proved() && exact.steps() == completion,
                   "the exact numeric budget reproduces every source dependency");

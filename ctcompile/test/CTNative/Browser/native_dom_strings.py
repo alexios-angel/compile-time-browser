@@ -246,31 +246,25 @@ function makeElement(value) {
     )
     completion_checks = completion_provenance_checks(args, completion_ir, completion_contract)
     _, branch_ir, branch_contract = next(row for row in prepared if row[0] == "branch_nested")
-    for budget in (0, 1, 32):
-        diagnostic = dom.lower(
-            args,
-            branch_ir,
-            branch_contract,
-            f"branch-budget-{budget}",
-            max_steps=budget,
-            success=False,
-        )
-        if "budget exhausted" not in diagnostic:
-            raise RuntimeError(f"branch budget {budget}: wrong refusal\n{diagnostic}")
+    dom.exhaust(
+        args,
+        branch_ir,
+        branch_contract,
+        "branch",
+        (0, 1, 32),
+        "branch budget {budget}: wrong refusal",
+    )
     _, helper_branch_ir, helper_branch_contract = next(
         row for row in prepared if row[0] == "helper_branch_nested"
     )
-    for budget in (0, 1, 32):
-        diagnostic = dom.lower(
-            args,
-            helper_branch_ir,
-            helper_branch_contract,
-            f"helper-branch-budget-{budget}",
-            max_steps=budget,
-            success=False,
-        )
-        if "budget exhausted" not in diagnostic:
-            raise RuntimeError(f"helper branch budget {budget}: wrong refusal\n{diagnostic}")
+    dom.exhaust(
+        args,
+        helper_branch_ir,
+        helper_branch_contract,
+        "helper-branch",
+        (0, 1, 32),
+        "helper branch budget {budget}: wrong refusal",
+    )
     for depth in (63, 64):
         source = (
             "function branchDepth(element) {"
@@ -308,17 +302,14 @@ function makeElement(value) {
                     if depth == 64 and expected not in result:
                         raise RuntimeError(f"{kind} branch depth: wrong refusal\n{result}")
     _, helper_ir, helper_contract = next(row for row in prepared if row[0] == "helper_nested")
-    for budget in (0, 1, 32):
-        diagnostic = dom.lower(
-            args,
-            helper_ir,
-            helper_contract,
-            f"helper-budget-{budget}",
-            success=False,
-            max_steps=budget,
-        )
-        if "budget exhausted" not in diagnostic:
-            raise RuntimeError(f"helper budget {budget}: missing bounded refusal\n{diagnostic}")
+    dom.exhaust(
+        args,
+        helper_ir,
+        helper_contract,
+        "helper",
+        (0, 1, 32),
+        "helper budget {budget}: missing bounded refusal",
+    )
     stale = dict(helper_contract, module_sha256="0" * 64)
     if "fingerprint mismatch" not in dom.lower(
         args, helper_ir, stale, "helper-stale", success=False

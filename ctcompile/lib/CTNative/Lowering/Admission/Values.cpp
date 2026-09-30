@@ -46,11 +46,11 @@ bool admission::isDeclarationStore(mlir::Operation * o) {
 // constant, every read of it is already the value, and what remains is the
 // capture operand of a closure that is about to go.
 bool admission::isLiftedClosure(mlir::Operation * o) {
-    return llvm::isa_and_nonnull<ctjs::CreateClosureOp>(o) && o->hasAttr("ctnative.lifted");
+    return llvm::isa_and_nonnull<ctjs::CreateClosureOp>(o) && o->hasAttr(kNativeLifted);
 }
 
 bool admission::isUnboxedCell(mlir::Operation * o) {
-    return llvm::isa_and_nonnull<ctjs::CreateCellOp>(o) && o->hasAttr("ctnative.unboxed");
+    return llvm::isa_and_nonnull<ctjs::CreateCellOp>(o) && o->hasAttr(kNativeUnboxed);
 }
 
 bool admission::closureLowersToNothing(mlir::Operation * o) {
@@ -64,8 +64,8 @@ bool admission::closureLowersToNothing(mlir::Operation * o) {
 // sentence about the ENCLOSING function reading a value it never reads.
 std::string admission::closureRefusal(mlir::Operation * o) {
     const llvm::StringRef what =
-        o->hasAttr("ctnative.method_refusal") ? "a method field" : "a closure used as a value";
-    auto why = o->getAttrOfType<mlir::StringAttr>("ctnative.closure_reason");
+        o->hasAttr(kNativeMethodRefusal) ? "a method field" : "a closure used as a value";
+    auto why = o->getAttrOfType<mlir::StringAttr>(kNativeClosureReason);
     return why ? (what + ": " + why.getValue()).str() : (what + " - Phase 59").str();
 }
 
@@ -87,8 +87,7 @@ bool admission::feedsOnlyDirectCallees(mlir::Value v) {
 // one of its ctjs.call_directs - the same list on both, which is what lets
 // the caller and the callee be lowered in either order.
 llvm::ArrayRef<int32_t> admission::objectArgsOf(mlir::Operation * o) {
-    auto listed = o->getAttrOfType<mlir::DenseI32ArrayAttr>("ctnative.object_args");
-    return listed ? listed.asArrayRef() : llvm::ArrayRef<int32_t>{};
+    return listedSlots(o, kNativeObjectArgs);
 }
 
 bool admission::isObjectArg(mlir::Operation * o, unsigned index) {
@@ -100,8 +99,7 @@ bool admission::isObjectArg(mlir::Operation * o, unsigned index) {
 // variable in the CALLER's frame and the callee reads and writes it
 // through a pointer.
 llvm::ArrayRef<int32_t> admission::cellArgsOf(mlir::Operation * o) {
-    auto listed = o->getAttrOfType<mlir::DenseI32ArrayAttr>("ctnative.cell_args");
-    return listed ? listed.asArrayRef() : llvm::ArrayRef<int32_t>{};
+    return listedSlots(o, kNativeCellArgs);
 }
 
 bool admission::isCellArg(mlir::Operation * o, unsigned index) {
@@ -110,7 +108,7 @@ bool admission::isCellArg(mlir::Operation * o, unsigned index) {
 
 // A `ctjs.create_cell` the lift made a frame-local variable.
 bool admission::isCarriedCell(mlir::Operation * o) {
-    return llvm::isa_and_nonnull<ctjs::CreateCellOp>(o) && o->hasAttr("ctnative.carried");
+    return llvm::isa_and_nonnull<ctjs::CreateCellOp>(o) && o->hasAttr(kNativeCarried);
 }
 
 // A capture parameter that arrived as one - an entry-block argument of a
@@ -288,28 +286,22 @@ bool admission::namesObjectPrototypeMember(llvm::StringRef key) {
     return llvm::is_contained(kInherited, key);
 }
 
+bool admission::stringConstantUsedOnlyAs(mlir::Operation * o,
+                                         llvm::function_ref<bool(mlir::OpOperand &)> key) {
+    auto constant = llvm::dyn_cast_or_null<ctjs::ConstantOp>(o);
+    return constant && llvm::isa<ctjs::StringAttr>(constant.getValue()) &&
+           !constant.getResult().use_empty() && llvm::all_of(constant.getResult().getUses(), key);
+}
+
 // A string constant whose every use is a property key of a closed object
 // lowers to nothing: the key becomes a member name.
 bool admission::isKeyOnlyString(mlir::Operation * o) {
-    auto constant = llvm::dyn_cast<ctjs::ConstantOp>(o);
-    if (!constant || !llvm::isa<ctjs::StringAttr>(constant.getValue()) ||
-        constant.getResult().use_empty()) {
-        return false;
-    }
-    for (mlir::OpOperand & use : constant.getResult().getUses()) {
+    return stringConstantUsedOnlyAs(o, [](mlir::OpOperand & use) {
         mlir::Operation * user = use.getOwner();
-        mlir::Value object;
-        if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user)) {
-            object = get.getObject();
-        } else if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user)) {
-            object = set.getObject();
-        }
-        if (!object || use.getOperandNumber() != 1 ||
-            (!isClosedObject(object) && nativeObjectFieldGroup(user) < 0)) {
-            return false;
-        }
-    }
-    return true;
+        return llvm::isa<ctjs::GetPropertyOp, ctjs::SetPropertyOp>(user) &&
+               use.getOperandNumber() == 1 &&
+               (isClosedObject(user->getOperand(0)) || nativeObjectFieldGroup(user) >= 0);
+    });
 }
 
 // PHASE 57A: A DENSE ARRAY IS A `std::vector<double>` BY VALUE.
@@ -338,9 +330,6 @@ std::string admission::whyNotDense(mlir::Value array) {
                 }
                 return ("an array literal given the named property `" + key + "`").str();
             }
-            if (use.getOperandNumber() == 2) {
-                return "an array literal that escapes - it is stored into another object";
-            }
         }
         if (llvm::isa<ctjs::DeletePropertyOp, ctjs::DeleteNamedOp>(user)) {
             return "an array literal with an element deleted - `delete a[0]` punches a hole "
@@ -354,17 +343,8 @@ std::string admission::whyNotDense(mlir::Value array) {
             }
         }
         if (llvm::isa<ctjs::AppendOp>(user) && use.getOperandNumber() == 0) { continue; }
-        if (llvm::isa<mlir::scf::WhileOp, mlir::scf::YieldOp, mlir::scf::ConditionOp>(user)) {
-            return "an array literal that is loop-carried - more than one value reaches the "
-                   "variable that holds it (assigned again inside a loop, or on only one "
-                   "path before it)";
-        }
-        if (llvm::isa<ctjs::ReturnOp>(user)) {
-            return "an array literal that escapes - it is returned";
-        }
-        return ("an array literal that escapes - it reaches `" + user->getName().getStringRef() +
-                "`")
-            .str();
+        if (auto why = escapeRoute("an array literal", use)) { return *why; }
+        return escapesTo("an array literal", user);
     }
     return "an array literal that is not a dense vector";
 }
@@ -376,19 +356,11 @@ std::string admission::whyNotDense(mlir::Value array) {
 // an array. Recognizing array keys separately keeps an erased `length`
 // name from requiring a runtime string carrier or its header.
 bool admission::isVectorKeyString(mlir::Operation * o) {
-    auto constant = llvm::dyn_cast_or_null<ctjs::ConstantOp>(o);
-    if (!constant || !llvm::isa<ctjs::StringAttr>(constant.getValue()) ||
-        constant.getResult().use_empty()) {
-        return false;
-    }
-    for (mlir::OpOperand & use : constant.getResult().getUses()) {
-        auto * user = use.getOwner();
-        if (!llvm::isa<ctjs::GetPropertyOp, ctjs::SetPropertyOp>(user) ||
-            use.getOperandNumber() != 1 || !isVectorSite(user->getOperand(0))) {
-            return false;
-        }
-    }
-    return true;
+    return stringConstantUsedOnlyAs(o, [](mlir::OpOperand & use) {
+        mlir::Operation * user = use.getOwner();
+        return llvm::isa<ctjs::GetPropertyOp, ctjs::SetPropertyOp>(user) &&
+               use.getOperandNumber() == 1 && isVectorSite(user->getOperand(0));
+    });
 }
 
 // A VALUE THAT LOWERS TO NOTHING NEEDS NO CARRIER, and these are the only

@@ -134,6 +134,26 @@ void restore(ctjs::FuncOp function,
     function->setAttrs((*result.original)->getAttrs());
 }
 
+// Every budget below `complete` refuses with the IR unchanged; exactly `complete` proves again
+// and is rolled back.
+static bool checkBudgets(ctjs::FuncOp function, unsigned complete, ExceptionRecoveryMode mode,
+                         llvm::function_ref<bool()> unchanged, llvm::StringRef prefix,
+                         llvm::StringRef incomplete, llvm::StringRef exactLabel) {
+    for (unsigned budget = 0; budget < complete; ++budget) {
+        auto limited = recoverPrimitiveExceptionRegion(function, budget, mode);
+        if (!check(!limited.recovered &&
+                       limited.refusal.find("budget exhausted") != std::string::npos && unchanged(),
+                   incomplete)) {
+            llvm::errs() << prefix << budget << ": " << limited.refusal << '\n';
+            return false;
+        }
+    }
+    auto exact = recoverPrimitiveExceptionRegion(function, complete, mode);
+    if (!check(exact.recovered && exact.steps == complete, exactLabel)) { return false; }
+    restore(function, exact);
+    return true;
+}
+
 void testBindings(mlir::MLIRContext & context, llvm::StringRef source) {
     auto module = import(context, source);
     if (!module) { return; }
@@ -149,24 +169,13 @@ void testBindings(mlir::MLIRContext & context, llvm::StringRef source) {
     const unsigned complete = result.steps;
     restore(function, result);
     check(printed(*module) == before, "source binding proof rollback restores the whole module");
-    for (unsigned budget = 0; budget < complete; ++budget) {
-        auto limited = recoverPrimitiveExceptionRegion(
-            function, budget, ExceptionRecoveryMode::EffectCheckedInvocations);
-        if (!check(!limited.recovered &&
-                       limited.refusal.find("budget exhausted") != std::string::npos &&
-                       printed(*module) == before && countChecks(function) == checks,
-                   "every incomplete source binding/effect budget preserves all original IR")) {
-            llvm::errs() << "budget " << budget << ": " << limited.refusal << '\n';
-            return;
-        }
-    }
-    auto exact = recoverPrimitiveExceptionRegion(function, complete,
-                                                 ExceptionRecoveryMode::EffectCheckedInvocations);
-    if (!check(exact.recovered && exact.steps == complete,
-               "the complete source binding/effect budget succeeds exactly")) {
+    if (!checkBudgets(
+            function, complete, ExceptionRecoveryMode::EffectCheckedInvocations,
+            [&] { return printed(*module) == before && countChecks(function) == checks; },
+            "budget ", "every incomplete source binding/effect budget preserves all original IR",
+            "the complete source binding/effect budget succeeds exactly")) {
         return;
     }
-    restore(function, exact);
     check(printed(*module) == before, "exact source budget permits a fresh proof after rollback");
     llvm::outs() << "source binding recovery: " << complete
                  << " steps, every incomplete budget preserves " << checks << " checks\n";
@@ -352,24 +361,14 @@ void testTransitive(mlir::MLIRContext & context, llvm::StringRef source) {
     const unsigned complete = result.steps;
     restore(function, result);
     check(printed(*module) == before, "transitive rollback preserves every family body");
-    for (unsigned budget = 0; budget < complete; ++budget) {
-        auto limited = recoverPrimitiveExceptionRegion(
-            function, budget, ExceptionRecoveryMode::EffectCheckedInvocations);
-        if (!check(!limited.recovered &&
-                       limited.refusal.find("budget exhausted") != std::string::npos &&
-                       printed(*module) == before && countChecks(function) == checks,
-                   "every transitive proof cutoff preserves the complete source graph")) {
-            llvm::errs() << "transitive budget " << budget << ": " << limited.refusal << '\n';
-            return;
-        }
-    }
-    auto exact = recoverPrimitiveExceptionRegion(function, complete,
-                                                 ExceptionRecoveryMode::EffectCheckedInvocations);
-    if (!check(exact.recovered && exact.steps == complete,
-               "the exact transitive budget completes")) {
+    if (!checkBudgets(
+            function, complete, ExceptionRecoveryMode::EffectCheckedInvocations,
+            [&] { return printed(*module) == before && countChecks(function) == checks; },
+            "transitive budget ",
+            "every transitive proof cutoff preserves the complete source graph",
+            "the exact transitive budget completes")) {
         return;
     }
-    restore(function, exact);
     check(printed(*module) == before, "exact transitive rollback retains all source operations");
     llvm::outs() << "transitive recovery: " << complete
                  << " steps, every incomplete budget preserves " << checks << " checks\n";
@@ -512,7 +511,7 @@ void testEffects(mlir::MLIRContext & context) {
     {
         auto source = effectFixture.str();
         constexpr llvm::StringLiteral direct = "ctjs.call_direct @leaf(%r, %nt, %c)";
-        source.replace(source.find(direct.str()), direct.size(), "ctjs.call %c(%r)");
+        replaceOnce(source, direct, "ctjs.call %c(%r)");
         auto module = mlir::parseSourceString<mlir::ModuleOp>(source, &context);
         if (!check(static_cast<bool>(module), "ordinary call effect fixture parses")) { return; }
         auto function = guarded(*module);
@@ -547,24 +546,13 @@ void testEffects(mlir::MLIRContext & context) {
 
     // Every incomplete budget must fail before adoption, including cutoffs
     // inside primitive predecessor walks, the effect scan and structuring.
-    for (unsigned budget = 0; budget < firstSteps; ++budget) {
-        auto limited = recoverPrimitiveExceptionRegion(
-            function, budget, ExceptionRecoveryMode::EffectCheckedInvocations);
-        if (!check(!limited.recovered &&
-                       limited.refusal.find("budget exhausted") != std::string::npos &&
-                       printed(function) == before && countChecks(function) == checks,
-                   "every incomplete effect/recovery budget preserves the original graph")) {
-            llvm::errs() << "budget " << budget << ": " << limited.refusal << '\n';
-            return;
-        }
-    }
-    auto exact = recoverPrimitiveExceptionRegion(function, firstSteps,
-                                                 ExceptionRecoveryMode::EffectCheckedInvocations);
-    if (!check(exact.recovered && exact.steps == firstSteps,
-               "the first complete effect/recovery budget succeeds exactly")) {
+    if (!checkBudgets(
+            function, firstSteps, ExceptionRecoveryMode::EffectCheckedInvocations,
+            [&] { return printed(function) == before && countChecks(function) == checks; },
+            "budget ", "every incomplete effect/recovery budget preserves the original graph",
+            "the first complete effect/recovery budget succeeds exactly")) {
         return;
     }
-    restore(function, exact);
     check(printed(function) == before, "exact-budget rollback permits a fresh proof");
     llvm::outs() << "effect recovery: " << firstSteps
                  << " steps, every incomplete budget preserves " << checks << " checks\n";
@@ -773,22 +761,12 @@ void testGuardedTail(mlir::MLIRContext & context) {
         const auto complete = result.steps;
         restore(function, result);
         check(printed(*module) == before, "guarded-tail rollback restores the complete source");
-        for (unsigned budget = 0; budget < complete; ++budget) {
-            auto limited = recoverPrimitiveExceptionRegion(function, budget, mode);
-            if (!check(!limited.recovered &&
-                           limited.refusal.find("budget exhausted") != std::string::npos &&
-                           printed(*module) == before,
-                       "every incomplete prefix/tail budget preserves source and status edges")) {
-                llvm::errs() << "budget " << budget << ": " << limited.refusal << '\n';
-                return;
-            }
-        }
-        auto exact = recoverPrimitiveExceptionRegion(function, complete, mode);
-        if (!check(exact.recovered && exact.steps == complete,
-                   "the complete prefix/tail budget succeeds exactly")) {
+        if (!checkBudgets(
+                function, complete, mode, [&] { return printed(*module) == before; }, "budget ",
+                "every incomplete prefix/tail budget preserves source and status edges",
+                "the complete prefix/tail budget succeeds exactly")) {
             return;
         }
-        restore(function, exact);
         check(printed(*module) == before, "exact-budget tail recovery rolls back verbatim");
         llvm::outs() << "guarded tail: " << complete
                      << " steps, all incomplete budgets preserve prefix and suffix, mode="

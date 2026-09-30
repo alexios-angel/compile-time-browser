@@ -10,10 +10,15 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Parser/Parser.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
+#include "llvm/ADT/Sequence.h"
 
 #include <cstdio>
+#include <initializer_list>
 #include <string>
+#include <string_view>
 #include <tuple>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -180,6 +185,47 @@ inline bool empty(mlir::ModuleOp module, const OwnedGlobalRoots & query) {
     bool result = query.roots().empty();
     module.walk([&](mlir::Operation * operation) { result &= !query.lookup(operation); });
     return result;
+}
+
+// A live edit has left `contract` stale: the old report refuses on its fingerprint, and the
+// edited source, fingerprinted afresh as `current`, still refuses without running out of work.
+inline void checkStaleAndRefused(mlir::ModuleOp module, const HostContract & contract,
+                                 const HostContract & current, std::string_view staleWhat,
+                                 std::string_view refusedWhat) {
+    OwnedGlobalRoots stale(module, contract);
+    check(!stale.proved() && stale.reason().contains("fingerprint") && empty(module, stale),
+          staleWhat);
+    OwnedGlobalRoots fresh(module, current);
+    check(!fresh.proved() && !fresh.exhausted() && empty(module, fresh), refusedWhat);
+}
+
+// Every budget in `budgets` (each below completion) refuses, reports exhaustion, stays within
+// its budget and publishes nothing: `withheld` when given, otherwise `empty`.
+template <typename Query = OwnedGlobalRoots, typename Budgets = std::initializer_list<unsigned>>
+void checkIncompleteBudgets(
+    mlir::ModuleOp module, const HostContract & contract, const Budgets & budgets,
+    std::string_view what,
+    std::type_identity_t<llvm::function_ref<bool(const Query &)>> withheld = {}) {
+    for (const unsigned budget : budgets) {
+        Query limited(module, contract, budget);
+        const auto nothing = [&] {
+            if constexpr (std::is_same_v<Query, OwnedGlobalRoots>) {
+                if (!withheld) { return empty(module, limited); }
+            }
+            return withheld(limited);
+        };
+        check(!limited.proved() && limited.exhausted() && limited.steps() <= budget && nothing(),
+              what);
+    }
+}
+
+// Every budget below `completion`.
+template <typename Query = OwnedGlobalRoots>
+void checkBudgetsBelow(
+    mlir::ModuleOp module, const HostContract & contract, unsigned completion,
+    std::string_view what,
+    std::type_identity_t<llvm::function_ref<bool(const Query &)>> withheld = {}) {
+    checkIncompleteBudgets<Query>(module, contract, llvm::seq(0u, completion), what, withheld);
 }
 
 } // namespace ctcompile::test::owned_global_methods
