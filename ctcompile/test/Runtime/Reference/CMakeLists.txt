@@ -1,17 +1,5 @@
-if(TARGET ctcompile-test-native-reference)
-  target_sources(ctcompile-test-native-reference PRIVATE
-    Interpreter.cpp
-  )
-endif()
+ctcompile_test_sources(ctcompile-test-native-reference Interpreter.cpp)
 
-if(TARGET ctcompile-test-native-vm-linked)
-  target_sources(ctcompile-test-native-vm-linked PRIVATE
-    VmLinked.cpp
-  )
-endif()
+ctcompile_test_sources(ctcompile-test-native-vm-linked VmLinked.cpp)
 
-if(TARGET ctcompile-test-native-values-vm-linked)
-  target_sources(ctcompile-test-native-values-vm-linked PRIVATE
-    VmLinked.cpp
-  )
-endif()
+ctcompile_test_sources(ctcompile-test-native-values-vm-linked VmLinked.cpp)

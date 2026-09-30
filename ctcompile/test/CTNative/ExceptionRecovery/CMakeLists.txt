@@ -1,10 +1,3 @@
-if(TARGET ctcompile-test-exception-recovery)
-  target_sources(ctcompile-test-exception-recovery PRIVATE
-    Main.cpp
-    Completion.cpp
-    Guards.cpp
-    Tests.h
-  )
-endif()
+ctcompile_test_sources(ctcompile-test-exception-recovery Main.cpp Completion.cpp Guards.cpp Tests.h)
 
 add_subdirectory(Completion)

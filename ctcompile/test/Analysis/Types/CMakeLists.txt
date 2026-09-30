@@ -1,20 +1,8 @@
-if(TARGET ctcompile-test-type-oracle)
-  target_sources(ctcompile-test-type-oracle PRIVATE
-    Oracle.cpp
-  )
-endif()
+ctcompile_test_sources(ctcompile-test-type-oracle Oracle.cpp)
 
-if(TARGET ctcompile-test-type-claims)
-  target_sources(ctcompile-test-type-claims PRIVATE
-    Claims.cpp
-  )
-endif()
+ctcompile_test_sources(ctcompile-test-type-claims Claims.cpp)
 
-if(TARGET ctcompile-test-ctnative-lattice)
-  target_sources(ctcompile-test-ctnative-lattice PRIVATE
-    Lattice.cpp
-  )
-endif()
+ctcompile_test_sources(ctcompile-test-ctnative-lattice Lattice.cpp)
 
 add_subdirectory(TypeInference)
 add_subdirectory(TypeOracle)

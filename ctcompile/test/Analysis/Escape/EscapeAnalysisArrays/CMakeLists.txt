@@ -1,19 +1,17 @@
-if(TARGET ctcompile-test-escape-analysis-arrays)
-  target_sources(ctcompile-test-escape-analysis-arrays PRIVATE
-    main.cpp
-    Harness.cpp
-    Contents.cpp
-    Objects.cpp
-    Selectors.cpp
-    Primitives.cpp
-    BigIntErrors.cpp
-    BigIntProducers.cpp
-    BigIntStrings.cpp
-    ControlFlow.cpp
-    Harness.h
-    PrimitiveBinary.h
-  )
-endif()
+ctcompile_test_sources(ctcompile-test-escape-analysis-arrays
+  main.cpp
+  Harness.cpp
+  Contents.cpp
+  Objects.cpp
+  Selectors.cpp
+  Primitives.cpp
+  BigIntErrors.cpp
+  BigIntProducers.cpp
+  BigIntStrings.cpp
+  ControlFlow.cpp
+  Harness.h
+  PrimitiveBinary.h
+)
 
 add_subdirectory(Induction)
 add_subdirectory(Length)

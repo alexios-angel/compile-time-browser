@@ -1,5 +1,1 @@
-if(TARGET ctcompile-test-differential)
-  target_sources(ctcompile-test-differential PRIVATE
-    Differential.cpp
-  )
-endif()
+ctcompile_test_sources(ctcompile-test-differential Differential.cpp)

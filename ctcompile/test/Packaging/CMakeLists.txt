@@ -1,20 +1,8 @@
-if(TARGET ctcompile-test-program_image)
-  target_sources(ctcompile-test-program_image PRIVATE
-    ProgramImage.cpp
-  )
-endif()
+ctcompile_test_sources(ctcompile-test-program_image ProgramImage.cpp)
 
-if(TARGET ctcompile-test-manifest)
-  target_sources(ctcompile-test-manifest PRIVATE
-    Manifest.cpp
-  )
-endif()
+ctcompile_test_sources(ctcompile-test-manifest Manifest.cpp)
 
-if(TARGET ctcompile-test-app_bundle)
-  target_sources(ctcompile-test-app_bundle PRIVATE
-    AppBundle.cpp
-  )
-endif()
+ctcompile_test_sources(ctcompile-test-app_bundle AppBundle.cpp)
 
 # The preview's supported host is Linux; this also exercises /proc/self/exe
 # launcher discovery after moving the installed prefix to a different path.

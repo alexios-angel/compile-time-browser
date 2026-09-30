@@ -1,20 +1,10 @@
-if(TARGET ctcompile-test-owned-method-table-slots)
-  target_sources(ctcompile-test-owned-method-table-slots PRIVATE
-    MethodTableSlots.cpp
-  )
-endif()
+ctcompile_test_sources(ctcompile-test-owned-method-table-slots MethodTableSlots.cpp)
 
-if(TARGET ctcompile-test-owned-global-roots)
-  target_sources(ctcompile-test-owned-global-roots PRIVATE
-    GlobalRoots.cpp
-  )
-endif()
+ctcompile_test_sources(ctcompile-test-owned-global-roots GlobalRoots.cpp)
 
-if(TARGET ctcompile-test-owned-global-methods)
-  target_sources(ctcompile-test-owned-global-methods PRIVATE
-    GlobalMethods.cpp
-    GlobalMethodsFixtures.h
-  )
-endif()
+ctcompile_test_sources(ctcompile-test-owned-global-methods
+  GlobalMethods.cpp
+  GlobalMethodsFixtures.h
+)
 
 add_subdirectory(OwnedGlobalSharedMap)

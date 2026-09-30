@@ -1,44 +1,15 @@
-if(TARGET ctcompile-test-escape-cycle)
-  target_sources(ctcompile-test-escape-cycle PRIVATE
-    Cycle.cpp
-  )
-endif()
+ctcompile_test_sources(ctcompile-test-escape-cycle Cycle.cpp)
 
-if(TARGET ctcompile-test-escape-analysis-sinks)
-  target_sources(ctcompile-test-escape-analysis-sinks PRIVATE
-    Sinks.cpp
-    Harness.h
-  )
-endif()
+ctcompile_test_sources(ctcompile-test-escape-analysis-sinks Sinks.cpp Harness.h)
 
-if(TARGET ctcompile-test-escape-analysis-completion)
-  target_sources(ctcompile-test-escape-analysis-completion PRIVATE
-    Completion.cpp
-  )
-endif()
+ctcompile_test_sources(ctcompile-test-escape-analysis-completion Completion.cpp)
 
-if(TARGET ctcompile-test-escape-analysis-storage)
-  target_sources(ctcompile-test-escape-analysis-storage PRIVATE
-    Storage.cpp
-  )
-endif()
+ctcompile_test_sources(ctcompile-test-escape-analysis-storage Storage.cpp)
 
-if(TARGET ctcompile-test-escape-claims)
-  target_sources(ctcompile-test-escape-claims PRIVATE
-    Claims.cpp
-  )
-endif()
+ctcompile_test_sources(ctcompile-test-escape-claims Claims.cpp)
 
-if(TARGET ctcompile-test-escape-oracle-aot)
-  target_sources(ctcompile-test-escape-oracle-aot PRIVATE
-    AOTOracle.cpp
-  )
-endif()
+ctcompile_test_sources(ctcompile-test-escape-oracle-aot AOTOracle.cpp)
 
-if(TARGET ctcompile-test-escape-oracle-aot-return)
-  target_sources(ctcompile-test-escape-oracle-aot-return PRIVATE
-    AOTReturnOracle.cpp
-  )
-endif()
+ctcompile_test_sources(ctcompile-test-escape-oracle-aot-return AOTReturnOracle.cpp)
 
 add_subdirectory(EscapeAnalysisArrays)

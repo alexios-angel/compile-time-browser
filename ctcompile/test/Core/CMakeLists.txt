@@ -1,5 +1,1 @@
-if(TARGET ctcompile-test-inventories)
-  target_sources(ctcompile-test-inventories PRIVATE
-    Inventories.cpp
-  )
-endif()
+ctcompile_test_sources(ctcompile-test-inventories Inventories.cpp)

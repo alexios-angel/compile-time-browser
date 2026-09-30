@@ -1,11 +1,3 @@
-if(TARGET ctcompile-test-html_comparator)
-  target_sources(ctcompile-test-html_comparator PRIVATE
-    Html.cpp
-  )
-endif()
+ctcompile_test_sources(ctcompile-test-html_comparator Html.cpp)
 
-if(TARGET ctcompile-test-css_comparator)
-  target_sources(ctcompile-test-css_comparator PRIVATE
-    Css.cpp
-  )
-endif()
+ctcompile_test_sources(ctcompile-test-css_comparator Css.cpp)

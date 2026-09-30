@@ -32,6 +32,14 @@ function(ctcompile_unit_test name)
   add_test(NAME ctcompile_${_test} COMMAND ctcompile-test-${name} ${_unit_ARGS})
 endfunction()
 
+# The handwritten SOURCES of test target TARGET, from the directory that owns
+# them, when that target is configured at all.
+function(ctcompile_test_sources target)
+  if(TARGET ${target})
+    target_sources(${target} PRIVATE ${ARGN})
+  endif()
+endfunction()
+
 # GENERATED CODE IS NOT THIS PROJECT'S CODE, and the flags that keep the
 # hand-written sources honest do not apply to it. The entry's signature is
 # fixed by ct_aot_entry_fn, so a function that never looks at `argc` has an

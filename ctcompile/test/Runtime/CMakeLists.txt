@@ -1,14 +1,6 @@
-if(TARGET ctcompile-test-native-runtime)
-  target_sources(ctcompile-test-native-runtime PRIVATE
-    NativeRuntime.cpp
-  )
-endif()
+ctcompile_test_sources(ctcompile-test-native-runtime NativeRuntime.cpp)
 
-if(TARGET ctcompile-test-stdlib_map)
-  target_sources(ctcompile-test-stdlib_map PRIVATE
-    StdLibMap.cpp
-  )
-endif()
+ctcompile_test_sources(ctcompile-test-stdlib_map StdLibMap.cpp)
 
 add_subdirectory(Differential)
 add_subdirectory(GC)
