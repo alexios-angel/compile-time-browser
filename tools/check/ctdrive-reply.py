@@ -55,15 +55,16 @@ def start(repo: Path, page: Path):
         line = proc.stdout.readline()
         if not line:
             break
-        hit = re.search(r"listening on 127\.0\.0\.1:(\d+)", line)
+        hit = re.search(r"listening on 127\.0\.0\.1:(\d+) token ([0-9a-f]+)", line)
         if hit:
-            return proc, int(hit.group(1))
+            return proc, int(hit.group(1)), hit.group(2)
     proc.kill()
     sys.exit("ctdrive-reply: ctdrive never printed a port")
 
 
-def run_case(port: int, want: int, read_delay: float, rcvbuf: int | None):
+def run_case(port: int, token: str, want: int, read_delay: float, rcvbuf: int | None):
     s = socket.create_connection(("127.0.0.1", port), timeout=20)
+    s.sendall((token + "\n").encode())  # the first line ctdrive accepts
     if rcvbuf:
         # A small receive buffer closes the sender's window sooner, so the
         # short-write window is reached with less data in flight.
@@ -109,9 +110,9 @@ def main() -> int:
     failures = 0
     for name in names:
         want, delay, rcvbuf = CASES[name]
-        proc, port = start(args.repo, page)
+        proc, port, token = start(args.repo, page)
         try:
-            ok, detail = run_case(port, want, delay, rcvbuf)
+            ok, detail = run_case(port, token, want, delay, rcvbuf)
         finally:
             proc.kill()
         failures += 0 if ok else 1

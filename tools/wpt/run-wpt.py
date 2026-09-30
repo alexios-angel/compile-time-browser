@@ -247,7 +247,7 @@ def plan_for(path: Path, wpt: Path) -> list[Plan]:
 
 # --- driving one page -------------------------------------------------------
 
-PORT_RE = re.compile(r"listening on 127\.0\.0\.1:(\d+)")
+PORT_RE = re.compile(r"listening on 127\.0\.0\.1:(\d+) token ([0-9a-f]+)")
 
 # The probe. `D` and the payload once the harness has published; otherwise `W`
 # and whether the harness is even there - which is the whole difference between
@@ -433,6 +433,7 @@ def run_one(plan: Plan, driver: Path, wpt: Path, memory_mb: int) -> DriverResult
             match = PORT_RE.search(output())
             if match:
                 port = int(match.group(1))
+                token = match.group(2)
                 break
             if gone():
                 return ended("before listening")
@@ -446,6 +447,7 @@ def run_one(plan: Plan, driver: Path, wpt: Path, memory_mb: int) -> DriverResult
             time.sleep(0.01)
 
         sock = socket.create_connection(("127.0.0.1", port), timeout=5)
+        sock.sendall((token + "\n").encode())  # the first line ctdrive accepts
         last_probe = ""
         # DID THE DRIVER EVER ANSWER? A page whose script never returns - an
         # infinite loop at the top level - prints its port and then runs no

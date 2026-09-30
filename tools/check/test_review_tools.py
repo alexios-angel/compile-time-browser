@@ -187,7 +187,7 @@ class ComparisonDeadlines(unittest.TestCase):
                 "-u",
                 "-c",
                 "import socket,time; s=socket.socket(); s.bind(('127.0.0.1',0)); s.listen(); "
-                "print('listening on 127.0.0.1:'+str(s.getsockname()[1])); "
+                "print('listening on 127.0.0.1:'+str(s.getsockname()[1])+' token 0f'); "
                 "peer,_=s.accept(); peer.recv(4096); time.sleep(10)",
             ],
             stdout=subprocess.PIPE,

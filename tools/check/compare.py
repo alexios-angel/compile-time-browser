@@ -37,6 +37,7 @@ from contextlib import contextmanager
 from importlib.metadata import version
 import json
 import os
+import re
 import socket
 import select
 import signal
@@ -238,10 +239,15 @@ class Ctbrowse:
             line = data.split(b"\n", 1)[0].decode()
             if "listening on" not in line:
                 raise RuntimeError(f"ctdrive did not start: {line.strip()}")
-            port = self.port if remote else int(line.rsplit(":", 1)[1])
+            announced = re.search(r"127\.0\.0\.1:(\d+) token ([0-9a-f]+)", line)
+            if announced is None:
+                raise RuntimeError(f"ctdrive announced no token: {line.strip()}")
+            port = self.port if remote else int(announced.group(1))
             self.sock = socket.create_connection(
                 ("127.0.0.1", port), timeout=max(0.001, deadline - time.monotonic())
             )
+            # The first line of a connection is the token ctdrive printed.
+            self.sock.sendall((announced.group(2) + "\n").encode())
         except BaseException:
             self.close(graceful=False)
             raise

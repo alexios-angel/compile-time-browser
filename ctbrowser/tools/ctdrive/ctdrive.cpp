@@ -50,6 +50,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <random>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -76,6 +77,13 @@ inline bool would_block() {
 }
 using socklen_arg = int;
 using iolen_t = int;
+// EXCLUSIVE, so no other process can bind the same port over this one and
+// take the commands (Windows lets SO_REUSEADDR steal a bound port).
+inline bool claim_port_exclusively(socket_t s) {
+    const BOOL on = TRUE;
+    return ::setsockopt(s, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, reinterpret_cast<const char *>(&on),
+                        sizeof(on)) == 0;
+}
 struct winsock_once {
     winsock_once() {
         WSADATA data;
@@ -96,6 +104,10 @@ inline bool would_block() {
 }
 using socklen_arg = socklen_t;
 using iolen_t = std::size_t;
+// A bound port is already exclusive here without SO_REUSEADDR.
+inline bool claim_port_exclusively(socket_t) {
+    return true;
+}
 struct winsock_once {};
 #endif
 
@@ -119,22 +131,39 @@ struct winsock_once {};
 
 // The commands, applied to the live page. One function so the vocabulary is in
 // one place - tools/check/compare.py speaks exactly this and nothing else.
+//
+// A CLIENT PROVES IT STARTED US. Loopback is not private - every local
+// process, and a page's own fetch() to 127.0.0.1, can connect - and `eval`
+// runs script and `shot` writes any path. So the first line of every
+// connection must be the token printed beside the port; anything else closes
+// it before a command is read. std::random_device is getrandom/urandom under
+// glibc and libc++ and rand_s (RtlGenRandom) under MinGW's libstdc++ and MSVC.
 class session {
 public:
     explicit session(unsigned short port) {
+        std::random_device entropy;
+        static constexpr char hex[] = "0123456789abcdef";
+        for (int i = 0; i < 32; ++i) { token_ += hex[entropy() & 0x0F]; }
+        const auto die = [](const char * what) {
+            std::fprintf(stderr, "ctdrive: %s failed\n", what);
+            std::exit(1);
+        };
         listener_ = ::socket(AF_INET, SOCK_STREAM, 0);
-        int reuse = 1;
-        ::setsockopt(listener_, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char *>(&reuse),
-                     sizeof(reuse));
+        if (listener_ == invalid_socket) { die("socket"); }
+        if (!claim_port_exclusively(listener_)) { die("setsockopt"); }
         sockaddr_in address{};
         address.sin_family = AF_INET;
         address.sin_addr.s_addr = ::htonl(INADDR_LOOPBACK);
         address.sin_port = ::htons(port);
-        ::bind(listener_, reinterpret_cast<sockaddr *>(&address), sizeof(address));
-        ::listen(listener_, 1);
+        if (::bind(listener_, reinterpret_cast<sockaddr *>(&address), sizeof(address)) != 0) {
+            die("bind");
+        }
+        if (::listen(listener_, 1) != 0) { die("listen"); }
         sockaddr_in bound{};
         auto length = static_cast<socklen_arg>(sizeof(bound));
-        ::getsockname(listener_, reinterpret_cast<sockaddr *>(&bound), &length);
+        if (::getsockname(listener_, reinterpret_cast<sockaddr *>(&bound), &length) != 0) {
+            die("getsockname");
+        }
         port_ = ::ntohs(bound.sin_port);
         // NON-BLOCKING, which is the whole contract of poll() below: a page
         // with no command pending must run at full speed.
@@ -148,6 +177,7 @@ public:
     session & operator=(const session &) = delete;
 
     [[nodiscard]] unsigned short port() const { return port_; }
+    [[nodiscard]] const std::string & token() const { return token_; }
 
     // Called every iteration from app_options::on_frame. Runs whatever the
     // socket has ready and returns - never blocks.
@@ -157,6 +187,7 @@ public:
             const socket_t incoming = ::accept(listener_, nullptr, nullptr);
             if (incoming != invalid_socket) {
                 peer_ = incoming;
+                authenticated_ = false;
                 set_non_blocking(peer_);
             }
         }
@@ -187,10 +218,31 @@ private:
             }
             break;
         }
+        // A peer that has not authenticated gets no more buffer than a token.
+        if (!authenticated_ && pending_.size() > 2 * token_.size() + 2 &&
+            pending_.find('\n') == std::string::npos) {
+            close_socket(peer_);
+            peer_ = invalid_socket;
+            pending_.clear();
+            return;
+        }
         for (std::size_t at = pending_.find('\n'); at != std::string::npos;
              at = pending_.find('\n')) {
             const std::string line = pending_.substr(0, at + 1);
             pending_.erase(0, at + 1);
+            if (!authenticated_) {
+                std::string_view given{line};
+                given.remove_suffix(1);
+                if (given.ends_with('\r')) { given.remove_suffix(1); }
+                if (given != token_) {
+                    close_socket(peer_);
+                    peer_ = invalid_socket;
+                    pending_.clear();
+                    return;
+                }
+                authenticated_ = true;
+                continue;
+            }
             reply(run(line));
         }
     }
@@ -432,6 +484,8 @@ private:
     socket_t listener_ = invalid_socket;
     socket_t peer_ = invalid_socket; // one client at a time, by design
     std::string pending_;            // bytes read but not yet a whole line
+    std::string token_;              // the first line a connection must send
+    bool authenticated_ = false;     // the peer has sent it
     unsigned short port_ = 0;
     ctbrowser::browser * page_ = nullptr;
 };
@@ -482,7 +536,8 @@ int main(int argc, char ** argv) {
         std::printf("usage: ctdrive <page.html> --port N [--size W H] [--fixed-dt SECONDS] "
                     "[--query ?x=y]\n"
                     "\n"
-                    "Speaks one JSON object per line on 127.0.0.1:N:\n"
+                    "Prints `listening on 127.0.0.1:N token T`; a client sends T\n"
+                    "as its first line, then one JSON object per line:\n"
                     "  {\"cmd\":\"click\",\"x\":120,\"y\":200}   move/down/up/click\n"
                     "  {\"cmd\":\"key\",\"code\":\"Tab\"}        + shift, ctrl\n"
                     "  {\"cmd\":\"type\",\"text\":\"hello\"}\n"
@@ -496,7 +551,8 @@ int main(int argc, char ** argv) {
     session control{port};
     // The port, on stdout, before anything else: asking for 0 gets one the
     // operating system chose, and the client has no other way to learn it.
-    std::printf("ctdrive: listening on 127.0.0.1:%u\n", control.port());
+    std::printf("ctdrive: listening on 127.0.0.1:%u token %s\n", control.port(),
+                control.token().c_str());
     std::fflush(stdout);
 
     // THE PAGE HAS AN ADDRESS, and it is the file's. `run_app_file` loads the
