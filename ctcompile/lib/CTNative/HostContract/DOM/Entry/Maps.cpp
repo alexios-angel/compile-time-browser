@@ -22,8 +22,7 @@ std::optional<bool> Body::mapOperation(mlir::Operation & operation) {
     if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(operation)) {
         if (!hasKind(made.getCallee(), Kind::mapIntrinsic)) { return std::nullopt; }
         if (!plainMapConstruction(made)) {
-            refusal = "DOM Map requires an empty construction by its own constructor";
-            return false;
+            return fail("DOM Map requires an empty construction by its own constructor");
         }
         // A parent stores fresh child Maps. Its fluent aliases share the
         // family; its reads are children, whose own payloads stay primitive.
@@ -54,18 +53,14 @@ std::optional<bool> Body::mapOperation(mlir::Operation & operation) {
             return true;
         }
         const auto arity = mapMethodArity(key);
-        if (!arity) {
-            refusal = "DOM Map property is not a supported constant method or size";
-            return false;
-        }
+        if (!arity) { return fail("DOM Map property is not a supported constant method or size"); }
         for (mlir::OpOperand & use : read.getResult().getUses()) {
             if (!spend()) { return false; }
             if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
             auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
             if (!call || use.getOperandNumber() != 0 || call.getReceiver() != read.getObject() ||
                 call.getArgs().size() != *arity) {
-                refusal = "DOM Map method is detached, escapes or has another receiver";
-                return false;
+                return fail("DOM Map method is detached, escapes or has another receiver");
             }
         }
         values[read.getResult()] = Kind::mapMethod;
@@ -80,8 +75,7 @@ std::optional<bool> Body::mapOperation(mlir::Operation & operation) {
         };
         if (compare.getKind() != ctjs::CompareKind::StrictEq || !primitive(compare.getLhs()) ||
             !primitive(compare.getRhs())) {
-            refusal = "DOM Map payload comparison requires strict equality with a primitive";
-            return false;
+            return fail("DOM Map payload comparison requires strict equality with a primitive");
         }
         values[compare.getResult()] = Kind::boolean;
         return true;
@@ -92,8 +86,7 @@ std::optional<bool> Body::mapOperation(mlir::Operation & operation) {
     const auto action = mapMethodName(call);
     if (action != "clear" &&
         !hasKind(call.getArgs()[0], {Kind::element, Kind::number, Kind::string, Kind::boolean})) {
-        refusal = "DOM Map key requires an element or a Number, String or Boolean";
-        return false;
+        return fail("DOM Map key requires an element or a Number, String or Boolean");
     }
     const bool parent = mapParents.contains(call.getReceiver());
     const auto schema = recordSchemas.find(call.getReceiver());
@@ -103,8 +96,7 @@ std::optional<bool> Body::mapOperation(mlir::Operation & operation) {
         const auto & fields = recordFields[record];
         if (recordMaps.lookup(record) != call.getReceiver() || parent ||
             primitiveMaps.contains(call.getReceiver())) {
-            refusal = "DOM record Map stores only its own records";
-            return false;
+            return fail("DOM record Map stores only its own records");
         }
         if (schema == recordSchemas.end()) {
             recordSchemas[call.getReceiver()] = fields;
@@ -112,8 +104,7 @@ std::optional<bool> Body::mapOperation(mlir::Operation & operation) {
                    llvm::any_of(fields, [&](const auto & field) {
                        return schema->second.lookup(field.getKey()) != field.getValue();
                    })) {
-            refusal = "DOM record fields differ from their Map's schema";
-            return false;
+            return fail("DOM record fields differ from their Map's schema");
         }
         storedRecords.insert(record);
     } else if (action == "set" && parent) {
@@ -121,14 +112,12 @@ std::optional<bool> Body::mapOperation(mlir::Operation & operation) {
         auto child = call.getArgs()[1].getDefiningOp<ctjs::ConstructOp>();
         if (!child || !plainMapConstruction(child) || !hasKind(child.getResult(), Kind::map) ||
             !child.getResult().hasOneUse()) {
-            refusal = "DOM parent Map payload requires one fresh child Map";
-            return false;
+            return fail("DOM parent Map payload requires one fresh child Map");
         }
     } else if (action == "set" &&
                (schema != recordSchemas.end() ||
                 !hasKind(call.getArgs()[1], {Kind::number, Kind::string, Kind::boolean}))) {
-        refusal = "DOM Map payload requires a Number, String or Boolean";
-        return false;
+        return fail("DOM Map payload requires a Number, String or Boolean");
     } else if (action == "set") {
         primitiveMaps.insert(call.getReceiver());
     }
@@ -182,10 +171,7 @@ std::optional<bool> Body::recordOperation(mlir::Operation & operation) {
         for (mlir::OpOperand & use : object.getResult().getUses()) {
             const auto map = stored(use);
             if (!map) { continue; }
-            if (owner && owner != map) {
-                refusal = "DOM record belongs to one local Map";
-                return false;
-            }
+            if (owner && owner != map) { return fail("DOM record belongs to one local Map"); }
             owner = map;
         }
         if (!owner) { return std::nullopt; }
@@ -198,8 +184,7 @@ std::optional<bool> Body::recordOperation(mlir::Operation & operation) {
                 stored(use) == owner) {
                 continue;
             }
-            refusal = "DOM record escapes its fields and its Map";
-            return false;
+            return fail("DOM record escapes its fields and its Map");
         }
         values[object.getResult()] = Kind::record;
         recordMaps[object.getResult()] = owner;
@@ -213,8 +198,7 @@ std::optional<bool> Body::recordOperation(mlir::Operation & operation) {
     if (!object || !hasKind(object, {Kind::record, Kind::recordAlias})) { return std::nullopt; }
     const auto key = fieldKey(write ? write.getKey() : read.getKey());
     if (key.empty() || (write && write.getValue() == object)) {
-        refusal = "DOM record field requires a constant ordinary String key";
-        return false;
+        return fail("DOM record field requires a constant ordinary String key");
     }
     // Before its first `set`, a record defines its own fields; after it, and
     // through any alias, only its Map's schema exists.
@@ -222,10 +206,7 @@ std::optional<bool> Body::recordOperation(mlir::Operation & operation) {
     auto & fields = initializing ? recordFields[object] : recordSchemas[recordMaps.lookup(object)];
     const auto slot = fields.find(key);
     if (read) {
-        if (slot == fields.end()) {
-            refusal = "DOM record field read precedes its write";
-            return false;
-        }
+        if (slot == fields.end()) { return fail("DOM record field read precedes its write"); }
         values[read.getResult()] = slot->getValue();
         return true;
     }
@@ -233,8 +214,7 @@ std::optional<bool> Body::recordOperation(mlir::Operation & operation) {
     const auto kind = stored == values.end() ? Kind::implicit : stored->second;
     if (!llvm::is_contained({Kind::number, Kind::string, Kind::boolean}, kind) ||
         (slot == fields.end() ? !initializing : slot->getValue() != kind)) {
-        refusal = "DOM record field requires one Number, String or Boolean kind in its schema";
-        return false;
+        return fail("DOM record field requires one Number, String or Boolean kind in its schema");
     }
     fields[key] = kind;
     return true;

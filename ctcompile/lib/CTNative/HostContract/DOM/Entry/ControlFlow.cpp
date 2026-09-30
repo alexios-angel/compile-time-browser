@@ -14,34 +14,68 @@ bool ctcompile::ctnative::validSelector(llvm::StringRef text) {
 
 namespace ctcompile::ctnative::dom_entry_detail {
 
+namespace {
+// Scalars a branch arm may yield.
+constexpr std::array yieldKinds{Kind::boolean,        Kind::optionalBoolean, Kind::number,
+                                Kind::optionalNumber, Kind::string,          Kind::null,
+                                Kind::optionalString, Kind::undefined,       Kind::json,
+                                Kind::jsonAggregate,  Kind::symbol,          Kind::undefinedString,
+                                Kind::element,        Kind::mapPayload};
+
+// The kind two arms' yields join to, or none for incompatible alternatives.
+std::optional<Kind> joinKind(Kind a, Kind b) {
+    if (a == b) { return a; }
+    const auto both = [&](std::initializer_list<Kind> kinds) {
+        return llvm::is_contained(kinds, a) && llvm::is_contained(kinds, b);
+    };
+    // A Map read joined with another primitive is still a primitive or
+    // undefined; native inference picks its carrier.
+    if ((a == Kind::mapPayload || b == Kind::mapPayload) &&
+        both({Kind::mapPayload, Kind::boolean, Kind::number, Kind::string, Kind::null,
+              Kind::undefined})) {
+        return Kind::mapPayload;
+    }
+    if (both({Kind::boolean, Kind::null, Kind::optionalBoolean})) { return Kind::optionalBoolean; }
+    if (both({Kind::number, Kind::null, Kind::optionalNumber})) { return Kind::optionalNumber; }
+    const auto json = [](Kind k) { return k == Kind::json || k == Kind::jsonAggregate; };
+    const auto jsonScalar = [](Kind k) {
+        return k == Kind::string || k == Kind::boolean || k == Kind::number || k == Kind::null ||
+               k == Kind::optionalString;
+    };
+    // Primitive arms become owning JSON alternatives. Undefined and borrowed
+    // browser values have no JSON representation.
+    if ((json(a) && (json(b) || jsonScalar(b))) || (jsonScalar(a) && json(b))) {
+        return Kind::json;
+    }
+    if (both({Kind::string, Kind::undefined, Kind::undefinedString})) {
+        return Kind::undefinedString;
+    }
+    if (both({Kind::string, Kind::null, Kind::optionalString})) { return Kind::optionalString; }
+    return std::nullopt;
+}
+} // namespace
+
 std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block & body,
                                       unsigned depth, mlir::Value & frame, bool & returned) {
     if (auto abrupt = llvm::dyn_cast<mlir::scf::ExecuteRegionOp>(operation)) {
         auto thrown = savedThrow(abrupt);
         if (!llvm::isa<mlir::scf::IfOp>(body.getParentOp()) || !thrown) {
-            refusal = "DOM abrupt region requires one exact saved primitive throw";
-            return false;
+            return fail("DOM abrupt region requires one exact saved primitive throw");
         }
-        for (auto * parent = abrupt->getParentOp(); parent != function;
-             parent = parent->getParentOp()) {
-            if (!spend()) { return false; }
-            if (!llvm::isa<mlir::scf::IfOp>(parent)) {
-                refusal = "DOM saved throw requires an acyclic unprotected branch";
-                return false;
-            }
+        if (!onlyBranchAncestors(abrupt,
+                                 "DOM saved throw requires an acyclic unprotected branch")) {
+            return false;
         }
         if (!spend() || !spend()) { return false; }
         if (hasKind(thrown.getValue(), {Kind::element, Kind::nullableElement})) {
             // The host owns nodes only through this invocation. An escaping
             // exception can survive destruction of that document during unwind.
-            refusal = "DOM thrown element requires an owner that outlives the exception";
-            return false;
+            return fail("DOM thrown element requires an owner that outlives the exception");
         }
         if (!hasKind(thrown.getValue(), {Kind::number, Kind::boolean, Kind::string,
                                          Kind::optionalString, Kind::null}) ||
             !dominance.dominates(thrown.getValue(), thrown)) {
-            refusal = "DOM saved throw requires a preceding owning primitive";
-            return false;
+            return fail("DOM saved throw requires a preceding owning primitive");
         }
         proved.throws.push_back(thrown);
         nonReturning.insert(&body);
@@ -49,8 +83,7 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
     }
     if (auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(operation)) {
         if (!loop.getBefore().hasOneBlock() || !loop.getAfter().hasOneBlock()) {
-            refusal = "DOM loop requires complete scalar regions";
-            return false;
+            return fail("DOM loop requires complete scalar regions");
         }
         auto & before = loop.getBefore().front();
         auto & after = loop.getAfter().front();
@@ -60,14 +93,12 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
             after.getNumArguments() != loop.getNumResults() ||
             yield.getNumOperands() != loop.getInits().size() ||
             condition.getArgs().size() != loop.getNumResults()) {
-            refusal = "DOM loop lost scalar state correspondence";
-            return false;
+            return fail("DOM loop lost scalar state correspondence");
         }
         for (auto [argument, initial] : llvm::zip(before.getArguments(), loop.getInits())) {
             if (!spend()) { return false; }
             if (!hasKind(initial, loopKinds)) {
-                refusal = "DOM loop cannot carry borrowed or unknown values";
-                return false;
+                return fail("DOM loop cannot carry borrowed or unknown values");
             }
             values[argument] = values[initial];
             auto zero = ctjs::constantAttr<ctjs::NumberAttr>(initial);
@@ -136,8 +167,7 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
              llvm::zip(after.getArguments(), loop.getResults(), condition.getArgs())) {
             if (!spend()) { return false; }
             if (!hasKind(value, loopKinds)) {
-                refusal = "DOM loop result is not an invariant scalar";
-                return false;
+                return fail("DOM loop result is not an invariant scalar");
             }
             values[argument] = values[result] = values[value];
             if (values[value] == Kind::string) {
@@ -149,14 +179,12 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
         // Supported attribute/class writes cannot reclaim nodes or change a
         // querySelectorAll snapshot. Dataset aliases still need a backedge proof.
         if (mutationEpoch != loopEpoch && !proved.datasetElements.empty()) {
-            refusal = "DOM loop mutation needs a backedge dataset-alias proof";
-            return false;
+            return fail("DOM loop mutation needs a backedge dataset-alias proof");
         }
         for (auto [value, initial] : llvm::zip(yield.getOperands(), loop.getInits())) {
             if (!spend()) { return false; }
             if (values[value] != values[initial]) {
-                refusal = "DOM loop changes its scalar state kind";
-                return false;
+                return fail("DOM loop changes its scalar state kind");
             }
         }
         return true;
@@ -164,16 +192,14 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
     if (auto condition = llvm::dyn_cast<mlir::scf::ConditionOp>(operation)) {
         if (!llvm::isa<mlir::scf::WhileOp>(body.getParentOp()) ||
             !hasKind(condition.getCondition(), Kind::boolean)) {
-            refusal = "DOM loop condition lacks a proved Boolean";
-            return false;
+            return fail("DOM loop condition lacks a proved Boolean");
         }
         returned = true;
         return true;
     }
     if (auto constant = llvm::dyn_cast<mlir::arith::ConstantOp>(operation)) {
         if (!constant.getType().isInteger(1)) {
-            refusal = "DOM completion arithmetic must be a Boolean constant";
-            return false;
+            return fail("DOM completion arithmetic must be a Boolean constant");
         }
         values[constant.getResult()] = Kind::boolean;
         return true;
@@ -182,8 +208,7 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
         if (!hasKind(branch.getCondition(), Kind::boolean) ||
             !llvm::hasSingleElement(branch.getThenRegion()) ||
             (!branch.getElseRegion().empty() && !llvm::hasSingleElement(branch.getElseRegion()))) {
-            refusal = "DOM entry branch lacks a proved Boolean and complete arms";
-            return false;
+            return fail("DOM entry branch lacks a proved Boolean and complete arms");
         }
         llvm::SmallVector<Kind> joined;
         mlir::Value thenFrame = frame, elseFrame = frame;
@@ -249,25 +274,15 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
             (first ? thenThrows : elseThrows) = throws;
             auto yielded = llvm::dyn_cast<mlir::scf::YieldOp>(region.front().getTerminator());
             if (!yielded || yielded.getNumOperands() != branch.getNumResults()) {
-                refusal = "DOM entry branch requires exact scalar yields";
-                return false;
+                return fail("DOM entry branch requires exact scalar yields");
             }
             for (auto [index, operand] : llvm::enumerate(yielded.getOperands())) {
                 if (!spend()) { return false; }
                 const auto found = values.find(operand);
-                if (found == values.end()) {
-                    refusal = "DOM entry yield lacks a proved value";
-                    return false;
-                }
+                if (found == values.end()) { return fail("DOM entry yield lacks a proved value"); }
                 const Kind kind = found->second;
-                if (kind != Kind::boolean && kind != Kind::optionalBoolean &&
-                    kind != Kind::number && kind != Kind::optionalNumber && kind != Kind::string &&
-                    kind != Kind::null && kind != Kind::optionalString && kind != Kind::undefined &&
-                    kind != Kind::json && kind != Kind::jsonAggregate && kind != Kind::symbol &&
-                    kind != Kind::undefinedString && kind != Kind::element &&
-                    kind != Kind::mapPayload) {
-                    refusal = "DOM entry branch cannot carry a borrowed or callable value";
-                    return false;
+                if (!llvm::is_contained(yieldKinds, kind)) {
+                    return fail("DOM entry branch cannot carry a borrowed or callable value");
                 }
                 // Both arms retain the complete typed effect proof, even
                 // when an original argument decides the default branch.
@@ -276,67 +291,14 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
                     joined.push_back(kind);
                     continue;
                 }
-                if (joined[index] == kind) { continue; }
-                // A Map read joined with another primitive is still a
-                // primitive or undefined; native inference picks its carrier.
-                const auto primitive = [](Kind k) {
-                    return k == Kind::mapPayload || k == Kind::boolean || k == Kind::number ||
-                           k == Kind::string || k == Kind::null || k == Kind::undefined;
-                };
-                if ((joined[index] == Kind::mapPayload || kind == Kind::mapPayload) &&
-                    primitive(joined[index]) && primitive(kind)) {
-                    joined[index] = Kind::mapPayload;
-                    continue;
-                }
-                const auto booleanOrNull = [](Kind k) {
-                    return k == Kind::boolean || k == Kind::null || k == Kind::optionalBoolean;
-                };
-                if (booleanOrNull(joined[index]) && booleanOrNull(kind)) {
-                    joined[index] = Kind::optionalBoolean;
-                    continue;
-                }
-                const auto numberOrNull = [](Kind k) {
-                    return k == Kind::number || k == Kind::null || k == Kind::optionalNumber;
-                };
-                if (numberOrNull(joined[index]) && numberOrNull(kind)) {
-                    joined[index] = Kind::optionalNumber;
-                    continue;
-                }
-                const auto json = [](Kind k) {
-                    return k == Kind::json || k == Kind::jsonAggregate;
-                };
-                const auto jsonScalar = [](Kind k) {
-                    return k == Kind::string || k == Kind::boolean || k == Kind::number ||
-                           k == Kind::null || k == Kind::optionalString;
-                };
-                // Primitive arms become owning JSON alternatives. Undefined
-                // and borrowed browser values have no JSON representation.
-                if ((json(joined[index]) && (json(kind) || jsonScalar(kind))) ||
-                    (jsonScalar(joined[index]) && json(kind))) {
-                    joined[index] = Kind::json;
-                    continue;
-                }
-                const auto stringOrNull = [](Kind k) {
-                    return k == Kind::string || k == Kind::null || k == Kind::optionalString;
-                };
-                const auto stringOrUndefined = [](Kind k) {
-                    return k == Kind::string || k == Kind::undefined || k == Kind::undefinedString;
-                };
-                if (stringOrUndefined(joined[index]) && stringOrUndefined(kind)) {
-                    joined[index] = Kind::undefinedString;
-                    continue;
-                }
-                if (!stringOrNull(joined[index]) || !stringOrNull(kind)) {
-                    refusal = "DOM entry branch has incompatible scalar alternatives";
-                    return false;
-                }
-                joined[index] = Kind::optionalString;
+                const auto join = joinKind(joined[index], kind);
+                if (!join) { return fail("DOM entry branch has incompatible scalar alternatives"); }
+                joined[index] = *join;
             }
             if (!throws && (!selected || first == *selected)) { joinedArm = true; }
         }
         if (!thenThrows && !elseThrows && thenFrame != elseFrame) {
-            refusal = "DOM entry branch has inconsistent shadow frame exits";
-            return false;
+            return fail("DOM entry branch has inconsistent shadow frame exits");
         }
         frame = thenThrows ? elseFrame : thenFrame;
         if (selected ? (*selected ? thenThrows : elseThrows) : (thenThrows && elseThrows)) {
@@ -352,8 +314,7 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
         }
         if (joined.size() != branch.getNumResults() ||
             (branch.getNumResults() && branch.getElseRegion().empty())) {
-            refusal = "DOM entry branch is missing a scalar arm";
-            return false;
+            return fail("DOM entry branch is missing a scalar arm");
         }
         for (auto & region : branch->getRegions()) {
             if (region.empty() || !nonReturning.contains(&region.front())) { continue; }
@@ -369,8 +330,7 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
                 } else if (kind == Kind::string) {
                     padding.values.push_back(ctjs::StringAttr::get(context, ""));
                 } else {
-                    refusal = "DOM throw join requires a primitive normal result";
-                    return false;
+                    return fail("DOM throw join requires a primitive normal result");
                 }
             }
             proved.throwYields.push_back(std::move(padding));
@@ -408,15 +368,13 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
             if (invocation->getParentOfType<ctjs::InvokeOp>() ||
                 !invocation.getBody().hasOneBlock() || !invocation.getNormalBody().hasOneBlock() ||
                 !invocation.getUnwindBody().hasOneBlock()) {
-                refusal = "DOM suppressed attribute requires complete unnested continuations";
-                return false;
+                return fail("DOM suppressed attribute requires complete unnested continuations");
             }
             auto & called = invocation.getBody().front();
             auto call = invokedCall(invocation);
             if (!call || !llvm::cast<ctjs::InvokeExitOp>(called.back()).getState().empty() ||
                 !hasKind(call.getReceiver(), Kind::element)) {
-                refusal = "DOM suppression requires one typed unused Element call";
-                return false;
+                return fail("DOM suppression requires one typed unused Element call");
             }
             const bool matches = hasKind(call.getCallee(), Kind::matches);
             if ((!matches && !hasKind(call.getCallee(), Kind::attribute)) ||
@@ -424,8 +382,7 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
                 !hasKind(call.getArgs()[0], Kind::string) ||
                 (!matches &&
                  !hasKind(call.getArgs()[1], {Kind::string, Kind::boolean, Kind::number}))) {
-                refusal = "DOM suppression requires typed setAttribute or matches arguments";
-                return false;
+                return fail("DOM suppression requires typed setAttribute or matches arguments");
             }
             for (mlir::Region * region :
                  {&invocation.getNormalBody(), &invocation.getUnwindBody()}) {
@@ -438,27 +395,21 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
                     !llvm::isa<ctjs::ValueType>(continuation.getArgument(0).getType()) ||
                     !continuation.getArgument(0).use_empty() || !yield ||
                     !yield.getValues().empty() || yield->getNextNode()) {
-                    refusal = "DOM suppressed attribute requires empty unobserved continuations";
-                    return false;
+                    return fail("DOM suppressed attribute requires empty unobserved continuations");
                 }
             }
             auto name = ctjs::constantAttr<ctjs::StringAttr>(call.getArgs()[0]);
-            if (!name) {
-                refusal = "DOM suppression requires a valid literal name or selector";
-                return false;
-            }
+            if (!name) { return fail("DOM suppression requires a valid literal name or selector"); }
             // Reserve the public validator's byte scan before invoking it.
             for (std::size_t i = 0; i < name.getValue().size(); ++i) {
                 if (!spend()) { return false; }
             }
             if (matches && !validSelector(name.getValue())) {
-                refusal = "DOM suppressed matches requires a valid literal selector";
-                return false;
+                return fail("DOM suppressed matches requires a valid literal selector");
             }
             if (!matches && !ctbrowser::is_valid_attribute_name(
                                 {name.getValue().data(), name.getValue().size()})) {
-                refusal = "DOM suppressed attribute requires a valid literal name";
-                return false;
+                return fail("DOM suppressed attribute requires a valid literal name");
             }
             if (!visit(called, depth + 1, frame)) { return false; }
             proved.invocations.push_back(invocation);
@@ -471,8 +422,7 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
             invocation.getNumResults() != 1 || !invocation.getBody().hasOneBlock() ||
             !invocation.getNormalBody().hasOneBlock() ||
             !invocation.getUnwindBody().hasOneBlock()) {
-            refusal = "DOM URI invocation requires complete unnested continuations";
-            return false;
+            return fail("DOM URI invocation requires complete unnested continuations");
         }
         auto & called = invocation.getBody().front();
         auto & normal = invocation.getNormalBody().front();
@@ -486,8 +436,7 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
             !llvm::isa<ctjs::ValueType>(call.getResult().getType()) ||
             !caught.getArgument(0).use_empty() ||
             !hasKind(call.getCallee(), {Kind::uriIntrinsic, Kind::jsonParse})) {
-            refusal = "DOM URI invocation requires exact call and unused catch payload";
-            return false;
+            return fail("DOM URI invocation requires exact call and unused catch payload");
         }
         const bool parses = hasKind(call.getCallee(), Kind::jsonParse);
         // Reserve before nested invokes look this parent up.
@@ -503,8 +452,7 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
             const bool tree = yielded && yielded.getValues().size() == 1 &&
                               hasKind(yielded.getValues().front(), Kind::json);
             if (!string && !tree) {
-                refusal = "DOM URI continuations must both return owning Strings";
-                return false;
+                return fail("DOM URI continuations must both return owning Strings");
             }
             if (tree) { result = Kind::json; }
         }
@@ -517,17 +465,13 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
         if (!invocation || &operation != body.getTerminator() ||
             (llvm::isa<ctjs::InvokeExitOp>(operation) !=
              (&body == &invocation.getBody().front()))) {
-            refusal = "DOM URI completion is outside its original continuation";
-            return false;
+            return fail("DOM URI completion is outside its original continuation");
         }
         returned = true;
         return true;
     }
     if (llvm::isa<mlir::scf::YieldOp>(operation)) {
-        if (!depth) {
-            refusal = "DOM entry yield is outside a branch";
-            return false;
-        }
+        if (!depth) { return fail("DOM entry yield is outside a branch"); }
         returned = true;
         return true;
     }

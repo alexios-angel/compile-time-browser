@@ -2,11 +2,19 @@
 
 namespace ctcompile::ctnative::dom_entry_detail {
 
+bool Body::onlyBranchAncestors(mlir::Operation * operation, llvm::StringRef reason) {
+    for (auto * parent = operation->getParentOp(); parent != function;
+         parent = parent->getParentOp()) {
+        if (!spend()) { return false; }
+        if (!llvm::isa<mlir::scf::IfOp>(parent)) { return fail(reason); }
+    }
+    return true;
+}
+
 bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
     if (depth == 64 || (!body.getArguments().empty() && depth != 0 &&
                         !llvm::isa<ctjs::InvokeOp, mlir::scf::WhileOp>(body.getParentOp()))) {
-        refusal = "DOM entry branch depth or block arguments are unsupported";
-        return false;
+        return fail("DOM entry branch depth or block arguments are unsupported");
     }
     bool entered = false, returned = false, structuralTail = false;
     for (mlir::Operation & operation : body) {
@@ -17,8 +25,7 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
             !llvm::isa<ctjs::ConstantOp, ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::RootOp,
                        ctjs::ReturnOp, ctjs::GetPropertyOp, ctjs::CallOp, ctjs::TruthyOp,
                        ctjs::UnaryOp, mlir::scf::IfOp, mlir::scf::YieldOp>(operation)) {
-            refusal = "DOM filter callback contains an unsupported source effect";
-            return false;
+            return fail("DOM filter callback contains an unsupported source effect");
         }
         if ((operation.getNumRegions() != 0 &&
              !llvm::isa<mlir::scf::IfOp, mlir::scf::WhileOp, mlir::scf::ExecuteRegionOp,
@@ -28,8 +35,7 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
              !(structuralTail &&
                llvm::isa<ctjs::ConstantOp, ctjs::FrameExitOp, ctjs::GetPropertyOp, ctjs::CallOp>(
                    operation)))) {
-            refusal = "DOM entry does not admit nested control flow or a source continuation";
-            return false;
+            return fail("DOM entry does not admit nested control flow or a source continuation");
         }
         // A fully proved throwing branch makes its suffix unreachable. Retain
         // and check each remaining DOM read/call with the ordinary proof below;
@@ -39,8 +45,7 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
             if (!spend()) { return false; }
             if ((!values.contains(operand) && operand != frame) ||
                 !dominance.dominates(operand, &operation)) {
-                refusal = "DOM entry operand has no preceding local definition";
-                return false;
+                return fail("DOM entry operand has no preceding local definition");
             }
             if (auto found = activeRefinements.find(operand);
                 found != activeRefinements.end() && !llvm::isa<ctjs::RootOp>(operation)) {
@@ -70,8 +75,7 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
             } else if (llvm::isa<ctjs::UndefinedAttr>(constant.getValue())) {
                 values[constant.getResult()] = Kind::undefined;
             } else {
-                refusal = "DOM entry constant has no supported scalar contract";
-                return false;
+                return fail("DOM entry constant has no supported scalar contract");
             }
             continue;
         }
@@ -90,9 +94,8 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
             if (!target || target->getBlock() != copy->getBlock() ||
                 copy.getTarget() == copy.getSource() ||
                 !hasKind(copy.getSource(), Kind::jsonAggregate)) {
-                refusal = "DOM JSON spread requires a fresh local target and an "
-                          "object-tagged JSON source";
-                return false;
+                return fail("DOM JSON spread requires a fresh local target and an "
+                            "object-tagged JSON source");
             }
             proved.jsonCopies.push_back(copy);
             continue;
@@ -104,8 +107,7 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
                 !hasKind(write.getValue(),
                          {Kind::string, Kind::optionalString, Kind::null, Kind::boolean,
                           Kind::number, Kind::json, Kind::jsonAggregate})) {
-                refusal = "DOM JSON assignment requires a fresh target and an owning value";
-                return false;
+                return fail("DOM JSON assignment requires a fresh target and an owning value");
             }
             if (!name || name.getValue() == "__proto__") {
                 // The proved transforms have only one __proto__ preimage.
@@ -127,16 +129,14 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
                     !increasingIndices.contains(index) || !loop || !snapshot ||
                     loop->isAncestor(snapshot) || loop->isAncestor(target) ||
                     !loop->isAncestor(write)) {
-                    refusal = "DOM JSON assignment key requires a constant non-prototype "
-                              "String or one direct snapshot traversal";
-                    return false;
+                    return fail("DOM JSON assignment key requires a constant non-prototype "
+                                "String or one direct snapshot traversal");
                 }
                 for (auto * parent = write->getParentOp(); parent != function;
                      parent = parent->getParentOp()) {
                     if (!spend()) { return false; }
                     if (llvm::isa<mlir::scf::WhileOp>(parent) && parent != loop) {
-                        refusal = "DOM JSON snapshot assignment cannot repeat in another loop";
-                        return false;
+                        return fail("DOM JSON snapshot assignment cannot repeat in another loop");
                     }
                 }
                 for (mlir::OpOperand & use : target.getResult().getUses()) {
@@ -144,8 +144,7 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
                     auto * user = use.getOwner();
                     if (use.getOperandNumber() == 0 && user != write &&
                         llvm::isa<ctjs::SetPropertyOp, ctjs::CopyPropsOp>(user)) {
-                        refusal = "DOM JSON snapshot assignment requires the sole target writer";
-                        return false;
+                        return fail("DOM JSON snapshot assignment requires the sole target writer");
                     }
                 }
                 proved.snapshotAssignments.push_back(write);
@@ -154,33 +153,24 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
             continue;
         }
         if (auto enter = llvm::dyn_cast<ctjs::FrameEnterOp>(operation)) {
-            if (depth || entered) {
-                refusal = "DOM entry has more than one shadow frame";
-                return false;
-            }
+            if (depth || entered) { return fail("DOM entry has more than one shadow frame"); }
             entered = true;
             frame = enter.getContext();
             continue;
         }
         if (auto root = llvm::dyn_cast<ctjs::RootOp>(operation)) {
             if (!frame || root.getContext() != frame) {
-                refusal = "DOM entry root is outside its local shadow frame";
-                return false;
+                return fail("DOM entry root is outside its local shadow frame");
             }
             continue;
         }
         if (auto exit = llvm::dyn_cast<ctjs::FrameExitOp>(operation)) {
             if (!frame || exit.getContext() != frame) {
-                refusal = "DOM entry exits an unknown shadow frame";
-                return false;
+                return fail("DOM entry exits an unknown shadow frame");
             }
-            for (auto * parent = exit->getParentOp(); parent != function;
-                 parent = parent->getParentOp()) {
-                if (!spend()) { return false; }
-                if (!llvm::isa<mlir::scf::IfOp>(parent)) {
-                    refusal = "DOM entry frame exit requires an acyclic conditional path";
-                    return false;
-                }
+            if (!onlyBranchAncestors(exit,
+                                     "DOM entry frame exit requires an acyclic conditional path")) {
+                return false;
             }
             frame = {};
             continue;
@@ -188,16 +178,14 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
         if (auto result = llvm::dyn_cast<ctjs::ReturnOp>(operation)) {
             if (callbackBody &&
                 !hasKind(result.getValue(), replacementBody ? Kind::string : Kind::boolean)) {
-                refusal = "DOM callback must return its proved scalar kind";
-                return false;
+                return fail("DOM callback must return its proved scalar kind");
             }
             if (depth || frame ||
                 !hasKind(result.getValue(), {Kind::undefined, Kind::boolean, Kind::number,
                                              Kind::string, Kind::undefinedString,
                                              Kind::optionalString, Kind::json, Kind::jsonAggregate,
                                              Kind::stringVector, Kind::symbol, Kind::mapPayload})) {
-                refusal = "DOM entry return must be a scalar with no borrowed browser handle";
-                return false;
+                return fail("DOM entry return must be a scalar with no borrowed browser handle");
             }
             returned = true;
             if (!callbackBody) {
@@ -214,9 +202,8 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
                 closure.getEnclosingClosure() != block.getArgument(ctjs::arg_callee) ||
                 (closure.getEnclosingThis() != block.getArgument(ctjs::arg_receiver) &&
                  !hasKind(closure.getEnclosingThis(), Kind::undefined))) {
-                refusal = "DOM filter callback lacks original intrinsics or a capture-free "
-                          "target";
-                return false;
+                return fail("DOM filter callback lacks original intrinsics or a capture-free "
+                            "target");
             }
             unsigned calls = 0;
             for (mlir::OpOperand & use : closure.getResult().getUses()) {
@@ -226,15 +213,11 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
                 if (!call || use.getOperandNumber() != (replacement ? 3u : 2u) ||
                     call.getArgs().size() != (replacement ? 2u : 1u) ||
                     !dominance.properlyDominates(closure.getOperation(), call.getOperation())) {
-                    refusal = "DOM filter callback escapes its exact local invocation";
-                    return false;
+                    return fail("DOM filter callback escapes its exact local invocation");
                 }
                 ++calls;
             }
-            if (!calls) {
-                refusal = "DOM filter callback has no source invocation";
-                return false;
-            }
+            if (!calls) { return fail("DOM filter callback has no source invocation"); }
             values[closure.getResult()] = replacement ? Kind::replacementCallback : Kind::callback;
             proved.closures.emplace_back(closure, callback);
             usedCallbacks.insert(callback);
@@ -242,18 +225,6 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
         }
         if (const auto handled = browserOperation(operation)) {
             if (!*handled) { return false; }
-            continue;
-        }
-        if (auto binary = llvm::dyn_cast<ctjs::BinaryStaticOp>(operation);
-            binary && binary.getKind() == ctjs::BinaryKind::Add &&
-            hasKind(binary.getLhs(), Kind::number) && hasKind(binary.getRhs(), Kind::number)) {
-            values[binary.getResult()] = Kind::number;
-            continue;
-        }
-        if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(operation);
-            binary && binary.getKind() == ctjs::BinaryKind::Add &&
-            hasKind(binary.getLhs(), Kind::number) && hasKind(binary.getRhs(), Kind::number)) {
-            values[binary.getResult()] = Kind::number;
             continue;
         }
         if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(operation);
@@ -431,14 +402,11 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
             }
             continue;
         }
-        refusal = ("DOM entry operation lacks a typed browser contract: " +
-                   operation.getName().getStringRef())
-                      .str();
-        return false;
+        return fail("DOM entry operation lacks a typed browser contract: " +
+                    operation.getName().getStringRef());
     }
     if (!returned) {
-        refusal = "DOM entry requires a complete return and exact source declaration";
-        return false;
+        return fail("DOM entry requires a complete return and exact source declaration");
     }
     return true;
 }

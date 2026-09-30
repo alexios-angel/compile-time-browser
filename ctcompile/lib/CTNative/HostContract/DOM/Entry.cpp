@@ -356,18 +356,20 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
     // finish every write before any such observation can snapshot it. No
     // member/identity observation or descendant mutation passed the census,
     // so the final single owning result cannot distinguish shallow aliases.
+    // Roots, further writes into the target and typeof observe no member.
+    const auto inertJsonUse = [](mlir::OpOperand & use) {
+        auto * user = use.getOwner();
+        auto unary = llvm::dyn_cast<ctjs::UnaryOp>(user);
+        return llvm::isa<ctjs::RootOp>(user) ||
+               (llvm::isa<ctjs::CopyPropsOp, ctjs::SetPropertyOp>(user) &&
+                use.getOperandNumber() == 0) ||
+               (unary && unary.getKind() == ctjs::UnaryKind::TypeOf);
+    };
     for (ctjs::CopyPropsOp copy : proved.jsonCopies) {
         for (mlir::OpOperand & use : copy.getTarget().getUses()) {
             if (!spend()) { return; }
-            auto * user = use.getOwner();
-            if (llvm::isa<ctjs::RootOp>(user)) { continue; }
-            if (llvm::isa<ctjs::CopyPropsOp>(user) && use.getOperandNumber() == 0) { continue; }
-            if (llvm::isa<ctjs::SetPropertyOp>(user) && use.getOperandNumber() == 0) { continue; }
-            if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(user);
-                unary && unary.getKind() == ctjs::UnaryKind::TypeOf) {
-                continue;
-            }
-            if (!dominance.properlyDominates(copy, user)) {
+            if (inertJsonUse(use)) { continue; }
+            if (!dominance.properlyDominates(copy, use.getOwner())) {
                 refusal = "DOM JSON target is observed before its final spread write";
                 return;
             }
@@ -376,16 +378,8 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
     for (ctjs::SetPropertyOp write : proved.jsonAssignments) {
         for (mlir::OpOperand & use : write.getObject().getUses()) {
             if (!spend()) { return; }
+            if (inertJsonUse(use)) { continue; }
             auto * user = use.getOwner();
-            if (llvm::isa<ctjs::RootOp>(user) ||
-                (llvm::isa<ctjs::CopyPropsOp, ctjs::SetPropertyOp>(user) &&
-                 use.getOperandNumber() == 0)) {
-                continue;
-            }
-            if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(user);
-                unary && unary.getKind() == ctjs::UnaryKind::TypeOf) {
-                continue;
-            }
             // A copy in the same loop would retain a JavaScript alias that a
             // later iteration can mutate. Only observations after the entire
             // loop may snapshot the owning tree.

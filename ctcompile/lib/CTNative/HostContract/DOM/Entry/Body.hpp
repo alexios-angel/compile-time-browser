@@ -12,6 +12,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/StringSet.h"
+#include "llvm/ADT/Twine.h"
 
 #include <array>
 #include <cstddef>
@@ -152,6 +153,11 @@ struct Body {
     llvm::DenseSet<mlir::Value> storedRecords{}, primitiveMaps{};
     llvm::DenseSet<mlir::Block *> nonReturning{};
 
+    // Overwrites: the latest refusal names the check that failed.
+    bool fail(const llvm::Twine & reason) {
+        refusal = reason.str();
+        return false;
+    }
     bool supplied(llvm::StringRef name) const { return intrinsics.contains(name); }
     // The literal factory stands in for the original RegExp constructor.
     bool suppliedRegExp() const { return supplied("RegExp") && supplied("__ctbrowser_regexp"); }
@@ -163,6 +169,8 @@ struct Body {
         const auto found = values.find(value);
         return found != values.end() && llvm::is_contained(kinds, found->second);
     }
+    // Charges each enclosing operation up to the function; all must be scf.if.
+    bool onlyBranchAncestors(mlir::Operation * operation, llvm::StringRef reason);
     bool visit(mlir::Block & body, unsigned depth, mlir::Value & frame);
     std::optional<bool> controlFlow(mlir::Operation & operation, mlir::Block & body, unsigned depth,
                                     mlir::Value & frame, bool & returned);
