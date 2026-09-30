@@ -603,6 +603,16 @@ namespace detail {
     out.reserve(text.size());
     if (end > ts.tokens.size()) { end = ts.tokens.size(); }
     std::pair<std::size_t, std::size_t> skip{0, 0};
+    // THE FALLBACK IS THE AUTHOR'S TEXT §3.3-PREPROCESSED, never the raw bytes.
+    // Callers re-tokenize what this returns and slice it by token offsets, and
+    // those index the preprocessed pool: a NUL is three bytes there and one in
+    // the raw text, so `\61<NUL><NUL>/` put the slash past the end of the
+    // value and `substr` threw out of the style engine (space_slashes,
+    // slash_halves, split_radius, split_columns).
+    const auto as_given = [&] {
+        const token_stream again = tokenize(text);
+        return std::string{std::string_view{again.pool}.substr(0, again.source_length)};
+    };
     // A NEGATIVE ZERO INSIDE A MATH FUNCTION KEEPS ITS SIGN. A lone `-0` is
     // `0` (serialize-values), but `sign(calc(-0))` is -0 and `1 / sign(...)`
     // tells the two apart - `signed-zero` reads it back through `scale` - and
@@ -625,7 +635,7 @@ namespace detail {
             const std::size_t after = canonical_url(ts, i, out);
             if (after == std::string_view::npos) {
                 if (invalid != nullptr) { *invalid = true; }
-                return std::string{text};
+                return as_given();
             }
             if (after != std::string_view::npos - 1) {
                 skip = {i, after};
@@ -666,12 +676,12 @@ namespace detail {
             out += number(t.number) + ascii_lower_copy(ts.unit_of(t));
             break;
         case token_type::string:
-            if (body.size() < 2) { return std::string{text}; }
+            if (body.size() < 2) { return as_given(); }
             out += string_text(body.substr(1, body.size() - 2));
             break;
         case token_type::url: out += "url(" + string_text(body) + ")"; break;
         default:
-            if (t.text >= ts.source_length) { return std::string{text}; }
+            if (t.text >= ts.source_length) { return as_given(); }
             out += body;
             break;
         }

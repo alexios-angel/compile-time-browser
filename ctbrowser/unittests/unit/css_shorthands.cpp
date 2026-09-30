@@ -197,9 +197,28 @@ void test_grid_is_a_shorthand() {
     CHECK_EQ(declaration_value(mixed, "grid-template"), std::string{"30px / 50px"});
 }
 
+// LOGIC-058/059: an escaped token made the declaration keep the author's RAW
+// text, and the shorthand splitters sliced it by offsets into the preprocessed
+// token pool, where each NUL is three bytes - `substr` threw past the end and
+// terminated the engine. Surviving without a throw is the assertion.
+void test_nul_bearing_values_split_without_throwing() {
+    using namespace std::string_literals;
+    const std::string nuls = "\\61\0\0\0\0/"s;
+    for (const std::string_view property :
+         {"background", "mask", "border-image", "border-radius", "container", "column-rule-inset",
+          "rule-inset", "columns"}) {
+        (void)set_and_read(property, nuls);
+        (void)set_and_read(property, "\\61\0\0/"s);
+        (void)set_and_read(property, "\\61\0\0\0\0/ 1px"s);
+    }
+    // The kept text is the preprocessed one: a NUL serialises as U+FFFD.
+    CHECK_EQ(set_and_read("container", "\\61\0 / size"s), std::string{"a\xEF\xBF\xBD / size"});
+}
+
 } // namespace
 
 int main() {
+    test_nul_bearing_values_split_without_throwing();
     test_grid_is_a_shorthand();
     test_white_space_is_a_shorthand();
     test_animation_is_a_shorthand();
