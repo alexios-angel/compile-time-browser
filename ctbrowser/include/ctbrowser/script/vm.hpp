@@ -259,6 +259,10 @@ public:
             if (over_ && !cx_->reentry_reported_) {
                 cx_->reentry_reported_ = true;
                 cx_->throw_error("RangeError", "Maximum call stack size exceeded");
+            } else if (over_) {
+                // Refused WITHOUT a throw: the caller gets undefined, which a
+                // fenced caller must not mistake for a result (call_fenced).
+                cx_->reentry_refused_ = true;
             }
         }
         ~reentry_scope() {
@@ -1041,6 +1045,8 @@ private:
     // reentry_scope, which is the only thing that touches either.
     std::uint32_t reentry_depth_ = 0;
     bool reentry_reported_ = false;
+    // A silent refusal since the innermost call_fenced began; see reentry_scope.
+    bool reentry_refused_ = false;
 
     // EVERY REALM THIS CONTEXT HAS MADE, the page's first. unique_ptr because
     // closures and frames point at them and the vector grows. A realm_record's

@@ -48,6 +48,23 @@ void test_spread_walks_a_snapshot() {
              "k0,k1,k2,k3");
 }
 
+// A re-entry refused AFTER its episode's one RangeError returned undefined with
+// nothing thrown, and the async-from-sync step cast that undefined to its pair
+// array. Each depth is tried, since which one lands on the refusal depends on
+// how many natives the step itself goes through.
+void test_refused_reentry_is_a_throw() {
+    CHECK_EQ(
+        page("function nest(fn, n) { var args = [fn, null, []];"
+             " for (var i = 0; i < n; ++i) args = [Reflect.apply, null, args];"
+             " return function() { return Reflect.apply.apply(null, args); }; }"
+             "var deep = nest(function() {}, 700);"
+             "async function step() { for await (const x of [1]) {} }"
+             "for (var d = 480; d < 530; ++d) try { nest(function() {"
+             "  try { deep(); } catch (e) {} step().catch(function() {}); }, d)(); } catch (e) {}"
+             "alert('survived');"),
+        "survived");
+}
+
 // A module that dynamic-imports while it runs: the loader inserts into the
 // registry the running module's record lives in, and the record must stay
 // where run_module left it.
@@ -72,6 +89,7 @@ void test_dynamic_import_inside_a_running_module() {
 
 int main() {
     test_spread_walks_a_snapshot();
+    test_refused_reentry_is_a_throw();
     test_dynamic_import_inside_a_running_module();
     REPORT("bindings_rooting");
 }

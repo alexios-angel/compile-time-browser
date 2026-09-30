@@ -61,7 +61,18 @@ value context::call_fenced(value callable, std::span<const value> args, value th
     fence.fence = true;
     handlers_.push_back(fence);
     const std::size_t mark = handlers_.size();
+    const bool outer_refused = std::exchange(reentry_refused_, false);
     const value out = invoke(callable, args, this_value, constructing);
+    // A RE-ENTRY REFUSED AFTER ITS EPISODE'S ONE RangeError returns undefined
+    // with nothing thrown; every fenced caller would take that for the
+    // callee's answer (an async-from-sync step casting it to its pair array).
+    // Reported as the throw it stands for.
+    if (std::exchange(reentry_refused_, outer_refused) && !fence_hit_) {
+        if (handlers_.size() >= mark) { handlers_.resize(mark - 1); }
+        threw = true;
+        thrown = make_error("RangeError", "Maximum call stack size exceeded");
+        return value::undefined();
+    }
     if (fence_hit_) {
         // unwind_to_handler popped the fence and everything above it.
         fence_hit_ = false;
