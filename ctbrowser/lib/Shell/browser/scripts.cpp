@@ -596,8 +596,8 @@ void browser::wire_reexports(const std::string & specifier) {
     const auto self = registry.find(specifier);
     if (self == registry.end() || self->second.compiled == nullptr) { return; }
 
-    // GATHERED FIRST, ASSIGNED AFTER: the registry is a flat_map and writing to
-    // one entry while holding a reference into another is how it invalidates.
+    // GATHERED FIRST, ASSIGNED AFTER: a module can re-export from itself, and
+    // adding to its exports (a flat_map) while walking them invalidates the walk.
     std::vector<std::pair<std::string, script::value>> wire;
     for (const auto & edge : self->second.compiled->reexports) {
         const auto mapped = self->second.resolved.find(edge.from);
@@ -664,8 +664,8 @@ void browser::evaluate_module(const std::string & specifier) {
     }
     for (const std::string & target : needed) { evaluate_module(target); }
 
-    // RE-FOUND, because the registry is a flat_map and the recursion above can
-    // insert into it - a reference taken before it would dangle.
+    // RE-FOUND, because the registry is an unordered_map and the recursion above
+    // can insert into it - a rehash invalidates an iterator taken before it.
     const auto self = registry.find(specifier);
     if (self == registry.end()) { return; }
     const script::run_result result = script_->run_module(*compiled, self->second);
