@@ -1,6 +1,7 @@
 #pragma once
 
 #include <optional>
+#include <unordered_map>
 
 #include <ctbrowser/aot/aot.hpp>
 
@@ -204,7 +205,7 @@ public:
         std::function<value(context &, const std::string &, const std::string &)> loader);
     run_result run_module(const program & prog, module_record & into);
 
-    [[nodiscard]] flat_map<std::string, module_record> & modules() noexcept;
+    [[nodiscard]] std::unordered_map<std::string, module_record> & modules() noexcept;
 
     [[nodiscard]] value module_import_cell(const std::string & specifier,
                                            const std::string & export_name);
@@ -1010,7 +1011,10 @@ private:
 
     std::size_t pending_argv_base_ = 0;
     std::uint32_t pending_argc_ = 0;
-    flat_map<std::string, module_record> modules_;
+    // NODE-BASED, for reference stability: run_module holds `&into` as
+    // current_module_ while the module runs, and a dynamic import() inside it
+    // inserts here - which in a flat_map rehashes the record out from under it.
+    std::unordered_map<std::string, module_record> modules_;
     // The module being evaluated, so `bind_export` knows whose cells to adopt and
     // `load_import` knows who is asking. Null while a classic script runs.
     module_record * current_module_ = nullptr;

@@ -310,7 +310,8 @@ inline auto context::set_module_loader(
 
 // Where a module is found by specifier. The loader owns the graph; the VM
 // only needs to look a name up when `load_import` runs.
-[[nodiscard]] inline auto context::modules() noexcept -> flat_map<std::string, module_record> & {
+[[nodiscard]] inline auto context::modules() noexcept
+    -> std::unordered_map<std::string, module_record> & {
     return modules_;
 }
 

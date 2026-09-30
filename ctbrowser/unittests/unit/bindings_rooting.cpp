@@ -48,9 +48,30 @@ void test_spread_walks_a_snapshot() {
              "k0,k1,k2,k3");
 }
 
+// A module that dynamic-imports while it runs: the loader inserts into the
+// registry the running module's record lives in, and the record must stay
+// where run_module left it.
+void test_dynamic_import_inside_a_running_module() {
+    browser p{browser_options{200, 100}};
+    for (int i = 0; i < 64; ++i) {
+        p.assets().add("m" + std::to_string(i) + ".js",
+                       bytes_of("export const v = " + std::to_string(i) + ";"));
+    }
+    p.load_html("<html><body><script type=\"module\">"
+                "for (let i = 0; i < 64; ++i) import('./m' + i + '.js');"
+                "export const after = 1;"
+                "alert('ran');"
+                "</script></body></html>");
+    std::string out;
+    for (const std::string & one : p.alerts()) { out += one + ";"; }
+    CHECK_EQ(out, std::string{"ran;"});
+    CHECK_EQ(p.script_error(), std::string{});
+}
+
 } // namespace
 
 int main() {
     test_spread_walks_a_snapshot();
+    test_dynamic_import_inside_a_running_module();
     REPORT("bindings_rooting");
 }
