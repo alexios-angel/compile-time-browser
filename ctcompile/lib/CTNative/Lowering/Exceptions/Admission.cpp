@@ -19,10 +19,7 @@ struct nonthrowingPrimitives {
 
     explicit nonthrowingPrimitives(admission & admitted) : admitted(admitted) {}
 
-    bool primitive(mlir::Value value) const {
-        const auto type = admitted.typeOf(value);
-        return llvm::isa_and_nonnull<NumType, BoolType, StrType>(type) || onlyAbsent(type);
-    }
+    bool primitive(mlir::Value value) const { return primitiveOrAbsent(admitted.typeOf(value)); }
 
     bool call(ctjs::CallDirectOp direct) {
         auto target = direct.getTarget();
@@ -84,11 +81,11 @@ bool admission::exceptionRegion(ctjs::TryOp attempt) {
     // be proved unable to throw a JavaScript value before its old status edge
     // can disappear. A successful normal-result type alone is not that proof.
     auto & caught = attempt.getCatchBody().front();
-    if (!llvm::isa_and_nonnull<NumType, BoolType, StrType>(typeOf(caught.getArgument(0)))) {
+    if (!isPrimitive(typeOf(caught.getArgument(0)))) {
         return refuse("native try/catch requires a homogeneous number, boolean or string payload");
     }
     for (auto argument : caught.getArguments().drop_front()) {
-        if (!llvm::isa_and_nonnull<NumType, BoolType, StrType>(typeOf(argument))) {
+        if (!isPrimitive(typeOf(argument))) {
             return refuse("native try/catch requires number, boolean or owning string catch state");
         }
     }

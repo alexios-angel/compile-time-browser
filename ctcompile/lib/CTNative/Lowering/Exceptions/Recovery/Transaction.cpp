@@ -100,11 +100,7 @@ ExceptionRecoveryResult recoverPrimitiveExceptionRegion(ctjs::FuncOp function, u
     // must retain the original attributes as well as the original body.
     auto structured = (*scratch)->getAttr("ctjs.not_structured");
     (*scratch)->setAttrs(function->getAttrs());
-    if (structured) {
-        function->setAttr("ctjs.not_structured", structured);
-    } else {
-        function->removeAttr("ctjs.not_structured");
-    }
+    setOrRemoveAttr(function, "ctjs.not_structured", structured);
     return {true, {}, std::move(scratch), maxSteps - attempt.remaining};
 }
 

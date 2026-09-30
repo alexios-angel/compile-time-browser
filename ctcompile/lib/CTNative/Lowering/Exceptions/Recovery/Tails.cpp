@@ -107,17 +107,9 @@ bool recovery::acyclic(tail & plan) {
     for (mlir::Block * block : plan.blocks) {
         if (incoming.lookup(block) == 0) { ready.push_back(block); }
     }
-    unsigned visited = 0;
-    while (!ready.empty()) {
-        if (!spend()) { return false; }
-        auto * block = ready.pop_back_val();
-        ++visited;
-        for (mlir::Block * successor : plan.edges[block]) {
-            if (!spend()) { return false; }
-            if (--incoming[successor] == 0) { ready.push_back(successor); }
-        }
-    }
-    return visited == plan.blocks.size() ||
+    auto visited = drain(ready, incoming, plan.edges);
+    if (!visited) { return false; }
+    return *visited == plan.blocks.size() ||
            reject("native exception recovery does not support loops");
 }
 

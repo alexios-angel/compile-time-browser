@@ -56,12 +56,10 @@ namespace ctcompile::ctnative::lowering_detail {
 // throw with a normal completion. The native consumer must still emit a C++
 // throw for the exceptional completion. Catch exits use try_yield. Only after
 // both regions structure successfully is the recovered body adopted.
-struct recovery {
+struct recovery : workBudget {
     ctjs::FuncOp function;
     mlir::ModuleOp module;
     mlir::IRMapping copies;
-    unsigned remaining;
-    std::string refusal;
     ctjs::PushHandlerOp push;
     ctjs::CatchLandOp landing;
     ctjs::FrameEnterOp frame;
@@ -76,27 +74,14 @@ struct recovery {
     llvm::DenseSet<mlir::Block *> prefix;
 
     recovery(ctjs::FuncOp function, unsigned maxSteps, ExceptionRecoveryMode mode)
-        : function(function), module(function->getParentOfType<mlir::ModuleOp>()),
-          remaining(maxSteps), mode(mode) {}
+        : workBudget{maxSteps, "native exception recovery work budget exhausted"},
+          function(function), module(function->getParentOfType<mlir::ModuleOp>()), mode(mode) {}
 
     struct tail {
         llvm::SmallVector<mlir::Block *> blocks;
         llvm::DenseMap<mlir::Block *, bool> active;
         llvm::DenseMap<mlir::Block *, llvm::SmallVector<mlir::Block *>> edges;
     };
-
-    bool reject(llvm::StringRef why) {
-        if (refusal.empty()) { refusal = why.str(); }
-        return false;
-    }
-
-    bool spend(uint64_t amount = 1) {
-        if (amount > remaining) {
-            return reject("native exception recovery work budget exhausted");
-        }
-        remaining -= static_cast<unsigned>(amount);
-        return true;
-    }
 
     // Defined in Inspect.cpp.
     bool inspect();
@@ -135,6 +120,22 @@ struct recovery {
     // Defined in Tails.cpp.
     bool collect(tail & result, mlir::Block * start, bool initiallyActive, bool isCatch);
     bool acyclic(tail & plan);
+    // Kahn's drain of `ready`, charging each node and edge: the number of
+    // nodes visited, or nullopt once the budget is spent.
+    template <class Ready, class Incoming, class Edges>
+    std::optional<unsigned> drain(Ready & ready, Incoming & incoming, Edges & edges) {
+        unsigned visited = 0;
+        while (!ready.empty()) {
+            if (!spend()) { return std::nullopt; }
+            auto node = ready.pop_back_val();
+            ++visited;
+            for (auto successor : edges[node]) {
+                if (!spend()) { return std::nullopt; }
+                if (--incoming[successor] == 0) { ready.push_back(successor); }
+            }
+        }
+        return visited;
+    }
     bool cloneTail(const tail & plan, mlir::Region & destination, bool isCatch);
 
     // Defined in Structure.cpp.

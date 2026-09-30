@@ -1,11 +1,13 @@
 #pragma once
 
 #include "ctcompile/CTJS/IR/CTJSOps.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/OwningOpRef.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Error.h"
 
+#include <cstdint>
 #include <string>
 #include <utility>
 
@@ -14,6 +16,63 @@ struct HostContract;
 }
 
 namespace ctcompile::ctnative::lowering_detail {
+
+// Charge `amount` against a proof's budget; false, charging nothing, when it is short.
+inline bool charge(unsigned & remaining, uint64_t amount = 1) {
+    if (amount > remaining) { return false; }
+    remaining -= static_cast<unsigned>(amount);
+    return true;
+}
+
+// Charge `factor` times cost(operation) for each operation `root` walks, in walk
+// order; false at the first the remaining budget cannot cover.
+template <class Cost>
+bool chargeWalk(mlir::Operation * root, unsigned & remaining, unsigned factor, Cost && cost) {
+    return !root->walk([&](mlir::Operation * operation) {
+                    const uint64_t amount = cost(operation);
+                    if (amount > remaining / factor) { return mlir::WalkResult::interrupt(); }
+                    remaining -= static_cast<unsigned>(amount * factor);
+                    return mlir::WalkResult::advance();
+                })
+                .wasInterrupted();
+}
+
+// A proof's remaining work and its first refusal; `exhausted` is the refusal
+// of a spent budget.
+struct workBudget {
+    unsigned remaining;
+    llvm::StringRef exhausted;
+    std::string refusal = {};
+
+    bool reject(llvm::StringRef why) {
+        if (refusal.empty()) { refusal = why.str(); }
+        return false;
+    }
+    bool spend(uint64_t amount = 1) { return charge(remaining, amount) || reject(exhausted); }
+    // Return the unspent budget to `caller`; the refusal as an error unless `complete`.
+    llvm::Error finish(bool complete, unsigned & caller) const {
+        caller = remaining;
+        return complete ? llvm::Error::success() : llvm::createStringError(refusal);
+    }
+};
+
+// Set `name` on `operation` to `value`, or remove it when `value` is null.
+inline void setOrRemoveAttr(mlir::Operation * operation, llvm::StringRef name,
+                            mlir::Attribute value) {
+    if (value) {
+        operation->setAttr(name, value);
+    } else {
+        operation->removeAttr(name);
+    }
+}
+
+// The scf.yield ending `region`'s single nonempty block with exactly `count`
+// operands; null otherwise.
+inline mlir::scf::YieldOp exactYield(mlir::Region & region, unsigned count) {
+    if (!region.hasOneBlock() || region.front().empty()) { return {}; }
+    auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(region.front().back());
+    return yield && yield.getNumOperands() == count ? yield : mlir::scf::YieldOp{};
+}
 
 // Normalize lifted switch dispatch and unused/all-poison if results on a
 // disposable function clone. Failure can leave that clone partly rewritten;

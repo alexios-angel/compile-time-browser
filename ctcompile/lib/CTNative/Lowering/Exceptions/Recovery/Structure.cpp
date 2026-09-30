@@ -25,10 +25,7 @@ llvm::Error structureRecoveredPrefix(ctjs::FuncOp function, unsigned & remaining
     }
     const bool complete =
         normalization.refusal.empty() && normalization.structure(function.getBody());
-    remaining = normalization.remaining;
-    if (!complete) {
-        return llvm::createStringError(llvm::inconvertibleErrorCode(), normalization.refusal);
-    }
+    if (auto error = normalization.finish(complete, remaining)) { return error; }
     function->removeAttr("ctjs.not_structured");
     return llvm::Error::success();
 }
@@ -39,11 +36,7 @@ llvm::Error normalizeStructuredExits(ctjs::FuncOp function, unsigned & remaining
     recovery normalization{function, remaining, ExceptionRecoveryMode::ExplicitThrows};
     const bool complete = normalization.normalizeIndexSwitches(function) &&
                           normalization.trimUnusedIfResults(function);
-    remaining = normalization.remaining;
-    if (!complete) {
-        return llvm::createStringError(llvm::inconvertibleErrorCode(), normalization.refusal);
-    }
-    return llvm::Error::success();
+    return normalization.finish(complete, remaining);
 }
 
 bool recovery::structure(mlir::Region & region) {
@@ -100,10 +93,7 @@ bool recovery::normalizeIndexSwitches(mlir::Operation * guarded) {
         }
         for (mlir::Region & region : switcher->getRegions()) {
             if (!spend(uint64_t(1) + count)) { return false; }
-            if (!region.hasOneBlock() || region.front().empty() ||
-                region.front().getNumArguments() != 0 ||
-                !llvm::isa<mlir::scf::YieldOp>(region.front().getTerminator()) ||
-                region.front().getTerminator()->getNumOperands() != count) {
+            if (!exactYield(region, count) || region.front().getNumArguments() != 0) {
                 return reject("native exception switch lost its result correspondence");
             }
         }
@@ -186,9 +176,7 @@ bool recovery::trimUnusedIfResults(mlir::Operation * guarded) {
             if (!spend(uint64_t(1) + count)) { return false; }
             if (count == 0) { continue; }
             for (mlir::Region & region : branch->getRegions()) {
-                if (!region.hasOneBlock() || region.front().empty() ||
-                    !llvm::isa<mlir::scf::YieldOp>(region.front().getTerminator()) ||
-                    region.front().getTerminator()->getNumOperands() != count) {
+                if (!exactYield(region, count)) {
                     return reject("native exception conditional lost its result correspondence");
                 }
             }

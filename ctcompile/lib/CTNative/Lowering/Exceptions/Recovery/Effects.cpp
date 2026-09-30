@@ -6,6 +6,7 @@
 // transaction declared in Attempt.h beside this; Exceptions/Recovery.h, the
 // header the rest of the lowering sees, did not change.
 
+#include "../../LoweringSupport.h"
 #include "Attempt.h"
 
 namespace ctcompile::ctnative::lowering_detail {
@@ -117,9 +118,7 @@ bool recovery::primitive(mlir::Value value) {
         if (!seen.insert({value, context}).second) { continue; }
         if (auto * definition = value.getDefiningOp()) {
             const auto type = staticResultType(definition);
-            if (llvm::isa_and_nonnull<NumType, BoolType, StrType>(type) ||
-                (llvm::isa_and_nonnull<OptType>(type) &&
-                 llvm::isa<BottomType>(llvm::cast<OptType>(type).getElementType()))) {
+            if (primitiveOrAbsent(type)) {
                 hasDefinition = true;
                 continue;
             }

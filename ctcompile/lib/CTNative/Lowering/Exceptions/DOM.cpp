@@ -21,11 +21,9 @@ namespace ctcompile::ctnative::lowering_detail {
 
 namespace {
 
-struct DOMURI {
+struct DOMURI : workBudget {
     ctjs::FuncOp function;
     ExceptionInvocationSource source;
-    unsigned remaining;
-    std::string reason;
     mlir::DominanceInfo dominance;
     llvm::DenseSet<mlir::Operation *> visited;
     llvm::DenseSet<mlir::Block *> reached;
@@ -35,7 +33,8 @@ struct DOMURI {
     bool json = false;
 
     DOMURI(ctjs::FuncOp function, unsigned maxSteps, bool json)
-        : function(function), remaining(maxSteps), dominance(function), json(json) {}
+        : workBudget{maxSteps, "DOM URI normalization work budget exhausted"}, function(function),
+          dominance(function), json(json) {}
 
     ctjs::CheckOp chained(mlir::Operation * operation) const {
         for (const auto & [call, check] : source.chain) {
@@ -64,27 +63,18 @@ struct DOMURI {
         return false;
     }
 
-    bool refuse(llvm::StringRef message) {
-        if (reason.empty()) { reason = message.str(); }
-        return false;
-    }
-    bool spend(uint64_t amount = 1) {
-        if (amount > remaining) { return refuse("DOM URI normalization work budget exhausted"); }
-        remaining -= static_cast<unsigned>(amount);
-        return true;
-    }
     bool copyCost(const mlir::IRMapping & mapping) {
         return spend(uint64_t(mapping.getValueMap().size()) + mapping.getOperationMap().size());
     }
     bool transfer(mlir::Block * block, mlir::ValueRange operands, mlir::IRMapping & mapping) {
         if (!spend(uint64_t(1) + operands.size()) || operands.size() != block->getNumArguments()) {
-            return refuse("DOM URI continuation lost its complete register vector");
+            return reject("DOM URI continuation lost its complete register vector");
         }
         // Read the complete old vector before replacing any argument mapping.
         llvm::SmallVector<mlir::Value> actuals;
         for (auto [operand, argument] : llvm::zip(operands, block->getArguments())) {
             if (operand.getType() != argument.getType() || !mapping.contains(operand)) {
-                return refuse("DOM URI continuation has an unmapped source register");
+                return reject("DOM URI continuation has an unmapped source register");
             }
             actuals.push_back(mapping.lookup(operand));
         }
@@ -97,11 +87,11 @@ struct DOMURI {
         for (mlir::Value operand : operation.getOperands()) {
             if (!spend()) { return false; }
             if (!mapping.contains(operand) || !dominance.dominates(operand, &operation)) {
-                return refuse("DOM URI operand has no preceding source definition");
+                return reject("DOM URI operand has no preceding source definition");
             }
             if (operand == source.frame.getContext() &&
                 !llvm::isa<ctjs::RootOp, ctjs::FrameExitOp>(operation)) {
-                return refuse("DOM URI source observes its shadow frame");
+                return reject("DOM URI source observes its shadow frame");
             }
         }
         return true;
@@ -141,7 +131,7 @@ struct DOMURI {
                     (load.getName() == "decodeURIComponent" || load.getName() == "undefined")) {
                     continue;
                 }
-                return refuse("DOM URI protected or caught operation lacks an independent "
+                return reject("DOM URI protected or caught operation lacks an independent "
                               "nonthrowing effect proof");
             }
         }
@@ -192,7 +182,7 @@ struct DOMURI {
             nested.create(yield);
         }
         if (!payload.use_empty()) {
-            refuse("DOM URI catch observes its semantic error payload");
+            reject("DOM URI catch observes its semantic error payload");
             return {};
         }
         return invocation.getResult(0);
@@ -201,7 +191,7 @@ struct DOMURI {
     mlir::Value emit(mlir::Block * block, mlir::IRMapping & mapping, mlir::OpBuilder & at,
                      bool liveFrame, unsigned depth) {
         if (!spend() || depth >= 64) {
-            refuse("DOM URI source continuation nesting is too deep");
+            reject("DOM URI source continuation nesting is too deep");
             return {};
         }
         reached.insert(block);
@@ -210,14 +200,14 @@ struct DOMURI {
             visited.insert(&operation);
             if (auto check = chained(&operation)) {
                 if (!liveFrame) {
-                    refuse("DOM URI call is outside its source frame");
+                    reject("DOM URI call is outside its source frame");
                     return {};
                 }
                 return invoke(&operation, check, mapping, at, depth);
             }
             if (auto enter = llvm::dyn_cast<ctjs::FrameEnterOp>(operation)) {
                 if (enter != source.frame || liveFrame || copiedFrame) {
-                    refuse("DOM URI source has an inconsistent frame entry");
+                    reject("DOM URI source has an inconsistent frame entry");
                     return {};
                 }
                 at.clone(operation, mapping);
@@ -227,7 +217,7 @@ struct DOMURI {
             }
             if (auto root = llvm::dyn_cast<ctjs::RootOp>(operation)) {
                 if (!liveFrame || root.getContext() != source.frame.getContext()) {
-                    refuse("DOM URI root is outside its original frame");
+                    reject("DOM URI root is outside its original frame");
                     return {};
                 }
                 continue;
@@ -235,7 +225,7 @@ struct DOMURI {
             if (auto exit = llvm::dyn_cast<ctjs::FrameExitOp>(operation)) {
                 if (!liveFrame || exit.getContext() != source.frame.getContext() ||
                     !llvm::isa_and_nonnull<ctjs::ReturnOp>(exit->getNextNode())) {
-                    refuse("DOM URI frame exit does not precede its source return");
+                    reject("DOM URI frame exit does not precede its source return");
                     return {};
                 }
                 liveFrame = false;
@@ -243,7 +233,7 @@ struct DOMURI {
             }
             if (auto returned = llvm::dyn_cast<ctjs::ReturnOp>(operation)) {
                 if (liveFrame) {
-                    refuse("DOM URI return retains its source frame");
+                    reject("DOM URI return retains its source frame");
                     return {};
                 }
                 return mapping.lookup(returned.getValue());
@@ -251,7 +241,7 @@ struct DOMURI {
             if (auto push = llvm::dyn_cast<ctjs::PushHandlerOp>(operation)) {
                 if (push != source.push || !liveFrame ||
                     !transfer(push.getBody(), push.getBodyOperands(), mapping)) {
-                    refuse("DOM URI handler installation lost its source state");
+                    reject("DOM URI handler installation lost its source state");
                     return {};
                 }
                 return emit(push.getBody(), mapping, at, liveFrame, depth + 1);
@@ -259,7 +249,7 @@ struct DOMURI {
             if (auto check = llvm::dyn_cast<ctjs::CheckOp>(operation)) {
                 if (!llvm::is_contained(source.normal, block) ||
                     !transfer(check.getCont(), check.getContOperands(), mapping)) {
-                    refuse("DOM URI status edge lacks a protected nonthrowing proof");
+                    reject("DOM URI status edge lacks a protected nonthrowing proof");
                     return {};
                 }
                 return emit(check.getCont(), mapping, at, liveFrame, depth + 1);
@@ -267,7 +257,7 @@ struct DOMURI {
             if (llvm::isa<ctjs::PopHandlerOp>(operation)) { continue; }
             if (auto landing = llvm::dyn_cast<ctjs::CatchLandOp>(operation)) {
                 if (landing != source.landing || !mapping.contains(landing.getThrown())) {
-                    refuse("DOM URI catch has no original invocation payload");
+                    reject("DOM URI catch has no original invocation payload");
                     return {};
                 }
                 continue;
@@ -280,7 +270,7 @@ struct DOMURI {
                 // ponytail: duplicate bounded prefix continuations; each source
                 // path still executes once. Larger trees stop at the work budget.
                 if (!llvm::is_contained(source.prefix, block) || !spend(3)) {
-                    refuse("DOM URI conditional continuation must precede its handler");
+                    reject("DOM URI conditional continuation must precede its handler");
                     return {};
                 }
                 auto copied =
@@ -304,12 +294,12 @@ struct DOMURI {
             }
             if (operation.getNumRegions() || operation.getNumSuccessors() ||
                 operation.hasTrait<mlir::OpTrait::IsTerminator>()) {
-                refuse("DOM URI requires the complete acyclic source CFG");
+                reject("DOM URI requires the complete acyclic source CFG");
                 return {};
             }
             at.clone(operation, mapping);
         }
-        refuse("DOM URI continuation has no original return");
+        reject("DOM URI continuation has no original return");
         return {};
     }
 
@@ -320,7 +310,7 @@ struct DOMURI {
                 if (!spend(uint64_t(1) + operation.getNumOperands())) { return false; }
                 if (visited.contains(&operation)) { continue; }
                 if (reached.contains(&block)) {
-                    return refuse("DOM URI normalization left source operations unvisited");
+                    return reject("DOM URI normalization left source operations unvisited");
                 }
                 // The importer retains dead pop/undefined-return epilogues.
                 // Inspect every operation; no source lookup, call or write can
@@ -341,7 +331,7 @@ struct DOMURI {
                     returned && ctjs::isUndefinedConstant(returned.getValue())) {
                     continue;
                 }
-                return refuse("DOM URI source contains an unvisited non-epilogue operation");
+                return reject("DOM URI source contains an unvisited non-epilogue operation");
             }
         }
         return true;
@@ -350,11 +340,11 @@ struct DOMURI {
     bool run() {
         source = inspectSingleInvocationRegion(function, remaining, json ? 2 : 1);
         remaining -= source.steps;
-        if (!source.proved()) { return refuse(source.refusal); }
+        if (!source.proved()) { return reject(source.refusal); }
         for (const auto & [call, check] : source.chain) {
             (void)check;
             if (!llvm::isa<ctjs::CallOp>(call)) {
-                return refuse("DOM URI requires original ordinary invocations");
+                return reject("DOM URI requires original ordinary invocations");
             }
         }
         if (!proveTailEffects()) { return false; }
@@ -381,13 +371,6 @@ struct DOMURI {
 
 namespace {
 
-// One step of a proof's budget; false once it is spent.
-bool step(unsigned & remaining) {
-    if (!remaining) { return false; }
-    --remaining;
-    return true;
-}
-
 // Whether every arm of the scf.if defining `value` yields a slot `proved`
 // accepts; nullopt when `value` is not an scf.if result.
 template <class Proof> std::optional<bool> allArms(mlir::Value value, Proof && proved) {
@@ -395,12 +378,8 @@ template <class Proof> std::optional<bool> allArms(mlir::Value value, Proof && p
     auto branch = result ? llvm::dyn_cast<mlir::scf::IfOp>(result.getOwner()) : mlir::scf::IfOp{};
     if (!branch) { return std::nullopt; }
     for (auto & region : branch->getRegions()) {
-        if (!region.hasOneBlock()) { return false; }
-        auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(region.front().getTerminator());
-        if (!yield || yield.getNumOperands() != branch.getNumResults() ||
-            !proved(yield.getOperand(result.getResultNumber()))) {
-            return false;
-        }
+        auto yield = exactYield(region, branch.getNumResults());
+        if (!yield || !proved(yield.getOperand(result.getResultNumber()))) { return false; }
     }
     return true;
 }
@@ -431,10 +410,15 @@ struct DOMAttributeProof {
     ctjs::FuncOp function;
     llvm::ArrayRef<unsigned> elementParameters;
     unsigned & remaining;
+    // The constant member name `call` invokes, or empty.
+    static llvm::StringRef calleeKey(ctjs::CallOp call) {
+        auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+        return method ? ctjs::constantKey(method.getKey()) : llvm::StringRef{};
+    }
     bool attributeMethod(ctjs::GetPropertyOp method) {
-        if (!method || (ctjs::constantKey(method.getKey()) != "hasAttribute" &&
-                        ctjs::constantKey(method.getKey()) != "getAttribute" &&
-                        ctjs::constantKey(method.getKey()) != "setAttribute")) {
+        static constexpr llvm::StringLiteral names[] = {"hasAttribute", "getAttribute",
+                                                        "setAttribute"};
+        if (!method || !llvm::is_contained(names, ctjs::constantKey(method.getKey()))) {
             return false;
         }
         mlir::Value value = method.getObject();
@@ -447,13 +431,12 @@ struct DOMAttributeProof {
                 result ? llvm::dyn_cast<mlir::scf::IfOp>(result.getOwner()) : mlir::scf::IfOp{};
             if (!branch) { break; }
             if (!branch.getThenRegion().hasOneBlock() || !branch.getElseRegion().hasOneBlock() ||
-                !step(remaining)) {
+                !charge(remaining)) {
                 return false;
             }
-            auto yes = llvm::dyn_cast<mlir::scf::YieldOp>(branch.getThenRegion().front().back());
-            auto no = llvm::dyn_cast<mlir::scf::YieldOp>(branch.getElseRegion().front().back());
-            if (!yes || !no || yes.getNumOperands() != branch.getNumResults() ||
-                no.getNumOperands() != branch.getNumResults() ||
+            auto yes = exactYield(branch.getThenRegion(), branch.getNumResults());
+            auto no = exactYield(branch.getElseRegion(), branch.getNumResults());
+            if (!yes || !no ||
                 yes.getOperand(result.getResultNumber()) !=
                     no.getOperand(result.getResultNumber())) {
                 return false;
@@ -466,7 +449,7 @@ struct DOMAttributeProof {
             return false;
         }
         for (unsigned index : elementParameters) {
-            if (!step(remaining)) { return false; }
+            if (!charge(remaining)) { return false; }
             if (index == receiver.getArgNumber() - ctjs::implicit_arguments) { return true; }
         }
         return false;
@@ -477,7 +460,7 @@ struct DOMAttributeProof {
     llvm::DenseSet<mlir::Value> stringReads;
     llvm::DenseSet<mlir::Value> numberReads;
     bool booleanValue(mlir::Value value, unsigned depth = 0) {
-        if (depth == 64 || !step(remaining)) { return false; }
+        if (depth == 64 || !charge(remaining)) { return false; }
         if (auto compare = value.getDefiningOp<ctjs::CompareOp>()) {
             return compare.getKind() == ctjs::CompareKind::StrictEq;
         }
@@ -498,18 +481,15 @@ struct DOMAttributeProof {
             .value_or(false);
     }
     bool stringValue(mlir::Value value, unsigned depth = 0) {
-        if (depth == 64 || !step(remaining)) { return false; }
+        if (depth == 64 || !charge(remaining)) { return false; }
         auto constant = value.getDefiningOp<ctjs::ConstantOp>();
         auto call = value.getDefiningOp<ctjs::CallOp>();
-        auto method =
-            call ? call.getCallee().getDefiningOp<ctjs::GetPropertyOp>() : ctjs::GetPropertyOp{};
         // Saved getAttribute and Number.toString results may precede the protected
         // body. Reuse their charged origins; producer effects and initial method
         // identity still require the complete final DOM proof.
         if (stringReads.contains(value) ||
             (constant && llvm::isa<ctjs::StringAttr, ctjs::NullAttr>(constant.getValue())) ||
-            (method && ctjs::constantKey(method.getKey()) == "getAttribute" &&
-             attributeCall(call)) ||
+            (call && calleeKey(call) == "getAttribute" && attributeCall(call)) ||
             numberStringCall(call)) {
             return true;
         }
@@ -520,13 +500,13 @@ struct DOMAttributeProof {
             .value_or(false);
     }
     static bool numberCallee(ctjs::CallOp call) {
-        if (!call) { return false; }
-        auto callee = call.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
+        auto callee =
+            call ? call.getCallee().getDefiningOp<ctjs::LoadGlobalOp>() : ctjs::LoadGlobalOp{};
         return callee && callee.getName() == "Number" &&
                ctjs::isUndefinedConstant(call.getReceiver()) && call.getArgs().size() == 1;
     }
     bool numberValue(mlir::Value value, unsigned depth = 0) {
-        if (depth == 64 || !step(remaining)) { return false; }
+        if (depth == 64 || !charge(remaining)) { return false; }
         if (numberReads.contains(value)) { return true; }
         if (auto constant = value.getDefiningOp<ctjs::ConstantOp>()) {
             return llvm::isa<ctjs::NumberAttr>(constant.getValue());
@@ -560,7 +540,7 @@ struct DOMAttributeProof {
     // Attribute conversion of a Number/null selection cannot invoke user code.
     // Null stays out of numberValue: that proof also authorizes Number methods.
     bool nullableNumberValue(mlir::Value value, unsigned depth = 0) {
-        if (depth == 64 || !step(remaining)) { return false; }
+        if (depth == 64 || !charge(remaining)) { return false; }
         auto constant = value.getDefiningOp<ctjs::ConstantOp>();
         if (constant && llvm::isa<ctjs::NullAttr>(constant.getValue())) { return true; }
         if (auto arms = allArms(
@@ -569,10 +549,7 @@ struct DOMAttributeProof {
         }
         return numberValue(value, depth + 1);
     }
-    static bool attributeRead(ctjs::CallOp call) {
-        auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
-        return method && ctjs::constantKey(method.getKey()) == "hasAttribute";
-    }
+    static bool attributeRead(ctjs::CallOp call) { return calleeKey(call) == "hasAttribute"; }
     bool numberStringMethod(ctjs::GetPropertyOp method) {
         return method && ctjs::constantKey(method.getKey()) == "toString" &&
                numberValue(method.getObject());
@@ -615,9 +592,7 @@ struct DOMAttributeProof {
     void callResult(ctjs::CallOp call, mlir::Value result) {
         // Called only after the independent nonthrowing proof succeeds.
         if (attributeRead(call)) { booleanReads.insert(result); }
-        auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
-        if (method && (ctjs::constantKey(method.getKey()) == "getAttribute" ||
-                       ctjs::constantKey(method.getKey()) == "toString")) {
+        if (const auto key = calleeKey(call); key == "getAttribute" || key == "toString") {
             stringReads.insert(result);
         }
         if (numberCallee(call)) { numberReads.insert(result); }
@@ -636,31 +611,29 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
                                                          ExceptionRecoveryMode mode,
                                                          bool recoveredBody = false) {
     const auto refuse = [](llvm::StringRef reason) -> llvm::Expected<bool> {
-        return llvm::createStringError(llvm::inconvertibleErrorCode(), reason);
+        return llvm::createStringError(reason);
     };
     unsigned remaining = maxSteps;
     bool throws = false;
-    const auto scanned = function.walk([&](mlir::Operation * operation) {
-        const uint64_t cost = uint64_t(1) + operation->getNumOperands();
-        if (cost > remaining / 3) { return mlir::WalkResult::interrupt(); }
-        remaining -= static_cast<unsigned>(cost * 3); // Scan and reserve the final rewrite.
-        throws |= llvm::isa<ctjs::ThrowOp>(operation);
-        return mlir::WalkResult::advance();
-    });
-    if (scanned.wasInterrupted()) { return refuse("DOM caught throw work budget exhausted"); }
+    const auto operandCost = [](mlir::Operation * operation) {
+        return uint64_t(1) + operation->getNumOperands();
+    };
+    // Scan and reserve the final rewrite.
+    if (!chargeWalk(function, remaining, 3, [&](mlir::Operation * operation) {
+            throws |= llvm::isa<ctjs::ThrowOp>(operation);
+            return operandCost(operation);
+        })) {
+        return refuse("DOM caught throw work budget exhausted");
+    }
     if (!recoveredBody) {
         if (!throws && mode == ExceptionRecoveryMode::ExplicitThrows) { return false; }
         auto recovered = recoverPrimitiveExceptionRegion(function, remaining, mode);
         if (!recovered.recovered) { return false; }
         remaining -= recovered.steps;
     }
-    const auto rewritten = function.walk([&](mlir::Operation * operation) {
-        const uint64_t cost = uint64_t(1) + operation->getNumOperands();
-        if (cost > remaining / 3) { return mlir::WalkResult::interrupt(); }
-        remaining -= static_cast<unsigned>(cost * 3);
-        return mlir::WalkResult::advance();
-    });
-    if (rewritten.wasInterrupted()) { return refuse("DOM caught throw work budget exhausted"); }
+    if (!chargeWalk(function, remaining, 3, operandCost)) {
+        return refuse("DOM caught throw work budget exhausted");
+    }
     if (auto error = structureRecoveredPrefix(function, remaining)) { return std::move(error); }
     if (!function.getBody().hasOneBlock()) {
         return refuse("DOM caught throw requires a structured local prefix");
@@ -675,7 +648,7 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
     auto exit = llvm::dyn_cast<ctjs::TryExitOp>(body.getTerminator());
     auto yield = llvm::dyn_cast<ctjs::TryYieldOp>(caught.getTerminator());
     const auto alwaysThrows = [&](auto && self, mlir::Value flag, unsigned depth) -> bool {
-        if (depth == 64 || !step(remaining)) { return false; }
+        if (depth == 64 || !charge(remaining)) { return false; }
         if (flag.getDefiningOp<mlir::arith::ConstantOp>()) {
             return flag.getType().isInteger(1) && mlir::matchPattern(flag, mlir::m_One());
         }
@@ -690,7 +663,7 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
     const auto effects = [&](auto && self, mlir::Block & block, unsigned depth) -> bool {
         if (depth == 64) { return false; }
         for (mlir::Operation & operation : llvm::make_early_inc_range(block.without_terminator())) {
-            if (!step(remaining)) { return false; }
+            if (!charge(remaining)) { return false; }
             if (auto poison = llvm::dyn_cast<mlir::ub::PoisonOp>(operation);
                 poison && (!unconditional || (poison.getResult() == exit.getNormalResult() &&
                                               poison.getResult().hasOneUse()))) {
@@ -761,7 +734,7 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
                 // Recovery's normal tuple contains only its tag, inactive padding
                 // and original saved values. Never infer effects from result types.
                 for (auto & projection : normal.without_terminator()) {
-                    if (!step(remaining)) { return false; }
+                    if (!charge(remaining)) { return false; }
                     if (!llvm::isa<ctjs::ConstantOp, mlir::arith::ConstantOp, mlir::ub::PoisonOp>(
                             projection)) {
                         return false;
@@ -781,10 +754,8 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
             }
             if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(operation)) {
                 for (auto & region : branch->getRegions()) {
-                    if (!region.hasOneBlock() || region.front().getNumArguments() ||
-                        !llvm::isa<mlir::scf::YieldOp>(region.front().getTerminator()) ||
-                        region.front().getTerminator()->getNumOperands() !=
-                            branch.getNumResults() ||
+                    if (!exactYield(region, branch.getNumResults()) ||
+                        region.front().getNumArguments() ||
                         !self(self, region.front(), depth + 1)) {
                         return false;
                     }
@@ -800,36 +771,34 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
                     auto selected = literal.isZero() ? no : yes;
                     for (auto & next :
                          llvm::make_early_inc_range(selected->getBlock()->without_terminator())) {
-                        if (!step(remaining)) { return false; }
+                        if (!charge(remaining)) { return false; }
                         next.moveBefore(branch);
                     }
                     for (auto [result, value] :
                          llvm::zip(branch.getResults(), selected.getOperands())) {
                         for (auto & use : llvm::make_early_inc_range(result.getUses())) {
-                            if (!step(remaining)) { return false; }
+                            if (!charge(remaining)) { return false; }
                             use.set(value);
                         }
                     }
                     // Discarded definitions must not survive as evidence when
                     // subsequent projections allocate new SSA values.
-                    const auto forgotten = branch.walk([&](mlir::Operation * nested) {
-                        const auto cost = uint64_t(1) + nested->getNumResults();
-                        if (cost > remaining) { return mlir::WalkResult::interrupt(); }
-                        remaining -= static_cast<unsigned>(cost);
-                        for (auto result : nested->getResults()) {
-                            attributes.booleanReads.erase(result);
-                            attributes.stringReads.erase(result);
-                            attributes.numberReads.erase(result);
-                        }
-                        return mlir::WalkResult::advance();
-                    });
-                    if (forgotten.wasInterrupted()) { return false; }
+                    if (!chargeWalk(branch, remaining, 1, [&](mlir::Operation * nested) {
+                            for (auto result : nested->getResults()) {
+                                attributes.booleanReads.erase(result);
+                                attributes.stringReads.erase(result);
+                                attributes.numberReads.erase(result);
+                            }
+                            return uint64_t(1) + nested->getNumResults();
+                        })) {
+                        return false;
+                    }
                     branch.erase();
                     continue;
                 }
                 for (auto [result, left, right] :
                      llvm::zip(branch.getResults(), yes.getOperands(), no.getOperands())) {
-                    if (!step(remaining)) { return false; }
+                    if (!charge(remaining)) { return false; }
                     attributes.join(result, left, right);
                     // Both arms have complete effect proofs. Forward only the
                     // identical saved SSA value, retaining the branch and its
@@ -837,7 +806,7 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
                     // proof; equal callable kinds or names supply no identity.
                     if (left != right) { continue; }
                     for (auto & use : llvm::make_early_inc_range(result.getUses())) {
-                        if (!step(remaining)) { return false; }
+                        if (!charge(remaining)) { return false; }
                         use.set(left);
                     }
                 }
@@ -851,19 +820,14 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
         return refuse("DOM caught throw protected effect lacks a nonthrowing proof");
     }
     if (!unconditional) {
-        const auto spend = [&](uint64_t cost) {
-            if (cost > remaining) { return false; }
-            remaining -= static_cast<unsigned>(cost);
-            return true;
-        };
+        const auto spend = [&](uint64_t cost) { return charge(remaining, cost); };
         const auto clone = [&](mlir::Operation & operation, mlir::IRMapping & mapping,
                                mlir::OpBuilder & at) {
-            const auto counted = operation.walk([&](mlir::Operation * nested) {
-                return spend(uint64_t(1) + nested->getNumOperands() + nested->getNumResults())
-                           ? mlir::WalkResult::advance()
-                           : mlir::WalkResult::interrupt();
-            });
-            if (counted.wasInterrupted()) { return false; }
+            if (!chargeWalk(&operation, remaining, 1, [](mlir::Operation * nested) {
+                    return uint64_t(1) + nested->getNumOperands() + nested->getNumResults();
+                })) {
+                return false;
+            }
             at.clone(operation, mapping);
             return true;
         };
@@ -1008,8 +972,7 @@ llvm::Error normalizeDOMRecoveredCatch(ctjs::FuncOp function, unsigned maxSteps,
                                                ExceptionRecoveryMode::CheckedInvocations, true);
     if (!result) { return result.takeError(); }
     if (!*result) {
-        return llvm::createStringError(llvm::inconvertibleErrorCode(),
-                                       "DOM recovered helper catch lost its completion");
+        return llvm::createStringError("DOM recovered helper catch lost its completion");
     }
     return llvm::Error::success();
 }
@@ -1019,27 +982,24 @@ llvm::Error normalizeDOMAttributeInvocations(ctjs::FuncOp function, unsigned max
     unsigned remaining = maxSteps;
     const auto refuse = [] {
         return llvm::createStringError(
-            llvm::inconvertibleErrorCode(),
             "DOM attribute completion is invalid or exhausted its budget");
     };
-    const auto census = function.walk([&](mlir::Operation * operation) {
+    // Scan, verify and rewrite.
+    const bool census = chargeWalk(function, remaining, 3, [](mlir::Operation * operation) {
         uint64_t cost = uint64_t(1) + operation->getNumOperands() + operation->getNumResults();
         for (auto & region : operation->getRegions()) {
             for (auto & block : region) { cost += 1 + block.getNumArguments(); }
         }
-        if (cost > remaining / 3) { return mlir::WalkResult::interrupt(); }
-        remaining -= static_cast<unsigned>(cost * 3); // Scan, verify and rewrite.
-        return mlir::WalkResult::advance();
+        return cost;
     });
-    if (census.wasInterrupted() || !function.getBody().hasOneBlock() ||
-        mlir::failed(mlir::verify(function))) {
+    if (!census || !function.getBody().hasOneBlock() || mlir::failed(mlir::verify(function))) {
         return refuse();
     }
     DOMAttributeProof attributes{function, elementParameters, remaining, {}, {}, {}};
     const auto normalize = [&](auto && self, mlir::Block & block, unsigned depth) -> bool {
         if (depth == 64) { return false; }
         for (auto & operation : llvm::make_early_inc_range(block)) {
-            if (!step(remaining)) { return false; }
+            if (!charge(remaining)) { return false; }
             if (auto attempt = llvm::dyn_cast<ctjs::TryOp>(operation)) {
                 for (auto & region : attempt->getRegions()) {
                     if (!region.hasOneBlock() || !self(self, region.front(), depth + 1)) {
@@ -1060,7 +1020,7 @@ llvm::Error normalizeDOMAttributeInvocations(ctjs::FuncOp function, unsigned max
                 auto no = llvm::cast<mlir::scf::YieldOp>(branch.getElseRegion().front().back());
                 for (auto [result, left, right] :
                      llvm::zip(branch.getResults(), yes.getOperands(), no.getOperands())) {
-                    if (!step(remaining)) { return false; }
+                    if (!charge(remaining)) { return false; }
                     attributes.join(result, left, right);
                 }
                 continue;
@@ -1097,7 +1057,7 @@ llvm::Error normalizeDOMAttributeInvocations(ctjs::FuncOp function, unsigned max
             if (!self(self, normal, depth + 1)) { return false; }
             auto yield = llvm::cast<ctjs::InvokeYieldOp>(normal.back());
             for (auto & next : llvm::make_early_inc_range(normal.without_terminator())) {
-                if (!step(remaining)) { return false; }
+                if (!charge(remaining)) { return false; }
                 next.moveBefore(invocation);
             }
             invocation.replaceAllUsesWith(yield.getValues());
@@ -1119,8 +1079,7 @@ llvm::Expected<bool> normalizeDOMCaughtThrow(ctjs::FuncOp function, unsigned max
         return size <= maxSteps ? mlir::WalkResult::advance() : mlir::WalkResult::interrupt();
     });
     if (scanned.wasInterrupted()) {
-        return llvm::createStringError(llvm::inconvertibleErrorCode(),
-                                       "DOM caught throw work budget exhausted");
+        return llvm::createStringError("DOM caught throw work budget exhausted");
     }
     if (throws) {
         return normalizeDOMCaughtCompletion(function, maxSteps - static_cast<unsigned>(size),
@@ -1148,16 +1107,12 @@ llvm::Expected<bool> normalizeDOMCaughtThrow(ctjs::FuncOp function, unsigned max
 llvm::Error normalizeDOMURI(mlir::ModuleOp candidate, const HostContract & contract,
                             unsigned maxSteps, llvm::StringRef function) {
     unsigned remaining = maxSteps;
-    const auto scanned = candidate.walk([&](mlir::Operation * operation) {
-        const uint64_t cost = uint64_t(1) + operation->getNumOperands();
-        if (cost > remaining) { return mlir::WalkResult::interrupt(); }
-        remaining -= static_cast<unsigned>(cost);
-        return mlir::WalkResult::advance();
+    const bool scanned = chargeWalk(candidate, remaining, 1, [](mlir::Operation * operation) {
+        return uint64_t(1) + operation->getNumOperands();
     });
     const unsigned scanCost = maxSteps - remaining;
-    if (scanned.wasInterrupted() || scanCost > remaining) {
-        return llvm::createStringError(llvm::inconvertibleErrorCode(),
-                                       "DOM URI normalization work budget exhausted");
+    if (!scanned || scanCost > remaining) {
+        return llvm::createStringError("DOM URI normalization work budget exhausted");
     }
     remaining -= scanCost; // Reserve the complete fingerprint scan before printing the module.
     if ((contract.provider != HostContract::Provider::ctbrowserDOM &&
@@ -1165,19 +1120,16 @@ llvm::Error normalizeDOMURI(mlir::ModuleOp candidate, const HostContract & contr
         !llvm::is_contained(contract.initialIntrinsics, "decodeURIComponent") ||
         contract.moduleSha256 != hostContractFingerprint(candidate)) {
         return llvm::createStringError(
-            llvm::inconvertibleErrorCode(),
             "DOM URI requires its fingerprinted initial provider binding");
     }
     auto target =
         candidate.lookupSymbol<ctjs::FuncOp>(function.empty() ? contract.entry : function);
     if (!target || target.getBody().empty()) {
-        return llvm::createStringError(llvm::inconvertibleErrorCode(), "DOM URI entry is missing");
+        return llvm::createStringError("DOM URI entry is missing");
     }
     candidate.getContext()->getOrLoadDialect<mlir::scf::SCFDialect>();
     DOMURI attempt(target, remaining, llvm::is_contained(contract.initialIntrinsics, "JSON"));
-    if (!attempt.run()) {
-        return llvm::createStringError(llvm::inconvertibleErrorCode(), attempt.reason);
-    }
+    if (!attempt.run()) { return llvm::createStringError(attempt.refusal); }
     return llvm::Error::success();
 }
 

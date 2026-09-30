@@ -164,17 +164,9 @@ bool recovery::proveBindings() {
         if (!spend()) { return false; }
         if (incoming.lookup(body) == 0) { ready.push_back(body); }
     }
-    unsigned visited = 0;
-    while (!ready.empty()) {
-        if (!spend()) { return false; }
-        auto body = ready.pop_back_val();
-        ++visited;
-        for (auto target : callees[body]) {
-            if (!spend()) { return false; }
-            if (--incoming[target] == 0) { ready.push_back(target); }
-        }
-    }
-    if (visited != functions.size()) {
+    auto visited = drain(ready, incoming, callees);
+    if (!visited) { return false; }
+    if (*visited != functions.size()) {
         return bindingFailure("the source call component is recursive");
     }
     for (auto [index, body] : functions) {
