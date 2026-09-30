@@ -484,6 +484,22 @@ void test_the_glyph_cache_is_thread_safe() {
     check(got == expected, "twelve threads measuring cold glyphs agree with one thread");
 }
 
+// Re-registering a family frees the old bytes; a sized font cached from them
+// must not outlive that (a use-after-free under ASan).
+void test_replacing_a_face_keeps_measuring() {
+    if (!raster::ttf_available()) { return; }
+    const std::unique_ptr<raster::ttf_backend> fonts = raster::make_ttf_backend();
+    const std::vector<std::byte> regular =
+        shell::asset_registry{}.load("resources/fonts/FiraSans-Regular.ttf");
+    check(fonts->add_face("Fira Sans", false, false, regular), "the face loads");
+    const float before = fonts->advance("Hamburgefonstiv", 13, "Fira Sans", false, false);
+    check(fonts->add_face("Fira Sans", false, false, regular), "and loads again");
+    check(fonts->face_count() == 1, "replaced, not added");
+    check(fonts->advance("Hamburgefonstiv", 13, "Fira Sans", false, false) == before,
+          "the replaced face measures the same");
+    check(fonts->ascent(13, "Fira Sans", false, false) > 0, "and its metrics are live");
+}
+
 // A page's OWN font, from its @font-face rule. The file is named by the page
 // and loaded through the asset registry like any other resource, so a page can
 // ship a face the machine has never heard of.
@@ -577,6 +593,7 @@ int main() {
     test_canvas_text_uses_the_real_font();
     test_page_font_face();
     test_the_glyph_cache_is_thread_safe();
+    test_replacing_a_face_keeps_measuring();
     test_real_fonts_are_deterministic_and_thread_safe();
     test_real_fonts_do_not_quantise();
 

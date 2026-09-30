@@ -262,7 +262,18 @@ bool sdl_ttf_backend::add_face(std::string family, bool bold, bool italic,
     TTF_Font * probe = open_sized(entry.bytes, 16);
     if (probe == nullptr) { return false; }
     TTF_CloseFont(probe);
-    faces_[face_key{ascii_lower_copy(family), bold, italic}] = std::move(entry);
+    // Replacing a face frees the bytes its cached TTF_Fonts still read (via
+    // SDL_IOFromConstMem). sized_ is keyed by the REQUESTED family, so fallbacks
+    // may also point at it: close them all; they reopen on demand. glyphs_ are
+    // bitmaps and stay.
+    const face_key key{ascii_lower_copy(family), bold, italic};
+    if (faces_.contains(key)) {
+        for (auto & [k, font] : sized_) {
+            if (font != nullptr) { TTF_CloseFont(font); }
+        }
+        sized_.clear();
+    }
+    faces_[key] = std::move(entry);
     return true;
 }
 
