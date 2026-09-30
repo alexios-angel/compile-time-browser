@@ -1,6 +1,7 @@
 #include <ctcompile/JavaScript/ProgramComparator.hpp>
 
 #include <cstddef>
+#include <functional>
 #include <string_view>
 #include <vector>
 
@@ -36,6 +37,19 @@ struct walker {
             if (a[i] != b[i]) {
                 return differ(where, std::string{what} + " " + std::to_string(i) + ": \"" + a[i] +
                                          "\" vs \"" + b[i] + "\"");
+            }
+        }
+        return true;
+    }
+    // A counted sequence compared element by element: the count first, then
+    // the first element `eq` rejects, reported as "<where>, <item> <i>".
+    template <typename T, typename Eq>
+    bool each(const std::vector<T> & a, const std::vector<T> & b, const std::string & where,
+              const char * counted, const char * item, const char * what, Eq eq) {
+        if (!count(a.size(), b.size(), where, counted)) { return false; }
+        for (std::size_t i = 0; i < a.size(); ++i) {
+            if (!eq(a[i], b[i])) {
+                return differ(where + ", " + item + " " + std::to_string(i), what);
             }
         }
         return true;
@@ -108,71 +122,47 @@ std::optional<difference> compare(const program & expected, const program & actu
         if (!w.same(a.source_begin, b.source_begin, where, "source_begin")) { return w.found; }
         if (!w.same(a.source_end, b.source_end, where, "source_end")) { return w.found; }
 
-        if (!w.count(a.code.size(), b.code.size(), where, "instruction count")) { return w.found; }
-        for (std::size_t ip = 0; ip < a.code.size(); ++ip) {
-            const auto & x = a.code[ip];
-            const auto & y = b.code[ip];
-            // FIELD BY FIELD, NOT AS BYTES. `instruction` has a padding byte at
-            // offset 1 whose contents depend on the optimisation level of the
-            // code that built it, so a memcmp here would report differences
-            // that do not exist - and would do it intermittently.
-            if (x.code != y.code || x.a != y.a || x.b != y.b || x.c != y.c) {
-                return w.differ(where + ", instruction " + std::to_string(ip),
-                                "opcode or operands"),
-                       w.found;
-            }
-        }
-
-        if (!w.count(a.constants.size(), b.constants.size(), where, "constant count")) {
+        // FIELD BY FIELD, NOT AS BYTES. `instruction` has a padding byte at
+        // offset 1 whose contents depend on the optimisation level of the
+        // code that built it, so a memcmp here would report differences
+        // that do not exist - and would do it intermittently.
+        if (!w.each(a.code, b.code, where, "instruction count", "instruction", "opcode or operands",
+                    [](const auto & x, const auto & y) {
+                        return x.code == y.code && x.a == y.a && x.b == y.b && x.c == y.c;
+                    })) {
             return w.found;
         }
-        for (std::size_t i = 0; i < a.constants.size(); ++i) {
-            // BY BITS. See the header: as doubles, NaN would differ from itself
-            // and -0 would compare equal to +0.
-            if (a.constants[i].bits() != b.constants[i].bits()) {
-                return w.differ(where + ", constant " + std::to_string(i), "bit pattern"), w.found;
-            }
+        // BY BITS. See the header: as doubles, NaN would differ from itself
+        // and -0 would compare equal to +0.
+        if (!w.each(a.constants, b.constants, where, "constant count", "constant", "bit pattern",
+                    [](const auto & x, const auto & y) { return x.bits() == y.bits(); })) {
+            return w.found;
         }
 
         if (!w.texts(a.strings, b.strings, where, "strings")) { return w.found; }
         if (!w.texts(a.names, b.names, where, "names")) { return w.found; }
 
-        if (!w.count(a.upvalues.size(), b.upvalues.size(), where, "upvalue count")) {
+        if (!w.each(a.upvalues, b.upvalues, where, "upvalue count", "upvalue",
+                    "capture source or index", [](const auto & x, const auto & y) {
+                        return x.from_parent_local == y.from_parent_local && x.index == y.index;
+                    })) {
             return w.found;
-        }
-        for (std::size_t i = 0; i < a.upvalues.size(); ++i) {
-            if (a.upvalues[i].from_parent_local != b.upvalues[i].from_parent_local ||
-                a.upvalues[i].index != b.upvalues[i].index) {
-                return w.differ(where + ", upvalue " + std::to_string(i),
-                                "capture source or index"),
-                       w.found;
-            }
         }
 
         // THE DEBUG SIDE TABLES, compared for the same reason everything above
         // is: a round trip that silently drops them looks exactly like a build
         // with CTBROWSER_SCRIPT_DEBUG_NAMES off, and the round-trip test is the
         // only thing that can tell the two apart.
-        if (!w.count(a.locals.size(), b.locals.size(), where, "local count")) { return w.found; }
-        for (std::size_t i = 0; i < a.locals.size(); ++i) {
-            if (a.locals[i].name != b.locals[i].name || a.locals[i].reg != b.locals[i].reg ||
-                a.locals[i].first_pc != b.locals[i].first_pc ||
-                a.locals[i].last_pc != b.locals[i].last_pc ||
-                a.locals[i].boxed != b.locals[i].boxed) {
-                return w.differ(where + ", local " + std::to_string(i),
-                                "name, register, live range or boxedness"),
-                       w.found;
-            }
-        }
-
-        if (!w.count(a.code_offsets.size(), b.code_offsets.size(), where, "source-offset count")) {
+        if (!w.each(a.locals, b.locals, where, "local count", "local",
+                    "name, register, live range or boxedness", [](const auto & x, const auto & y) {
+                        return x.name == y.name && x.reg == y.reg && x.first_pc == y.first_pc &&
+                               x.last_pc == y.last_pc && x.boxed == y.boxed;
+                    })) {
             return w.found;
         }
-        for (std::size_t i = 0; i < a.code_offsets.size(); ++i) {
-            if (a.code_offsets[i] != b.code_offsets[i]) {
-                return w.differ(where + ", instruction " + std::to_string(i), "source offset"),
-                       w.found;
-            }
+        if (!w.each(a.code_offsets, b.code_offsets, where, "source-offset count", "instruction",
+                    "source offset", std::equal_to<>{})) {
+            return w.found;
         }
     }
     return std::nullopt;
