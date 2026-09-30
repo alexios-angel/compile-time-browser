@@ -2,9 +2,16 @@
 #ifndef CTCOMPILE_CTJS_OPS_EXCEPTIONS_TD
 #define CTCOMPILE_CTJS_OPS_EXCEPTIONS_TD
 
-def CTJS_TryOp : CTJS_Op<"try", [
-    DeclareOpInterfaceMethods<RegionBranchOpInterface,
-      ["getSuccessorInputs", "getRegionInvocationBounds"]>]> {
+// The region-carrying ops and their terminators, which forward to a successor region.
+class CTJS_RegionBranchOp<string mnemonic>
+    : CTJS_Op<mnemonic, [DeclareOpInterfaceMethods<RegionBranchOpInterface,
+                          ["getSuccessorInputs", "getRegionInvocationBounds"]>]>;
+class CTJS_RegionTerminator<string mnemonic,
+                            list<string> methods = ["getMutableSuccessorOperands"]>
+    : CTJS_Op<mnemonic, [Terminator,
+                         DeclareOpInterfaceMethods<RegionBranchTerminatorOpInterface, methods>]>;
+
+def CTJS_TryOp : CTJS_RegionBranchOp<"try"> {
   let summary = "Execute a protected region and dispatch its exceptional completion";
   let description = [{
     The body ends in try_exit, which selects either the normal result or the
@@ -20,9 +27,8 @@ def CTJS_TryOp : CTJS_Op<"try", [
   let hasVerifier = 1;
 }
 
-def CTJS_TryExitOp : CTJS_Op<"try_exit", [Terminator,
-    DeclareOpInterfaceMethods<RegionBranchTerminatorOpInterface,
-      ["getMutableSuccessorOperands", "getSuccessorRegions"]>]> {
+def CTJS_TryExitOp : CTJS_RegionTerminator<"try_exit",
+    ["getMutableSuccessorOperands", "getSuccessorRegions"]> {
   let summary = "Select a normal result or a thrown value and catch state";
   let arguments = (ins I1:$isThrow, CTJS_ValueType:$normalResult,
                        Variadic<CTJS_ValueType>:$caughtValues);
@@ -30,18 +36,14 @@ def CTJS_TryExitOp : CTJS_Op<"try_exit", [Terminator,
   let hasVerifier = 1;
 }
 
-def CTJS_TryYieldOp : CTJS_Op<"try_yield", [Terminator,
-    DeclareOpInterfaceMethods<RegionBranchTerminatorOpInterface,
-      ["getMutableSuccessorOperands"]>]> {
+def CTJS_TryYieldOp : CTJS_RegionTerminator<"try_yield"> {
   let summary = "Complete a catch with its normal result";
   let arguments = (ins CTJS_ValueType:$value);
   let assemblyFormat = "$value attr-dict";
   let hasVerifier = 1;
 }
 
-def CTJS_InvokeOp : CTJS_Op<"invoke", [
-    DeclareOpInterfaceMethods<RegionBranchOpInterface,
-      ["getSuccessorInputs", "getRegionInvocationBounds"]>]> {
+def CTJS_InvokeOp : CTJS_RegionBranchOp<"invoke"> {
   let summary = "Dispatch one call to normal and exceptional continuations";
   let description = [{
     The body contains exactly one call or call_direct followed by invoke_exit. On
@@ -73,9 +75,7 @@ def CTJS_InvokeOp : CTJS_Op<"invoke", [
   let hasVerifier = 1;
 }
 
-def CTJS_InvokeExitOp : CTJS_Op<"invoke_exit", [Terminator,
-    DeclareOpInterfaceMethods<RegionBranchTerminatorOpInterface,
-      ["getMutableSuccessorOperands"]>]> {
+def CTJS_InvokeExitOp : CTJS_RegionTerminator<"invoke_exit"> {
   let summary = "Dispatch a call completion without exposing its result on throw";
   let description = [{
     This is the completion boundary of the immediately preceding call or call_direct,
@@ -90,9 +90,7 @@ def CTJS_InvokeExitOp : CTJS_Op<"invoke_exit", [Terminator,
   let hasVerifier = 1;
 }
 
-def CTJS_InvokeYieldOp : CTJS_Op<"invoke_yield", [Terminator,
-    DeclareOpInterfaceMethods<RegionBranchTerminatorOpInterface,
-      ["getMutableSuccessorOperands"]>]> {
+def CTJS_InvokeYieldOp : CTJS_RegionTerminator<"invoke_yield"> {
   let summary = "Complete a normal or exceptional invocation continuation";
   let description = [{
     Supply every result of the enclosing invoke after the selected continuation

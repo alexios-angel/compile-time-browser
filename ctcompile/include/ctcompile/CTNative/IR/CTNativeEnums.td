@@ -22,6 +22,17 @@
 
 include "mlir/IR/EnumAttr.td"
 
+// NO SPECIALIZED ATTRIBUTE. These enums parameterize TYPES; they are not
+// attributes on operations. Generating a NumKindAttr the dialect never
+// registers would be a class nobody can parse and a registration hook this
+// dialect does not have. NVGPU's TensorMapSwizzleKind does the same thing for
+// the same reason.
+class CTNative_I32Enum<string name, string summary, list<I32EnumAttrCase> cases>
+    : I32EnumAttr<name, summary, cases> {
+  let cppNamespace = "::ctcompile::ctnative";
+  let genSpecializedAttr = 0;
+}
+
 // THE NUMERIC CHAIN, `i32 -> i64 -> f64`, exactly as part 24 §53B writes it.
 //
 // Every JavaScript number IS an IEEE-754 double, so f64 is the only member of
@@ -35,19 +46,11 @@ include "mlir/IR/EnumAttr.td"
 // both operands descend from a JavaScript double, so an i64 that meets an f64
 // was only ever an f64 that a bound proof had narrowed. The unsound direction
 // is the other one - f64 narrowing to i64 - and this chain cannot express it.
-def CTNative_NumKind : I32EnumAttr<"NumKind", "The C++ arithmetic type a JS number lowers to", [
+def CTNative_NumKind : CTNative_I32Enum<"NumKind", "The C++ arithmetic type a JS number lowers to", [
     I32EnumAttrCase<"I32", 0, "i32">,
     I32EnumAttrCase<"I64", 1, "i64">,
     I32EnumAttrCase<"F64", 2, "f64">,
-  ]> {
-  let cppNamespace = "::ctcompile::ctnative";
-  // NO SPECIALIZED ATTRIBUTE. These enums parameterize TYPES; they are not
-  // attributes on operations. Generating a NumKindAttr the dialect never
-  // registers would be a class nobody can parse and a registration hook this
-  // dialect does not have. NVGPU's TensorMapSwizzleKind does the same thing for
-  // the same reason.
-  let genSpecializedAttr = 0;
-}
+  ]>;
 
 // THE ENCODING CHAIN, `utf8 -> utf16`, ordered by REPRESENTATIONAL WIDTH rather
 // than by preference.
@@ -60,13 +63,10 @@ def CTNative_NumKind : I32EnumAttr<"NumKind", "The C++ arithmetic type a JS numb
 // WHICH OF THE TWO IS THE DEFAULT IS A SEPARATE QUESTION, AND PART 24 GETS IT
 // WRONG FOR THIS ENGINE. See kDefaultStringEncoding in CTNativeLattice.h and
 // entry ND-1 of ctcompile/docs/native-divergences.md.
-def CTNative_StrEncoding : I32EnumAttr<"StrEncoding", "How a JS string is represented in C++", [
+def CTNative_StrEncoding : CTNative_I32Enum<"StrEncoding", "How a JS string is represented in C++", [
     I32EnumAttrCase<"UTF8",  0, "utf8">,
     I32EnumAttrCase<"UTF16", 1, "utf16">,
-  ]> {
-  let cppNamespace = "::ctcompile::ctnative";
-  let genSpecializedAttr = 0;
-}
+  ]>;
 
 // PHASE 55'S ONE NEW DEF: WHY A SITE IS NOT CONFINED.
 //
@@ -94,7 +94,7 @@ def CTNative_StrEncoding : I32EnumAttr<"StrEncoding", "How a JS string is repres
 // nobody can parse. stringifyEscapeReason is what the claims file, the unit
 // test and the histogram print; symbolizeEscapeReason is how the analysis
 // turns a ctjs escape route's name back into one of these.
-def CTNative_EscapeReason : I32EnumAttr<"EscapeReason", "why a site is not confined", [
+def CTNative_EscapeReason : CTNative_I32Enum<"EscapeReason", "why a site is not confined", [
     I32EnumAttrCase<"Confined",          0,  "confined">,
     I32EnumAttrCase<"Returned",          1,  "returned">,
     I32EnumAttrCase<"Thrown",            2,  "thrown">,
@@ -114,9 +114,6 @@ def CTNative_EscapeReason : I32EnumAttr<"EscapeReason", "why a site is not confi
     I32EnumAttrCase<"UnknownOp",         16, "unknown_op">,
     I32EnumAttrCase<"Unvisited",         17, "unvisited">,
     I32EnumAttrCase<"UnvisitedOperand",  18, "unvisited_operand">,
-  ]> {
-  let cppNamespace = "::ctcompile::ctnative";
-  let genSpecializedAttr = 0;
-}
+  ]>;
 
 #endif // CTCOMPILE_CTNATIVE_ENUMS
