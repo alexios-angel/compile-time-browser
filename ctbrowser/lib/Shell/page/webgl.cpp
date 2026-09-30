@@ -51,6 +51,10 @@ void webgl_context::present() {
     // per mesh, which for Babylon's scene meant 267 of them for one frame.
     if (!device_.ok()) { return; }
     if (surface_ == nullptr) { return; }
+    // A BORROWED BITMAP KEEPS ITS SIZE. read_pixels re-makes a bitmap of the
+    // wrong size, and this one is the canvas's: a 2D clip mask or the painter
+    // sized against it would then index past its end.
+    if (surface_->width != device_.width() || surface_->height != device_.height()) { return; }
     (void)device_.read_pixels(*surface_);
 }
 

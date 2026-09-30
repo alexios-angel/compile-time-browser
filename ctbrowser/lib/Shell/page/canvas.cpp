@@ -331,6 +331,8 @@ void canvas_context::draw_focus_ring(const canvas_path & path) {
     state saved = state_;
     state_ = state{};
     state_.clip = saved.clip;
+    state_.clip_width = saved.clip_width;
+    state_.clip_height = saved.clip_height;
     state_.line_width = 2;
     state_.stroke.solid = color::rgba(0x00, 0x5f, 0xcc);
     stroke(path);
@@ -351,21 +353,29 @@ void canvas_context::clip(const canvas_path & path, fill_rule rule) {
     const int w = width();
     std::uint8_t * into = mask->data();
     const std::uint8_t * previous = state_.clip ? state_.clip->data() : nullptr;
-    for_each_span(path, rule, 0, height() - 1, [&](int y, int x0, int x1) {
-        const int left = std::max(0, x0);
-        const int right = std::min(w - 1, x1);
-        if (right < left) { return; }
-        const auto row = static_cast<std::size_t>(y) * static_cast<std::size_t>(w);
-        const auto span = static_cast<std::size_t>(right - left) + 1U;
-        std::uint8_t * out = into + row + static_cast<std::size_t>(left);
-        if (previous == nullptr) {
-            std::fill_n(out, span, std::uint8_t{1});
-            return;
-        }
-        const std::uint8_t * was = previous + row + static_cast<std::size_t>(left);
-        for (std::size_t i = 0; i < span; ++i) { out[i] = static_cast<std::uint8_t>(was[i] != 0); }
-    });
+    // A stale mask clips out everything, and so does anything intersected with
+    // it: the new mask stays all zero.
+    if (!clip_stale()) {
+        for_each_span(path, rule, 0, height() - 1, [&](int y, int x0, int x1) {
+            const int left = std::max(0, x0);
+            const int right = std::min(w - 1, x1);
+            if (right < left) { return; }
+            const auto row = static_cast<std::size_t>(y) * static_cast<std::size_t>(w);
+            const auto span = static_cast<std::size_t>(right - left) + 1U;
+            std::uint8_t * out = into + row + static_cast<std::size_t>(left);
+            if (previous == nullptr) {
+                std::fill_n(out, span, std::uint8_t{1});
+                return;
+            }
+            const std::uint8_t * was = previous + row + static_cast<std::size_t>(left);
+            for (std::size_t i = 0; i < span; ++i) {
+                out[i] = static_cast<std::uint8_t>(was[i] != 0);
+            }
+        });
+    }
     state_.clip = std::move(mask);
+    state_.clip_width = w;
+    state_.clip_height = height();
 }
 
 // --- shadows --------------------------------------------------------------------
@@ -930,10 +940,11 @@ canvas_context::pass::~pass() {
     // nothing, so those pixels go back to what they were.
     if (canvas.backdrop_ && canvas.state_.clip && canvas.pixels_) {
         const std::vector<std::uint8_t> & mask = *canvas.state_.clip;
+        const bool stale = canvas.clip_stale();
         std::vector<std::uint32_t> & out = canvas.pixels_->pixels;
         const std::vector<std::uint32_t> & was = canvas.backdrop_->pixels;
         for (std::size_t i = 0; i < out.size() && i < mask.size(); ++i) {
-            if (mask[i] == 0) { out[i] = was[i]; }
+            if (stale || mask[i] == 0) { out[i] = was[i]; }
         }
     }
     canvas.backdrop_.reset();
@@ -972,6 +983,7 @@ void canvas_context::blend_span(int y, int x0, int x1, color c) {
     std::uint32_t * out = target.pixels.data() + row;
     // The clip mask is the same shape as the bitmap, so the row offset serves
     // both and the per-pixel index arithmetic disappears.
+    if (clip_stale()) { return; }
     const std::uint8_t * mask = state_.clip ? state_.clip->data() + row : nullptr;
     for (int x = left; x <= right; ++x) {
         if (mask != nullptr && mask[x] == 0) { continue; }
@@ -983,6 +995,7 @@ void canvas_context::blend_row(int y, int x0, int x1, const std::uint32_t * colo
     if (!pixels_ || y < 0 || y >= pixels_->height) { return; }
     const auto row = static_cast<std::size_t>(y) * static_cast<std::size_t>(pixels_->width);
     std::uint32_t * out = pixels_->pixels.data() + row;
+    if (clip_stale()) { return; }
     const std::uint8_t * mask = state_.clip ? state_.clip->data() + row : nullptr;
     for (int x = x0; x <= x1; ++x) {
         if (mask != nullptr && mask[x] == 0) { continue; }
@@ -999,6 +1012,7 @@ void canvas_context::write_span(int y, int x0, int x1, std::uint32_t argb) {
     if (left > right) { return; }
     const auto row = static_cast<std::size_t>(y) * static_cast<std::size_t>(target.width);
     std::uint32_t * out = target.pixels.data() + row;
+    if (clip_stale()) { return; }
     const std::uint8_t * mask = state_.clip ? state_.clip->data() + row : nullptr;
     if (mask == nullptr) {
         std::fill(out + left, out + right + 1, argb);

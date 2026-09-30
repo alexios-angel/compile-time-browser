@@ -29,8 +29,29 @@ value dom_bindings::webgl_context_object(context & cx, node_id id, int version) 
     // whichever context it handed out, and the painter reads them through
     // canvases_->pixels_of - so a WebGL draw has to land there or nothing
     // composites it.
+    // ONE CONTEXT PER CANVAS: a canvas that already handed out a 2D context
+    // answers null to `webgl` (4.12.5.1, getContext step 3). Sharing it was also
+    // a heap overread - the 2D clip mask is sized to the bitmap, and present()
+    // re-dimensioned that bitmap under it. The key is canvas.cpp's cache key.
+    const auto existing = webgl_contexts_.find(id.key());
+    const bool first = existing == webgl_contexts_.end() || !existing->second;
+    if (first) {
+        const value wrapper = wrap(cx, id);
+        if (wrapper.is_object() &&
+            static_cast<script::object_object *>(wrapper.as_heap())
+                    ->find(CTBROWSER_PRIVATE_KEY("ctbrowser:context2d")) != nullptr) {
+            return value::null();
+        }
+    }
     canvas_context * surface = canvases_->context_for(id, width, height);
     if (surface == nullptr) { return value::null(); }
+    // THE BUFFER MATCHES THE DEVICE. A surface made at an older size (by
+    // toDataURL, before a width attribute changed) is re-made at this one, so
+    // present() never has to re-dimension a bitmap it only borrows. Only
+    // before the context exists: afterwards it holds a pointer into the surface.
+    if (first && (surface->width() != width || surface->height() != height)) {
+        canvases_->resize(id, width, height);
+    }
 
     auto & made = webgl_contexts_[id.key()];
     // `made` IS A REFERENCE INTO THE MAP, so it is non-null from here on

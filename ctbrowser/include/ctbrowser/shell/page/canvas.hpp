@@ -278,6 +278,11 @@ public:
         // polygons exactly is a clipping-polygon algorithm, where a mask is one
         // AND per pixel. Shared, so save() copies a pointer and not a buffer.
         std::shared_ptr<const std::vector<std::uint8_t>> clip;
+        // The bitmap size the mask was built for. A surface re-dimensioned
+        // under a live clip leaves the mask the wrong shape, and indexing it
+        // with the new width reads past its end - so a mismatch is clipped out.
+        int clip_width = 0;
+        int clip_height = 0;
     };
 
     canvas_context(std::shared_ptr<bitmap> pixels, const raster::font_backend * fonts = nullptr)
@@ -467,8 +472,14 @@ private:
     // The opaque write path (`clearRect`).
     void write_span(int y, int x0, int x1, std::uint32_t argb);
 
+    // A clip in force that was built for another bitmap size (see
+    // state::clip_width): everything is outside it.
+    [[nodiscard]] bool clip_stale() const noexcept {
+        return state_.clip && (state_.clip_width != width() || state_.clip_height != height());
+    }
     [[nodiscard]] bool clipped_out(int x, int y) const noexcept {
         if (!state_.clip) { return false; }
+        if (clip_stale()) { return true; }
         if (x < 0 || y < 0 || x >= width() || y >= height()) { return true; }
         return (*state_.clip)[static_cast<std::size_t>(y) * static_cast<std::size_t>(width()) +
                               static_cast<std::size_t>(x)] == 0;

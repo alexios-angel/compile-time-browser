@@ -576,6 +576,72 @@ void test_webgl_is_constructible_and_refuses() {
     check(asking != "<not logged>", "the sketch reported what happened: " + asking);
 }
 
+// A CLIP MASK IS SIZED TO THE BITMAP IT WAS BUILT FOR. When the surface is
+// re-dimensioned under a live clip (WebGL's present() once did it), indexing
+// the old mask with the new width read past its end. A stale mask now clips
+// out everything, until a resize or restore() replaces it. 2D only, so the
+// asan preset (no WebGL) can run it.
+void test_clip_after_surface_resized() {
+    browser page{browser_options{300, 200}};
+    page.load_html(R"(<html><body><canvas id=c width=100 height=40></canvas><script>
+        var ctx = document.getElementById('c').getContext('2d');
+        ctx.save();
+        ctx.beginPath(); ctx.rect(10, 10, 20, 20); ctx.clip();
+    </script></body></html>)");
+    check(page.script_error().empty(), "the script ran: " + page.script_error());
+    shell::canvas_context * canvas = page.canvases().find(find_id(page, "c"));
+    check(canvas != nullptr, "the canvas has a context");
+    if (canvas == nullptr) { return; }
+    *canvas->surface() = paint::bitmap{400, 40};
+    (void)page.run_script(R"(
+        ctx.fillStyle = '#ff0000'; ctx.fillRect(0, 0, 400, 40);
+        ctx.clearRect(0, 0, 400, 40);
+        ctx.globalCompositeOperation = 'copy'; ctx.fillRect(0, 0, 400, 40);
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.beginPath(); ctx.rect(0, 0, 400, 40); ctx.clip();
+        ctx.fillRect(0, 0, 400, 40);
+        ctx.restore();
+        ctx.fillStyle = '#00ff00'; ctx.fillRect(300, 0, 10, 10);
+    )");
+    check(page.script_error().empty(), "the draws ran: " + page.script_error());
+    const auto pixels = canvas->surface();
+    check(color{pixels->at(350, 20)}.alpha() == 0, "a stale clip clips everything out");
+    check(color{pixels->at(305, 5)} == color::rgba(0, 255, 0), "restore() drops the stale clip");
+}
+
+// ONE CONTEXT PER CANVAS. A canvas that handed out a 2D context answers null
+// to `webgl`; sharing the bitmap let present() re-dimension it under the 2D
+// clip mask (a heap overread). A canvas whose surface predates a width change
+// gets a WebGL context over a surface of the new size.
+void test_webgl_after_2d_is_null() {
+    browser page{browser_options{300, 200}};
+    page.load_html(R"(<html><body><canvas id=c width=100 height=40></canvas>
+        <canvas id=d width=100 height=40></canvas><script>
+        const c = document.getElementById('c');
+        const ctx = c.getContext('2d');
+        ctx.beginPath(); ctx.rect(10, 10, 20, 20); ctx.clip();
+        c.setAttribute('width', '400');
+        console.log('gl=' + c.getContext('webgl'));
+        ctx.fillStyle = '#ff0000'; ctx.fillRect(0, 0, 400, 40);
+        ctx.clearRect(0, 0, 400, 40);
+        const d = document.getElementById('d');
+        d.toDataURL();
+        d.setAttribute('width', '400');
+        const gl = d.getContext('webgl');
+        if (gl) {
+            gl.clearColor(0, 0, 1, 1); gl.clear(gl.COLOR_BUFFER_BIT);
+            const px = new Uint8Array(4);
+            gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+        }
+    </script></body></html>)");
+    check(page.script_error().empty(), "the script ran: " + page.script_error());
+    bool nulled = false;
+    for (const std::string & line : log_of(page)) { nulled = nulled || line == "gl=null"; }
+    check(nulled, "getContext('webgl') after '2d' is null");
+    const auto pixels = page.canvases().pixels_of(find_id(page, "d"));
+    check(pixels != nullptr && pixels->width == 400, "the WebGL surface takes the new width");
+}
+
 // A CANVAS IS AN IMAGE SOURCE. `drawImage(otherCanvas, ...)` is how a page
 // composites one surface onto another - and it is what p5's `image(g, ...)` does
 // with a createGraphics, so an offscreen buffer drew nothing at all.
@@ -909,6 +975,8 @@ int main() {
     test_gradients_caps_and_round_corners();
     test_canvas_as_image_source();
     test_clip();
+    test_clip_after_surface_resized();
+    test_webgl_after_2d_is_null();
     test_webgl_is_constructible_and_refuses();
     test_webgl_buffer_data_sizes();
     test_composite_operations();

@@ -708,15 +708,18 @@ void test_getcontext_only_answers_for_2d() {
     check(log.size() == 4, "four console lines");
     if (log.size() == 4) {
         check(log[0] == "2d true", "a 2d context exists");
-        check(log[1] == "webgl true", "and so does a webgl one");
+        // ONE CONTEXT TYPE PER CANVAS, 2d included (getContext step 3): this
+        // answered a webgl context over the 2d bitmap until 2026-09-30, and
+        // present() re-dimensioned that bitmap under the 2d clip mask.
+        check(log[1] == "webgl false", "and a webgl one is null after it");
         // STILL NULL, FOR A COMPLETELY DIFFERENT REASON since 2026-08-02.
         // It used to be null because webgl2 was unimplemented; now it is null
-        // because this canvas already has a `webgl` context two lines above,
+        // because this canvas already has a context two lines above,
         // and A CANVAS HAS ONE CONTEXT TYPE FOR EVER - asking for a different
         // id returns null rather than converting it or handing back the one it
         // has under the wrong name. unittests/unit/canvas_context.cpp asserts the other
         // side of that rule, on a canvas that takes webgl2 first.
-        check(log[2] == "webgl2 true", "webgl2 is null on a canvas that already took webgl");
+        check(log[2] == "webgl2 true", "webgl2 is null on a canvas that already has a context");
         // Anything ELSE is still null - that is what an unknown context type
         // means, and a page testing for one expects null rather than a throw.
         check(log[3] == "unknown true", "an unknown context type is still null");
