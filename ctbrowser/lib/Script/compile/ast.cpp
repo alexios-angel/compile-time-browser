@@ -18,6 +18,10 @@ void compiler_impl::compile_owned_expr(std::string source, std::uint16_t dst) {
 void compiler_impl::compile_foreign_expr(std::string_view source, std::uint16_t dst) {
     auto tree = std::make_unique<vp::ast>(vp::parse(source));
     if (!tree->ok || tree->root < 0) {
+        // A TEMPLATE HOLE THAT DOES NOT PARSE is a SyntaxError, not undefined.
+        // Thrown where it is evaluated rather than refusing the whole script:
+        // the parse also fails on engine gaps (`${yield x}` parses alone).
+        emit_throw("SyntaxError", "parse error: " + std::string{tree->error});
         proto().emit(instruction{op::load_undef, dst});
         return;
     }

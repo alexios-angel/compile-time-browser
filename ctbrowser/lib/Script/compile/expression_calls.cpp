@@ -20,16 +20,31 @@ void compiler_impl::split_template(std::string_view raw, std::vector<std::string
         if (raw[i] == '$' && i + 1 < raw.size() && raw[i + 1] == '{') {
             chunks.push_back(std::move(chunk));
             chunk.clear();
+            // THE HOLE ENDS AT THE `}` TOKEN that balances it, found by LEXING
+            // the rest: a brace inside a string, comment, regex or nested
+            // template is not one, so `${"}${alert(1)}"}` is one hole holding
+            // a string, not a hole `"` and a second hole that runs code. The
+            // tail past the hole lexes as garbage and is never looked at. With
+            // no balancing `}` the hole is the rest, which does not parse and
+            // throws a SyntaxError where it is evaluated (compile_foreign_expr).
+            // ponytail: re-lexes the remaining template per hole, quadratic in
+            // a template of many holes; lex once per hole end if that shows.
+            const std::size_t start = i + 2;
+            const std::string_view rest = raw.substr(start);
+            std::size_t end = rest.size();
+            std::size_t resume = rest.size();
             std::size_t depth = 1;
-            std::size_t at_char = i + 2;
-            const std::size_t start = at_char;
-            while (at_char < raw.size() && depth > 0) {
-                if (raw[at_char] == '{') { ++depth; }
-                if (raw[at_char] == '}') { --depth; }
-                if (depth > 0) { ++at_char; }
+            for (const vp::token & t : vp::lex(rest)) {
+                if (t.kind != vp::tk::punct) { continue; }
+                if (t.s == "{") { ++depth; }
+                if (t.s == "}" && --depth == 0) {
+                    end = t.begin;
+                    resume = t.end;
+                    break;
+                }
             }
-            holes.emplace_back(raw.substr(start, at_char - start));
-            i = at_char + 1;
+            holes.emplace_back(rest.substr(0, end));
+            i = start + resume;
             continue;
         }
         chunk += raw[i++];

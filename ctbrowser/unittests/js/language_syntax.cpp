@@ -577,5 +577,23 @@ int main() {
     answers("var using = 1; return using;", "1"); // an ordinary name everywhere else
     answers("var using, x; using\nx = 2; return x;", "2");
 
+    // --- A TEMPLATE HOLE ends at the `}` that balances it as a TOKEN (LOGIC-023):
+    // a brace inside a string, comment, regex or nested template is data. The
+    // naive cut made `${"}${alert(1)}"}` two holes, the second one code.
+    answers("var ran = 0; function alert() { ran = 1; }"
+            " var s = `${\"}${alert(1)}\"}`; return s + ran;",
+            "}${alert(1)}0");
+    answers("var ran = 0; function alert() { ran = 1; }"
+            " var s = String.raw`${'}${alert(1)}'}`; return s + ran;",
+            "}${alert(1)}0");
+    answers("return `<${ /* } */ 1 }|${ /}/.source }|${ `a${1}b` }>`;", "<1|}|a1b>");
+    // ponytail: the ctjs LEXER still cuts the whole template by counting raw
+    // braces, so a `{` in data (`${"{"}`) or a backtick after a `}` in data
+    // (`${"}`"}`) mis-cuts the token itself - a parse error, or the source
+    // after it swallowed into the template - fixable only in the submodule.
+    answers("return `${ {v: '}'}.v }`;", "}");
+    // A hole that does not parse is a SyntaxError where it runs, not undefined.
+    answers("try { return `${ 1 + }`; } catch (e) { return e instanceof SyntaxError; }", "true");
+
     return ctbrowser_test_failures == 0 ? 0 : 1;
 }
