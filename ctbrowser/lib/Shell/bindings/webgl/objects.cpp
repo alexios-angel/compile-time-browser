@@ -9,19 +9,7 @@ using namespace detail;
 
 namespace {
 
-// A double as a float the way JavaScript rounds one (Math.fround): nearest,
-// and past the largest float, Infinity. The plain cast is undefined behaviour
-// for a finite double out of float's range ([conv.double]), and a page's
-// Float32 data is exactly where 1e300 arrives from. At or beyond FLT_MAX plus
-// half an ulp (0x1.ffffffp127) the nearest float IS infinity; below it the cast
-// is in range. NaN converts as a NaN.
-[[nodiscard]] float to_float(double d) noexcept {
-    if (std::abs(d) >= 0x1.ffffffp127) {
-        constexpr float inf = std::numeric_limits<float>::infinity();
-        return d > 0 ? inf : -inf;
-    }
-    return static_cast<float>(d);
-}
+using script::to_float;
 
 // Pull bytes out of whatever a page passed: a typed array, an ArrayBuffer, or a
 // plain array of numbers. All three carry their data in `__bytes` or are arrays

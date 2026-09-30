@@ -89,7 +89,7 @@ void install_math(context & cx, std::uint64_t seed) {
     unary("asinh", [](double x) { return std::asinh(x); });
     unary("acosh", [](double x) { return std::acosh(x); });
     unary("atanh", [](double x) { return std::atanh(x); });
-    unary("fround", [](double x) { return static_cast<double>(static_cast<float>(x)); });
+    unary("fround", [](double x) { return static_cast<double>(to_float(x)); });
     // 21.3.2.17 Math.f16round: the nearest binary16, ties to even, straight
     // from the double - through `float` first would round twice. A binary16
     // has 10 fraction bits and a least exponent of -14, so the unit in the

@@ -199,6 +199,8 @@ int main() {
     js_expect("Math.fround(NaN)", "NaN");
     js_expect("Math.fround(Infinity)", "Infinity");
     js_expect("Math.fround(1e300)", "Infinity");
+    js_expect("Math.fround(-1e300)", "-Infinity");
+    js_expect("Math.fround(3.4028235677973366e38)", "Infinity"); // FLT_MAX + half an ulp
     // f16round is the same round trip through binary16 (ties to even, straight
     // from the double), V8's answers.
     js_expect("Math.f16round(1.5)", "1.5");
