@@ -854,14 +854,24 @@ fail. p5's `save()`, `saveCanvas()`, `saveJSON()`, `saveStrings()` and
 download>` built entirely from script, `click()`, revoke. So the choice was
 between a file appearing and the whole export API being a no-op with no message.
 
-    page.set_download_directory("build/downloads");  // empty means the CWD
+    page.set_download_directory("build/downloads");  // empty means NO write
     page.downloads();                                // every export, recorded
+
+Downloads are OFF by default: `app_options::download_directory` is unset, and an
+empty directory means the export is recorded with `written == false` and nothing
+touches the disk. A shipped game that wants exports sets a directory of its own.
+A write also needs a user gesture, is capped by `max_download_bytes` (64 MiB) and
+never overwrites an existing file (`name-1`, `name-2`, ...).
 
 The bytes come from the asset registry, which is where `createObjectURL` put
 them, so this needs no knowledge of blobs. A `download` attribute is a NAME and
-not a path: `/`, `\` and `:` are replaced, because a page does not get to choose
-where on the host it writes. Every export is recorded whether or not the write
-succeeded, so a test can assert on it without reading the disk.
+not a path, and `shell::sanitize_download_name` keeps it that way: basename only,
+no control characters or `<>:"/\|?*`, no trailing dots or spaces, no Windows
+device names (`CON`, `NUL`, `COM1`, ... with any extension) and no executable or
+library extensions (`.exe`, `.dll`, `.so`, ...), because a page does not get to
+choose where on the host it writes or what it plants. Every export is recorded
+whether or not the write succeeded, so a test can assert on it without reading
+the disk.
 
 ### The smaller gaps this needed
 
