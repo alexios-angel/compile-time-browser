@@ -27,6 +27,7 @@
 // edge's writes in a block of their own is the only placement that is correct
 // for every terminator, so it is used for all of them rather than only where the
 // hazard is visible.
+#include "ctcompile/CTJS/IR/CTJSOps.h"
 #include "ctcompile/CTJS/Transforms/Passes.h"
 
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -74,8 +75,8 @@ struct EmitCEliminateBlockArgumentsPass
                 if (op->getName().getStringRef() != "ctjs.func") {
                     return mlir::WalkResult::advance();
                 }
-                return op->hasAttr("ctjs.not_lowered") ? mlir::WalkResult::advance()
-                                                       : mlir::WalkResult::interrupt();
+                return op->hasAttr(notLoweredMarker) ? mlir::WalkResult::advance()
+                                                     : mlir::WalkResult::interrupt();
             });
             early.wasInterrupted()) {
             getOperation().emitError()

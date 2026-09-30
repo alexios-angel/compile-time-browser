@@ -106,7 +106,7 @@ bool lowering::lower(FuncOp function, mlir::OpBuilder & build, mlir::MLIRContext
     // callee's window with missing parameters filled in with undefined" -
     // so argv[i] is well-defined for every declared parameter regardless of
     // how many arguments actually arrived.
-    const unsigned declared = body.getNumArguments() - implicit_arguments;
+    const unsigned declared = parameterCount(body);
     llvm::SmallVector<mlir::Value> parameters;
     parameters.reserve(declared);
     //

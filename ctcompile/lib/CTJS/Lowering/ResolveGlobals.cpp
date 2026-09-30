@@ -242,12 +242,6 @@ struct verdict {
     std::string reason;      // why not, when the target is null
 };
 
-// A BODY WHOSE ENTRY BLOCK CARRIES THE IMPLICIT ARGUMENTS every call binds.
-bool has_entry(FuncOp function) {
-    return !function.getBody().empty() &&
-           function.getBody().front().getNumArguments() >= implicit_arguments;
-}
-
 verdict bound_closure(const census & world, mlir::StringAttr name, const binding & facts) {
     const auto no = [](std::string because) {
         return verdict{FuncOp{}, CreateClosureOp{}, std::move(because)};
@@ -276,10 +270,12 @@ verdict bound_closure(const census & world, mlir::StringAttr name, const binding
         return no("function " + std::to_string(index) +
                   " emitted no ctjs.func - refused by the importer (ctjs.skipped)");
     }
-    if (target->hasAttr("ctjs.not_lowered")) {
+    if (target->hasAttr(notLoweredMarker)) {
         return no("function " + target.getSymName().str() + " was refused");
     }
-    if (!has_entry(target)) { return no("function " + target.getSymName().str() + " has no body"); }
+    if (!implicitEntry(target)) {
+        return no("function " + target.getSymName().str() + " has no body");
+    }
     return verdict{target, made, {}};
 }
 
@@ -331,21 +327,6 @@ bool enters_arrow(const census & world, mlir::Value callee) {
     return made && made.getEnclosingThis().getDefiningOp<ConstantOp>() == nullptr;
 }
 
-// DOES THIS BODY READ ITS RAW ARGUMENT WINDOW? `arguments` and a rest
-// parameter copy the FRAME's registers - every value the site passed, not the
-// declared ones - and read them back under an index this walk cannot see
-// (ctjs.make_arguments' own note: make_arguments_object copies the RAW
-// window). A marked value handed to such a body is reachable there through a
-// computed key, so a body holding one is not a known callee at all.
-bool reads_raw_arguments(FuncOp function) {
-    return function
-        .walk([](mlir::Operation * op) {
-            return mlir::isa<MakeArgumentsOp, GatherRestOp>(op) ? mlir::WalkResult::interrupt()
-                                                                : mlir::WalkResult::advance();
-        })
-        .wasInterrupted();
-}
-
 // PADDING A SHORT CALL IS VISIBLE TO `arguments`, AND IS THE ONE THING THE PAD
 // MAY NOT CHANGE.
 //
@@ -364,7 +345,7 @@ bool reads_raw_arguments(FuncOp function) {
 // mentions `arguments` would refuse calls that are already the right length and
 // change nothing about them.
 bool padding_hides_arguments(FuncOp target, std::size_t supplied, unsigned parameters) {
-    return supplied < parameters && reads_raw_arguments(target);
+    return supplied < parameters && readsRawArguments(target);
 }
 
 // WHY `call` CANNOT BECOME A ctjs.call_direct INTO `target`, or nothing.
@@ -489,7 +470,7 @@ std::optional<std::string> dynamic_global_writes(
     };
     const auto reads_arguments = [&](FuncOp target) {
         const auto row = raw_arguments.try_emplace(target.getOperation(), false);
-        if (row.second) { row.first->second = reads_raw_arguments(target); }
+        if (row.second) { row.first->second = readsRawArguments(target); }
         return row.first->second;
     };
 
@@ -510,7 +491,7 @@ std::optional<std::string> dynamic_global_writes(
     // for every classic script, strict or not), so `function f() { return 1; }
     // this.f = function () { return 2; }; f();` rebinds `f` - and resolving it
     // answered 1 through a call_direct where the VM answers 2.
-    if (FuncOp top = world.top; top && has_entry(top)) {
+    if (FuncOp top = world.top; top && implicitEntry(top)) {
         mark(top.getBody().front().getArgument(0), watched::global_object);
     }
     // AND A BODY NO OPERATION HERE CREATES is created inside one the importer
@@ -523,7 +504,7 @@ std::optional<std::string> dynamic_global_writes(
     });
     for (const auto & [index, entered] : world.by_index) {
         if (FuncOp function = entered;
-            index != 0 && !created.contains(index) && has_entry(function)) {
+            index != 0 && !created.contains(index) && implicitEntry(function)) {
             mark(function.getBody().front().getArgument(0), watched::receiver);
         }
     }
@@ -549,14 +530,14 @@ std::optional<std::string> dynamic_global_writes(
         // property read may call and that returns or passes `this` on.
         if (auto call = mlir::dyn_cast<CallOp>(op)) {
             FuncOp target = known_callee(world, call.getCallee());
-            if (target && has_entry(target) && !enters_arrow(world, call.getCallee())) {
+            if (target && implicitEntry(target) && !enters_arrow(world, call.getCallee())) {
                 mark(target.getBody().front().getArgument(0), watched::receiver);
             }
         }
         if (auto direct = mlir::dyn_cast<CallDirectOp>(op)) {
             auto target =
                 mlir::SymbolTable::lookupNearestSymbolFrom<FuncOp>(direct, direct.getCalleeAttr());
-            if (target && has_entry(target)) {
+            if (target && implicitEntry(target)) {
                 mark(target.getBody().front().getArgument(0), watched::receiver);
             }
         }
@@ -599,12 +580,12 @@ std::optional<std::string> dynamic_global_writes(
     // new.target, callee, then the declared parameters.
     const auto enter = [&](FuncOp target, std::size_t supplied, unsigned parameter,
                            mlir::Operation * at, watched kind) -> std::optional<std::string> {
-        if (!target || !has_entry(target)) {
+        if (!target || !implicitEntry(target)) {
             return name_of(kind) + " escapes into a call whose callee this module does not name (" +
                    describe(at) + ")";
         }
         mlir::Block & entry = target.getBody().front();
-        const unsigned parameters = entry.getNumArguments() - ctjs::implicit_arguments;
+        const unsigned parameters = parameterCount(entry);
         if (supplied > parameters) {
             return name_of(kind) + " is passed to " + target.getSymName().str() + " beyond its " +
                    std::to_string(parameters) +
@@ -693,7 +674,7 @@ std::optional<std::string> dynamic_global_writes(
                 made && use.getOperandNumber() == 1) {
                 FuncOp arrow =
                     world.by_index.lookup(static_cast<std::uint32_t>(made.getFunction()));
-                if (!arrow || !has_entry(arrow)) {
+                if (!arrow || !implicitEntry(arrow)) {
                     return name_of(kind) +
                            " is captured by an arrow whose body was not imported (" + describe(op) +
                            ")";
@@ -745,7 +726,7 @@ std::optional<std::string> dynamic_global_writes(
 // CLAUSE 4's second half: F's own closure, as its body sees it, feeds nothing
 // but nested closures and upvalue reads. Anything else is an escape.
 std::optional<std::string> own_closure_escapes(FuncOp function) {
-    if (!has_entry(function)) { return "the function has no callee argument"; }
+    if (!implicitEntry(function)) { return "the function has no callee argument"; }
     if (mlir::Operation * op = ownClosureEscape(function)) {
         return "the function's own closure escapes into " + describe(op);
     }
@@ -868,8 +849,7 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
             FuncOp target = answer.target;
             ++resolvedGlobals;
             ++resolved_here;
-            const unsigned parameters =
-                target.getBody().front().getNumArguments() - ctjs::implicit_arguments;
+            const unsigned parameters = parameterCount(target.getBody().front());
 
             // ---- the rewrite, per load ----------------------------------------
             std::optional<std::string> open;
@@ -972,9 +952,10 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
         });
         for (CallOp call : closure_calls) {
             FuncOp target = known_callee(world, call.getCallee());
-            if (!target || target->hasAttr("ctjs.not_lowered") || !has_entry(target)) { continue; }
-            const unsigned parameters =
-                target.getBody().front().getNumArguments() - ctjs::implicit_arguments;
+            if (!target || target->hasAttr(notLoweredMarker) || !implicitEntry(target)) {
+                continue;
+            }
+            const unsigned parameters = parameterCount(target.getBody().front());
             if (direct_refusal(call, parameters, target, passes_new_target)) { continue; }
             rewrite_direct(call, target, parameters);
             ++rewrittenCalls;

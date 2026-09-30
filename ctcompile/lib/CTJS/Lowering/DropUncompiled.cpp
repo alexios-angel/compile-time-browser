@@ -17,6 +17,7 @@
 // next operation gets chosen. Running this pass is the caller saying "I want a
 // translation unit now", which is a different question from "what can you
 // compile".
+#include "ctcompile/CTJS/IR/CTJSOps.h"
 #include "ctcompile/CTJS/Transforms/Passes.h"
 
 #include "mlir/IR/BuiltinOps.h"
@@ -34,7 +35,7 @@ struct CTJSDropUncompiledPass : impl::CTJSDropUncompiledBase<CTJSDropUncompiledP
     void runOnOperation() override {
         llvm::SmallVector<mlir::Operation *> refused;
         getOperation().walk([&](mlir::Operation * op) {
-            if (op->getName().getStringRef() == "ctjs.func" && op->hasAttr("ctjs.not_lowered")) {
+            if (op->getName().getStringRef() == "ctjs.func" && op->hasAttr(notLoweredMarker)) {
                 refused.push_back(op);
             }
         });

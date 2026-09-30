@@ -86,9 +86,7 @@ void importInstruction(function_importer & state, mlir::Block * entry, std::size
         }
         const value k = proto.constants[in.bx()];
         if (k.is_number()) {
-            set(in.a,
-                state.constant(where, ctjs::NumberAttr::get(
-                                          context, std::bit_cast<std::uint64_t>(k.as_number()))));
+            set(in.a, state.constant(where, ctjs::numberAttr(context, k.as_number())));
         } else if (k.is_boolean()) {
             set(in.a, state.constant(where, ctjs::BooleanAttr::get(context, k.as_boolean())));
         } else if (k.is_undefined()) {

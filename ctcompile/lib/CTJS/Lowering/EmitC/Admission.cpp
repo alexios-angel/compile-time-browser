@@ -37,7 +37,7 @@ bool runtime_defines(llvm::StringRef helper) {
 
 // WHY A FUNCTION WAS LEFT ALONE, in a form ctjs-opt prints.
 void refuse(FuncOp function, llvm::StringRef because) {
-    function->setAttr("ctjs.not_lowered", mlir::StringAttr::get(function.getContext(), because));
+    function->setAttr(notLoweredMarker, mlir::StringAttr::get(function.getContext(), because));
 }
 
 // Whether every operation in the body is one this pass knows how to emit.
@@ -189,10 +189,7 @@ bool body_is_supported(FuncOp function, std::string & why) {
             // values and print identically. A string is still refused; it
             // reaches ct_aot_new_string, which is a safepoint, and nothing
             // roots the result yet.
-            if (mlir::isa<UndefinedAttr, NullAttr, BooleanAttr, NumberAttr, StringAttr, BigIntAttr>(
-                    constant.getValue())) {
-                return;
-            }
+            if (isConstantAttr(constant.getValue())) { return; }
             fail("no lowering yet for this constant");
             return;
         }
