@@ -15,6 +15,8 @@
 
 #include "ctcompile/CTJS/Lowering/OpcodeMapping.hpp"
 
+#include <bitset>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -124,14 +126,40 @@ std::pair<mlir::Value, mlir::Value> bytes_and_length(mlir::OpBuilder & build, ml
                                                      llvm::StringRef text);
 mlir::Value intern(mlir::OpBuilder & build, mlir::Location where, llvm::StringRef name);
 mlir::Value nonzero(mlir::OpBuilder & build, mlir::Location where, mlir::Value u32);
+mlir::Value compare_zero(mlir::OpBuilder & build, mlir::Location where, ec::CmpPredicate predicate,
+                         mlir::Value u32);
+mlir::Value u32_literal(mlir::OpBuilder & build, mlir::Location where, std::uint64_t number);
+mlir::Value opaque_call(mlir::OpBuilder & build, mlir::Location where, mlir::Type produces,
+                        llvm::StringRef helper, mlir::ValueRange arguments);
+mlir::Value status_literal(mlir::OpBuilder & build, mlir::Location where, mlir::Type status,
+                           llvm::StringRef named);
+mlir::Value status_is(mlir::OpBuilder & build, mlir::Location where, mlir::Type status,
+                      mlir::Value answered, llvm::StringRef named);
+std::optional<mlir::ValueRange> window_operands(mlir::Operation & op);
 std::string c_identifier(llvm::StringRef symbol);
 bool runtime_defines(llvm::StringRef helper);
 void refuse(FuncOp function, llvm::StringRef because);
 bool body_is_supported(FuncOp function, std::string & why);
 
+// THE PRELUDE'S SHIMS, each a name box() calls and the body Module.cpp emits
+// for it - one row, so the two cannot drift apart. See lowering::run.
+enum class shim : unsigned {
+    box_bool,
+    box_number
+};
+struct shim_row {
+    llvm::StringLiteral name;
+    llvm::StringLiteral body;
+};
+inline constexpr shim_row shim_rows[] = {
+    {"ctc_box_bool", "inline uint64_t ctc_box_bool(bool b) { return "
+                     "::ctbrowser::script::value::boolean(b).bits(); }"},
+    {"ctc_box_number", "inline uint64_t ctc_box_number(double d) { return "
+                       "::ctbrowser::script::value::number(d).bits(); }"},
+};
+
 struct lowering {
-    bool boxes_bool = false;
-    bool boxes_number = false;
+    std::bitset<std::size(shim_rows)> used_shims;
     void run(mlir::ModuleOp module, mlir::MLIRContext * context);
     bool lower(FuncOp function, mlir::OpBuilder & build, mlir::MLIRContext * context);
     static mlir::Type as_emitc(mlir::Type type, mlir::Type value);
@@ -160,9 +188,9 @@ struct lowering {
     mlir::Value window_pointer(compiled_entry & scope, mlir::OpBuilder & build,
                                mlir::Location where, unsigned base);
     unsigned park_window(compiled_entry & scope, mlir::OpBuilder & build, mlir::Location where,
-                         mlir::IRMapping & mapping, mlir::Operation & op, mlir::ValueRange values);
-    mlir::Value box(mlir::OpBuilder & build, mlir::Location where, mlir::Type value,
-                    llvm::StringRef shim, mlir::Value machine);
+                         mlir::IRMapping & mapping, mlir::Operation & op);
+    mlir::Value box(mlir::OpBuilder & build, mlir::Location where, mlir::Type value, shim which,
+                    mlir::Value machine);
     mlir::Value undefined(mlir::OpBuilder & build, mlir::Location where, mlir::Type value);
     mlir::Value constant_value(mlir::OpBuilder & build, mlir::Location where, mlir::Type value,
                                ConstantOp constant);

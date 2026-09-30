@@ -24,7 +24,12 @@ bool may_be_function(mlir::Value value);
 bool prototype_replaced(mlir::ModuleOp module);
 bool hands_back_the_global_object(llvm::StringRef key);
 bool hands_back_the_compiler(llvm::StringRef key);
-std::optional<std::string> opaque_refusal(mlir::ModuleOp module);
-llvm::DenseSet<mlir::StringAttr> refused_store_names(mlir::ModuleOp module);
+// WHAT THE IMPORTER'S ctjs.skipped ROWS SAY: a reason that refuses the whole
+// module, and the names the refused bodies may store.
+struct skipped_summary {
+    std::optional<std::string> opaque;
+    llvm::DenseSet<mlir::StringAttr> stores;
+};
+skipped_summary read_skipped(mlir::ModuleOp module);
 bool in_prologue(StoreGlobalOp store);
 } // namespace ctcompile::ctjs::globals_detail

@@ -63,13 +63,8 @@ void lowering::run(mlir::ModuleOp module, mlir::MLIRContext * context) {
         // generated code, not engine code: nothing links against them and
         // no other backend has to agree about them.
         std::string prelude;
-        if (boxes_bool) {
-            prelude += "\ninline uint64_t ctc_box_bool(bool b) { return "
-                       "::ctbrowser::script::value::boolean(b).bits(); }";
-        }
-        if (boxes_number) {
-            prelude += "\ninline uint64_t ctc_box_number(double d) { return "
-                       "::ctbrowser::script::value::number(d).bits(); }";
+        for (const auto [index, row] : llvm::enumerate(shim_rows)) {
+            if (used_shims.test(index)) { prelude += "\n" + row.body.str(); }
         }
         if (!prelude.empty()) {
             ec::VerbatimOp::create(build, module.getLoc(),

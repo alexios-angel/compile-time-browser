@@ -10,15 +10,15 @@ namespace ctcompile::ctjs::emitc_detail {
 // is a member call on a temporary - which emitc.call_opaque, whose whole
 // output is `callee(args)`, cannot spell.
 mlir::Value lowering::box(mlir::OpBuilder & build, mlir::Location where, mlir::Type value,
-                          llvm::StringRef shim, mlir::Value machine) {
+                          shim which, mlir::Value machine) {
     // ONLY THE SHIMS A MODULE ACTUALLY USES ARE EMITTED. A translation unit
     // carrying a function nothing calls is dead code the host compiler will
     // warn about - and this project builds with -Werror, so emitting all of
     // them unconditionally would make the generated output unbuildable
     // under the same flags as everything else.
-    if (shim == "ctc_box_bool") { boxes_bool = true; }
-    if (shim == "ctc_box_number") { boxes_number = true; }
-    return ec::CallOpaqueOp::create(build, where, mlir::TypeRange{value}, shim,
+    const auto index = static_cast<std::size_t>(which);
+    used_shims.set(index);
+    return ec::CallOpaqueOp::create(build, where, mlir::TypeRange{value}, shim_rows[index].name,
                                     mlir::ValueRange{machine})
         .getResult(0);
 }

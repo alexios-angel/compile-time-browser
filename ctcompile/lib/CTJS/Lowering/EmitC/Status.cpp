@@ -40,16 +40,13 @@ mlir::Block * lowering::failure_path(compiled_entry & scope, mlir::OpBuilder & b
     mlir::Block * finish = scope.entry.addBlock();
 
     build.setInsertionPointToEnd(propagate);
-    const mlir::Value gone = literal(
-        build, where, scope.status, "static_cast<int32_t>(ctbrowser::aot::ct_aot_status::unwound)");
-    auto destroyed = ec::CmpOp::create(build, where, mlir::IntegerType::get(build.getContext(), 1),
-                                       ec::CmpPredicate::eq, propagate->getArgument(0), gone);
+    const mlir::Value destroyed =
+        status_is(build, where, scope.status, propagate->getArgument(0), "unwound");
     mlir::cf::CondBranchOp::create(build, where, destroyed, finish, mlir::ValueRange{}, leaving,
                                    mlir::ValueRange{});
 
     build.setInsertionPointToEnd(leaving);
-    ec::CallOpaqueOp::create(build, where, mlir::TypeRange{}, callee("ct_aot_leave"),
-                             mlir::ValueRange{scope.frame});
+    opaque_call(build, where, {}, "ct_aot_leave", {scope.frame});
     mlir::cf::BranchOp::create(build, where, finish);
 
     build.setInsertionPointToEnd(finish);
@@ -78,10 +75,8 @@ mlir::Block * lowering::caught_or_failure(compiled_entry & scope, mlir::OpBuilde
     sorted->addArgument(scope.status, where);
     mlir::OpBuilder::InsertionGuard keep{build};
     build.setInsertionPointToEnd(sorted);
-    const mlir::Value caught = literal(
-        build, where, scope.status, "static_cast<int32_t>(ctbrowser::aot::ct_aot_status::caught)");
-    auto landed = ec::CmpOp::create(build, where, mlir::IntegerType::get(build.getContext(), 1),
-                                    ec::CmpPredicate::eq, sorted->getArgument(0), caught);
+    const mlir::Value landed =
+        status_is(build, where, scope.status, sorted->getArgument(0), "caught");
     mlir::cf::CondBranchOp::create(build, where, landed, scope.caught_target, scope.caught_operands,
                                    failure_path(scope, build, where),
                                    mlir::ValueRange{sorted->getArgument(0)});
@@ -170,10 +165,7 @@ void lowering::status_call_void(compiled_entry & scope, mlir::OpBuilder & build,
                                 llvm::ArrayRef<mlir::Value> arguments) {
     auto answered =
         ec::CallOpaqueOp::create(build, where, mlir::TypeRange{scope.status}, symbol, arguments);
-    const mlir::Value ok = literal(build, where, scope.status,
-                                   "static_cast<int32_t>(ctbrowser::aot::ct_aot_status::ok)");
-    auto survived = ec::CmpOp::create(build, where, mlir::IntegerType::get(build.getContext(), 1),
-                                      ec::CmpPredicate::eq, answered.getResult(0), ok);
+    const mlir::Value survived = status_is(build, where, scope.status, answered.getResult(0), "ok");
     mlir::Block * carry_on = continuation_after(scope, build);
     mlir::cf::CondBranchOp::create(build, where, survived, carry_on, mlir::ValueRange{},
                                    caught_or_failure(scope, build, where),

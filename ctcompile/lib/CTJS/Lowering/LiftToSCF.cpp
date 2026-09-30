@@ -167,6 +167,19 @@ bool observesThrown(CatchLandOp landing) {
     return !uses || !uses->empty();
 }
 
+// Upstream also replaces after arguments with then-yielded values before
+// remapping captures, but only remaps uses inside then. A before-local value
+// would escape directly into the sibling after: answers that value, the one
+// `branch` yields for condition argument `index`, or null when it is safe.
+mlir::Value beforeLocalCapture(mlir::scf::WhileOp loop, mlir::scf::IfOp branch, mlir::Value value,
+                               std::size_t index) {
+    auto yielded =
+        branch.thenYield().getOperand(llvm::cast<mlir::OpResult>(value).getResultNumber());
+    const bool escapes = yielded.getParentRegion() == &loop.getBefore() &&
+                         !loop.getAfterArguments()[index].use_empty();
+    return escapes ? yielded : mlir::Value{};
+}
+
 // WhileMoveIfDown replaces all uses while visiting condition operands. A
 // repeated if result would hide its later occurrences, leaving those body
 // arguments carrying the else value. Other rewrites can introduce aliases or
@@ -177,15 +190,7 @@ bool safeWhileInputs(mlir::scf::WhileOp loop) {
         auto branch = value.getDefiningOp<mlir::scf::IfOp>();
         if (!branch) { continue; }
         if (!forwarded.insert(value).second) { return false; }
-        // Upstream also replaces after arguments with then-yielded values
-        // before remapping captures, but only remaps uses inside then. A
-        // before-local value would escape directly into the sibling after.
-        auto yielded =
-            branch.thenYield().getOperand(llvm::cast<mlir::OpResult>(value).getResultNumber());
-        if (yielded.getParentRegion() == &loop.getBefore() &&
-            !loop.getAfterArguments()[index].use_empty()) {
-            return false;
-        }
+        if (beforeLocalCapture(loop, branch, value, index)) { return false; }
     }
     return true;
 }
@@ -219,10 +224,7 @@ mlir::scf::WhileOp forwardHeaderCaptures(mlir::scf::WhileOp loop, mlir::scf::IfO
         }
         if (value.getDefiningOp() != branch) { continue; }
         if (!forwarded.insert(value).second) { return loop; }
-        auto yielded =
-            branch.thenYield().getOperand(llvm::cast<mlir::OpResult>(value).getResultNumber());
-        if (yielded.getParentRegion() == &loop.getBefore() &&
-            !loop.getAfterArguments()[index].use_empty()) {
+        if (mlir::Value yielded = beforeLocalCapture(loop, branch, value, index)) {
             captures.emplace_back(static_cast<unsigned>(index), yielded);
         }
     }
@@ -295,6 +297,56 @@ mlir::FailureOr<bool> recoverLoopGuards(mlir::FunctionOpInterface function,
     return true;
 }
 
+// WHY A FUNCTION KEEPS ITS CFG FOR EXCEPTION RECOVERY, as the refusal the
+// structuring utility would have given, or nothing.
+std::optional<std::string> handlerRefusal(mlir::FunctionOpInterface body) {
+    // Exception candidates need the complete importer
+    // register vectors: throw has no successor operands, so its
+    // block arguments identify the catch-visible state. This is
+    // only a preservation filter; recovery and native admission
+    // still prove the actual control flow, types and effects.
+    // Preserve ordinary calls/property reads too, including a
+    // prefix before a non-entry handler; neither those effects
+    // nor their callees acquire proof by keeping their CFG.
+    // Other handler functions keep legacy simplification, which
+    // exposes the value flow needed by closure/callback lifting.
+    mlir::Operation * handler = nullptr;
+    bool exceptionCandidate = true, holder = false;
+    llvm::SmallVector<CatchLandOp> landings;
+    body.getFunctionBody().walk([&](mlir::Operation * operation) {
+        // Captured helpers also need their original saved
+        // registers. This proves no effects.
+        if (llvm::isa<CreateClosureOp, CreateCellOp, CellGetOp>(operation)) {
+            return mlir::WalkResult::advance();
+        }
+        // So do local iterator holders, but only for a catch that
+        // observes the exception (41c9f87de). A landing that only
+        // suppresses an iterator close is represented by the DOM
+        // close normalizer, which needs the simplified CFG.
+        if (llvm::isa<BinaryStaticOp, CreateObjectOp, SetPropertyOp, DefineAccessorOp, IterableOp>(
+                operation)) {
+            holder = true;
+            return mlir::WalkResult::advance();
+        }
+        if (auto landing = llvm::dyn_cast<CatchLandOp>(operation)) { landings.push_back(landing); }
+        if (!llvm::isa<FrameEnterOp, FrameExitOp, RootOp, ConstantOp, BinaryOp, UnaryOp, CompareOp,
+                       TruthyOp, FromBoolOp, PushHandlerOp, PopHandlerOp, CheckOp, CatchLandOp,
+                       ThrowOp, ReturnOp, LoadGlobalOp, GetPropertyOp, CallOp, CallDirectOp,
+                       mlir::cf::BranchOp, mlir::cf::CondBranchOp, mlir::cf::SwitchOp>(operation)) {
+            exceptionCandidate = false;
+            return mlir::WalkResult::interrupt();
+        }
+        if (!handler && llvm::isa<PushHandlerOp, CheckOp>(operation)) { handler = operation; }
+        return mlir::WalkResult::advance();
+    });
+    if (handler && exceptionCandidate && (!holder || llvm::any_of(landings, observesThrown))) {
+        return ("'" + handler->getName().getStringRef() +
+                "' op transformation does not support terminators with side effects")
+            .str();
+    }
+    return std::nullopt;
+}
+
 struct CTJSLiftToSCFPass : impl::CTJSLiftToSCFBase<CTJSLiftToSCFPass> {
     using CTJSLiftToSCFBase::CTJSLiftToSCFBase;
 
@@ -315,59 +367,9 @@ struct CTJSLiftToSCFPass : impl::CTJSLiftToSCFBase<CTJSLiftToSCFPass> {
             getOperation()->walk([&](mlir::FunctionOpInterface body) -> mlir::WalkResult {
                 if (body.getFunctionBody().empty()) { return mlir::WalkResult::advance(); }
 
-                // Exception candidates need the complete importer
-                // register vectors: throw has no successor operands, so its
-                // block arguments identify the catch-visible state. This is
-                // only a preservation filter; recovery and native admission
-                // still prove the actual control flow, types and effects.
-                // Preserve ordinary calls/property reads too, including a
-                // prefix before a non-entry handler; neither those effects
-                // nor their callees acquire proof by keeping their CFG.
-                // Other handler functions keep legacy simplification, which
-                // exposes the value flow needed by closure/callback lifting.
-                mlir::Operation * handler = nullptr;
-                bool exceptionCandidate = true, holder = false;
-                llvm::SmallVector<CatchLandOp> landings;
-                body.getFunctionBody().walk([&](mlir::Operation * operation) {
-                    // Captured helpers also need their original saved
-                    // registers. This proves no effects.
-                    if (llvm::isa<CreateClosureOp, CreateCellOp, CellGetOp>(operation)) {
-                        return mlir::WalkResult::advance();
-                    }
-                    // So do local iterator holders, but only for a catch that
-                    // observes the exception (41c9f87de). A landing that only
-                    // suppresses an iterator close is represented by the DOM
-                    // close normalizer, which needs the simplified CFG.
-                    if (llvm::isa<BinaryStaticOp, CreateObjectOp, SetPropertyOp, DefineAccessorOp,
-                                  IterableOp>(operation)) {
-                        holder = true;
-                        return mlir::WalkResult::advance();
-                    }
-                    if (auto landing = llvm::dyn_cast<CatchLandOp>(operation)) {
-                        landings.push_back(landing);
-                    }
-                    if (!llvm::isa<FrameEnterOp, FrameExitOp, RootOp, ConstantOp, BinaryOp, UnaryOp,
-                                   CompareOp, TruthyOp, FromBoolOp, PushHandlerOp, PopHandlerOp,
-                                   CheckOp, CatchLandOp, ThrowOp, ReturnOp, LoadGlobalOp,
-                                   GetPropertyOp, CallOp, CallDirectOp, mlir::cf::BranchOp,
-                                   mlir::cf::CondBranchOp, mlir::cf::SwitchOp>(operation)) {
-                        exceptionCandidate = false;
-                        return mlir::WalkResult::interrupt();
-                    }
-                    if (!handler && llvm::isa<PushHandlerOp, CheckOp>(operation)) {
-                        handler = operation;
-                    }
-                    return mlir::WalkResult::advance();
-                });
-                if (handler && exceptionCandidate &&
-                    (!holder || llvm::any_of(landings, observesThrown))) {
-                    body->setAttr(
-                        "ctjs.not_structured",
-                        mlir::StringAttr::get(
-                            &getContext(),
-                            ("'" + handler->getName().getStringRef() +
-                             "' op transformation does not support terminators with side effects")
-                                .str()));
+                if (const std::optional<std::string> kept = handlerRefusal(body)) {
+                    body->setAttr("ctjs.not_structured",
+                                  mlir::StringAttr::get(&getContext(), *kept));
                     return mlir::WalkResult::advance();
                 }
 

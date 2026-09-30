@@ -41,16 +41,13 @@ bool lowering::convertValues(mlir::Operation & op, mlir::OpBuilder & build,
         auto text = mlir::dyn_cast<StringAttr>(constant.getValue());
         auto digits = mlir::dyn_cast<BigIntAttr>(constant.getValue());
         if (text || digits) {
-            const mlir::Value slot = literal(build, where, opaque(build.getContext(), "uint32_t"),
-                                             std::to_string(scope.memo_slots.lookup(&op)));
+            const mlir::Value slot = u32_literal(build, where, scope.memo_slots.lookup(&op));
             const auto [bytes, length] =
                 bytes_and_length(build, where, text ? text.getValue() : digits.getText());
             mapping.map(constant.getResult(),
-                        ec::CallOpaqueOp::create(
-                            build, where, mlir::TypeRange{value},
-                            callee(text ? "ct_aot_new_string" : "ct_aot_new_bigint_literal"),
-                            mlir::ValueRange{scope.frame, scope.memo_site, slot, bytes, length})
-                            .getResult(0));
+                        opaque_call(build, where, value,
+                                    text ? "ct_aot_new_string" : "ct_aot_new_bigint_literal",
+                                    {scope.frame, scope.memo_site, slot, bytes, length}));
             return true;
         }
         mapping.map(constant.getResult(), constant_value(build, where, value, constant));
@@ -64,11 +61,10 @@ bool lowering::convertValues(mlir::Operation & op, mlir::OpBuilder & build,
     // than trusting C++'s implicit narrowing keeps the emitted code saying
     // what it means.
     if (auto truthy = mlir::dyn_cast<TruthyOp>(op)) {
-        const auto u32 = opaque(build.getContext(), "uint32_t");
-        auto answered =
-            ec::CallOpaqueOp::create(build, where, mlir::TypeRange{u32}, callee("ct_aot_truthy"),
-                                     mlir::ValueRange{mapping.lookup(truthy.getValue())});
-        mapping.map(truthy.getResult(), nonzero(build, where, answered.getResult(0)));
+        const mlir::Value answered =
+            opaque_call(build, where, opaque(build.getContext(), "uint32_t"), "ct_aot_truthy",
+                        {mapping.lookup(truthy.getValue())});
+        mapping.map(truthy.getResult(), nonzero(build, where, answered));
         return true;
     }
 
@@ -117,7 +113,7 @@ bool lowering::convertValues(mlir::Operation & op, mlir::OpBuilder & build,
             const mlir::Value number =
                 status_call(scope, build, where, callee("ct_aot_to_number"), {scope.frame, operand},
                             opaque(build.getContext(), "double"));
-            mapping.map(unary.getResult(), box(build, where, value, "ctc_box_number", number));
+            mapping.map(unary.getResult(), box(build, where, value, shim::box_number, number));
             return true;
         }
         case UnaryKind::Not: {
@@ -125,15 +121,11 @@ bool lowering::convertValues(mlir::Operation & op, mlir::OpBuilder & build,
             // row is (0, 0, 0) and takes no frame - so there is no status
             // and no edge. Testing the uint32_t against zero IS the
             // negation.
-            const auto u32 = opaque(build.getContext(), "uint32_t");
-            auto answered =
-                ec::CallOpaqueOp::create(build, where, mlir::TypeRange{u32},
-                                         callee("ct_aot_truthy"), mlir::ValueRange{operand});
-            auto negated = ec::CmpOp::create(
-                build, where, mlir::IntegerType::get(build.getContext(), 1), ec::CmpPredicate::eq,
-                answered.getResult(0), literal(build, where, u32, "0"));
+            const mlir::Value answered = opaque_call(
+                build, where, opaque(build.getContext(), "uint32_t"), "ct_aot_truthy", {operand});
             mapping.map(unary.getResult(),
-                        box(build, where, value, "ctc_box_bool", negated.getResult()));
+                        box(build, where, value, shim::box_bool,
+                            compare_zero(build, where, ec::CmpPredicate::eq, answered)));
             return true;
         }
         case UnaryKind::Void:
@@ -161,22 +153,17 @@ bool lowering::convertValues(mlir::Operation & op, mlir::OpBuilder & build,
                                                ec::OpaqueAttr::get(build.getContext(), ""));
             auto address = ec::AddressOfOp::create(build, where, ec::PointerType::get(text_ptr),
                                                    slot.getResult());
-            auto len = ec::CallOpaqueOp::create(build, where, mlir::TypeRange{u32},
-                                                callee("ct_aot_type_of_name"),
-                                                mlir::ValueRange{operand, address.getResult()});
+            const mlir::Value len = opaque_call(build, where, u32, "ct_aot_type_of_name",
+                                                {operand, address.getResult()});
             auto text = ec::LoadOp::create(build, where, text_ptr, slot.getResult());
-            mapping.map(
-                unary.getResult(),
-                ec::CallOpaqueOp::create(
-                    build, where, mlir::TypeRange{value}, callee("ct_aot_new_string"),
-                    mlir::ValueRange{scope.frame,
+            mapping.map(unary.getResult(),
+                        opaque_call(build, where, value, "ct_aot_new_string",
+                                    {scope.frame,
                                      literal(build, where,
-                                             pointer_to(build.getContext(), "const ctbrowser::aot::"
-                                                                            "ct_aot_site"),
+                                             pointer_to(build.getContext(),
+                                                        "const ctbrowser::aot::ct_aot_site"),
                                              "nullptr"),
-                                     literal(build, where, u32, "0"), text.getResult(),
-                                     len.getResult(0)})
-                    .getResult(0));
+                                     u32_literal(build, where, 0), text.getResult(), len}));
             return true;
         }
         }
@@ -195,11 +182,10 @@ bool lowering::convertValues(mlir::Operation & op, mlir::OpBuilder & build,
             // STRICT EQUALITY CANNOT THROW AND TAKES NO FRAME: its row is
             // (0, 0, 0) and it answers with a uint32_t directly, so there
             // is no out-parameter, no status and no exception edge.
-            auto answered = ec::CallOpaqueOp::create(build, where, mlir::TypeRange{u32},
-                                                     callee("ct_aot_strict_equals"),
-                                                     mlir::ValueRange{lhs, rhs});
-            mapping.map(compare.getResult(), box(build, where, value, "ctc_box_bool",
-                                                 nonzero(build, where, answered.getResult(0))));
+            const mlir::Value answered =
+                opaque_call(build, where, u32, "ct_aot_strict_equals", {lhs, rhs});
+            mapping.map(compare.getResult(),
+                        box(build, where, value, shim::box_bool, nonzero(build, where, answered)));
             return true;
         }
         if (compare.getKind() == CompareKind::Eq) {
@@ -208,7 +194,7 @@ bool lowering::convertValues(mlir::Operation & op, mlir::OpBuilder & build,
             const mlir::Value answered = status_call(
                 scope, build, where, callee("ct_aot_loose_equals"), {scope.frame, lhs, rhs}, u32);
             mapping.map(compare.getResult(),
-                        box(build, where, value, "ctc_box_bool", nonzero(build, where, answered)));
+                        box(build, where, value, shim::box_bool, nonzero(build, where, answered)));
             return true;
         }
 
@@ -246,7 +232,7 @@ bool lowering::convertValues(mlir::Operation & op, mlir::OpBuilder & build,
             break;
         default: llvm_unreachable("the two equality kinds are handled above");
         }
-        mapping.map(compare.getResult(), box(build, where, value, "ctc_box_bool", truth));
+        mapping.map(compare.getResult(), box(build, where, value, shim::box_bool, truth));
         return true;
     }
 
@@ -263,11 +249,8 @@ bool lowering::convertValues(mlir::Operation & op, mlir::OpBuilder & build,
     if (auto global = mlir::dyn_cast<LoadGlobalOp>(op)) {
         const auto [text, length] = bytes_and_length(build, where, global.getName());
         if (global.getTypeofLookup()) {
-            const mlir::Value loaded =
-                ec::CallOpaqueOp::create(build, where, mlir::TypeRange{value},
-                                         callee("ct_aot_global_get_soft"),
-                                         mlir::ValueRange{scope.frame, text, length})
-                    .getResult(0);
+            const mlir::Value loaded = opaque_call(build, where, value, "ct_aot_global_get_soft",
+                                                   {scope.frame, text, length});
             status_call_void(scope, build, where, callee("ct_aot_check"), {scope.frame});
             mapping.map(global.getResult(), loaded);
             return true;
@@ -279,9 +262,8 @@ bool lowering::convertValues(mlir::Operation & op, mlir::OpBuilder & build,
     }
     if (auto global = mlir::dyn_cast<StoreGlobalOp>(op)) {
         const auto [text, length] = bytes_and_length(build, where, global.getName());
-        ec::CallOpaqueOp::create(
-            build, where, mlir::TypeRange{}, callee("ct_aot_global_set"),
-            mlir::ValueRange{scope.frame, text, length, mapping.lookup(global.getValue())});
+        opaque_call(build, where, {}, "ct_aot_global_set",
+                    {scope.frame, text, length, mapping.lookup(global.getValue())});
         return true;
     }
 

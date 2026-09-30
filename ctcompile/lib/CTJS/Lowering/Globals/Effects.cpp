@@ -41,18 +41,17 @@ bool names_eval(llvm::StringRef name) {
     return name == "Function" || name == "eval";
 }
 
+// The operation's name, then the op's own file location or a fused one's first
+// direct file part.
 std::string describe(mlir::Operation * op) {
     std::string text = op->getName().getStringRef().str();
-    if (auto file = mlir::dyn_cast<mlir::FileLineColLoc>(op->getLoc())) {
-        text += " at " + file.getFilename().str() + ":" + std::to_string(file.getLine());
-    } else if (auto fused = mlir::dyn_cast<mlir::FusedLoc>(op->getLoc())) {
+    mlir::FileLineColLoc file = mlir::dyn_cast<mlir::FileLineColLoc>(op->getLoc());
+    if (auto fused = mlir::dyn_cast<mlir::FusedLoc>(op->getLoc()); !file && fused) {
         for (const mlir::Location part : fused.getLocations()) {
-            if (auto inner = mlir::dyn_cast<mlir::FileLineColLoc>(part)) {
-                text += " at " + inner.getFilename().str() + ":" + std::to_string(inner.getLine());
-                break;
-            }
+            if ((file = mlir::dyn_cast<mlir::FileLineColLoc>(part))) { break; }
         }
     }
+    if (file) { text += " at " + file.getFilename().str() + ":" + std::to_string(file.getLine()); }
     return text;
 }
 
@@ -225,38 +224,32 @@ bool hands_back_the_compiler(llvm::StringRef key) {
 // predating the summary, produce rows without the two keys, and reading a
 // missing key as "stores nothing" would resolve names a dropped body rebinds -
 // the exact unsoundness this clause exists for. Absent means unknown.
-std::optional<std::string> opaque_refusal(mlir::ModuleOp module) {
+//
+// AND THE NAMES THOSE BODIES MAY STORE, which are refused one by one - read in
+// the same pass over the rows. The FIRST row that refuses the module decides
+// `opaque`.
+skipped_summary read_skipped(mlir::ModuleOp module) {
+    skipped_summary summary;
     auto skipped = module->getAttrOfType<mlir::ArrayAttr>("ctjs.skipped");
-    if (!skipped) { return std::nullopt; }
+    if (!skipped) { return summary; }
     for (const mlir::Attribute row : skipped) {
         auto fields = llvm::dyn_cast<mlir::DictionaryAttr>(row);
         const auto opaque = fields ? fields.getAs<mlir::StringAttr>("opaque") : mlir::StringAttr{};
         const auto stores = fields ? fields.getAs<mlir::ArrayAttr>("stores") : mlir::ArrayAttr{};
-        if (!opaque || !stores) {
-            return "the importer refused " + std::to_string(skipped.size()) +
-                   " function(s) (ctjs.skipped) and one of them carries no globals summary, so a "
-                   "body this pass cannot read may store any global";
+        if (!summary.opaque && (!opaque || !stores)) {
+            summary.opaque =
+                "the importer refused " + std::to_string(skipped.size()) +
+                " function(s) (ctjs.skipped) and one of them carries no globals summary, so a "
+                "body this pass cannot read may store any global";
+        } else if (!summary.opaque && !opaque.getValue().empty()) {
+            summary.opaque = opaque.getValue().str();
         }
-        if (!opaque.getValue().empty()) { return opaque.getValue().str(); }
-    }
-    return std::nullopt;
-}
-
-// AND THE NAMES THOSE BODIES MAY STORE, which are refused one by one.
-llvm::DenseSet<mlir::StringAttr> refused_store_names(mlir::ModuleOp module) {
-    llvm::DenseSet<mlir::StringAttr> names;
-    auto skipped = module->getAttrOfType<mlir::ArrayAttr>("ctjs.skipped");
-    if (!skipped) { return names; }
-    for (const mlir::Attribute row : skipped) {
-        auto fields = llvm::dyn_cast<mlir::DictionaryAttr>(row);
-        if (!fields) { continue; } // opaque_refusal has already refused the module
-        auto stores = fields.getAs<mlir::ArrayAttr>("stores");
         if (!stores) { continue; }
         for (const mlir::Attribute one : stores) {
-            if (auto text = llvm::dyn_cast<mlir::StringAttr>(one)) { names.insert(text); }
+            if (auto text = llvm::dyn_cast<mlir::StringAttr>(one)) { summary.stores.insert(text); }
         }
     }
-    return names;
+    return summary;
 }
 
 // Whether every operation before `store` in its block belongs to the hoisting

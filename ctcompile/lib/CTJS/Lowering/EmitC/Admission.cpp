@@ -47,6 +47,11 @@ void refuse(FuncOp function, llvm::StringRef because) {
 // that compiles and computes something else.
 bool body_is_supported(FuncOp function, std::string & why) {
     bool supported = true;
+    // THE WALK DOES NOT STOP AT A REFUSAL, so the LAST reason wins.
+    const auto fail = [&](std::string because) {
+        supported = false;
+        why = std::move(because);
+    };
     function.getBody().walk([&](mlir::Operation * op) {
         // ctjs.frame_exit MUST BE THE LAST THING BEFORE THE RETURN.
         //
@@ -56,9 +61,8 @@ bool body_is_supported(FuncOp function, std::string & why) {
         // adjacency requirement makes the deferred release match that marker.
         if (mlir::isa<FrameExitOp>(op)) {
             if (op->getNextNode() == nullptr || !mlir::isa<ReturnOp>(op->getNextNode())) {
-                supported = false;
-                why = "ctjs.frame_exit is not immediately followed by ctjs.return - the boxed "
-                      "exit requires a return-value handoff";
+                fail("ctjs.frame_exit is not immediately followed by ctjs.return - the boxed "
+                     "exit requires a return-value handoff");
             }
             return;
         }
@@ -77,10 +81,8 @@ bool body_is_supported(FuncOp function, std::string & why) {
             // not, and ctcompile_linkable is what keeps it honest.
             if ((unary.getKind() == UnaryKind::Neg && !runtime_defines("ct_aot_negate")) ||
                 (unary.getKind() == UnaryKind::BitNot && !runtime_defines("ct_aot_bit_not"))) {
-                supported = false;
-                why = "the helper for this unary operator is declared in aot.hpp and defined "
-                      "nowhere - emitting a call to it compiles and fails at link";
-                return;
+                fail("the helper for this unary operator is declared in aot.hpp and defined "
+                     "nowhere - emitting a call to it compiles and fails at link");
             }
             return;
         }
@@ -101,10 +103,9 @@ bool body_is_supported(FuncOp function, std::string & why) {
             for (const mlir::Value each : guarded.getHandlerOperands()) {
                 const auto argument = mlir::dyn_cast<mlir::BlockArgument>(each);
                 if (argument == nullptr || argument.getOwner() != guarded->getBlock()) {
-                    supported = false;
-                    why = "a protected block carries a handler snapshot that is not its own "
-                          "block argument, so the caught edge cannot be armed before the block "
-                          "is converted";
+                    fail("a protected block carries a handler snapshot that is not its own "
+                         "block argument, so the caught edge cannot be armed before the block "
+                         "is converted");
                     return;
                 }
             }
@@ -118,9 +119,8 @@ bool body_is_supported(FuncOp function, std::string & why) {
         if (auto direct = mlir::dyn_cast<CallDirectOp>(op)) {
             auto constant = direct.getNewTarget().getDefiningOp<ConstantOp>();
             if (!constant || !mlir::isa<UndefinedAttr>(constant.getValue())) {
-                supported = false;
-                why = "ctjs.call_direct carries a new.target that is not the undefined constant, "
-                      "and ct_aot_call has no parameter to pass one through";
+                fail("ctjs.call_direct carries a new.target that is not the undefined constant, "
+                     "and ct_aot_call has no parameter to pass one through");
             }
             return;
         }
@@ -146,35 +146,30 @@ bool body_is_supported(FuncOp function, std::string & why) {
                                           ? mlir::cast<LoadUpvalueOp>(op).getClosure()
                                           : mlir::cast<StoreUpvalueOp>(op).getClosure();
             if (named != function.getBody().front().getArgument(arg_callee)) {
-                supported = false;
-                why = "an upvalue operation names a closure other than this frame's own - "
-                      "ct_aot_upvalue_cell reads the frame, so it would read the wrong one";
+                fail("an upvalue operation names a closure other than this frame's own - "
+                     "ct_aot_upvalue_cell reads the frame, so it would read the wrong one");
             }
             return;
         }
         if (mlir::isa<LoadGlobalOp>(op) && !runtime_defines("ct_aot_global_get")) {
-            supported = false;
-            why = "ct_aot_global_get is declared in aot.hpp and defined nowhere - emitting a call "
-                  "to it compiles and fails at link";
+            fail("ct_aot_global_get is declared in aot.hpp and defined nowhere - emitting a call "
+                 "to it compiles and fails at link");
             return;
         }
         if (mlir::isa<StoreGlobalOp>(op) && !runtime_defines("ct_aot_global_set")) {
-            supported = false;
-            why = "ct_aot_global_set is declared in aot.hpp and defined nowhere - emitting a call "
-                  "to it compiles and fails at link";
+            fail("ct_aot_global_set is declared in aot.hpp and defined nowhere - emitting a call "
+                 "to it compiles and fails at link");
             return;
         }
         if (auto binary = mlir::dyn_cast<BinaryOp>(op)) {
             if (!is_valid_binary(binary.getKind())) {
-                supported = false;
-                why = "ctjs.binary was given a kind only the static family serves";
+                fail("ctjs.binary was given a kind only the static family serves");
             }
             return;
         }
         if (auto binary = mlir::dyn_cast<BinaryStaticOp>(op)) {
             if (!is_valid_binary_static(binary.getKind())) {
-                supported = false;
-                why = "ctjs.binary_static was given a kind only the re-entering family serves";
+                fail("ctjs.binary_static was given a kind only the re-entering family serves");
             }
             return;
         }
@@ -198,12 +193,10 @@ bool body_is_supported(FuncOp function, std::string & why) {
                     constant.getValue())) {
                 return;
             }
-            supported = false;
-            why = "no lowering yet for this constant";
+            fail("no lowering yet for this constant");
             return;
         }
-        supported = false;
-        why = ("no lowering yet for " + op->getName().getStringRef()).str();
+        fail(("no lowering yet for " + op->getName().getStringRef()).str());
     });
     return supported;
 }

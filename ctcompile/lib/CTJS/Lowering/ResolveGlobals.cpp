@@ -223,6 +223,7 @@ struct census {
     llvm::MapVector<mlir::StringAttr, binding> bindings;
     llvm::DenseMap<std::uint32_t, FuncOp> by_index;
     llvm::DenseSet<mlir::StringAttr> refused; // clause 6, per name
+    std::optional<std::string> opaque_skip;   // a refused body no summary bounds
     FuncOp top;                               // function index 0, or null
 };
 
@@ -282,6 +283,13 @@ verdict bound_closure(const census & world, mlir::StringAttr name, const binding
     return verdict{target, made, {}};
 }
 
+// THE VERDICT ON THE NAME A GLOBAL READ NAMES, or nothing without a census row.
+std::optional<verdict> load_verdict(const census & world, LoadGlobalOp load) {
+    const auto row = world.bindings.find(load.getNameAttr());
+    if (row == world.bindings.end()) { return std::nullopt; }
+    return bound_closure(world, load.getNameAttr(), row->second);
+}
+
 // WHICH ctjs.func DOES THIS CALLEE VALUE PROVABLY ENTER? Two shapes, and the
 // first is the one a bundle is made of.
 //
@@ -302,9 +310,8 @@ FuncOp known_callee(const census & world, mlir::Value callee) {
         return world.by_index.lookup(static_cast<std::uint32_t>(made.getFunction()));
     }
     if (auto load = callee.getDefiningOp<LoadGlobalOp>()) {
-        const auto row = world.bindings.find(load.getNameAttr());
-        if (row == world.bindings.end()) { return FuncOp{}; }
-        return bound_closure(world, load.getNameAttr(), row->second).target;
+        const std::optional<verdict> answer = load_verdict(world, load);
+        return answer ? answer->target : FuncOp{};
     }
     return FuncOp{};
 }
@@ -317,9 +324,8 @@ FuncOp known_callee(const census & world, mlir::Value callee) {
 bool enters_arrow(const census & world, mlir::Value callee) {
     CreateClosureOp made = callee.getDefiningOp<CreateClosureOp>();
     if (auto load = callee.getDefiningOp<LoadGlobalOp>()) {
-        const auto row = world.bindings.find(load.getNameAttr());
-        if (row != world.bindings.end()) {
-            made = bound_closure(world, load.getNameAttr(), row->second).closure;
+        if (const std::optional<verdict> answer = load_verdict(world, load)) {
+            made = answer->closure;
         }
     }
     return made && made.getEnclosingThis().getDefiningOp<ConstantOp>() == nullptr;
@@ -413,7 +419,7 @@ void rewrite_direct(CallOp call, FuncOp target, unsigned parameters) {
 }
 
 // WHAT A WATCHED VALUE IS CALLED IN A REASON.
-const char * name_of(watched kind) {
+std::string name_of(watched kind) {
     switch (kind) {
     case watched::global_object: return "the global object";
     case watched::receiver: return "a receiver that may be the global object";
@@ -497,7 +503,7 @@ std::optional<std::string> dynamic_global_writes(
     // the missing bodies touch" was not true: the BYTECODE says, and the
     // importer reads it. Only a body whose summary is `opaque` still refuses
     // everything; the rest refuse the names they name, in the census.
-    if (const std::optional<std::string> refused = opaque_refusal(module)) { return refused; }
+    if (world.opaque_skip) { return world.opaque_skip; }
 
     // THE GLOBAL OBJECT NEEDS NO NAME TO BE `this`. A classic script's top level
     // runs with it as the receiver (run.cpp selects the realm's global value
@@ -594,19 +600,18 @@ std::optional<std::string> dynamic_global_writes(
     const auto enter = [&](FuncOp target, std::size_t supplied, unsigned parameter,
                            mlir::Operation * at, watched kind) -> std::optional<std::string> {
         if (!target || !has_entry(target)) {
-            return std::string{name_of(kind)} +
-                   " escapes into a call whose callee this module does not name (" + describe(at) +
-                   ")";
+            return name_of(kind) + " escapes into a call whose callee this module does not name (" +
+                   describe(at) + ")";
         }
         mlir::Block & entry = target.getBody().front();
         const unsigned parameters = entry.getNumArguments() - ctjs::implicit_arguments;
         if (supplied > parameters) {
-            return std::string{name_of(kind)} + " is passed to " + target.getSymName().str() +
-                   " beyond its " + std::to_string(parameters) +
+            return name_of(kind) + " is passed to " + target.getSymName().str() + " beyond its " +
+                   std::to_string(parameters) +
                    " parameter(s), where the surplus keeps frame semantics (" + describe(at) + ")";
         }
         if (reads_arguments(target)) {
-            return std::string{name_of(kind)} + " is passed to " + target.getSymName().str() +
+            return name_of(kind) + " is passed to " + target.getSymName().str() +
                    ", which reads its raw argument window (" + describe(at) + ")";
         }
         // IN RANGE BY THE ARITY CLAUSE ABOVE: a receiver is 0, a callee value
@@ -667,7 +672,7 @@ std::optional<std::string> dynamic_global_writes(
                 // is being converted to a string, or stored into somebody
                 // else's object, and either way it leaves this walk's sight.
                 if (use.getOperandNumber() != 0) {
-                    return std::string{name_of(kind)} + " escapes into " + describe(op);
+                    return name_of(kind) + " escapes into " + describe(op);
                 }
                 const llvm::StringRef key = constantKey(set.getKey());
                 if (kind != watched::compiler && !key.empty() && key != "__proto__") {
@@ -675,11 +680,11 @@ std::optional<std::string> dynamic_global_writes(
                         {mlir::StringAttr::get(module.getContext(), key), {describe(op), kind}});
                     continue;
                 }
-                return std::string{name_of(kind)} + " is written through (" + describe(op) + ")";
+                return name_of(kind) + " is written through (" + describe(op) + ")";
             }
             if (mlir::isa<DeletePropertyOp, DeleteNamedOp, DefineAccessorOp, SetProtoOp,
                           CopyPropsOp>(op)) {
-                return std::string{name_of(kind)} + " is written through (" + describe(op) + ")";
+                return name_of(kind) + " is written through (" + describe(op) + ")";
             }
             // AN ARROW'S LEXICAL `this`. The VM reads $enclosing_this only for
             // an arrow (make_closure's captured_this), and the arrow reads it
@@ -689,7 +694,7 @@ std::optional<std::string> dynamic_global_writes(
                 FuncOp arrow =
                     world.by_index.lookup(static_cast<std::uint32_t>(made.getFunction()));
                 if (!arrow || !has_entry(arrow)) {
-                    return std::string{name_of(kind)} +
+                    return name_of(kind) +
                            " is captured by an arrow whose body was not imported (" + describe(op) +
                            ")";
                 }
@@ -701,7 +706,7 @@ std::optional<std::string> dynamic_global_writes(
                 // body at all, and this is also where `seed.constructor(src)`
                 // answers.
                 if (use.getOperandNumber() == 0) {
-                    return std::string{name_of(kind)} + " escapes into " + describe(op);
+                    return name_of(kind) + " escapes into " + describe(op);
                 }
                 // ctjs.call is (callee, receiver, args...) and the entry block
                 // is (receiver, new.target, callee, parameters...) - the same
@@ -731,7 +736,7 @@ std::optional<std::string> dynamic_global_writes(
             // an operation this walk does not know: the value is out of sight
             // and anything may write through it - or compile through it - from
             // here on.
-            return std::string{name_of(kind)} + " escapes into " + describe(op);
+            return name_of(kind) + " escapes into " + describe(op);
         }
     }
     return std::nullopt;
@@ -791,7 +796,9 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
                 passes_new_target.insert(op->getParentOfType<FuncOp>());
             }
         });
-        world.refused = refused_store_names(module);
+        skipped_summary skipped = read_skipped(module);
+        world.refused = std::move(skipped.stores);
+        world.opaque_skip = std::move(skipped.opaque);
         world.top = world.by_index.lookup(0);
 
         // CLAUSE 5, AND THE NAMES IT NOW HANDS BACK RATHER THAN REFUSING FOR.
@@ -848,7 +855,7 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
             // bail this used to be.
             if (const auto written = bound_through.find(name); written != bound_through.end()) {
                 record(name, facts.stores.size(), FuncOp{},
-                       "written through " + std::string{name_of(written->second.through)} + " (" +
+                       "written through " + name_of(written->second.through) + " (" +
                            written->second.at + "), which binds this name");
                 continue;
             }

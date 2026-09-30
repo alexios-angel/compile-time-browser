@@ -1,6 +1,8 @@
 #include "Lowering.h"
 #include "ctcompile/Support/CppLiterals.hpp"
 
+#include "llvm/ADT/TypeSwitch.h"
+
 namespace ctcompile::ctjs::emitc_detail {
 // THE C++ SPELLINGS, IN ONE PLACE.
 //
@@ -51,27 +53,73 @@ std::pair<mlir::Value, mlir::Value> bytes_and_length(mlir::OpBuilder & build, ml
                                                      llvm::StringRef text) {
     const mlir::Value bytes = literal(build, where, pointer_to(build.getContext(), "const char"),
                                       cpp::c_string_literal(text));
-    return {bytes, literal(build, where, opaque(build.getContext(), "uint32_t"),
-                           std::to_string(text.size()))};
+    return {bytes, u32_literal(build, where, text.size())};
 }
 
 // THE INTERNED NAME RECORD a helper taking `const ct_aot_name *` wants.
 mlir::Value intern(mlir::OpBuilder & build, mlir::Location where, llvm::StringRef name) {
     const auto [bytes, length] = bytes_and_length(build, where, name);
-    return ec::CallOpaqueOp::create(
-               build, where,
-               mlir::TypeRange{pointer_to(build.getContext(), "const ctbrowser::aot::ct_aot_name")},
-               callee("ct_aot_intern_name"), mlir::ValueRange{bytes, length})
-        .getResult(0);
+    return opaque_call(build, where,
+                       pointer_to(build.getContext(), "const ctbrowser::aot::ct_aot_name"),
+                       "ct_aot_intern_name", {bytes, length});
+}
+
+// A uint32_t tested against zero, as an i1.
+mlir::Value compare_zero(mlir::OpBuilder & build, mlir::Location where, ec::CmpPredicate predicate,
+                         mlir::Value u32) {
+    return ec::CmpOp::create(build, where, mlir::IntegerType::get(build.getContext(), 1), predicate,
+                             u32, u32_literal(build, where, 0))
+        .getResult();
 }
 
 // A uint32_t 0-or-1 answer as an i1. The ABI has no bool; testing against
 // zero IS the conversion.
 mlir::Value nonzero(mlir::OpBuilder & build, mlir::Location where, mlir::Value u32) {
+    return compare_zero(build, where, ec::CmpPredicate::ne, u32);
+}
+
+// A uint32_t count, index or slot, spelled in decimal.
+mlir::Value u32_literal(mlir::OpBuilder & build, mlir::Location where, std::uint64_t number) {
+    return literal(build, where, opaque(build.getContext(), "uint32_t"), std::to_string(number));
+}
+
+// ONE CALL TO A RUNTIME HELPER by its qualified name; answers its result, or
+// nothing when `produces` is null.
+mlir::Value opaque_call(mlir::OpBuilder & build, mlir::Location where, mlir::Type produces,
+                        llvm::StringRef helper, mlir::ValueRange arguments) {
+    llvm::SmallVector<mlir::Type, 1> results;
+    if (produces) { results.push_back(produces); }
+    auto call = ec::CallOpaqueOp::create(build, where, results, callee(helper), arguments);
+    return produces ? call.getResult(0) : mlir::Value{};
+}
+
+// A ct_aot_status ENUMERATOR, BY NAME, as the int32_t the entry returns.
+mlir::Value status_literal(mlir::OpBuilder & build, mlir::Location where, mlir::Type status,
+                           llvm::StringRef named) {
+    return literal(build, where, status,
+                   ("static_cast<int32_t>(ctbrowser::aot::ct_aot_status::" + named + ")").str());
+}
+
+// Whether a helper's status answer is the enumerator `named`.
+mlir::Value status_is(mlir::OpBuilder & build, mlir::Location where, mlir::Type status,
+                      mlir::Value answered, llvm::StringRef named) {
+    const mlir::Value expected = status_literal(build, where, status, named);
     return ec::CmpOp::create(build, where, mlir::IntegerType::get(build.getContext(), 1),
-                             ec::CmpPredicate::ne, u32,
-                             literal(build, where, opaque(build.getContext(), "uint32_t"), "0"))
+                             ec::CmpPredicate::eq, answered, expected)
         .getResult();
+}
+
+// THE CONTIGUOUS RUN OF FRAME SLOTS AN OPERATION HANDS ITS HELPER, if it has
+// one: ct_aot_call's and ct_aot_construct's argv, ct_aot_make_closure's
+// upvalues. lower() reserves exactly these and park_window fills exactly
+// these, so the two cannot disagree about a window's size.
+std::optional<mlir::ValueRange> window_operands(mlir::Operation & op) {
+    return llvm::TypeSwitch<mlir::Operation *, std::optional<mlir::ValueRange>>(&op)
+        .Case<CallOp, CallDirectOp, ConstructOp>(
+            [](auto call) { return mlir::ValueRange{call.getArgs()}; })
+        .Case<CreateClosureOp>(
+            [](CreateClosureOp made) { return mlir::ValueRange{made.getUpvalues()}; })
+        .Default([](mlir::Operation *) { return std::nullopt; });
 }
 
 // THE SYMBOL, AS C++ ACTUALLY SPELLS IDENTIFIERS.

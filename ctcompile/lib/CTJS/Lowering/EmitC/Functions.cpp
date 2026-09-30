@@ -196,16 +196,11 @@ bool lowering::lower(FuncOp function, mlir::OpBuilder & build, mlir::MLIRContext
         };
         // A CONTIGUOUS RUN PER CALL SITE, reserved here so the register
         // window can be sized to include it before ct_aot_enter is emitted.
-        if (auto call = mlir::dyn_cast<CallOp>(inner)) { reserve(call.getArgs().size()); }
-        if (auto direct = mlir::dyn_cast<CallDirectOp>(inner)) { reserve(direct.getArgs().size()); }
         // A CLOSURE'S UPVALUE ARRAY IS AN ARGV BY ANOTHER NAME: a
         // contiguous run the helper reads, and one that must live in the
         // frame rather than in C++ locals, because ct_aot_make_closure
         // allocates and is therefore a safepoint.
-        if (auto made = mlir::dyn_cast<CreateClosureOp>(inner)) {
-            reserve(made.getUpvalues().size());
-        }
-        if (auto built = mlir::dyn_cast<ConstructOp>(inner)) { reserve(built.getArgs().size()); }
+        if (const auto run = window_operands(*inner)) { reserve(run->size()); }
         // ONE SLOT PER PROTECTED REGION, which is where the unwinder puts
         // the thrown value: context::unwind_to_handler writes
         // registers_[base + slot] and ct_aot_catch_land reads it back. It
@@ -223,16 +218,15 @@ bool lowering::lower(FuncOp function, mlir::OpBuilder & build, mlir::MLIRContext
         }
     });
     const unsigned window = std::max(static_cast<unsigned>(entered.getRegCount()), parked);
-    const mlir::Value registers = literal(build, where, u32, std::to_string(window));
-    auto frame = ec::CallOpaqueOp::create(
-        build, where, mlir::TypeRange{frame_ptr}, callee("ct_aot_enter"),
-        mlir::ValueRange{in_ctx, in_site, registers, in_receiver, storage});
+    const mlir::Value registers = u32_literal(build, where, window);
+    const mlir::Value frame = opaque_call(build, where, frame_ptr, "ct_aot_enter",
+                                          {in_ctx, in_site, registers, in_receiver, storage});
 
     // ITS FAILURE IS A NULL POINTER, NOT A STATUS. There is no frame, so
     // there is nothing to leave and no handler to reach.
     const mlir::Value null = literal(build, where, frame_ptr, "nullptr");
     auto ok = ec::CmpOp::create(build, where, mlir::IntegerType::get(context, 1),
-                                ec::CmpPredicate::ne, frame.getResult(0), null);
+                                ec::CmpPredicate::ne, frame, null);
 
     mlir::Block * raised = entry.addBlock();
     mlir::Block * running = entry.addBlock();
@@ -240,9 +234,7 @@ bool lowering::lower(FuncOp function, mlir::OpBuilder & build, mlir::MLIRContext
                                    mlir::ValueRange{});
 
     build.setInsertionPointToStart(raised);
-    ec::ReturnOp::create(build, where,
-                         literal(build, where, status,
-                                 "static_cast<int32_t>(ctbrowser::aot::ct_aot_status::failed)"));
+    ec::ReturnOp::create(build, where, status_literal(build, where, status, "failed"));
 
     // ---- the blocks ---------------------------------------------------
     //
@@ -260,19 +252,13 @@ bool lowering::lower(FuncOp function, mlir::OpBuilder & build, mlir::MLIRContext
     // inside Operation::create, with a stack that names neither.
     build.setInsertionPointToEnd(running);
     if (!body.getArgument(arg_callee).use_empty()) {
-        mapping_callee =
-            ec::CallOpaqueOp::create(build, where, mlir::TypeRange{value}, callee("ct_aot_callee"),
-                                     mlir::ValueRange{frame.getResult(0)})
-                .getResult(0);
+        mapping_callee = opaque_call(build, where, value, "ct_aot_callee", {frame});
     }
     // AND new.target, THE SAME WAY AND FOR THE SAME REASON. It reads
     // call_frame::new_target, so it cannot be hoisted above ct_aot_enter
     // either, and it must be emitted before the mapping is built.
     if (!body.getArgument(arg_new_target).use_empty()) {
-        mapping_new_target = ec::CallOpaqueOp::create(build, where, mlir::TypeRange{value},
-                                                      callee("ct_aot_new_target"),
-                                                      mlir::ValueRange{frame.getResult(0)})
-                                 .getResult(0);
+        mapping_new_target = opaque_call(build, where, value, "ct_aot_new_target", {frame});
     }
 
     // ARGUMENT 0 IS THE EFFECTIVE RECEIVER, NOT THE ENTRY'S RAW ONE, and the
@@ -289,16 +275,13 @@ bool lowering::lower(FuncOp function, mlir::OpBuilder & build, mlir::MLIRContext
     // constructed at all.
     mlir::IRMapping mapping;
     mapping.map(body.getArgument(arg_receiver),
-                ec::CallOpaqueOp::create(build, where, mlir::TypeRange{value},
-                                         callee("ct_aot_this"),
-                                         mlir::ValueRange{frame.getResult(0)})
-                    .getResult(0));
+                opaque_call(build, where, value, "ct_aot_this", {frame}));
     if (mapping_callee) { mapping.map(body.getArgument(arg_callee), mapping_callee); }
     if (mapping_new_target) { mapping.map(body.getArgument(arg_new_target), mapping_new_target); }
     for (unsigned i = 0; i < declared; ++i) {
         mapping.map(body.getArgument(implicit_arguments + i), parameters[i]);
     }
-    mapping.map(entered.getResult(), frame.getResult(0));
+    mapping.map(entered.getResult(), frame);
     mapping.map(&body, running);
 
     for (mlir::Block & block : llvm::drop_begin(function.getBody())) {
@@ -319,7 +302,7 @@ bool lowering::lower(FuncOp function, mlir::OpBuilder & build, mlir::MLIRContext
     // ---- and their operations -----------------------------------------
     compiled_entry scope{
         entry,
-        frame.getResult(0),
+        frame,
         in_receiver,
         in_constructing,
         in_out,

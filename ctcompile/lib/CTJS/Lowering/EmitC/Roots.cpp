@@ -6,11 +6,9 @@ namespace ctcompile::ctjs::emitc_detail {
 // FRAME SLOT `index`, as an lvalue through a freshly fetched span.
 static mlir::Value frame_slot(compiled_entry & scope, mlir::OpBuilder & build, mlir::Location where,
                               unsigned index) {
-    auto span =
-        ec::CallOpaqueOp::create(build, where, mlir::TypeRange{ec::PointerType::get(scope.value)},
-                                 callee("ct_aot_slots"), mlir::ValueRange{scope.frame});
-    return ec::SubscriptOp::create(build, where, ec::LValueType::get(scope.value),
-                                   span.getResult(0),
+    const mlir::Value span =
+        opaque_call(build, where, ec::PointerType::get(scope.value), "ct_aot_slots", {scope.frame});
+    return ec::SubscriptOp::create(build, where, ec::LValueType::get(scope.value), span,
                                    mlir::ValueRange{literal(
                                        build, where, mlir::IntegerType::get(build.getContext(), 32),
                                        std::to_string(index))})
@@ -50,18 +48,13 @@ void lowering::park_if_tracked(compiled_entry & scope, mlir::OpBuilder & build,
 mlir::Value lowering::cell_of_upvalue(compiled_entry & scope, mlir::OpBuilder & build,
                                       mlir::Location where, std::uint32_t index, bool read,
                                       mlir::Value written) {
-    auto cell = ec::CallOpaqueOp::create(
-        build, where, mlir::TypeRange{scope.value}, callee("ct_aot_upvalue_cell"),
-        mlir::ValueRange{scope.frame, literal(build, where, opaque(build.getContext(), "uint32_t"),
-                                              std::to_string(index))});
+    const mlir::Value cell = opaque_call(build, where, scope.value, "ct_aot_upvalue_cell",
+                                         {scope.frame, u32_literal(build, where, index)});
     if (!read) {
-        ec::CallOpaqueOp::create(build, where, mlir::TypeRange{}, callee("ct_aot_cell_set"),
-                                 mlir::ValueRange{cell.getResult(0), written});
+        opaque_call(build, where, {}, "ct_aot_cell_set", {cell, written});
         return mlir::Value{};
     }
-    return ec::CallOpaqueOp::create(build, where, mlir::TypeRange{scope.value},
-                                    callee("ct_aot_cell_get"), mlir::ValueRange{cell.getResult(0)})
-        .getResult(0);
+    return opaque_call(build, where, scope.value, "ct_aot_cell_get", {cell});
 }
 
 // A POINTER TO A RESERVED RUN OF FRAME SLOTS.
@@ -79,8 +72,9 @@ mlir::Value lowering::window_pointer(compiled_entry & scope, mlir::OpBuilder & b
 // PARK A RUN OF VALUES in the window reserved for `op`; answers its base.
 unsigned lowering::park_window(compiled_entry & scope, mlir::OpBuilder & build,
                                mlir::Location where, mlir::IRMapping & mapping,
-                               mlir::Operation & op, mlir::ValueRange values) {
+                               mlir::Operation & op) {
     const unsigned base = scope.argument_windows.lookup(&op);
+    const mlir::ValueRange values = *window_operands(op);
     for (auto [index, each] : llvm::enumerate(values)) {
         park(scope, build, where, mapping.lookup(each), base + static_cast<unsigned>(index));
     }
