@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <optional>
 #include <span>
 // <ostream> EXPLICITLY. `out << "P6\n"` needs the const char* inserter, and
 // without it the const void* one is chosen instead - which compiles, and
@@ -222,6 +223,14 @@ struct app_options {
     // The SYSTEM BROWSER is reached only when this is true AND the verdict is
     // open_external. Off by default: a sealed game never hands a URL to the OS.
     bool open_external_links = false;
+
+    // Where an `<a download>` (p5's save()) may write. UNSET - the default -
+    // DISABLES THE WRITE: the export is still recorded but no file appears, so a
+    // page cannot drop version.dll into the game's own directory. Set it to a
+    // folder the application owns (a saves directory, never the install one).
+    std::optional<std::filesystem::path> download_directory;
+    // The largest single download written; a bigger one is dropped.
+    std::size_t max_download_bytes = std::size_t{64} << 20;
 };
 
 // What run_app does with a link that leaves the page: open_external only when

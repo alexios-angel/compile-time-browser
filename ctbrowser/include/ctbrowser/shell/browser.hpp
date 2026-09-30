@@ -69,6 +69,12 @@ enum class dirty : std::uint8_t {
     everything // a new document
 };
 
+// The file name an `<a download>` may be saved under: the basename only, no
+// control or reserved character, no trailing dot or space, no Windows device
+// name (CON, NUL.png, ...), no executable or loader-planted extension (.dll,
+// .exe, .sh, ...) and not desktop.ini. `download` when nothing usable remains.
+[[nodiscard]] std::string sanitize_download_name(std::string_view name);
+
 [[nodiscard]] constexpr dirty worse(dirty a, dirty b) noexcept {
     return static_cast<std::uint8_t>(a) > static_cast<std::uint8_t>(b) ? a : b;
 }
@@ -308,11 +314,15 @@ public:
         bool written;      // whether the write itself succeeded
     };
 
-    // Where exports land. Empty means the process's working directory, which is
-    // where a command-line tool writes. A test points this at its build dir.
+    // Where exports land. EMPTY (the default) DISABLES THE WRITE: the download is
+    // still recorded, with written = false, but nothing touches the disk - a
+    // sealed game must not let a page drop version.dll into its own directory.
+    // A test points this at its build dir; an application opts in.
     void set_download_directory(std::filesystem::path where) {
         download_directory_ = std::move(where);
     }
+    // The largest file one download may write; a bigger one is recorded unwritten.
+    void set_download_limit(std::size_t max_bytes) noexcept { max_download_bytes_ = max_bytes; }
 
     [[nodiscard]] const std::vector<download_record> & downloads() const noexcept {
         return downloads_;
@@ -879,6 +889,7 @@ private:
 
     std::function<double()> clock_;
     std::filesystem::path download_directory_;
+    std::size_t max_download_bytes_ = std::size_t{64} << 20;
     std::vector<download_record> downloads_;
 
     // Put the element with that id at the top of the viewport, clamped the same

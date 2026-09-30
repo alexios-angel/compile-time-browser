@@ -194,6 +194,8 @@ int run_app(std::string_view html, app_options options) {
     page.assets().set_document_root(options.document_root);
     page.assets().set_sealed(options.sealed_assets);
     page.allow_network(options.network);
+    if (options.download_directory) { page.set_download_directory(*options.download_directory); }
+    page.set_download_limit(options.max_download_bytes);
     detail::install_image_decoder(page.images());
     // THE REAL WALL CLOCK, because this is an application and a page showing the
     // wrong date is a bug. The engine's own default is deterministic - a fixed

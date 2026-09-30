@@ -241,42 +241,85 @@ bool browser::follow_link(node_id target) {
 // them - so this needs no knowledge of blobs and works for any href the registry
 // resolves. It is called BEFORE the navigation, because a download is not one.
 //
-// The directory is set by the embedder (set_download_directory). The default is
-// the process's working directory, the same place a command-line tool writes.
-// Every download is recorded in downloads() whether or not the write succeeds,
+// The directory is set by the embedder (set_download_directory), and UNSET
+// MEANS NO WRITE: the old default was the working directory, which for a
+// shipped game is the game's own folder - one injected `<a download="version.dll"
+// href="data:...">` and a click planted a DLL beside the executable. A write also
+// needs a user gesture (the click consumes it, as a navigation does), fits
+// under the size limit, gets a sanitised name and never replaces a file.
+// Every download is recorded in downloads() whether or not the write happens,
 // so a test can assert on it without reading the disk and a page's export is
 // visible even in a sandbox.
 bool browser::save_download(const std::string & href, const std::string & suggested) {
     if (href.empty()) { return false; }
+    const bool activated = bindings_->has_transient_activation();
+    if (activated) { bindings_->consume_activation(); }
     std::vector<std::byte> bytes = assets_.load(href);
-    // A name the page asked for, else the last path segment, else something.
-    std::string name = suggested;
-    if (name.empty()) {
-        const std::size_t slash = href.find_last_of("/\\");
-        name = slash == std::string::npos ? href : href.substr(slash + 1);
-    }
-    // A NAME AND NOT A PATH. `download="../../etc/passwd"` is a page choosing
-    // where to write on the host, which it does not get to do.
-    for (char & c : name) {
-        if (c == '/' || c == '\\' || c == ':') { c = '_'; }
-    }
-    if (name.empty() || name == "." || name == "..") { name = "download"; }
+    // A name the page asked for, else the last path segment. A NAME AND NOT A
+    // PATH: `download="../../etc/passwd"` is a page choosing where to write.
+    const std::string name = sanitize_download_name(suggested.empty() ? href : suggested);
 
-    const std::filesystem::path where =
-        (download_directory_.empty() ? std::filesystem::path{"."} : download_directory_) / name;
+    std::filesystem::path where;
     bool written = false;
-    if (!bytes.empty()) {
+    if (!download_directory_.empty() && activated && !bytes.empty() &&
+        bytes.size() <= max_download_bytes_) {
         std::error_code ignored;
-        std::filesystem::create_directories(where.parent_path(), ignored);
-        std::ofstream out{where, std::ios::binary};
-        if (out) {
-            out.write(reinterpret_cast<const char *>(bytes.data()),
-                      static_cast<std::streamsize>(bytes.size()));
-            written = out.good();
+        std::filesystem::create_directories(download_directory_, ignored);
+        // NEVER OVERWRITE: name, name-1, name-2, ... - symlink_status, so a
+        // dangling link is taken as occupied rather than written through.
+        // ponytail: check-then-open races another writer; std::ios::noreplace
+        // closes it once every standard library in the matrix has it.
+        const std::filesystem::path base{name};
+        where = download_directory_ / base;
+        for (int n = 1;
+             n <= 1000 && std::filesystem::exists(std::filesystem::symlink_status(where, ignored));
+             ++n) {
+            where = download_directory_ /
+                    (base.stem().string() + "-" + std::to_string(n) + base.extension().string());
+        }
+        if (!std::filesystem::exists(std::filesystem::symlink_status(where, ignored))) {
+            std::ofstream out{where, std::ios::binary};
+            if (out) {
+                out.write(reinterpret_cast<const char *>(bytes.data()),
+                          static_cast<std::streamsize>(bytes.size()));
+                written = out.good();
+            }
         }
     }
     downloads_.push_back(download_record{name, where.string(), bytes.size(), written});
     return true;
+}
+
+std::string sanitize_download_name(std::string_view name) {
+    const std::string fallback = "download";
+    if (const std::size_t slash = name.find_last_of("/\\"); slash != std::string_view::npos) {
+        name.remove_prefix(slash + 1);
+    }
+    for (const char c : name) {
+        const auto u = static_cast<unsigned char>(c);
+        if (u < 0x20 || u == 0x7F || std::string_view{"<>:\"|?*"}.contains(c)) { return fallback; }
+    }
+    // Windows drops trailing dots and spaces, so `evil.dll.` IS evil.dll.
+    while (!name.empty() && (name.back() == '.' || name.back() == ' ')) { name.remove_suffix(1); }
+    if (name.empty()) { return fallback; }
+    // A DEVICE NAME is one whatever follows its first dot: CON.txt opens CON.
+    std::string_view device = name.substr(0, name.find('.'));
+    while (!device.empty() && device.back() == ' ') { device.remove_suffix(1); }
+    if (ascii_iequals_any(device, {"con", "prn", "aux", "nul"}) ||
+        (device.size() == 4 &&
+         (ascii_iequals(device.substr(0, 3), "com") || ascii_iequals(device.substr(0, 3), "lpt")) &&
+         device[3] >= '1' && device[3] <= '9')) {
+        return fallback;
+    }
+    if (ascii_iequals(name, "desktop.ini")) { return fallback; }
+    if (const std::size_t dot = name.rfind('.'); dot != std::string_view::npos) {
+        if (ascii_iequals_any(name.substr(dot + 1),
+                              {"exe", "dll", "com", "bat", "cmd", "ps1", "scr", "msi", "lnk", "url",
+                               "vbs", "js", "hta", "cpl", "sys", "so", "dylib", "sh"})) {
+            return fallback;
+        }
+    }
+    return std::string{name};
 }
 
 void browser::scroll_to_fragment(std::string_view id) {

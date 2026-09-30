@@ -12,7 +12,9 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -343,13 +345,14 @@ void test_encode_png() {
 void test_export_writes_a_file() {
     ctbrowser::browser page{{.width = 80, .height = 60}};
     page.set_download_directory("../build/downloads");
+    std::filesystem::remove("../build/downloads/sketch.png"); // no overwrite: a rerun's name
     page.load_html(R"(<body>
       <canvas id='c' width='8' height='8'></canvas>
       <script>
         var ctx = document.getElementById('c').getContext('2d');
         ctx.fillStyle = '#3366cc';
         ctx.fillRect(0, 0, 8, 8);
-        document.getElementById('c').toBlob(function (blob) {
+        function go() { document.getElementById('c').toBlob(function (blob) {
           console.log('blob ' + blob.size + ' ' + blob.type + ' ' +
                       (blob instanceof Blob));
           var url = URL.createObjectURL(blob);
@@ -358,10 +361,14 @@ void test_export_writes_a_file() {
           link.download = 'sketch.png';
           link.click();
           URL.revokeObjectURL(url);
-        });
+        }); }
       </script>
     </body>)");
     CHECK(page.script_error().empty());
+    // A write needs a user gesture - one key press, as a player's click would be
+    // - and the export starts inside it, the way a save button's handler would.
+    (void)page.handle(ctbrowser::shell::input_event::key_press("a"));
+    (void)page.run_script("go()");
     // toBlob is asynchronous - a page that wraps it in a promise depends on the
     // callback landing after the call returns - so the loop has to run.
     for (int frame = 0; frame < 4; ++frame) { page.tick(16); }
@@ -384,24 +391,107 @@ void test_export_writes_a_file() {
     }
 }
 
+// One `<a download=name>` of `text`, behind a real key press when `gesture`.
+void download_text(browser & page, std::string_view name, std::string_view text,
+                   bool gesture = true) {
+    if (gesture) { (void)page.handle(ctbrowser::shell::input_event::key_press("a")); }
+    (void)page.run_script("var link = document.createElement('a');"
+                          "link.href = URL.createObjectURL(new Blob(['" +
+                          std::string{text} + "']));link.download = '" + std::string{name} +
+                          "';link.click();");
+}
+
+[[nodiscard]] std::string read_all(const std::string & path) {
+    std::ifstream in{path, std::ios::binary};
+    return {std::istreambuf_iterator<char>{in}, std::istreambuf_iterator<char>{}};
+}
+
 // A DOWNLOAD NAME IS A NAME, NOT A PATH. `download="../../x"` is a page choosing
 // where to write on the host, and it does not get to.
 void test_a_download_cannot_escape_its_directory() {
     ctbrowser::browser page{{.width = 60, .height = 40}};
     page.set_download_directory("../build/downloads");
-    page.load_html(R"(<body><script>
-      var url = URL.createObjectURL(new Blob(['x']));
-      var link = document.createElement('a');
-      link.href = url;
-      link.download = '../../escaped.txt';
-      link.click();
-    </script></body>)");
+    page.load_html("<body></body>");
+    std::filesystem::remove("../build/downloads/escaped.txt");
+    download_text(page, "../../escaped.txt", "x");
     CHECK(page.script_error().empty());
     CHECK(page.downloads().size() == 1);
     if (!page.downloads().empty()) {
-        CHECK(page.downloads().front().name == ".._.._escaped.txt");
+        CHECK(page.downloads().front().name == "escaped.txt");
+        CHECK(page.downloads().front().written);
         CHECK(page.downloads().front().path.find("../build/downloads") != std::string::npos);
     }
+}
+
+// What a page may call its file. version.dll beside a game's executable is a
+// DLL the loader picks up, and CON.txt is a device, not a file.
+void test_download_names_are_sanitised() {
+    const auto name = [](std::string_view in) {
+        return ctbrowser::shell::sanitize_download_name(in);
+    };
+    CHECK(name("save1.json") == "save1.json");
+    CHECK(name("version.dll") == "download");
+    CHECK(name("SETUP.EXE") == "download");
+    CHECK(name("evil.dll.") == "download");
+    CHECK(name("run.sh  ") == "download");
+    CHECK(name("desktop.INI") == "download");
+    CHECK(name("CON") == "download");
+    CHECK(name("con.txt") == "download");
+    CHECK(name("NUL.png") == "download");
+    CHECK(name("com1.log") == "download");
+    CHECK(name("LPT9") == "download");
+    CHECK(name("com0.txt") == "com0.txt");
+    CHECK(name("console.txt") == "console.txt");
+    CHECK(name("notes.txt. .") == "notes.txt");
+    CHECK(name("../x") == "x");
+    CHECK(name("a\\b.txt") == "b.txt");
+    CHECK(name("..") == "download");
+    CHECK(name("") == "download");
+    CHECK(name("a\nb.txt") == "download");
+    CHECK(name("a:stream.txt") == "download");
+    CHECK(name("what?.txt") == "download");
+}
+
+// NO DIRECTORY, NO WRITE - the default, and what run_app ships unless the
+// application names a folder. The export is still recorded.
+void test_download_without_a_directory_writes_nothing() {
+    browser page{{.width = 60, .height = 40}};
+    page.load_html("<body></body>");
+    std::filesystem::remove("unset-probe.txt");
+    download_text(page, "unset-probe.txt", "x");
+    CHECK(page.downloads().size() == 1);
+    if (!page.downloads().empty()) {
+        CHECK(!page.downloads().front().written);
+        CHECK(page.downloads().front().path.empty());
+    }
+    CHECK(!std::filesystem::exists("unset-probe.txt"));
+}
+
+// A script's click() with no gesture behind it, a file over the limit, and a
+// name already taken: none writes over anything.
+void test_download_gesture_limit_and_no_overwrite() {
+    browser page{{.width = 60, .height = 40}};
+    page.set_download_directory("../build/downloads");
+    page.load_html("<body></body>");
+    for (const char * stale : {"keep.txt", "keep-1.txt", "big.txt", "quiet.txt"}) {
+        std::filesystem::remove(std::filesystem::path{"../build/downloads"} / stale);
+    }
+    download_text(page, "quiet.txt", "x", false);
+    download_text(page, "keep.txt", "first");
+    download_text(page, "keep.txt", "second");
+    page.set_download_limit(4);
+    download_text(page, "big.txt", "12345");
+    CHECK(page.downloads().size() == 4);
+    if (page.downloads().size() == 4) {
+        CHECK(!page.downloads()[0].written);
+        CHECK(page.downloads()[1].written && page.downloads()[2].written);
+        CHECK(page.downloads()[2].path.ends_with("keep-1.txt"));
+        CHECK(!page.downloads()[3].written);
+    }
+    CHECK(read_all("../build/downloads/keep.txt") == "first");
+    CHECK(read_all("../build/downloads/keep-1.txt") == "second");
+    CHECK(!std::filesystem::exists("../build/downloads/quiet.txt"));
+    CHECK(!std::filesystem::exists("../build/downloads/big.txt"));
 }
 
 // `toDataURL` is the other way out, and the one a page puts in an <img src>.
@@ -591,6 +681,9 @@ int main() {
     test_encode_png();
     test_export_writes_a_file();
     test_a_download_cannot_escape_its_directory();
+    test_download_names_are_sanitised();
+    test_download_without_a_directory_writes_nothing();
+    test_download_gesture_limit_and_no_overwrite();
     test_to_data_url();
     test_blob_object_url_and_image();
     test_image_load_failure_is_reported();
