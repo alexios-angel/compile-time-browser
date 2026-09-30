@@ -228,7 +228,7 @@ struct interface_pair {
     auto * buffer = cx.allocate<script::object_object>();
     buffer->set("byteLength", value::number(static_cast<double>(bytes.size())));
     buffer->set("length", value::number(static_cast<double>(bytes.size())));
-    buffer->set("__bytes", make_u8_array(cx, bytes));
+    buffer->define("__bytes", make_u8_array(cx, bytes), script::attr_none);
     return value::object(buffer);
 }
 

@@ -80,7 +80,7 @@ def main():
     print("constexpr std::u16string_view single_byte_indexes[] = {")
     for name in ENCODINGS:
         row = "".join("\\u%04X" % cp for cp in index_of(name))
-        print('    u"%s", // %s' % (row, name))
+        print('    {u"%s", 128}, // %s' % (row, name))
     print("};")
     print("// clang-format on")
     return 0

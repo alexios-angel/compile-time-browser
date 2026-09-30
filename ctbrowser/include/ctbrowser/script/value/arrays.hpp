@@ -2,6 +2,8 @@
 
 #include "objects.hpp"
 
+#include <cmath>
+
 namespace ctbrowser::script {
 
 // WHICH TYPED ARRAY THIS IS, or `none` for an ordinary one.
@@ -354,6 +356,12 @@ struct array_object final : heap_object {
 // the goldens stay byte-identical wherever they are produced. A DataView picks
 // its byte order per call, so the store's own reads take `little`; a byte past
 // the store reads 0 and is not written.
+// ToUint8: modulo 2^8, NaN and the infinities are 0 (a bare cast is UB).
+[[nodiscard]] inline std::uint8_t to_uint8(double d) noexcept {
+    return std::isfinite(d)
+               ? static_cast<std::uint8_t>(static_cast<std::int64_t>(std::fmod(d, 256.0)))
+               : std::uint8_t{0};
+}
 [[nodiscard]] inline std::uint64_t store_raw(const array_object & bytes, std::size_t at,
                                              std::size_t width, bool little = true) noexcept {
     std::uint64_t raw = 0;
@@ -361,7 +369,7 @@ struct array_object final : heap_object {
         const std::size_t i = little ? at + b : at + width - 1 - b;
         if (i >= bytes.items.size()) { continue; }
         const double each = bytes.items[i].is_number() ? bytes.items[i].as_number() : 0;
-        raw |= static_cast<std::uint64_t>(static_cast<std::uint8_t>(each)) << (8 * b);
+        raw |= static_cast<std::uint64_t>(to_uint8(each)) << (8 * b);
     }
     return raw;
 }

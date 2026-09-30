@@ -98,6 +98,23 @@ void test_the_bom_and_streaming() {
        "0|\xc3\xa9");
 }
 
+void test_view_hardening() {
+    // A getter that drops __bytes mid-read must not leave a dangling store.
+    is("var b = new ArrayBuffer(4); var v = new Uint8Array(b);"
+       " Object.defineProperty(v, 'byteLength', {get: function () { delete b.__bytes;"
+       " return 4; }}); return typeof new TextDecoder().decode(v);",
+       "string");
+    is("var v = new Uint8Array([104, 105]);"
+       " Object.defineProperty(v, 'byteLength', {get: function () { return Infinity; }});"
+       " return new TextDecoder().decode(v);",
+       "hi");
+    // ISO-8859-3 leaves 0xA5 unmapped (a NUL in the index row): U+FFFD, no over-read.
+    is("return new TextDecoder('iso-8859-3').decode(new Uint8Array([0xA5, 0xFF, "
+       "0x41])).charCodeAt(0)"
+       " + '|' + new TextDecoder('iso-8859-3').decode(new Uint8Array([0xA5, 0xFF])).length;",
+       "65533|2");
+}
+
 void test_utf16_and_a_single_byte_index() {
     is("return new TextDecoder('utf-16le').decode(new Uint8Array([0x41, 0x00, 0x42, 0x00]));",
        "AB");
@@ -134,6 +151,7 @@ int main() {
     test_the_utf8_decoder();
     test_the_bom_and_streaming();
     test_utf16_and_a_single_byte_index();
+    test_view_hardening();
     test_a_crafted_bytelength_does_not_over_reserve();
     REPORT("encoding_bindings");
 }

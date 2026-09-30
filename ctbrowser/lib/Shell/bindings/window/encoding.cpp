@@ -459,7 +459,8 @@ void install_text_decoder(context & cx) {
 
     const auto row_of = [](script::object_object & self) -> const encoding_row & {
         const value * held = self.find(encoding_key);
-        const auto at = static_cast<std::size_t>(std::max(0.0, context::to_number(*held)));
+        const double d = held != nullptr ? context::to_number(*held) : 0.0;
+        const auto at = d >= 1.0 ? static_cast<std::size_t>(std::min(d, 1e6)) : std::size_t{0};
         return encodings[std::min(at, std::size(encodings) - 1)];
     };
     define_getter(cx, *made.proto, "encoding", [row_of](context & c, std::span<value>) {
@@ -578,33 +579,41 @@ void install_encoding(context & cx) {
 // takes every shape - Uint8Array, Float32Array, DataView, ArrayBuffer.
 bool buffer_source_bytes(context & c, value source, std::vector<std::uint8_t> & out) {
     if (!source.is_object_like()) { return false; }
+    // Script-free from here to the end of a copy: to_uint32 is static, so no
+    // getter or valueOf runs while `store` is held raw.
     const auto copy = [&out](script::array_object * store, std::size_t from, std::size_t count) {
         out.clear();
-        // Reserve only what can actually be copied, never `count`: a view's
-        // byteLength/byteOffset are read off the source OBJECT, so a crafted
-        // `{buffer, byteLength: 2**53}` would otherwise reserve() a huge block
-        // and abort the process. The copy loop below is already store-bounded.
+        // Bounded by the store, never by `count`: a view's byteLength/byteOffset
+        // are read off the source OBJECT, so `{buffer, byteLength: 2**53}` must
+        // not reserve() a huge block, and from + count must not wrap.
         const std::size_t available = from < store->items.size() ? store->items.size() - from : 0;
-        out.reserve(std::min(count, available));
-        for (std::size_t i = from; i < from + count && i < store->items.size(); ++i) {
-            out.push_back(static_cast<std::uint8_t>(
-                static_cast<std::uint32_t>(context::to_number(store->items[i])) & 0xFFu));
+        const std::size_t n = std::min(count, available);
+        out.reserve(n);
+        for (std::size_t i = from; i < from + n; ++i) {
+            out.push_back(static_cast<std::uint8_t>(context::to_uint32(store->items[i]) & 0xFFu));
         }
     };
+    // NaN and negatives are refused by the caller; +Infinity saturates.
+    const auto saturate = [](double d) {
+        return d >= 9007199254740992.0 ? std::size_t{1} << 53 : static_cast<std::size_t>(d);
+    };
     if (const value own = c.lookup_property(source, "__bytes"); own.is_array()) {
+        const context::rooted keep{c, own};
         auto * store = static_cast<script::array_object *>(own.as_heap());
         copy(store, 0, store->items.size());
         return true;
     }
+    // Everything that can run script comes BEFORE the store is looked up.
+    const double offset = context::to_number(c.lookup_property(source, "byteOffset"));
+    const double length = context::to_number(c.lookup_property(source, "byteLength"));
     const value buffer = c.lookup_property(source, "buffer");
     if (!buffer.is_object_like()) { return false; }
     const value store_value = c.lookup_property(buffer, "__bytes");
     if (!store_value.is_array()) { return false; }
-    auto * store = static_cast<script::array_object *>(store_value.as_heap());
-    const double offset = context::to_number(c.lookup_property(source, "byteOffset"));
-    const double length = context::to_number(c.lookup_property(source, "byteLength"));
+    const context::rooted keep{c, store_value};
     if (!(offset >= 0) || !(length >= 0)) { return false; }
-    copy(store, static_cast<std::size_t>(offset), static_cast<std::size_t>(length));
+    copy(static_cast<script::array_object *>(store_value.as_heap()), saturate(offset),
+         saturate(length));
     return true;
 }
 
