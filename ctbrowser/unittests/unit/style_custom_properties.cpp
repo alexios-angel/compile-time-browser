@@ -235,6 +235,16 @@ void test_inherit_function() {
     chain.load("<div id=e1><div id=e2><div id=e3></div></div></div>",
                "#e1 { --v: e1 } #e2 { --v: e2 inherit(--v) } #e3 { --v: e3 inherit(--v) }");
     expect_value(chain, chain.find_id("e3"), "--v", "e3 e2 e1", "accumulating values");
+    // TWO inherit()s DOUBLE at every level: thirty levels are gigabytes. Past
+    // 64 KB the property is guaranteed-invalid, and so is every descendant's.
+    std::string html = "<html><body>";
+    for (int i = 0; i < 30; ++i) { html += "<div id=d" + std::to_string(i) + ">"; }
+    fixture doubling;
+    doubling.load(html, "html { --v: x } div { --v: inherit(--v) inherit(--v) }");
+    expect_value(doubling, doubling.find_id("d1"), "--v", "x x x x", "two levels doubled");
+    CHECK(doubling.value_of(doubling.find_id("d29"), "--v").size() < 1024);
+    CHECK(doubling.value_of(doubling.find_id("d29"), "--v") ==
+          doubling.value_of(doubling.find_id("d25"), "--v"));
 }
 
 } // namespace

@@ -18,6 +18,10 @@ namespace ctbrowser::style {
 
 namespace {
 
+// The most bytes a custom property's value may grow to through inherit(): the
+// same 64 KB css/substitute gives a var() substitution.
+constexpr std::size_t max_custom_property_bytes = 64 * 1024;
+
 // A KEYWORD FONT SIZE AS PIXELS (CSS Fonts 4 §2.5): an <absolute-size> is the
 // length the table gives it at the 16px `medium` - the same table
 // easing/numeric.cpp adds with - a <relative-size> steps the parent's by the
@@ -313,6 +317,14 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
                 parent && name.starts_with("--") ? parent->get(atoms_->intern(name)) : "";
             if (!held.empty() && held != guaranteed_invalid) {
                 value += held;
+                // `--v: inherit(--v) inherit(--v)` DOUBLES at every level, so
+                // thirty nested elements are gigabytes. Past the bytes a var()
+                // substitution may produce (substitute's max_bytes) the
+                // property is guaranteed-invalid, as a too-long var() is.
+                if (value.size() > max_custom_property_bytes) {
+                    value = std::string{guaranteed_invalid};
+                    break;
+                }
             } else if (comma != std::string::npos) {
                 value += trim(std::string_view{inner}.substr(comma + 1), html_whitespace);
             } else {
