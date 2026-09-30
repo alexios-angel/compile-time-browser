@@ -85,12 +85,24 @@ struct oklab {
 
 [[nodiscard]] bool repeatable(std::string_view property);
 
-template <typename T> void repeat_to_match(std::vector<T> & a, std::vector<T> & b) {
-    if (a.empty() || b.empty() || a.size() == b.size()) { return; }
+// Both lists repeated to the least common multiple of their lengths. Coprime
+// lengths of ten thousand make a hundred million entries, so past
+// max_repeated_items the lists are too long to pair: BOTH COME BACK EMPTY and
+// the answer is false, and the pair is discrete.
+inline constexpr std::size_t max_repeated_items = 10000;
+
+template <typename T> bool repeat_to_match(std::vector<T> & a, std::vector<T> & b) {
+    if (a.empty() || b.empty() || a.size() == b.size()) { return true; }
     const std::size_t a_size = a.size(), b_size = b.size();
     const std::size_t n = std::lcm(a_size, b_size);
+    if (n > max_repeated_items) {
+        a.clear();
+        b.clear();
+        return false;
+    }
     for (std::size_t i = a_size; i < n; ++i) { a.push_back(a[i % a_size]); }
     for (std::size_t i = b_size; i < n; ++i) { b.push_back(b[i % b_size]); }
+    return true;
 }
 
 [[nodiscard]] std::string computed_shape(std::string_view property, std::string_view text,

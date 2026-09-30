@@ -170,6 +170,11 @@ void test_interpolation() {
     CHECK(interpolate_text("grid-template-rows", "1fr repeat(2, 2fr auto 30px) 1fr",
                            "2fr repeat(2, 3fr 30px 40px) 2fr", 0.4,
                            context) == "1.4fr repeat(2, 2.4fr auto 34px) 1.4fr");
+    // A repeat count is raw text: this pair once spelled one shape with one
+    // size against two, and the blend read past the shorter list. Discrete.
+    CHECK(interpolate_text("grid-template-columns", "repeat(a(t)rb, 1px)",
+                           "repeat(a, 1px) repeat(b, 2px)", 0.6,
+                           context) == "repeat(a, 1px) repeat(b, 2px)");
     // An angle may go negative; a url() makes the pair discrete; accumulation
     // sums, a 1-based amount as `a + b - 1` (Filter Effects 1 §11.3).
     CHECK(interpolate_text("filter", "hue-rotate(0deg)", "hue-rotate(180deg)", -0.5, context) ==
@@ -420,6 +425,20 @@ void test_track_and_origin_composition() {
                          context) == "translate(200px, 0px) rotate(90deg)");
 }
 
+// Lists pair at the least common multiple of their lengths: ten thousand and
+// 9,999 would be a hundred million entries, so they do not pair at all.
+void test_list_repetition_is_capped() {
+    ctbrowser::style::css::length_context context;
+    CHECK(interpolate_text("column-rule-width", "repeat(10000, 1px)", "repeat(9999, 2px)", 0.5,
+                           context)
+              .size() < 100000);
+    std::string a = "0px 0px", b = "1px 1px";
+    for (int i = 1; i < 10000; ++i) { a += ", 0px 0px"; }
+    for (int i = 1; i < 9999; ++i) { b += ", 1px 1px"; }
+    CHECK(interpolate_text("background-position", a, b, 0.25, context) == a);
+    CHECK(interpolate_text("background-position", a, b, 0.75, context) == b);
+}
+
 } // namespace
 
 int main() {
@@ -428,5 +447,6 @@ int main() {
     test_interpolation();
     test_composition();
     test_calc_size_interpolation();
+    test_list_repetition_is_capped();
     REPORT("style_easing");
 }

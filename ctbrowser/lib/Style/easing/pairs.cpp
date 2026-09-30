@@ -73,6 +73,9 @@ struct gap_shape {
             for (std::size_t i = 1; i < args.size(); ++i) {
                 into.emplace_back(trim(args[i], html_whitespace));
             }
+            // Ten thousand repeats of a long argument list: the same cap as
+            // repeat_to_match puts on the paired lists.
+            if (into.size() > max_repeated_items) { return std::nullopt; }
         }
     }
     return out;
@@ -95,9 +98,9 @@ struct gap_shape {
         if (a->leading.size() != b->leading.size() || a->trailing.size() != b->trailing.size()) {
             return std::nullopt;
         }
-        repeat_to_match(a->repeated, b->repeated);
-    } else {
-        repeat_to_match(a->leading, b->leading);
+        if (!repeat_to_match(a->repeated, b->repeated)) { return std::nullopt; }
+    } else if (!repeat_to_match(a->leading, b->leading)) {
+        return std::nullopt;
     }
     bool ok = true;
     const auto items = [&](const std::vector<std::string> & x, const std::vector<std::string> & y) {
