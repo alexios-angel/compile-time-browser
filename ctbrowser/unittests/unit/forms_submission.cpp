@@ -216,9 +216,40 @@ void test_an_image_submitter_in_a_frame_sends_its_coordinate() {
     }
 }
 
+// THE BOUNDARY IS NOT A CONSTANT: fresh per body, and never one a value
+// contains - with a fixed public one a value could close its part and forge
+// fields after it.
+void test_the_multipart_boundary_is_fresh_and_absent_from_the_values() {
+    using ctbrowser::shell::form_entry;
+    using ctbrowser::shell::multipart_form_body;
+    std::vector<form_entry> entries(1);
+    entries[0].name = "a";
+    entries[0].value = "x";
+    const auto one = multipart_form_body(entries, "UTF-8");
+    const auto two = multipart_form_body(entries, "UTF-8");
+    CHECK(one.boundary != two.boundary);
+    CHECK(one.boundary.starts_with("----ctbrowser"));
+    CHECK_EQ(one.boundary.size(), std::size_t{13 + 24});
+    CHECK_EQ(one.body, "--" + one.boundary +
+                           "\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\nx\r\n--" +
+                           one.boundary + "--\r\n");
+    // A value that is every boundary the last body used: the next one differs
+    // from all of them, and appears only as delimiters.
+    entries[0].value = "--" + one.boundary + "--" + two.boundary;
+    const auto three = multipart_form_body(entries, "UTF-8");
+    CHECK(entries[0].value.find(three.boundary) == std::string::npos);
+    std::size_t delimiters = 0;
+    for (std::size_t at = three.body.find(three.boundary); at != std::string::npos;
+         at = three.body.find(three.boundary, at + 1)) {
+        ++delimiters;
+    }
+    CHECK_EQ(delimiters, std::size_t{2});
+}
+
 } // namespace
 
 int main() {
+    test_the_multipart_boundary_is_fresh_and_absent_from_the_values();
     test_a_post_carries_its_urlencoded_body();
     test_the_encodings_follow_the_forms_charset();
     test_the_submitters_attributes_win();

@@ -20,5 +20,6 @@ int main() {
     options.title = "Phaser Space Invaders";
     options.width = 320;
     options.height = 240;
+    options.confine_assets = false; // a trusted in-tree page reaching ../../vendor/
     return ctbrowser::run_app_file("examples/pages/phaser-invaders.html", options);
 }

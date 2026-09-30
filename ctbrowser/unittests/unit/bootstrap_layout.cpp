@@ -100,6 +100,10 @@ constexpr std::string_view fixtures[] = {"box",        "type",     "grid",
     // root - so without this the fixture's own stylesheet does not load and every
     // number in the baseline is the unstyled one.
     page_browser.assets().set_base_path("examples/pages");
+    // UNCONFINED, explicitly: `../../vendor/` climbs out of the base path, which
+    // a confined registry refuses. Trusted in-tree fixture - never do this for
+    // a page from the network.
+    page_browser.assets().set_confine(false);
     page_browser.load_html(html);
     if (!page_browser.style_error().empty()) {
         why = page_browser.style_error();

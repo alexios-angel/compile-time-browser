@@ -21,5 +21,6 @@ int main() {
     options.title = "image formats";
     options.width = 120;
     options.height = 200;
+    options.confine_assets = false; // trusted: examples/assets/ is the working directory's
     return ctbrowser::run_app_file("examples/pages/image-formats.html", options);
 }

@@ -252,8 +252,8 @@ struct extracted_body {
             }
             list.push_back(std::move(entry));
         }
-        return {multipart_form_body(list, "UTF-8"),
-                "multipart/form-data; boundary=" + std::string{multipart_boundary}};
+        multipart_body made = multipart_form_body(list, "UTF-8");
+        return {std::move(made.body), "multipart/form-data; boundary=" + made.boundary};
     }
     // An ArrayBuffer or a view onto one: its bytes, the view's offset and
     // length applied, and no type. A plain array is no BufferSource - it is
@@ -1198,22 +1198,17 @@ dom_bindings::loaded_resource dom_bindings::load_resource(const std::string & ur
         // once it is resolved against a page loaded from disk - an XHR for
         // `resources/x.html` from file:///a/b.html asks for
         // file:///a/resources/x.html. It is read the way the relative branch
-        // reads, not sent to the network (which would refuse the scheme):
-        // the host (empty, or `localhost`) dropped, the query and fragment
-        // cut, and the path percent-decoded.
-        std::string_view path = std::string_view{url}.substr(5);
-        if (path.starts_with("//")) {
-            path.remove_prefix(2);
-            path = path.substr(std::min(path.find('/'), path.size()));
-        }
-        path = path.substr(0, std::min(path.find('?'), path.find('#')));
-        out.body = assets_->load(percent_decode(path));
+        // reads, not sent to the network (which would refuse the scheme); the
+        // registry decides whether this document may read that path at all.
+        out.body = assets_->load_file_url(url, location_href_);
         if (out.body.empty()) {
             out.status = 404;
             out.failure = "no such resource: " + url;
         }
     } else if (network_allowed_) {
-        const http_response response = http_get(url);
+        http_options options;
+        if (assets_ != nullptr) { options.policy = assets_->network_policy(); }
+        const http_response response = http_get(url, options);
         out.status = response.status;
         out.type = response.content_type;
         out.body = std::move(response.body);

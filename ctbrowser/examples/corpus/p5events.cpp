@@ -26,5 +26,6 @@ int main() {
     options.title = "p5.js input";
     options.width = 340;
     options.height = 260;
+    options.confine_assets = false; // a trusted in-tree page reaching ../../vendor/
     return ctbrowser::run_app_file("examples/pages/p5-events.html", options);
 }

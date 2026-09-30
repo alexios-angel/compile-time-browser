@@ -23,5 +23,6 @@ int main() {
     options.logical_width = 320;
     options.logical_height = 240;
     options.max_fps = 60;
+    options.confine_assets = false; // trusted: examples/assets/ is the working directory's
     return ctbrowser::run_app_file("examples/pages/invaders.html", options);
 }

@@ -138,6 +138,9 @@ probed_page probe_page(const llvm::opt::InputArgList & options, const std::files
     // The page's own directory, so `<script src>` and an `<img src>` resolve
     // exactly as they do when the page is opened from there.
     probe.assets().set_base_path(entry.parent_path());
+    // UNCONFINED: the developer's own page, packaged from their tree - the
+    // corpus reaches `../../vendor/`. The bundle it produces is sealed.
+    probe.assets().set_confine(false);
 
     // REAL FONTS, BEFORE THE PAGE LOADS, exactly as run_app does it.
     //

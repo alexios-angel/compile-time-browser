@@ -798,6 +798,7 @@ int record_page(const std::string & html_path, const std::string & assets, int f
     {
         ctbrowser::browser page{ctbrowser::browser_options{800, 600}};
         if (!assets.empty()) { page.assets().set_base_path(assets); }
+        page.assets().set_confine(false); // trusted corpus pages reach ../../vendor/
         page.load_html(html);
         if (!page.script_error().empty()) {
             std::fprintf(stderr, "type-oracle: %s reported %s\n", html_path.c_str(),

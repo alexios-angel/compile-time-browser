@@ -663,9 +663,9 @@ void dom_bindings::install_control_form_data(context & cx) {
             navigation.request.method = "POST";
             navigation.request.url = url;
             if (enctype == "multipart/form-data") {
-                navigation.request.body = multipart_form_body(entries, encoding);
-                navigation.request.content_type =
-                    "multipart/form-data; boundary=" + std::string{multipart_boundary};
+                multipart_body made = multipart_form_body(entries, encoding);
+                navigation.request.body = std::move(made.body);
+                navigation.request.content_type = "multipart/form-data; boundary=" + made.boundary;
             } else if (enctype == "text/plain") {
                 navigation.request.body = text_plain_form_body(entries, encoding);
                 navigation.request.content_type = "text/plain";

@@ -18,5 +18,6 @@ int main() {
     options.title = "p5.js images";
     options.width = 320;
     options.height = 220;
+    options.confine_assets = false; // a trusted in-tree page reaching ../../vendor/
     return ctbrowser::run_app_file("examples/pages/p5-image.html", options);
 }

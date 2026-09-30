@@ -193,6 +193,8 @@ int run_app(std::string_view html, app_options options) {
     // root a server would have resolved that against.
     page.assets().set_document_root(options.document_root);
     page.assets().set_sealed(options.sealed_assets);
+    page.assets().set_confine(options.confine_assets);
+    page.assets().set_fetch_policy(options.network_policy);
     page.allow_network(options.network);
     if (options.download_directory) { page.set_download_directory(*options.download_directory); }
     page.set_download_limit(options.max_download_bytes);

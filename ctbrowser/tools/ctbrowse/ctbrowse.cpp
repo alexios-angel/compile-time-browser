@@ -82,6 +82,9 @@ int main(int argc, char ** argv) {
     // the default policy, which sends a clicked http(s) link to the system
     // browser - this is an interactive browser, so it opts in.
     options.open_external_links = true;
+    // UNCONFINED ASSETS, for the same reason: the user named a local page to
+    // open, and the in-tree ones reach `../../vendor/` above their directory.
+    options.confine_assets = false;
     options.on_navigate = [&path, &live](const std::string & href) {
         if (href.find("://") != std::string::npos) { return false; }
         namespace fs = std::filesystem;

@@ -244,6 +244,14 @@ struct app_options {
     // Date.now() pinned to this many milliseconds since the epoch, for a golden
     // that draws a date. Unset is the real wall clock. `CTBROWSER_CLOCK` sets it.
     std::optional<double> fixed_clock;
+
+    // CONFINED ASSETS: the filesystem answers only from inside asset_path,
+    // document_root and the font directory - never `/etc/passwd`, `../..` or a
+    // symlink out (shell::asset_registry::set_confine). Off only for TRUSTED
+    // local pages, like the in-tree examples that reach `../../vendor/`.
+    bool confine_assets = true;
+    // What fetch()/XHR may reach: https and public addresses unless widened.
+    shell::fetch_policy network_policy{};
 };
 
 // What run_app does with a link that leaves the page: open_external only when
@@ -284,6 +292,7 @@ struct app_options {
 //   CTBROWSER_MAX_FPS      -> max_fps, the redraw cap (0 = uncapped)
 //   CTBROWSER_IDLE_WAIT_MS -> idle_wait_ms, the longest an idle loop blocks
 //   CTBROWSER_CLOCK        -> fixed_clock, Date.now() in epoch milliseconds
+//   CTBROWSER_CONFINE_ASSETS -> 0 turns confine_assets off (trusted local pages)
 //
 // This is what lets an example BE a ctest without the example containing any
 // test scaffolding.
@@ -305,6 +314,9 @@ inline void apply_environment(app_options & options) {
     // and it is here rather than a flag because ctdrive parses four arguments
     // and this is a property of the corpus rather than of the driver.
     if (const char * root = std::getenv("CTBROWSER_DOC_ROOT")) { options.document_root = root; }
+    if (const char * confine = std::getenv("CTBROWSER_CONFINE_ASSETS")) {
+        options.confine_assets = std::string_view{confine} != "0";
+    }
     if (const char * fps = std::getenv("CTBROWSER_MAX_FPS")) { options.max_fps = std::atoi(fps); }
     if (const char * wait = std::getenv("CTBROWSER_IDLE_WAIT_MS")) {
         options.idle_wait_ms = std::max(1, std::atoi(wait));

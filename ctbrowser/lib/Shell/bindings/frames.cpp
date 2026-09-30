@@ -553,10 +553,7 @@ dom_bindings * dom_bindings::load_frame(context & cx, node_id id, const std::str
             // resolved against a page opened from disk. Read as that path,
             // percent-decoded, without its query - as load_resource reads one.
             if (bytes.empty() && href.starts_with("file://")) {
-                std::string_view path = std::string_view{href}.substr(7);
-                path = path.substr(std::min(path.find('/'), path.size()));
-                path = path.substr(0, std::min(path.find('?'), path.find('#')));
-                const std::vector<std::byte> read = assets_->load(percent_decode(path));
+                const std::vector<std::byte> read = assets_->load_file_url(href, location_href_);
                 bytes.assign(reinterpret_cast<const char *>(read.data()), read.size());
             }
         }

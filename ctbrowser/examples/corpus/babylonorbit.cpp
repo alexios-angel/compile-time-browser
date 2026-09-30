@@ -15,5 +15,6 @@ int main() {
     options.title = "Babylon.js - drag to orbit";
     options.width = 420;
     options.height = 360;
+    options.confine_assets = false; // a trusted in-tree page reaching ../../vendor/
     return ctbrowser::run_app_file("examples/pages/babylon-orbit.html", options);
 }

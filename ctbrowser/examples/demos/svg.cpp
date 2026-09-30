@@ -25,5 +25,6 @@ int main() {
     options.title = "svg gallery";
     options.width = 900;
     options.height = 700;
+    options.confine_assets = false; // trusted: examples/assets/ is the working directory's
     return ctbrowser::run_app_file("examples/pages/svg.html", options);
 }

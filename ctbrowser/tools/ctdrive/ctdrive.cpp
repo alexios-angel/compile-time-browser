@@ -576,6 +576,10 @@ int main(int argc, char ** argv) {
                           ? ctbrowser::browser::source_kind::xml
                           : ctbrowser::browser::source_kind::html;
     options.asset_path = file.parent_path();
+    // UNCONFINED ASSETS: a developer's driver over in-tree pages - the corpus
+    // reaches `../../vendor/` above its directory. CTBROWSER_CONFINE_ASSETS=1
+    // (read below) confines it again.
+    options.confine_assets = false;
     // A DOCUMENT ROOT IS A WPT RUN (tools/wpt/run-wpt.py sets it), and a WPT
     // page talks to wptserve's Python handlers as well as to its files: the
     // ones the corpus's form and frame tests reach are emulated in

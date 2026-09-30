@@ -4,6 +4,8 @@
 #include <string_view>
 #include <vector>
 
+#include <ctbrowser/shell/net/policy.hpp>
+
 // HTTP over libcurl, which also brings TLS - Schannel on Windows - so the
 // cross build has https:// with no OpenSSL. See docs/build.md.
 //
@@ -23,6 +25,10 @@ struct http_options {
     // Zero accepts only an empty body.
     std::size_t max_bytes = 8U * 1024U * 1024U;
     std::string user_agent = "ctbrowser/2.0";
+    // Which schemes, hosts and addresses may be reached, checked on the URL, on
+    // every redirect hop and on the connected address. The body cap is the
+    // smaller of max_bytes and policy.max_body_bytes.
+    fetch_policy policy{};
 };
 
 struct http_response {
@@ -51,10 +57,9 @@ struct http_response {
 // cannot drift from the truth the way a build-system guess can.
 [[nodiscard]] bool tls_available() noexcept;
 
-// GET, following redirects. NEVER THROWS: a failure is an `error` on the
-// response, because that is what the caller has to turn into a rejected
-// promise anyway, and because an exception crossing into the script engine has
-// nowhere to go.
+// GET, following redirects (each hop re-checked against options.policy). NEVER THROWS: a failure is
+// an `error` on the response, because that is what the caller has to turn into a rejected promise
+// anyway, and because an exception crossing into the script engine has nowhere to go.
 [[nodiscard]] http_response http_get(std::string_view url, http_options options = {});
 
 } // namespace ctbrowser::shell

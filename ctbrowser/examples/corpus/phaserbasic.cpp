@@ -22,5 +22,6 @@ int main() {
     options.title = "Phaser 4";
     options.width = 360;
     options.height = 280;
+    options.confine_assets = false; // a trusted in-tree page reaching ../../vendor/
     return ctbrowser::run_app_file("examples/pages/phaser-basic.html", options);
 }

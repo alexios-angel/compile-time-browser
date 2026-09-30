@@ -2,6 +2,7 @@
 
 #include <ctbrowser/dom/encoding.hpp>
 
+#include <random>
 #include <string>
 
 // forms: the method bodies.
@@ -504,8 +505,8 @@ std::string text_plain_form_body(const std::vector<form_entry> & entries,
     return text_encoder{encoding}(out);
 }
 
-std::string multipart_form_body(const std::vector<form_entry> & entries,
-                                std::string_view encoding) {
+multipart_body multipart_form_body(const std::vector<form_entry> & entries,
+                                   std::string_view encoding) {
     const text_encoder encode{encoding};
     // A field name's and a filename's `"`, CR and LF - after encoding - are the
     // only escapes there are ("the name escaping rule").
@@ -521,25 +522,42 @@ std::string multipart_form_body(const std::vector<form_entry> & entries,
         }
         return out;
     };
-    std::string out;
+    // Each part's header and content, encoded once, so the boundary can be
+    // checked against exactly the bytes that will be sent.
+    std::vector<std::pair<std::string, std::string>> parts;
     for (const form_entry & entry : entries) {
-        out += "--";
-        out += multipart_boundary;
-        out += "\r\nContent-Disposition: form-data; name=\"" +
-               escaped(normalize_line_breaks(entry.name)) + "\"";
+        std::string head = "\r\nContent-Disposition: form-data; name=\"" +
+                           escaped(normalize_line_breaks(entry.name)) + "\"";
         if (entry.file) {
             // A File's name is escaped but NOT normalised, and its bytes go
             // as they are, under its type.
-            out += "; filename=\"" + escaped(entry.filename) + "\"\r\nContent-Type: " +
-                   (entry.type.empty() ? std::string{"application/octet-stream"} : entry.type) +
-                   "\r\n\r\n" + entry.value + "\r\n";
+            head += "; filename=\"" + escaped(entry.filename) + "\"\r\nContent-Type: " +
+                    (entry.type.empty() ? std::string{"application/octet-stream"} : entry.type);
+            parts.emplace_back(std::move(head), entry.value);
         } else {
-            out += "\r\n\r\n" + encode(normalize_line_breaks(entry.value)) + "\r\n";
+            parts.emplace_back(std::move(head), encode(normalize_line_breaks(entry.value)));
         }
     }
-    out += "--";
-    out += multipart_boundary;
-    out += "--\r\n";
+    static constexpr std::string_view alphabet =
+        "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+    std::random_device entropy;
+    std::uniform_int_distribution<std::size_t> pick{0, alphabet.size() - 1};
+    multipart_body out;
+    for (bool clash = true; clash;) {
+        out.boundary = "----ctbrowser";
+        for (int i = 0; i < 24; ++i) { out.boundary.push_back(alphabet[pick(entropy)]); }
+        clash = false;
+        for (const auto & [head, content] : parts) {
+            if (head.find(out.boundary) != std::string::npos ||
+                content.find(out.boundary) != std::string::npos) {
+                clash = true;
+            }
+        }
+    }
+    for (const auto & [head, content] : parts) {
+        out.body += "--" + out.boundary + head + "\r\n\r\n" + content + "\r\n";
+    }
+    out.body += "--" + out.boundary + "--\r\n";
     return out;
 }
 

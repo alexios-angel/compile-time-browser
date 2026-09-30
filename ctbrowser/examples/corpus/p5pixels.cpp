@@ -16,5 +16,6 @@ int main() {
     options.title = "p5.js pixels";
     options.width = 320;
     options.height = 180;
+    options.confine_assets = false; // a trusted in-tree page reaching ../../vendor/
     return ctbrowser::run_app_file("examples/pages/p5-pixels.html", options);
 }

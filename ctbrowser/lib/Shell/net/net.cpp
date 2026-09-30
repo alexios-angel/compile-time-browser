@@ -14,8 +14,18 @@
 
 #include <curl/curl.h>
 
+#if defined(_WIN32)
+#include <ws2tcpip.h>
+#else
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#endif
+
+#include <algorithm>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -81,6 +91,34 @@ std::size_t on_body(char * data, std::size_t size, std::size_t count, void * opa
     return offered;
 }
 
+// Whether the socket being opened is to an address the policy allows. The
+// address is formatted and handed to is_private_address, so there is one
+// definition of "private" rather than a second one over sockaddr bytes.
+struct peer_check {
+    bool allow_private = false;
+    bool refused = false;
+};
+
+curl_socket_t open_checked_socket(void * opaque, curlsocktype, curl_sockaddr * address) {
+    auto & check = *static_cast<peer_check *>(opaque);
+    if (!check.allow_private) {
+        char text[INET6_ADDRSTRLEN] = {};
+        const void * raw = nullptr;
+        if (address->family == AF_INET) {
+            raw = &reinterpret_cast<const sockaddr_in *>(&address->addr)->sin_addr;
+        } else if (address->family == AF_INET6) {
+            raw = &reinterpret_cast<const sockaddr_in6 *>(&address->addr)->sin6_addr;
+        }
+        // Not IPv4 or IPv6 (a unix socket), or unprintable: refused, not guessed.
+        if (raw == nullptr || inet_ntop(address->family, raw, text, sizeof(text)) == nullptr ||
+            is_private_address(text)) {
+            check.refused = true;
+            return CURL_SOCKET_BAD;
+        }
+    }
+    return ::socket(address->family, address->socktype, address->protocol);
+}
+
 } // namespace
 
 // ASKED OF LIBCURL, not of the build system. curl_version_info reports the
@@ -96,21 +134,6 @@ http_response http_get(std::string_view url_text, http_options options) {
     http_response out;
     out.url = std::string{url_text};
 
-    // PARSED AND REFUSED HERE rather than by libcurl, and deliberately. libcurl
-    // speaks ftp, file, smtp and a dozen others; this client does http and
-    // https, and a `file://` reaching a network transport is a bug in the
-    // caller rather than a request. shell/net/url.hpp is also what drops credentials
-    // and the fragment, which must not travel.
-    const fetch_url target = parse_absolute(url_text);
-    if (!target.valid) {
-        out.error = "not an http(s) url: " + out.url;
-        return out;
-    }
-    if (target.scheme == "https" && !tls_available()) {
-        out.error = "https:// needs TLS, which this build does not have";
-        return out;
-    }
-
     ensure_curl();
     const easy_handle handle{curl_easy_init()};
     if (!handle) {
@@ -119,17 +142,15 @@ http_response http_get(std::string_view url_text, http_options options) {
     }
 
     sink into;
-    into.max_bytes = options.max_bytes;
+    into.max_bytes = std::min(options.max_bytes, options.policy.max_body_bytes);
+    peer_check peers{options.policy.allow_private_addresses, false};
 
-    // Rebuilt from the parsed URL rather than passed through: that is what
-    // normalises the scheme and host, removes dot segments and strips the
-    // credentials and fragment.
-    const std::string url = target.scheme + "://" + target.authority + target.target;
-    curl_easy_setopt(handle.get(), CURLOPT_URL, url.c_str());
     curl_easy_setopt(handle.get(), CURLOPT_USERAGENT, options.user_agent.c_str());
     curl_easy_setopt(handle.get(), CURLOPT_TIMEOUT_MS, static_cast<long>(options.timeout_ms));
-    curl_easy_setopt(handle.get(), CURLOPT_FOLLOWLOCATION, 1L);
-    curl_easy_setopt(handle.get(), CURLOPT_MAXREDIRS, static_cast<long>(options.max_redirects));
+    // REDIRECTS ARE FOLLOWED HERE, not by libcurl, so every hop is parsed and
+    // checked against the policy the same way the first URL is - a public
+    // server answering `302 Location: http://169.254.169.254/` is the attack.
+    curl_easy_setopt(handle.get(), CURLOPT_FOLLOWLOCATION, 0L);
     // ONLY http AND https, even after a redirect - a 302 to `file:///etc/passwd`
     // is a real attack and libcurl will follow anything it supports otherwise.
     curl_easy_setopt(handle.get(), CURLOPT_PROTOCOLS_STR, "http,https");
@@ -138,6 +159,11 @@ http_response http_get(std::string_view url_text, http_options options) {
     curl_easy_setopt(handle.get(), CURLOPT_WRITEFUNCTION, &on_body);
     curl_easy_setopt(handle.get(), CURLOPT_WRITEDATA, &into);
     curl_easy_setopt(handle.get(), CURLOPT_HTTPGET, 1L);
+    // THE ADDRESS ACTUALLY CONNECTED TO, checked as the socket is opened: a
+    // public hostname that resolves to 127.0.0.1 - or re-resolves to it, which
+    // is DNS rebinding - is refused here, after resolution and before connect.
+    curl_easy_setopt(handle.get(), CURLOPT_OPENSOCKETFUNCTION, &open_checked_socket);
+    curl_easy_setopt(handle.get(), CURLOPT_OPENSOCKETDATA, &peers);
 
     header_list sending;
     // Identity, because nothing above this decompresses yet. libcurl WOULD do
@@ -148,31 +174,75 @@ http_response http_get(std::string_view url_text, http_options options) {
     sending.add("Accept: */*");
     curl_easy_setopt(handle.get(), CURLOPT_HTTPHEADER, sending.get());
 
-    // NEVER THROWS, which the C API makes easy: every failure is a return code.
-    const CURLcode result = curl_easy_perform(handle.get());
+    std::string next{url_text};
+    for (int hop = 0;; ++hop) {
+        // PARSED AND REFUSED HERE rather than by libcurl, and deliberately.
+        // libcurl speaks ftp, file, smtp and a dozen others; this client does
+        // http and https, and a `file://` reaching a network transport is a bug
+        // in the caller rather than a request. shell/net/url.hpp is also what
+        // drops credentials and the fragment, which must not travel.
+        const fetch_url target = parse_absolute(next);
+        if (!target.valid) {
+            out.error = "not an http(s) url: " + next;
+            return out;
+        }
+        if (std::optional<std::string> refused =
+                check_request(target.scheme, target.host, options.policy)) {
+            out.error = std::move(*refused);
+            return out;
+        }
+        if (target.scheme == "https" && !tls_available()) {
+            out.error = "https:// needs TLS, which this build does not have";
+            return out;
+        }
+        // Rebuilt from the parsed URL rather than passed through: that is what
+        // normalises the scheme and host, removes dot segments and strips the
+        // credentials and fragment.
+        const std::string url = target.scheme + "://" + target.authority + target.target;
+        curl_easy_setopt(handle.get(), CURLOPT_URL, url.c_str());
+        into.body.clear();
+        into.limit_exceeded = false;
+        peers.refused = false;
 
-    long status = 0;
-    curl_easy_getinfo(handle.get(), CURLINFO_RESPONSE_CODE, &status);
-    out.status = static_cast<int>(status);
-    const char * effective = nullptr;
-    curl_easy_getinfo(handle.get(), CURLINFO_EFFECTIVE_URL, &effective);
-    if (effective != nullptr) { out.url = effective; }
-    // The FINAL response's, after redirects - libcurl reports the last one.
-    const char * content_type = nullptr;
-    curl_easy_getinfo(handle.get(), CURLINFO_CONTENT_TYPE, &content_type);
-    if (content_type != nullptr) { out.content_type = content_type; }
-    out.body = std::move(into.body);
+        // NEVER THROWS, which the C API makes easy: every failure is a return code.
+        const CURLcode result = curl_easy_perform(handle.get());
 
-    if (into.limit_exceeded) {
-        out.body.clear();
-        out.error = "response body exceeds max_bytes";
-        return out;
+        long status = 0;
+        curl_easy_getinfo(handle.get(), CURLINFO_RESPONSE_CODE, &status);
+        out.status = static_cast<int>(status);
+        out.url = url;
+        const char * content_type = nullptr;
+        curl_easy_getinfo(handle.get(), CURLINFO_CONTENT_TYPE, &content_type);
+        out.content_type = content_type != nullptr ? content_type : "";
+        if (peers.refused) {
+            out.body.clear();
+            out.error = "the fetch policy does not allow a private address for " + url;
+            return out;
+        }
+        if (into.limit_exceeded) {
+            out.body.clear();
+            out.error = "response body exceeds max_bytes";
+            return out;
+        }
+        if (result != CURLE_OK) {
+            out.body = std::move(into.body);
+            out.error = curl_easy_strerror(result);
+            return out;
+        }
+        const char * location = nullptr;
+        curl_easy_getinfo(handle.get(), CURLINFO_REDIRECT_URL, &location);
+        const bool redirect =
+            status == 301 || status == 302 || status == 303 || status == 307 || status == 308;
+        if (!redirect || location == nullptr) {
+            out.body = std::move(into.body);
+            return out;
+        }
+        if (hop >= options.max_redirects) {
+            out.error = "too many redirects";
+            return out;
+        }
+        next = location;
     }
-    if (result != CURLE_OK) {
-        out.error = curl_easy_strerror(result);
-        return out;
-    }
-    return out;
 }
 
 } // namespace ctbrowser::shell

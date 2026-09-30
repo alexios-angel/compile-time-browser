@@ -118,6 +118,14 @@ private:
     std::thread thread_;
 };
 
+// THIS SUITE TALKS TO 127.0.0.1 over http, which the default fetch policy
+// refuses - so every request to the test server opts in, explicitly.
+[[nodiscard]] ctbrowser::shell::http_options local(ctbrowser::shell::http_options options = {}) {
+    options.policy.schemes = {"http", "https"};
+    options.policy.allow_private_addresses = true;
+    return options;
+}
+
 [[nodiscard]] std::string body_text(const ctbrowser::shell::http_response & response) {
     return std::string{reinterpret_cast<const char *>(response.body.data()), response.body.size()};
 }
@@ -129,7 +137,7 @@ private:
 
 void test_get() {
     test_server server{{canned("{\"n\":7}", "application/json")}};
-    const auto response = ctbrowser::shell::http_get(server.url("/thing.json"));
+    const auto response = ctbrowser::shell::http_get(server.url("/thing.json"), local());
     CHECK(response.completed());
     CHECK(response.ok());
     CHECK(response.status == 200);
@@ -145,7 +153,7 @@ void test_chunked() {
     // encoding reads the chunk sizes as content.
     test_server server{{"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
                         "5\r\nhello\r\n1\r\n \r\n5\r\nworld\r\n0\r\n\r\n"}};
-    const auto response = ctbrowser::shell::http_get(server.url("/stream"));
+    const auto response = ctbrowser::shell::http_get(server.url("/stream"), local());
     CHECK(response.ok());
     CHECK(body_text(response) == "hello world");
 }
@@ -154,28 +162,30 @@ void test_body_limit() {
     test_server server{{canned("AB"), canned("AB"), canned(""), canned("A"),
                         "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
                         "2\r\nAB\r\n2\r\nCD\r\n0\r\n\r\n"}};
-    const auto exact = ctbrowser::shell::http_get(server.url("/exact"), {.max_bytes = 2});
+    const auto exact = ctbrowser::shell::http_get(server.url("/exact"), local({.max_bytes = 2}));
     CHECK(exact.completed());
     CHECK(exact.ok());
     CHECK(body_text(exact) == "AB");
 
-    const auto exceeded = ctbrowser::shell::http_get(server.url("/exceeded"), {.max_bytes = 1});
+    const auto exceeded =
+        ctbrowser::shell::http_get(server.url("/exceeded"), local({.max_bytes = 1}));
     CHECK(!exceeded.completed());
     CHECK(exceeded.error == "response body exceeds max_bytes");
     CHECK(exceeded.body.empty());
 
-    const auto empty = ctbrowser::shell::http_get(server.url("/empty"), {.max_bytes = 0});
+    const auto empty = ctbrowser::shell::http_get(server.url("/empty"), local({.max_bytes = 0}));
     CHECK(empty.completed());
     CHECK(empty.ok());
     CHECK(empty.body.empty());
 
-    const auto zero = ctbrowser::shell::http_get(server.url("/zero"), {.max_bytes = 0});
+    const auto zero = ctbrowser::shell::http_get(server.url("/zero"), local({.max_bytes = 0}));
     CHECK(!zero.completed());
     CHECK(zero.error == exceeded.error);
     CHECK(zero.body.empty());
 
     // A later chunk exceeding the cap also discards the already accepted bytes.
-    const auto chunked = ctbrowser::shell::http_get(server.url("/chunked"), {.max_bytes = 3});
+    const auto chunked =
+        ctbrowser::shell::http_get(server.url("/chunked"), local({.max_bytes = 3}));
     CHECK(!chunked.completed());
     CHECK(chunked.error == exceeded.error);
     CHECK(chunked.body.empty());
@@ -185,7 +195,7 @@ void test_status_and_body() {
     // A 404 COMPLETED - it is not a network failure, and fetch only rejects on
     // the latter. Getting this wrong turns every missing page into an exception.
     test_server server{{"HTTP/1.1 404 Not Found\r\nContent-Length: 9\r\n\r\nno such!!"}};
-    const auto response = ctbrowser::shell::http_get(server.url("/missing"));
+    const auto response = ctbrowser::shell::http_get(server.url("/missing"), local());
     CHECK(response.completed());
     CHECK(!response.ok());
     CHECK(response.status == 404);
@@ -198,7 +208,7 @@ void test_redirect() {
     test_server target{{canned("arrived")}};
     test_server hop{{"HTTP/1.1 302 Found\r\nLocation: " + target.url("/final") +
                      "\r\nContent-Length: 0\r\n\r\n"}};
-    const auto response = ctbrowser::shell::http_get(hop.url("/start"));
+    const auto response = ctbrowser::shell::http_get(hop.url("/start"), local());
     CHECK(response.ok());
     CHECK(body_text(response) == "arrived");
     CHECK(response.url == target.url("/final"));
@@ -208,7 +218,7 @@ void test_relative_redirect() {
     test_server server{{"HTTP/1.1 301 Moved Permanently\r\nLocation: /elsewhere\r\n"
                         "Content-Length: 0\r\n\r\n",
                         canned("relative worked")}};
-    const auto response = ctbrowser::shell::http_get(server.url("/start"));
+    const auto response = ctbrowser::shell::http_get(server.url("/start"), local());
     CHECK(response.ok());
     CHECK(body_text(response) == "relative worked");
 }
@@ -216,7 +226,8 @@ void test_relative_redirect() {
 void test_failures() {
     // Port 1 is not listening. This must come back as an error, not a hang and
     // not an exception.
-    const auto refused = ctbrowser::shell::http_get("http://127.0.0.1:1/", {.timeout_ms = 500});
+    const auto refused =
+        ctbrowser::shell::http_get("http://127.0.0.1:1/", local({.timeout_ms = 500}));
     CHECK(!refused.completed());
     CHECK(!refused.error.empty());
 
@@ -253,7 +264,7 @@ void test_timeout() {
     }};
 
     const auto response = ctbrowser::shell::http_get(
-        "http://127.0.0.1:" + std::to_string(port) + "/hang", {.timeout_ms = 300});
+        "http://127.0.0.1:" + std::to_string(port) + "/hang", local({.timeout_ms = 300}));
     CHECK(!response.completed());
     stop.store(true);
     server.join();
@@ -263,13 +274,70 @@ void test_timeout() {
 void test_tls_is_honest() {
     // Either this build can do https:// or it says so. What it must never do is
     // fail with a confusing transport error.
-    const auto response = ctbrowser::shell::http_get("https://127.0.0.1:1/", {.timeout_ms = 300});
+    const auto response =
+        ctbrowser::shell::http_get("https://127.0.0.1:1/", local({.timeout_ms = 300}));
     CHECK(!response.completed());
     if (!ctbrowser::shell::tls_available()) {
         CHECK(response.error.find("OpenSSL") != std::string::npos);
     }
     std::printf("     https:// %s in this build\n",
                 ctbrowser::shell::tls_available() ? "enabled" : "disabled");
+}
+
+// THE DEFAULT POLICY: https only, public addresses only - checked on the URL,
+// on each redirect hop, and on the address the socket actually connects to.
+void test_policy() {
+    using ctbrowser::shell::check_request;
+    using ctbrowser::shell::fetch_policy;
+    using ctbrowser::shell::is_private_address;
+    for (const char * ip :
+         {"127.0.0.1", "10.0.0.1", "172.16.0.1", "172.31.255.255", "192.168.1.1", "169.254.1.1",
+          "169.254.169.254", "0.0.0.0", "100.64.0.1", "[::1]", "::1", "::", "::ffff:127.0.0.1",
+          "::ffff:7f00:1", "fc00::1", "fd12:3456::1", "fe80::1", "fe80::1%eth0"}) {
+        CHECK_EQ(is_private_address(ip), true);
+    }
+    for (const char * ip : {"8.8.8.8", "172.32.0.1", "100.128.0.1", "2001:4860:4860::8888",
+                            "::ffff:8.8.8.8", "example.com", "1.2.3", "1::2::3"}) {
+        CHECK_EQ(is_private_address(ip), false);
+    }
+    const fetch_policy defaults;
+    CHECK(!check_request("https", "8.8.8.8", defaults).has_value());
+    CHECK(check_request("http", "8.8.8.8", defaults).has_value());
+    CHECK(check_request("https", "127.0.0.1", defaults).has_value());
+    CHECK(check_request("https", "::1", defaults).has_value());
+    CHECK(check_request("https", "localhost", defaults).has_value());
+    CHECK(check_request("https", "a.localhost", defaults).has_value());
+    fetch_policy hosts;
+    hosts.hosts = {"*.example.com", "exact.org"};
+    CHECK(!check_request("https", "cdn.example.com", hosts).has_value());
+    CHECK(check_request("https", "example.com", hosts).has_value());
+    CHECK(check_request("https", "evilexample.com", hosts).has_value());
+    CHECK(!check_request("https", "exact.org", hosts).has_value());
+    CHECK(check_request("https", "sub.exact.org", hosts).has_value());
+
+    // http_get enforces it: no socket is opened for a refused URL.
+    const auto refused = ctbrowser::shell::http_get("http://127.0.0.1:1/");
+    CHECK(!refused.completed());
+    CHECK(refused.error.find("fetch policy") != std::string::npos);
+    // An allowed scheme on a private literal is still refused. (A hostname
+    // that RESOLVES to one is refused when the socket opens - not testable
+    // hermetically without a resolver that lies.)
+    ctbrowser::shell::http_options http_only;
+    http_only.policy.schemes = {"http"};
+    const auto private_peer = ctbrowser::shell::http_get("http://127.0.0.1:1/", http_only);
+    CHECK(private_peer.error.find("private address") != std::string::npos);
+    // A redirect is re-checked on its own URL: only the first hop's host is
+    // allowed here, so the Location is refused rather than followed.
+    test_server target2{{canned("should not arrive")}};
+    test_server hop2{{"HTTP/1.1 302 Found\r\nLocation: http://localhost:" +
+                      target2.url("/x").substr(17) + "\r\nContent-Length: 0\r\n\r\n"}};
+    ctbrowser::shell::http_options redirect_checked = local();
+    redirect_checked.policy.hosts = {"127.0.0.1"};
+    const auto second = ctbrowser::shell::http_get(hop2.url("/start"), redirect_checked);
+    CHECK(!second.completed());
+    CHECK(second.error.find("does not allow host localhost") != std::string::npos);
+    // target2 was never reached: serve its one reply so its thread can end.
+    (void)ctbrowser::shell::http_get(target2.url("/x"), local());
 }
 
 } // namespace
@@ -284,6 +352,7 @@ int main() {
     test_failures();
     test_timeout();
     test_tls_is_honest();
+    test_policy();
 
     REPORT("net_basics");
 }

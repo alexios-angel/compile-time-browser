@@ -176,6 +176,9 @@ bool browser::use_real_fonts(std::string_view directory) {
     // for. A build without them registers nothing and the loop reads the
     // directory, exactly as before.
     (void)register_embedded_fonts(assets_, directory);
+    // The EMBEDDER named this directory, not the page, so a confined registry
+    // may read from it wherever it is.
+    assets_.add_root(std::filesystem::path{directory});
     // family, then the four (bold, italic) files that make it up.
     struct vendored {
         std::string_view family;

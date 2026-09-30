@@ -18,5 +18,6 @@ int main() {
     options.height = 700;
     // The page is taller than the window on purpose: scroll it with the wheel,
     // PageUp/PageDown, Home and End.
+    options.confine_assets = false; // trusted: examples/assets/ is the working directory's
     return ctbrowser::run_app_file("examples/pages/elements.html", options);
 }

@@ -1,7 +1,9 @@
 #pragma once
+#include <algorithm>
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -9,6 +11,7 @@
 #include <vector>
 
 #include <ctbrowser/core/core.hpp>
+#include <ctbrowser/shell/net/policy.hpp>
 #include <ctbrowser/shell/net/url.hpp>
 
 // Everything a page loads by name - sprites, sounds, JSON, whatever `fetch`
@@ -87,6 +90,43 @@ public:
     void set_sealed(bool sealed) { sealed_ = sealed; }
     [[nodiscard]] bool sealed() const noexcept { return sealed_; }
 
+    // CONFINED (the default): the filesystem answers only from inside the
+    // base path - the working directory when none was set - or the document
+    // root. A page decides what names it asks for, so without this any page
+    // reads any file the process can: `fetch('/etc/passwd')`,
+    // `fetch('../../.ssh/id_rsa')`, `file:///...`. Confined, a relative name is
+    // resolved from the working directory and then the base path, an absolute
+    // one is either already inside a
+    // root or is taken as relative to the document root (else the base path),
+    // and whatever it resolves to - `..` and symlinks included - must still be
+    // inside a root. A `file:` URL is honoured only from a document that is
+    // itself a file: one.
+    //
+    // UNCONFINED is the old probe order - the working directory, the base
+    // path, two levels above it, and any absolute path at all. It is for
+    // trusted local content only (the in-tree examples and fixtures that reach
+    // `../../vendor/`); never turn it off for a page from the network.
+    void set_confine(bool confine) { confine_ = confine; }
+    [[nodiscard]] bool confine() const noexcept { return confine_; }
+    // ANOTHER DIRECTORY a confined registry may read an absolute path from -
+    // for what the EMBEDDER names rather than the page: the font directory
+    // (browser::use_real_fonts reads CTBROWSER_FONT_PATH through here).
+    void add_root(std::filesystem::path root) { extra_roots_.push_back(std::move(root)); }
+
+    // What fetch()/XHR may reach over the network. Kept here rather than on
+    // the bindings because the registry outlives a page's reloads and every
+    // frame's bindings already reach it. See shell/net/policy.hpp.
+    void set_fetch_policy(fetch_policy policy) { policy_ = std::move(policy); }
+    [[nodiscard]] const fetch_policy & network_policy() const noexcept { return policy_; }
+
+    // NAME under ROOT, canonical, if it is still inside ROOT once `..` and
+    // symlinks are resolved - else nothing. An absolute NAME is taken relative
+    // to ROOT.
+    [[nodiscard]] static std::optional<std::filesystem::path> contained(
+        const std::filesystem::path & root, const std::filesystem::path & name) {
+        return inside(root, root / name.relative_path());
+    }
+
     // The registry, then a data: URL, then the filesystem. Empty when none of
     // them has it.
     // WHAT THIS PAGE ASKED FOR, in the order it asked, each name once and
@@ -145,6 +185,10 @@ public:
             return {};
         }
         if (sealed_) { return {}; }
+        if (confine_) {
+            return load_confined(
+                std::filesystem::path{name.substr(0, std::min(name.find('?'), name.find('#')))});
+        }
         // A FILE HAS NO QUERY AND NO FRAGMENT. `support/x.js?pipe=trickle(d1)`
         // names x.js in every browser once the URL is a file: one - the query
         // is the server's business and there is no server here - so the
@@ -173,6 +217,23 @@ public:
         return {};
     }
 
+    // A `file:` URL, read as the path it names: the host (empty, or
+    // `localhost`) dropped, the query and fragment cut, the path
+    // percent-decoded. Confined, only for a document at a file: URL itself -
+    // an http page has no business reading the disk - and only inside a root.
+    [[nodiscard]] std::vector<std::byte> load_file_url(std::string_view url,
+                                                       std::string_view document_href) const {
+        if (!url.starts_with("file:")) { return {}; }
+        if (confine_ && !document_href.starts_with("file:")) { return {}; }
+        std::string_view path = url.substr(5);
+        if (path.starts_with("//")) {
+            path.remove_prefix(2);
+            path = path.substr(std::min(path.find('/'), path.size()));
+        }
+        path = path.substr(0, std::min(path.find('?'), path.find('#')));
+        return load(percent_decode(path));
+    }
+
     [[nodiscard]] std::size_t size() const noexcept { return entries_.size(); }
 
 private:
@@ -182,6 +243,60 @@ private:
     // what mutable is for.
     mutable std::vector<std::string> requested_;
     bool sealed_ = false;
+    bool confine_ = true;
+    fetch_policy policy_;
+
+    // CANDIDATE, canonical, when it lies under ROOT (compared component by
+    // component, so /a/bc is not under /a/b).
+    [[nodiscard]] static std::optional<std::filesystem::path> inside(
+        const std::filesystem::path & root, const std::filesystem::path & candidate) {
+        const auto canonical = [](const std::filesystem::path & path) {
+            std::error_code failed;
+            std::filesystem::path out = std::filesystem::absolute(path, failed);
+            if (!failed) { out = std::filesystem::weakly_canonical(out, failed); }
+            return failed || out.empty() ? std::optional<std::filesystem::path>{}
+                                         : std::optional<std::filesystem::path>{std::move(out)};
+        };
+        std::optional<std::filesystem::path> base = canonical(root);
+        const std::optional<std::filesystem::path> full = canonical(candidate);
+        if (!base || !full) { return std::nullopt; }
+        if (base->filename().empty()) { *base = base->parent_path(); } // a trailing separator
+        if (std::mismatch(base->begin(), base->end(), full->begin(), full->end()).first !=
+            base->end()) {
+            return std::nullopt;
+        }
+        return full;
+    }
+
+    [[nodiscard]] std::vector<std::byte> load_confined(const std::filesystem::path & name) const {
+        if (name.empty()) { return {}; }
+        const std::filesystem::path base = base_.empty() ? std::filesystem::path{"."} : base_;
+        std::vector<std::filesystem::path> roots{base};
+        if (!document_root_.empty()) { roots.push_back(document_root_); }
+        roots.insert(roots.end(), extra_roots_.begin(), extra_roots_.end());
+        std::vector<std::filesystem::path> candidates;
+        if (name.has_root_path()) {
+            // Already a path inside a root (a frame's subresource, a font), or
+            // server-absolute: from the document root, else the base path.
+            candidates = {name,
+                          (document_root_.empty() ? base : document_root_) / name.relative_path()};
+        } else {
+            // The working directory first, as the unconfined probe order has it
+            // - but only where that lands inside a root (the font directory,
+            // usually), never as a root of its own.
+            candidates = {name, base / name};
+        }
+        for (const std::filesystem::path & candidate : candidates) {
+            for (const std::filesystem::path & root : roots) {
+                if (const std::optional<std::filesystem::path> path = inside(root, candidate)) {
+                    std::vector<std::byte> bytes = read_file(*path);
+                    if (!bytes.empty()) { return bytes; }
+                    break;
+                }
+            }
+        }
+        return {};
+    }
 
     [[nodiscard]] static std::vector<std::byte> read_file(const std::filesystem::path & path) {
         std::error_code failed;
@@ -209,6 +324,7 @@ private:
     std::vector<std::pair<std::string, std::vector<std::byte>>> entries_;
     std::filesystem::path base_;
     std::filesystem::path document_root_;
+    std::vector<std::filesystem::path> extra_roots_;
 };
 
 } // namespace ctbrowser::shell

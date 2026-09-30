@@ -2,6 +2,7 @@ target_sources(ctbrowser-shell PRIVATE
   idna_table.inc
   net.cpp
   nfc_table.inc
+  policy.cpp
   url.cpp
   url_encoding.cpp
   url_internal.hpp

@@ -448,14 +448,17 @@ struct form_entry {
                                                std::string_view encoding);
 [[nodiscard]] std::string text_plain_form_body(const std::vector<form_entry> & entries,
                                                std::string_view encoding);
-[[nodiscard]] std::string multipart_form_body(const std::vector<form_entry> & entries,
-                                              std::string_view encoding);
-
-// THE multipart/form-data boundary string. Fixed, so a submission's bytes are
-// the same on every run and a golden could compare them. ponytail: a value
-// that contains it ends its part early; a boundary from the seeded random
-// source is the upgrade.
-inline constexpr std::string_view multipart_boundary = "----ctbrowserFormBoundary7MA4YWxkTrZu0gW";
+// multipart/form-data under a boundary of its OWN: `----ctbrowser` and 24
+// random alphanumerics from std::random_device - not the page's seeded
+// Math.random, which a page can predict - drawn again should any name, value
+// or file contain it. A fixed public boundary let a value end its part early
+// and forge fields after it.
+struct multipart_body {
+    std::string boundary;
+    std::string body;
+};
+[[nodiscard]] multipart_body multipart_form_body(const std::vector<form_entry> & entries,
+                                                 std::string_view encoding);
 
 class dom_bindings;
 
