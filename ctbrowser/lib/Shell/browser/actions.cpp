@@ -217,7 +217,12 @@ bool browser::follow_link(node_id target) {
     }
     location_hash_.clear();
     bindings_->observe_location(location_href_, location_hash_);
-    if (navigate_hook_) { navigate_hook_(href); }
+    // The hook gets the RESOLVED address - what an external opener must judge
+    // by - the author's text, and whether a user gesture is behind it. Following
+    // the link CONSUMES that gesture, so one click cannot open two things.
+    const bool activated = bindings_->has_transient_activation();
+    if (activated) { bindings_->consume_activation(); }
+    if (navigate_hook_) { navigate_hook_(location_href_, href, activated); }
     return true;
 }
 

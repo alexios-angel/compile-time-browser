@@ -167,7 +167,12 @@ void test_window_and_document_share_one_location() {
 void test_a_link_is_handed_to_the_embedder() {
     browser page{browser_options{400, 200}};
     std::vector<std::string> visited;
-    page.set_navigate_hook([&visited](const std::string & url) { visited.push_back(url); });
+    std::vector<bool> activated;
+    page.set_navigate_hook(
+        [&visited, &activated](const std::string & url, const std::string &, bool gesture) {
+            visited.push_back(url);
+            activated.push_back(gesture);
+        });
     page.load_html("<body><a href='https://example.com/x'>a link</a></body>");
     page.frame();
 
@@ -176,13 +181,72 @@ void test_a_link_is_handed_to_the_embedder() {
     (void)page.handle(input_event::mouse_up_at(8, 8));
     check(visited.size() == 1, "the link was followed");
     if (!visited.empty()) { check(visited[0] == "https://example.com/x", "with its href"); }
+    if (!activated.empty()) { check(activated[0], "a real click carries user activation"); }
     check(page.location_href() == "https://example.com/x", "and location.href records it");
+
+    // Following it CONSUMED the gesture: a script re-clicking inside the same
+    // activation window must not open a second thing.
+    (void)page.run_script("document.querySelector('a').click();");
+    check(activated.size() == 2 && !activated[1], "one gesture opens one link");
+}
+
+// A SCRIPT'S click() with no gesture behind it may not reach the system
+// browser under the default policy.
+void test_a_script_click_is_not_activated() {
+    browser page{browser_options{400, 200}};
+    std::vector<bool> activated;
+    page.set_navigate_hook([&activated](const std::string &, const std::string &, bool gesture) {
+        activated.push_back(gesture);
+    });
+    page.load_html("<body><a id=a href='https://example.com/x'>a</a>"
+                   "<script>document.getElementById('a').click();</script></body>");
+    check(activated.size() == 1 && !activated[0], "a script click is not user-activated");
+}
+
+// THE DEFAULT POLICY: only a user-activated http(s) URL, and only when the
+// application enabled external links. No SDL needed - it is a free function.
+void test_the_default_navigate_policy() {
+    const auto verdict = [](std::string url, bool gesture) {
+        return default_navigate_verdict(navigate_request{std::move(url), "", gesture});
+    };
+    check(verdict("https://example.com/", true) == navigate_verdict::open_external, "https");
+    check(verdict("HTTP://example.com/", true) == navigate_verdict::open_external,
+          "http, case-folded");
+    check(verdict("https://example.com/", false) == navigate_verdict::deny,
+          "https without activation is denied");
+    for (const char * bad :
+         {"javascript:alert(1)", "file:///etc/passwd", "\\\\server\\share\\x.exe",
+          "C:\\Windows\\calc.exe", "next.html", "../x", "data:text/html,hi", "ms-settings:privacy",
+          "steam://run/1", "https:evil", "https ://x", "https://x/ y", "httpsx://x", ""}) {
+        check(verdict(bad, true) == navigate_verdict::deny, bad);
+    }
+
+    const navigate_request link{"https://example.com/", "https://example.com/", true};
+    app_options options;
+    check(navigate_verdict_for(options, link) == navigate_verdict::deny,
+          "the default configuration never opens anything");
+    options.open_external_links = true;
+    check(navigate_verdict_for(options, link) == navigate_verdict::open_external,
+          "enabled, an activated https link opens");
+    options.on_navigate = [](const std::string &) { return true; };
+    check(navigate_verdict_for(options, link) == navigate_verdict::handled,
+          "on_navigate claiming it wins");
+    options.navigate_policy = [](const navigate_request &) {
+        return navigate_verdict::open_external;
+    };
+    check(navigate_verdict_for(options, navigate_request{"file:///x", "file:///x", false}) ==
+              navigate_verdict::open_external,
+          "a navigate_policy supersedes on_navigate");
+    options.open_external_links = false;
+    check(navigate_verdict_for(options, link) == navigate_verdict::deny,
+          "and even a policy cannot open with external links off");
 }
 
 void test_a_fragment_scrolls_instead_of_navigating() {
     browser page{browser_options{300, 200}};
     std::vector<std::string> visited;
-    page.set_navigate_hook([&visited](const std::string & url) { visited.push_back(url); });
+    page.set_navigate_hook(
+        [&visited](const std::string & url, const std::string &, bool) { visited.push_back(url); });
     page.load_html(R"(<body><a href='#far'>jump</a>
     <div style='height:1200px'>tall</div>
     <p id=far>the target</p></body>)");
@@ -198,7 +262,7 @@ void test_a_fragment_scrolls_instead_of_navigating() {
 
 void test_a_page_can_read_where_a_link_went() {
     browser page{browser_options{300, 200}};
-    page.set_navigate_hook([](const std::string &) {});
+    page.set_navigate_hook([](const std::string &, const std::string &, bool) {});
     page.load_html(R"(<body><a href='/first'>go</a><script>
     document.addEventListener('click', function () { console.log(location.href); });
     </script></body>)");
@@ -226,8 +290,7 @@ void test_a_page_can_read_where_a_link_went() {
 // is what was wrong: `ctbrowse` set browser::set_navigate_hook itself, which
 // REPLACES run_app's hook rather than chaining with it, so every http:// link
 // it was handed was silently swallowed. The application gets first refusal
-// now and anything it does not claim goes to SDL_OpenURL - the system default
-// browser, whatever that is.
+// now and anything it does not claim goes to the navigate policy.
 void test_a_link_reaches_the_application_through_run_app() {
     std::vector<std::string> asked;
     ctbrowser::app_options options;
@@ -237,7 +300,7 @@ void test_a_link_reaches_the_application_through_run_app() {
     options.real_fonts = false;
     options.network = false;
     // Claimed, so the run does not actually open a browser mid-test. Returning
-    // FALSE is what sends it to the system one.
+    // FALSE falls to the policy, which opens nothing unless open_external_links.
     options.on_navigate = [&asked](const std::string & url) {
         asked.push_back(url);
         return true;
@@ -327,6 +390,8 @@ int main() {
     test_location_reload_reruns_the_page();
     test_window_and_document_share_one_location();
     test_a_link_is_handed_to_the_embedder();
+    test_a_script_click_is_not_activated();
+    test_the_default_navigate_policy();
     test_a_fragment_scrolls_instead_of_navigating();
     test_a_page_can_read_where_a_link_went();
     test_a_link_reaches_the_application_through_run_app();

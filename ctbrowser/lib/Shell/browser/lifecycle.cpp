@@ -254,7 +254,8 @@ void browser::set_alert_hook(std::function<void(const std::string &)> hook) {
     alert_hook_ = std::move(hook);
 }
 
-void browser::set_navigate_hook(std::function<void(const std::string &)> hook) {
+void browser::set_navigate_hook(
+    std::function<void(const std::string &, const std::string &, bool)> hook) {
     navigate_hook_ = std::move(hook);
 }
 

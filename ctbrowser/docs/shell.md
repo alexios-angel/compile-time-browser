@@ -394,10 +394,14 @@ nine hardcoded copies, so ctbrowser's rows still sit further apart than
 Chrome's. It is the single largest remaining difference and it is left for its
 own change — it touches ten sites and `layout_inline` asserts the 1.25 outright.
 
-**`<a href>` reaches the SYSTEM BROWSER.** `app_options::on_navigate` gives the
+**`<a href>` reaches the SYSTEM BROWSER only if the application opts in.**
+`app_options::navigate_policy` (or the older `on_navigate`) gives the
 application first refusal — `ctbrowse` loads a local `.html` that way — and
-anything it does not claim goes to `SDL_OpenURL`. It is an app_options hook
-rather than a browser one because setting `browser::set_navigate_hook` directly
+`SDL_OpenURL` is called only with `open_external_links` set and an
+`open_external` verdict; `default_navigate_verdict` allows a resolved http(s)
+URL behind a user gesture and nothing else. A page controls the href and can
+click it from script, so the OS URL opener is never a default. It is an
+app_options hook rather than a browser one because setting `browser::set_navigate_hook` directly
 REPLACES the fallback, which is how `ctbrowse` silently swallowed every
 external link it was handed.
 
@@ -613,6 +617,9 @@ engine.
 **SDL3_image is optional** and arrives as a decoder hook installed by
 `ctbrowser.app` for what is left — GIF, WEBP, TIFF — the only place SDL and
 images are allowed to meet, since the shell stays SDL-free.
+**An image above 2^26 pixels decodes blank by policy** (`max_decode_pixels` in
+`shell/image/images.hpp`, shared by BMP, PNG and JPEG): a 12000x8000 photo is
+96M pixels and is refused, a documented limit rather than a decoder bug.
 
 **PNG AND JPEG CAME OUT OF THAT HOOK on 2026-08-01**, and the reason is a gap
 nothing could see: `tests/` is SDL-free by an invariant `ctbrowser/test/lint/api_surface`

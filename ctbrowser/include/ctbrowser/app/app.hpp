@@ -15,6 +15,7 @@
 #include <string_view>
 #include <vector>
 
+#include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/paint/paint.hpp>
 #include <ctbrowser/raster/raster.hpp>
@@ -36,6 +37,40 @@ struct asset {
     std::string name;
     std::vector<std::byte> bytes;
 };
+
+// WHAT A LINK THAT LEAVES THE PAGE MAY DO. The page chooses the href and can
+// click it from script, so handing it to the operating system's URL opener
+// (ShellExecute, xdg-open) unchecked lets a shipped game open file:, UNC or
+// custom-scheme targets. Nothing leaves unless the application opts in.
+enum class navigate_verdict {
+    deny,
+    handled,
+    open_external
+};
+
+struct navigate_request {
+    std::string url;     // resolved against the document
+    std::string href;    // the author's text
+    bool user_activated; // a real input gesture was behind it (and was consumed)
+};
+
+// The default policy: only an http(s) URL - judged by the RESOLVED address's
+// scheme, ASCII case-folded - that a user gesture asked for. Everything else
+// (javascript:, data:, file:, UNC, drive letters, relative, custom schemes) is
+// denied, as is any byte a URL parser would have percent-encoded.
+[[nodiscard]] inline navigate_verdict default_navigate_verdict(const navigate_request & request) {
+    if (!request.user_activated) { return navigate_verdict::deny; }
+    const std::string_view url = request.url;
+    for (const char c : url) {
+        if (static_cast<unsigned char>(c) <= 0x20 || c == 0x7f) { return navigate_verdict::deny; }
+    }
+    const auto colon = url.find("://");
+    if (colon == std::string_view::npos) { return navigate_verdict::deny; }
+    const std::string_view scheme = url.substr(0, colon);
+    return ascii_iequals(scheme, "http") || ascii_iequals(scheme, "https")
+               ? navigate_verdict::open_external
+               : navigate_verdict::deny;
+}
 
 struct app_options {
     std::string title = "ctbrowser";
@@ -175,17 +210,37 @@ struct app_options {
     // Set it to an empty function to silence the default without replacing it.
     std::function<void(const std::string & message)> on_script_error;
 
-    // A link the page followed that LEAVES this document. Return true if the
-    // application handled it - `ctbrowse` loads a local .html this way - and
-    // false to let it go to the SYSTEM BROWSER, which is what happens with no
-    // hook at all and what a user clicking an http:// link expects.
+    // A link the page followed that LEAVES this document. navigate_policy, when
+    // set, decides; otherwise on_navigate (given the raw href) returning true
+    // means the application handled it - `ctbrowse` loads a local .html this
+    // way - and false falls through to default_navigate_verdict.
     //
-    // A hook rather than a browser-level one so an application does not have to
-    // remember to chain: setting browser::set_navigate_hook directly REPLACES
-    // the system-browser fallback, which is how ctbrowse silently swallowed
-    // every external link it was given.
-    std::function<bool(const std::string & url)> on_navigate;
+    // Hooks here rather than browser::set_navigate_hook, which REPLACES this
+    // wiring - how ctbrowse once silently swallowed every external link.
+    std::function<navigate_verdict(const navigate_request &)> navigate_policy;
+    std::function<bool(const std::string & href)> on_navigate;
+    // The SYSTEM BROWSER is reached only when this is true AND the verdict is
+    // open_external. Off by default: a sealed game never hands a URL to the OS.
+    bool open_external_links = false;
 };
+
+// What run_app does with a link that leaves the page: open_external only when
+// the application enabled it. Free so it is testable without a window.
+[[nodiscard]] inline navigate_verdict navigate_verdict_for(const app_options & options,
+                                                           const navigate_request & request) {
+    navigate_verdict verdict = navigate_verdict::deny;
+    if (options.navigate_policy) {
+        verdict = options.navigate_policy(request);
+    } else if (options.on_navigate && options.on_navigate(request.href)) {
+        verdict = navigate_verdict::handled;
+    } else {
+        verdict = default_navigate_verdict(request);
+    }
+    if (verdict == navigate_verdict::open_external && !options.open_external_links) {
+        return navigate_verdict::deny;
+    }
+    return verdict;
+}
 
 // Environment overrides, applied by run_app before anything else:
 //

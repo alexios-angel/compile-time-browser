@@ -79,8 +79,9 @@ int main(int argc, char ** argv) {
     // stops - it has no idea what a URL means. Deciding that a relative one
     // names a file next to the current page is a BROWSER's business, and this
     // program is the browser. Returning false for anything else hands it to
-    // the system browser rather than swallowing it, which is what an http://
-    // link in a page is for.
+    // the default policy, which sends a clicked http(s) link to the system
+    // browser - this is an interactive browser, so it opts in.
+    options.open_external_links = true;
     options.on_navigate = [&path, &live](const std::string & href) {
         if (href.find("://") != std::string::npos) { return false; }
         namespace fs = std::filesystem;

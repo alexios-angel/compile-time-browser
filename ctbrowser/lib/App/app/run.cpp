@@ -236,15 +236,18 @@ int run_app(std::string_view html, app_options options) {
     });
 #endif
     // A LINK THAT LEAVES THE PAGE. The application gets first refusal - that is
-    // how `ctbrowse` follows a link to another local file - and anything it
-    // does not claim goes to the system browser, which is what clicking an
-    // http:// link means.
-    page.set_navigate_hook([&options](const std::string & url) {
-        if (options.on_navigate && options.on_navigate(url)) { return; }
+    // how `ctbrowse` follows a link to another local file - and only what the
+    // policy (navigate_verdict_for) lets out reaches the system browser.
+    page.set_navigate_hook(
+        [&options](const std::string & url, const std::string & href, bool activated) {
+            const navigate_request request{url, href, activated};
+            if (navigate_verdict_for(options, request) != navigate_verdict::open_external) {
+                return;
+            }
 #if CTBROWSER_WITH_SDL3
-        (void)SDL_OpenURL(url.c_str());
+            (void)SDL_OpenURL(url.c_str());
 #endif
-    });
+        });
     if (options.real_fonts) { (void)page.use_real_fonts(options.font_path.string()); }
 
     // Sound. `playSound(name [, volume])` is what the page calls; the HTML

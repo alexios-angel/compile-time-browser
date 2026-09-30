@@ -325,7 +325,12 @@ public:
     // the wrong date is a bug no golden cares about; `run_app` does exactly that.
     void set_clock(std::function<double()> clock) { clock_ = std::move(clock); }
 
-    void set_navigate_hook(std::function<void(const std::string &)> hook);
+    // A LINK THAT LEAVES THE DOCUMENT: (resolved url, the author's raw href,
+    // whether the page had transient user activation - which following it
+    // consumed). The embedder decides what leaving means; see app_options.
+    void set_navigate_hook(
+        std::function<void(const std::string & url, const std::string & href, bool user_activated)>
+            hook);
 
     // EVERY CLASSIC SCRIPT'S PROGRAM, ONCE, BEFORE IT RUNS - which is where a
     // packaged application stamps its compiled bodies on.
@@ -942,7 +947,7 @@ private:
     double autoscroll_due_ms_ = 0;
     std::function<void(const std::string &)> alert_hook_;
     std::vector<std::string> alerts_;
-    std::function<void(const std::string &)> navigate_hook_;
+    std::function<void(const std::string &, const std::string &, bool)> navigate_hook_;
     std::function<void(script::program &, std::string_view)> script_prepared_hook_;
     std::string source_html_;
     // Which front end read `source_html_`, so `location.reload()` re-reads it

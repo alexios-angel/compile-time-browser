@@ -518,8 +518,9 @@ void test_nothing_leaks_from_one_script_into_the_next() {
         browser page{browser_options{200, 100}};
         constexpr std::string_view next_page = "<html><body><div id=out>NEW</div>"
                                                "<script>alert('new-page');</script></body></html>";
-        page.set_navigate_hook(
-            [&page, next_page](const std::string &) { page.load_html(next_page); });
+        page.set_navigate_hook([&page, next_page](const std::string &, const std::string &, bool) {
+            page.load_html(next_page);
+        });
         page.load_html("<html><body><div id=out>OLD</div><a id=go href='next.html'>go</a>"
                        "<script>alert('old-1'); document.getElementById('go').click();</script>"
                        "<script>alert('old-2'); "
