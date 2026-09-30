@@ -13,19 +13,10 @@ std::optional<bool> prefixTruth(prefixValue value) {
         return true;
     }
     if (value.kind != prefixValue::Kind::primitive) { return {}; }
-    auto literal = value.literal;
-    if (llvm::isa<ctjs::UndefinedAttr, ctjs::NullAttr>(literal)) { return false; }
-    if (auto boolean = llvm::dyn_cast<ctjs::BooleanAttr>(literal)) { return boolean.getValue(); }
-    if (auto number = llvm::dyn_cast<ctjs::NumberAttr>(literal)) {
+    if (auto number = llvm::dyn_cast_if_present<ctjs::NumberAttr>(value.literal)) {
         return number.getDouble() != 0 && !std::isnan(number.getDouble());
     }
-    if (auto text = llvm::dyn_cast<ctjs::StringAttr>(literal)) { return !text.getValue().empty(); }
-    if (auto integer = llvm::dyn_cast<mlir::IntegerAttr>(literal)) {
-        if (integer.getValue().isZero() || integer.getValue().isOne()) {
-            return integer.getValue().isOne();
-        }
-    }
-    return {};
+    return literalTruth(value.literal);
 }
 
 std::optional<prefixValue> prefixScalar(mlir::Operation * operation,
@@ -60,17 +51,10 @@ prefixValue prefixUnary(ctjs::UnaryKind kind, prefixValue operand, mlir::MLIRCon
                operand.kind == prefixValue::Kind::realm ||
                operand.kind == prefixValue::Kind::resource) {
         name = "object";
-    } else if (operand.kind == prefixValue::Kind::absent ||
-               llvm::isa_and_nonnull<ctjs::UndefinedAttr>(operand.literal)) {
+    } else if (operand.kind == prefixValue::Kind::absent) {
         name = "undefined";
-    } else if (llvm::isa_and_nonnull<ctjs::NullAttr>(operand.literal)) {
-        name = "object";
-    } else if (llvm::isa_and_nonnull<ctjs::StringAttr>(operand.literal)) {
-        name = "string";
-    } else if (llvm::isa_and_nonnull<ctjs::BooleanAttr>(operand.literal)) {
-        name = "boolean";
-    } else if (llvm::isa_and_nonnull<ctjs::NumberAttr>(operand.literal)) {
-        name = "number";
+    } else {
+        name = typeofLiteral(operand.literal);
     }
     return name.empty() ? prefixValue{}
                         : prefixValue::constant(ctjs::StringAttr::get(context, name));
@@ -104,7 +88,7 @@ prefixValue prefixAnalysis::operation(mlir::Operation * operation, environment &
     if (auto made = llvm::dyn_cast<ctjs::CreateObjectOp>(operation)) {
         const unsigned id = static_cast<unsigned>(objects.size());
         objects.push_back({{}, made, made->getParentOfType<ctjs::FuncOp>(), false, false});
-        return {prefixValue::Kind::object, {}, {}, id};
+        return prefixValue::of(prefixValue::Kind::object, id);
     }
     if (auto made = llvm::dyn_cast<ctjs::CreateClosureOp>(operation)) {
         prefixValue closure{prefixValue::Kind::closure, {}, made, 0};

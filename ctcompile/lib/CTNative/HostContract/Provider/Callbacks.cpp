@@ -1,4 +1,5 @@
 #include "Callbacks.h"
+#include "Paths.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "llvm/ADT/APFloat.h"
@@ -11,15 +12,11 @@ struct callbackReader {
     llvm::StringMap<prefixValue> & globals;
     HostPrefixProviderCallback proof;
     using environment = prefixAnalysis::environment;
-    using completion = prefixAnalysis::completion;
 
     prefixValue primitive(prefixValue value) {
         if (value.kind != prefixValue::Kind::primitive || !value.literal) { return {}; }
-        if (auto flag = llvm::dyn_cast<mlir::IntegerAttr>(value.literal)) {
-            if (!flag.getValue().isZero() && !flag.getValue().isOne()) { return {}; }
-            value.literal =
-                ctjs::BooleanAttr::get(prefix.module.getContext(), flag.getValue().isOne());
-        }
+        value.literal = booleanFromBit(value.literal);
+        if (!value.literal) { return {}; }
         if (auto string = llvm::dyn_cast<ctjs::StringAttr>(value.literal)) {
             if (string.getValue().size() > 65536 ||
                 !prefix.spend(static_cast<unsigned>(string.getValue().size()))) {
@@ -30,21 +27,14 @@ struct callbackReader {
     }
 
     bool writable(llvm::StringRef name) {
-        if (!prefix.spendText(name) || !ctjs::ordinaryKey(name) || reservedCallbackBinding(name)) {
+        if (!prefix.spendText(name) || !ctjs::ordinaryKey(name) || reservedCallbackBinding(name) ||
+            !unreservedBinding(
+                name, prefix.contract,
+                {&prefix.contract.initialIntrinsics, &prefix.contract.realmOwnDataProperties},
+                [&](llvm::StringRef reserved) {
+                    return prefix.step() && prefix.spendText(reserved);
+                })) {
             return false;
-        }
-        for (const auto * names :
-             {&prefix.contract.initialIntrinsics, &prefix.contract.realmOwnDataProperties}) {
-            for (const auto & reserved : *names) {
-                if (!prefix.step() || !prefix.spendText(reserved) || reserved == name) {
-                    return false;
-                }
-            }
-        }
-        for (const auto & root : prefix.contract.roots) {
-            if (!prefix.step() || !prefix.spendText(root.binding) || root.binding == name) {
-                return false;
-            }
         }
         const auto found = globals.find(name);
         return found != globals.end() &&
@@ -112,67 +102,18 @@ struct callbackReader {
         if (llvm::isa<ctjs::FromBoolOp, mlir::arith::TruncIOp, mlir::arith::ExtUIOp>(operation)) {
             return primitive(values.lookup(operation->getOperand(0)));
         }
-        // No calls, properties, allocation, upvalues, raw arguments, exception
-        // paths or identity inspection can cross this callback proof.
-        return {};
-    }
-
-    completion region(mlir::Region & region, environment & values, unsigned depth = 0) {
-        if (depth > 64 || !prefix.step()) { return {}; }
-        if (region.empty()) {
-            return {completion::Kind::yielded, {}};
-        }
-        if (!llvm::hasSingleElement(region)) { return {}; }
-        for (mlir::Operation & operation : region.front()) {
-            if (!prefix.step()) { return {}; }
-            if (auto returned = llvm::dyn_cast<ctjs::ReturnOp>(operation)) {
-                return {completion::Kind::returned,
-                        {primitive(values.lookup(returned.getValue()))}};
-            }
-            if (auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(operation)) {
-                completion result{completion::Kind::yielded, {}};
-                for (mlir::Value value : yield.getOperands()) {
-                    if (!prefix.step()) { return {}; }
-                    auto known = primitive(values.lookup(value));
-                    if (known.kind != prefixValue::Kind::primitive) { return {}; }
-                    result.values.push_back(known);
-                }
-                return result;
-            }
-            if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(operation)) {
-                auto bit = prefixTruth(primitive(values.lookup(branch.getCondition())));
-                if (!bit) { return {}; }
-                auto selected = this->region(branch->getRegion(*bit ? 0u : 1u), values, depth + 1);
-                if (selected.kind == completion::Kind::returned) { return selected; }
-                if (selected.kind != completion::Kind::yielded ||
-                    selected.values.size() != branch.getNumResults()) {
-                    return {};
-                }
-                for (auto [result, value] : llvm::zip(branch.getResults(), selected.values)) {
-                    if (!prefix.step()) { return {}; }
-                    values[result] = value;
-                }
-                continue;
-            }
-            if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(operation)) {
-                auto value = primitive(values.lookup(store.getValue()));
-                if (value.kind != prefixValue::Kind::primitive || !writable(store.getName()) ||
-                    !prefix.step()) {
-                    return {};
-                }
-                globals[store.getName()] = value;
-                proof.writes.push_back({store, store.getName().str(), value.literal});
-                continue;
-            }
-            if (llvm::isa<ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::RootOp>(operation)) {
-                continue;
-            }
-            auto value = this->operation(&operation, values);
-            if (operation.getNumResults() != 1 || value.kind != prefixValue::Kind::primitive) {
+        if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(operation)) {
+            auto value = primitive(values.lookup(store.getValue()));
+            if (value.kind != prefixValue::Kind::primitive || !writable(store.getName()) ||
+                !prefix.step()) {
                 return {};
             }
-            values[operation.getResult(0)] = value;
+            globals[store.getName()] = value;
+            proof.writes.push_back({store, store.getName().str(), value.literal});
+            return value;
         }
+        // No calls, properties, allocation, upvalues, raw arguments, exception
+        // paths or identity inspection can cross this callback proof.
         return {};
     }
 };
@@ -209,7 +150,7 @@ prefixValue providerCallback(prefixAnalysis & prefix, ctjs::CallOp sourceCall, p
         if (known.kind != prefixValue::Kind::primitive) { return {}; }
         values[parameter] = known;
     }
-    auto returned = reader.region(function.getBody(), values);
+    auto returned = providerRegion(reader, function.getBody(), values);
     if (returned.kind != prefixAnalysis::completion::Kind::returned ||
         returned.values.size() != 1 ||
         returned.values.front().kind != prefixValue::Kind::primitive || !prefix.step()) {

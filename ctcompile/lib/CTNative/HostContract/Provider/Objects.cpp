@@ -78,7 +78,7 @@ bool providerObjectState::accepts(unsigned id) {
     if (!allocation || object.published || prefix.factoryTables.contains(id) ||
         allocation->getParentOfType<ctjs::FuncOp>().getSymName() != prefix.contract.entry ||
         object.invocation != allocation->getParentOfType<ctjs::FuncOp>().getOperation() ||
-        providerPublicationOwner(prefix, {prefixValue::Kind::object, {}, {}, id})) {
+        providerPublicationOwner(prefix, prefixValue::of(prefixValue::Kind::object, id))) {
         return false;
     }
     // Scalar own contents exclude object/Map/callable backedges and coercion.

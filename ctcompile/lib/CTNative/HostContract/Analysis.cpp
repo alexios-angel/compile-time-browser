@@ -511,11 +511,9 @@ std::string analyzer::environmentProblem() {
                       mlir::scf::IfOp, mlir::scf::YieldOp>(operation)) {
             // Even an inactive source arm must have real SSA operands. A
             // selected-arm effect anchor cannot export its local definitions.
-            for (mlir::Value operand : operation->getOperands()) {
-                if (!step() || !dominance.dominates(operand, operation)) {
-                    reject("provider operand is outside its source scope");
-                    return;
-                }
+            if (!operandsDominate(operation)) {
+                reject("provider operand is outside its source scope");
+                return;
             }
         }
         if (declaration && operation->getParentOfType<ctjs::FuncOp>() == declaration) { return; }

@@ -38,7 +38,7 @@ prefixValue providerDiagnosticState::global(ctjs::LoadGlobalOp load) {
         llvm::is_contained(prefix.contract.initialIntrinsics, "Array")) {
         // initialBindingProblem checks all live intrinsic uses and forbids
         // aliases, replacement, descriptor changes and detached from calls.
-        return {prefixValue::Kind::arrayConstructor, {}, {}, 0};
+        return prefixValue::of(prefixValue::Kind::arrayConstructor, 0);
     }
     const auto found = globals.find(load.getName());
     if (found == globals.end() || found->second.kind == prefixValue::Kind::absent) { return {}; }
@@ -62,7 +62,7 @@ prefixValue providerDiagnosticState::property(ctjs::GetPropertyOp read,
         return found == fields.end() ? prefixValue{} : found->second;
     }
     if (owner.kind == prefixValue::Kind::arrayConstructor && text && text.getValue() == "from") {
-        return {prefixValue::Kind::arrayFrom, {}, {}, 0};
+        return prefixValue::of(prefixValue::Kind::arrayFrom, 0);
     }
     if (owner.kind == prefixValue::Kind::resource && state.get(owner.object) && text &&
         text.getValue() == "keys") {
@@ -127,7 +127,7 @@ prefixValue providerDiagnosticState::call(ctjs::CallOp invoked,
         }
         const auto id = static_cast<unsigned>(iterators.size());
         iterators.push_back({receiver.object, mutation, consumes, false});
-        const prefixValue result{prefixValue::Kind::mapKeysIterator, {}, {}, id};
+        const auto result = prefixValue::of(prefixValue::Kind::mapKeysIterator, id);
         return record(invoked, receiver.object, "keys", {}) ? result : prefixValue{};
     }
     if (callee.kind == prefixValue::Kind::arrayFrom &&
@@ -141,13 +141,14 @@ prefixValue providerDiagnosticState::call(ctjs::CallOp invoked,
             snapshots.size() >= std::numeric_limits<unsigned>::max() || !prefix.step()) {
             return {};
         }
-        snapshot copied{iterator.map, {}};
         const auto charge = [&](unsigned count) { return prefix.spend(count); };
-        if (!state.keys(iterator.map, copied.keys, charge)) { return {}; }
+        auto keys = state.keys(iterator.map, charge);
+        if (!keys) { return {}; }
+        snapshot copied{iterator.map, std::move(*keys)};
         const auto id = static_cast<unsigned>(snapshots.size());
         snapshots.push_back(std::move(copied));
         iterator.consumed = true;
-        const prefixValue result{prefixValue::Kind::keySnapshot, {}, {}, id};
+        const auto result = prefixValue::of(prefixValue::Kind::keySnapshot, id);
         return record(invoked, iterator.map, "Array.from", {}) ? result : prefixValue{};
     }
     if (callee.kind != prefixValue::Kind::closure || !prefix.followProviderCallbacks) { return {}; }

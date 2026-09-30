@@ -6,12 +6,16 @@
 #include "mlir/IR/SymbolTable.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSet.h"
 
+#include <initializer_list>
 #include <optional>
+#include <string>
 #include <utility>
+#include <vector>
 
 namespace ctcompile::ctnative::host_detail {
 
@@ -29,10 +33,90 @@ inline constexpr llvm::StringLiteral classDefinedIntrinsic = "__ctbrowser_class_
 // Ordinary DOM identities; class preparation consumes its separate declarations.
 inline constexpr unsigned maxDOMIntrinsicNameLength = 29; // __ctbrowser_set_function_name
 const llvm::StringSet<> & domInitialIntrinsics();
+inline bool domInitialIntrinsic(llvm::StringRef name) {
+    return name.size() <= maxDOMIntrinsicNameLength && domInitialIntrinsics().contains(name);
+}
+// The intrinsic-entry declaration: Symbol, and optionally String, only.
+inline bool symbolStringIntrinsics(const std::vector<std::string> & names) {
+    return llvm::is_contained(names, "Symbol") && llvm::all_of(names, [](const auto & name) {
+               return name == "Symbol" || name == "String";
+           });
+}
 
 inline bool reservedCallbackBinding(llvm::StringRef name) {
     static const llvm::StringSet<> names{"globalThis", "undefined", "NaN", "Infinity"};
     return name.size() <= 10 && names.contains(name);
+}
+
+// The callee, receiver and explicit arguments of a ctjs.call or ctjs.call_direct
+// (`direct` set only for the latter).
+struct jsCall {
+    mlir::Value callee, receiver;
+    mlir::OperandRange args;
+    ctjs::CallDirectOp direct;
+};
+
+inline std::optional<jsCall> jsCallOf(mlir::Operation * operation) {
+    if (auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(operation)) {
+        return jsCall{direct.getCalleeValue(), direct.getReceiver(), direct.getArgs(), direct};
+    }
+    if (auto call = llvm::dyn_cast<ctjs::CallOp>(operation)) {
+        return jsCall{call.getCallee(), call.getReceiver(), call.getArgs(), {}};
+    }
+    return std::nullopt;
+}
+
+// An i1-style 0/1 IntegerAttr as its Boolean, a wider integer as null, and any
+// other literal unchanged.
+inline mlir::Attribute booleanFromBit(mlir::Attribute literal) {
+    auto integer = llvm::dyn_cast_if_present<mlir::IntegerAttr>(literal);
+    if (!integer) { return literal; }
+    if (!integer.getValue().isZero() && !integer.getValue().isOne()) { return {}; }
+    return ctjs::BooleanAttr::get(literal.getContext(), integer.getValue().isOne());
+}
+
+// ToBoolean of an undefined, null, Boolean, String or 0/1 integer literal.
+// Numbers are deliberately absent: callers that fold them test them first.
+inline std::optional<bool> literalTruth(mlir::Attribute literal) {
+    if (llvm::isa_and_nonnull<ctjs::UndefinedAttr, ctjs::NullAttr>(literal)) { return false; }
+    if (auto boolean = llvm::dyn_cast_if_present<ctjs::BooleanAttr>(literal)) {
+        return boolean.getValue();
+    }
+    if (auto text = llvm::dyn_cast_if_present<ctjs::StringAttr>(literal)) {
+        return !text.getValue().empty();
+    }
+    if (auto integer = llvm::dyn_cast_if_present<mlir::IntegerAttr>(literal)) {
+        if (integer.getValue().isZero() || integer.getValue().isOne()) {
+            return integer.getValue().isOne();
+        }
+    }
+    return std::nullopt;
+}
+
+// `typeof` of a primitive literal; empty for anything else.
+inline llvm::StringRef typeofLiteral(mlir::Attribute literal) {
+    if (llvm::isa_and_nonnull<ctjs::UndefinedAttr>(literal)) { return "undefined"; }
+    if (llvm::isa_and_nonnull<ctjs::NullAttr>(literal)) { return "object"; }
+    if (llvm::isa_and_nonnull<ctjs::StringAttr>(literal)) { return "string"; }
+    if (llvm::isa_and_nonnull<ctjs::BooleanAttr>(literal)) { return "boolean"; }
+    if (llvm::isa_and_nonnull<ctjs::NumberAttr>(literal)) { return "number"; }
+    return {};
+}
+
+// Whether `name` differs from every name in `lists` and every root binding of
+// `contract`, charging `charge(name)` for each compared name first (false stops).
+inline bool unreservedBinding(llvm::StringRef name, const HostContract & contract,
+                              std::initializer_list<const std::vector<std::string> *> lists,
+                              llvm::function_ref<bool(llvm::StringRef)> charge) {
+    for (const auto * names : lists) {
+        for (const auto & reserved : *names) {
+            if (!charge(reserved) || reserved == name) { return false; }
+        }
+    }
+    for (const auto & root : contract.roots) {
+        if (!charge(root.binding) || root.binding == name) { return false; }
+    }
+    return true;
 }
 
 // The source function a closure creates. Its numeric index names a function
@@ -143,6 +227,12 @@ struct analyzer {
     bool step();
     // `count` steps at once; one that does not fit spends the rest, as `count` steps would.
     bool spend(uint64_t count);
+    // One step per operand; false at the first that does not dominate `operation`.
+    bool operandsDominate(mlir::Operation * operation);
+    // One step; then `use` lies in `function` and `value` dominates it.
+    bool localUse(mlir::Value value, mlir::OpOperand & use, mlir::Operation * function);
+    // One step per user; false at the first that is not a ctjs.root.
+    bool rootedUsers(mlir::Value value);
     mlir::BlockArgument elementInput(mlir::Value value) const;
     ctjs::FuncOp target(mlir::Operation * call) const;
     ctjs::FuncOp callable(mlir::Value value, unsigned depth = 0);

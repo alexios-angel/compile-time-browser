@@ -28,17 +28,11 @@ bool analyzer::scalarCallbacks(llvm::ArrayRef<HostMethodParameters> family,
         if (walked.wasInterrupted()) { return false; }
     }
     const auto ordinaryBinding = [&](llvm::StringRef name) {
-        if (!step() || !ctjs::ordinaryKey(name) || reservedCallbackBinding(name)) { return false; }
-        for (const auto * names : {&contract.initialIntrinsics, &contract.absentBindings,
-                                   &contract.undefinedBindings, &contract.realmOwnDataProperties}) {
-            for (const auto & reserved : *names) {
-                if (!step() || name == reserved) { return false; }
-            }
-        }
-        for (const auto & root : contract.roots) {
-            if (!step() || root.binding == name) { return false; }
-        }
-        return true;
+        return step() && ctjs::ordinaryKey(name) && !reservedCallbackBinding(name) &&
+               unreservedBinding(name, contract,
+                                 {&contract.initialIntrinsics, &contract.absentBindings,
+                                  &contract.undefinedBindings, &contract.realmOwnDataProperties},
+                                 [&](llvm::StringRef) { return step(); });
     };
     std::vector<HostScalarCallback> callbacks;
     for (ctjs::LoadGlobalOp candidate : candidates) {
@@ -58,10 +52,7 @@ bool analyzer::scalarCallbacks(llvm::ArrayRef<HostMethodParameters> family,
             return false;
         }
         for (mlir::OpOperand & use : callback.owner.getResult().getUses()) {
-            if (!step() || use.getOwner()->getParentOfType<ctjs::FuncOp>() != entry ||
-                !dominance.dominates(callback.owner.getResult(), use.getOwner())) {
-                return false;
-            }
+            if (!localUse(callback.owner.getResult(), use, entry)) { return false; }
             if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
             if (use.getOwner() == callback.initialization && use.getOperandNumber() == 0) {
                 continue;
@@ -97,12 +88,9 @@ bool analyzer::scalarCallbacks(llvm::ArrayRef<HostMethodParameters> family,
              !callback.closure.getEnclosingIndicesAttr().empty())) {
             return false;
         }
-        for (mlir::Value operand : callback.closure->getOperands()) {
-            if (!step() || !dominance.dominates(operand, callback.closure)) { return false; }
-        }
+        if (!operandsDominate(callback.closure)) { return false; }
         for (mlir::OpOperand & use : callback.closure.getResult().getUses()) {
-            if (!step() || use.getOwner()->getParentOfType<ctjs::FuncOp>() != entry ||
-                !dominance.dominates(callback.closure.getResult(), use.getOwner()) ||
+            if (!localUse(callback.closure.getResult(), use, entry) ||
                 (!llvm::isa<ctjs::RootOp>(use.getOwner()) &&
                  (use.getOwner() != callback.write || use.getOperandNumber() != 2))) {
                 return false;
@@ -122,10 +110,7 @@ bool analyzer::scalarCallbacks(llvm::ArrayRef<HostMethodParameters> family,
         for (ctjs::LoadGlobalOp load : callback.loads) {
             bool used = false;
             for (mlir::OpOperand & use : load.getResult().getUses()) {
-                if (!step() ||
-                    use.getOwner()->getParentOfType<ctjs::FuncOp>() !=
-                        load->getParentOfType<ctjs::FuncOp>() ||
-                    !dominance.dominates(load.getResult(), use.getOwner())) {
+                if (!localUse(load.getResult(), use, load->getParentOfType<ctjs::FuncOp>())) {
                     return false;
                 }
                 if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
@@ -138,16 +123,13 @@ bool analyzer::scalarCallbacks(llvm::ArrayRef<HostMethodParameters> family,
                     used = true;
                     continue;
                 }
-                auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
-                auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
-                if ((!call || use.getOperandNumber() != 1) &&
-                    (!direct || use.getOperandNumber() != 0)) {
-                    return false;
-                }
-                auto callee = call ? call.getCallee() : direct.getCalleeValue();
+                // The load must be the call's receiver operand.
+                auto js = jsCallOf(use.getOwner());
+                if (!js || use.getOperandNumber() != (js->direct ? 0u : 1u)) { return false; }
+                auto direct = js->direct;
+                const auto callee = js->callee;
                 auto property = callee.getDefiningOp<ctjs::GetPropertyOp>();
-                const auto args = call ? call.getArgs() : direct.getArgs();
-                if (!property || property.getObject() != load.getResult() || args.size() != 1 ||
+                if (!property || property.getObject() != load.getResult() || js->args.size() != 1 ||
                     ctjs::constantKey(property.getKey()) !=
                         ctjs::constantKey(callback.write.getKey()) ||
                     !dominance.dominates(callee, use.getOwner())) {
@@ -157,9 +139,7 @@ bool analyzer::scalarCallbacks(llvm::ArrayRef<HostMethodParameters> family,
                                !ctjs::isUndefinedConstant(direct.getNewTarget()))) {
                     return false;
                 }
-                for (mlir::Value operand : use.getOwner()->getOperands()) {
-                    if (!step() || !dominance.dominates(operand, use.getOwner())) { return false; }
-                }
+                if (!operandsDominate(use.getOwner())) { return false; }
                 if (calls.insert(use.getOwner()).second) {
                     callback.calls.push_back(use.getOwner());
                 }
@@ -169,10 +149,7 @@ bool analyzer::scalarCallbacks(llvm::ArrayRef<HostMethodParameters> family,
         if (callback.calls.empty()) { return false; }
         for (ctjs::GetPropertyOp read : callback.reads) {
             for (mlir::OpOperand & use : read.getResult().getUses()) {
-                if (!step() ||
-                    use.getOwner()->getParentOfType<ctjs::FuncOp>() !=
-                        read->getParentOfType<ctjs::FuncOp>() ||
-                    !dominance.dominates(read.getResult(), use.getOwner())) {
+                if (!localUse(read.getResult(), use, read->getParentOfType<ctjs::FuncOp>())) {
                     return false;
                 }
                 if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
@@ -245,8 +222,7 @@ bool analyzer::scalarCallbacks(llvm::ArrayRef<HostMethodParameters> family,
                     return mlir::WalkResult::interrupt();
                 }
                 for (mlir::OpOperand & use : load.getResult().getUses()) {
-                    if (!step() || use.getOwner()->getParentOfType<ctjs::FuncOp>() != function ||
-                        !dominance.dominates(load.getResult(), use.getOwner())) {
+                    if (!localUse(load.getResult(), use, function)) {
                         return mlir::WalkResult::interrupt();
                     }
                 }
@@ -272,9 +248,7 @@ bool analyzer::scalarCallbacks(llvm::ArrayRef<HostMethodParameters> family,
                 if (!step() || (frameExited && !llvm::isa<ctjs::ReturnOp>(operation))) {
                     return false;
                 }
-                for (mlir::Value operand : operation.getOperands()) {
-                    if (!step() || !dominance.dominates(operand, &operation)) { return false; }
-                }
+                if (!operandsDominate(&operation)) { return false; }
                 callback.operations.push_back(&operation);
                 if (auto constant = llvm::dyn_cast<ctjs::ConstantOp>(operation)) {
                     if (!ctjs::isPrimitiveAttr(constant.getValue())) { return false; }
@@ -384,8 +358,7 @@ bool analyzer::scalarCallbacks(llvm::ArrayRef<HostMethodParameters> family,
         if (!walk(walk, body, 0) || !returned) { return false; }
         for (mlir::BlockArgument argument : body.getArguments()) {
             for (mlir::OpOperand & use : argument.getUses()) {
-                if (!step() || !dominance.dominates(argument, use.getOwner()) ||
-                    use.getOwner()->getParentOfType<ctjs::FuncOp>() != callback.function ||
+                if (!localUse(argument, use, callback.function) ||
                     (argument.getArgNumber() < 3 &&
                      (!llvm::isa<ctjs::RootOp>(use.getOwner()) || use.getOperandNumber() != 1))) {
                     return false;
@@ -395,10 +368,7 @@ bool analyzer::scalarCallbacks(llvm::ArrayRef<HostMethodParameters> family,
         for (mlir::Operation * operation : callback.operations) {
             for (mlir::Value value : operation->getResults()) {
                 for (mlir::OpOperand & use : value.getUses()) {
-                    if (!step() || !dominance.dominates(value, use.getOwner()) ||
-                        use.getOwner()->getParentOfType<ctjs::FuncOp>() != callback.function) {
-                        return false;
-                    }
+                    if (!localUse(value, use, callback.function)) { return false; }
                     if (operation == frame &&
                         (use.getOperandNumber() != 0 ||
                          !llvm::isa<ctjs::RootOp, ctjs::FrameExitOp>(use.getOwner()))) {

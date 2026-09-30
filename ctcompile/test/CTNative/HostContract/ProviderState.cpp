@@ -76,16 +76,15 @@ providerValue string(mlir::MLIRContext & context, llvm::StringRef value) {
 }
 
 providerValue read(const providerState & state, unsigned map, providerValue key) {
-    bool found = false;
-    providerValue value;
-    check(state.lookup(map, key, found, value, unlimited) && found, "known entry is found");
-    return value;
+    const auto value = state.lookup(map, key, unlimited);
+    check(value && *value, "known entry is found");
+    return value && *value ? **value : providerValue{};
 }
 
 unsigned create(providerState & state, providerMapProvenance provenance) {
-    unsigned id = 0;
-    check(state.create(provenance, id, unlimited), "private Map allocation succeeds");
-    return id;
+    const auto id = state.create(provenance, unlimited);
+    check(id.has_value(), "private Map allocation succeeds");
+    return id.value_or(0);
 }
 
 // Sweep the externally observable completion boundary; no internal work formula
@@ -143,8 +142,7 @@ void keysAndOrder(mlir::MLIRContext & context, providerMapProvenance provenance)
         check(state.set(map, key, number(context, static_cast<double>(ordinal++)), unlimited),
               "tagged primitive or proved object key is accepted");
     }
-    unsigned size = 0;
-    check(state.size(map, size, unlimited) && size == 13,
+    check(state.size(map, unlimited) == 13u,
           "primitive tags, object tokens, infinities and embedded NUL remain distinct");
     ordinal = 0;
     for (providerValue key : distinct) {
@@ -165,21 +163,15 @@ void keysAndOrder(mlir::MLIRContext & context, providerMapProvenance provenance)
           "ordered fixture and replacement succeed");
     check(same(ordered.get(orderedId)->entries[1].key, b),
           "replacement preserves insertion position");
-    bool removed = false;
-    check(ordered.erase(orderedId, b, removed, unlimited) && removed,
-          "deletion reports an existing entry");
-    check(ordered.erase(orderedId, b, removed, unlimited) && !removed,
-          "failed deletion reports no mutation");
+    check(ordered.erase(orderedId, b, unlimited) == true, "deletion reports an existing entry");
+    check(ordered.erase(orderedId, b, unlimited) == false, "failed deletion reports no mutation");
     check(ordered.set(orderedId, b, two, unlimited), "reinsertion succeeds");
     const auto & entries = ordered.get(orderedId)->entries;
     check(entries.size() == 3 && same(entries[0].key, a) && same(entries[1].key, c) &&
               same(entries[2].key, b),
           "deletion and reinsertion append after surviving entries");
-    bool found = true;
-    providerValue missing = one;
-    check(ordered.lookup(orderedId, string(context, "absent"), found, missing, unlimited) &&
-              !found && same(missing, providerValue{}),
-          "proved absence is separate from a stored undefined value");
+    const auto missing = ordered.lookup(orderedId, string(context, "absent"), unlimited);
+    check(missing && !*missing, "proved absence is separate from a stored undefined value");
 
     mlir::MLIRContext otherContext;
     otherContext.getOrLoadDialect<ctjs::CTJSDialect>();
@@ -197,17 +189,12 @@ void keySnapshots(mlir::MLIRContext & context, providerMapProvenance provenance)
     const auto nanB = bits(context, UINT64_C(0xfff0000000000002));
     const auto firstObject = providerValue::object(0), secondObject = providerValue::object(1);
 
-    llvm::SmallVector<providerValue, 2> empty{one, two};
-    check(state.keys(map, empty, unlimited) && empty.empty(),
-          "empty Map snapshot replaces the previous output with an empty sequence");
-    const providerValue keep[] = {one, secondObject};
-    llvm::SmallVector<providerValue, 2> invalid{one, secondObject};
-    check(!state.keys(0, invalid, unlimited) && same(invalid, keep) &&
-              !state.keys(999, invalid, unlimited) && same(invalid, keep),
-          "invalid MapIds cannot replace the previous snapshot output");
+    const auto empty = state.keys(map, unlimited);
+    check(empty && empty->empty(), "empty Map snapshot is an empty sequence");
+    check(!state.keys(0, unlimited) && !state.keys(999, unlimited),
+          "invalid MapIds produce no snapshot");
     const auto noWork = [](unsigned) { return false; };
-    check(!state.keys(map, invalid, noWork) && same(invalid, keep),
-          "even an empty snapshot requires a successful budget check");
+    check(!state.keys(map, noWork), "even an empty snapshot requires a successful budget check");
 
     const providerValue inserted[] = {a, b, c, firstObject, secondObject, negativeZero, nanA};
     for (auto key : inserted) {
@@ -217,21 +204,19 @@ void keySnapshots(mlir::MLIRContext & context, providerMapProvenance provenance)
               state.set(map, zero, two, unlimited) && state.set(map, nanB, two, unlimited),
           "replacement and SameValueZero aliases preserve the snapshot's key positions");
     const providerValue before[] = {a, b, c, firstObject, secondObject, zero, nanA};
-    llvm::SmallVector<providerValue, 0> snapshot;
-    check(state.keys(map, snapshot, unlimited) && same(snapshot, before),
+    auto snapshot = state.keys(map, unlimited).value_or(llvm::SmallVector<providerValue, 0>{});
+    check(same(snapshot, before),
           "snapshot preserves insertion order, object identities, NaN identity and positive zero");
     llvm::SmallVector<providerValue, 8> another;
-    check(state.keys(map, another, unlimited) && same(another, before) &&
-              another.data() != snapshot.data(),
+    if (auto keys = state.keys(map, unlimited)) { another = std::move(*keys); }
+    check(same(another, before) && another.data() != snapshot.data(),
           "repeated snapshots own distinct key storage regardless of inline capacity");
 
-    bool removed = false;
-    check(state.erase(map, b, removed, unlimited) && removed && state.set(map, b, one, unlimited),
+    check(state.erase(map, b, unlimited) == true && state.set(map, b, one, unlimited),
           "Map deletion and reinsertion after snapshot creation succeed");
     const providerValue after[] = {a, c, firstObject, secondObject, zero, nanA, b};
-    llvm::SmallVector<providerValue, 0> updated;
-    check(state.keys(map, updated, unlimited) && same(updated, after) && same(snapshot, before) &&
-              same(another, before),
+    const auto updated = state.keys(map, unlimited);
+    check(updated && same(*updated, after) && same(snapshot, before) && same(another, before),
           "later mutation updates fresh snapshots without changing existing snapshots");
     another.front() = c;
     check(same(snapshot, before) && same(read(state, map, a), one),
@@ -265,9 +250,7 @@ void graphAndRefusals(mlir::MLIRContext & context, providerMapProvenance provena
         providerValue::constant(ctjs::BigIntAttr::get(&context, "1")),
         providerValue::constant(mlir::StringAttr::get(&context, "not a JS literal"))};
     for (providerValue key : badKeys) {
-        bool found = true;
-        providerValue output = one;
-        check(!state.lookup(first, key, found, output, unlimited) && found && same(output, one),
+        check(!state.lookup(first, key, unlimited),
               "unsupported equality cannot be reported as absence");
         check(!state.set(first, key, one, unlimited) && same(state, saved),
               "unsupported key cannot change state");
@@ -289,15 +272,11 @@ void graphAndRefusals(mlir::MLIRContext & context, providerMapProvenance provena
               same(read(objectPayloads, first, edge), providerValue::object(1)) &&
               same(state, saved),
           "object payload replacement preserves identity and does not modify the original state");
-    unsigned outputId = 77;
-    check(!state.create({}, outputId, unlimited) && outputId == 77 && same(state, saved),
+    check(!state.create({}, unlimited) && same(state, saved),
           "missing allocation provenance cannot publish a MapId");
-    unsigned outputSize = 77;
-    check(!state.size(0, outputSize, unlimited) && outputSize == 77 && !state.get(0) &&
-              !state.get(999),
+    check(!state.size(0, unlimited) && !state.get(0) && !state.get(999),
           "invalid MapIds produce no state or size proof");
-    bool removed = false;
-    check(state.erase(second, edge, removed, unlimited) && removed &&
+    check(state.erase(second, edge, unlimited) == true &&
               state.set(third, edge, providerValue::map(first), unlimited),
           "cycle checks use the current graph after deletion");
     check(saved.get(second)->entries.size() == 1,
@@ -323,40 +302,29 @@ void budgets(mlir::MLIRContext & context, providerMapProvenance provenance) {
     check(initial.cloneTo(countedCopy, countWork) && charged >= 7,
           "copy charges at least three Map records and four stored entries");
     charged = 0;
-    bool countedFound = false;
-    providerValue countedValue;
-    check(initial.lookup(first, c, countedFound, countedValue, countWork) && countedFound &&
-              charged >= 3,
+    const auto counted = initial.lookup(first, c, countWork);
+    check(counted && *counted && charged >= 3,
           "lookup charges every compared key before the last entry");
     charged = 0;
-    llvm::SmallVector<providerValue, 0> countedKeys;
-    check(initial.keys(first, countedKeys, countWork) && countedKeys.size() == 3 && charged >= 3,
+    const auto countedKeys = initial.keys(first, countWork);
+    check(countedKeys && countedKeys->size() == 3 && charged >= 3,
           "snapshot charges every copied key before publishing the complete sequence");
     cutoffs(
         initial,
         [&](providerState & state, providerState::Spend spend) {
-            const providerValue before[] = {two, providerValue::object(99)};
             const providerValue after[] = {a, b, c};
-            llvm::SmallVector<providerValue, 2> output{two, providerValue::object(99)};
-            const auto * storage = output.data();
-            const auto capacity = output.capacity();
-            const bool success = state.keys(first, output, spend);
-            check(success ? same(output, after)
-                          : same(output, before) && output.data() == storage &&
-                                output.capacity() == capacity,
-                  "exhausted snapshots preserve every prior output key and its storage");
-            return success;
+            const auto output = state.keys(first, spend);
+            check(!output || same(*output, after), "a complete snapshot holds every key in order");
+            return output.has_value();
         },
         "complete key snapshots have a finite completion budget");
     cutoffs(
         initial,
         [&](providerState & state, providerState::Spend spend) {
-            bool found = false;
-            providerValue output = two;
-            const bool success = state.lookup(first, c, found, output, spend);
-            check(success ? found && same(output, one) : !found && same(output, two),
+            const auto output = state.lookup(first, c, spend);
+            check(!output || (*output && same(**output, one)),
                   "lookup only publishes outputs after every required comparison");
-            return success;
+            return output.has_value();
         },
         "lookup has a finite completion budget");
     cutoffs(
@@ -374,30 +342,26 @@ void budgets(mlir::MLIRContext & context, providerMapProvenance provenance) {
     cutoffs(
         initial,
         [&](providerState & state, providerState::Spend spend) {
-            bool removed = false;
-            const bool success = state.erase(first, a, removed, spend);
-            check(success == removed,
+            const auto removed = state.erase(first, a, spend);
+            check(!removed || *removed,
                   "deletion does not publish its result before mutation commits");
-            return success;
+            return removed.has_value();
         },
         "deletion and entry shifts have a finite completion budget");
     cutoffs(
         initial,
         [&](providerState & state, providerState::Spend spend) {
-            unsigned id = 77;
-            const bool success = state.create(provenance, id, spend);
-            check(success ? id == 4 : id == 77,
-                  "allocation ID is withheld until allocation commits");
-            return success;
+            const auto id = state.create(provenance, spend);
+            check(!id || *id == 4, "allocation ID is withheld until allocation commits");
+            return id.has_value();
         },
         "allocation has a finite completion budget");
     cutoffs(
         initial,
         [&](providerState & state, providerState::Spend spend) {
-            unsigned count = 77;
-            const bool success = state.size(first, count, spend);
-            check(success ? count == 3 : count == 77, "size output is unchanged on exhaustion");
-            return success;
+            const auto count = state.size(first, spend);
+            check(!count || *count == 3, "size output is withheld on exhaustion");
+            return count.has_value();
         },
         "size has a finite completion budget");
     providerState destination;

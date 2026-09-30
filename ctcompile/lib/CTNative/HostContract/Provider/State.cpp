@@ -114,28 +114,26 @@ bool providerState::cloneTo(providerState & out, Spend spend) const {
     return true;
 }
 
-bool providerState::create(providerMapProvenance provenance, unsigned & outId, Spend spend) {
+std::optional<unsigned> providerState::create(providerMapProvenance provenance, Spend spend) {
     if (!spend(1) || !provenance.allocation || !provenance.invocation || provenance.factory == 0 ||
         state.size() >= std::numeric_limits<unsigned>::max()) {
-        return false;
+        return std::nullopt;
     }
     unsigned work = 1;
     if (state.size() == state.capacity()) { work += static_cast<unsigned>(state.size()); }
-    if (!spend(work)) { return false; }
+    if (!spend(work)) { return std::nullopt; }
     state.push_back({provenance, {}});
-    outId = static_cast<unsigned>(state.size());
-    return true;
+    return static_cast<unsigned>(state.size());
 }
 
-bool providerState::lookup(unsigned mapId, providerValue key, bool & found,
-                           providerValue & outValue, Spend spend) const {
+std::optional<std::optional<providerValue>> providerState::lookup(unsigned mapId, providerValue key,
+                                                                  Spend spend) const {
     const auto * map = get(mapId);
-    if (!spend(1) || !map || !keyIsKnown(key)) { return false; }
+    if (!spend(1) || !map || !keyIsKnown(key)) { return std::nullopt; }
     unsigned index = 0;
-    if (!find(*map, key, index, spend)) { return false; }
-    found = index != map->entries.size();
-    outValue = found ? map->entries[index].value : providerValue{};
-    return true;
+    if (!find(*map, key, index, spend)) { return std::nullopt; }
+    if (index == map->entries.size()) { return std::optional<providerValue>{}; }
+    return std::optional{map->entries[index].value};
 }
 
 bool providerState::reaches(unsigned from, unsigned target, bool & found, Spend spend) const {
@@ -184,42 +182,38 @@ bool providerState::set(unsigned mapId, providerValue key, providerValue value, 
     return true;
 }
 
-bool providerState::erase(unsigned mapId, providerValue key, bool & outRemoved, Spend spend) {
+std::optional<bool> providerState::erase(unsigned mapId, providerValue key, Spend spend) {
     const auto * map = get(mapId);
-    if (!spend(1) || !map || !keyIsKnown(key)) { return false; }
+    if (!spend(1) || !map || !keyIsKnown(key)) { return std::nullopt; }
     unsigned index = 0;
-    if (!find(*map, key, index, spend)) { return false; }
+    if (!find(*map, key, index, spend)) { return std::nullopt; }
     auto & entries = state[mapId - 1].entries;
-    if (index == entries.size()) {
-        outRemoved = false;
-        return true;
-    }
+    if (index == entries.size()) { return false; }
     // The erased entry and every shifted entry are charged before mutation.
-    if (!spend(static_cast<unsigned>(entries.size() - index))) { return false; }
+    if (!spend(static_cast<unsigned>(entries.size() - index))) { return std::nullopt; }
     entries.erase(entries.begin() + index);
-    outRemoved = true;
     return true;
 }
 
-bool providerState::size(unsigned mapId, unsigned & outSize, Spend spend) const {
+std::optional<unsigned> providerState::size(unsigned mapId, Spend spend) const {
     const auto * map = get(mapId);
-    if (!spend(1) || !map) { return false; }
-    outSize = static_cast<unsigned>(map->entries.size());
-    return true;
+    if (!spend(1) || !map) { return std::nullopt; }
+    return static_cast<unsigned>(map->entries.size());
 }
 
-bool providerState::keys(unsigned mapId, llvm::SmallVectorImpl<providerValue> & outKeys,
-                         Spend spend) const {
+std::optional<llvm::SmallVector<providerValue, 0>> providerState::keys(unsigned mapId,
+                                                                       Spend spend) const {
     const auto * map = get(mapId);
-    if (!spend(1) || !map || !spend(static_cast<unsigned>(map->entries.size()))) { return false; }
+    if (!spend(1) || !map || !spend(static_cast<unsigned>(map->entries.size()))) {
+        return std::nullopt;
+    }
     // Precharge the entire traversal/copy before allocating its storage. Zero
     // inline capacity makes publication a storage transfer, without another
     // uncharged key copy, even when the caller's vector has inline storage.
     llvm::SmallVector<providerValue, 0> snapshot;
     snapshot.reserve(map->entries.size());
     for (const auto & entry : map->entries) { snapshot.push_back(entry.key); }
-    outKeys = std::move(snapshot);
-    return true;
+    return snapshot;
 }
 
 } // namespace ctcompile::ctnative::host_detail

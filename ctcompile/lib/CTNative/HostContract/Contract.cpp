@@ -8,12 +8,15 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringSet.h"
+#include "llvm/ADT/StringSwitch.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/SHA256.h"
 #include "llvm/Support/raw_ostream.h"
 
-#include <limits>
+#include <cstdint>
+#include <optional>
+#include <tuple>
 
 namespace ctcompile::ctnative {
 namespace {
@@ -37,6 +40,15 @@ llvm::Error names(const llvm::json::Object & object, llvm::StringRef field,
         output.push_back(name->str());
     }
     return llvm::Error::success();
+}
+
+// A JSON integer in [0, bound), or nullopt.
+std::optional<unsigned> indexBelow(const llvm::json::Value & value, std::uint64_t bound) {
+    const auto index = value.getAsInteger();
+    if (!index || *index < 0 || static_cast<std::uint64_t>(*index) >= bound) {
+        return std::nullopt;
+    }
+    return static_cast<unsigned>(*index);
 }
 
 bool keys(const llvm::json::Object & object, llvm::ArrayRef<llvm::StringRef> allowed) {
@@ -173,28 +185,25 @@ llvm::Expected<HostContract> parseHostContract(llvm::StringRef text) {
         if (auto failure = names(*object, "initial_intrinsics", result.initialIntrinsics, false)) {
             return std::move(failure);
         }
-        if (!llvm::is_contained(result.initialIntrinsics, "Symbol") ||
-            llvm::any_of(result.initialIntrinsics,
-                         [](const auto & name) { return name != "Symbol" && name != "String"; })) {
+        if (!host_detail::symbolStringIntrinsics(result.initialIntrinsics)) {
             return error("intrinsic entry requires standard Symbol and optional String identities");
         }
         if (const auto * requested = object->get("parameter_types")) {
             const auto * parameters = requested->getAsArray();
             if (!parameters) { return error("intrinsic parameter_types must be an array"); }
             for (const auto & parameter : *parameters) {
-                const auto name = parameter.getAsString();
-                if (name == "boolean") {
-                    result.intrinsicParameters.push_back(HostIntrinsicParameter::boolean);
-                } else if (name == "number") {
-                    result.intrinsicParameters.push_back(HostIntrinsicParameter::number);
-                } else if (name == "string") {
-                    result.intrinsicParameters.push_back(HostIntrinsicParameter::string);
-                } else if (name == "symbol") {
-                    result.intrinsicParameters.push_back(HostIntrinsicParameter::symbol);
-                } else {
+                const auto kind = llvm::StringSwitch<std::optional<HostIntrinsicParameter>>(
+                                      parameter.getAsString().value_or(""))
+                                      .Case("boolean", HostIntrinsicParameter::boolean)
+                                      .Case("number", HostIntrinsicParameter::number)
+                                      .Case("string", HostIntrinsicParameter::string)
+                                      .Case("symbol", HostIntrinsicParameter::symbol)
+                                      .Default(std::nullopt);
+                if (!kind) {
                     return error("intrinsic parameter_types supports only boolean, number, "
                                  "string and symbol");
                 }
+                result.intrinsicParameters.push_back(*kind);
             }
         }
         return result;
@@ -208,35 +217,30 @@ llvm::Expected<HostContract> parseHostContract(llvm::StringRef text) {
             return error("DOM entry requires nonempty element_parameters");
         }
         for (const auto & value : *parameters) {
-            const auto index = value.getAsInteger();
-            if (!index || *index < 0 ||
-                static_cast<std::uint64_t>(*index) > std::numeric_limits<unsigned>::max() ||
-                static_cast<std::uint64_t>(*index) != result.elementParameters.size()) {
+            const auto index = indexBelow(value, result.elementParameters.size() + 1);
+            if (!index || *index != result.elementParameters.size()) {
                 return error("DOM element_parameters must list every explicit parameter in order");
             }
-            result.elementParameters.push_back(static_cast<unsigned>(*index));
+            result.elementParameters.push_back(*index);
         }
         if (dom) {
             if (const auto * requested = object->get("current_document_parameter")) {
-                const auto index = requested->getAsInteger();
-                if (!index || *index < 0 ||
-                    static_cast<std::uint64_t>(*index) >= result.elementParameters.size()) {
+                const auto index = indexBelow(*requested, result.elementParameters.size());
+                if (!index) {
                     return error("DOM current_document_parameter must name a declared element");
                 }
-                result.currentDocumentParameter = static_cast<unsigned>(*index);
+                result.currentDocumentParameter = *index;
             }
             if (const auto * requested = object->get("dataset_parameters")) {
                 const auto * indices = requested->getAsArray();
                 if (!indices) { return error("DOM dataset_parameters must be an index array"); }
                 for (const auto & value : *indices) {
-                    const auto index = value.getAsInteger();
-                    if (!index || *index < 0 ||
-                        static_cast<std::uint64_t>(*index) >= result.elementParameters.size() ||
-                        (!result.datasetParameters.empty() &&
-                         static_cast<std::uint64_t>(*index) <= result.datasetParameters.back())) {
+                    const auto index = indexBelow(value, result.elementParameters.size());
+                    if (!index || (!result.datasetParameters.empty() &&
+                                   *index <= result.datasetParameters.back())) {
                         return error("DOM dataset_parameters must be an ordered element subset");
                     }
-                    result.datasetParameters.push_back(static_cast<unsigned>(*index));
+                    result.datasetParameters.push_back(*index);
                 }
             }
             if (object->get("initial_intrinsics")) {
@@ -248,14 +252,12 @@ llvm::Expected<HostContract> parseHostContract(llvm::StringRef text) {
                 // declarations survive for every method probe and final proof.
                 const bool hasClasses = llvm::is_contained(result.initialIntrinsics,
                                                            host_detail::classDefinedIntrinsic);
-                const auto & supportedIntrinsics = host_detail::domInitialIntrinsics();
                 if (llvm::any_of(result.initialIntrinsics, [&](const auto & name) {
                         if (hasClasses &&
                             (host_detail::classIntrinsicArity(name) || name == "Error")) {
                             return false;
                         }
-                        return name.size() > host_detail::maxDOMIntrinsicNameLength ||
-                               !supportedIntrinsics.contains(name);
+                        return !host_detail::domInitialIntrinsic(name);
                     })) {
                     return error("unsupported DOM initial intrinsic identity");
                 }
@@ -263,14 +265,13 @@ llvm::Expected<HostContract> parseHostContract(llvm::StringRef text) {
             return result;
         }
     }
-    if (auto failure = names(*object, "observations", result.observations, false)) {
-        return std::move(failure);
-    }
-    if (auto failure = names(*object, "absent_bindings", result.absentBindings, true)) {
-        return std::move(failure);
-    }
-    if (auto failure = names(*object, "undefined_bindings", result.undefinedBindings, true)) {
-        return std::move(failure);
+    for (auto [field, output, allowEmpty] :
+         {std::tuple{"observations", &result.observations, false},
+          std::tuple{"absent_bindings", &result.absentBindings, true},
+          std::tuple{"undefined_bindings", &result.undefinedBindings, true}}) {
+        if (auto failure = names(*object, field, *output, allowEmpty)) {
+            return std::move(failure);
+        }
     }
     if (object->get("initial_intrinsics")) {
         if (auto failure = names(*object, "initial_intrinsics", result.initialIntrinsics, true)) {
@@ -368,9 +369,7 @@ std::string hostContractFingerprint(mlir::ModuleOp module) {
     std::string text;
     llvm::raw_string_ostream stream(text);
     module.print(stream, mlir::OpPrintingFlags().printGenericOpForm().enableDebugInfo(false));
-    return llvm::toHex(llvm::SHA256::hash(llvm::ArrayRef<std::uint8_t>(
-                           reinterpret_cast<const std::uint8_t *>(text.data()), text.size())),
-                       /*LowerCase=*/true);
+    return llvm::toHex(llvm::SHA256::hash(llvm::arrayRefFromStringRef(text)), /*LowerCase=*/true);
 }
 
 } // namespace ctcompile::ctnative

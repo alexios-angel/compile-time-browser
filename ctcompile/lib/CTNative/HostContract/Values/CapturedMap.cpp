@@ -31,6 +31,8 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
     auto capture = closure.getUpvalues().front();
     result.cell = capture.getDefiningOp<ctjs::CreateCellOp>();
     const bool prepared = !result.cell;
+    // A prepared member takes its captured Map as a leading formal.
+    const unsigned formals = prepared ? 4u : 3u;
     auto & body = function.getBody().front();
     if (prepared) {
         if (function.getUpvalueCount() != 0 || body.getNumArguments() < 4 || !direct ||
@@ -160,7 +162,7 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
         if (!member || member == entry || member == factory ||
             !familyFunctions.insert(member).second || !llvm::hasSingleElement(member.getBody()) ||
             member.getUpvalueCount() != (prepared ? 0u : 1u) ||
-            member.getBody().front().getNumArguments() < (prepared ? 4u : 3u) ||
+            member.getBody().front().getNumArguments() < formals ||
             (indices && (indices.size() != 1 || indices[0] >= 0)) ||
             !ctjs::isUndefinedConstant(made.getEnclosingThis()) ||
             !result.allocation->isBeforeInBlock(made) ||
@@ -232,7 +234,7 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
             }
             auto payload = llvm::dyn_cast<mlir::BlockArgument>(store.getArgs()[1]);
             if (!payload || payload.getOwner() != &member.getBody().front() ||
-                payload.getArgNumber() < (prepared ? 4u : 3u)) {
+                payload.getArgNumber() < formals) {
                 return mlir::WalkResult::advance();
             }
             for (mlir::Operation * invocation : familyCalls[index]) {
@@ -293,10 +295,10 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
             }
             auto argument = llvm::dyn_cast<mlir::BlockArgument>(value);
             if (!argument || argument.getOwner() != &memberBody ||
-                argument.getArgNumber() < (prepared ? 4u : 3u)) {
+                argument.getArgNumber() < formals) {
                 return false;
             }
-            const auto position = argument.getArgNumber() - (prepared ? 4u : 3u);
+            const auto position = argument.getArgNumber() - formals;
             return position < independent.alternatives.size() &&
                    independent.alternatives[position].tag() ==
                        mlir::TypeID::get<ctjs::StringAttr>();
@@ -368,8 +370,8 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
                     alternatives = PrimitiveAlternatives::forTag(value.getValue().getTypeID());
                 } else if (auto argument = llvm::dyn_cast<mlir::BlockArgument>(invoke.getArgs()[1]);
                            argument && argument.getOwner() == &memberBody &&
-                           argument.getArgNumber() >= (prepared ? 4u : 3u)) {
-                    const auto position = argument.getArgNumber() - (prepared ? 4u : 3u);
+                           argument.getArgNumber() >= formals) {
+                    const auto position = argument.getArgNumber() - formals;
                     if (position < independent.alternatives.size()) {
                         alternatives = independent.alternatives[position].categories();
                     }
@@ -637,8 +639,7 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
                 }
                 invocation.call = &operation;
                 invocation.arguments.clear();
-                for (auto parameter :
-                     member.getBody().front().getArguments().drop_front(prepared ? 4u : 3u)) {
+                for (auto parameter : member.getBody().front().getArguments().drop_front(formals)) {
                     if (!step()) { return {}; }
                     auto actual = explicitArgument(&operation, parameter.getArgNumber());
                     if (auto object = namedObject(actual)) { actual = object.getResult(); }

@@ -25,10 +25,8 @@ struct emptyMapReader {
             const auto resource = capture ? llvm::find(factory.resources, capture->resource)
                                           : factory.resources.end();
             if (resource == factory.resources.end()) { return {}; }
-            return {prefixValue::Kind::resource,
-                    {},
-                    {},
-                    static_cast<unsigned>(resource - factory.resources.begin())};
+            return prefixValue::of(prefixValue::Kind::resource,
+                                   static_cast<unsigned>(resource - factory.resources.begin()));
         }
         if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
             const auto owner = values.lookup(read.getObject());
@@ -85,20 +83,29 @@ struct emptyMapReader {
 
 } // namespace
 
-prefixValue prefixAnalysis::providerRead(ctjs::CallOp call, ctjs::FuncOp function,
-                                         prefixValue closure, environment & arguments) {
-    if (!followProviderReads || !followPublication || closure.invocation == 0 ||
-        closure.invocation > factories.size() ||
+const HostPrefixFactory * prefixAnalysis::summarizedOwner(ctjs::CallOp call, ctjs::FuncOp function,
+                                                          prefixValue closure, bool charged) {
+    if (closure.invocation == 0 || closure.invocation > factories.size() ||
         call->getParentOfType<ctjs::FuncOp>().getSymName() != contract.entry ||
         !llvm::hasSingleElement(function.getBody()) ||
         !llvm::is_contained(contract.initialIntrinsics, "Map")) {
-        return {};
+        return nullptr;
     }
     const auto & owner = factories[closure.invocation - 1];
-    if (!llvm::any_of(owner.captures,
-                      [&](auto capture) { return capture.closure == closure.made; })) {
-        return {};
+    if ((charged && !spend(owner.captures.size())) ||
+        llvm::none_of(owner.captures,
+                      [&](const auto & capture) { return capture.closure == closure.made; })) {
+        return nullptr;
     }
+    return &owner;
+}
+
+prefixValue prefixAnalysis::providerRead(ctjs::CallOp call, ctjs::FuncOp function,
+                                         prefixValue closure, environment & arguments) {
+    if (!followProviderReads || !followPublication) { return {}; }
+    const auto * summarized = summarizedOwner(call, function, closure, false);
+    if (!summarized) { return {}; }
+    const auto & owner = *summarized;
     // The factory independently checked target/cell immutability and resource
     // retention. No unsupported operation has been crossed since its return;
     // accepted summaries never mutate or leak a Map, so it is still empty.

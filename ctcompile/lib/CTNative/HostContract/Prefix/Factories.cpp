@@ -58,12 +58,12 @@ prefixValue prefixAnalysis::factory(ctjs::CallOp call, ctjs::FuncOp function) {
             if (!plainMapConstruction(construct)) { return {}; }
             const auto id = static_cast<unsigned>(proof.resources.size());
             proof.resources.push_back(construct);
-            values[construct.getResult()] = {prefixValue::Kind::resource, {}, {}, id};
+            values[construct.getResult()] = prefixValue::of(prefixValue::Kind::resource, id);
         } else if (auto made = llvm::dyn_cast<ctjs::CreateObjectOp>(operation)) {
             const auto id = static_cast<unsigned>(objects.size());
             objects.push_back({{}, made, call, false, false});
             tables[id] = made;
-            values[made.getResult()] = {prefixValue::Kind::object, {}, {}, id};
+            values[made.getResult()] = prefixValue::of(prefixValue::Kind::object, id);
         } else if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(operation)) {
             // Reuse the independent capture proof: exact source target and
             // parent, local capture indices, unused receiver/new.target,
@@ -171,12 +171,10 @@ prefixValue prefixAnalysis::factory(ctjs::CallOp call, ctjs::FuncOp function) {
         if (!providers.cloneTo(next, charge)) { return {}; }
         llvm::SmallVector<unsigned> roots;
         for (auto resource : proof.resources) {
-            unsigned id = 0;
-            if (!next.create({resource, call, static_cast<unsigned>(factories.size()) + 1}, id,
-                             charge)) {
-                return {};
-            }
-            roots.push_back(id);
+            const auto id =
+                next.create({resource, call, static_cast<unsigned>(factories.size()) + 1}, charge);
+            if (!id) { return {}; }
+            roots.push_back(*id);
         }
         providerRoots.push_back(std::move(roots));
         providers = std::move(next);

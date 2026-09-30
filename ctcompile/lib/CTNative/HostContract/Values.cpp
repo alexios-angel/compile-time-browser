@@ -75,6 +75,25 @@ bool analyzer::spend(uint64_t count) {
     return true;
 }
 
+bool analyzer::operandsDominate(mlir::Operation * operation) {
+    for (mlir::Value operand : operation->getOperands()) {
+        if (!step() || !dominance.dominates(operand, operation)) { return false; }
+    }
+    return true;
+}
+
+bool analyzer::localUse(mlir::Value value, mlir::OpOperand & use, mlir::Operation * function) {
+    return step() && use.getOwner()->getParentOfType<ctjs::FuncOp>().getOperation() == function &&
+           dominance.dominates(value, use.getOwner());
+}
+
+bool analyzer::rootedUsers(mlir::Value value) {
+    for (mlir::Operation * user : value.getUsers()) {
+        if (!step() || !llvm::isa<ctjs::RootOp>(user)) { return false; }
+    }
+    return true;
+}
+
 ctjs::FuncOp analyzer::target(mlir::Operation * operation) const {
     if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(operation)) { return call.getTarget(); }
     return indirectFactories.lookup(operation);
@@ -199,24 +218,15 @@ ctjs::SetPropertyOp analyzer::currentWrite(ctjs::GetPropertyOp read, unsigned de
 
 std::optional<HostCallableEdge> analyzer::propertyCall(mlir::Operation * operation) {
     if (!step()) { return {}; }
-    mlir::Value callee, receiver;
-    mlir::ValueRange arguments;
-    auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(operation);
-    if (direct) {
-        if (!llvm::isa_and_nonnull<ctjs::UndefinedAttr>(primitive(direct.getNewTarget()))) {
-            return {};
-        }
-        callee = direct.getCalleeValue();
-        receiver = direct.getReceiver();
-        arguments = direct.getArgs();
-    } else if (auto call = llvm::dyn_cast<ctjs::CallOp>(operation)) {
-        callee = call.getCallee();
-        receiver = call.getReceiver();
-        arguments = call.getArgs();
-    } else {
+    auto js = jsCallOf(operation);
+    if (!js) { return {}; }
+    auto direct = js->direct;
+    if (direct && !llvm::isa_and_nonnull<ctjs::UndefinedAttr>(primitive(direct.getNewTarget()))) {
         return {};
     }
-    auto read = callee.getDefiningOp<ctjs::GetPropertyOp>();
+    const auto receiver = js->receiver;
+    const auto arguments = js->args;
+    auto read = js->callee.getDefiningOp<ctjs::GetPropertyOp>();
     if (!read || !before(read, operation)) { return {}; }
     auto write = currentWrite(read);
     auto closure =
@@ -241,9 +251,7 @@ std::optional<HostCallableEdge> analyzer::propertyCall(mlir::Operation * operati
     // Otherwise retain the effect-free literal getter boundary.
     if (!capture) {
         for (mlir::BlockArgument argument : function.getBody().front().getArguments()) {
-            for (mlir::Operation * user : argument.getUsers()) {
-                if (!step() || !llvm::isa<ctjs::RootOp>(user)) { return {}; }
-            }
+            if (!rootedUsers(argument)) { return {}; }
         }
         bool returned = false;
         for (mlir::Operation & body : function.getBody().front()) {
@@ -320,19 +328,17 @@ bool analyzer::capturedMapCalls(ctjs::FuncOp function, ctjs::SetPropertyOp publi
     auto & body = function.getBody().front();
     const auto census = module.walk([&](mlir::Operation * operation) {
         if (!step()) { return mlir::WalkResult::interrupt(); }
-        auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(operation);
-        auto call = llvm::dyn_cast<ctjs::CallOp>(operation);
-        if (!direct && !call) { return mlir::WalkResult::advance(); }
-        auto callee = direct ? direct.getCalleeValue() : call.getCallee();
-        auto read = callee.getDefiningOp<ctjs::GetPropertyOp>();
+        auto js = jsCallOf(operation);
+        if (!js) { return mlir::WalkResult::advance(); }
+        auto direct = js->direct;
+        auto read = js->callee.getDefiningOp<ctjs::GetPropertyOp>();
         if (!read || currentWrite(read) != publication) {
             return direct && target(direct) == function ? mlir::WalkResult::interrupt()
                                                         : mlir::WalkResult::advance();
         }
-        const auto args = direct ? direct.getArgs() : call.getArgs();
-        const auto receiver = direct ? direct.getReceiver() : call.getReceiver();
+        const auto args = js->args;
         const auto owner = object(publication.getObject());
-        if (!owner || !before(read, operation) || object(receiver) != owner ||
+        if (!owner || !before(read, operation) || object(js->receiver) != owner ||
             args.size() != body.getNumArguments() - ctjs::implicit_arguments ||
             (prepared && !direct) ||
             (direct && (target(direct) != function || !llvm::isa_and_nonnull<ctjs::UndefinedAttr>(
@@ -608,20 +614,10 @@ mlir::Attribute analyzer::primitive(mlir::Value value, unsigned depth) {
             return bit ? ctjs::BooleanAttr::get(context, !*bit) : mlir::Attribute{};
         }
         if (unary.getKind() != ctjs::UnaryKind::TypeOf) { return {}; }
-        auto operand = primitive(unary.getOperand(), depth + 1);
-        llvm::StringRef name;
-        if (llvm::isa_and_nonnull<ctjs::UndefinedAttr>(operand)) {
-            name = "undefined";
-        } else if (llvm::isa_and_nonnull<ctjs::StringAttr>(operand)) {
-            name = "string";
-        } else if (llvm::isa_and_nonnull<ctjs::BooleanAttr>(operand)) {
-            name = "boolean";
-        } else if (llvm::isa_and_nonnull<ctjs::NumberAttr>(operand)) {
-            name = "number";
-        } else if (llvm::isa_and_nonnull<ctjs::NullAttr>(operand) ||
-                   object(unary.getOperand(), depth + 1)) {
+        auto name = typeofLiteral(primitive(unary.getOperand(), depth + 1));
+        if (name.empty() && object(unary.getOperand(), depth + 1)) {
             name = "object";
-        } else if (callable(unary.getOperand(), depth + 1)) {
+        } else if (name.empty() && callable(unary.getOperand(), depth + 1)) {
             name = "function";
         }
         return name.empty() ? mlir::Attribute{} : ctjs::StringAttr::get(context, name);
@@ -663,19 +659,7 @@ std::optional<bool> analyzer::truth(mlir::Value value, unsigned depth) {
     if (llvm::isa_and_nonnull<mlir::arith::TruncIOp, mlir::arith::ExtUIOp>(value.getDefiningOp())) {
         return truth(value.getDefiningOp()->getOperand(0), depth + 1);
     }
-    auto constant = primitive(value, depth + 1);
-    if (auto bit = llvm::dyn_cast_if_present<ctjs::BooleanAttr>(constant)) {
-        return bit.getValue();
-    }
-    if (auto integer = llvm::dyn_cast_if_present<mlir::IntegerAttr>(constant)) {
-        if (integer.getValue().isZero() || integer.getValue().isOne()) {
-            return integer.getValue().isOne();
-        }
-    }
-    if (llvm::isa_and_nonnull<ctjs::NullAttr, ctjs::UndefinedAttr>(constant)) { return false; }
-    if (auto text = llvm::dyn_cast_if_present<ctjs::StringAttr>(constant)) {
-        return !text.getValue().empty();
-    }
+    if (auto bit = literalTruth(primitive(value, depth + 1))) { return bit; }
     if (object(value, depth + 1) || callable(value, depth + 1)) { return true; }
     return {};
 }

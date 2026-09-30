@@ -5,6 +5,8 @@
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SmallVector.h"
 
+#include <optional>
+
 namespace ctcompile::ctnative::host_detail {
 
 // These are already-proved values, not claims read from IR attributes. Object
@@ -52,24 +54,27 @@ public:
     providerState(providerState &&) = default;
     providerState & operator=(providerState &&) = default;
 
-    // Every operation leaves its state and output arguments unchanged on
-    // failure. The caller must still discard the entire attempted transaction.
-    // Copying charges every Map and entry; reads charge each key comparison;
-    // writes additionally charge mutation and every traversed resource edge.
+    // Every operation leaves its state (and cloneTo's `out`) unchanged on
+    // failure, reported as false or nullopt. The caller must still discard the
+    // entire attempted transaction. Copying charges every Map and entry; reads
+    // charge each key comparison; writes additionally charge mutation and every
+    // traversed resource edge.
     bool cloneTo(providerState & out, Spend spend) const;
-    bool create(providerMapProvenance provenance, unsigned & outId, Spend spend);
-    bool lookup(unsigned mapId, providerValue key, bool & found, providerValue & outValue,
-                Spend spend) const;
+    std::optional<unsigned> create(providerMapProvenance provenance, Spend spend);
+    // The stored value, or an inner nullopt for proved absence.
+    std::optional<std::optional<providerValue>> lookup(unsigned mapId, providerValue key,
+                                                       Spend spend) const;
     bool set(unsigned mapId, providerValue key, providerValue value, Spend spend);
-    bool erase(unsigned mapId, providerValue key, bool & outRemoved, Spend spend);
-    bool size(unsigned mapId, unsigned & outSize, Spend spend) const;
+    // Whether an entry was removed.
+    std::optional<bool> erase(unsigned mapId, providerValue key, Spend spend);
+    std::optional<unsigned> size(unsigned mapId, Spend spend) const;
 
-    // Replace outKeys with an independently owned, insertion-ordered snapshot.
-    // Charge every copied key before allocating; failure leaves outKeys intact.
-    // This is not a live Map iterator: the caller separately proves when and
-    // how iteration is consumed. Interned literals and object tokens retain
-    // their identity and the caller's existing context/heap lifetime rules.
-    bool keys(unsigned mapId, llvm::SmallVectorImpl<providerValue> & outKeys, Spend spend) const;
+    // An independently owned, insertion-ordered snapshot. Every copied key is
+    // charged before allocating. This is not a live Map iterator: the caller
+    // separately proves when and how iteration is consumed. Interned literals
+    // and object tokens retain their identity and the caller's existing
+    // context/heap lifetime rules.
+    std::optional<llvm::SmallVector<providerValue, 0>> keys(unsigned mapId, Spend spend) const;
 
     // Read-only views expose provenance and insertion order for separately
     // bounded retention checks/reporting. Mutation may invalidate them; they

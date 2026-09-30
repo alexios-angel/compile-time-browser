@@ -23,12 +23,8 @@ struct mapPathReader {
 
     providerValue known(prefixValue value) {
         if (value.kind == prefixValue::Kind::primitive) {
-            auto literal = value.literal;
-            if (auto integer = llvm::dyn_cast_or_null<mlir::IntegerAttr>(literal)) {
-                if (!integer.getValue().isZero() && !integer.getValue().isOne()) { return {}; }
-                literal =
-                    ctjs::BooleanAttr::get(prefix.module.getContext(), integer.getValue().isOne());
-            }
+            auto literal = booleanFromBit(value.literal);
+            if (!literal && value.literal) { return {}; }
             return providerValue::constant(literal);
         }
         if (value.kind == prefixValue::Kind::object && value.object < prefix.objects.size()) {
@@ -44,10 +40,10 @@ struct mapPathReader {
             return prefixValue::constant(value.literal);
         }
         if (value.kind == providerValue::Kind::map && state.get(value.id)) {
-            return {prefixValue::Kind::resource, {}, {}, value.id};
+            return prefixValue::of(prefixValue::Kind::resource, value.id);
         }
         if (value.kind == providerValue::Kind::object && objects.accepts(value.id)) {
-            return {prefixValue::Kind::object, {}, {}, value.id};
+            return prefixValue::of(prefixValue::Kind::object, value.id);
         }
         return {};
     }
@@ -73,10 +69,8 @@ struct mapPathReader {
             for (auto [index, resource] : llvm::enumerate(factory.resources)) {
                 if (!prefix.step()) { return {}; }
                 if (resource == capture->resource) {
-                    return {prefixValue::Kind::resource,
-                            {},
-                            {},
-                            prefix.providerRoots[closure.invocation - 1][index]};
+                    return prefixValue::of(prefixValue::Kind::resource,
+                                           prefix.providerRoots[closure.invocation - 1][index]);
                 }
             }
             return {};
@@ -84,7 +78,7 @@ struct mapPathReader {
         if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(operation)) {
             if (load.getName() == "Map" &&
                 llvm::is_contained(prefix.contract.initialIntrinsics, "Map")) {
-                return {prefixValue::Kind::mapConstructor, {}, {}, 0};
+                return prefixValue::of(prefixValue::Kind::mapConstructor, 0);
             }
             return diagnostics.operation(operation, values);
         }
@@ -93,13 +87,11 @@ struct mapPathReader {
                 values.lookup(construct.getCallee()).kind != prefixValue::Kind::mapConstructor) {
                 return {};
             }
-            unsigned id = 0;
-            if (!state.create({construct, proof.operation, closure.invocation}, id, charge)) {
-                return {};
-            }
-            proof.allocations.push_back({construct, proof.operation, id});
+            const auto id = state.create({construct, proof.operation, closure.invocation}, charge);
+            if (!id) { return {}; }
+            proof.allocations.push_back({construct, proof.operation, *id});
             diagnostics.mutated();
-            return {prefixValue::Kind::resource, {}, {}, id};
+            return prefixValue::of(prefixValue::Kind::resource, *id);
         }
         if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
             const auto owner = values.lookup(read.getObject());
@@ -108,10 +100,10 @@ struct mapPathReader {
                 return diagnostics.operation(operation, values);
             }
             if (key == "size") {
-                unsigned size = 0;
-                if (!state.size(owner.object, size, charge)) { return {}; }
+                const auto size = state.size(owner.object, charge);
+                if (!size) { return {}; }
                 auto result = prefixValue::constant(ctjs::NumberAttr::get(
-                    context, llvm::bit_cast<uint64_t>(static_cast<double>(size))));
+                    context, llvm::bit_cast<uint64_t>(static_cast<double>(*size))));
                 return diagnostics.record(read, owner.object, key, result) ? result : prefixValue{};
             }
             if (nativeMapKeyAction(key)) {
@@ -147,18 +139,18 @@ struct mapPathReader {
                 result = receiver;
                 diagnostics.mutated();
             } else if (member == "delete") {
-                bool removed = false;
-                if (!state.erase(receiver.object, key, removed, charge)) { return {}; }
-                result = prefixValue::constant(ctjs::BooleanAttr::get(context, removed));
+                const auto removed = state.erase(receiver.object, key, charge);
+                if (!removed) { return {}; }
+                result = prefixValue::constant(ctjs::BooleanAttr::get(context, *removed));
                 diagnostics.mutated();
             } else {
-                bool found = false;
-                providerValue value;
-                if (!state.lookup(receiver.object, key, found, value, charge)) { return {}; }
-                result = member == "has"
-                             ? prefixValue::constant(ctjs::BooleanAttr::get(context, found))
-                         : found ? carried(value)
-                                 : prefixValue::constant(ctjs::UndefinedAttr::get(context));
+                const auto value = state.lookup(receiver.object, key, charge);
+                if (!value) { return {}; }
+                result =
+                    member == "has"
+                        ? prefixValue::constant(ctjs::BooleanAttr::get(context, value->has_value()))
+                    : *value ? carried(**value)
+                             : prefixValue::constant(ctjs::UndefinedAttr::get(context));
             }
             return diagnostics.record(call, receiver.object, member, result) ? result
                                                                              : prefixValue{};
@@ -224,19 +216,10 @@ struct mapPathReader {
 
 prefixValue prefixAnalysis::providerMutation(ctjs::CallOp call, ctjs::FuncOp function,
                                              prefixValue closure, environment & arguments) {
-    if (!followProviderMutations || closure.invocation == 0 ||
-        closure.invocation > factories.size() || closure.invocation > providerRoots.size() ||
-        call->getParentOfType<ctjs::FuncOp>().getSymName() != contract.entry ||
-        !llvm::hasSingleElement(function.getBody()) ||
-        !llvm::is_contained(contract.initialIntrinsics, "Map")) {
-        return {};
-    }
-    const auto & owner = factories[closure.invocation - 1];
-    if (!spend(owner.captures.size()) || llvm::none_of(owner.captures, [&](const auto & capture) {
-            return capture.closure == closure.made;
-        })) {
-        return {};
-    }
+    if (!followProviderMutations || closure.invocation > providerRoots.size()) { return {}; }
+    const auto * summarized = summarizedOwner(call, function, closure, true);
+    if (!summarized) { return {}; }
+    const auto & owner = *summarized;
     mapPathReader reader{*this,    owner, closure,
                          function, {},    {call, function, owner.operation, {}, {}, {}, {}}};
     const auto charge = [&](unsigned count) { return spend(count); };

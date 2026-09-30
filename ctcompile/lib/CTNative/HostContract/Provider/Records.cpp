@@ -63,9 +63,7 @@ std::string analyzer::localRecordProblem() {
                 !initializers.try_emplace(owner, direct.getOperation()).second) {
                 return reject();
             }
-            for (mlir::Operation * user : direct.getResult().getUsers()) {
-                if (!step() || !llvm::isa<ctjs::RootOp>(user)) { return reject(); }
-            }
+            if (!rootedUsers(direct.getResult())) { return reject(); }
             operations.insert(instance);
         }
         auto & body = function.getBody().front();
@@ -78,15 +76,12 @@ std::string analyzer::localRecordProblem() {
             }
         }
         for (unsigned index : {ctjs::arg_new_target, ctjs::arg_callee}) {
-            for (mlir::Operation * user : body.getArgument(index).getUsers()) {
-                if (!step() || !llvm::isa<ctjs::RootOp>(user)) { return reject(); }
-            }
+            if (!rootedUsers(body.getArgument(index))) { return reject(); }
         }
         bool returned = false;
         for (mlir::Operation & op : body) {
-            if (!step() || op.hasAttr("ctjs.skipped")) { return reject(); }
-            for (mlir::Value operand : op.getOperands()) {
-                if (!step() || !dominance.dominates(operand, &op)) { return reject(); }
+            if (!step() || op.hasAttr("ctjs.skipped") || !operandsDominate(&op)) {
+                return reject();
             }
             if (auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(op)) {
                 if (write.getObject() != body.getArgument(ctjs::arg_receiver) ||
@@ -218,11 +213,7 @@ std::string analyzer::localRecordProblem() {
                 for (mlir::Value argument : call.getArgs()) {
                     if (!step() || !dominance.dominates(argument, call)) { return reject(); }
                 }
-                if (key == "set") {
-                    for (mlir::Operation * user : call->getUsers()) {
-                        if (!step() || !llvm::isa<ctjs::RootOp>(user)) { return reject(); }
-                    }
-                }
+                if (key == "set" && !rootedUsers(call.getResult())) { return reject(); }
                 operations.insert(call);
             }
         }
@@ -312,10 +303,7 @@ std::string analyzer::localRecordProblem() {
     for (auto [alias, owner] : origins) {
         const auto initializer = initializers.lookup(owner);
         for (mlir::OpOperand & use : alias.getUses()) {
-            if (!step() || use.getOwner()->getParentOfType<ctjs::FuncOp>() != entry ||
-                !dominance.dominates(alias, use.getOwner())) {
-                return reject();
-            }
+            if (!localUse(alias, use, entry)) { return reject(); }
             auto * op = use.getOwner();
             if (llvm::isa<ctjs::RootOp>(op)) { continue; }
             if (initializer && op != initializer && !dominance.properlyDominates(initializer, op)) {
@@ -336,10 +324,7 @@ std::string analyzer::localRecordProblem() {
         }
     }
     for (mlir::Operation * op : operations) {
-        if (!step() || op->hasAttr("ctjs.skipped")) { return reject(); }
-        for (mlir::Value operand : op->getOperands()) {
-            if (!step() || !dominance.dominates(operand, op)) { return reject(); }
-        }
+        if (!step() || op->hasAttr("ctjs.skipped") || !operandsDominate(op)) { return reject(); }
     }
     // Commit only a complete source proof. Categories never select a branch,
     // replace an allocation/read, or establish its native storage lifetime.

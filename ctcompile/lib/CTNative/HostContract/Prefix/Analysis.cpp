@@ -8,14 +8,13 @@
 namespace ctcompile::ctnative::host_detail {
 
 prefixAnalysis::prefixAnalysis(mlir::ModuleOp module, const HostContract & contract,
-                               unsigned maxSteps, bool followPublication, bool followProviderReads,
-                               bool followProviderMutations, bool followProviderDiagnostics,
-                               bool followProviderCallbacks, bool followProviderObjects)
-    : module(module), contract(contract), remaining(maxSteps), followPublication(followPublication),
-      followProviderReads(followProviderReads), followProviderMutations(followProviderMutations),
-      followProviderDiagnostics(followProviderDiagnostics),
-      followProviderCallbacks(followProviderCallbacks),
-      followProviderObjects(followProviderObjects), dominance(module) {
+                               unsigned maxSteps, HostPrefixFollow follow)
+    : module(module), contract(contract), remaining(maxSteps),
+      followPublication(follow.publication), followProviderReads(follow.providerReads),
+      followProviderMutations(follow.providerMutations),
+      followProviderDiagnostics(follow.providerDiagnostics),
+      followProviderCallbacks(follow.providerCallbacks),
+      followProviderObjects(follow.providerObjects), dominance(module) {
     refusal = initialBindingProblem(module, contract);
     if (!refusal.empty()) { return; }
     if (auto declarations = module->getAttrOfType<mlir::ArrayAttr>("ctjs.hoisted_vars")) {
@@ -89,7 +88,7 @@ prefixAnalysis::prefixAnalysis(mlir::ModuleOp module, const HostContract & contr
         }
     });
     for (const auto & name : contract.absentBindings) {
-        globals[name] = {prefixValue::Kind::absent, {}, {}, 0};
+        globals[name] = prefixValue::of(prefixValue::Kind::absent, 0);
     }
     for (const auto & name : contract.undefinedBindings) {
         globals[name] = prefixValue::constant(ctjs::UndefinedAttr::get(module.getContext()));
@@ -290,11 +289,13 @@ HostEntryPrefixAnalysis::HostEntryPrefixAnalysis(
         refusal = "host prefix does not support DOM Data input contracts";
         return;
     }
-    host_detail::prefixAnalysis analysis(
-        module, contract, maxSteps, followPublication, followProviderReads, followProviderMutations,
-        followProviderDiagnostics, followProviderCallbacks, followProviderObjects);
+    host_detail::prefixAnalysis analysis(module, contract, maxSteps,
+                                         {followPublication, followProviderReads,
+                                          followProviderMutations, followProviderDiagnostics,
+                                          followProviderCallbacks, followProviderObjects});
     auto entry = module.lookupSymbol<ctjs::FuncOp>(contract.entry);
-    if (!entry || entry.getBody().empty() || entry.getBody().front().getNumArguments() != 3 ||
+    if (!entry || entry.getBody().empty() ||
+        entry.getBody().front().getNumArguments() != ctjs::implicit_arguments ||
         entry.getUpvalueCount() != 0 || !analysis.callers[entry].empty() ||
         analysis.creations.lookup(entry) != 0) {
         refusal = "host prefix requires an unreferenced closed script entry";

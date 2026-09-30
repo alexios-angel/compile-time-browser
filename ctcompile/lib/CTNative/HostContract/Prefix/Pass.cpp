@@ -45,6 +45,164 @@ void select(HostPrefixBranch proof) {
     branch.erase();
 }
 
+// The --output document; read before any rewrite, so it matches the plan.
+llvm::json::Object prefixReport(mlir::ModuleOp module, const HostEntryPrefixAnalysis & analysis,
+                                llvm::StringRef moduleSha256) {
+    const auto factoryOf = [&](mlir::Operation * operation) {
+        return llvm::find_if(analysis.factories(), [&](const auto & candidate) {
+            return candidate.operation == operation;
+        });
+    };
+    llvm::json::Array targets;
+    for (auto proof : analysis.calls()) { targets.push_back(proof.target.getSymName().str()); }
+    llvm::json::Array factories, publications, providerReads;
+    std::int64_t resourceCount = 0, captureCount = 0;
+    for (const auto & proof : analysis.factories()) {
+        llvm::json::Array captures;
+        llvm::SmallVector<ctjs::CreateCellOp> cells;
+        for (auto edge : proof.captures) {
+            if (!llvm::is_contained(cells, edge.cell)) { cells.push_back(edge.cell); }
+            captures.push_back(llvm::json::Object{
+                {"property", edge.property},
+                {"closure_function", edge.closure.getFunction()},
+                {"capture_index", static_cast<std::int64_t>(edge.index)},
+                {"cell", static_cast<std::int64_t>(llvm::find(cells, edge.cell) - cells.begin())},
+                {"resource", static_cast<std::int64_t>(llvm::find(proof.resources, edge.resource) -
+                                                       proof.resources.begin())}});
+        }
+        resourceCount += static_cast<std::int64_t>(proof.resources.size());
+        captureCount += static_cast<std::int64_t>(proof.captures.size());
+        auto target = proof.target;
+        factories.push_back(llvm::json::Object{
+            {"target", target.getSymName().str()},
+            {"resource_allocations", static_cast<std::int64_t>(proof.resources.size())},
+            {"captures", std::move(captures)}});
+    }
+    for (const auto & proof : analysis.publications()) {
+        auto target = factoryOf(proof.factory)->target;
+        publications.push_back(llvm::json::Object{{"binding", proof.binding},
+                                                  {"property", proof.property},
+                                                  {"factory_target", target.getSymName().str()}});
+    }
+    std::int64_t readCount = 0;
+    for (auto proof : analysis.providerReads()) {
+        const auto factory = factoryOf(proof.factory);
+        llvm::json::Array operations;
+        for (const auto & read : proof.reads) {
+            operations.push_back(llvm::json::Object{
+                {"member", read.member},
+                {"resource",
+                 static_cast<std::int64_t>(llvm::find(factory->resources, read.resource) -
+                                           factory->resources.begin())}});
+        }
+        readCount += static_cast<std::int64_t>(proof.reads.size());
+        providerReads.push_back(llvm::json::Object{
+            {"target", proof.target.getSymName().str()},
+            {"factory_index", static_cast<std::int64_t>(factory - analysis.factories().begin())},
+            {"result", providerResult(proof.result)},
+            {"reads", std::move(operations)}});
+    }
+    llvm::json::Array providerCalls;
+    std::int64_t mutationCount = 0, nestedCount = 0, callbackCount = 0, globalWriteCount = 0;
+    llvm::DenseMap<mlir::Operation *, std::int64_t> ordinals;
+    if (!analysis.providerCalls().empty()) {
+        module.walk([&](mlir::Operation * operation) {
+            const auto index = static_cast<std::int64_t>(ordinals.size());
+            ordinals[operation] = index;
+        });
+    }
+    const auto allocationRow = [&](HostPrefixProviderAllocation allocation) {
+        return llvm::json::Object{{"map_id", static_cast<std::int64_t>(allocation.mapId)},
+                                  {"allocation_operation", ordinals.lookup(allocation.operation)},
+                                  {"invocation_operation", ordinals.lookup(allocation.invocation)}};
+    };
+    for (auto proof : analysis.providerCalls()) {
+        const auto factory = factoryOf(proof.factory);
+        llvm::json::Array allocations, operations;
+        for (auto allocation : proof.allocations) {
+            allocations.push_back(allocationRow(allocation));
+            ++nestedCount;
+        }
+        for (const auto & operation : proof.operations) {
+            auto row = allocationRow(operation.resource);
+            row["operation"] = ordinals.lookup(operation.operation);
+            row["member"] = operation.member;
+            row["result"] = providerResult(operation.result);
+            row["result_map_id"] = static_cast<std::int64_t>(operation.resultMapId);
+            row["result_object_id"] = static_cast<std::int64_t>(operation.resultObjectId);
+            operations.push_back(std::move(row));
+            if (operation.member == "set" || operation.member == "delete") {
+                ++mutationCount;
+            } else {
+                ++readCount;
+            }
+        }
+        llvm::json::Array callbacks;
+        for (const auto & callback : proof.callbacks) {
+            llvm::json::Array writes;
+            for (const auto & write : callback.writes) {
+                writes.push_back(llvm::json::Object{{"operation", ordinals.lookup(write.operation)},
+                                                    {"binding", write.binding},
+                                                    {"value", providerResult(write.value)}});
+                ++globalWriteCount;
+            }
+            auto target = callback.target;
+            callbacks.push_back(
+                llvm::json::Object{{"target", target.getSymName().str()},
+                                   {"call_operation", ordinals.lookup(callback.operation)},
+                                   {"result", providerResult(callback.result)},
+                                   {"writes", std::move(writes)}});
+            ++callbackCount;
+        }
+        llvm::json::Array objectOperations;
+        for (const auto & operation : proof.objectOperations) {
+            objectOperations.push_back(
+                llvm::json::Object{{"operation", ordinals.lookup(operation.operation)},
+                                   {"object_id", static_cast<std::int64_t>(operation.objectId)},
+                                   {"allocation_operation", ordinals.lookup(operation.allocation)},
+                                   {"invocation_operation", ordinals.lookup(operation.invocation)},
+                                   {"member", operation.member},
+                                   {"action", operation.action},
+                                   {"result", providerResult(operation.result)}});
+        }
+        providerCalls.push_back(llvm::json::Object{
+            {"target", proof.target.getSymName().str()},
+            {"call_operation", ordinals.lookup(proof.operation)},
+            {"factory_index", static_cast<std::int64_t>(factory - analysis.factories().begin())},
+            {"result", providerResult(proof.result)},
+            {"result_object_id", static_cast<std::int64_t>(proof.resultObjectId)},
+            {"object_operations", std::move(objectOperations)},
+            {"allocations", std::move(allocations)},
+            {"operations", std::move(operations)},
+            {"callbacks", std::move(callbacks)}});
+    }
+    return llvm::json::Object{
+        {"valid", analysis.valid()},
+        {"reason", analysis.reason().str()},
+        {"boundary", analysis.boundary().str()},
+        {"provider_boundary", analysis.providerBoundary().str()},
+        {"source_module_sha256", moduleSha256},
+        {"selected_branches", static_cast<std::int64_t>(analysis.branches().size())},
+        {"resolved_calls", static_cast<std::int64_t>(analysis.calls().size())},
+        {"targets", std::move(targets)},
+        {"summarized_factories", static_cast<std::int64_t>(analysis.factories().size())},
+        {"runtime_provider_allocations", resourceCount},
+        {"capture_edges", captureCount},
+        {"publication_writes", static_cast<std::int64_t>(analysis.publications().size())},
+        {"factories", std::move(factories)},
+        {"publications", std::move(publications)},
+        {"summarized_provider_calls", static_cast<std::int64_t>(analysis.providerReads().size() +
+                                                                analysis.providerCalls().size())},
+        {"runtime_provider_reads", readCount},
+        {"provider_reads", std::move(providerReads)},
+        {"runtime_provider_mutations", mutationCount},
+        {"runtime_nested_provider_allocations", nestedCount},
+        {"runtime_provider_callbacks", callbackCount},
+        {"runtime_provider_global_writes", globalWriteCount},
+        {"provider_calls", std::move(providerCalls)},
+        {"full_host_contract_claimed", false}};
+}
+
 struct CTNativeSpecializeHostPrefixPass
     : impl::CTNativeSpecializeHostPrefixBase<CTNativeSpecializeHostPrefixPass> {
     using CTNativeSpecializeHostPrefixBase::CTNativeSpecializeHostPrefixBase;
@@ -76,169 +234,8 @@ struct CTNativeSpecializeHostPrefixPass
                 signalPassFailure();
                 return;
             }
-            const auto factoryOf = [&](mlir::Operation * operation) {
-                return llvm::find_if(analysis.factories(), [&](const auto & candidate) {
-                    return candidate.operation == operation;
-                });
-            };
-            llvm::json::Array targets;
-            for (auto proof : calls) { targets.push_back(proof.target.getSymName().str()); }
-            llvm::json::Array factories, publications, providerReads;
-            std::int64_t resourceCount = 0, captureCount = 0;
-            for (const auto & proof : analysis.factories()) {
-                llvm::json::Array captures;
-                llvm::SmallVector<ctjs::CreateCellOp> cells;
-                for (auto edge : proof.captures) {
-                    if (!llvm::is_contained(cells, edge.cell)) { cells.push_back(edge.cell); }
-                    captures.push_back(llvm::json::Object{
-                        {"property", edge.property},
-                        {"closure_function", edge.closure.getFunction()},
-                        {"capture_index", static_cast<std::int64_t>(edge.index)},
-                        {"cell",
-                         static_cast<std::int64_t>(llvm::find(cells, edge.cell) - cells.begin())},
-                        {"resource",
-                         static_cast<std::int64_t>(llvm::find(proof.resources, edge.resource) -
-                                                   proof.resources.begin())}});
-                }
-                resourceCount += static_cast<std::int64_t>(proof.resources.size());
-                captureCount += static_cast<std::int64_t>(proof.captures.size());
-                auto target = proof.target;
-                factories.push_back(llvm::json::Object{
-                    {"target", target.getSymName().str()},
-                    {"resource_allocations", static_cast<std::int64_t>(proof.resources.size())},
-                    {"captures", std::move(captures)}});
-            }
-            for (const auto & proof : analysis.publications()) {
-                auto target = factoryOf(proof.factory)->target;
-                publications.push_back(
-                    llvm::json::Object{{"binding", proof.binding},
-                                       {"property", proof.property},
-                                       {"factory_target", target.getSymName().str()}});
-            }
-            std::int64_t readCount = 0;
-            for (auto proof : analysis.providerReads()) {
-                const auto factory = factoryOf(proof.factory);
-                llvm::json::Array operations;
-                for (const auto & read : proof.reads) {
-                    operations.push_back(llvm::json::Object{
-                        {"member", read.member},
-                        {"resource",
-                         static_cast<std::int64_t>(llvm::find(factory->resources, read.resource) -
-                                                   factory->resources.begin())}});
-                }
-                readCount += static_cast<std::int64_t>(proof.reads.size());
-                providerReads.push_back(llvm::json::Object{
-                    {"target", proof.target.getSymName().str()},
-                    {"factory_index",
-                     static_cast<std::int64_t>(factory - analysis.factories().begin())},
-                    {"result", providerResult(proof.result)},
-                    {"reads", std::move(operations)}});
-            }
-            llvm::json::Array providerCalls;
-            std::int64_t mutationCount = 0, nestedCount = 0, callbackCount = 0,
-                         globalWriteCount = 0;
-            llvm::DenseMap<mlir::Operation *, std::int64_t> ordinals;
-            if (!analysis.providerCalls().empty()) {
-                module.walk([&](mlir::Operation * operation) {
-                    const auto index = static_cast<std::int64_t>(ordinals.size());
-                    ordinals[operation] = index;
-                });
-            }
-            const auto allocationRow = [&](HostPrefixProviderAllocation allocation) {
-                return llvm::json::Object{
-                    {"map_id", static_cast<std::int64_t>(allocation.mapId)},
-                    {"allocation_operation", ordinals.lookup(allocation.operation)},
-                    {"invocation_operation", ordinals.lookup(allocation.invocation)}};
-            };
-            for (auto proof : analysis.providerCalls()) {
-                const auto factory = factoryOf(proof.factory);
-                llvm::json::Array allocations, operations;
-                for (auto allocation : proof.allocations) {
-                    allocations.push_back(allocationRow(allocation));
-                    ++nestedCount;
-                }
-                for (const auto & operation : proof.operations) {
-                    auto row = allocationRow(operation.resource);
-                    row["operation"] = ordinals.lookup(operation.operation);
-                    row["member"] = operation.member;
-                    row["result"] = providerResult(operation.result);
-                    row["result_map_id"] = static_cast<std::int64_t>(operation.resultMapId);
-                    row["result_object_id"] = static_cast<std::int64_t>(operation.resultObjectId);
-                    operations.push_back(std::move(row));
-                    if (operation.member == "set" || operation.member == "delete") {
-                        ++mutationCount;
-                    } else {
-                        ++readCount;
-                    }
-                }
-                llvm::json::Array callbacks;
-                for (const auto & callback : proof.callbacks) {
-                    llvm::json::Array writes;
-                    for (const auto & write : callback.writes) {
-                        writes.push_back(
-                            llvm::json::Object{{"operation", ordinals.lookup(write.operation)},
-                                               {"binding", write.binding},
-                                               {"value", providerResult(write.value)}});
-                        ++globalWriteCount;
-                    }
-                    auto target = callback.target;
-                    callbacks.push_back(
-                        llvm::json::Object{{"target", target.getSymName().str()},
-                                           {"call_operation", ordinals.lookup(callback.operation)},
-                                           {"result", providerResult(callback.result)},
-                                           {"writes", std::move(writes)}});
-                    ++callbackCount;
-                }
-                llvm::json::Array objectOperations;
-                for (const auto & operation : proof.objectOperations) {
-                    objectOperations.push_back(llvm::json::Object{
-                        {"operation", ordinals.lookup(operation.operation)},
-                        {"object_id", static_cast<std::int64_t>(operation.objectId)},
-                        {"allocation_operation", ordinals.lookup(operation.allocation)},
-                        {"invocation_operation", ordinals.lookup(operation.invocation)},
-                        {"member", operation.member},
-                        {"action", operation.action},
-                        {"result", providerResult(operation.result)}});
-                }
-                providerCalls.push_back(llvm::json::Object{
-                    {"target", proof.target.getSymName().str()},
-                    {"call_operation", ordinals.lookup(proof.operation)},
-                    {"factory_index",
-                     static_cast<std::int64_t>(factory - analysis.factories().begin())},
-                    {"result", providerResult(proof.result)},
-                    {"result_object_id", static_cast<std::int64_t>(proof.resultObjectId)},
-                    {"object_operations", std::move(objectOperations)},
-                    {"allocations", std::move(allocations)},
-                    {"operations", std::move(operations)},
-                    {"callbacks", std::move(callbacks)}});
-            }
-            llvm::json::Object document{
-                {"valid", analysis.valid()},
-                {"reason", analysis.reason().str()},
-                {"boundary", analysis.boundary().str()},
-                {"provider_boundary", analysis.providerBoundary().str()},
-                {"source_module_sha256", contract->moduleSha256},
-                {"selected_branches", static_cast<std::int64_t>(branches.size())},
-                {"resolved_calls", static_cast<std::int64_t>(calls.size())},
-                {"targets", std::move(targets)},
-                {"summarized_factories", static_cast<std::int64_t>(analysis.factories().size())},
-                {"runtime_provider_allocations", resourceCount},
-                {"capture_edges", captureCount},
-                {"publication_writes", static_cast<std::int64_t>(analysis.publications().size())},
-                {"factories", std::move(factories)},
-                {"publications", std::move(publications)},
-                {"summarized_provider_calls",
-                 static_cast<std::int64_t>(analysis.providerReads().size() +
-                                           analysis.providerCalls().size())},
-                {"runtime_provider_reads", readCount},
-                {"provider_reads", std::move(providerReads)},
-                {"runtime_provider_mutations", mutationCount},
-                {"runtime_nested_provider_allocations", nestedCount},
-                {"runtime_provider_callbacks", callbackCount},
-                {"runtime_provider_global_writes", globalWriteCount},
-                {"provider_calls", std::move(providerCalls)},
-                {"full_host_contract_claimed", false}};
-            stream << llvm::formatv("{0:2}\n", llvm::json::Value(std::move(document)));
+            stream << llvm::formatv("{0:2}\n", llvm::json::Value(prefixReport(
+                                                   module, analysis, contract->moduleSha256)));
         }
         if (!analysis.valid()) {
             mlir::emitError(module.getLoc()) << "host prefix refused: " << analysis.reason();

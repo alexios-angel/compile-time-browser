@@ -30,6 +30,7 @@ struct prefixValue {
     unsigned invocation = 0;
 
     static prefixValue constant(mlir::Attribute value) { return {Kind::primitive, value, {}, 0}; }
+    static prefixValue of(Kind kind, unsigned object) { return {kind, {}, {}, object}; }
 };
 
 struct prefixObject {
@@ -89,9 +90,7 @@ struct prefixAnalysis {
     };
 
     prefixAnalysis(mlir::ModuleOp module, const HostContract & contract, unsigned maxSteps,
-                   bool followPublication, bool followProviderReads, bool followProviderMutations,
-                   bool followProviderDiagnostics, bool followProviderCallbacks,
-                   bool followProviderObjects);
+                   HostPrefixFollow follow);
     bool step();
     bool spend(uint64_t count);
     // One step per character of a copied or compared name.
@@ -108,6 +107,11 @@ struct prefixAnalysis {
     bool identitySafeFunction(ctjs::FuncOp function, llvm::DenseSet<mlir::Operation *> & stack);
     bool identitySafeRegion(mlir::Region & region, llvm::DenseSet<mlir::Operation *> & stack);
     prefixValue factory(ctjs::CallOp call, ctjs::FuncOp function);
+    // The factory summary whose captured closure `closure` is, when `call` in
+    // the entry invokes a one-block `function` and Map is an intrinsic;
+    // `charged` spends one step per capture first.
+    const HostPrefixFactory * summarizedOwner(ctjs::CallOp call, ctjs::FuncOp function,
+                                              prefixValue closure, bool charged);
     prefixValue providerRead(ctjs::CallOp call, ctjs::FuncOp function, prefixValue closure,
                              environment & values);
     prefixValue providerMutation(ctjs::CallOp call, ctjs::FuncOp function, prefixValue closure,
