@@ -379,8 +379,4 @@ var trace = host.slot.get({});
 
 
 def object_argument_sources():
-    return {
-        name: (row["source"], "host", row["expected_trace"])
-        for name, row in object_argument_cases().items()
-        if row["admitted"]
-    }
+    return admitted_sources(object_argument_cases())

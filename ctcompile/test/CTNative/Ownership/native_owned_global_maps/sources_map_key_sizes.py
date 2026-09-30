@@ -161,11 +161,7 @@ def string_field_cases():
 
 
 def string_field_sources():
-    return {
-        name: (row["source"], "host", row["expected_trace"])
-        for name, row in string_field_cases().items()
-        if row["admitted"]
-    }
+    return admitted_sources(string_field_cases())
 
 
 # Exact sources of the thirteen-row post-String-field continuation probe.
@@ -227,26 +223,7 @@ def zero_size_cases():
     old = numeric_entry_cases()
     base = old["local_clear_zero_size_key"]["source"]
 
-    def add(name, source, value, calls, admitted=True, repair=None):
-        digest = hashlib.sha256(source.encode()).hexdigest()
-        if name in ZERO_SIZE_HISTORY:
-            assert (calls, digest) == ZERO_SIZE_HISTORY[name], name
-        row = dict(
-            source=source,
-            expected_trace=value,
-            raw_calls=calls,
-            prepared_calls=calls,
-            sha256=digest,
-            admitted=admitted,
-        )
-        if repair:
-            before, after, target = repair
-            assert (
-                source.count(before) == 1
-                and source.replace(before, after) == rows[target]["source"]
-            ), name
-            row.update(removed_text=before, replacement_text=after, repair=target)
-        rows[name] = row
+    add = case_adder(rows, ZERO_SIZE_HISTORY)
 
     add("local_clear_zero_size_key", base, 1, 8)
     add("local_clear_zero_literal_repair", old["local_clear_zero_literal_repair"]["source"], 1, 8)
@@ -374,11 +351,7 @@ def zero_size_cases():
 
 
 def zero_size_sources():
-    return {
-        name: (row["source"], "host", row["expected_trace"])
-        for name, row in zero_size_cases().items()
-        if row["admitted"]
-    }
+    return admitted_sources(zero_size_cases())
 
 
 # Preserve the eight exact sources of the saved-one continuation probe.
@@ -431,27 +404,7 @@ def one_size_cases():
     old = zero_size_cases()
     base = old["zero_size_read_after_write"]["source"]
 
-    def add(name, source, value, calls, admitted=True, repair=None, prepared=None):
-        digest = hashlib.sha256(source.encode()).hexdigest()
-        prepared = calls if prepared is None else prepared
-        if name in ONE_SIZE_HISTORY:
-            assert (calls, prepared, digest) == ONE_SIZE_HISTORY[name], name
-        row = dict(
-            source=source,
-            expected_trace=value,
-            raw_calls=calls,
-            prepared_calls=prepared,
-            sha256=digest,
-            admitted=admitted,
-        )
-        if repair:
-            before, after, target = repair
-            assert (
-                source.count(before) == 1
-                and source.replace(before, after) == rows[target]["source"]
-            ), name
-            row.update(removed_text=before, replacement_text=after, repair=target)
-        rows[name] = row
+    add = case_adder(rows, ONE_SIZE_HISTORY)
 
     add("zero_size_read_after_write", base, 0, 8)
     # A raw own-field read requires the exact-one key to select the object.
@@ -663,11 +616,7 @@ def one_size_cases():
 
 
 def one_size_sources():
-    return {
-        name: (row["source"], "host", row["expected_trace"])
-        for name, row in one_size_cases().items()
-        if row["admitted"]
-    }
+    return admitted_sources(one_size_cases())
 
 
 # Every byte of the ten measured delete-size continuation sources is retained.
@@ -715,26 +664,7 @@ DELETE_SIZE_HISTORY = {
 def delete_size_cases():
     rows = {}
 
-    def add(name, source, value, calls, admitted=True, repair=None):
-        digest = hashlib.sha256(source.encode()).hexdigest()
-        if name in DELETE_SIZE_HISTORY:
-            assert (calls, digest) == DELETE_SIZE_HISTORY[name], name
-        row = dict(
-            source=source,
-            expected_trace=value,
-            raw_calls=calls,
-            prepared_calls=calls,
-            sha256=digest,
-            admitted=admitted,
-        )
-        if repair:
-            before, after, target = repair
-            assert (
-                source.count(before) == 1
-                and source.replace(before, after) == rows[target]["source"]
-            ), name
-            row.update(removed_text=before, replacement_text=after, repair=target)
-        rows[name] = row
+    add = case_adder(rows, DELETE_SIZE_HISTORY)
 
     old = one_size_cases()
     formal = old["size_deleted_last"]["source"]
@@ -893,11 +823,7 @@ def delete_size_cases():
 
 
 def delete_size_sources():
-    return {
-        name: (row["source"], "host", row["expected_trace"])
-        for name, row in delete_size_cases().items()
-        if row["admitted"]
-    }
+    return admitted_sources(delete_size_cases())
 
 
 # The twelve measured branch-cardinality continuation sources are immutable.

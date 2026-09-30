@@ -689,3 +689,53 @@ def mixed_result_refusals():
             2,
         ),
     }
+
+
+def case_adder(rows, history):
+    """The `add(name, source, value, calls, ...)` of a size/join case table.
+
+    Each row is pinned against `history` when named there: a 2-tuple pin is
+    (calls, sha256), a 3-tuple pin (calls, prepared, sha256). A `repair`
+    triple must remove exactly once and reproduce the named target's source.
+    """
+
+    def add(name, source, value, calls, admitted=True, repair=None, prepared=None):
+        digest = hashlib.sha256(source.encode()).hexdigest()
+        prepared = calls if prepared is None else prepared
+        if name in history:
+            pin = history[name]
+            assert pin == ((calls, digest) if len(pin) == 2 else (calls, prepared, digest)), name
+        row = dict(
+            source=source,
+            expected_trace=value,
+            raw_calls=calls,
+            prepared_calls=prepared,
+            sha256=digest,
+            admitted=admitted,
+        )
+        if repair:
+            before, after, target = repair
+            assert (
+                source.count(before) == 1
+                and source.replace(before, after) == rows[target]["source"]
+            ), name
+            row.update(removed_text=before, replacement_text=after, repair=target)
+        rows[name] = row
+
+    return add
+
+
+def admitted_sources(rows):
+    """The (source, owner, trace) entries of the admitted rows, in row order."""
+    return {
+        name: (row["source"], "host", row["expected_trace"])
+        for name, row in rows.items()
+        if row["admitted"]
+    }
+
+
+def js_host_calls(source):
+    """Two boundary calls plus every Map or slot call spelled in the JS source."""
+    return 2 + len(
+        re.findall(r"\b(?:state|host\.slot)\.(?:set|get|size|has|delete|clear)\(", source)
+    )

@@ -54,26 +54,7 @@ JOIN_SIZE_HISTORY = {
 def join_size_cases():
     rows = {}
 
-    def add(name, source, value, calls, admitted=True, repair=None):
-        digest = hashlib.sha256(source.encode()).hexdigest()
-        if name in JOIN_SIZE_HISTORY:
-            assert (calls, digest) == JOIN_SIZE_HISTORY[name], name
-        row = dict(
-            source=source,
-            expected_trace=value,
-            raw_calls=calls,
-            prepared_calls=calls,
-            sha256=digest,
-            admitted=admitted,
-        )
-        if repair:
-            before, after, target = repair
-            assert (
-                source.count(before) == 1
-                and source.replace(before, after) == rows[target]["source"]
-            ), name
-            row.update(removed_text=before, replacement_text=after, repair=target)
-        rows[name] = row
+    add = case_adder(rows, JOIN_SIZE_HISTORY)
 
     def source(body, flag):
         return """var host = {};
@@ -196,11 +177,7 @@ host.slot.size(); var trace = host.slot.set(7, FLAG);
 
 
 def join_size_sources():
-    return {
-        name: (row["source"], "host", row["expected_trace"])
-        for name, row in join_size_cases().items()
-        if row["admitted"]
-    }
+    return admitted_sources(join_size_cases())
 
 
 # The twelve measured after-join mutation sources retain their exact bytes.
@@ -259,26 +236,7 @@ MUTATION_SIZE_HISTORY = {
 def mutation_size_cases():
     rows = {}
 
-    def add(name, source, value, calls, admitted=True, repair=None):
-        digest = hashlib.sha256(source.encode()).hexdigest()
-        if name in MUTATION_SIZE_HISTORY:
-            assert (calls, digest) == MUTATION_SIZE_HISTORY[name], name
-        row = dict(
-            source=source,
-            expected_trace=value,
-            raw_calls=calls,
-            prepared_calls=calls,
-            sha256=digest,
-            admitted=admitted,
-        )
-        if repair:
-            before, after, target = repair
-            assert (
-                source.count(before) == 1
-                and source.replace(before, after) == rows[target]["source"]
-            ), name
-            row.update(removed_text=before, replacement_text=after, repair=target)
-        rows[name] = row
+    add = case_adder(rows, MUTATION_SIZE_HISTORY)
 
     snapshot = "const saved = state.size; "
     branches = "if (flag) { state.delete(1); } " "else { state.delete(2); state.has(key); } "
@@ -413,8 +371,4 @@ def mutation_size_cases():
 
 
 def mutation_size_sources():
-    return {
-        name: (row["source"], "host", row["expected_trace"])
-        for name, row in mutation_size_cases().items()
-        if row["admitted"]
-    }
+    return admitted_sources(mutation_size_cases())

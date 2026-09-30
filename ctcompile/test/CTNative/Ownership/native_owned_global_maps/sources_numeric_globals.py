@@ -68,9 +68,7 @@ def numeric_entry_cases():
     rows = {}
 
     def add(name, source, value, boundary, historical=False, repair=None):
-        calls = 2 + len(
-            re.findall(r"\b(?:state|host\.slot)\.(?:set|get|size|has|delete|clear)\(", source)
-        )
+        calls = js_host_calls(source)
         rows[name] = dict(
             source=source,
             expected_trace=value,

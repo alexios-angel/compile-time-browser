@@ -19,9 +19,7 @@ def scalar_global_cases():
     rows = {}
 
     def add(name, source, value, saved, boundary, repair=None):
-        calls = 2 + len(
-            re.findall(r"\b(?:state|host\.slot)\.(?:set|get|size|has|delete|clear)\(", source)
-        )
+        calls = js_host_calls(source)
         rows[name] = dict(
             source=source,
             expected_trace=value,
@@ -432,9 +430,7 @@ def constant_global_cases():
     rows = {}
 
     def add(name, text, trace, saved, old=None, replacement=None, candidate_saved=None):
-        calls = 2 + len(
-            re.findall(r"\b(?:state|host\.slot)\.(?:set|get|size|has|delete|clear)\(", text)
-        )
+        calls = js_host_calls(text)
         rows[name] = dict(
             source=text,
             expected_trace=trace,
