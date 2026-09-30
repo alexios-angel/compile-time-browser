@@ -3,6 +3,7 @@
 #include "objects.hpp"
 
 #include <cmath>
+#include <limits>
 
 namespace ctbrowser::script {
 
@@ -75,6 +76,20 @@ enum class element_kind : std::uint8_t {
     return std::isnan(d) ? canonical_nan() : d;
 }
 
+// A double as a float the way a Float32Array store rounds one (Math.fround):
+// nearest, and past the largest float, Infinity. The plain cast is undefined
+// behaviour for a finite double out of float's range ([conv.double]), and a
+// page's `f32[0] = 1e300` is exactly that. At or beyond FLT_MAX plus half an
+// ulp (0x1.ffffffp127) the nearest float IS infinity; below it the cast is in
+// range. NaN converts as a NaN.
+[[nodiscard]] inline float to_float(double d) noexcept {
+    if (std::abs(d) >= 0x1.ffffffp127) {
+        return d > 0 ? std::numeric_limits<float>::infinity()
+                     : -std::numeric_limits<float>::infinity();
+    }
+    return static_cast<float>(d);
+}
+
 // Coerce a number the way a store into that element type does. A BigInt kind
 // has no number to coerce: its store is ToBigInt's, in bigint.hpp.
 [[nodiscard]] inline double coerce_element(element_kind kind, double v) {
@@ -91,7 +106,7 @@ enum class element_kind : std::uint8_t {
     case element_kind::big_i64:
     case element_kind::big_u64: return v;
     case element_kind::f16: return half_to_double(double_to_half(v));
-    case element_kind::f32: return static_cast<double>(static_cast<float>(v));
+    case element_kind::f32: return static_cast<double>(to_float(v));
     case element_kind::f64: return v;
     case element_kind::u8_clamped:
         // The ONE that clamps rather than wrapping, which is why it exists:
@@ -406,7 +421,7 @@ inline void store_set_raw(array_object & bytes, std::size_t at, std::size_t widt
 [[nodiscard]] inline std::uint64_t element_to_raw(element_kind kind, double v) noexcept {
     switch (kind) {
     case element_kind::f16: return double_to_half(v);
-    case element_kind::f32: return std::bit_cast<std::uint32_t>(static_cast<float>(v));
+    case element_kind::f32: return std::bit_cast<std::uint32_t>(to_float(v));
     case element_kind::f64: return std::bit_cast<std::uint64_t>(v);
     default:
         // THE SAME COERCION AN OWNING TYPED ARRAY DOES - wrap for the integer

@@ -65,6 +65,15 @@ void test_refused_reentry_is_a_throw() {
         "survived");
 }
 
+// A Float32Array store of a double past float's range is Infinity (the plain
+// cast is undefined behaviour), through the array and through a DataView.
+void test_float32_store_out_of_range() {
+    CHECK_EQ(page("var f = new Float32Array(2); f[0] = 1e300; f[1] = -1e300;"
+                  "var v = new DataView(new ArrayBuffer(4)); v.setFloat32(0, 1e300);"
+                  "alert(f[0] + ',' + f[1] + ',' + v.getFloat32(0));"),
+             "Infinity,-Infinity,Infinity");
+}
+
 // A module that dynamic-imports while it runs: the loader inserts into the
 // registry the running module's record lives in, and the record must stay
 // where run_module left it.
@@ -90,6 +99,7 @@ void test_dynamic_import_inside_a_running_module() {
 int main() {
     test_spread_walks_a_snapshot();
     test_refused_reentry_is_a_throw();
+    test_float32_store_out_of_range();
     test_dynamic_import_inside_a_running_module();
     REPORT("bindings_rooting");
 }
