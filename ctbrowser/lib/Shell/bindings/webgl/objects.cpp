@@ -9,6 +9,20 @@ using namespace detail;
 
 namespace {
 
+// A double as a float the way JavaScript rounds one (Math.fround): nearest,
+// and past the largest float, Infinity. The plain cast is undefined behaviour
+// for a finite double out of float's range ([conv.double]), and a page's
+// Float32 data is exactly where 1e300 arrives from. At or beyond FLT_MAX plus
+// half an ulp (0x1.ffffffp127) the nearest float IS infinity; below it the cast
+// is in range. NaN converts as a NaN.
+[[nodiscard]] float to_float(double d) noexcept {
+    if (std::abs(d) >= 0x1.ffffffp127) {
+        constexpr float inf = std::numeric_limits<float>::infinity();
+        return d > 0 ? inf : -inf;
+    }
+    return static_cast<float>(d);
+}
+
 // Pull bytes out of whatever a page passed: a typed array, an ArrayBuffer, or a
 // plain array of numbers. All three carry their data in `__bytes` or are arrays
 // themselves, which is the shape install_typed_arrays already uses.
@@ -34,47 +48,45 @@ namespace {
             array->view_length * width, bytes->items.size() - std::min(from, bytes->items.size()));
         out.resize(want);
         for (std::size_t i = 0; i < want; ++i) {
-            out[i] = static_cast<std::byte>(static_cast<unsigned char>(
-                std::clamp(context::to_number(bytes->items[from + i]), 0.0, 255.0)));
+            out[i] = static_cast<std::byte>(
+                script::to_uint8(context::to_number(bytes->items[from + i])));
         }
         return out;
     }
     // A FLOAT ARRAY IS FOUR BYTES A NUMBER, not one. The element kind says which
     // - getting it wrong turns a buffer of positions into a quarter of one, and
     // the triangle that results looks like a bad transform rather than a bad
-    // upload.
-    const bool floats = array->elements == script::element_kind::f32 ||
-                        array->elements == script::element_kind::none;
-    if (floats) {
+    // upload. A plain array of numbers is floats too.
+    const script::element_kind kind = array->elements;
+    if (kind == script::element_kind::f32 || kind == script::element_kind::none) {
         out.resize(array->items.size() * sizeof(float));
         for (std::size_t i = 0; i < array->items.size(); ++i) {
-            const auto f = static_cast<float>(context::to_number(array->items[i]));
+            const float f = to_float(context::to_number(array->items[i]));
             std::memcpy(out.data() + i * sizeof(float), &f, sizeof(f));
         }
         return out;
     }
-    if (array->elements == script::element_kind::u16 ||
-        array->elements == script::element_kind::i16) {
-        out.resize(array->items.size() * sizeof(std::uint16_t));
-        for (std::size_t i = 0; i < array->items.size(); ++i) {
-            const auto v16 = static_cast<std::uint16_t>(context::to_uint32(array->items[i]));
-            std::memcpy(out.data() + i * sizeof(std::uint16_t), &v16, sizeof(v16));
+    // EVERY OTHER NUMBER KIND IS ITS OWN BYTES, little-endian, exactly what a
+    // view over the same buffer would hold: Int8Array([-1]) is 0xFF (ToInt8 is
+    // modular), Uint8ClampedArray was clamped when it was stored, and a
+    // Float64Array is eight bytes an element. element_to_raw is the store's
+    // own encoding, so the two cannot disagree.
+    if (!script::is_bigint_kind(kind)) {
+        const std::size_t width = script::bytes_per_element(kind);
+        out.reserve(array->items.size() * width);
+        for (const value & each : array->items) {
+            const std::uint64_t raw = script::element_to_raw(kind, context::to_number(each));
+            for (std::size_t b = 0; b < width; ++b) {
+                out.push_back(static_cast<std::byte>((raw >> (8 * b)) & 0xFFu));
+            }
         }
         return out;
     }
-    if (array->elements == script::element_kind::u32 ||
-        array->elements == script::element_kind::i32) {
-        out.resize(array->items.size() * sizeof(std::uint32_t));
-        for (std::size_t i = 0; i < array->items.size(); ++i) {
-            const auto v32 = context::to_uint32(array->items[i]);
-            std::memcpy(out.data() + i * sizeof(std::uint32_t), &v32, sizeof(v32));
-        }
-        return out;
-    }
+    // ponytail: a BigInt64Array uploads one byte an element; 8 via
+    // bigint_to_uint64_wrap if a page ever feeds one to WebGL.
     out.reserve(array->items.size());
     for (const value & each : array->items) {
-        out.push_back(static_cast<std::byte>(
-            static_cast<unsigned char>(std::clamp(context::to_number(each), 0.0, 255.0))));
+        out.push_back(static_cast<std::byte>(context::to_uint32(each) & 0xFFu));
     }
     return out;
 }
@@ -101,20 +113,19 @@ namespace {
         // origin - with no GL error anywhere, because a zero matrix is a
         // perfectly legal one.
         for (std::size_t i = 0; i < array->length(); ++i) {
-            made.data.push_back(static_cast<float>(array->is_view()
-                                                       ? script::view_get(*array, i)
-                                                       : context::to_number(array->items[i])));
+            made.data.push_back(to_float(array->is_view() ? script::view_get(*array, i)
+                                                          : context::to_number(array->items[i])));
         }
     } else if (args.size() > from && args[from].is_object()) {
         const value held = cx.lookup_property(args[from], "__bytes");
         if (held.is_array()) {
             for (const value & each : static_cast<script::array_object *>(held.as_heap())->items) {
-                made.data.push_back(static_cast<float>(context::to_number(each)));
+                made.data.push_back(to_float(context::to_number(each)));
             }
         }
     } else {
         for (std::size_t i = from; i < args.size(); ++i) {
-            made.data.push_back(static_cast<float>(context::to_number(args[i])));
+            made.data.push_back(to_float(context::to_number(args[i])));
         }
     }
     // PAD TO THE SHAPE, NEVER TRUNCATE TO IT.
@@ -211,8 +222,21 @@ void dom_bindings::install_webgl_methods(context & cx, script::object_object * o
         // `bufferData(target, size, usage)` ALLOCATES rather than uploading -
         // a page that means to reserve space passes a number, and treating that
         // as data would upload one float where it asked for a megabyte.
+        //
+        // ZERO-FILLED, as WebGL requires: the size-only overload hands the
+        // driver no data, and without EGL_ANGLE_robust_resource_initialization
+        // the new storage is whatever GPU memory held before - readable by the
+        // page. A size the context refuses (negative: INVALID_VALUE, above
+        // 1 GiB: OUT_OF_MEMORY) still goes through that overload for its error.
         if (a.size() > 1 && a[1].is_number()) {
-            gl->buffer_data(enum_at(a, 0), int_at(a, 1), enum_at(a, 2));
+            const int size = int_at(a, 1);
+            if (size < 0 || size > (1 << 30)) {
+                gl->buffer_data(enum_at(a, 0), size, enum_at(a, 2));
+            } else {
+                gl->buffer_data(enum_at(a, 0),
+                                std::vector<std::byte>(static_cast<std::size_t>(size)),
+                                enum_at(a, 2));
+            }
             return value::undefined();
         }
         gl->buffer_data(enum_at(a, 0), bytes_of(c, a.size() > 1 ? a[1] : value::undefined()),
@@ -489,13 +513,12 @@ void dom_bindings::install_webgl_methods(context & cx, script::object_object * o
         return value::undefined();
     });
     set_method(cx, *obj, "clearColor", [gl](context &, std::span<value> a) {
-        gl->device().clear_color(
-            static_cast<float>(arg_number(a, 0)), static_cast<float>(arg_number(a, 1)),
-            static_cast<float>(arg_number(a, 2)), static_cast<float>(arg_number(a, 3)));
+        gl->device().clear_color(to_float(arg_number(a, 0)), to_float(arg_number(a, 1)),
+                                 to_float(arg_number(a, 2)), to_float(arg_number(a, 3)));
         return value::undefined();
     });
     set_method(cx, *obj, "clearDepth", [gl](context &, std::span<value> a) {
-        gl->device().clear_depth(static_cast<float>(arg_number(a, 0)));
+        gl->device().clear_depth(to_float(arg_number(a, 0)));
         return value::undefined();
     });
     set_method(cx, *obj, "clearStencil",
