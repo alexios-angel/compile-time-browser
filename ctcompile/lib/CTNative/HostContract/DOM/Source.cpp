@@ -1,21 +1,6 @@
-#include "../Analysis.h"
 #include "Source/Proof.hpp"
-#include "ctbrowser/core/algorithms.hpp"
-#include "ctcompile/CTNative/Analysis/ClosedCallable.h"
-#include "ctcompile/CTNative/Analysis/ImmutableCaptures.h"
-#include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/Dialect/SCF/IR/SCF.h"
-#include "mlir/Dialect/UB/IR/UBOps.h"
-#include "mlir/IR/Dominance.h"
-#include "mlir/IR/IRMapping.h"
-#include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/Verifier.h"
-#include "llvm/ADT/DenseMap.h"
-#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/ScopeExit.h"
-#include "llvm/ADT/StringMap.h"
-
-#include <optional>
 
 namespace ctcompile::ctnative {
 using dom_source_detail::DOMSource;
@@ -172,9 +157,7 @@ llvm::Error expandDOMHelpers(mlir::ModuleOp candidate, llvm::StringRef entry, un
             }
         }
     }
-    if (!source.reason.empty()) {
-        return llvm::createStringError(llvm::inconvertibleErrorCode(), source.reason);
-    }
+    if (!source.reason.empty()) { return llvm::createStringError(source.reason); }
     if (initialized) {
         target.getBody().takeBody(wrapper.getBody());
         target.setUpvalueCount(0);

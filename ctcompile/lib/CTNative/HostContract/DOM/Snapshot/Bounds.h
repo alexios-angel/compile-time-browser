@@ -19,6 +19,13 @@ inline ctjs::CompareOp truthyComparison(mlir::Value flag) {
     return truth ? truth.getValue().getDefiningOp<ctjs::CompareOp>() : ctjs::CompareOp{};
 }
 
+// Whether `compare` is `subject === undefined`, either way round.
+inline bool strictUndefinedTest(ctjs::CompareOp compare, mlir::Value subject) {
+    return compare && compare.getKind() == ctjs::CompareKind::StrictEq &&
+           ((compare.getLhs() == subject && ctjs::isUndefinedConstant(compare.getRhs())) ||
+            (compare.getRhs() == subject && ctjs::isUndefinedConstant(compare.getLhs())));
+}
+
 // The comparison guarding `read` at `parent`, with the index it tests there:
 // the condition of an scf.if whose then arm holds the read, or of the scf.while
 // whose after-block argument keys it. Null otherwise.
@@ -59,6 +66,19 @@ bool hasOwnSnapshotBound(ctjs::GetPropertyOp read, mlir::Value snapshot, Spend s
     return false;
 }
 
+// An scf.if on `test` whose arms yield `yes` and `no`; returns its result.
+inline mlir::Value emitSelect(mlir::OpBuilder & at, mlir::Location where, mlir::TypeRange types,
+                              mlir::Value test, mlir::Value yes, mlir::Value no) {
+    auto branch = mlir::scf::IfOp::create(at, where, types, test);
+    for (auto [region, value] :
+         llvm::zip(branch->getRegions(), llvm::ArrayRef<mlir::Value>{yes, no})) {
+        auto & arm = region.emplaceBlock();
+        mlir::OpBuilder nested(&arm, arm.begin());
+        mlir::scf::YieldOp::create(nested, where, value);
+    }
+    return branch.getResult(0);
+}
+
 // min(object[key], 2^24): the VM materializes at most 2^24 proxy slots.
 inline mlir::Value cappedLength(mlir::OpBuilder & at, mlir::Location where, mlir::Type type,
                                 mlir::Value object, mlir::Value key) {
@@ -69,14 +89,7 @@ inline mlir::Value cappedLength(mlir::OpBuilder & at, mlir::Location where, mlir
     auto less = ctjs::CompareOp::create(at, where, type, ctjs::CompareKind::Lt, size.getResult(),
                                         cap.getResult());
     auto test = ctjs::TruthyOp::create(at, where, at.getI1Type(), less.getResult());
-    auto bounded = mlir::scf::IfOp::create(at, where, mlir::TypeRange{type}, test.getResult());
-    for (auto [region, value] :
-         llvm::zip(bounded->getRegions(), llvm::ArrayRef<mlir::Value>{size, cap})) {
-        auto & arm = region.emplaceBlock();
-        mlir::OpBuilder nested(&arm, arm.begin());
-        mlir::scf::YieldOp::create(nested, where, value);
-    }
-    return bounded.getResult(0);
+    return emitSelect(at, where, mlir::TypeRange{type}, test.getResult(), size, cap);
 }
 
 // Whether `text` parses as a complete selector list. Callers charge its bytes.

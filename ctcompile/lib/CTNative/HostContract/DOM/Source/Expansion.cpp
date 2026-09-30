@@ -279,6 +279,17 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
             llvm::DenseSet<mlir::Value> suffixReads;
             llvm::SmallVector<ctjs::CallOp> consumedSelectors;
             auto result = llvm::dyn_cast<ctjs::ReturnOp>(target.getBody().front().back());
+            // Whether `call` invokes `method` on its own receiver with `arity` arguments.
+            const auto calls = [](ctjs::CallOp call, ctjs::GetPropertyOp method, unsigned arity) {
+                return call.getCallee() == method.getResult() &&
+                       call.getReceiver() == method.getObject() && call.getArgs().size() == arity;
+            };
+            // Keep a completed method/read pair in the complete use census.
+            const auto retainRead = [&](ctjs::GetPropertyOp pairMethod, ctjs::CallOp pairRead) {
+                suffixValues.append({pairMethod.getResult(), pairRead.getResult()});
+                suffixUses.insert(&pairRead->getOpOperand(0));
+                suffixReads.insert(pairRead.getResult());
+            };
             const auto selectFeedingRead = [&](ctjs::CallOp leaf,
                                                ctjs::GetPropertyOp & pendingMethod,
                                                ctjs::CallOp & pendingRead) {
@@ -290,11 +301,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                 if (!suffixReads.contains(leaf.getArgs()[1])) { return !pendingRead; }
                 // A standalone read may feed the write without an argument read.
                 // Preserve any later argument read in the complete use census.
-                if (pendingRead) {
-                    suffixValues.append({pendingMethod.getResult(), pendingRead.getResult()});
-                    suffixUses.insert(&pendingRead->getOpOperand(0));
-                    suffixReads.insert(pendingRead.getResult());
-                }
+                if (pendingRead) { retainRead(pendingMethod, pendingRead); }
                 pendingRead = leaf.getArgs()[1].getDefiningOp<ctjs::CallOp>();
                 pendingMethod = pendingRead.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
                 return true;
@@ -331,9 +338,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                     const auto retainTrailingRead = [&] {
                         if (!trailingMethod) { return true; }
                         if (!trailingCall) { return false; }
-                        suffixValues.append({trailingMethod.getResult(), trailingCall.getResult()});
-                        suffixUses.insert(&trailingCall->getOpOperand(0));
-                        suffixReads.insert(trailingCall.getResult());
+                        retainRead(trailingMethod, trailingCall);
                         trailingMethod = {};
                         trailingCall = {};
                         return true;
@@ -408,9 +413,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                                 }
                                 if (auto read = llvm::dyn_cast<ctjs::CallOp>(nested);
                                     read && trailingMethod && !trailingCall &&
-                                    read.getCallee() == trailingMethod.getResult() &&
-                                    read.getReceiver() == trailingMethod.getObject() &&
-                                    read.getArgs().size() == 1) {
+                                    calls(read, trailingMethod, 1)) {
                                     trailingCall = read;
                                     // This read stays inside the branch, but leaves suppression.
                                     // The shared selector and typed DOM proofs must exclude throws.
@@ -420,10 +423,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                                     continue;
                                 }
                                 if (auto leaf = llvm::dyn_cast<ctjs::CallOp>(nested);
-                                    leaf && guardedMethod &&
-                                    leaf.getCallee() == guardedMethod.getResult() &&
-                                    leaf.getReceiver() == guardedMethod.getObject() &&
-                                    leaf.getArgs().size() == 2 &&
+                                    leaf && guardedMethod && calls(leaf, guardedMethod, 2) &&
                                     (secondLeaf || trailingCall ||
                                      suffixReads.contains(leaf.getArgs()[1]))) {
                                     if (!selectFeedingRead(leaf, trailingMethod, trailingCall)) {
@@ -487,10 +487,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                         if (suffixRead || !sourceReadCall) { return false; }
                         // Keep completed argument reads in the complete use
                         // census; the write selects its feeding read below.
-                        suffixValues.append(
-                            {sourceReadMethod.getResult(), sourceReadCall.getResult()});
-                        suffixUses.insert(&sourceReadCall->getOpOperand(0));
-                        suffixReads.insert(sourceReadCall.getResult());
+                        retainRead(sourceReadMethod, sourceReadCall);
                         sourceReadCall = {};
                     }
                     sourceReadMethod = read;
@@ -498,9 +495,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                 }
                 if (auto read = llvm::dyn_cast<ctjs::CallOp>(operation);
                     read && sourceReadMethod && !sourceReadCall &&
-                    read.getCallee() == sourceReadMethod.getResult() &&
-                    read.getReceiver() == sourceReadMethod.getObject() &&
-                    read.getArgs().size() == 1) {
+                    calls(read, sourceReadMethod, 1)) {
                     sourceReadCall = read;
                     const bool selector = ctjs::constantKey(sourceReadMethod.getKey()) == "matches";
                     // Initial reads move outside the helper's suppression.
@@ -511,26 +506,21 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                         // Unused selectors need exact suppression; all reads retain
                         // the complete use census and typed DOM proof below. A pending
                         // hasAttribute read keeps the read-to-write proof instead.
-                        suffixValues.append({sourceReadMethod.getResult(), read.getResult()});
-                        suffixUses.insert(&read->getOpOperand(0));
+                        retainRead(sourceReadMethod, read);
                         if (selector && secondLeaf) { suffixLeaves.insert(read); }
-                        suffixReads.insert(read.getResult());
                         sourceReadMethod = {};
                         sourceReadCall = {};
                     }
                     continue;
                 }
                 if (auto leaf = llvm::dyn_cast<ctjs::CallOp>(operation);
-                    leaf && method && !protectedLeaf && leaf.getCallee() == method.getResult() &&
-                    leaf.getReceiver() == method.getObject() && leaf.getArgs().size() == 2) {
+                    leaf && method && !protectedLeaf && calls(leaf, method, 2)) {
                     if (!selectFeedingRead(leaf, readMethod, readCall)) { return false; }
                     protectedLeaf = leaf;
                     continue;
                 }
                 if (auto leaf = llvm::dyn_cast<ctjs::CallOp>(operation);
-                    leaf && secondMethod && !secondLeaf &&
-                    leaf.getCallee() == secondMethod.getResult() &&
-                    leaf.getReceiver() == secondMethod.getObject() && leaf.getArgs().size() == 2 &&
+                    leaf && secondMethod && !secondLeaf && calls(leaf, secondMethod, 2) &&
                     (trailingCall || suffixReads.contains(leaf.getArgs()[1]))) {
                     if (!selectFeedingRead(leaf, trailingMethod, trailingCall)) { return false; }
                     secondLeaf = leaf;
@@ -543,10 +533,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                     continue;
                 }
                 if (auto leaf = llvm::dyn_cast<ctjs::CallOp>(operation);
-                    leaf && selectorMethod && !selectorLeaf &&
-                    leaf.getCallee() == selectorMethod.getResult() &&
-                    leaf.getReceiver() == selectorMethod.getObject() &&
-                    leaf.getArgs().size() == 1) {
+                    leaf && selectorMethod && !selectorLeaf && calls(leaf, selectorMethod, 1)) {
                     selectorLeaf = leaf;
                     continue;
                 }
@@ -557,8 +544,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                     continue;
                 }
                 if (auto leaf = llvm::dyn_cast<ctjs::CallOp>(operation);
-                    leaf && finalMethod && leaf.getCallee() == finalMethod.getResult() &&
-                    leaf.getReceiver() == finalMethod.getObject() && leaf.getArgs().size() == 2) {
+                    leaf && finalMethod && calls(leaf, finalMethod, 2)) {
                     if (!selectFeedingRead(leaf, finalReadMethod, finalReadCall)) { return false; }
                     if (finalReadMethod &&
                         (!finalReadCall || leaf.getArgs()[1] != finalReadCall.getResult())) {
@@ -717,10 +703,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                     // success observes the helper's return; failure retains the
                     // original payload and saved state.
                     auto payload = protectedInvocation.getNormalBody().front().getArgument(0);
-                    for (auto & use : payload.getUses()) {
-                        (void)use;
-                        if (!step()) { return false; }
-                    }
+                    if (!drain(payload.getNumUses())) { return false; }
                     payload.replaceAllUsesWith(mapping.lookup(result.getValue()));
                 }
                 call->getResult(0).replaceAllUsesWith(
@@ -779,8 +762,7 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                     if (inactiveFillers.contains(from)) { inactiveFillers.insert(to); }
                 }
                 if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(operation);
-                    closure && confinedCallback(closure, functions.lookup(static_cast<unsigned>(
-                                                             closure.getFunction())))) {
+                    closure && confinedCallback(closure, closureTarget(closure))) {
                     // The original enclosure and unused implicit arguments
                     // were proved before cloning. Preserve this callback in
                     // its source arm with the caller's inert enclosure.
@@ -1004,7 +986,7 @@ bool DOMSource::expand(ctjs::FuncOp function, unsigned depth, bool entry, bool d
     // Uncaptured helpers wait until their holders retire and expose every
     // invocation; only then can argument facts specialize their bodies.
     for (ctjs::CreateClosureOp closure : closures) {
-        auto target = functions.lookup(static_cast<unsigned>(closure.getFunction()));
+        auto target = closureTarget(closure);
         if (!target) { return refuse("DOM helper closure target is missing"); }
         if (!closure.getUpvalues().empty() && !expand(target, depth + 1)) { return false; }
     }
@@ -1028,11 +1010,9 @@ bool DOMSource::expand(ctjs::FuncOp function, unsigned depth, bool entry, bool d
             if (held) { continue; }
             auto capture = cells.lookup(cell.getResult());
             if (capture.write) { capture.write.erase(); }
-            while (!cell.getResult().use_empty()) {
-                if (!step()) { return false; }
-                auto root = llvm::dyn_cast<ctjs::RootOp>(*cell.getResult().getUsers().begin());
-                if (!root) { return refuse("DOM helper capture cell has an unexpanded use"); }
-                root.erase();
+            if (!eraseRootedUses(cell.getResult(),
+                                 "DOM helper capture cell has an unexpanded use")) {
+                return false;
             }
             cells.erase(cell.getResult());
             cell.erase();
@@ -1064,7 +1044,7 @@ bool DOMSource::expand(ctjs::FuncOp function, unsigned depth, bool entry, bool d
                         (object && use.getOperandNumber() == 2 && object->getBlock() == &block);
             }
             if (held) { continue; }
-            auto target = functions.lookup(static_cast<unsigned>(closure.getFunction()));
+            auto target = closureTarget(closure);
             if (!target) { return refuse("DOM helper closure target is missing"); }
             if (confinedCallback(closure, target)) {
                 if (!expand(target, depth + 1)) { return false; }
@@ -1142,8 +1122,7 @@ bool DOMSource::expand(ctjs::FuncOp function, unsigned depth, bool entry, bool d
                 }
             }
             if (calls.empty()) {
-                if (!closure.getUpvalues().empty() ||
-                    creations.lookup(static_cast<unsigned>(closure.getFunction())) != 1 ||
+                if (!closure.getUpvalues().empty() || !uniqueCreation(closure) ||
                     !proveUnusedBody(target)) {
                     return refuse("DOM helper has no independently proved unused body");
                 }
@@ -1173,11 +1152,8 @@ bool DOMSource::expand(ctjs::FuncOp function, unsigned depth, bool entry, bool d
         if (!progress) { return refuse("DOM helper capture graph is cyclic or escapes"); }
     }
     for (ctjs::CreateObjectOp object : methodObjects) {
-        while (!object.getResult().use_empty()) {
-            if (!step()) { return false; }
-            auto root = llvm::dyn_cast<ctjs::RootOp>(*object.getResult().getUsers().begin());
-            if (!root) { return refuse("DOM helper object has an unexpanded use"); }
-            root.erase();
+        if (!eraseRootedUses(object.getResult(), "DOM helper object has an unexpanded use")) {
+            return false;
         }
         object.erase();
     }

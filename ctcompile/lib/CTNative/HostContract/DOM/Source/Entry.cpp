@@ -53,10 +53,7 @@ bool DOMSource::forwardFields(ctjs::FuncOp function) {
                 fields[ctjs::constantKey(set.getKey())] = set.getValue();
             } else if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
                 auto value = fields.lookup(ctjs::constantKey(get.getKey()));
-                if (!value) {
-                    refuse("DOM local field read lacks a preceding write");
-                    return mlir::WalkResult::interrupt();
-                }
+                if (!value) { return halt("DOM local field read lacks a preceding write"); }
                 get.getResult().replaceAllUsesWith(value);
             }
             operation->erase();
@@ -146,9 +143,7 @@ bool DOMSource::flattenEntryFactory(ctjs::FuncOp wrapper, ctjs::FuncOp target) {
     auto closure = callee.getDefiningOp<ctjs::CreateClosureOp>();
     auto factory = closureTarget(closure);
     if (!factory || factory == target || factory == wrapper || !closure.getUpvalues().empty() ||
-        factory.getUpvalueCount() != 0 ||
-        creations.lookup(static_cast<unsigned>(closure.getFunction())) != 1 ||
-        !undefined(receiver) ||
+        factory.getUpvalueCount() != 0 || !uniqueCreation(closure) || !undefined(receiver) ||
         (direct &&
          (direct.getCallee() != factory.getSymName() || !undefined(direct.getNewTarget()))) ||
         arguments.size() + ctjs::implicit_arguments !=
@@ -224,11 +219,8 @@ bool DOMSource::flattenEntryFactory(ctjs::FuncOp wrapper, ctjs::FuncOp target) {
         if (!resolveMethods(object, methods)) { return false; }
         // Selection removes only checked own slots. Every source callable,
         // including unselected slots, still needs its invocation proof.
-        while (!object.getResult().use_empty()) {
-            if (!step()) { return false; }
-            auto root = llvm::dyn_cast<ctjs::RootOp>(*object.getResult().getUsers().begin());
-            if (!root) { return refuse("DOM entry factory table has an unexpanded use"); }
-            root.erase();
+        if (!eraseRootedUses(object.getResult(), "DOM entry factory table has an unexpanded use")) {
+            return false;
         }
         object.erase();
     }

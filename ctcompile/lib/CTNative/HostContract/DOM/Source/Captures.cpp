@@ -30,6 +30,25 @@ bool DOMSource::step(uint64_t cost) {
     return true;
 }
 
+bool DOMSource::drain(uint64_t cost) {
+    if (cost > remaining) {
+        remaining = 0;
+        return refuse("DOM helper expansion work budget exhausted");
+    }
+    remaining -= static_cast<unsigned>(cost);
+    return true;
+}
+
+bool DOMSource::eraseRootedUses(mlir::Value value, llvm::StringRef reason) {
+    while (!value.use_empty()) {
+        if (!step()) { return false; }
+        auto root = llvm::dyn_cast<ctjs::RootOp>(*value.getUsers().begin());
+        if (!root) { return refuse(reason); }
+        root.erase();
+    }
+    return true;
+}
+
 bool DOMSource::chargeCaptureQuery() {
     // The shared immutable-capture query scans the module and target uses.
     for (unsigned scan = 0; scan < 6; ++scan) {
@@ -50,10 +69,7 @@ bool DOMSource::precedesInStructuredBody(mlir::Operation * definition, mlir::Ope
 }
 
 bool DOMSource::confinedCallback(ctjs::CreateClosureOp closure, ctjs::FuncOp target) {
-    if (!target || !closure.getUpvalues().empty() ||
-        creations.lookup(static_cast<unsigned>(closure.getFunction())) != 1) {
-        return false;
-    }
+    if (!target || !closure.getUpvalues().empty() || !uniqueCreation(closure)) { return false; }
     for (const bool replacement : {false, true}) {
         auto & body = target.getBody();
         if (replacement
@@ -91,8 +107,7 @@ bool DOMSource::confinedCallback(ctjs::CreateClosureOp closure, ctjs::FuncOp tar
 
 bool DOMSource::bindConstantArguments(ctjs::CreateClosureOp closure, ctjs::FuncOp target) {
     if (target.getUpvalueCount() != 0 ||
-        (closure && (!closure.getUpvalues().empty() ||
-                     creations.lookup(static_cast<unsigned>(closure.getFunction())) != 1))) {
+        (closure && (!closure.getUpvalues().empty() || !uniqueCreation(closure)))) {
         return true;
     }
     auto & body = target.getBody().front();
@@ -234,9 +249,9 @@ bool DOMSource::foldConstantReplacements(ctjs::FuncOp function) {
                            c <= static_cast<unsigned char>(pattern[3]);
             }
         }
-        auto target = functions.lookup(static_cast<unsigned>(callback.getFunction()));
+        auto target = closureTarget(callback);
         if (!target || target == function || target.getUpvalueCount() != 0 ||
-            creations.lookup(static_cast<unsigned>(callback.getFunction())) != 1) {
+            !uniqueCreation(callback)) {
             continue;
         }
         llvm::SmallVector<ctjs::RootOp> roots;
@@ -306,17 +321,9 @@ bool DOMSource::foldConstantReplacements(ctjs::FuncOp function) {
                                                      call.getReceiver(), input.getResult());
                 auto condition =
                     ctjs::TruthyOp::create(at, call.getLoc(), at.getI1Type(), equal.getResult());
-                auto branch = mlir::scf::IfOp::create(at, call.getLoc(), call->getResultTypes(),
-                                                      condition.getResult());
-                for (auto [region, selected] :
-                     llvm::zip(branch->getRegions(),
-                               llvm::ArrayRef<mlir::Value>{normalized.getResult(), result})) {
-                    auto & arm = region.emplaceBlock();
-                    mlir::OpBuilder nested(&arm, arm.begin());
-                    mlir::scf::YieldOp::create(nested, call.getLoc(), selected);
-                }
+                result = emitSelect(at, call.getLoc(), call->getResultTypes(),
+                                    condition.getResult(), normalized.getResult(), result);
                 operationCount += 6;
-                result = branch.getResult(0);
             }
         }
         call.getResult().replaceAllUsesWith(result);
@@ -351,8 +358,7 @@ bool DOMSource::captureTarget(ctjs::CreateClosureOp closure, ctjs::FuncOp target
     // child has already been expanded, and the original creator census plus
     // the enclosing slot prove which invocation supplies each remaining load.
     auto parent = closure->getParentOfType<ctjs::FuncOp>();
-    if (creations.lookup(static_cast<unsigned>(closure.getFunction())) != 1 ||
-        indices.size() != closure.getUpvalues().size()) {
+    if (!uniqueCreation(closure) || indices.size() != closure.getUpvalues().size()) {
         return refuse("DOM helper forwarded capture identity is ambiguous");
     }
     for (auto [index, value] : llvm::zip(indices.asArrayRef(), closure.getUpvalues())) {
@@ -366,8 +372,7 @@ bool DOMSource::captureTarget(ctjs::CreateClosureOp closure, ctjs::FuncOp target
     const auto checked = target.walk([&](mlir::Operation * operation) {
         if (!step()) { return mlir::WalkResult::interrupt(); }
         if (llvm::isa<ctjs::StoreUpvalueOp, ctjs::CreateClosureOp>(operation)) {
-            refuse("DOM helper forwarded capture is mutable or unexpanded");
-            return mlir::WalkResult::interrupt();
+            return halt("DOM helper forwarded capture is mutable or unexpanded");
         }
         return mlir::WalkResult::advance();
     });
@@ -399,8 +404,7 @@ bool DOMSource::resolveCell(ctjs::CreateCellOp cell) {
                    closure && use.getOperandNumber() >= 2) {
             const auto indices = closure.getEnclosingIndicesAttr();
             if ((!indices || indices[use.getOperandNumber() - 2] == -1) &&
-                captureTarget(closure,
-                              functions.lookup(static_cast<unsigned>(closure.getFunction())))) {
+                captureTarget(closure, closureTarget(closure))) {
                 continue;
             }
         }

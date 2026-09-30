@@ -18,8 +18,7 @@ llvm::Error normalizeDOMSnapshotLengths(mlir::ModuleOp candidate, const HostCont
         if (workSteps) { *workSteps = static_cast<unsigned>(maxSteps - budget.remaining); }
     });
     const auto error = [&](llvm::StringRef text) {
-        return llvm::createStringError(llvm::inconvertibleErrorCode(),
-                                       budget.remaining ? text
+        return llvm::createStringError(budget.remaining ? text
                                                         : "DOM snapshot work budget exhausted");
     };
     const auto spend = [&] { return budget.spend(); };

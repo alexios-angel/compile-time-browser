@@ -40,7 +40,19 @@ struct DOMSource {
     llvm::DenseSet<mlir::Value> inactiveFillers;
 
     bool refuse(llvm::StringRef message);
+    // refuse(), then the empty result or a stopped walk.
+    std::nullopt_t fail(llvm::StringRef message) {
+        refuse(message);
+        return std::nullopt;
+    }
+    mlir::WalkResult halt(llvm::StringRef message) {
+        refuse(message);
+        return mlir::WalkResult::interrupt();
+    }
     bool step(uint64_t cost = 1);
+    // One all-or-nothing charge; one that does not fit drains the budget, as
+    // `cost` separate steps would.
+    bool drain(uint64_t cost);
     bool chargeCaptureQuery();
     static bool undefined(mlir::Value value) { return ctjs::isUndefinedConstant(value); }
 
@@ -51,6 +63,13 @@ struct DOMSource {
                    ? functions.lookup(static_cast<unsigned>(closure.getFunction()))
                    : ctjs::FuncOp{};
     }
+    // Whether the census saw exactly one creation of this closure's function.
+    bool uniqueCreation(ctjs::CreateClosureOp closure) {
+        return closure.getFunction() >= 0 &&
+               creations.lookup(static_cast<unsigned>(closure.getFunction())) == 1;
+    }
+    // Erase every root of `value`; refuse any other remaining use.
+    bool eraseRootedUses(mlir::Value value, llvm::StringRef reason);
 
     // A capture-free filter predicate or uppercase replacement, invoked only as
     // the callback of its own Array filter or String replace call.

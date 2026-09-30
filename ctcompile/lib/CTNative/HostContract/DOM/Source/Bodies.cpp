@@ -237,8 +237,7 @@ bool DOMSource::proveUnusedBody(ctjs::FuncOp function, unsigned depth) {
                       use.getOperandNumber() == 0))) {
                     continue;
                 }
-                refuse("unused DOM helper cell identity escapes its local state");
-                return mlir::WalkResult::interrupt();
+                return halt("unused DOM helper cell identity escapes its local state");
             }
             return mlir::WalkResult::advance();
         }
@@ -247,28 +246,23 @@ bool DOMSource::proveUnusedBody(ctjs::FuncOp function, unsigned depth) {
             if (cell && cell->getParentOfType<ctjs::FuncOp>() == function) {
                 return mlir::WalkResult::advance();
             }
-            refuse("unused DOM helper cell access lacks a local cell");
-            return mlir::WalkResult::interrupt();
+            return halt("unused DOM helper cell access lacks a local cell");
         }
         if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(operation)) {
-            const auto index = static_cast<unsigned>(closure.getFunction());
-            auto target = functions.lookup(index);
-            if (!target || !closure.getUpvalues().empty() || creations.lookup(index) != 1) {
-                refuse("unused DOM helper child is captured or has ambiguous identity");
-                return mlir::WalkResult::interrupt();
+            auto target = closureTarget(closure);
+            if (!target || !closure.getUpvalues().empty() || !uniqueCreation(closure)) {
+                return halt("unused DOM helper child is captured or has ambiguous identity");
             }
             for (mlir::OpOperand & use : closure.getResult().getUses()) {
                 if (!step()) { return mlir::WalkResult::interrupt(); }
                 if (!llvm::isa<ctjs::RootOp>(use.getOwner()) || use.getOperandNumber() != 1) {
-                    refuse("unused DOM helper child is invoked or its identity escapes");
-                    return mlir::WalkResult::interrupt();
+                    return halt("unused DOM helper child is invoked or its identity escapes");
                 }
             }
             auto module = function->getParentOfType<mlir::ModuleOp>();
             if (!step(2 * uint64_t(operationCount))) { return mlir::WalkResult::interrupt(); }
             if (!symbolUnused(target, module) || !proveUnusedBody(target, depth + 1)) {
-                refuse("unused DOM helper child lacks a complete independent body proof");
-                return mlir::WalkResult::interrupt();
+                return halt("unused DOM helper child lacks a complete independent body proof");
             }
             return mlir::WalkResult::advance();
         }
@@ -278,10 +272,9 @@ bool DOMSource::proveUnusedBody(ctjs::FuncOp function, unsigned depth) {
             return mlir::WalkResult::advance();
         }
         if (ctjs::nonCoercing(operation)) { return mlir::WalkResult::advance(); }
-        refuse(("unused DOM helper body contains an unproved operation: " + function.getSymName() +
-                " / " + operation->getName().getStringRef())
-                   .str());
-        return mlir::WalkResult::interrupt();
+        return halt(("unused DOM helper body contains an unproved operation: " +
+                     function.getSymName() + " / " + operation->getName().getStringRef())
+                        .str());
     });
     if (checked.wasInterrupted()) { return false; }
     active.erase(function);
