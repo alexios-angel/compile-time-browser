@@ -255,6 +255,26 @@ void test_windows_post_messages_to_each_other() {
     }
 }
 
+void test_a_shadowed_origin_does_not_forge_a_message() {
+    // ACCESS-006: the sender's `origin` and the targetOrigin check come from
+    // the document's URL. A page that shadows `window.origin` neither signs
+    // its messages with the shadow nor receives one addressed to it.
+    browser page{browser_options{400, 300}};
+    page.set_location("file:///pages/the-page.html");
+    page.load_html("<!DOCTYPE html><html><body><script>"
+                   "var log = [];"
+                   "addEventListener('message', function (e) {"
+                   "  log.push(e.data + ':' + e.origin); console.log(log.join('|')); });"
+                   "Object.defineProperty(window, 'origin', {value: 'https://bank.example'});"
+                   "postMessage('addressed', 'https://bank.example');"
+                   "postMessage('any', '*');"
+                   "</script></body></html>");
+    for (int i = 0; i < 5; ++i) { (void)page.tick(16.0); }
+    const std::vector<std::string> & logged = page.bindings().console_output();
+    CHECK(!logged.empty());
+    if (!logged.empty()) { CHECK_EQ(logged.back(), std::string{"any:null"}); }
+}
+
 void test_a_frame_window_scrolls_its_own_viewport() {
     // scrollIntoView-iframes.html: a frame's message handler answers with its
     // `scrollY`, which a frame window did not have.
@@ -657,6 +677,7 @@ int main() {
     test_a_data_url_frame_carries_its_own_type();
     test_a_frame_runs_its_scripts_in_its_own_realm();
     test_windows_post_messages_to_each_other();
+    test_a_shadowed_origin_does_not_forge_a_message();
     test_report_error_fires_at_its_this_window();
     test_a_removed_frames_callbacks();
     test_a_frame_window_scrolls_its_own_viewport();

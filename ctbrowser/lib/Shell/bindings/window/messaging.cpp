@@ -25,11 +25,13 @@ namespace ctbrowser::shell {
 
 namespace {
 
-// A window's origin, serialized - what its `origin` property answers.
-[[nodiscard]] std::string origin_of(context & c, value window) {
-    if (!window.is_heap()) { return "null"; }
-    const value origin = c.lookup_property(window, "origin");
-    return origin.is_string() ? c.to_string(origin) : std::string{"null"};
+// A window's origin, serialized - from ITS DOCUMENT'S URL, as the `origin`
+// getter computes it, and never by reading that property: a page can shadow
+// `window.origin`, and the event's `origin` and the targetOrigin check are
+// the receiver's only proof of who sent it (ACCESS-006).
+[[nodiscard]] std::string origin_of(std::string_view href) {
+    const std::string origin = href.empty() ? std::string{} : location_parts(href).origin;
+    return origin.empty() ? std::string{"null"} : origin;
 }
 
 } // namespace
@@ -58,7 +60,9 @@ void dom_bindings::install_post_message(context & cx, script::object_object & wi
         // The INCUMBENT settings: the realm of the code that called - whose
         // window is the event's `source` and whose origin its `origin`.
         const value source = c.current_realm().global_this;
-        const std::string source_origin = origin_of(c, source);
+        const dom_bindings * sender = source.is_heap() ? find_bindings_of(source) : nullptr;
+        const std::string source_origin =
+            origin_of(sender == nullptr ? std::string_view{} : sender->location_href_);
         // Steps 5-6: "/" is the incumbent's own origin, "*" is any, and
         // anything else must parse as a URL, whose origin it names.
         if (target_origin == "/") {
@@ -97,7 +101,7 @@ void dom_bindings::install_post_message(context & cx, script::object_object & wi
             [this, data, source, source_origin, target_origin](context & t, std::span<value>) {
                 // The target's origin is checked when the task RUNS: it may
                 // have navigated in between.
-                if (target_origin != "*" && target_origin != origin_of(t, window_view_)) {
+                if (target_origin != "*" && target_origin != origin_of(location_href_)) {
                     return value::undefined();
                 }
                 const value event = make_event_object(t, "message", false, false);
@@ -129,6 +133,11 @@ void dom_bindings::install_post_message(context & cx, script::object_object & wi
     window.set("postMessage", post);
     // The window is the global object, so the bare name is the same method.
     cx.define_global("postMessage", post);
+    // `crypto` rides here because this is the one installer the page's window
+    // and every frame's window both run (window.cpp, frames.cpp).
+    install_crypto(cx, window, [this](context & c, std::string_view name, std::string message) {
+        throw_dom_exception(c, name, std::move(message));
+    });
     // THE [Serializable] INTERFACES this engine has (HTML 2.7.2), each with the
     // own properties its binding keeps an instance's state in - which is what
     // structuredClone copies of one, and all it copies: a page's expando stays

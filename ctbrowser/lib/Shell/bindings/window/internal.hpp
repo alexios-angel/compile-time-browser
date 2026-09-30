@@ -2,6 +2,10 @@
 // Private to lib/Shell/bindings/window/.
 #include <ctbrowser/shell/bindings.hpp>
 
+#include <functional>
+#include <string>
+#include <string_view>
+
 namespace ctbrowser::shell {
 
 // `locationbar`, `menubar` and the rest onto `window` (window.cpp).
@@ -17,5 +21,10 @@ void install_bar_props(context & cx, script::object_object & window, value proto
 // `TextEncoder` and `TextDecoder`, the Encoding Standard §8 - encoding.cpp,
 // which also carries the label table and the single-byte indexes.
 void install_encoding(context & cx);
+
+// `crypto` and the `Crypto` interface onto `window` - crypto.cpp. The DOMExceptions
+// it throws go through the bindings' `throw_dom_exception`, which is theirs.
+using throw_dom_fn = std::function<void(context &, std::string_view, std::string)>;
+void install_crypto(context & cx, script::object_object & window, const throw_dom_fn & throw_dom);
 
 } // namespace ctbrowser::shell
