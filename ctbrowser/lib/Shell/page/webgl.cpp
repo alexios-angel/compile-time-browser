@@ -14,6 +14,7 @@ namespace {
 // from JavaScript as numbers and there is nothing to translate.
 constexpr std::uint32_t gl_no_error = 0;
 constexpr std::uint32_t gl_invalid_value = 0x0501;
+constexpr std::uint32_t gl_out_of_memory = 0x0505;
 
 } // namespace
 
@@ -217,6 +218,10 @@ void webgl_context::buffer_data(std::uint32_t target, int size, std::uint32_t us
     // reserving room it will fill with bufferSubData.
     if (size < 0) {
         fail(gl_invalid_value);
+        return;
+    }
+    if (size > (1 << 30)) { // a page-sized allocation request must not reach the allocator
+        fail(gl_out_of_memory);
         return;
     }
     note_storage(target, static_cast<std::size_t>(size));

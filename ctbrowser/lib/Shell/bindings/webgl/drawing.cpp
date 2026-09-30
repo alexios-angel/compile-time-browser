@@ -80,24 +80,22 @@ void dom_bindings::install_webgl_draw_methods(context & cx, script::object_objec
         });
         set_method(cx, *obj, "bindVertexArray", [gl](context &, std::span<value> a) {
             gl->device().bind_vertex_array(
-                a.empty() || !a[0].is_number() ? 0U : static_cast<std::uint32_t>(a[0].as_number()));
+                a.empty() || !a[0].is_number() ? 0U : to_index(a[0].as_number()));
             return value::undefined();
         });
         set_method(cx, *obj, "deleteVertexArray", [gl](context &, std::span<value> a) {
             if (!a.empty() && a[0].is_number()) {
-                gl->device().delete_vertex_array(static_cast<std::uint32_t>(a[0].as_number()));
+                gl->device().delete_vertex_array(to_index(a[0].as_number()));
             }
             return value::undefined();
         });
         set_method(cx, *obj, "isVertexArray", [gl](context &, std::span<value> a) {
-            return value::boolean(
-                !a.empty() && a[0].is_number() &&
-                gl->device().is_vertex_array(static_cast<std::uint32_t>(a[0].as_number())));
+            return value::boolean(!a.empty() && a[0].is_number() &&
+                                  gl->device().is_vertex_array(to_index(a[0].as_number())));
         });
         set_method(cx, *obj, "vertexAttribDivisor", [gl](context &, std::span<value> a) {
-            gl->attribute_divisor(
-                !a.empty() && a[0].is_number() ? static_cast<int>(a[0].as_number()) : -1,
-                a.size() > 1 && a[1].is_number() ? static_cast<int>(a[1].as_number()) : 0);
+            gl->attribute_divisor(!a.empty() && a[0].is_number() ? to_int(a[0].as_number()) : -1,
+                                  a.size() > 1 && a[1].is_number() ? to_int(a[1].as_number()) : 0);
             return value::undefined();
         });
         set_method(cx, *obj, "drawArraysInstanced", touches([gl](context &, std::span<value> a) {
@@ -343,25 +341,22 @@ void dom_bindings::install_webgl_draw_methods(context & cx, script::object_objec
                 });
                 add("bindVertexArrayOES", [gl](context & inner, std::span<value> args) {
                     gl->device().bind_vertex_array(
-                        args.empty() || !args[0].is_number()
-                            ? 0U
-                            : static_cast<std::uint32_t>(args[0].as_number()));
+                        args.empty() || !args[0].is_number() ? 0U : to_index(args[0].as_number()));
                     (void)inner;
                     return value::undefined();
                 });
                 add("deleteVertexArrayOES", [gl](context & inner, std::span<value> args) {
                     if (!args.empty() && args[0].is_number()) {
-                        gl->device().delete_vertex_array(
-                            static_cast<std::uint32_t>(args[0].as_number()));
+                        gl->device().delete_vertex_array(to_index(args[0].as_number()));
                     }
                     (void)inner;
                     return value::undefined();
                 });
                 add("isVertexArrayOES", [gl](context & inner, std::span<value> args) {
                     (void)inner;
-                    return value::boolean(!args.empty() && args[0].is_number() &&
-                                          gl->device().is_vertex_array(
-                                              static_cast<std::uint32_t>(args[0].as_number())));
+                    return value::boolean(
+                        !args.empty() && args[0].is_number() &&
+                        gl->device().is_vertex_array(to_index(args[0].as_number())));
                 });
             });
         }
@@ -369,26 +364,22 @@ void dom_bindings::install_webgl_draw_methods(context & cx, script::object_objec
             return make("angle", [gl, touches](auto add) {
                 add("vertexAttribDivisorANGLE", [gl](context & inner, std::span<value> args) {
                     (void)inner;
-                    gl->attribute_divisor(args.size() > 0 && args[0].is_number()
-                                              ? static_cast<int>(args[0].as_number())
-                                              : -1,
-                                          args.size() > 1 && args[1].is_number()
-                                              ? static_cast<int>(args[1].as_number())
-                                              : 0);
+                    gl->attribute_divisor(
+                        args.size() > 0 && args[0].is_number() ? to_int(args[0].as_number()) : -1,
+                        args.size() > 1 && args[1].is_number() ? to_int(args[1].as_number()) : 0);
                     return value::undefined();
                 });
                 add("drawArraysInstancedANGLE",
                     touches([gl](context & inner, std::span<value> args) {
                         const auto n = [&args](std::size_t i) {
                             return args.size() > i && args[i].is_number()
-                                       ? static_cast<int>(args[i].as_number())
+                                       ? to_int(args[i].as_number())
                                        : 0;
                         };
-                        (void)gl->draw_arrays_instanced(
-                            args.empty() || !args[0].is_number()
-                                ? 0U
-                                : static_cast<std::uint32_t>(args[0].as_number()),
-                            n(1), n(2), n(3));
+                        (void)gl->draw_arrays_instanced(args.empty() || !args[0].is_number()
+                                                            ? 0U
+                                                            : to_index(args[0].as_number()),
+                                                        n(1), n(2), n(3));
                         (void)inner;
                         return value::undefined();
                     }));
@@ -396,17 +387,15 @@ void dom_bindings::install_webgl_draw_methods(context & cx, script::object_objec
                     touches([gl](context & inner, std::span<value> args) {
                         const auto n = [&args](std::size_t i) {
                             return args.size() > i && args[i].is_number()
-                                       ? static_cast<int>(args[i].as_number())
+                                       ? to_int(args[i].as_number())
                                        : 0;
                         };
                         (void)gl->draw_elements_instanced(
-                            args.empty() || !args[0].is_number()
-                                ? 0U
-                                : static_cast<std::uint32_t>(args[0].as_number()),
+                            args.empty() || !args[0].is_number() ? 0U
+                                                                 : to_index(args[0].as_number()),
                             n(1),
-                            args.size() > 2 && args[2].is_number()
-                                ? static_cast<std::uint32_t>(args[2].as_number())
-                                : 0U,
+                            args.size() > 2 && args[2].is_number() ? to_index(args[2].as_number())
+                                                                   : 0U,
                             n(3), n(4));
                         (void)inner;
                         return value::undefined();

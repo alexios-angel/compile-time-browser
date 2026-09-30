@@ -44,11 +44,15 @@ namespace ctbrowser::shell::detail {
     return static_cast<int>(enum_at(args, i));
 }
 
-[[nodiscard]] inline int int_at(std::span<value> args, std::size_t i) {
-    const double d = arg_number(args, i);
+// A double as an int, saturating; NaN is 0.
+[[nodiscard]] inline int to_int(double d) noexcept {
     if (std::isnan(d)) { return 0; }
     return static_cast<int>(std::clamp(d, static_cast<double>(std::numeric_limits<int>::min()),
                                        static_cast<double>(std::numeric_limits<int>::max())));
+}
+
+[[nodiscard]] inline int int_at(std::span<value> args, std::size_t i) {
+    return to_int(arg_number(args, i));
 }
 
 } // namespace ctbrowser::shell::detail

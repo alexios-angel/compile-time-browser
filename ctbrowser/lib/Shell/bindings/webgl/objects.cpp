@@ -57,7 +57,7 @@ namespace {
         array->elements == script::element_kind::i16) {
         out.resize(array->items.size() * sizeof(std::uint16_t));
         for (std::size_t i = 0; i < array->items.size(); ++i) {
-            const auto v16 = static_cast<std::uint16_t>(context::to_number(array->items[i]));
+            const auto v16 = static_cast<std::uint16_t>(context::to_uint32(array->items[i]));
             std::memcpy(out.data() + i * sizeof(std::uint16_t), &v16, sizeof(v16));
         }
         return out;
@@ -66,7 +66,7 @@ namespace {
         array->elements == script::element_kind::i32) {
         out.resize(array->items.size() * sizeof(std::uint32_t));
         for (std::size_t i = 0; i < array->items.size(); ++i) {
-            const auto v32 = static_cast<std::uint32_t>(context::to_number(array->items[i]));
+            const auto v32 = context::to_uint32(array->items[i]);
             std::memcpy(out.data() + i * sizeof(std::uint32_t), &v32, sizeof(v32));
         }
         return out;
@@ -212,9 +212,7 @@ void dom_bindings::install_webgl_methods(context & cx, script::object_object * o
         // a page that means to reserve space passes a number, and treating that
         // as data would upload one float where it asked for a megabyte.
         if (a.size() > 1 && a[1].is_number()) {
-            gl->buffer_data(enum_at(a, 0),
-                            std::vector<std::byte>(static_cast<std::size_t>(arg_number(a, 1))),
-                            enum_at(a, 2));
+            gl->buffer_data(enum_at(a, 0), int_at(a, 1), enum_at(a, 2));
             return value::undefined();
         }
         gl->buffer_data(enum_at(a, 0), bytes_of(c, a.size() > 1 ? a[1] : value::undefined()),
@@ -291,13 +289,13 @@ void dom_bindings::install_webgl_methods(context & cx, script::object_object * o
     };
     set_method(cx, *obj, "getActiveUniform", [gl, active_info](context & c, std::span<value> a) {
         const auto all = gl->active_uniforms(id_of(c, a.empty() ? value::undefined() : a[0]));
-        const auto i = static_cast<std::size_t>(std::max(0.0, arg_number(a, 1)));
+        const auto i = static_cast<std::size_t>(to_index(arg_number(a, 1)));
         if (i >= all.size()) { return value::null(); }
         return active_info(c, all[i]);
     });
     set_method(cx, *obj, "getActiveAttrib", [gl, active_info](context & c, std::span<value> a) {
         const auto all = gl->active_attributes(id_of(c, a.empty() ? value::undefined() : a[0]));
-        const auto i = static_cast<std::size_t>(std::max(0.0, arg_number(a, 1)));
+        const auto i = static_cast<std::size_t>(to_index(arg_number(a, 1)));
         if (i >= all.size()) { return value::null(); }
         return active_info(c, all[i]);
     });
@@ -541,10 +539,8 @@ void dom_bindings::install_webgl_methods(context & cx, script::object_object * o
             const value source = a[5];
             const value data = c.lookup_property(source, "data");
             if (data.is_array() || (data.is_object() && !data.is_undefined())) {
-                const int w =
-                    static_cast<int>(context::to_number(c.lookup_property(source, "width")));
-                const int h =
-                    static_cast<int>(context::to_number(c.lookup_property(source, "height")));
+                const int w = to_int(context::to_number(c.lookup_property(source, "width")));
+                const int h = to_int(context::to_number(c.lookup_property(source, "height")));
                 gl->texture_image(enum_at(a, 0), w, h, bytes_of(c, data));
                 return value::undefined();
             }
