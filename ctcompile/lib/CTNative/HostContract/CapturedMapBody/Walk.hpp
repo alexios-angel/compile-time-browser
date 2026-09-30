@@ -3,6 +3,7 @@
 #include "../../Analysis/NativeMap/SnapshotCopies.h"
 #include "../../Analysis/PrimitiveMapKey.h"
 #include "../Analysis.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 
 namespace ctcompile::ctnative::host_detail::captured_map_detail {
 
@@ -88,6 +89,8 @@ struct Walk {
 
     bool run();
     bool walk(mlir::Block & block, unsigned depth);
+    bool walkIf(mlir::scf::IfOp branch, unsigned depth);
+    bool mapCall(ctjs::CallOp invoke);
     bool prepareSnapshots();
     bool chargeStates(const llvm::DenseMap<CapturedMapOrigin, CapturedMapState> & states);
     mlir::Value actualKey(mlir::Value value);
@@ -96,6 +99,20 @@ struct Walk {
                                         PrimitiveMapKeyEvidence leftEvidence = {},
                                         PrimitiveMapKeyEvidence rightEvidence = {});
     PrimitiveMapKeyEvidence keyEvidence(mlir::Value key);
+    // keyRelation with both keys' current-path evidence.
+    PrimitiveMapKeyRelation pathRelation(mlir::Value left, mlir::Value right) {
+        return keyRelation(left, right, keyEvidence(left), keyEvidence(right));
+    }
+    // A primitive SSA value with its first-recorded alternatives.
+    void scalar(mlir::Value value, PrimitiveAlternatives fact) {
+        primitives.insert(value);
+        alternatives.try_emplace(value, fact);
+    }
+    template <class Tag> void scalar(mlir::Value value) {
+        scalar(value, PrimitiveAlternatives::forTag(mlir::TypeID::get<Tag>()));
+    }
+    // Every use of `value` costs a step, is dominated by it and is `allowed`.
+    bool closedUses(mlir::Value value, llvm::function_ref<bool(mlir::OpOperand &)> allowed);
     std::optional<size_fact> sizeFacts(const CapturedMapState & state);
     std::optional<bool> absent(mlir::Value key, llvm::ArrayRef<CapturedMapEntry> facts,
                                bool complete, llvm::ArrayRef<mlir::Value> possible,

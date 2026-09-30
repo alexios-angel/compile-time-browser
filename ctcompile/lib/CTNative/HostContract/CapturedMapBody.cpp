@@ -129,8 +129,7 @@ std::optional<size_fact> Walk::sizeFacts(const CapturedMapState & state) {
         bool disjoint = true;
         for (mlir::Value previous : distinct) {
             if (!owner.step()) { return std::nullopt; }
-            if (keyRelation(previous, entry.key, keyEvidence(previous), keyEvidence(entry.key)) !=
-                PrimitiveMapKeyRelation::Distinct) {
+            if (pathRelation(previous, entry.key) != PrimitiveMapKeyRelation::Distinct) {
                 disjoint = false;
                 break;
             }
@@ -148,8 +147,7 @@ std::optional<size_fact> Walk::sizeFacts(const CapturedMapState & state) {
             bool same = false;
             for (mlir::Value previous : possible) {
                 if (!owner.step()) { return std::nullopt; }
-                if (keyRelation(previous, key, keyEvidence(previous), keyEvidence(key)) ==
-                    PrimitiveMapKeyRelation::Same) {
+                if (pathRelation(previous, key) == PrimitiveMapKeyRelation::Same) {
                     same = true;
                     break;
                 }
@@ -167,8 +165,7 @@ std::optional<bool> Walk::absent(mlir::Value key, llvm::ArrayRef<CapturedMapEntr
     for (const auto & entry : facts) {
         if (!owner.step()) { return std::nullopt; }
         const auto relation =
-            currentPath ? keyRelation(entry.key, key, keyEvidence(entry.key), keyEvidence(key))
-                        : keyRelation(entry.key, key);
+            currentPath ? pathRelation(entry.key, key) : keyRelation(entry.key, key);
         if (relation == PrimitiveMapKeyRelation::Same) { return entry.absent; }
     }
     if (!complete) { return false; }
@@ -176,9 +173,7 @@ std::optional<bool> Walk::absent(mlir::Value key, llvm::ArrayRef<CapturedMapEntr
         if (!owner.step()) { return std::nullopt; }
         // Cross-arm queries cannot use the other arm's filtered scalar
         // alternatives. Exact source constants/SSA equality are path-free.
-        const auto relation =
-            currentPath ? keyRelation(written, key, keyEvidence(written), keyEvidence(key))
-                        : keyRelation(written, key);
+        const auto relation = currentPath ? pathRelation(written, key) : keyRelation(written, key);
         if (relation != PrimitiveMapKeyRelation::Distinct) { return false; }
     }
     return true;
@@ -199,8 +194,7 @@ bool Walk::mutate(CapturedMapState & state, mlir::Value key, bool erase,
         bool present = false;
         for (const auto & entry : state.entries) {
             if (!owner.step()) { return false; }
-            if (entry.present && keyRelation(entry.key, key, keyEvidence(entry.key),
-                                             keyEvidence(key)) == PrimitiveMapKeyRelation::Same) {
+            if (entry.present && pathRelation(entry.key, key) == PrimitiveMapKeyRelation::Same) {
                 present = true;
                 break;
             }
@@ -232,7 +226,7 @@ bool Walk::mutate(CapturedMapState & state, mlir::Value key, bool erase,
     bool hasExactAbsence = false;
     for (auto it = state.entries.begin(); it != state.entries.end();) {
         if (!owner.step()) { return false; }
-        const auto relation = keyRelation(it->key, key, keyEvidence(it->key), keyEvidence(key));
+        const auto relation = pathRelation(it->key, key);
         if (relation == PrimitiveMapKeyRelation::Distinct) {
             ++it;
         } else if (erase) {
@@ -260,8 +254,7 @@ bool Walk::mutate(CapturedMapState & state, mlir::Value key, bool erase,
             if (!owner.step()) { return false; }
             auto call = llvm::cast<ctjs::CallOp>(observed);
             auto observedKey = call.getArgs()[0];
-            if (keyRelation(observedKey, key, keyEvidence(observedKey), keyEvidence(key)) !=
-                PrimitiveMapKeyRelation::Distinct) {
+            if (pathRelation(observedKey, key) != PrimitiveMapKeyRelation::Distinct) {
                 state.observations.erase(observed);
             }
         }
@@ -278,8 +271,7 @@ bool Walk::mutate(CapturedMapState & state, mlir::Value key, bool erase,
             size_t retained = 0;
             for (mlir::Value possible : state.possibleKeys) {
                 if (!owner.step()) { return false; }
-                if (keyRelation(possible, key, keyEvidence(possible), keyEvidence(key)) !=
-                    PrimitiveMapKeyRelation::Same) {
+                if (pathRelation(possible, key) != PrimitiveMapKeyRelation::Same) {
                     state.possibleKeys[retained++] = possible;
                 }
             }
@@ -405,6 +397,15 @@ std::optional<bool> Walk::knownTruth(mlir::Value value, unsigned depth) {
     return {};
 }
 
+bool Walk::closedUses(mlir::Value value, llvm::function_ref<bool(mlir::OpOperand &)> allowed) {
+    for (mlir::OpOperand & use : value.getUses()) {
+        if (!owner.step() || !owner.dominance.dominates(value, use.getOwner()) || !allowed(use)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool Walk::run() {
     // This is an effects and ownership proof, not an evaluation of the first
     // invocation. The immutable slot always denotes this Map; its contents
@@ -447,9 +448,7 @@ bool Walk::run() {
             }
             continue;
         }
-        primitives.insert(parameter);
-        alternatives.try_emplace(parameter,
-                                 parameters.alternatives[parameter.getArgNumber() - offset]);
+        scalar(parameter, parameters.alternatives[parameter.getArgNumber() - offset]);
         if (invocation) {
             const auto actual = invocation->arguments.lookup(parameter);
             if (actual) {
@@ -482,33 +481,27 @@ bool Walk::run() {
         returnAlternatives = alternatives.lookup(returned.getValue());
         return true;
     }
-    if (frame) {
-        for (mlir::OpOperand & use : frame.getContext().getUses()) {
-            if (!owner.step() || use.getOperandNumber() != 0 ||
-                !frameUses.contains(use.getOwner()) ||
-                !owner.dominance.dominates(frame.getContext(), use.getOwner())) {
-                return false;
-            }
-        }
+    const auto anyUse = [](mlir::OpOperand &) { return true; };
+    if (frame && !closedUses(frame.getContext(), [&](mlir::OpOperand & use) {
+            return use.getOperandNumber() == 0 && frameUses.contains(use.getOwner());
+        })) {
+        return false;
     }
     for (mlir::BlockArgument parameter : parameters.objectKeys) {
-        for (mlir::OpOperand & use : parameter.getUses()) {
-            if (!owner.step() || !owner.dominance.dominates(parameter, use.getOwner())) {
-                return false;
-            }
-            if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
-            if (identities.contains(use.getOwner()) ||
-                llvm::isa<ctjs::TruthyOp, ctjs::UnaryOp, mlir::scf::YieldOp>(use.getOwner())) {
-                continue;
-            }
-            auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
-            auto read = call ? call.getCallee().getDefiningOp<ctjs::GetPropertyOp>()
-                             : ctjs::GetPropertyOp{};
-            if (!read || !calls.contains(call) ||
-                (use.getOperandNumber() != 2 &&
-                 (ctjs::constantKey(read.getKey()) != "set" || use.getOperandNumber() != 3))) {
-                return false;
-            }
+        if (!closedUses(parameter, [&](mlir::OpOperand & use) {
+                if (llvm::isa<ctjs::RootOp>(use.getOwner())) { return true; }
+                if (identities.contains(use.getOwner()) ||
+                    llvm::isa<ctjs::TruthyOp, ctjs::UnaryOp, mlir::scf::YieldOp>(use.getOwner())) {
+                    return true;
+                }
+                auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
+                auto read = call ? call.getCallee().getDefiningOp<ctjs::GetPropertyOp>()
+                                 : ctjs::GetPropertyOp{};
+                return read && calls.contains(call) &&
+                       (use.getOperandNumber() == 2 ||
+                        (ctjs::constantKey(read.getKey()) == "set" && use.getOperandNumber() == 3));
+            })) {
+            return false;
         }
     }
     for (mlir::BlockArgument argument : body.getArguments()) {
@@ -525,32 +518,25 @@ bool Walk::run() {
         }
     }
     for (const auto & [alias, origin] : maps) {
-        for (mlir::OpOperand & use : alias.getUses()) {
-            if (!owner.step()) { return false; }
-            if (!owner.dominance.dominates(alias, use.getOwner())) { return false; }
-            if (llvm::isa<ctjs::RootOp>(use.getOwner()) ||
-                (reads.contains(use.getOwner()) && use.getOperandNumber() == 0) ||
-                (calls.contains(use.getOwner()) && use.getOperandNumber() == 1) ||
-                (origin != capturedOrigin && mapStores.contains(use.getOwner()) &&
-                 use.getOperandNumber() == 3)) {
-                continue;
-            }
+        if (!closedUses(alias, [&](mlir::OpOperand & use) {
+                return llvm::isa<ctjs::RootOp>(use.getOwner()) ||
+                       (reads.contains(use.getOwner()) && use.getOperandNumber() == 0) ||
+                       (calls.contains(use.getOwner()) && use.getOperandNumber() == 1) ||
+                       (origin != capturedOrigin && mapStores.contains(use.getOwner()) &&
+                        use.getOperandNumber() == 3);
+            })) {
             return false;
         }
     }
     for (mlir::Operation * operation : constructors) {
-        auto constructor = llvm::cast<ctjs::LoadGlobalOp>(operation);
-        for (mlir::OpOperand & use : constructor.getResult().getUses()) {
-            if (!owner.step() ||
-                !owner.dominance.dominates(constructor.getResult(), use.getOwner())) {
-                return false;
-            }
-            if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
-            auto made = llvm::dyn_cast<ctjs::ConstructOp>(use.getOwner());
-            if (!made || !allocations.contains(made) ||
-                (use.getOperandNumber() != 0 && use.getOperandNumber() != 1)) {
-                return false;
-            }
+        if (!closedUses(llvm::cast<ctjs::LoadGlobalOp>(operation).getResult(),
+                        [&](mlir::OpOperand & use) {
+                            if (llvm::isa<ctjs::RootOp>(use.getOwner())) { return true; }
+                            auto made = llvm::dyn_cast<ctjs::ConstructOp>(use.getOwner());
+                            return made && allocations.contains(made) &&
+                                   (use.getOperandNumber() == 0 || use.getOperandNumber() == 1);
+                        })) {
+            return false;
         }
     }
     // Scalar read-time facts, including an absent get's Undefined result,
@@ -558,32 +544,25 @@ bool Walk::run() {
     // same requirement protects primitive key evidence and branch conditions.
     for (const auto * values : {&primitives, &flags, &leafValues}) {
         for (mlir::Value value : *values) {
-            for (mlir::OpOperand & use : value.getUses()) {
-                if (!owner.step() || !owner.dominance.dominates(value, use.getOwner())) {
-                    return false;
-                }
-            }
+            if (!closedUses(value, anyUse)) { return false; }
         }
     }
     // A method-local object is a leaf owner, retained only by checked Maps.
     // Check every use, including uses outside the
     // walked body. Neither native markers nor provider allocation tokens can
     // authorize a field, alias, escape or future invocation here.
+    // Live analysis queries may follow edits before MLIR verification.
+    // A then-only allocation/read cannot authorize an else or outer
+    // use merely because its immutable origin was visited first.
     for (const auto & [object, origin] : objects) {
         (void)origin;
-        for (mlir::OpOperand & use : object.getUses()) {
-            if (!owner.step()) { return false; }
-            // Live analysis queries may follow edits before MLIR verification.
-            // A then-only allocation/read cannot authorize an else or outer
-            // use merely because its immutable origin was visited first.
-            if (!owner.dominance.dominates(object, use.getOwner())) { return false; }
-            if (llvm::isa<ctjs::RootOp>(use.getOwner()) ||
-                (objectWrites.contains(use.getOwner()) && use.getOperandNumber() == 0) ||
-                (objectReads.contains(use.getOwner()) && use.getOperandNumber() == 0) ||
-                (identities.contains(use.getOwner()) && use.getOperandNumber() < 2) ||
-                (objectStores.contains(use.getOwner()) && use.getOperandNumber() == 3)) {
-                continue;
-            }
+        if (!closedUses(object, [&](mlir::OpOperand & use) {
+                return llvm::isa<ctjs::RootOp>(use.getOwner()) ||
+                       (objectWrites.contains(use.getOwner()) && use.getOperandNumber() == 0) ||
+                       (objectReads.contains(use.getOwner()) && use.getOperandNumber() == 0) ||
+                       (identities.contains(use.getOwner()) && use.getOperandNumber() < 2) ||
+                       (objectStores.contains(use.getOwner()) && use.getOperandNumber() == 3);
+            })) {
             return false;
         }
     }
@@ -591,13 +570,10 @@ bool Walk::run() {
         auto read = result.reads[index];
         if (!owner.step()) { return false; }
         if (ctjs::constantKey(read.getKey()) == "size") { continue; }
-        for (mlir::OpOperand & use : read.getResult().getUses()) {
-            if (!owner.step()) { return false; }
-            if (!owner.dominance.dominates(read.getResult(), use.getOwner())) { return false; }
-            if (llvm::isa<ctjs::RootOp>(use.getOwner()) ||
-                (calls.contains(use.getOwner()) && use.getOperandNumber() == 0)) {
-                continue;
-            }
+        if (!closedUses(read.getResult(), [&](mlir::OpOperand & use) {
+                return llvm::isa<ctjs::RootOp>(use.getOwner()) ||
+                       (calls.contains(use.getOwner()) && use.getOperandNumber() == 0);
+            })) {
             return false;
         }
     }
@@ -609,11 +585,7 @@ bool Walk::run() {
             auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
             if (!owner.step()) { return false; }
             if (ctjs::constantKey(read.getKey()) != "keys") { continue; }
-            for (mlir::OpOperand & use : call.getResult().getUses()) {
-                if (!owner.step() || !owner.dominance.dominates(call.getResult(), use.getOwner())) {
-                    return false;
-                }
-            }
+            if (!closedUses(call.getResult(), anyUse)) { return false; }
         }
         for (mlir::Operation * operation : result.snapshotOperations) {
             if (!owner.step()) { return false; }
@@ -625,15 +597,11 @@ bool Walk::run() {
             }
         }
         for (mlir::Operation * copy : copies->calls) {
-            for (mlir::OpOperand & use : copy->getResult(0).getUses()) {
-                if (!owner.step() ||
-                    !owner.dominance.dominates(copy->getResult(0), use.getOwner())) {
-                    return false;
-                }
-                if (!llvm::isa<ctjs::RootOp>(use.getOwner()) &&
-                    !(use.getOperandNumber() == 0 && snapshotReads.contains(use.getOwner()))) {
-                    return false;
-                }
+            if (!closedUses(copy->getResult(0), [&](mlir::OpOperand & use) {
+                    return llvm::isa<ctjs::RootOp>(use.getOwner()) ||
+                           (use.getOperandNumber() == 0 && snapshotReads.contains(use.getOwner()));
+                })) {
+                return false;
             }
         }
     }
@@ -642,16 +610,13 @@ bool Walk::run() {
     // Independently closed String keys additionally permit checked Concat only;
     // nullable reads still format Undefined through the existing string lowering.
     for (mlir::Value element : snapshotElements) {
-        for (mlir::OpOperand & use : element.getUses()) {
-            if (!owner.step() || !owner.dominance.dominates(element, use.getOwner())) {
-                return false;
-            }
-            if (!llvm::isa<ctjs::RootOp>(use.getOwner()) &&
-                !(identities.contains(use.getOwner()) && use.getOperandNumber() < 2) &&
-                !(stringSnapshotElements.contains(element) &&
-                  concatenations.contains(use.getOwner()) && use.getOperandNumber() < 2)) {
-                return false;
-            }
+        if (!closedUses(element, [&](mlir::OpOperand & use) {
+                return llvm::isa<ctjs::RootOp>(use.getOwner()) ||
+                       (identities.contains(use.getOwner()) && use.getOperandNumber() < 2) ||
+                       (stringSnapshotElements.contains(element) &&
+                        concatenations.contains(use.getOwner()) && use.getOperandNumber() < 2);
+            })) {
+            return false;
         }
     }
     // Unproved Map.get results remain potentially nullable/mixed. Even a
