@@ -304,8 +304,9 @@ inline bool operator<(const nullable_string & a, const nullable_string & b) {
 // Each observation is written once over any such variant; the named helpers
 // below are the spellings generated code calls.
 namespace detail {
-template <class T>
-constexpr bool is_absent = std::is_same_v<T, undefined_t> || std::is_same_v<T, js_null_t>;
+template <class T, class... U>
+concept one_of = (std::is_same_v<T, U> || ...);
+template <class T> constexpr bool is_absent = one_of<T, undefined_t, js_null_t>;
 
 template <class... T, class Text, class Scalar>
 auto visit_carrier(const std::variant<T...> & value, Text text, Scalar scalar) {
@@ -396,7 +397,7 @@ inline js_num to_number(const js_string & value) {
     return value.to_number();
 }
 template <class T>
-requires(std::is_same_v<T, undefined_t> || std::is_same_v<T, js_null_t>)
+requires(detail::is_absent<T>)
 inline js_num to_number(T value) {
     return to_number(nullable_scalar{value});
 }
@@ -467,6 +468,12 @@ inline std::string global_string(const nullable_number_string & value) {
 
 using boolean_string = std::variant<js_boolean_t, js_string>;
 using nullable_boolean_string = std::variant<undefined_t, js_null_t, js_boolean_t, js_string>;
+namespace detail {
+// The four Number/Boolean-or-String unions, each a std::variant holding js_string.
+template <class T>
+concept primitive_union =
+    one_of<T, number_string, nullable_number_string, boolean_string, nullable_boolean_string>;
+} // namespace detail
 
 inline js_num to_number(const boolean_string & value) {
     return detail::variant_number(value);
@@ -526,12 +533,9 @@ inline std::string global_string(const nullable_boolean_string & value) {
 
 template <class T>
 concept primitive_add_operand =
-    std::is_same_v<T, js_num> || std::is_same_v<T, js_boolean_t> ||
-    std::is_same_v<T, nullable_scalar> || std::is_same_v<T, js_string> ||
-    std::is_same_v<T, nullable_string> ||
-    std::is_same_v<T, std::variant<js_boolean_t, std::string>> ||
-    std::is_same_v<T, number_string> || std::is_same_v<T, nullable_number_string> ||
-    std::is_same_v<T, boolean_string> || std::is_same_v<T, nullable_boolean_string>;
+    detail::one_of<T, js_num, js_boolean_t, nullable_scalar, js_string, nullable_string,
+                   std::variant<js_boolean_t, std::string>> ||
+    detail::primitive_union<T>;
 
 template <primitive_add_operand L, primitive_add_operand R>
 number_string add(const L & left, const R & right) {
@@ -542,10 +546,7 @@ number_string add(const L & left, const R & right) {
             return value.tag == nullable_string::kind::string;
         } else if constexpr (std::is_same_v<T, std::variant<js_boolean_t, std::string>>) {
             return std::holds_alternative<std::string>(value);
-        } else if constexpr (std::is_same_v<T, number_string> ||
-                             std::is_same_v<T, nullable_number_string> ||
-                             std::is_same_v<T, boolean_string> ||
-                             std::is_same_v<T, nullable_boolean_string>) {
+        } else if constexpr (detail::primitive_union<T>) {
             return std::holds_alternative<js_string>(value);
         } else {
             return false;
@@ -577,11 +578,9 @@ number_string add(const L & left, const R & right) {
 
 template <class T>
 concept primitive_equality_operand =
-    std::is_same_v<T, js_num> || std::is_same_v<T, js_boolean_t> || std::is_same_v<T, js_string> ||
-    std::is_same_v<T, nullable_scalar> || std::is_same_v<T, nullable_string> ||
-    std::is_same_v<T, number_string> || std::is_same_v<T, nullable_number_string> ||
-    std::is_same_v<T, boolean_string> || std::is_same_v<T, nullable_boolean_string> ||
-    std::is_same_v<T, undefined_t> || std::is_same_v<T, js_null_t>;
+    detail::one_of<T, js_num, js_boolean_t, js_string, nullable_scalar, nullable_string,
+                   undefined_t, js_null_t> ||
+    detail::primitive_union<T>;
 
 namespace detail {
 // Borrow String storage only for this comparison; other leaves retain the
@@ -597,10 +596,7 @@ js_boolean_t visit_equality_operand(const T & value, F && visitor) {
         case nullable_string::kind::string: return visitor(value.value);
         }
         std::terminate();
-    } else if constexpr (std::is_same_v<T, number_string> ||
-                         std::is_same_v<T, nullable_number_string> ||
-                         std::is_same_v<T, boolean_string> ||
-                         std::is_same_v<T, nullable_boolean_string>) {
+    } else if constexpr (primitive_union<T>) {
         return std::visit(
             [&](const auto & alternative) { return visit_equality_operand(alternative, visitor); },
             value);
@@ -678,11 +674,30 @@ inline bool element_index(nullable_scalar key, std::size_t size, std::size_t & i
     index = static_cast<std::size_t>(key.value);
     return true;
 }
-// ctcompile: `a[i]`, whose out-of-range answer is undefined, which is NaN here
-inline nullable_scalar vec_at(const std::vector<double> & v, nullable_scalar key) {
-    std::size_t i = 0;
-    if (!element_index(key, v.size(), i)) { return {}; }
-    return v[i];
+// The carrier a read of stored V answers with: absent is its default value.
+template <class V> struct read_carrier {};
+template <> struct read_carrier<double> {
+    using type = nullable_scalar;
+};
+template <> struct read_carrier<js_boolean_t> {
+    using type = nullable_scalar;
+};
+template <> struct read_carrier<nullable_scalar> {
+    using type = nullable_scalar;
+};
+template <> struct read_carrier<std::string> {
+    using type = nullable_string;
+};
+template <> struct read_carrier<nullable_string> {
+    using type = nullable_string;
+};
+// ctcompile: `a[i]`, whose out-of-range answer is undefined, which is NaN here;
+// also confined owning Map string-key snapshots
+template <class T>
+typename read_carrier<T>::type vec_at(const std::vector<T> & values, nullable_scalar key) {
+    std::size_t index = 0;
+    if (!element_index(key, values.size(), index)) { return {}; }
+    return values[index];
 }
 // ctcompile: `a.length`, which is `size()` exactly - the site proof is what
 // rules out a hole
@@ -692,12 +707,6 @@ template <class T> js_num vec_length(const std::vector<T> & v) {
 // ctcompile: one element of an array literal, in source order
 inline void vec_push(std::vector<double> & v, js_num x) {
     v.push_back(x.value());
-}
-// ctcompile: confined owning Map string-key snapshots
-inline nullable_string vec_at(const std::vector<std::string> & values, nullable_scalar key) {
-    std::size_t index = 0;
-    if (!element_index(key, values.size(), index)) { return {}; }
-    return values[index];
 }
 
 // --- object values -----------------------------------------------------------
@@ -716,6 +725,9 @@ struct object_value {
     object_value(js_boolean_t value) : scalar(value) {}
     object_value(bool value) : object_value(js_boolean_t{value}) {}
     object_value(std::shared_ptr<identity_object> value) : object(std::move(value)) {}
+};
+template <> struct read_carrier<object_value> {
+    using type = object_value;
 };
 inline nullable_scalar global_scalar(const object_value & value) {
     if (value.object) { std::terminate(); }
@@ -862,32 +874,34 @@ inline std::shared_ptr<string_to_number_map> make_string_to_number_map() {
 template <class Map, class K> js_boolean_t map_has(const Map & map, const K & key) {
     return js_boolean_t{map->find(key) != map->end()};
 }
+// Nullable Strings also own payload storage and object values keep their
+// owner: every read returns a copy and never borrows Map storage; an absent
+// lookup is undefined.
 template <class K, class V>
-requires(std::is_same_v<V, double> || std::is_same_v<V, js_boolean_t> ||
-         std::is_same_v<V, nullable_scalar>)
-nullable_scalar map_get(map_storage<K, V> * map, const K & key) {
+typename read_carrier<V>::type map_get(map_storage<K, V> * map, const K & key) {
     const auto found = map->find(key);
     if (found != map->end()) { return found->second; }
     return {};
 }
 template <class K, class V>
-requires(std::is_same_v<V, double> || std::is_same_v<V, js_boolean_t> ||
-         std::is_same_v<V, nullable_scalar>)
-nullable_scalar map_get(const std::shared_ptr<map_storage<K, V>> & map, const K & key) {
+typename read_carrier<V>::type map_get(const std::shared_ptr<map_storage<K, V>> & map,
+                                       const K & key) {
     return map_get(map.get(), key);
 }
-template <class Map, class K> auto map_get_present(const Map & map, const K & key) {
+// The payload of a key the compiler proved present. Reaching absence
+// contradicts the compiler's dominance/identity proof.
+template <class Map, class K> const auto & present_entry(const Map & map, const K & key) {
     const auto found = map->find(key);
-    if (found != map->end()) { return found->second; }
-    // Reaching this point contradicts the compiler's dominance/identity proof.
-    std::terminate();
+    if (found == map->end()) { std::terminate(); }
+    return found->second;
+}
+template <class Map, class K> auto map_get_present(const Map & map, const K & key) {
+    return present_entry(map, key);
 }
 // T is selected only by a rederived present, exact-payload proof. Return
 // by value so an owning string survives overwrite, deletion and Map lifetime.
 template <class T, class K, class... V>
 T map_get_present_as(map_storage<K, std::variant<V...>> * map, const K & key) {
-    const auto found = map->find(key);
-    if (found == map->end()) { std::terminate(); }
     return std::visit(
         [](const auto & value) -> T {
             if constexpr (std::is_same_v<T, std::decay_t<decltype(value)>>) {
@@ -896,7 +910,7 @@ T map_get_present_as(map_storage<K, std::variant<V...>> * map, const K & key) {
                 std::terminate();
             }
         },
-        found->second);
+        present_entry(map, key));
 }
 template <class T, class K, class... V>
 T map_get_present_as(const std::shared_ptr<map_storage<K, std::variant<V...>>> & map,
@@ -933,27 +947,6 @@ template <class Map> js_num map_size(const Map & map) {
     return js_num{static_cast<double>(map->size())};
 }
 
-// Nullable Strings also own payload storage. Every read returns a copy;
-// neither a full-schema read nor an exact-tag read borrows Map storage.
-template <class K> nullable_string map_get(map_storage<K, std::string> * map, const K & key) {
-    const auto found = map->find(key);
-    if (found != map->end()) { return found->second; }
-    return {};
-}
-template <class K> nullable_string map_get(map_storage<K, nullable_string> * map, const K & key) {
-    const auto found = map->find(key);
-    if (found != map->end()) { return found->second; }
-    return {};
-}
-template <class K>
-nullable_string map_get(const std::shared_ptr<map_storage<K, std::string>> & map, const K & key) {
-    return map_get(map.get(), key);
-}
-template <class K>
-nullable_string map_get(const std::shared_ptr<map_storage<K, nullable_string>> & map,
-                        const K & key) {
-    return map_get(map.get(), key);
-}
 template <class T> T map_nullable_payload_as(const nullable_string & value) {
     if constexpr (std::is_same_v<T, nullable_string>) {
         return value;
@@ -979,10 +972,9 @@ template <class T> T map_nullable_payload_as(nullable_scalar value) {
 // The storage schema itself never selects a narrower alternative.
 template <class T, class K, class V>
 T map_get_present_nullable_as(map_storage<K, V> * map, const K & key) {
-    const auto found = map->find(key);
-    if (found == map->end()) { std::terminate(); }
-    if constexpr (std::is_same_v<V, nullable_string> || std::is_same_v<V, nullable_scalar>) {
-        return map_nullable_payload_as<T>(found->second);
+    const V & payload = present_entry(map, key);
+    if constexpr (detail::one_of<V, nullable_string, nullable_scalar>) {
+        return map_nullable_payload_as<T>(payload);
     } else {
         return std::visit(
             [](const auto & value) -> T {
@@ -995,7 +987,7 @@ T map_get_present_nullable_as(map_storage<K, V> * map, const K & key) {
                     std::terminate();
                 }
             },
-            found->second);
+            payload);
     }
 }
 template <class T, class K, class V>
@@ -1003,23 +995,13 @@ T map_get_present_nullable_as(const std::shared_ptr<map_storage<K, V>> & map, co
     return map_get_present_nullable_as<T>(map.get(), key);
 }
 
-// ctcompile: absent lookups retain undefined, saved values retain their owner
-template <class K> object_value map_get(map_storage<K, object_value> * map, const K & key) {
-    const auto found = map->find(key);
-    if (found != map->end()) { return found->second; }
-    return {};
-}
 template <class K>
 std::shared_ptr<identity_object> map_get_present_identity(map_storage<K, object_value> * map,
                                                           const K & key) {
-    const auto found = map->find(key);
-    if (found != map->end() && found->second.object) { return found->second.object; }
+    const object_value & payload = present_entry(map, key);
     // Both presence and the object result type were independently proved.
-    std::terminate();
-}
-template <class K>
-object_value map_get(const std::shared_ptr<map_storage<K, object_value>> & map, const K & key) {
-    return map_get(map.get(), key);
+    if (!payload.object) { std::terminate(); }
+    return payload.object;
 }
 template <class K>
 std::shared_ptr<identity_object> map_get_present_identity(
@@ -1069,20 +1051,13 @@ nullable_scalar map_snapshot_at(const std::shared_ptr<map_storage<K, V>> & map,
 
 // --- owned globals -----------------------------------------------------------
 
-// ctcompile: read a field of a source-proved owned global
-template <auto Field, class T> auto owned_global_get(std::shared_ptr<T> const & object) {
-    return object.get()->*Field;
+// ctcompile: read a field of a source-proved owned global (shared or raw)
+template <auto Field, class P> auto owned_global_get(const P & object) {
+    return std::to_address(object)->*Field;
 }
-// ctcompile: write a field of a source-proved owned global
-template <auto Field, class T, class V>
-void owned_global_set(std::shared_ptr<T> const & object, V value) {
-    object.get()->*Field = value;
-}
-template <auto Field, class T> auto owned_global_get(T * object) {
-    return object->*Field;
-}
-template <auto Field, class T, class V> void owned_global_set(T * object, V value) {
-    object->*Field = value;
+// ctcompile: write a field of a source-proved owned global (shared or raw)
+template <auto Field, class P, class V> void owned_global_set(const P & object, V value) {
+    std::to_address(object)->*Field = value;
 }
 template <class Table> auto data_map(Table * table) {
     return &table->captured_map;
