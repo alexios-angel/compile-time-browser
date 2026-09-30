@@ -497,6 +497,11 @@ void test_replacing_a_face_keeps_measuring() {
     check(fonts->face_count() == 1, "replaced, not added");
     check(fonts->advance("Hamburgefonstiv", 13, "Fira Sans", false, false) == before,
           "the replaced face measures the same");
+    // Glyphs no earlier call measured: these must be read from the NEW bytes,
+    // which is where a sized font left over from the old ones would read freed
+    // memory.
+    check(fonts->advance("QXZjkwy0123", 13, "Fira Sans", false, false) > 0,
+          "uncached glyphs rasterise from live bytes");
     check(fonts->ascent(13, "Fira Sans", false, false) > 0, "and its metrics are live");
 }
 
