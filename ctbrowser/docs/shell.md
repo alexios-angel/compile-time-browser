@@ -19,6 +19,14 @@ timers and rAF actually fire), vsync, fps pacing, screenshots and teardown.
 `on_ready`. Env: `CTBROWSER_TEST_FRAMES`, `CTBROWSER_SCREENSHOT` — which
 is how an example becomes a ctest with no test code in it.
 
+The `CTBROWSER_*` overrides (`apply_environment`) are read only while
+`app_options::environment_overrides` is set: on for `run_app` by default, OFF
+for a packaged application (`run_bundle`) unless it was built with `ctcompile
+--allow-env-overrides` or handed to `ctrun` as a loose `.ctapp`. Otherwise a
+player's `CTBROWSER_TEST_FRAMES` is a fixed-step speedhack, `CTBROWSER_MAX_FPS=0`
+lifts the frame cap and `CTBROWSER_NETWORK` turns a sealed game's network back
+on. This is anti-tamper hygiene, not a hard boundary: the player owns the binary.
+
 **SDL3 is OPTIONAL AT BUILD TIME.** `ctbrowser-app` always builds;
 `CTBROWSER_WITH_SDL3` selects an SDL host or a headless one at runtime. Without
 SDL3 the engine still renders and `run_app` still works.

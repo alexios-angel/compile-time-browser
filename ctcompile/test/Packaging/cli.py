@@ -53,6 +53,21 @@ with tempfile.TemporaryDirectory(prefix="ctcompile cli ") as directory:
     run(compiler, root, "-o", output, "--output", output, code=2)
     run(compiler, root, "--bundle", "-o", output, "--not-an-option", code=2)
     assert not output.exists()
+    run(
+        compiler,
+        root,
+        "--bundle",
+        "-o",
+        output,
+        "--allow-env-overrides",
+        "--allow-env-overrides",
+        code=2,
+    )
+    run(compiler, root, "--bundle", "-o", output, "--allow-env-overrides")
+    assert b"env_overrides" in output.read_bytes()
+    run(compiler, root, "--bundle", "-o", output)
+    assert b"env_overrides" not in output.read_bytes()
+    output.unlink()
     run(compiler, root, "--bundle", "--output=", code=2)
     run(compiler, root, "--bundle", "-o", output, "--manifest=", code=2)
 

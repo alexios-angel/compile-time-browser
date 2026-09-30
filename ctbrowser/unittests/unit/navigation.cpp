@@ -27,6 +27,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <fstream>
+#include <functional>
 #include <span>
 #include <sstream>
 #include <string>
@@ -382,6 +383,67 @@ void test_run_app_is_silent_for_a_healthy_page() {
     check(reported.empty(), "a healthy page reports nothing");
 }
 
+// THE CTBROWSER_* OVERRIDES ARE THE EMBEDDER'S TO GRANT. unittests/unit/
+// CMakeLists.txt runs this test with CTBROWSER_CLOCK pinned: a page built from
+// source reads it, a packaged bundle does not unless it was built with
+// `ctcompile --allow-env-overrides` or handed to `ctrun` as a loose file -
+// otherwise CTBROWSER_TEST_FRAMES would be a speedhack in every shipped game.
+[[nodiscard]] std::string clock_seen(const std::function<int(ctbrowser::app_options)> & run) {
+    std::string seen;
+    ctbrowser::app_options options;
+    options.width = 100;
+    options.height = 100;
+    options.max_frames = 1;
+    options.real_fonts = false;
+    options.network = false;
+    // From on_ready rather than the page: a bundle's page may not carry a
+    // script it has no compiled image for.
+    options.on_ready = [&seen](shell::browser & page) {
+        (void)page.run_script("console.log(String(Date.now()))");
+        if (!log_of(page).empty()) { seen = log_of(page).back(); }
+    };
+    check(run(std::move(options)) == 0, "the application ran");
+    return seen;
+}
+
+void test_environment_overrides_are_opt_in() {
+    constexpr std::string_view page = "<body>clock</body>";
+    const std::string pinned = "86400000";
+    check(clock_seen([&](ctbrowser::app_options o) { return ctbrowser::run_app(page, o); }) ==
+              pinned,
+          "run_app reads CTBROWSER_CLOCK by default (is it set in CMakeLists.txt?)");
+    check(clock_seen([&](ctbrowser::app_options o) {
+              o.environment_overrides = false;
+              return ctbrowser::run_app(page, o);
+          }) != pinned,
+          "and ignores it when environment_overrides is off");
+
+    const auto bundle_of = [&](bool allow) {
+        shell::app_bundle bundle;
+        bundle.entries.push_back(
+            {shell::bundle_kind::html, "", std::vector<std::byte>(page.size())});
+        std::transform(page.begin(), page.end(), bundle.entries.back().bytes.begin(),
+                       [](char c) { return static_cast<std::byte>(c); });
+        if (allow) {
+            bundle.entries.push_back({shell::bundle_kind::meta, "env_overrides",
+                                      std::vector<std::byte>{std::byte{'1'}}});
+        }
+        return shell::write_bundle(bundle);
+    };
+    const std::vector<std::byte> sealed = bundle_of(false);
+    const std::vector<std::byte> allowed = bundle_of(true);
+    check(clock_seen([&](ctbrowser::app_options o) { return ctbrowser::run_bundle(sealed, o); }) !=
+              pinned,
+          "a packaged bundle ignores the environment, whatever the caller's options say");
+    check(clock_seen([&](ctbrowser::app_options o) { return ctbrowser::run_bundle(allowed, o); }) ==
+              pinned,
+          "unless it was packaged with --allow-env-overrides");
+    check(clock_seen([&](ctbrowser::app_options o) {
+              return ctbrowser::run_bundle(sealed, o, true);
+          }) == pinned,
+          "or the launcher trusts it (ctrun handed a loose .ctapp)");
+}
+
 } // namespace
 
 int main() {
@@ -397,6 +459,7 @@ int main() {
     test_a_link_reaches_the_application_through_run_app();
     test_run_app_reports_a_script_error();
     test_run_app_is_silent_for_a_healthy_page();
+    test_environment_overrides_are_opt_in();
     test_location_parts_and_cookies();
     test_url_objects();
     REPORT("navigation");

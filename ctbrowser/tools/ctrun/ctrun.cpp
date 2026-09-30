@@ -96,5 +96,7 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "ctrun: cannot read %s\n", argv[1]);
         return 2;
     }
-    return ctbrowser::run_bundle(bundle);
+    // A LOOSE BUNDLE IS A DEVELOPER'S, so it takes the CTBROWSER_* overrides
+    // whatever it was packaged with; an appended one (above) does not.
+    return ctbrowser::run_bundle(bundle, {}, true);
 }

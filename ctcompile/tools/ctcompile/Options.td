@@ -26,4 +26,6 @@ defm launcher : Eq<"launcher", "FILE",
 defm manifest : Eq<"manifest", "FILE", "also write the application manifest here, as JSON">;
 defm fonts : Eq<"fonts", "DIR",
   "where the vendored faces are (default $CTBROWSER_FONT_PATH, else `fonts`)">;
+def allow_env_overrides : Flag<["--"], "allow-env-overrides">,
+  HelpText<"let the packaged application read the CTBROWSER_* test overrides (frames, fps, network, clock)">;
 def verbose : Flag<["--"], "verbose">, HelpText<"report each stage as it runs">;

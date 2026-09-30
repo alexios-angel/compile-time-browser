@@ -1,5 +1,6 @@
 #pragma once
 #include <algorithm>
+#include <charconv>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -231,6 +232,18 @@ struct app_options {
     std::optional<std::filesystem::path> download_directory;
     // The largest single download written; a bigger one is dropped.
     std::size_t max_download_bytes = std::size_t{64} << 20;
+
+    // WHETHER run_app READS THE CTBROWSER_* VARIABLES (apply_environment). On
+    // for an application built from source - that is how an example becomes a
+    // ctest - and OFF for a packaged one unless it was built with
+    // `ctcompile --allow-env-overrides` (run_bundle reads that from the
+    // bundle): otherwise CTBROWSER_TEST_FRAMES is a speedhack, CTBROWSER_MAX_FPS=0
+    // lifts the frame cap and CTBROWSER_NETWORK turns a sealed game's network
+    // back on. Hygiene, not a boundary: the player owns the binary.
+    bool environment_overrides = true;
+    // Date.now() pinned to this many milliseconds since the epoch, for a golden
+    // that draws a date. Unset is the real wall clock. `CTBROWSER_CLOCK` sets it.
+    std::optional<double> fixed_clock;
 };
 
 // What run_app does with a link that leaves the page: open_external only when
@@ -251,7 +264,8 @@ struct app_options {
     return verdict;
 }
 
-// Environment overrides, applied by run_app before anything else:
+// Environment overrides, applied by run_app before anything else - ONLY when
+// options.environment_overrides is set, which a packaged bundle turns off:
 //
 //   CTBROWSER_TEST_FRAMES  -> max_frames (and therefore a fixed timestep)
 //   CTBROWSER_SCREENSHOT   -> screenshot_path
@@ -269,6 +283,7 @@ struct app_options {
 //                             resource name resolves against
 //   CTBROWSER_MAX_FPS      -> max_fps, the redraw cap (0 = uncapped)
 //   CTBROWSER_IDLE_WAIT_MS -> idle_wait_ms, the longest an idle loop blocks
+//   CTBROWSER_CLOCK        -> fixed_clock, Date.now() in epoch milliseconds
 //
 // This is what lets an example BE a ctest without the example containing any
 // test scaffolding.
@@ -293,6 +308,15 @@ inline void apply_environment(app_options & options) {
     if (const char * fps = std::getenv("CTBROWSER_MAX_FPS")) { options.max_fps = std::atoi(fps); }
     if (const char * wait = std::getenv("CTBROWSER_IDLE_WAIT_MS")) {
         options.idle_wait_ms = std::max(1, std::atoi(wait));
+    }
+    if (const char * pinned = std::getenv("CTBROWSER_CLOCK")) {
+        // from_chars rather than strtod: this pins the clock so a golden can
+        // draw a date, and a value that parsed differently under another
+        // locale would move the very render it exists to hold still.
+        double fixed = 0.0;
+        const std::string_view text{pinned};
+        std::from_chars(text.data(), text.data() + text.size(), fixed);
+        options.fixed_clock = fixed;
     }
     // A bounded run has to be reproducible, or comparing its screenshot is a
     // coin flip.
@@ -338,7 +362,11 @@ inline void apply_environment(app_options & options) {
 // slowly with nothing said.
 //
 // `overrides` is applied on top of what the bundle says, so a launcher can
-// still force a window size or a screenshot for a test.
-[[nodiscard]] int run_bundle(std::span<const std::byte> bytes, app_options overrides = {});
+// still force a window size or a screenshot for a test - EXCEPT
+// environment_overrides, which the bundle decides: its "env_overrides" meta
+// (`ctcompile --allow-env-overrides`) is "1", or `trust_environment` is set,
+// which is what `ctrun app.ctapp` passes for a loose bundle on its command line.
+[[nodiscard]] int run_bundle(std::span<const std::byte> bytes, app_options overrides = {},
+                             bool trust_environment = false);
 
 } // namespace ctbrowser

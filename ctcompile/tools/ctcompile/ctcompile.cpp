@@ -431,6 +431,12 @@ int main(int argc, char ** argv) try {
     }
     bundle.entries.push_back(
         {ctbrowser::shell::bundle_kind::meta, "title", bytes_of(entry.stem().string())});
+    // OFF UNLESS ASKED: a shipped application ignores CTBROWSER_TEST_FRAMES and
+    // the rest, which would otherwise let a player uncap or speed it up.
+    if (options.hasArg(OPT_allow_env_overrides)) {
+        bundle.entries.push_back(
+            {ctbrowser::shell::bundle_kind::meta, "env_overrides", bytes_of("1")});
+    }
 
     // THE MANIFEST GOES IN THE BUNDLE, so a packaged application can always say
     // what it is without the directory it was built from. `bundle_bytes` is the

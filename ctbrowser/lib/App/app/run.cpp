@@ -156,7 +156,7 @@ namespace ctbrowser {
 // This is the whole application API: it owns the window, the event loop, the
 // clock, the frame pacing and the teardown.
 int run_app(std::string_view html, app_options options) {
-    apply_environment(options);
+    if (options.environment_overrides) { apply_environment(options); }
 
     std::unique_ptr<detail::host> host = detail::make_host(options);
 
@@ -201,16 +201,9 @@ int run_app(std::string_view html, app_options options) {
     // wrong date is a bug. The engine's own default is deterministic - a fixed
     // base plus the page's elapsed time - so a headless golden run is unaffected
     // by this line, which is the whole reason the clock is a hook. Pinned by
-    // CTBROWSER_CLOCK (milliseconds since the epoch) when a golden does need to
-    // draw a date.
-    if (const char * pinned = std::getenv("CTBROWSER_CLOCK"); pinned != nullptr) {
-        // from_chars rather than strtod: this pins the clock so a golden can
-        // draw a date, and a value that parsed differently under another
-        // locale would move the very render it exists to hold still.
-        double fixed = 0.0;
-        const std::string_view text{pinned};
-        std::from_chars(text.data(), text.data() + text.size(), fixed);
-        page.set_clock([fixed] { return fixed; });
+    // fixed_clock (CTBROWSER_CLOCK) when a golden does need to draw a date.
+    if (options.fixed_clock) {
+        page.set_clock([fixed = *options.fixed_clock] { return fixed; });
     } else {
         page.set_clock([] {
             return static_cast<double>(std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -472,7 +465,7 @@ int run_app_file(const std::filesystem::path & path, app_options options) {
 // a resource nobody asks for, and a page whose images arrive after `load_html`
 // is a page that already compiled from source. Doing it once here is what
 // stops a second launcher doing it differently.
-int run_bundle(std::span<const std::byte> bytes, app_options overrides) {
+int run_bundle(std::span<const std::byte> bytes, app_options overrides, bool trust_environment) {
     const auto loaded = shell::read_bundle(bytes);
     if (!loaded.ok) {
         std::fprintf(stderr, "ctbrowser: %s\n", loaded.error.c_str());
@@ -505,6 +498,11 @@ int run_bundle(std::span<const std::byte> bytes, app_options overrides) {
     // application missing a resource reads whatever happens to sit next to the
     // user, under the name its own document asked for. A miss has to be a miss.
     options.sealed_assets = true;
+    // AND THE PLAYER'S ENVIRONMENT DOES NOT RETUNE IT: CTBROWSER_TEST_FRAMES
+    // would be a fixed-step speedhack, CTBROWSER_MAX_FPS=0 an uncapped loop.
+    // Only a bundle packaged with `--allow-env-overrides`, or a loose one ctrun
+    // was handed, reads them.
+    options.environment_overrides = trust_environment || bundle.meta("env_overrides") == "1";
     // AND THE FACES IT WAS PACKAGED WITH. The registry key for a face is
     // "<directory>/Tinos-Regular.ttf", so the directory is part of the name and
     // the bundle's answer has to win over this machine's - a run that resolved

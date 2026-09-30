@@ -117,7 +117,9 @@ with tempfile.TemporaryDirectory(prefix="ctcompile install ") as directory:
     assert bundle.stat().st_size > 0
     if args.launcher:
         executable = work / "application"
-        run(compiler, app, "--fonts", fonts, "-o", executable)
+        # The flag lets CTBROWSER_TEST_FRAMES bound the run below; a packaged
+        # application ignores CTBROWSER_* without it (ctrun reads them for a loose bundle).
+        run(compiler, app, "--fonts", fonts, "-o", executable, "--allow-env-overrides")
         info = json.loads(run(executable, "--info"))
         assert info["entry"] == "index.html" and len(info["scripts"]) == 1
         app.rename(work / "moved source")

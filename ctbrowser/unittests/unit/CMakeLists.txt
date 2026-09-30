@@ -15,6 +15,7 @@ add_subdirectory(css_values)
 #
 # set_tests_properties resolves a test name in the directory scope that created it, so a property for
 # a unittest belongs in this file. ENVIRONMENT is one property, so this REPLACES
-# the font path ctbrowser_test() set rather than adding to it.
+# the font path ctbrowser_test() set rather than adding to it. CTBROWSER_CLOCK is
+# what test_environment_overrides_are_opt_in looks for.
 set_tests_properties(navigation PROPERTIES ENVIRONMENT
-  "CTBROWSER_FONT_PATH=${PROJECT_SOURCE_DIR}/resources/fonts;SDL_VIDEODRIVER=offscreen;SDL_AUDIODRIVER=dummy;TSAN_OPTIONS=suppressions=${CTBROWSER_TEST_SUPPORT_DIR}/tsan.supp;LSAN_OPTIONS=suppressions=${CTBROWSER_TEST_SUPPORT_DIR}/lsan.supp")
+  "CTBROWSER_FONT_PATH=${PROJECT_SOURCE_DIR}/resources/fonts;CTBROWSER_CLOCK=86400000;SDL_VIDEODRIVER=offscreen;SDL_AUDIODRIVER=dummy;TSAN_OPTIONS=suppressions=${CTBROWSER_TEST_SUPPORT_DIR}/tsan.supp;LSAN_OPTIONS=suppressions=${CTBROWSER_TEST_SUPPORT_DIR}/lsan.supp")
