@@ -40,6 +40,7 @@ enum class dom_error : std::uint8_t {
     invalid_attribute_name, // the qualified name cannot round-trip through HTML
     invalid_shadow_host,    // only supported HTML names may host a shadow tree
     shadow_root_exists,     // an element can host only one shadow tree
+    too_deep,               // the tree would reach max_dom_depth (node.hpp)
 };
 
 class document;
@@ -208,6 +209,19 @@ public:
     void remove_document_element();
     std::expected<void, dom_error> insert_before(node_id parent, node_id child, node_id before);
     std::expected<void, dom_error> remove_child(node_id child);
+
+    // THE DEPTH CAP (max_dom_depth). `up` is the parent, or for a parentless
+    // shadow root or template contents its host element. `depth` counts `up`
+    // steps to the top and `height` the longest path below `id` (0 for a
+    // leaf, crossing into shadow roots and template contents); both stop
+    // counting at max_dom_depth, which also bounds a cycle through a template.
+    // `too_deep` is what append_child and insert_before refuse.
+    [[nodiscard]] node_id up(node_id id) const;
+    [[nodiscard]] std::size_t depth(node_id id) const;
+    [[nodiscard]] std::size_t height(node_id id) const;
+    [[nodiscard]] bool too_deep(node_id parent, node_id child) const {
+        return depth(parent) + 1 + height(child) >= max_dom_depth;
+    }
 
     // --- per-node writes -----------------------------------------------------
     //

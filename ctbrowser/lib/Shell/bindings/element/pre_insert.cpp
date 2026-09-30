@@ -76,6 +76,23 @@ bool dom_bindings::pre_insert_valid(context & cx, node_id parent, node_id child,
                             "a DocumentType can only be inserted into a Document");
         return false;
     }
+    // THE DEPTH CAP (max_dom_depth, dom/node.hpp) - Blink's parser limit made
+    // one for the whole tree, so no walk over it can run out of stack. The
+    // document refuses it as dom_error::too_deep; this says so the way the
+    // steps above do. A fragment's CHILDREN are what move.
+    bool deep = false;
+    if (txn.kind(child).value_or(node_kind::element) == node_kind::document_fragment) {
+        for (const node_id one : txn.children(child)) {
+            deep = deep || doc_->too_deep(parent, one);
+        }
+    } else {
+        deep = doc_->too_deep(parent, child);
+    }
+    if (deep) {
+        throw_dom_exception(cx, "HierarchyRequestError",
+                            "the tree would be deeper than the engine allows");
+        return false;
+    }
     return true;
 }
 

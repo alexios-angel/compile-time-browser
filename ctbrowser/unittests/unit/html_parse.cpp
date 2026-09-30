@@ -399,6 +399,61 @@ void test_pathological_input_terminates() {
     check(!g.tree(closes).empty(), "500 stray close tags terminate");
 }
 
+// THE DEPTH CAP (max_dom_depth): past it the parser flattens, as Blink does,
+// so no tree it builds can take a recursive walk past it - and the tokenizer
+// and the option/selectedcontent clone stop recursing per token.
+void test_depth_is_capped() {
+    const auto deepest = [](parsed & p) { return p.doc.height(p.doc.document_node()); };
+    parsed a;
+    std::string bs;
+    for (int i = 0; i < 100000; ++i) { bs += "<b>"; }
+    (void)parse_html(a.doc, bs + "x");
+    check(deepest(a) < max_dom_depth, "100000 nested <b> stay under the depth cap");
+
+    parsed b;
+    std::string select = "<select><button><selectedcontent></selectedcontent></button>";
+    // 50000 deep, not more: every <option> asks whether a <select> is in scope,
+    // a walk down the whole open-element stack, so the parse is quadratic.
+    for (int i = 0; i < 25000; ++i) { select += "<option><div>"; }
+    (void)parse_html(b.doc, select + "x");
+    check(deepest(b) < max_dom_depth, "50000 nested <option><div> stay under the depth cap");
+
+    // 200000 levels inside one chosen <option>: the pop walks the <select> and
+    // clones the option into its <selectedcontent>, both recursively, and the
+    // clone is skipped when it would pass the cap.
+    parsed f;
+    std::string chosen = "<select><button><selectedcontent></selectedcontent></button><option>";
+    for (int i = 0; i < 200000; ++i) { chosen += "<span>"; }
+    (void)parse_html(f.doc, chosen + "x</select>");
+    check(deepest(f) < max_dom_depth, "200000 levels in an <option> stay under the depth cap");
+
+    // The adoption agency wraps the furthest block's children once per run:
+    // distinct formatting elements around one <p> made that a depth pump.
+    parsed c;
+    std::string pump;
+    for (int i = 0; i < 3000; ++i) { pump += "<b id=" + std::to_string(i) + ">"; }
+    pump += "<p>x";
+    for (int i = 0; i < 3000; ++i) { pump += "</b>"; }
+    (void)parse_html(c.doc, pump);
+    check(deepest(c) < max_dom_depth, "the adoption agency stays under the depth cap");
+
+    parsed d;
+    std::string empties;
+    for (int i = 0; i < 20000; ++i) { empties += "</>"; }
+    check(d.tree(empties + "x") == "html(head body(\"x\"))", "60 KB of </> emit nothing");
+
+    parsed e;
+    std::string many = "<p";
+    for (int i = 0; i < 2000; ++i) {
+        many += " a" + std::to_string(i % 1000) + "=" + std::to_string(i);
+    }
+    check(!e.tree(many + ">").empty(), "2000 attributes terminate");
+    const auto txn = e.doc.read();
+    const node_id p = txn.children(txn.children(txn.root())[1])[0];
+    check(txn.attributes(p).size() == 1000, "duplicates past 64 attributes are still dropped");
+    check(txn.attribute_value(p, e.atoms.intern("a5")) == "5", "and the first one wins");
+}
+
 } // namespace
 
 int main() {
@@ -429,6 +484,7 @@ int main() {
     test_comments_and_doctype();
 
     test_pathological_input_terminates();
+    test_depth_is_capped();
 
     REPORT("html_parse");
 }

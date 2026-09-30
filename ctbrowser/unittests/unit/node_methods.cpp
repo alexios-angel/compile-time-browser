@@ -601,6 +601,41 @@ void test_the_table_model() {
           "delete removes them and a wrong tHead is refused: " + log[6]);
 }
 
+// THE DEPTH CAP (max_dom_depth): an insertion that would put a node 512
+// levels down is a HierarchyRequestError, whether it grows one level at a
+// time or moves a tall subtree in whole - so no walk over the tree a page
+// builds can run the stack out.
+void test_depth_cap() {
+    browser page{browser_options{400, 300}};
+    page.load_html(R"(<html><body><script>
+        let at = document.body, made = 0, error = 'none';
+        try {
+            for (; made < 2000; ++made) { at = at.appendChild(document.createElement('div')); }
+        } catch (e) { error = e.name; }
+        console.log(error + ',' + made);
+        let shadow = 'none';
+        try { at.attachShadow({mode: 'open'}); } catch (e) { shadow = e.name; }
+        console.log(shadow);
+        const chain = document.createElement('p');
+        let end = chain;
+        for (let i = 0; i < 400; ++i) { end = end.appendChild(document.createElement('i')); }
+        let mid = document.body.lastChild;
+        for (let i = 0; i < 199; ++i) { mid = mid.firstChild; }
+        let moved = 'none';
+        try { mid.insertBefore(chain, null); } catch (e) { moved = e.name; }
+        console.log(moved + ',' + (chain.parentNode === null));
+    </script></body></html>)");
+    check(page.script_error().empty(), "the depth script ran: " + page.script_error());
+    const auto & log = log_of(page);
+    // body is two levels down, so its descendants fill levels 3..511.
+    check(log.size() == 3 && log[0] == "HierarchyRequestError,509",
+          "appendChild stops at the depth cap: " + (log.empty() ? "" : log[0]));
+    check(log.size() == 3 && log[1] == "HierarchyRequestError",
+          "attachShadow on the deepest element is refused: " + (log.size() < 2 ? "" : log[1]));
+    check(log.size() == 3 && log[2] == "HierarchyRequestError,true",
+          "a tall subtree is refused whole: " + (log.size() < 3 ? "" : log[2]));
+}
+
 } // namespace
 
 int main() {
@@ -616,5 +651,6 @@ int main() {
     test_the_constructible_dom();
     test_document_implementation();
     test_create_element_ns();
+    test_depth_cap();
     REPORT("node_methods");
 }

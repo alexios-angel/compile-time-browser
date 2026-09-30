@@ -31,6 +31,14 @@ namespace ctbrowser {
 struct node_tag {};
 using node_id = handle<node_tag>;
 
+// THE DEEPEST A TREE MAY GO: no node sits max_dom_depth or more levels below
+// the top of its tree, counting a shadow root and a <template>'s contents as
+// one level below their element. Blink's parser cap
+// (kMaximumHTMLParserDOMTreeDepth) - the HTML tree builder flattens past it
+// and document::append_child / insert_before refuse to exceed it - so every
+// recursive tree walk downstream of the DOM is bounded by it.
+inline constexpr std::size_t max_dom_depth = 512;
+
 enum class node_kind : std::uint8_t {
     document,
     element,

@@ -454,6 +454,11 @@ private:
         node_id before; // empty = append
     };
     [[nodiscard]] insertion_point appropriate_place(node_id override_target = node_id{}) const;
+    [[nodiscard]] insertion_point spec_place(node_id override_target) const;
+    // THE DEPTH CAP (max_dom_depth), Blink's flattening: a place too deep for
+    // a subtree `height` tall moves up to the ancestor it fits under, as its
+    // last child - so past the cap new elements become siblings.
+    [[nodiscard]] insertion_point fit(insertion_point where, std::size_t height = 0) const;
     // The place a child of `parent` goes: a <template>'s contents fragment
     // stands in for the element.
     [[nodiscard]] node_id insertion_parent(node_id parent) const;

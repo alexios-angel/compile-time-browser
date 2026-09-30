@@ -158,8 +158,6 @@ private:
     // The text-run states stop short of anything a truncated view cuts: a
     // `<` or `&` whose continuation has not arrived, a CR whose LF may follow.
     [[nodiscard]] bool cut_at(std::size_t at) const;
-    // A character token from a run - or, when it is empty, the next token.
-    [[nodiscard]] token text_or_next(token & run);
 
     // --- the states, 13.2.5 ------------------------------------------------
 

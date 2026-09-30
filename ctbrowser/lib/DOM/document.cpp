@@ -3,6 +3,7 @@
 
 #include <ctbrowser/core/algorithms.hpp>
 
+#include <cassert>
 #include <optional>
 
 // document: the function bodies.
@@ -554,6 +555,7 @@ std::expected<void, dom_error> document::append_child(node_id parent, node_id ch
     for (node_id at = parent; at; at = find(at)->parent) {
         if (at == child) { return std::unexpected{dom_error::would_cycle}; }
     }
+    if (too_deep(parent, child)) { return std::unexpected{dom_error::too_deep}; }
     detach(child_node, child);
     parent_node->children.push_back(child);
     child_node->parent = parent;
@@ -572,6 +574,7 @@ std::expected<void, dom_error> document::insert_before(node_id parent, node_id c
     for (node_id at = parent; at; at = find(at)->parent) {
         if (at == child) { return std::unexpected{dom_error::would_cycle}; }
     }
+    if (too_deep(parent, child)) { return std::unexpected{dom_error::too_deep}; }
     // "If child is node, set child to node's next sibling" - DOM 4.2.3. A node
     // inserted before ITSELF stays where it is; detaching first and then
     // looking for a reference that is no longer in the list appended it to the
@@ -589,6 +592,43 @@ std::expected<void, dom_error> document::insert_before(node_id parent, node_id c
               static_cast<std::size_t>(at - items.begin()));
     bump_version();
     return {};
+}
+
+node_id document::up(node_id id) const {
+    const node * n = find(id);
+    if (n == nullptr) { return {}; }
+    // The document element keeps no parent pointer (set_document_element).
+    if (id == root_ && id != document_node_) { return document_node_; }
+    if (n->parent || n->kind != node_kind::document_fragment) { return n->parent; }
+    if (const shadow_tree * tree = shadow_tree_of(id)) { return tree->host; }
+    return template_of(id);
+}
+
+std::size_t document::depth(node_id id) const {
+    std::size_t levels = 0;
+    for (node_id at = up(id); at && levels < max_dom_depth; at = up(at)) { ++levels; }
+    return levels;
+}
+
+// Iterative: the subtree may be one a caller is about to refuse for being
+// too deep to recurse over.
+std::size_t document::height(node_id id) const {
+    std::size_t tallest = 0;
+    std::vector<std::pair<node_id, std::size_t>> todo{{id, 0}};
+    while (!todo.empty() && tallest < max_dom_depth) {
+        const auto [at, below] = todo.back();
+        todo.pop_back();
+        tallest = std::max(tallest, below);
+        const node * n = find(at);
+        if (n == nullptr) { continue; }
+        for (const node_id child : n->children) { todo.emplace_back(child, below + 1); }
+        if (n->kind != node_kind::element) { continue; }
+        if (const node_id root = shadow_root_of(at)) { todo.emplace_back(root, below + 1); }
+        if (const node_id contents = template_content(at)) {
+            todo.emplace_back(contents, below + 1);
+        }
+    }
+    return tallest;
 }
 
 std::expected<void, dom_error> document::remove_child(node_id child) {
@@ -824,6 +864,7 @@ std::expected<node_id, dom_error> document::attach_shadow(node_id host, shadow_t
         return std::unexpected{dom_error::invalid_shadow_host};
     }
     if (shadow_root_of(host)) { return std::unexpected{dom_error::shadow_root_exists}; }
+    if (depth(host) + 1 >= max_dom_depth) { return std::unexpected{dom_error::too_deep}; }
     const node_id root = create_fragment();
     try {
         how.host = host;
@@ -870,6 +911,7 @@ std::vector<node_id> document::shadow_roots() const {
 // what its slots then show (shadow-dom/slotchange-customelements.html). Off,
 // which is every parse nothing observes, it is the one load it always was.
 void document::builder::append(node_id parent, node_id child) {
+    assert(doc_->depth(parent) + 1 < max_dom_depth); // the parser fits its places
     node * parent_node = doc_->find(parent);
     node * child_node = doc_->find(child);
     if (parent_node == nullptr || child_node == nullptr) { return; }
@@ -879,6 +921,7 @@ void document::builder::append(node_id parent, node_id child) {
 }
 
 void document::builder::reparent(node_id child, node_id new_parent) {
+    assert(doc_->depth(new_parent) + 1 < max_dom_depth);
     node * child_node = doc_->find(child);
     if (child_node == nullptr) { return; }
     if (node * previous = doc_->find(child_node->parent); previous != nullptr) {
@@ -892,6 +935,7 @@ void document::builder::reparent(node_id child, node_id new_parent) {
 }
 
 void document::builder::insert_before(node_id parent, node_id child, node_id before) {
+    assert(doc_->depth(parent) + 1 < max_dom_depth);
     node * parent_node = doc_->find(parent);
     node * child_node = doc_->find(child);
     if (parent_node == nullptr || child_node == nullptr) { return; }

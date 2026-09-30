@@ -104,6 +104,9 @@ value dom_bindings::attach_shadow(context & cx, node_id host, std::span<value> a
         if (root.error() == dom_error::shadow_root_exists) {
             throw_dom_exception(cx, "NotSupportedError",
                                 "attachShadow: this element already hosts a shadow root");
+        } else if (root.error() == dom_error::too_deep) {
+            throw_dom_exception(cx, "HierarchyRequestError",
+                                "attachShadow: the tree would be deeper than the engine allows");
         } else {
             const std::string tag{atoms_->text(doc_->read().tag(host).value_or(atom{}))};
             throw_dom_exception(cx, "NotSupportedError",

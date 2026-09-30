@@ -399,7 +399,9 @@ void tree_builder::option_popped(node_id option) {
         children.assign(kids.begin(), kids.end());
     }
     // "Clone an option into a selectedcontent": replace all of its children
-    // with clones of the option's.
+    // with clones of the option's - unless the copies would pass the depth
+    // cap (max_dom_depth), and then it keeps what it had.
+    if (doc_->depth(selectedcontent) + doc_->height(option) >= max_dom_depth) { return; }
     std::vector<node_id> old;
     {
         const auto txn = doc_->read();
@@ -634,6 +636,22 @@ node_id tree_builder::insertion_parent(node_id parent) const {
 // parenting - just before the last <table> on the stack, in its parent (or
 // inside the <template> above it when there is no such parent).
 tree_builder::insertion_point tree_builder::appropriate_place(node_id override_target) const {
+    return fit(spec_place(override_target));
+}
+
+tree_builder::insertion_point tree_builder::fit(insertion_point where, std::size_t height) const {
+    const std::size_t deepest = max_dom_depth - 2 - std::min(height, max_dom_depth - 2);
+    std::size_t depth = doc_->depth(where.parent);
+    if (depth <= deepest) { return where; }
+    for (; depth > deepest; --depth) {
+        const node_id above = doc_->up(where.parent);
+        if (!above) { break; }
+        where.parent = above;
+    }
+    return insertion_point{where.parent, node_id{}};
+}
+
+tree_builder::insertion_point tree_builder::spec_place(node_id override_target) const {
     const node_id target = override_target ? override_target : current();
     if (foster_parenting_ && !open_.empty()) {
         // The TARGET's kind decides, which for the adoption agency's override
@@ -1041,12 +1059,15 @@ bool tree_builder::adoption_agency(const std::string & subject) {
         }
         // Step 4.14: last node goes to the appropriate place with the common
         // ancestor as the override target (foster parenting applies).
-        move_to(last_node, appropriate_place(common_ancestor));
+        // The whole chain moves, so the place must fit its height.
+        move_to(last_node, fit(spec_place(common_ancestor), doc_->height(last_node)));
         // Step 4.15-16: a new element for the formatting element, taking
         // the furthest block's children.
         const formatting fe_entry = active_[fe_index];
         const node_id fresh = create_element(fe_entry.tag, fe_entry.attributes);
-        {
+        // Every child goes one level deeper - unless that passes the cap
+        // (max_dom_depth), and then they stay where they are.
+        if (doc_->depth(furthest_block) + 1 + doc_->height(furthest_block) < max_dom_depth) {
             std::vector<node_id> moving;
             {
                 const auto txn = doc_->read();
@@ -1056,7 +1077,7 @@ bool tree_builder::adoption_agency(const std::string & subject) {
             }
             for (const node_id child : moving) { builder_->reparent(child, fresh); }
         }
-        builder_->append(furthest_block, fresh);
+        builder_->append(fit(insertion_point{furthest_block, node_id{}}).parent, fresh);
         // Step 4.18-19: the list and the stack.
         formatting replacement = fe_entry;
         replacement.id = fresh;

@@ -2,6 +2,9 @@
 
 #include <ctbrowser/core/algorithms.hpp>
 
+#include <string>
+#include <unordered_set>
+
 // tokenizer: the method bodies, following the states of HTML 13.2.5.
 //
 // The spec's machine consumes one character per state; this one runs each
@@ -53,6 +56,10 @@ token tokenizer::next() {
 }
 
 token tokenizer::next_token() {
+    // `</>` is a parse error that emits nothing (13.2.5.7): skipped here in a
+    // loop, because producing the NEXT token by recursing once per `</>` was
+    // a stack overflow on a page of them.
+    while (model_ == content_model::data && looking_at("</>")) { at_ += 3; }
     if (eof()) {
         starve();
         token end;
@@ -125,11 +132,6 @@ bool tokenizer::cut_at(std::size_t at) const {
     }
     while (i < size && is_alnum(input_[i])) { ++i; }
     return i >= size;
-}
-
-token tokenizer::text_or_next(token & run) {
-    if (!run.data.empty()) { return run; }
-    return next_token();
 }
 
 // ============================================================================
@@ -399,7 +401,7 @@ token tokenizer::end_tag_open_state() {
         return tag_name_state(out);
     }
     if (c == '>') {
-        ++at_; // `</>`: parse error, nothing emitted
+        ++at_; // `</>`: parse error, nothing emitted - next_token skips these
         return next_token();
     }
     return bogus_comment_state();
@@ -430,6 +432,7 @@ token tokenizer::tag_name_state(token & out) {
 // 13.2.5.32-40: before attribute name through after attribute value, and
 // the self-closing start tag state.
 token tokenizer::attributes(token & out) {
+    std::unordered_set<std::string> names; // past scan_limit attributes
     while (true) {
         while (!eof() && is_space(input_[at_])) { ++at_; }
         if (eof()) { break; }
@@ -490,10 +493,20 @@ token tokenizer::attributes(token & out) {
         }
         (void)has_value;
         // FIRST wins, per the spec. A duplicate attribute is dropped, not
-        // overwritten - and pages do contain them.
-        const bool seen = std::ranges::any_of(out.attributes, [&](const token_attribute & held) {
-            return held.name == attribute.name;
-        });
+        // overwritten - and pages do contain them. A linear scan, until a tag
+        // has enough attributes for that to be quadratic.
+        constexpr std::size_t scan_limit = 64;
+        bool seen = false;
+        if (out.attributes.size() < scan_limit) {
+            seen = std::ranges::any_of(out.attributes, [&](const token_attribute & held) {
+                return held.name == attribute.name;
+            });
+        } else {
+            if (names.empty()) {
+                for (const token_attribute & held : out.attributes) { names.insert(held.name); }
+            }
+            seen = !names.insert(attribute.name).second;
+        }
         if (!seen) { out.attributes.push_back(std::move(attribute)); }
     }
     // EOF in a tag: the tag is dropped and an EOF token emitted (eof-in-tag).
