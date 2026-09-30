@@ -3,6 +3,28 @@
 #include "llvm/ADT/ScopeExit.h"
 
 namespace ctcompile::ctnative::class_detail {
+namespace {
+
+// `record` and every retained alias recorded for it, one step per recorded alias.
+bool recordAliases(classInitialization & proof, mlir::Value record,
+                   llvm::SmallVectorImpl<mlir::Value> & aliases) {
+    aliases.push_back(record);
+    for (auto [alias, owner] : proof.retainedRecordOrigins) {
+        if (!proof.step()) { return false; }
+        if (owner == record) { aliases.push_back(alias); }
+    }
+    return true;
+}
+
+// `use` is the stored value of a checked Map set.
+bool mapSetValue(classInitialization & proof, mlir::OpOperand & use) {
+    auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
+    return call && use.getOperandNumber() == 3 && proof.mapOperations.contains(call) &&
+           ctjs::constantKey(call.getCallee().getDefiningOp<ctjs::GetPropertyOp>().getKey()) ==
+               "set";
+}
+
+} // namespace
 
 bool classInitialization::forwardDOMDataFields(const HostContract & contract) {
     auto entry = module.lookupSymbol<ctjs::FuncOp>(contract.entry);
@@ -15,21 +37,22 @@ bool classInitialization::forwardDOMDataFields(const HostContract & contract) {
         }
         llvm::SmallVector<ctjs::ConstructOp> instances;
         bool local = true;
-        const auto scanned = module.walk([&](ctjs::ConstructOp made) {
-            if (!step()) { return mlir::WalkResult::interrupt(); }
-            auto closure = sourceValue(made.getCallee()).getDefiningOp<ctjs::CreateClosureOp>();
-            if (target(closure) != function) { return mlir::WalkResult::advance(); }
-            local &= made->getParentOp() == entry && !baseClasses.contains(closure.getResult()) &&
-                     !heritage.contains(closure.getResult());
-            for (auto [instance, definition] : methodProbes) {
-                (void)definition;
-                if (!step()) { return mlir::WalkResult::interrupt(); }
-                local &= instance != made;
-            }
-            instances.push_back(made);
-            return mlir::WalkResult::advance();
-        });
-        if (scanned.wasInterrupted()) { return false; }
+        if (!walkSteps(module, [&](ctjs::ConstructOp made) {
+                auto closure = sourceValue(made.getCallee()).getDefiningOp<ctjs::CreateClosureOp>();
+                if (target(closure) != function) { return mlir::WalkResult::advance(); }
+                local &= made->getParentOp() == entry &&
+                         !baseClasses.contains(closure.getResult()) &&
+                         !heritage.contains(closure.getResult());
+                for (auto [instance, definition] : methodProbes) {
+                    (void)definition;
+                    if (!step()) { return mlir::WalkResult::interrupt(); }
+                    local &= instance != made;
+                }
+                instances.push_back(made);
+                return mlir::WalkResult::advance();
+            })) {
+            return false;
+        }
         if (!local || instances.empty()) { continue; }
         auto & body = function.getBody().front();
         const auto self = body.getArgument(ctjs::arg_receiver);
@@ -67,11 +90,8 @@ bool classInitialization::forwardDOMDataFields(const HostContract & contract) {
                     fixed = false;
                     break;
                 }
-                llvm::SmallVector<mlir::Value> aliases{made.getResult()};
-                for (auto [alias, owner] : retainedRecordOrigins) {
-                    if (!step()) { return false; }
-                    if (owner == made.getResult()) { aliases.push_back(alias); }
-                }
+                llvm::SmallVector<mlir::Value> aliases;
+                if (!recordAliases(*this, made.getResult(), aliases)) { return false; }
                 for (mlir::Value alias : aliases) {
                     for (mlir::OpOperand * use : sourceUses(alias)) {
                         if (!step()) { return false; }
@@ -83,14 +103,7 @@ bool classInitialization::forwardDOMDataFields(const HostContract & contract) {
                             fixed = false;
                             continue;
                         }
-                        if (llvm::isa<ctjs::RootOp>(op)) { continue; }
-                        auto call = llvm::dyn_cast<ctjs::CallOp>(op);
-                        if (call && use->getOperandNumber() == 3 && mapOperations.contains(call) &&
-                            ctjs::constantKey(
-                                call.getCallee().getDefiningOp<ctjs::GetPropertyOp>().getKey()) ==
-                                "set") {
-                            continue;
-                        }
+                        if (llvm::isa<ctjs::RootOp>(op) || mapSetValue(*this, *use)) { continue; }
                         const auto selected = ctjs::propertyKey(op);
                         if (use->getOperandNumber() != 0 || !selected ||
                             !ctjs::ordinaryKey(selected)) {
@@ -123,8 +136,7 @@ bool classInitialization::forwardDOMDataFields(const HostContract & contract) {
             for (ctjs::ConstructOp made : instances) {
                 if (!step()) { return false; }
                 mlir::OpBuilder at(made);
-                auto absent = ctjs::ConstantOp::create(
-                    at, made.getLoc(), ctjs::UndefinedAttr::get(module.getContext()));
+                auto absent = undefinedAt(at, made.getLoc());
                 made.getArgsMutable()[index].set(absent);
             }
         }
@@ -206,11 +218,8 @@ bool classInitialization::proveDOMDataScalars(host_detail::analyzer & analysis) 
             }
         }
         if (!safe || !returned) { continue; }
-        llvm::SmallVector<mlir::Value> aliases{made.getResult()};
-        for (auto [read, owner] : retainedRecordOrigins) {
-            if (!step()) { return false; }
-            if (owner == made.getResult()) { aliases.push_back(read); }
-        }
+        llvm::SmallVector<mlir::Value> aliases;
+        if (!recordAliases(*this, made.getResult(), aliases)) { return false; }
         for (mlir::Value alias : aliases) {
             for (mlir::OpOperand * use : sourceUses(alias)) {
                 if (!step()) { return false; }
@@ -219,13 +228,7 @@ bool classInitialization::proveDOMDataScalars(host_detail::analyzer & analysis) 
                     (op->getParentOp() != entry && !llvm::isa<ctjs::GetPropertyOp>(op))) {
                     safe = false;
                 }
-                if (llvm::isa<ctjs::RootOp>(op)) { continue; }
-                auto call = llvm::dyn_cast<ctjs::CallOp>(op);
-                if (call && use->getOperandNumber() == 3 && mapOperations.contains(call) &&
-                    ctjs::constantKey(
-                        call.getCallee().getDefiningOp<ctjs::GetPropertyOp>().getKey()) == "set") {
-                    continue;
-                }
+                if (llvm::isa<ctjs::RootOp>(op) || mapSetValue(*this, *use)) { continue; }
                 const auto key = ctjs::propertyKey(op);
                 safe &= use->getOperandNumber() == 0 && key && ctjs::ordinaryKey(key);
             }
@@ -262,34 +265,36 @@ bool classInitialization::proveDOMDataScalars(host_detail::analyzer & analysis) 
     }
     // Alias validation above forbids nested writes. Postorder visits both
     // read-only arms before a scalar join, retaining each read-time field tag.
-    const auto walked = entry.walk([&](mlir::Operation * op) {
-        if (!step()) { return mlir::WalkResult::interrupt(); }
-        if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(op)) {
-            if (auto initial = initialFields.find(made.getResult());
-                initial != initialFields.end()) {
-                fields[made.getResult()] = std::move(initial->second);
-            }
-        } else if (auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(op)) {
-            auto owner = origins.lookup(sourceValue(write.getObject()));
-            if (!owner) { return mlir::WalkResult::advance(); }
-            analysis.remaining = remaining;
-            std::vector<mlir::Value> dependencies;
-            auto category =
-                analysis.entryCategories(write.getValue(), noResults, write, 0, &dependencies);
-            remaining = analysis.remaining;
-            // Other records need their own complete use census. Only literals,
-            // their scalar expressions and already checked class reads qualify.
-            if (!dependencies.empty()) { category = {}; }
-            fields[owner][ctjs::constantKey(write.getKey())] = category;
-        } else if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) {
-            auto owner = origins.lookup(sourceValue(read.getObject()));
-            if (!owner) { return mlir::WalkResult::advance(); }
-            auto category = fields[owner].lookup(ctjs::constantKey(read.getKey()));
-            if (category.tag()) { analysis.classScalarReads[read.getResult()] = category; }
-        }
-        return mlir::WalkResult::advance();
-    });
-    return !walked.wasInterrupted() && reason.empty() && !analysis.exhausted;
+    return walkSteps(entry,
+                     [&](mlir::Operation * op) {
+                         if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(op)) {
+                             if (auto initial = initialFields.find(made.getResult());
+                                 initial != initialFields.end()) {
+                                 fields[made.getResult()] = std::move(initial->second);
+                             }
+                         } else if (auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(op)) {
+                             auto owner = origins.lookup(sourceValue(write.getObject()));
+                             if (!owner) { return mlir::WalkResult::advance(); }
+                             analysis.remaining = remaining;
+                             std::vector<mlir::Value> dependencies;
+                             auto category = analysis.entryCategories(write.getValue(), noResults,
+                                                                      write, 0, &dependencies);
+                             remaining = analysis.remaining;
+                             // Other records need their own complete use census. Only literals,
+                             // their scalar expressions and already checked class reads qualify.
+                             if (!dependencies.empty()) { category = {}; }
+                             fields[owner][ctjs::constantKey(write.getKey())] = category;
+                         } else if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) {
+                             auto owner = origins.lookup(sourceValue(read.getObject()));
+                             if (!owner) { return mlir::WalkResult::advance(); }
+                             auto category = fields[owner].lookup(ctjs::constantKey(read.getKey()));
+                             if (category.tag()) {
+                                 analysis.classScalarReads[read.getResult()] = category;
+                             }
+                         }
+                         return mlir::WalkResult::advance();
+                     }) &&
+           reason.empty() && !analysis.exhausted;
 }
 
 bool classInitialization::proveDOMDataFamily(const HostContract & contract) {

@@ -23,16 +23,20 @@ void classInitialization::forgetRecords(mlir::Region & region) {
     });
 }
 
-bool classInitialization::proveHeritage(const HostContract & contract) {
-    llvm::DenseMap<mlir::Value, ctjs::CallOp> completed;
+bool classInitialization::completedClasses(llvm::DenseMap<mlir::Value, ctjs::CallOp> & completed) {
     for (ctjs::CallOp call : calls) {
         if (!step()) { return false; }
         if (call.getArgs().size() != 1) { continue; }
         auto [at, fresh] = completed.try_emplace(sourceValue(call.getArgs().front()), call);
         if (!fresh) { at->second = {}; }
     }
-    const auto walked = module.walk([&](ctjs::CallOp call) {
-        if (!step()) { return mlir::WalkResult::interrupt(); }
+    return true;
+}
+
+bool classInitialization::proveHeritage(const HostContract & contract) {
+    llvm::DenseMap<mlir::Value, ctjs::CallOp> completed;
+    if (!completedClasses(completed)) { return false; }
+    return walkSteps(module, [&](ctjs::CallOp call) {
         auto load = call.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
         if (!load || load.getName() != "__ctbrowser_class_heritage") {
             return mlir::WalkResult::advance();
@@ -40,8 +44,7 @@ bool classInitialization::proveHeritage(const HostContract & contract) {
         if (!llvm::is_contained(contract.initialIntrinsics, load.getName()) ||
             call.getArgs().size() != 3 || !undefined(call.getReceiver()) ||
             !call.getResult().use_empty()) {
-            refuse("class heritage needs its declared direct helper and unused result");
-            return mlir::WalkResult::interrupt();
+            return refuseWalk("class heritage needs its declared direct helper and unused result");
         }
         const auto derived = sourceValue(call.getArgs()[0]);
         const auto base = sourceValue(call.getArgs()[1]);
@@ -58,16 +61,15 @@ bool classInitialization::proveHeritage(const HostContract & contract) {
             !derivedClosure->isBeforeInBlock(call) || !prototype->isBeforeInBlock(call) ||
             !baseDone->isBeforeInBlock(call) || !call->isBeforeInBlock(derivedDone) ||
             !heritage.try_emplace(derived, call).second) {
-            refuse("class heritage needs an earlier completed local base and fresh derived "
-                   "prototype");
-            return mlir::WalkResult::interrupt();
+            return refuseWalk(
+                "class heritage needs an earlier completed local base and fresh derived "
+                "prototype");
         }
         // Strict source order rules out cycles. Every base's exact home,
         // prototype, captures and complete use census still pass examine.
         baseClasses.insert(base);
         return mlir::WalkResult::advance();
     });
-    return !walked.wasInterrupted();
 }
 
 bool classInitialization::heritageUse(mlir::OpOperand & use, mlir::Value constructor) {
@@ -112,16 +114,15 @@ bool classInitialization::normalizeSuper(ctjs::CreateClosureOp constructor,
     // this first constructor slice free of declarations/publications instead
     // of invalidating those records while replacing its private body.
     for (auto fn : {function, base}) {
-        const auto census = fn.walk([&](mlir::Operation * op) {
-            if (!step()) { return mlir::WalkResult::interrupt(); }
-            if (llvm::isa<ctjs::CreateClosureOp, ctjs::StoreGlobalOp, ctjs::RootOp>(op)) {
-                refuse(
-                    "super constructor declarations, roots and global writes remain unsupported");
-                return mlir::WalkResult::interrupt();
-            }
-            return mlir::WalkResult::advance();
-        });
-        if (census.wasInterrupted()) { return false; }
+        if (!walkSteps(fn, [&](mlir::Operation * op) {
+                if (llvm::isa<ctjs::CreateClosureOp, ctjs::StoreGlobalOp, ctjs::RootOp>(op)) {
+                    return refuseWalk("super constructor declarations, roots and global writes "
+                                      "remain unsupported");
+                }
+                return mlir::WalkResult::advance();
+            })) {
+            return false;
+        }
     }
     ctjs::CreateCellOp guard;
     for (auto cell : original.getOps<ctjs::CreateCellOp>()) {
@@ -249,8 +250,7 @@ bool classInitialization::normalizeSuper(ctjs::CreateClosureOp constructor,
     }
     mlir::OpBuilder at(function.getContext());
     at.setInsertionPointToEnd(output);
-    auto absent = ctjs::ConstantOp::create(at, function.getLoc(),
-                                           ctjs::UndefinedAttr::get(module.getContext()));
+    auto absent = undefinedAt(at, function.getLoc());
     llvm::SmallVector<std::pair<ctjs::LoadUpvalueOp, ctjs::FuncOp>> copiedCaptures;
     llvm::SmallVector<std::pair<ctjs::LoadUpvalueOp, mlir::Value>> copiedHolders;
     llvm::SmallVector<std::pair<ctjs::LoadUpvalueOp, mlir::Value>> copiedMaps;
@@ -261,8 +261,7 @@ bool classInitialization::normalizeSuper(ctjs::CreateClosureOp constructor,
         at.clone(op, values);
         // A base's slot number belongs to its original closure, never the
         // leaf's environment. Carry the proved helper/holder identity with each copy.
-        auto recorded = op.walk([&](mlir::Operation * source) {
-            if (!step()) { return mlir::WalkResult::interrupt(); }
+        return walkSteps(&op, [&](mlir::Operation * source) {
             auto * copied = values.lookupOrNull(source);
             if (auto helper = callableCaptures.lookup(source)) {
                 copiedCaptures.emplace_back(llvm::cast<ctjs::LoadUpvalueOp>(copied), helper);
@@ -283,9 +282,9 @@ bool classInitialization::normalizeSuper(ctjs::CreateClosureOp constructor,
                     if (index == captures.size()) {
                         if (baseClosure->getBlock() != constructor->getBlock() ||
                             !baseClosure->isBeforeInBlock(constructor)) {
-                            refuse("inherited Map capture requires initialization before the leaf "
-                                   "closure");
-                            return mlir::WalkResult::interrupt();
+                            return refuseWalk(
+                                "inherited Map capture requires initialization before the leaf "
+                                "closure");
                         }
                         mlir::Value cell;
                         for (auto candidate : baseClosure.getUpvalues()) {
@@ -297,8 +296,7 @@ bool classInitialization::normalizeSuper(ctjs::CreateClosureOp constructor,
                             }
                         }
                         if (!cell) {
-                            refuse("inherited Map read lacks its original capture cell");
-                            return mlir::WalkResult::interrupt();
+                            return refuseWalk("inherited Map read lacks its original capture cell");
                         }
                         captures.push_back(cell);
                     }
@@ -311,7 +309,6 @@ bool classInitialization::normalizeSuper(ctjs::CreateClosureOp constructor,
             if (helperCalls.contains(source)) { copiedHelperCalls.push_back(copied); }
             return mlir::WalkResult::advance();
         });
-        return !recorded.wasInterrupted();
     };
     const auto receiver = original.getArgument(ctjs::arg_receiver);
     const auto integer = [&](mlir::Value value) -> std::optional<int64_t> {
@@ -403,11 +400,8 @@ bool classInitialization::normalizeSuper(ctjs::CreateClosureOp constructor,
             if (auto branch = llvm::dyn_cast<mlir::scf::IndexSwitchOp>(op)) {
                 const auto key = integer(branch.getArg());
                 if (!key) { return refuse("super completion has an unproved switch"); }
-                auto * region = &branch.getDefaultRegion();
-                for (auto [i, value] : llvm::enumerate(branch.getCases())) {
-                    if (!step()) { return false; }
-                    if (value == *key) { region = &branch.getCaseRegions()[i]; }
-                }
+                auto * region = switchArm(branch, *key, [&] { return step(); });
+                if (!region) { return false; }
                 if (!region->hasOneBlock()) { return refuse("super completion is not linear"); }
                 llvm::SmallVector<mlir::Value> values;
                 if (!self(self, region->front(), values, depth + 1) ||
@@ -660,12 +654,12 @@ bool classInitialization::normalizeSuper(ctjs::CreateClosureOp constructor,
 bool classInitialization::normalizeSuperMethods(
     ctjs::FuncOp function, llvm::ArrayRef<ctjs::SetPropertyOp> baseDefinitions) {
     llvm::SmallVector<ctjs::CallOp> invocations;
-    auto walked = function.walk([&](ctjs::CallOp call) {
-        if (!step()) { return mlir::WalkResult::interrupt(); }
-        invocations.push_back(call);
-        return mlir::WalkResult::advance();
-    });
-    if (walked.wasInterrupted()) { return false; }
+    if (!walkSteps(function, [&](ctjs::CallOp call) {
+            invocations.push_back(call);
+            return mlir::WalkResult::advance();
+        })) {
+        return false;
+    }
     for (ctjs::CallOp call : invocations) {
         auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
         auto proto = read ? read.getObject().getDefiningOp<ctjs::GetProtoOp>() : ctjs::GetProtoOp{};
@@ -712,8 +706,7 @@ bool classInitialization::normalizeSuperMethods(
             }
         }
         mlir::OpBuilder at(call);
-        auto absent = ctjs::ConstantOp::create(at, call.getLoc(),
-                                               ctjs::UndefinedAttr::get(module.getContext()));
+        auto absent = undefinedAt(at, call.getLoc());
         mlir::IRMapping mapping;
         mapping.map(body.getArgument(ctjs::arg_receiver), call.getReceiver());
         mapping.map(body.getArgument(ctjs::arg_new_target), absent);
@@ -816,10 +809,7 @@ std::optional<partial_eval::value> classInitialization::evaluateHelper(
                                   ? llvm::dyn_cast<mlir::IntegerAttr>(index.constant)
                                   : mlir::IntegerAttr{};
                 if (!number) { return false; }
-                auto * region = &branch.getDefaultRegion();
-                for (auto [i, key] : llvm::enumerate(branch.getCases())) {
-                    if (key == number.getInt()) { region = &branch.getCaseRegions()[i]; }
-                }
+                auto * region = switchArm(branch, number.getInt(), [] { return true; });
                 if (!enter(op, *region)) { return false; }
                 continue;
             }
@@ -954,8 +944,7 @@ bool classInitialization::foldDecidedArms(ctjs::CreateClosureOp constructor,
         // can already name a capture-free helper; evaluate only its pure path,
         // then leave the closure and cell for that later complete census.
         if (!helper && load && load.getClosure() == entry.getArgument(ctjs::arg_callee) &&
-            load->getBlock() == &entry && load.getIndex() >= 0 &&
-            static_cast<size_t>(load.getIndex()) < constructor.getUpvalues().size() &&
+            load->getBlock() == &entry && capturesSlot(load, constructor) &&
             !earlyCaptures.contains(constructor)) {
             const auto cell = cells.find(constructor.getUpvalues()[load.getIndex()]);
             auto closure = cell == cells.end()

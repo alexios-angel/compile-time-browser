@@ -56,34 +56,35 @@ bool classInitialization::clearOwnFieldLoop(ctjs::CallOp snapshot,
     // Census both arms first: even an empty snapshot cannot hide unknown effects.
     llvm::DenseSet<mlir::Operation *> operations;
     for (auto * root : segment) {
-        const auto walked = root->walk([&](mlir::Operation * op) {
-            if (!step()) { return mlir::WalkResult::interrupt(); }
-            operations.insert(op);
-            bool accepted = llvm::isa<ctjs::ConstantOp, mlir::arith::ConstantOp, mlir::ub::PoisonOp,
-                                      ctjs::IterableOp, ctjs::GetPropertyOp, ctjs::BinaryOp,
-                                      ctjs::BinaryStaticOp, ctjs::CompareOp, ctjs::TruthyOp,
-                                      mlir::arith::IndexCastUIOp, mlir::arith::TruncIOp,
-                                      mlir::scf::IfOp, mlir::scf::IndexSwitchOp, mlir::scf::WhileOp,
-                                      mlir::scf::YieldOp, mlir::scf::ConditionOp>(op);
-            if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op)) {
-                accepted = host_detail::iteratorIntrinsicArity(load.getName()) != 0;
-            }
-            if (auto call = llvm::dyn_cast<ctjs::CallOp>(op)) {
-                const unsigned arity = host_detail::iteratorIntrinsicArity(helper(call));
-                accepted = arity && call.getArgs().size() == arity && undefined(call.getReceiver());
-            }
-            if (auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(op)) {
-                auto value = write.getValue().getDefiningOp<ctjs::ConstantOp>();
-                accepted = write.getObject() == snapshot.getArgs().front() && value &&
-                           llvm::isa<ctjs::NullAttr>(value.getValue());
-            }
-            if (!accepted) {
-                refuse("class own-key loop contains an unproved effect");
-                return mlir::WalkResult::interrupt();
-            }
-            return mlir::WalkResult::advance();
-        });
-        if (walked.wasInterrupted()) { return false; }
+        if (!walkSteps(root, [&](mlir::Operation * op) {
+                operations.insert(op);
+                bool accepted =
+                    llvm::isa<ctjs::ConstantOp, mlir::arith::ConstantOp, mlir::ub::PoisonOp,
+                              ctjs::IterableOp, ctjs::GetPropertyOp, ctjs::BinaryOp,
+                              ctjs::BinaryStaticOp, ctjs::CompareOp, ctjs::TruthyOp,
+                              mlir::arith::IndexCastUIOp, mlir::arith::TruncIOp, mlir::scf::IfOp,
+                              mlir::scf::IndexSwitchOp, mlir::scf::WhileOp, mlir::scf::YieldOp,
+                              mlir::scf::ConditionOp>(op);
+                if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op)) {
+                    accepted = host_detail::iteratorIntrinsicArity(load.getName()) != 0;
+                }
+                if (auto call = llvm::dyn_cast<ctjs::CallOp>(op)) {
+                    const unsigned arity = host_detail::iteratorIntrinsicArity(helper(call));
+                    accepted =
+                        arity && call.getArgs().size() == arity && undefined(call.getReceiver());
+                }
+                if (auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(op)) {
+                    auto value = write.getValue().getDefiningOp<ctjs::ConstantOp>();
+                    accepted = write.getObject() == snapshot.getArgs().front() && value &&
+                               llvm::isa<ctjs::NullAttr>(value.getValue());
+                }
+                if (!accepted) {
+                    return refuseWalk("class own-key loop contains an unproved effect");
+                }
+                return mlir::WalkResult::advance();
+            })) {
+            return false;
+        }
     }
     for (auto * op : operations) {
         for (auto & operand : op->getOpOperands()) {
@@ -156,12 +157,9 @@ bool classInitialization::clearOwnFieldLoop(ctjs::CallOp snapshot,
                 if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(op)) {
                     selected = *key ? &branch.getThenRegion() : &branch.getElseRegion();
                 } else {
-                    auto switcher = llvm::cast<mlir::scf::IndexSwitchOp>(op);
-                    selected = &switcher.getDefaultRegion();
-                    for (auto [i, choice] : llvm::enumerate(switcher.getCases())) {
-                        if (!step()) { return {}; }
-                        if (choice == *key) { selected = &switcher.getCaseRegions()[i]; }
-                    }
+                    selected = switchArm(llvm::cast<mlir::scf::IndexSwitchOp>(op), *key,
+                                         [&] { return step(); });
+                    if (!selected) { return {}; }
                 }
                 if (!selected->hasOneBlock() || selected->front().getNumArguments()) { return {}; }
                 auto result =

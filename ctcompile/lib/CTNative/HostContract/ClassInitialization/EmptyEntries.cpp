@@ -337,15 +337,16 @@ bool classInitialization::foldEmptyEntries(const HostContract & contract) {
     // fold that keeps them.
     if (!llvm::is_contained(contract.initialIntrinsics, "Object")) { return true; }
     llvm::SetVector<mlir::Operation *> scopes;
-    const auto walked = module.walk([&](ctjs::GetPropertyOp read) {
-        if (!step()) { return mlir::WalkResult::interrupt(); }
-        auto load = read.getObject().getDefiningOp<ctjs::LoadGlobalOp>();
-        if (load && load.getName() == "Object" && ctjs::constantKey(read.getKey()) == "entries") {
-            scopes.insert(read->getParentOfType<ctjs::FuncOp>());
-        }
-        return mlir::WalkResult::advance();
-    });
-    if (walked.wasInterrupted()) { return false; }
+    if (!walkSteps(module, [&](ctjs::GetPropertyOp read) {
+            auto load = read.getObject().getDefiningOp<ctjs::LoadGlobalOp>();
+            if (load && load.getName() == "Object" &&
+                ctjs::constantKey(read.getKey()) == "entries") {
+                scopes.insert(read->getParentOfType<ctjs::FuncOp>());
+            }
+            return mlir::WalkResult::advance();
+        })) {
+        return false;
+    }
     for (mlir::Operation * scope : scopes) {
         if (!foldMethod(*this, llvm::cast<ctjs::FuncOp>(scope), contract)) { return false; }
     }

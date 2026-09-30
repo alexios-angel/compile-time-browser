@@ -22,6 +22,22 @@ using class_detail::classInitialization;
 #include "ctcompile/CTNative/Transforms/Passes.h.inc"
 namespace {
 
+// Prove `proof`'s module, check `binding` against `bindingModule`, then
+// normalize methods and rewrite. The refusal when any step fails.
+std::optional<std::string> proveAndRewrite(classInitialization & proof,
+                                           mlir::ModuleOp bindingModule,
+                                           const HostContract & contract,
+                                           const HostContract & binding, bool domEntry) {
+    if (!proof.prove(contract, domEntry)) { return proof.reason; }
+    if (auto problem = host_detail::initialBindingProblem(bindingModule, binding);
+        !problem.empty()) {
+        return problem;
+    }
+    if (!proof.normalizeMethods()) { return proof.reason; }
+    proof.rewrite();
+    return std::nullopt;
+}
+
 struct CTNativeSpecializeClassInitializationPass
     : impl::CTNativeSpecializeClassInitializationBase<CTNativeSpecializeClassInitializationPass> {
     using CTNativeSpecializeClassInitializationBase::CTNativeSpecializeClassInitializationBase;
@@ -47,9 +63,10 @@ struct CTNativeSpecializeClassInitializationPass
             !llvm::is_contained(contract->initialIntrinsics, host_detail::classDefinedIntrinsic) ||
             llvm::any_of(contract->initialIntrinsics,
                          [](const auto & name) {
-                             return !host_detail::classIntrinsicArity(name) && name != "Error" &&
-                                    name != "Function" && name != "Object" && name != "Array" &&
-                                    name != "Map" && !host_detail::iteratorIntrinsicArity(name);
+                             return !host_detail::classIntrinsicArity(name) &&
+                                    !llvm::is_contained(
+                                        {"Error", "Function", "Object", "Array", "Map"}, name) &&
+                                    !host_detail::iteratorIntrinsicArity(name);
                          }) ||
             contract->realmGlobalThis || contract->classicScriptRealm ||
             !contract->absentBindings.empty() || !contract->undefinedBindings.empty()) {
@@ -65,20 +82,10 @@ struct CTNativeSpecializeClassInitializationPass
         }
         mlir::OwningOpRef<mlir::ModuleOp> candidate(module.clone());
         classInitialization proof{*candidate, static_cast<unsigned>(budget.remaining)};
-        if (!proof.prove(*contract)) {
-            module.emitError() << proof.reason;
+        if (auto refusal = proveAndRewrite(proof, module, *contract, *contract, false)) {
+            module.emitError() << *refusal;
             return signalPassFailure();
         }
-        if (auto problem = host_detail::initialBindingProblem(module, *contract);
-            !problem.empty()) {
-            module.emitError() << problem;
-            return signalPassFailure();
-        }
-        if (!proof.normalizeMethods()) {
-            module.emitError() << proof.reason;
-            return signalPassFailure();
-        }
-        proof.rewrite();
         module->setAttrs((*candidate)->getAttrs());
         module.getBodyRegion().takeBody(candidate->getBodyRegion());
     }
@@ -100,18 +107,14 @@ llvm::Error normalizeDOMClasses(mlir::ModuleOp module, HostContract & contract, 
                       "Error identity");
     }
     classInitialization proof{module, maxSteps};
-    if (!proof.prove(contract, true)) { return refuse(proof.reason); }
     // Reuse the binding proof before consuming its declaration. This projected
     // contract proves helper and optional Error identity; DOM declarations and
     // parameters are proved later. Referenced throwing getters retain their
     // original bodies and must pass the final typed DOM proof after rewriting.
-    if (auto problem = host_detail::initialBindingProblem(
-            module, class_detail::classBindingContract(contract));
-        !problem.empty()) {
-        return refuse(problem);
+    if (auto refusal = proveAndRewrite(proof, module, contract,
+                                       class_detail::classBindingContract(contract), true)) {
+        return refuse(*refusal);
     }
-    if (!proof.normalizeMethods()) { return refuse(proof.reason); }
-    proof.rewrite();
     llvm::erase_if(contract.initialIntrinsics, [](const auto & name) {
         // The class proof normalized these helpers after checking their
         // identities. Any residual use must pass the complete DOM proof.

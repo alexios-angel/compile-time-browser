@@ -90,9 +90,35 @@ bool diagnosticArm(mlir::Block & block, llvm::function_ref<bool(mlir::Value)> ma
     return true;
 }
 
+// Constants, roots, truth tests, yields, `!` and `===`: no effect or observer.
+bool inertScalarOp(mlir::Operation * op) {
+    if (llvm::isa<ctjs::ConstantOp, ctjs::RootOp, ctjs::TruthyOp, ctjs::FromBoolOp,
+                  mlir::scf::YieldOp>(op)) {
+        return true;
+    }
+    auto unary = llvm::dyn_cast<ctjs::UnaryOp>(op);
+    auto compare = llvm::dyn_cast<ctjs::CompareOp>(op);
+    return (unary && unary.getKind() == ctjs::UnaryKind::Not) ||
+           (compare && compare.getKind() == ctjs::CompareKind::StrictEq);
+}
+
 } // namespace
 
 bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope, const HostContract & contract) {
+    auto & entry = scope.getBody().front();
+    llvm::SmallVector<ctjs::ConstructOp> candidates;
+    for (auto made : entry.getOps<ctjs::ConstructOp>()) {
+        if (!step()) { return false; }
+        if (maps.contains(made.getResult())) { candidates.push_back(made); }
+    }
+    for (auto map : candidates) {
+        if (!normalizeNestedMap(scope, contract, map)) { return false; }
+    }
+    return reason.empty();
+}
+
+bool classInitialization::normalizeNestedMap(ctjs::FuncOp scope, const HostContract & contract,
+                                             ctjs::ConstructOp map) {
     // ponytail: literal/fresh keys and one live DOM input key per outer Map.
     // Overlapping DOM key lifetimes need alias partitions, not distinct SSA identities.
     auto & entry = scope.getBody().front();
@@ -105,253 +131,233 @@ bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope, const HostCont
                    ? made
                    : ctjs::ConstructOp{};
     };
-    llvm::SmallVector<ctjs::ConstructOp> candidates;
-    for (auto made : entry.getOps<ctjs::ConstructOp>()) {
+    bool nested = false;
+    for (mlir::OpOperand * use : sourceUses(map.getResult())) {
         if (!step()) { return false; }
-        if (maps.contains(made.getResult())) { candidates.push_back(made); }
+        auto call = llvm::dyn_cast<ctjs::CallOp>(use->getOwner());
+        if (!call || use->getOperandNumber() != 1 || call.getArgs().size() != 2) { continue; }
+        auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+        nested |= read && ctjs::constantKey(read.getKey()) == "set" && localMap(call.getArgs()[1]);
     }
-    for (auto map : candidates) {
-        bool nested = false;
-        for (mlir::OpOperand * use : sourceUses(map.getResult())) {
+    if (!nested) { return true; }
+    llvm::SmallVector<mlir::Value> bindings;
+    for (auto [cell, initial] : cells) {
+        if (!step()) { return false; }
+        if (sourceValue(initial) != map.getResult()) { continue; }
+        bindings.push_back(cell);
+        const auto transport = transportOnlyCell(cell);
+        if (!transport) { return false; }
+        if (!*transport) { return refuse("class nested Map cannot capture its outer owner"); }
+    }
+    // Captures box caller locals too. Discharge these already-proved
+    // reads before a selected branch can retire their cached operations.
+    for (ctjs::CellGetOp read : cellReads) {
+        if (!spend(1 + (llvm::is_contained(bindings, read.getCell()) ? read.getResult().getNumUses()
+                                                                     : 0))) {
+            return false;
+        }
+    }
+    llvm::erase_if(cellReads, [&](ctjs::CellGetOp read) {
+        if (!llvm::is_contained(bindings, read.getCell())) { return false; }
+        cellOperations.erase(read);
+        read.getResult().replaceAllUsesWith(map.getResult());
+        eraseRooted(read);
+        return true;
+    });
+    llvm::DenseSet<mlir::Operation *> operations;
+    llvm::DenseSet<mlir::Operation *> conditional;
+    // Record `op` and its ancestors below the scope as conditional.
+    const auto enclose = [&](mlir::Operation * op) {
+        for (; op != scope; op = op->getParentOp()) {
             if (!step()) { return false; }
-            auto call = llvm::dyn_cast<ctjs::CallOp>(use->getOwner());
-            if (!call || use->getOperandNumber() != 1 || call.getArgs().size() != 2) { continue; }
+            conditional.insert(op);
+        }
+        return true;
+    };
+    llvm::SmallVector<ctjs::GetPropertyOp> selections;
+    for (mlir::OpOperand * use : sourceUses(map.getResult())) {
+        if (!step()) { return false; }
+        auto * op = use->getOwner();
+        if (llvm::isa<ctjs::RootOp>(op)) { continue; }
+        auto * position = entryPosition(op);
+        if (position->getBlock() != &entry || !map->isBeforeInBlock(position)) {
+            return refuse("class nested Map requires ordered entry operations");
+        }
+        if (!enclose(op->getParentOp())) { return false; }
+        if (auto call = llvm::dyn_cast<ctjs::CallOp>(op); call && use->getOperandNumber() == 1) {
             auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
-            nested |=
-                read && ctjs::constantKey(read.getKey()) == "set" && localMap(call.getArgs()[1]);
+            if (read && read.getObject() == call.getReceiver()) { continue; }
         }
-        if (!nested) { continue; }
-        llvm::SmallVector<mlir::Value> bindings;
-        for (auto [cell, initial] : cells) {
+        auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
+        if (!read || use->getOperandNumber() != 0) {
+            return refuse("class nested Map outer owner escapes");
+        }
+        selections.push_back(read);
+        const auto key = ctjs::constantKey(read.getKey());
+        if (key == "size") {
+            operations.insert(read);
+            continue;
+        }
+        const auto arity = mapMethodArity(key);
+        if (!arity) { return refuse("class nested Map has an unproved member"); }
+        for (mlir::OpOperand & selected : read.getResult().getUses()) {
             if (!step()) { return false; }
-            if (sourceValue(initial) != map.getResult()) { continue; }
-            bindings.push_back(cell);
-            for (mlir::Operation * user : cell.getUsers()) {
-                if (!step()) { return false; }
-                if (!cellOperations.contains(user)) {
-                    return refuse("class nested Map cannot capture its outer owner");
-                }
+            if (llvm::isa<ctjs::RootOp>(selected.getOwner())) { continue; }
+            auto call = llvm::dyn_cast<ctjs::CallOp>(selected.getOwner());
+            if (!call || selected.getOperandNumber() != 0 ||
+                call.getReceiver() != read.getObject() || call.getArgs().size() != *arity ||
+                entryPosition(call)->getBlock() != &entry) {
+                return refuse("class nested Map method escapes its exact receiver call");
             }
+            operations.insert(call);
         }
-        // Captures box caller locals too. Discharge these already-proved
-        // reads before a selected branch can retire their cached operations.
-        for (ctjs::CellGetOp read : cellReads) {
-            if (!spend(1 + (llvm::is_contained(bindings, read.getCell())
-                                ? read.getResult().getNumUses()
-                                : 0))) {
+    }
+    llvm::DenseMap<std::pair<mlir::Attribute, mlir::Value>, mlir::Value> entries;
+    mlir::Value elementKey;
+    llvm::MapVector<mlir::Operation *, mlir::Attribute> constants;
+    llvm::MapVector<mlir::Value, mlir::Value> children;
+    llvm::MapVector<mlir::scf::IfOp, bool> branches;
+    llvm::DenseMap<mlir::Value, mlir::Value> branchValues;
+    llvm::DenseMap<mlir::Value, llvm::StringMap<mlir::Value>> childEntries;
+    llvm::DenseMap<mlir::Value, bool> lookupTruth;
+    llvm::DenseMap<mlir::Value, mlir::Value> lookupOwners;
+    llvm::DenseSet<mlir::Operation *> lookupTests;
+    llvm::SmallVector<ctjs::CallOp> missingReads;
+    llvm::DenseSet<mlir::Value> observedChildren;
+    llvm::SmallVector<ctjs::ConstructOp> created;
+    llvm::DenseSet<mlir::Operation *> visited;
+    const auto resolved = [&](mlir::Value value) {
+        value = sourceValue(value);
+        while (true) {
+            auto next = branchValues.lookup(value);
+            if (!next) { next = children.lookup(value); }
+            if (!next || !step()) { return value; }
+            value = sourceValue(next);
+        }
+    };
+    const auto constant = [&](mlir::Value value) -> mlir::Attribute {
+        value = resolved(value);
+        auto * op = value.getDefiningOp();
+        if (auto known = constants.lookup(op)) { return known; }
+        if (auto literal = llvm::dyn_cast_or_null<ctjs::ConstantOp>(op)) {
+            return literal.getValue();
+        }
+        return {};
+    };
+    const auto truth = [](mlir::Attribute value) -> std::optional<bool> {
+        if (llvm::isa_and_nonnull<ctjs::NullAttr, ctjs::UndefinedAttr>(value)) { return false; }
+        if (auto flag = llvm::dyn_cast_or_null<ctjs::BooleanAttr>(value)) {
+            return flag.getValue();
+        }
+        if (auto number = llvm::dyn_cast_or_null<ctjs::NumberAttr>(value)) {
+            const double n = number.getDouble();
+            return n != 0 && n == n;
+        }
+        return std::nullopt;
+    };
+    const auto valueTruth = [&](mlir::Value value) -> std::optional<bool> {
+        auto found = lookupTruth.find(resolved(value));
+        return found == lookupTruth.end() ? truth(constant(value)) : found->second;
+    };
+    // This is only a candidate origin for the both-arm effect census.
+    // The ordered visit must still resolve an actually present child.
+    const auto mapCandidate = [&](auto && self, mlir::Value value, unsigned depth) -> bool {
+        if (!step() || depth == 64) { return false; }
+        value = sourceValue(value);
+        if (localMap(value)) { return true; }
+        if (auto call = value.getDefiningOp<ctjs::CallOp>()) {
+            auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+            return read && sourceValue(call.getReceiver()) == map.getResult() &&
+                   read.getObject() == call.getReceiver() &&
+                   ctjs::constantKey(read.getKey()) == "get" && call.getArgs().size() == 1;
+        }
+        auto branch = value.getDefiningOp<mlir::scf::IfOp>();
+        if (!branch || branch.getNumResults() != 1) { return false; }
+        for (auto & region : branch->getRegions()) {
+            if (!region.hasOneBlock()) { return false; }
+            auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(region.front().getTerminator());
+            if (!yield || yield.getNumOperands() != 1 ||
+                !self(self, yield.getOperand(0), depth + 1)) {
                 return false;
             }
         }
-        llvm::erase_if(cellReads, [&](ctjs::CellGetOp read) {
-            if (!llvm::is_contained(bindings, read.getCell())) { return false; }
-            cellOperations.erase(read);
-            read.getResult().replaceAllUsesWith(map.getResult());
-            eraseRooted(read);
-            return true;
-        });
-        llvm::DenseSet<mlir::Operation *> operations;
-        llvm::DenseSet<mlir::Operation *> conditional;
-        // Record `op` and its ancestors below the scope as conditional.
-        const auto enclose = [&](mlir::Operation * op) {
-            for (; op != scope; op = op->getParentOp()) {
-                if (!step()) { return false; }
-                conditional.insert(op);
-            }
-            return true;
-        };
-        llvm::SmallVector<ctjs::GetPropertyOp> selections;
-        for (mlir::OpOperand * use : sourceUses(map.getResult())) {
+        return true;
+    };
+    llvm::SmallVector<mlir::Value> observations;
+    if (!walkSteps(scope,
+                   [&](ctjs::GetPropertyOp read) {
+                       if (!mapCandidate(mapCandidate, read.getObject(), 0)) {
+                           return mlir::WalkResult::advance();
+                       }
+                       if (entryPosition(read)->getBlock() != &entry) {
+                           return refuseWalk(
+                               "class nested Map child requires ordered entry operations");
+                       }
+                       if (ctjs::constantKey(read.getKey()) == "get") {
+                           observations.push_back(read.getResult());
+                       }
+                       if (!enclose(read->getParentOp())) { return mlir::WalkResult::interrupt(); }
+                       return mlir::WalkResult::advance();
+                   }) ||
+        !reason.empty()) {
+        return false;
+    }
+    // A getter's final || null follows its inner && rather than enclosing
+    // the Map reads. Include that result flow in the same both-arm census.
+    llvm::DenseSet<mlir::Value> observed;
+    while (!observations.empty()) {
+        auto value = observations.pop_back_val();
+        if (!observed.insert(value).second) { continue; }
+        for (mlir::OpOperand * use : sourceUses(value)) {
             if (!step()) { return false; }
             auto * op = use->getOwner();
-            if (llvm::isa<ctjs::RootOp>(op)) { continue; }
-            auto * position = entryPosition(op);
-            if (position->getBlock() != &entry || !map->isBeforeInBlock(position)) {
-                return refuse("class nested Map requires ordered entry operations");
-            }
-            if (!enclose(op->getParentOp())) { return false; }
-            if (auto call = llvm::dyn_cast<ctjs::CallOp>(op);
-                call && use->getOperandNumber() == 1) {
+            if (auto call = llvm::dyn_cast<ctjs::CallOp>(op)) {
                 auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
-                if (read && read.getObject() == call.getReceiver()) { continue; }
-            }
-            auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
-            if (!read || use->getOperandNumber() != 0) {
-                return refuse("class nested Map outer owner escapes");
-            }
-            selections.push_back(read);
-            const auto key = ctjs::constantKey(read.getKey());
-            if (key == "size") {
-                operations.insert(read);
-                continue;
-            }
-            const auto arity = mapMethodArity(key);
-            if (!arity) { return refuse("class nested Map has an unproved member"); }
-            for (mlir::OpOperand & selected : read.getResult().getUses()) {
-                if (!step()) { return false; }
-                if (llvm::isa<ctjs::RootOp>(selected.getOwner())) { continue; }
-                auto call = llvm::dyn_cast<ctjs::CallOp>(selected.getOwner());
-                if (!call || selected.getOperandNumber() != 0 ||
-                    call.getReceiver() != read.getObject() || call.getArgs().size() != *arity ||
-                    entryPosition(call)->getBlock() != &entry) {
-                    return refuse("class nested Map method escapes its exact receiver call");
+                if (use->getOperandNumber() == 0 && read &&
+                    call.getReceiver() == read.getObject() &&
+                    mapCandidate(mapCandidate, read.getObject(), 0)) {
+                    observations.push_back(call.getResult());
                 }
-                operations.insert(call);
+            } else if (llvm::isa<ctjs::TruthyOp, ctjs::FromBoolOp, ctjs::UnaryOp, ctjs::CompareOp>(
+                           op)) {
+                observations.push_back(op->getResult(0));
+            } else {
+                auto branch = llvm::dyn_cast<mlir::scf::IfOp>(op);
+                if (auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(op)) {
+                    branch = llvm::dyn_cast<mlir::scf::IfOp>(yield->getParentOp());
+                }
+                if (!branch) { continue; }
+                if (entryPosition(branch)->getBlock() != &entry) {
+                    return refuse("class nested Map result requires ordered entry branches");
+                }
+                if (!enclose(branch)) { return false; }
+                llvm::append_range(observations, branch.getResults());
             }
         }
-        llvm::DenseMap<std::pair<mlir::Attribute, mlir::Value>, mlir::Value> entries;
-        mlir::Value elementKey;
-        llvm::MapVector<mlir::Operation *, mlir::Attribute> constants;
-        llvm::MapVector<mlir::Value, mlir::Value> children;
-        llvm::MapVector<mlir::scf::IfOp, bool> branches;
-        llvm::DenseMap<mlir::Value, mlir::Value> branchValues;
-        llvm::DenseMap<mlir::Value, llvm::StringMap<mlir::Value>> childEntries;
-        llvm::DenseMap<mlir::Value, bool> lookupTruth;
-        llvm::DenseMap<mlir::Value, mlir::Value> lookupOwners;
-        llvm::DenseSet<mlir::Operation *> lookupTests;
-        llvm::SmallVector<ctjs::CallOp> missingReads;
-        llvm::DenseSet<mlir::Value> observedChildren;
-        llvm::SmallVector<ctjs::ConstructOp> created;
-        llvm::DenseSet<mlir::Operation *> visited;
-        const auto resolved = [&](mlir::Value value) {
-            value = sourceValue(value);
-            while (true) {
-                auto next = branchValues.lookup(value);
-                if (!next) { next = children.lookup(value); }
-                if (!next || !step()) { return value; }
-                value = sourceValue(next);
-            }
-        };
-        const auto constant = [&](mlir::Value value) -> mlir::Attribute {
-            value = resolved(value);
-            auto * op = value.getDefiningOp();
-            if (auto known = constants.lookup(op)) { return known; }
-            if (auto literal = llvm::dyn_cast_or_null<ctjs::ConstantOp>(op)) {
-                return literal.getValue();
-            }
-            return {};
-        };
-        const auto truth = [](mlir::Attribute value) -> std::optional<bool> {
-            if (llvm::isa_and_nonnull<ctjs::NullAttr, ctjs::UndefinedAttr>(value)) { return false; }
-            if (auto flag = llvm::dyn_cast_or_null<ctjs::BooleanAttr>(value)) {
-                return flag.getValue();
-            }
-            if (auto number = llvm::dyn_cast_or_null<ctjs::NumberAttr>(value)) {
-                const double n = number.getDouble();
-                return n != 0 && n == n;
-            }
-            return std::nullopt;
-        };
-        const auto valueTruth = [&](mlir::Value value) -> std::optional<bool> {
-            auto found = lookupTruth.find(resolved(value));
-            return found == lookupTruth.end() ? truth(constant(value)) : found->second;
-        };
-        // This is only a candidate origin for the both-arm effect census.
-        // The ordered visit must still resolve an actually present child.
-        const auto mapCandidate = [&](auto && self, mlir::Value value, unsigned depth) -> bool {
-            if (!step() || depth == 64) { return false; }
-            value = sourceValue(value);
-            if (localMap(value)) { return true; }
-            if (auto call = value.getDefiningOp<ctjs::CallOp>()) {
-                auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
-                return read && sourceValue(call.getReceiver()) == map.getResult() &&
-                       read.getObject() == call.getReceiver() &&
-                       ctjs::constantKey(read.getKey()) == "get" && call.getArgs().size() == 1;
-            }
-            auto branch = value.getDefiningOp<mlir::scf::IfOp>();
-            if (!branch || branch.getNumResults() != 1) { return false; }
-            for (auto & region : branch->getRegions()) {
-                if (!region.hasOneBlock()) { return false; }
-                auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(region.front().getTerminator());
-                if (!yield || yield.getNumOperands() != 1 ||
-                    !self(self, yield.getOperand(0), depth + 1)) {
-                    return false;
-                }
-            }
-            return true;
-        };
-        llvm::SmallVector<mlir::Value> observations;
-        const auto childBranches = scope.walk([&](ctjs::GetPropertyOp read) {
-            if (!step()) { return mlir::WalkResult::interrupt(); }
-            if (!mapCandidate(mapCandidate, read.getObject(), 0)) {
-                return mlir::WalkResult::advance();
-            }
-            if (entryPosition(read)->getBlock() != &entry) {
-                refuse("class nested Map child requires ordered entry operations");
-                return mlir::WalkResult::interrupt();
-            }
-            if (ctjs::constantKey(read.getKey()) == "get") {
-                observations.push_back(read.getResult());
-            }
-            if (!enclose(read->getParentOp())) { return mlir::WalkResult::interrupt(); }
-            return mlir::WalkResult::advance();
-        });
-        if (childBranches.wasInterrupted() || !reason.empty()) { return false; }
-        // A getter's final || null follows its inner && rather than enclosing
-        // the Map reads. Include that result flow in the same both-arm census.
-        llvm::DenseSet<mlir::Value> observed;
-        while (!observations.empty()) {
-            auto value = observations.pop_back_val();
-            if (!observed.insert(value).second) { continue; }
-            for (mlir::OpOperand * use : sourceUses(value)) {
-                if (!step()) { return false; }
-                auto * op = use->getOwner();
-                if (auto call = llvm::dyn_cast<ctjs::CallOp>(op)) {
-                    auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
-                    if (use->getOperandNumber() == 0 && read &&
-                        call.getReceiver() == read.getObject() &&
-                        mapCandidate(mapCandidate, read.getObject(), 0)) {
-                        observations.push_back(call.getResult());
-                    }
-                } else if (llvm::isa<ctjs::TruthyOp, ctjs::FromBoolOp, ctjs::UnaryOp,
-                                     ctjs::CompareOp>(op)) {
-                    observations.push_back(op->getResult(0));
-                } else {
-                    auto branch = llvm::dyn_cast<mlir::scf::IfOp>(op);
-                    if (auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(op)) {
-                        branch = llvm::dyn_cast<mlir::scf::IfOp>(yield->getParentOp());
-                    }
-                    if (!branch) { continue; }
-                    if (entryPosition(branch)->getBlock() != &entry) {
-                        return refuse("class nested Map result requires ordered entry branches");
-                    }
-                    if (!enclose(branch)) { return false; }
-                    llvm::append_range(observations, branch.getResults());
-                }
+    }
+    llvm::DenseSet<mlir::Block *> diagnostics;
+    for (mlir::Operation * op : conditional) {
+        for (auto & region : op->getRegions()) {
+            if (!step()) { return false; }
+            if (region.hasOneBlock() &&
+                diagnosticArm(
+                    region.front(),
+                    [&](mlir::Value value) { return mapCandidate(mapCandidate, value, 0); },
+                    [&] { return step(); })) {
+                diagnostics.insert(&region.front());
             }
         }
-        llvm::DenseSet<mlir::Block *> diagnostics;
-        for (mlir::Operation * op : conditional) {
-            for (auto & region : op->getRegions()) {
-                if (!step()) { return false; }
-                if (region.hasOneBlock() &&
-                    diagnosticArm(
-                        region.front(),
-                        [&](mlir::Value value) { return mapCandidate(mapCandidate, value, 0); },
-                        [&] { return step(); })) {
-                    diagnostics.insert(&region.front());
-                }
-            }
+    }
+    // Check both arms before discarding either. These operations cannot
+    // retain cached class/cell/closure facts or invoke user code.
+    for (mlir::Operation * op : conditional) {
+        auto branch = llvm::dyn_cast<mlir::scf::IfOp>(op);
+        if (!branch || branch.getNumResults() > 1) {
+            return refuse("class nested Map branch carries unproved values");
         }
-        // Check both arms before discarding either. These operations cannot
-        // retain cached class/cell/closure facts or invoke user code.
-        for (mlir::Operation * op : conditional) {
-            auto branch = llvm::dyn_cast<mlir::scf::IfOp>(op);
-            if (!branch || branch.getNumResults() > 1) {
-                return refuse("class nested Map branch carries unproved values");
-            }
-            const auto checked = branch.walk([&](mlir::Operation * nested) {
-                if (!step()) { return mlir::WalkResult::interrupt(); }
+        if (!walkSteps(branch, [&](mlir::Operation * nested) {
                 if (diagnostics.contains(nested->getBlock())) { return mlir::WalkResult::skip(); }
-                if (llvm::isa<ctjs::ConstantOp, ctjs::RootOp, ctjs::TruthyOp, ctjs::FromBoolOp,
-                              mlir::scf::YieldOp, mlir::scf::IfOp>(nested)) {
-                    return mlir::WalkResult::advance();
-                }
-                if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(nested);
-                    unary && unary.getKind() == ctjs::UnaryKind::Not) {
-                    return mlir::WalkResult::advance();
-                }
-                if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(nested);
-                    compare && compare.getKind() == ctjs::CompareKind::StrictEq) {
+                if (llvm::isa<mlir::scf::IfOp>(nested) || inertScalarOp(nested)) {
                     return mlir::WalkResult::advance();
                 }
                 if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(nested);
@@ -374,367 +380,339 @@ bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope, const HostCont
                         return mlir::WalkResult::advance();
                     }
                 }
-                refuse("class nested Map branch contains an unproved effect or observer");
-                return mlir::WalkResult::interrupt();
-            });
-            if (checked.wasInterrupted()) { return false; }
-        }
-        // A set returns the outer identity. Only unused yield transport can
-        // disappear with that owner; a cell, observer or escape must still refuse.
-        const auto unusedResult = [&](mlir::Value value) {
-            llvm::SmallVector<mlir::Value> pending{value};
-            llvm::DenseSet<mlir::Value> seen;
-            while (!pending.empty()) {
-                auto current = pending.pop_back_val();
-                if (!seen.insert(current).second) { continue; }
-                for (mlir::OpOperand & use : current.getUses()) {
-                    if (!step()) { return false; }
-                    if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
-                    auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(use.getOwner());
-                    auto branch = yield ? llvm::dyn_cast<mlir::scf::IfOp>(yield->getParentOp())
-                                        : mlir::scf::IfOp{};
-                    if (!branch || !conditional.contains(branch) || branch.getNumResults() != 1 ||
-                        use.getOperandNumber() != 0) {
-                        return false;
-                    }
-                    pending.push_back(branch.getResult(0));
-                }
-            }
-            return true;
-        };
-        for (mlir::Operation * op : operations) {
-            if (!step()) { return false; }
-            auto call = llvm::dyn_cast<ctjs::CallOp>(op);
-            if (!call) { continue; }
-            const auto action =
-                ctjs::constantKey(call.getCallee().getDefiningOp<ctjs::GetPropertyOp>().getKey());
-            if ((action == "clear" || action == "set") && !unusedResult(call.getResult())) {
-                return refuse("class nested Map mutation result escapes");
-            }
-        }
-        const auto visit = [&](auto && self, mlir::Block & block, unsigned depth) -> bool {
-            if (depth == 64) { return refuse("class nested Map branch nesting exhausted"); }
-            if (diagnostics.contains(&block)) {
-                return refuse("class nested Map conflict observer is reachable");
-            }
-            for (mlir::Operation & op : block) {
-                if (!step()) { return false; }
-                visited.insert(&op);
-                if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(op);
-                    branch && conditional.contains(branch)) {
-                    auto known = valueTruth(branch.getCondition());
-                    if (!known) {
-                        return refuse("class nested Map branch condition is not proved");
-                    }
-                    branches[branch] = *known;
-                    auto & selected = *known ? branch.getThenRegion() : branch.getElseRegion();
-                    if (selected.empty()) { continue; }
-                    if (!selected.hasOneBlock() || selected.front().getNumArguments() ||
-                        !llvm::isa<mlir::scf::YieldOp>(selected.front().getTerminator()) ||
-                        !self(self, selected.front(), depth + 1)) {
-                        return refuse("class nested Map branch lacks an exact selected arm");
-                    }
-                    auto yield = llvm::cast<mlir::scf::YieldOp>(selected.front().getTerminator());
-                    if (yield.getNumOperands() != branch.getNumResults()) {
-                        return refuse("class nested Map branch lacks an exact selected result");
-                    }
-                    for (auto [result, value] :
-                         llvm::zip(branch.getResults(), yield.getOperands())) {
-                        if (!step()) { return false; }
-                        branchValues[result] = resolved(value);
-                    }
-                    continue;
-                }
-                if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(op);
-                    made && localMap(made.getResult())) {
-                    if (&block != &entry) { created.push_back(made); }
-                    if (made != map) { childEntries.try_emplace(made.getResult()); }
-                }
-                if (auto test = llvm::dyn_cast<ctjs::TruthyOp>(op)) {
-                    if (auto flag = valueTruth(test.getValue())) {
-                        constants[&op] = ctjs::BooleanAttr::get(module.getContext(), *flag);
-                        if (lookupTruth.contains(resolved(test.getValue()))) {
-                            lookupTests.insert(&op);
-                            observedChildren.insert(lookupOwners.lookup(resolved(test.getValue())));
-                        }
-                    }
-                } else if (auto boxed = llvm::dyn_cast<ctjs::FromBoolOp>(op)) {
-                    if (auto value = constant(boxed.getBit())) { constants[&op] = value; }
-                } else if (auto test = llvm::dyn_cast<ctjs::UnaryOp>(op);
-                           test && test.getKind() == ctjs::UnaryKind::Not) {
-                    if (auto flag = truth(constant(test.getOperand()))) {
-                        constants[&op] = ctjs::BooleanAttr::get(module.getContext(), !*flag);
-                    }
-                } else if (auto test = llvm::dyn_cast<ctjs::CompareOp>(op);
-                           test && test.getKind() == ctjs::CompareKind::StrictEq) {
-                    auto left = constant(test.getLhs()), right = constant(test.getRhs());
-                    if (left && right && truth(left).has_value() && truth(right).has_value()) {
-                        bool equal = left == right;
-                        if (auto number = llvm::dyn_cast<ctjs::NumberAttr>(left)) {
-                            auto other = llvm::dyn_cast<ctjs::NumberAttr>(right);
-                            equal = other && number.getDouble() == other.getDouble();
-                        }
-                        constants[&op] = ctjs::BooleanAttr::get(module.getContext(), equal);
-                    }
-                }
-                if (!operations.contains(&op)) {
-                    auto call = llvm::dyn_cast<ctjs::CallOp>(op);
-                    auto read = call ? call.getCallee().getDefiningOp<ctjs::GetPropertyOp>()
-                                     : llvm::dyn_cast<ctjs::GetPropertyOp>(op);
-                    auto child = read ? localMap(resolved(read.getObject())) : ctjs::ConstructOp{};
-                    if (!child || child == map) { continue; }
-                    auto found = childEntries.find(child.getResult());
-                    if (found == childEntries.end()) {
-                        return refuse("class nested Map child lacks an ordered allocation");
-                    }
-                    auto & contents = found->second;
-                    const auto action = ctjs::constantKey(read.getKey());
-                    if (!call) {
-                        if (action == "size") {
-                            constants[&op] = ctjs::NumberAttr::get(
-                                module.getContext(),
-                                std::bit_cast<uint64_t>(static_cast<double>(contents.size())));
-                            observedChildren.insert(child.getResult());
-                        }
-                        continue;
-                    }
-                    const auto arity = mapMethodArity(action);
-                    if (call.getReceiver() != read.getObject() || call.getArgs().size() != arity) {
-                        return refuse("class nested Map child has an unproved invocation");
-                    }
-                    if (action == "clear") {
-                        contents.clear();
-                        continue;
-                    }
-                    auto key =
-                        llvm::dyn_cast_or_null<ctjs::StringAttr>(constant(call.getArgs()[0]));
-                    if (!key) {
-                        return refuse("class nested Map child requires literal String keys");
-                    }
-                    if (action == "set") {
-                        contents[key.getValue()] = resolved(call.getArgs()[1]);
-                    } else if (action == "get") {
-                        auto record = contents.lookup(key.getValue());
-                        if (!record || record.getDefiningOp<ctjs::ConstructOp>()) {
-                            lookupTruth[call.getResult()] = bool(record);
-                            lookupOwners[call.getResult()] = child.getResult();
-                            if (!record) { missingReads.push_back(call); }
-                        }
-                    } else {
-                        constants[&op] = ctjs::BooleanAttr::get(module.getContext(),
-                                                                contents.contains(key.getValue()));
-                        observedChildren.insert(child.getResult());
-                        if (action == "delete") { contents.erase(key.getValue()); }
-                    }
-                    continue;
-                }
-                if (llvm::isa<ctjs::GetPropertyOp>(op)) {
-                    constants[&op] = ctjs::NumberAttr::get(
-                        module.getContext(),
-                        std::bit_cast<uint64_t>(static_cast<double>(entries.size())));
-                    continue;
-                }
-                auto call = llvm::cast<ctjs::CallOp>(op);
-                const auto action = ctjs::constantKey(
-                    call.getCallee().getDefiningOp<ctjs::GetPropertyOp>().getKey());
-                if (action == "clear") {
-                    entries.clear();
-                    continue;
-                }
-                auto origin = resolved(call.getArgs()[0]);
-                auto text = ctjs::constantAttr<ctjs::StringAttr>(origin);
-                std::pair<mlir::Attribute, mlir::Value> identity{text, {}};
-                if (!text) {
-                    auto fresh = origin.getDefiningOp<ctjs::CreateObjectOp>();
-                    auto input = llvm::dyn_cast<mlir::BlockArgument>(origin);
-                    const bool element = declaredElementInput(contract, scope, input);
-                    if ((!fresh || fresh->getBlock() != &entry) && !element) {
-                        return refuse("class nested Map requires literal String, fresh object "
-                                      "or exact DOM input keys");
-                    }
-                    if (element) {
-                        // Once the previous key is absent, either alias partition
-                        // starts with the same empty DOM-key state. Saved children
-                        // keep their allocation identity independently of this key.
-                        if (elementKey && elementKey != input && entries.count({{}, elementKey})) {
-                            return refuse("class nested Map DOM inputs require an alias proof");
-                        }
-                        elementKey = input;
-                    }
-                    identity.second = origin;
-                }
-                if (action == "set") {
-                    auto value = resolved(call.getArgs()[1]);
-                    auto child = localMap(value);
-                    if (!child || child == map ||
-                        (!maps.contains(child.getResult()) &&
-                         !llvm::is_contained(created, child))) {
-                        return refuse("class nested Map requires a selected child owner");
-                    }
-                    entries[identity] = child.getResult();
-                } else if (action == "get") {
-                    auto child = entries.lookup(identity);
-                    if (!child) { return refuse("class nested Map get requires a present child"); }
-                    children[call.getResult()] = child;
-                } else {
-                    const bool present = entries.count(identity) != 0;
-                    constants[&op] = ctjs::BooleanAttr::get(module.getContext(), present);
-                    if (action == "delete") { entries.erase(identity); }
-                }
-            }
-            return true;
-        };
-        if (!visit(visit, entry, 0)) { return false; }
-        // A second outer owner or a captured observer can mutate a child through
-        // an alias this visit did not resolve. Check every alias before folding.
-        for (mlir::Value child : observedChildren) {
-            llvm::SmallVector<mlir::Value> aliases{child};
-            for (auto [read, value] : children) {
-                if (!step()) { return false; }
-                if (resolved(value) == child) { aliases.push_back(read); }
-            }
-            for (auto [result, value] : branchValues) {
-                if (!step()) { return false; }
-                if (resolved(value) == child) { aliases.push_back(result); }
-            }
-            for (auto [cell, initial] : cells) {
-                if (!step()) { return false; }
-                if (resolved(initial) != child) { continue; }
-                for (mlir::Operation * user : cell.getUsers()) {
-                    if (!step()) { return false; }
-                    if (!cellOperations.contains(user)) {
-                        return refuse("class nested Map child occupancy has a captured observer");
-                    }
-                }
-            }
-            for (mlir::Value alias : aliases) {
-                for (mlir::OpOperand * use : sourceUses(alias)) {
-                    if (!step()) { return false; }
-                    auto * op = use->getOwner();
-                    if (llvm::isa<ctjs::RootOp>(op)) { continue; }
-                    if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
-                        read && use->getOperandNumber() == 0) {
-                        continue;
-                    }
-                    if (auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(op);
-                        yield && conditional.contains(yield->getParentOp())) {
-                        continue;
-                    }
-                    auto call = llvm::dyn_cast<ctjs::CallOp>(op);
-                    auto read = call ? call.getCallee().getDefiningOp<ctjs::GetPropertyOp>()
-                                     : ctjs::GetPropertyOp{};
-                    if (read && read.getObject() == call.getReceiver() &&
-                        (use->getOperandNumber() == 1 ||
-                         (use->getOperandNumber() == 3 && operations.contains(call) &&
-                          ctjs::constantKey(read.getKey()) == "set"))) {
-                        continue;
-                    }
-                    return refuse("class nested Map child occupancy has an outside alias");
-                }
-            }
-        }
-        // Keep child operations for ownership proof. Only outer observations
-        // and proved lookup truth tests need materialized replacements.
-        for (auto at = constants.begin(); at != constants.end();) {
-            if (!operations.contains(at->first) && !lookupTests.contains(at->first)) {
-                at = constants.erase(at);
-            } else {
-                ++at;
-            }
-        }
-        // Charge rewriting before mutation; the enclosing pass discards its
-        // private module if any later child/record/effect proof fails.
-        uint64_t cost = cells.size();
-        for (mlir::Operation * op : operations) {
-            cost += (constants.contains(op) ? 3u : 1u) + op->getResult(0).getNumUses();
-        }
-        for (mlir::Operation * op : lookupTests) { cost += 2 + op->getResult(0).getNumUses(); }
-        for (ctjs::CallOp read : missingReads) { cost += 1 + read.getResult().getNumUses(); }
-        for (auto [branch, selected] : branches) {
-            (void)selected;
-            for (mlir::Value result : branch.getResults()) {
-                cost += result.getNumUses() + cells.size();
-            }
-        }
-        for (mlir::Value cell : bindings) { cost += cell.getNumUses(); }
-        if (!spend(cost) || !reason.empty()) { return false; }
-        llvm::erase_if(selections, [&](ctjs::GetPropertyOp read) {
-            return !visited.contains(read.getOperation());
-        });
-        // DenseSet erasure can relocate other buckets, invalidating iteration.
-        operations.remove_if([&](mlir::Operation * op) { return !visited.contains(op); });
-        // Repair result and cell aliases before erasing their SSA producers.
-        // Reverse order keeps nested yields live until their contents move.
-        for (auto [branch, selected] : llvm::reverse(branches)) {
-            auto & region = selected ? branch.getThenRegion() : branch.getElseRegion();
-            if (!region.empty()) {
-                auto & contents = region.front().getOperations();
-                auto yield = llvm::cast<mlir::scf::YieldOp>(region.front().getTerminator());
-                for (auto [result, value] : llvm::zip(branch.getResults(), yield.getOperands())) {
-                    result.replaceAllUsesWith(value);
-                    for (auto & [cell, initial] : cells) {
-                        (void)cell;
-                        if (initial == result) { initial = value; }
-                    }
-                }
-                branch->getBlock()->getOperations().splice(branch->getIterator(), contents,
-                                                           contents.begin(), yield->getIterator());
-            }
-            branch.erase();
-        }
-        for (ctjs::ConstructOp made : created) {
-            maps.insert(made.getResult());
-            mapOperations.insert(made);
-            mapOperations.insert(made.getCallee().getDefiningOp());
-        }
-        for (auto [read, child] : children) { read.replaceAllUsesWith(child); }
-        for (auto [op, value] : constants) {
-            mlir::OpBuilder at(op);
-            mlir::Value literal;
-            if (lookupTests.contains(op)) {
-                literal = mlir::arith::ConstantIntOp::create(
-                    at, op->getLoc(), llvm::cast<ctjs::BooleanAttr>(value).getValue(), 1);
-            } else {
-                literal = ctjs::ConstantOp::create(at, op->getLoc(), value);
-            }
-            children[op->getResult(0)] = literal;
-            op->getResult(0).replaceAllUsesWith(literal);
-        }
-        // Cell facts cache SSA values; RAUW alone does not update this table.
-        for (auto & [cell, initial] : cells) {
-            (void)cell;
-            if (auto replacement = children.lookup(initial)) { initial = replacement; }
-        }
-        for (mlir::Operation * op : lookupTests) { eraseRooted(op); }
-        // Missing lookup results may disappear only after every observer was
-        // discharged. Present reads retain the existing record/lifetime proof.
-        for (ctjs::CallOp read : missingReads) {
-            if (rootedOnly(read)) {
-                mapOperations.erase(read);
-                eraseRooted(read);
-            }
-        }
-        for (mlir::Operation * op : operations) {
-            if (llvm::isa<ctjs::GetPropertyOp>(op)) { continue; }
-            mapOperations.erase(op);
-            eraseRooted(op);
-        }
-        for (ctjs::GetPropertyOp read : selections) {
-            mapOperations.erase(read);
-            eraseRooted(read);
-        }
-        // Fixed outer aliases are transport only; no captured observer remains.
-        for (mlir::Value cell : bindings) { retireCell(cell); }
-        maps.erase(map.getResult());
-        mapOperations.erase(map);
-        auto load = map.getCallee().getDefiningOp();
-        eraseRooted(map);
-        if (rootedOnly(load)) {
-            mapOperations.erase(load);
-            eraseRooted(load);
+                return refuseWalk(
+                    "class nested Map branch contains an unproved effect or observer");
+            })) {
+            return false;
         }
     }
-    return reason.empty();
+    // A set returns the outer identity. Only unused yield transport can
+    // disappear with that owner; a cell, observer or escape must still refuse.
+    const auto unusedResult = [&](mlir::Value value) {
+        llvm::SmallVector<mlir::Value> pending{value};
+        llvm::DenseSet<mlir::Value> seen;
+        while (!pending.empty()) {
+            auto current = pending.pop_back_val();
+            if (!seen.insert(current).second) { continue; }
+            for (mlir::OpOperand & use : current.getUses()) {
+                if (!step()) { return false; }
+                if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
+                auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(use.getOwner());
+                auto branch = yield ? llvm::dyn_cast<mlir::scf::IfOp>(yield->getParentOp())
+                                    : mlir::scf::IfOp{};
+                if (!branch || !conditional.contains(branch) || branch.getNumResults() != 1 ||
+                    use.getOperandNumber() != 0) {
+                    return false;
+                }
+                pending.push_back(branch.getResult(0));
+            }
+        }
+        return true;
+    };
+    for (mlir::Operation * op : operations) {
+        if (!step()) { return false; }
+        auto call = llvm::dyn_cast<ctjs::CallOp>(op);
+        if (!call) { continue; }
+        const auto action =
+            ctjs::constantKey(call.getCallee().getDefiningOp<ctjs::GetPropertyOp>().getKey());
+        if ((action == "clear" || action == "set") && !unusedResult(call.getResult())) {
+            return refuse("class nested Map mutation result escapes");
+        }
+    }
+    const auto visit = [&](auto && self, mlir::Block & block, unsigned depth) -> bool {
+        if (depth == 64) { return refuse("class nested Map branch nesting exhausted"); }
+        if (diagnostics.contains(&block)) {
+            return refuse("class nested Map conflict observer is reachable");
+        }
+        for (mlir::Operation & op : block) {
+            if (!step()) { return false; }
+            visited.insert(&op);
+            if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(op);
+                branch && conditional.contains(branch)) {
+                auto known = valueTruth(branch.getCondition());
+                if (!known) { return refuse("class nested Map branch condition is not proved"); }
+                branches[branch] = *known;
+                auto & selected = *known ? branch.getThenRegion() : branch.getElseRegion();
+                if (selected.empty()) { continue; }
+                if (!selected.hasOneBlock() || selected.front().getNumArguments() ||
+                    !llvm::isa<mlir::scf::YieldOp>(selected.front().getTerminator()) ||
+                    !self(self, selected.front(), depth + 1)) {
+                    return refuse("class nested Map branch lacks an exact selected arm");
+                }
+                auto yield = llvm::cast<mlir::scf::YieldOp>(selected.front().getTerminator());
+                if (yield.getNumOperands() != branch.getNumResults()) {
+                    return refuse("class nested Map branch lacks an exact selected result");
+                }
+                for (auto [result, value] : llvm::zip(branch.getResults(), yield.getOperands())) {
+                    if (!step()) { return false; }
+                    branchValues[result] = resolved(value);
+                }
+                continue;
+            }
+            if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(op);
+                made && localMap(made.getResult())) {
+                if (&block != &entry) { created.push_back(made); }
+                if (made != map) { childEntries.try_emplace(made.getResult()); }
+            }
+            if (auto test = llvm::dyn_cast<ctjs::TruthyOp>(op)) {
+                if (auto flag = valueTruth(test.getValue())) {
+                    constants[&op] = ctjs::BooleanAttr::get(module.getContext(), *flag);
+                    if (lookupTruth.contains(resolved(test.getValue()))) {
+                        lookupTests.insert(&op);
+                        observedChildren.insert(lookupOwners.lookup(resolved(test.getValue())));
+                    }
+                }
+            } else if (auto boxed = llvm::dyn_cast<ctjs::FromBoolOp>(op)) {
+                if (auto value = constant(boxed.getBit())) { constants[&op] = value; }
+            } else if (auto test = llvm::dyn_cast<ctjs::UnaryOp>(op);
+                       test && test.getKind() == ctjs::UnaryKind::Not) {
+                if (auto flag = truth(constant(test.getOperand()))) {
+                    constants[&op] = ctjs::BooleanAttr::get(module.getContext(), !*flag);
+                }
+            } else if (auto test = llvm::dyn_cast<ctjs::CompareOp>(op);
+                       test && test.getKind() == ctjs::CompareKind::StrictEq) {
+                auto left = constant(test.getLhs()), right = constant(test.getRhs());
+                if (left && right && truth(left).has_value() && truth(right).has_value()) {
+                    bool equal = left == right;
+                    if (auto number = llvm::dyn_cast<ctjs::NumberAttr>(left)) {
+                        auto other = llvm::dyn_cast<ctjs::NumberAttr>(right);
+                        equal = other && number.getDouble() == other.getDouble();
+                    }
+                    constants[&op] = ctjs::BooleanAttr::get(module.getContext(), equal);
+                }
+            }
+            if (!operations.contains(&op)) {
+                auto call = llvm::dyn_cast<ctjs::CallOp>(op);
+                auto read = call ? call.getCallee().getDefiningOp<ctjs::GetPropertyOp>()
+                                 : llvm::dyn_cast<ctjs::GetPropertyOp>(op);
+                auto child = read ? localMap(resolved(read.getObject())) : ctjs::ConstructOp{};
+                if (!child || child == map) { continue; }
+                auto found = childEntries.find(child.getResult());
+                if (found == childEntries.end()) {
+                    return refuse("class nested Map child lacks an ordered allocation");
+                }
+                auto & contents = found->second;
+                const auto action = ctjs::constantKey(read.getKey());
+                if (!call) {
+                    if (action == "size") {
+                        constants[&op] = ctjs::NumberAttr::get(
+                            module.getContext(),
+                            std::bit_cast<uint64_t>(static_cast<double>(contents.size())));
+                        observedChildren.insert(child.getResult());
+                    }
+                    continue;
+                }
+                const auto arity = mapMethodArity(action);
+                if (call.getReceiver() != read.getObject() || call.getArgs().size() != arity) {
+                    return refuse("class nested Map child has an unproved invocation");
+                }
+                if (action == "clear") {
+                    contents.clear();
+                    continue;
+                }
+                auto key = llvm::dyn_cast_or_null<ctjs::StringAttr>(constant(call.getArgs()[0]));
+                if (!key) { return refuse("class nested Map child requires literal String keys"); }
+                if (action == "set") {
+                    contents[key.getValue()] = resolved(call.getArgs()[1]);
+                } else if (action == "get") {
+                    auto record = contents.lookup(key.getValue());
+                    if (!record || record.getDefiningOp<ctjs::ConstructOp>()) {
+                        lookupTruth[call.getResult()] = bool(record);
+                        lookupOwners[call.getResult()] = child.getResult();
+                        if (!record) { missingReads.push_back(call); }
+                    }
+                } else {
+                    constants[&op] = ctjs::BooleanAttr::get(module.getContext(),
+                                                            contents.contains(key.getValue()));
+                    observedChildren.insert(child.getResult());
+                    if (action == "delete") { contents.erase(key.getValue()); }
+                }
+                continue;
+            }
+            if (llvm::isa<ctjs::GetPropertyOp>(op)) {
+                constants[&op] = ctjs::NumberAttr::get(
+                    module.getContext(),
+                    std::bit_cast<uint64_t>(static_cast<double>(entries.size())));
+                continue;
+            }
+            auto call = llvm::cast<ctjs::CallOp>(op);
+            const auto action =
+                ctjs::constantKey(call.getCallee().getDefiningOp<ctjs::GetPropertyOp>().getKey());
+            if (action == "clear") {
+                entries.clear();
+                continue;
+            }
+            auto origin = resolved(call.getArgs()[0]);
+            auto text = ctjs::constantAttr<ctjs::StringAttr>(origin);
+            std::pair<mlir::Attribute, mlir::Value> identity{text, {}};
+            if (!text) {
+                auto fresh = origin.getDefiningOp<ctjs::CreateObjectOp>();
+                auto input = llvm::dyn_cast<mlir::BlockArgument>(origin);
+                const bool element = declaredElementInput(contract, scope, input);
+                if ((!fresh || fresh->getBlock() != &entry) && !element) {
+                    return refuse("class nested Map requires literal String, fresh object "
+                                  "or exact DOM input keys");
+                }
+                if (element) {
+                    // Once the previous key is absent, either alias partition
+                    // starts with the same empty DOM-key state. Saved children
+                    // keep their allocation identity independently of this key.
+                    if (elementKey && elementKey != input && entries.count({{}, elementKey})) {
+                        return refuse("class nested Map DOM inputs require an alias proof");
+                    }
+                    elementKey = input;
+                }
+                identity.second = origin;
+            }
+            if (action == "set") {
+                auto value = resolved(call.getArgs()[1]);
+                auto child = localMap(value);
+                if (!child || child == map ||
+                    (!maps.contains(child.getResult()) && !llvm::is_contained(created, child))) {
+                    return refuse("class nested Map requires a selected child owner");
+                }
+                entries[identity] = child.getResult();
+            } else if (action == "get") {
+                auto child = entries.lookup(identity);
+                if (!child) { return refuse("class nested Map get requires a present child"); }
+                children[call.getResult()] = child;
+            } else {
+                const bool present = entries.count(identity) != 0;
+                constants[&op] = ctjs::BooleanAttr::get(module.getContext(), present);
+                if (action == "delete") { entries.erase(identity); }
+            }
+        }
+        return true;
+    };
+    if (!visit(visit, entry, 0)) { return false; }
+    // A second outer owner or a captured observer can mutate a child through
+    // an alias this visit did not resolve. Check every alias before folding.
+    for (mlir::Value child : observedChildren) {
+        llvm::SmallVector<mlir::Value> aliases{child};
+        for (auto [read, value] : children) {
+            if (!step()) { return false; }
+            if (resolved(value) == child) { aliases.push_back(read); }
+        }
+        for (auto [result, value] : branchValues) {
+            if (!step()) { return false; }
+            if (resolved(value) == child) { aliases.push_back(result); }
+        }
+        for (auto [cell, initial] : cells) {
+            if (!step()) { return false; }
+            if (resolved(initial) != child) { continue; }
+            const auto transport = transportOnlyCell(cell);
+            if (!transport) { return false; }
+            if (!*transport) {
+                return refuse("class nested Map child occupancy has a captured observer");
+            }
+        }
+        for (mlir::Value alias : aliases) {
+            for (mlir::OpOperand * use : sourceUses(alias)) {
+                if (!step()) { return false; }
+                auto * op = use->getOwner();
+                if (llvm::isa<ctjs::RootOp>(op)) { continue; }
+                if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
+                    read && use->getOperandNumber() == 0) {
+                    continue;
+                }
+                if (auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(op);
+                    yield && conditional.contains(yield->getParentOp())) {
+                    continue;
+                }
+                auto call = llvm::dyn_cast<ctjs::CallOp>(op);
+                auto read = call ? call.getCallee().getDefiningOp<ctjs::GetPropertyOp>()
+                                 : ctjs::GetPropertyOp{};
+                if (read && read.getObject() == call.getReceiver() &&
+                    (use->getOperandNumber() == 1 ||
+                     (use->getOperandNumber() == 3 && operations.contains(call) &&
+                      ctjs::constantKey(read.getKey()) == "set"))) {
+                    continue;
+                }
+                return refuse("class nested Map child occupancy has an outside alias");
+            }
+        }
+    }
+    // Keep child operations for ownership proof. Only outer observations
+    // and proved lookup truth tests need materialized replacements.
+    for (auto at = constants.begin(); at != constants.end();) {
+        if (!operations.contains(at->first) && !lookupTests.contains(at->first)) {
+            at = constants.erase(at);
+        } else {
+            ++at;
+        }
+    }
+    // Charge rewriting before mutation; the enclosing pass discards its
+    // private module if any later child/record/effect proof fails.
+    uint64_t cost = cells.size();
+    for (mlir::Operation * op : operations) {
+        cost += (constants.contains(op) ? 3u : 1u) + op->getResult(0).getNumUses();
+    }
+    for (mlir::Operation * op : lookupTests) { cost += 2 + op->getResult(0).getNumUses(); }
+    for (ctjs::CallOp read : missingReads) { cost += 1 + read.getResult().getNumUses(); }
+    for (auto [branch, selected] : branches) {
+        (void)selected;
+        for (mlir::Value result : branch.getResults()) {
+            cost += result.getNumUses() + cells.size();
+        }
+    }
+    for (mlir::Value cell : bindings) { cost += cell.getNumUses(); }
+    if (!spend(cost) || !reason.empty()) { return false; }
+    llvm::erase_if(selections, [&](ctjs::GetPropertyOp read) {
+        return !visited.contains(read.getOperation());
+    });
+    // DenseSet erasure can relocate other buckets, invalidating iteration.
+    operations.remove_if([&](mlir::Operation * op) { return !visited.contains(op); });
+    // Repair result and cell aliases before erasing their SSA producers.
+    // Reverse order keeps nested yields live until their contents move.
+    for (auto [branch, selected] : llvm::reverse(branches)) {
+        auto & region = selected ? branch.getThenRegion() : branch.getElseRegion();
+        if (!region.empty()) {
+            auto & contents = region.front().getOperations();
+            auto yield = llvm::cast<mlir::scf::YieldOp>(region.front().getTerminator());
+            for (auto [result, value] : llvm::zip(branch.getResults(), yield.getOperands())) {
+                result.replaceAllUsesWith(value);
+                retargetCells(result, value);
+            }
+            branch->getBlock()->getOperations().splice(branch->getIterator(), contents,
+                                                       contents.begin(), yield->getIterator());
+        }
+        branch.erase();
+    }
+    for (ctjs::ConstructOp made : created) { adoptMap(made); }
+    for (auto [read, child] : children) { read.replaceAllUsesWith(child); }
+    for (auto [op, value] : constants) {
+        mlir::OpBuilder at(op);
+        mlir::Value literal;
+        if (lookupTests.contains(op)) {
+            literal = mlir::arith::ConstantIntOp::create(
+                at, op->getLoc(), llvm::cast<ctjs::BooleanAttr>(value).getValue(), 1);
+        } else {
+            literal = ctjs::ConstantOp::create(at, op->getLoc(), value);
+        }
+        children[op->getResult(0)] = literal;
+        op->getResult(0).replaceAllUsesWith(literal);
+    }
+    // Cell facts cache SSA values; RAUW alone does not update this table.
+    for (mlir::Value & initial : llvm::make_second_range(cells)) {
+        if (auto replacement = children.lookup(initial)) { initial = replacement; }
+    }
+    for (mlir::Operation * op : lookupTests) { eraseRooted(op); }
+    // Missing lookup results may disappear only after every observer was
+    // discharged. Present reads retain the existing record/lifetime proof.
+    for (ctjs::CallOp read : missingReads) {
+        if (rootedOnly(read)) { eraseMapOperation(read); }
+    }
+    for (mlir::Operation * op : operations) {
+        if (!llvm::isa<ctjs::GetPropertyOp>(op)) { eraseMapOperation(op); }
+    }
+    for (ctjs::GetPropertyOp read : selections) { eraseMapOperation(read); }
+    // Fixed outer aliases are transport only; no captured observer remains.
+    for (mlir::Value cell : bindings) { retireCell(cell); }
+    maps.erase(map.getResult());
+    auto load = map.getCallee().getDefiningOp();
+    eraseMapOperation(map);
+    if (rootedOnly(load)) { eraseMapOperation(load); }
+    return true;
 }
 
 bool classInitialization::normalizeCapturedMapHelpers(ctjs::FuncOp scope) {
@@ -766,89 +744,81 @@ bool classInitialization::normalizeCapturedMapHelpers(ctjs::FuncOp scope) {
         if (!returned) { return true; }
         llvm::DenseSet<mlir::Value> captures;
         llvm::DenseSet<mlir::Block *> diagnostics;
-        const auto checked = function.walk<mlir::WalkOrder::PreOrder>([&](mlir::Operation * op) {
-            if (!step()) { return mlir::WalkResult::interrupt(); }
-            if (op == function) { return mlir::WalkResult::advance(); }
-            if (diagnostics.contains(op->getBlock())) { return mlir::WalkResult::skip(); }
-            if (auto read = llvm::dyn_cast<ctjs::LoadUpvalueOp>(op)) {
-                if (read.getIndex() != 0 ||
-                    read.getClosure() != body.getArgument(ctjs::arg_callee)) {
-                    return mlir::WalkResult::interrupt();
-                }
-                captures.insert(read.getResult());
-                return mlir::WalkResult::advance();
-            }
-            if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op)) {
-                return load.getName() == "Map" ? mlir::WalkResult::advance()
-                                               : mlir::WalkResult::interrupt();
-            }
-            if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(op)) {
-                if (!plainMapConstruction(made)) { return mlir::WalkResult::interrupt(); }
-                captures.insert(made.getResult());
-                return mlir::WalkResult::advance();
-            }
-            if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) {
-                if (!captures.contains(read.getObject())) { return mlir::WalkResult::interrupt(); }
-                const auto key = ctjs::constantKey(read.getKey());
-                return key == "size" || mapMethodArity(key) ? mlir::WalkResult::advance()
-                                                            : mlir::WalkResult::interrupt();
-            }
-            if (auto call = llvm::dyn_cast<ctjs::CallOp>(op)) {
-                auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
-                if (!read || !captures.contains(call.getReceiver()) ||
-                    read.getObject() != call.getReceiver()) {
-                    return mlir::WalkResult::interrupt();
-                }
-                const auto key = ctjs::constantKey(read.getKey());
-                if (call.getArgs().size() != mapMethodArity(key)) {
-                    return mlir::WalkResult::interrupt();
-                }
-                // A get is only a candidate child origin. Nested routing and
-                // the unchanged record-owner proof must establish its identity.
-                if (key == "get") { captures.insert(call.getResult()); }
-                return mlir::WalkResult::advance();
-            }
-            if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(op)) {
-                if (branch.getNumResults() > 1) { return mlir::WalkResult::interrupt(); }
-                unsigned depth = 0;
-                for (auto * parent = op; parent != function; parent = parent->getParentOp()) {
-                    if (!step()) { return mlir::WalkResult::interrupt(); }
-                    if (++depth == 64) { return mlir::WalkResult::interrupt(); }
-                }
-                for (auto & region : branch->getRegions()) {
-                    if (!region.empty() &&
-                        (!region.hasOneBlock() || region.front().getNumArguments())) {
+        if (!walkSteps<mlir::WalkOrder::PreOrder>(function, [&](mlir::Operation * op) {
+                if (op == function) { return mlir::WalkResult::advance(); }
+                if (diagnostics.contains(op->getBlock())) { return mlir::WalkResult::skip(); }
+                if (auto read = llvm::dyn_cast<ctjs::LoadUpvalueOp>(op)) {
+                    if (read.getIndex() != 0 ||
+                        read.getClosure() != body.getArgument(ctjs::arg_callee)) {
                         return mlir::WalkResult::interrupt();
                     }
-                    if (region.hasOneBlock() &&
-                        diagnosticArm(
-                            region.front(),
-                            [&](mlir::Value value) { return captures.contains(value); },
-                            [&] { return step(); })) {
-                        diagnostics.insert(&region.front());
-                    }
+                    captures.insert(read.getResult());
+                    return mlir::WalkResult::advance();
                 }
-                for (mlir::Value result : branch.getResults()) { captures.insert(result); }
-                return mlir::WalkResult::advance();
-            }
-            if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(op);
-                unary && unary.getKind() == ctjs::UnaryKind::Not) {
-                return mlir::WalkResult::advance();
-            }
-            if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(op);
-                compare && compare.getKind() == ctjs::CompareKind::StrictEq) {
-                return mlir::WalkResult::advance();
-            }
-            if (llvm::isa<ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::ReturnOp>(op)) {
-                return op->getBlock() == &body ? mlir::WalkResult::advance()
-                                               : mlir::WalkResult::interrupt();
-            }
-            return llvm::isa<ctjs::ConstantOp, ctjs::RootOp, ctjs::TruthyOp, ctjs::FromBoolOp,
-                             mlir::scf::YieldOp>(op)
-                       ? mlir::WalkResult::advance()
-                       : mlir::WalkResult::interrupt();
-        });
-        if (checked.wasInterrupted()) { return reason.empty(); }
+                if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op)) {
+                    return load.getName() == "Map" ? mlir::WalkResult::advance()
+                                                   : mlir::WalkResult::interrupt();
+                }
+                if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(op)) {
+                    if (!plainMapConstruction(made)) { return mlir::WalkResult::interrupt(); }
+                    captures.insert(made.getResult());
+                    return mlir::WalkResult::advance();
+                }
+                if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) {
+                    if (!captures.contains(read.getObject())) {
+                        return mlir::WalkResult::interrupt();
+                    }
+                    const auto key = ctjs::constantKey(read.getKey());
+                    return key == "size" || mapMethodArity(key) ? mlir::WalkResult::advance()
+                                                                : mlir::WalkResult::interrupt();
+                }
+                if (auto call = llvm::dyn_cast<ctjs::CallOp>(op)) {
+                    auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+                    if (!read || !captures.contains(call.getReceiver()) ||
+                        read.getObject() != call.getReceiver()) {
+                        return mlir::WalkResult::interrupt();
+                    }
+                    const auto key = ctjs::constantKey(read.getKey());
+                    if (call.getArgs().size() != mapMethodArity(key)) {
+                        return mlir::WalkResult::interrupt();
+                    }
+                    // A get is only a candidate child origin. Nested routing and
+                    // the unchanged record-owner proof must establish its identity.
+                    if (key == "get") { captures.insert(call.getResult()); }
+                    return mlir::WalkResult::advance();
+                }
+                if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(op)) {
+                    if (branch.getNumResults() > 1) { return mlir::WalkResult::interrupt(); }
+                    unsigned depth = 0;
+                    for (auto * parent = op; parent != function; parent = parent->getParentOp()) {
+                        if (!step()) { return mlir::WalkResult::interrupt(); }
+                        if (++depth == 64) { return mlir::WalkResult::interrupt(); }
+                    }
+                    for (auto & region : branch->getRegions()) {
+                        if (!region.empty() &&
+                            (!region.hasOneBlock() || region.front().getNumArguments())) {
+                            return mlir::WalkResult::interrupt();
+                        }
+                        if (region.hasOneBlock() &&
+                            diagnosticArm(
+                                region.front(),
+                                [&](mlir::Value value) { return captures.contains(value); },
+                                [&] { return step(); })) {
+                            diagnostics.insert(&region.front());
+                        }
+                    }
+                    for (mlir::Value result : branch.getResults()) { captures.insert(result); }
+                    return mlir::WalkResult::advance();
+                }
+                if (llvm::isa<ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::ReturnOp>(op)) {
+                    return op->getBlock() == &body ? mlir::WalkResult::advance()
+                                                   : mlir::WalkResult::interrupt();
+                }
+                return inertScalarOp(op) ? mlir::WalkResult::advance()
+                                         : mlir::WalkResult::interrupt();
+            })) {
+            return reason.empty();
+        }
         for (mlir::OpOperand & use : body.getArgument(ctjs::arg_callee).getUses()) {
             if (!step()) { return false; }
             if (!llvm::isa<ctjs::LoadUpvalueOp, ctjs::RootOp>(use.getOwner())) { return true; }
@@ -861,12 +831,11 @@ bool classInitialization::normalizeCapturedMapHelpers(ctjs::FuncOp scope) {
             helperCell = cell;
         }
         if (helperCell) {
-            for (mlir::Operation * user : helperCell.getUsers()) {
-                if (!step()) { return false; }
-                // sourceUses omits capture transport: a second observer must
-                // not survive retirement of this binding.
-                if (!cellOperations.contains(user)) { return true; }
-            }
+            // sourceUses omits capture transport: a second observer must
+            // not survive retirement of this binding.
+            const auto transport = transportOnlyCell(helperCell);
+            if (!transport) { return false; }
+            if (!*transport) { return true; }
         }
         llvm::SmallVector<ctjs::GetPropertyOp> holderReads;
         ctjs::SetPropertyOp publication;
@@ -1045,18 +1014,11 @@ bool classInitialization::normalizeCapturedMapHelpers(ctjs::FuncOp scope) {
                             nested->erase();
                         }
                     });
-                    if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(cloned)) {
-                        maps.insert(made.getResult());
-                        mapOperations.insert(made);
-                        mapOperations.insert(made.getCallee().getDefiningOp());
-                    }
+                    if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(cloned)) { adoptMap(made); }
                 }
             }
             auto result = mapping.lookup(returned.getValue());
-            for (auto & [cell, initial] : cells) {
-                (void)cell;
-                if (initial == call->getResult(0)) { initial = result; }
-            }
+            retargetCells(call->getResult(0), result);
             call->getResult(0).replaceAllUsesWith(result);
             call->erase();
         }

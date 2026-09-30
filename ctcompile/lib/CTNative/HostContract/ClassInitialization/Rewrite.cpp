@@ -9,8 +9,7 @@ namespace {
 ctjs::CallDirectOp callDirect(mlir::Operation * call, ctjs::FuncOp function,
                               mlir::ValueRange extra = {}) {
     mlir::OpBuilder at(call);
-    auto absent =
-        ctjs::ConstantOp::create(at, call->getLoc(), ctjs::UndefinedAttr::get(call->getContext()));
+    auto absent = undefinedAt(at, call->getLoc());
     auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(call);
     llvm::SmallVector<mlir::Value> arguments(direct ? direct.getArgs()
                                                     : llvm::cast<ctjs::CallOp>(call).getArgs());
@@ -27,6 +26,14 @@ ctjs::CallDirectOp callDirect(mlir::Operation * call, ctjs::FuncOp function,
     return replacement;
 }
 
+// Replace every call of `read`'s result with a direct call of `function`.
+// Other users stay: they are inert roots their callers remove.
+void callDirectUsers(mlir::Operation * read, ctjs::FuncOp function) {
+    for (mlir::Operation * user : llvm::make_early_inc_range(read->getUsers())) {
+        if (llvm::isa<ctjs::CallOp>(user)) { callDirect(user, function); }
+    }
+}
+
 } // namespace
 
 bool classInitialization::transportHelperMaps() {
@@ -37,40 +44,33 @@ bool classInitialization::transportHelperMaps() {
     llvm::DenseMap<mlir::Operation *, ctjs::CreateClosureOp> closures;
     llvm::MapVector<mlir::Operation *, llvm::SmallVector<mlir::Value>> needed;
     llvm::MapVector<mlir::Operation *, ctjs::FuncOp> edges;
-    auto scanned = module.walk([&](ctjs::CreateClosureOp closure) {
-        if (!step()) { return mlir::WalkResult::interrupt(); }
-        closures[target(closure)] = closure;
-        return mlir::WalkResult::advance();
-    });
-    if (scanned.wasInterrupted()) { return false; }
-    scanned = module.walk([&](ctjs::LoadUpvalueOp read) {
-        if (!step()) { return mlir::WalkResult::interrupt(); }
-        auto function = read->getParentOfType<ctjs::FuncOp>();
-        if (auto map = mapCaptures.lookup(read.getResult()); map && helpers.contains(function)) {
-            auto & values = needed[function];
-            if (!llvm::is_contained(values, map)) { values.push_back(map); }
-        }
-        return mlir::WalkResult::advance();
-    });
-    if (scanned.wasInterrupted()) { return false; }
+    if (!walkSteps(module, [&](ctjs::CreateClosureOp closure) {
+            closures[target(closure)] = closure;
+            return mlir::WalkResult::advance();
+        })) {
+        return false;
+    }
+    if (!walkSteps(module, [&](ctjs::LoadUpvalueOp read) {
+            auto function = read->getParentOfType<ctjs::FuncOp>();
+            if (auto map = mapCaptures.lookup(read.getResult());
+                map && helpers.contains(function)) {
+                auto & values = needed[function];
+                if (!llvm::is_contained(values, map)) { values.push_back(map); }
+            }
+            return mlir::WalkResult::advance();
+        })) {
+        return false;
+    }
     if (needed.empty()) { return true; }
-    scanned = module.walk([&](mlir::Operation * op) {
-        if (!step()) { return mlir::WalkResult::interrupt(); }
-        if (!helperCalls.contains(op)) { return mlir::WalkResult::advance(); }
-        auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(op);
-        auto call = llvm::dyn_cast<ctjs::CallOp>(op);
-        auto callee = direct ? direct.getCalleeValue() : call.getCallee();
-        auto function =
-            direct ? direct.getTarget() : callableCaptures.lookup(callee.getDefiningOp());
-        if (!function) { function = target(sourceClosure(sourceValue(callee))); }
-        if (!function) {
-            refuse("class Map helper call lacks an exact target");
-            return mlir::WalkResult::interrupt();
-        }
-        edges[op] = function;
-        return mlir::WalkResult::advance();
-    });
-    if (scanned.wasInterrupted()) { return false; }
+    if (!walkSteps(module, [&](mlir::Operation * op) {
+            if (!helperCalls.contains(op)) { return mlir::WalkResult::advance(); }
+            auto function = helperCallTarget(op, true);
+            if (!function) { return refuseWalk("class Map helper call lacks an exact target"); }
+            edges[op] = function;
+            return mlir::WalkResult::advance();
+        })) {
+        return false;
+    }
     // A caller either owns the original Map or carries the same identity.
     // The bounded fixpoint includes helpers which only forward another helper.
     bool changed = true;
@@ -156,16 +156,16 @@ bool classInitialization::transportHelperMaps() {
             function.setFunctionTypeAttr(mlir::TypeAttr::get(
                 mlir::FunctionType::get(module.getContext(), block.getArgumentTypes(),
                                         function.getFunctionType().getResults())));
-            auto rewritten = function.walk([&](ctjs::LoadUpvalueOp read) {
-                if (!step()) { return mlir::WalkResult::interrupt(); }
-                if (auto value =
-                        available[operation].lookup(mapCaptures.lookup(read.getResult()))) {
-                    read.getResult().replaceAllUsesWith(value);
-                    read.erase();
-                }
-                return mlir::WalkResult::advance();
-            });
-            if (rewritten.wasInterrupted()) { return false; }
+            if (!walkSteps(function, [&](ctjs::LoadUpvalueOp read) {
+                    if (auto value =
+                            available[operation].lookup(mapCaptures.lookup(read.getResult()))) {
+                        read.getResult().replaceAllUsesWith(value);
+                        read.erase();
+                    }
+                    return mlir::WalkResult::advance();
+                })) {
+                return false;
+            }
             mapClosures.erase(closure);
             mlir::SymbolTable::setSymbolVisibility(function,
                                                    mlir::SymbolTable::Visibility::Private);
@@ -243,11 +243,7 @@ bool classInitialization::transportHelperMaps() {
         if (!spend(inertCalleeCalls.size() + cells.size())) { return false; }
         llvm::erase(inertCalleeCalls, op);
         const auto previous = op->getResult(0);
-        auto replacement = callDirect(op, function, maps);
-        for (auto & [cell, initial] : cells) {
-            (void)cell;
-            if (initial == previous) { initial = replacement.getResult(); }
-        }
+        retargetCells(previous, callDirect(op, function, maps).getResult());
     }
     return reason.empty();
 }
@@ -294,11 +290,7 @@ llvm::SmallVector<ctjs::FuncOp> classInitialization::expandHolders() {
         auto publication = llvm::dyn_cast<ctjs::StoreGlobalOp>(owner);
         auto * object = publication ? publication.getValue().getDefiningOp() : owner;
         for (auto [read, closure] : holder.reads) {
-            auto function = target(closure);
-            for (mlir::Operation * user : llvm::make_early_inc_range(read->getUsers())) {
-                // Inert roots are removed below.
-                if (llvm::isa<ctjs::CallOp>(user)) { callDirect(user, function); }
-            }
+            callDirectUsers(read, target(closure));
             eraseRooted(read);
         }
         for (ctjs::SetPropertyOp store : holder.stores) {
@@ -373,8 +365,7 @@ void classInitialization::rewrite() {
     }
     for (ctjs::CreateClosureOp closure : inertReceiverClosures) {
         mlir::OpBuilder at(closure);
-        closure.getEnclosingThisMutable().assign(ctjs::ConstantOp::create(
-            at, closure.getLoc(), ctjs::UndefinedAttr::get(module.getContext())));
+        closure.getEnclosingThisMutable().assign(undefinedAt(at, closure.getLoc()));
     }
     // Holder expansion erases its slot closures. Clear their proved capture
     // metadata first; the retained bodies still own all recorded reads.
@@ -383,11 +374,9 @@ void classInitialization::rewrite() {
     }
     const auto holderTargets = expandHolders();
     for (auto [read, function] : staticMethodReads) {
-        for (mlir::Operation * user : llvm::make_early_inc_range(read->getUsers())) {
-            // Getter/capture expansion removes the proved implicit uses.
-            // Keep the original body and frame rather than cloning its code.
-            if (llvm::isa<ctjs::CallOp>(user)) { callDirect(user, function); }
-        }
+        // Getter/capture expansion removes the proved implicit uses.
+        // Keep the original body and frame rather than cloning its code.
+        callDirectUsers(read, function);
         eraseRooted(read);
     }
     llvm::DenseMap<mlir::Operation *, llvm::SmallVector<ctjs::GetPropertyOp>> reads;
@@ -444,12 +433,7 @@ void classInitialization::rewrite() {
         read.erase();
     }
     for (ctjs::LoadUpvalueOp read : captureReads) {
-        if (auto helper = callableCaptures.lookup(read)) {
-            for (mlir::Operation * user : llvm::make_early_inc_range(read->getUsers())) {
-                // Only inert roots remain below.
-                if (llvm::isa<ctjs::CallOp>(user)) { callDirect(user, helper); }
-            }
-        }
+        if (auto helper = callableCaptures.lookup(read)) { callDirectUsers(read, helper); }
         for (mlir::Operation * root : llvm::make_early_inc_range(read->getUsers())) {
             root->erase(); // Only roots remain after captured getter expansion.
         }
@@ -496,8 +480,7 @@ void classInitialization::rewrite() {
         // callee uses were proved to be only inert callback enclosures.
         if (auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(operation)) {
             mlir::OpBuilder at(operation);
-            direct.getCalleeValueMutable().assign(ctjs::ConstantOp::create(
-                at, operation->getLoc(), ctjs::UndefinedAttr::get(module.getContext())));
+            direct.getCalleeValueMutable().assign(undefinedAt(at, operation->getLoc()));
             continue;
         }
         auto call = llvm::cast<ctjs::CallOp>(operation);

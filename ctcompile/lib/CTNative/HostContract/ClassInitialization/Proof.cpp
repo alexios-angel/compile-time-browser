@@ -3,20 +3,12 @@
 namespace ctcompile::ctnative::class_detail {
 
 bool classInitialization::proveInstanceOf(const HostContract & contract) {
+    // examine() has already required one argument per call.
     llvm::DenseMap<mlir::Value, ctjs::CallOp> completed;
-    for (ctjs::CallOp call : calls) {
-        if (!step()) { return false; }
-        auto [at, fresh] = completed.try_emplace(sourceValue(call.getArgs().front()), call);
-        if (!fresh) { at->second = {}; }
-    }
-    const auto walked = module.walk([&](ctjs::InstanceOfOp test) {
-        const auto reject = [&](llvm::StringRef message) {
-            refuse(message);
-            return mlir::WalkResult::interrupt();
-        };
-        if (!step()) { return mlir::WalkResult::interrupt(); }
+    if (!completedClasses(completed)) { return false; }
+    return walkSteps(module, [&](ctjs::InstanceOfOp test) {
         if (llvm::count(contract.initialIntrinsics, "Function") != 1) {
-            return reject("class instanceof requires the standard Function identity");
+            return refuseWalk("class instanceof requires the standard Function identity");
         }
         // The full source census excludes hook/prototype mutation and reentry.
         // Function supplies its initial inherited @@hasInstance. Only an exact
@@ -37,23 +29,24 @@ bool classInitialization::proveInstanceOf(const HostContract & contract) {
             made->getBlock() != test->getBlock() || !wanted->isBeforeInBlock(test) ||
             !initialized->isBeforeInBlock(made) || !made->isBeforeInBlock(test) ||
             methods.contains(scope) || constructors.contains(scope) || getters.contains(scope)) {
-            return reject("class instanceof requires a completed local constructor and exact "
-                          "same-block construction");
+            return refuseWalk("class instanceof requires a completed local constructor and exact "
+                              "same-block construction");
         }
         bool returned = false;
-        const auto returns = target(original).walk([&](ctjs::ReturnOp result) {
-            if (!step()) { return mlir::WalkResult::interrupt(); }
-            returned = true;
-            // Derived super normalization has already proved and preserved its
-            // receiver. Other replacement-return proofs can extend this slice.
-            if (!result.getValue().getDefiningOp<ctjs::ConstantOp>()) {
-                refuse("class instanceof constructor may replace its instance");
-                return mlir::WalkResult::interrupt();
-            }
-            return mlir::WalkResult::advance();
-        });
-        if (returns.wasInterrupted()) { return mlir::WalkResult::interrupt(); }
-        if (!returned) { return reject("class instanceof constructor has no proved completion"); }
+        if (!walkSteps(target(original), [&](ctjs::ReturnOp result) {
+                returned = true;
+                // Derived super normalization has already proved and preserved its
+                // receiver. Other replacement-return proofs can extend this slice.
+                if (!result.getValue().getDefiningOp<ctjs::ConstantOp>()) {
+                    return refuseWalk("class instanceof constructor may replace its instance");
+                }
+                return mlir::WalkResult::advance();
+            })) {
+            return mlir::WalkResult::interrupt();
+        }
+        if (!returned) {
+            return refuseWalk("class instanceof constructor has no proved completion");
+        }
         mlir::Value ancestor = original.getResult();
         bool matches = false;
         while (ancestor) {
@@ -68,7 +61,14 @@ bool classInitialization::proveInstanceOf(const HostContract & contract) {
         instanceOfResults[test] = matches;
         return mlir::WalkResult::advance();
     });
-    return !walked.wasInterrupted();
+}
+
+ctjs::FuncOp classInitialization::helperCallTarget(mlir::Operation * op, bool throughCells) {
+    auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(op);
+    auto callee = direct ? direct.getCalleeValue() : llvm::cast<ctjs::CallOp>(op).getCallee();
+    auto fn = direct ? direct.getTarget() : callableCaptures.lookup(callee.getDefiningOp());
+    if (!fn) { fn = target(sourceClosure(throughCells ? sourceValue(callee) : callee)); }
+    return fn;
 }
 
 void classInitialization::decideSlot(mlir::Value holder, ctjs::GetPropertyOp read) {
@@ -122,12 +122,12 @@ bool classInitialization::dropUnreadStatics() {
             }
         }
         for (size_t i = 0; i < result.size(); ++i) {
-            const auto walked = result[i]->walk([&](ctjs::CreateClosureOp nested) {
-                if (!step()) { return mlir::WalkResult::interrupt(); }
-                if (auto fn = target(nested)) { result.insert(fn); }
-                return mlir::WalkResult::advance();
-            });
-            if (walked.wasInterrupted()) { return false; }
+            if (!walkSteps(result[i], [&](ctjs::CreateClosureOp nested) {
+                    if (auto fn = target(nested)) { result.insert(fn); }
+                    return mlir::WalkResult::advance();
+                })) {
+                return false;
+            }
         }
         return true;
     };
@@ -141,29 +141,29 @@ bool classInitialization::dropUnreadStatics() {
         }
         llvm::StringSet<> read;
         bool dynamic = false;
-        const auto walked = module.walk([&](ctjs::GetPropertyOp get) {
-            if (!step()) { return mlir::WalkResult::interrupt(); }
-            if (excluded.contains(get->getParentOfType<ctjs::FuncOp>())) {
+        if (!walkSteps(module, [&](ctjs::GetPropertyOp get) {
+                if (excluded.contains(get->getParentOfType<ctjs::FuncOp>())) {
+                    return mlir::WalkResult::advance();
+                }
+                const auto key = ctjs::constantKey(get.getKey());
+                if (!key.empty()) {
+                    read.insert(key);
+                    return mlir::WalkResult::advance();
+                }
+                // Only a class value, a receiver or a constructor read can name a
+                // static method through a computed key.
+                const auto object = sourceValue(get.getObject());
+                auto argument = llvm::dyn_cast<mlir::BlockArgument>(object);
+                auto owner = object.getDefiningOp<ctjs::GetPropertyOp>();
+                dynamic |= (argument && argument.getArgNumber() == ctjs::arg_receiver &&
+                            argument.getOwner()->isEntryBlock() &&
+                            llvm::isa<ctjs::FuncOp>(argument.getOwner()->getParentOp())) ||
+                           object.getDefiningOp<ctjs::CreateClosureOp>() ||
+                           (owner && ctjs::constantKey(owner.getKey()) == "constructor");
                 return mlir::WalkResult::advance();
-            }
-            const auto key = ctjs::constantKey(get.getKey());
-            if (!key.empty()) {
-                read.insert(key);
-                return mlir::WalkResult::advance();
-            }
-            // Only a class value, a receiver or a constructor read can name a
-            // static method through a computed key.
-            const auto object = sourceValue(get.getObject());
-            auto argument = llvm::dyn_cast<mlir::BlockArgument>(object);
-            auto owner = object.getDefiningOp<ctjs::GetPropertyOp>();
-            dynamic |= (argument && argument.getArgNumber() == ctjs::arg_receiver &&
-                        argument.getOwner()->isEntryBlock() &&
-                        llvm::isa<ctjs::FuncOp>(argument.getOwner()->getParentOp())) ||
-                       object.getDefiningOp<ctjs::CreateClosureOp>() ||
-                       (owner && ctjs::constantKey(owner.getKey()) == "constructor");
-            return mlir::WalkResult::advance();
-        });
-        if (walked.wasInterrupted()) { return false; }
+            })) {
+            return false;
+        }
         if (dynamic) { return true; }
         for (auto [write, key] : statics) {
             if (unread.contains(key) && read.contains(key)) {
@@ -216,27 +216,24 @@ bool classInitialization::dropUnreadStatics() {
         auto load = value.getDefiningOp<ctjs::LoadUpvalueOp>();
         auto closure =
             load ? creators.lookup(load->getParentOfType<ctjs::FuncOp>()) : ctjs::CreateClosureOp{};
-        if (!closure || load.getIndex() < 0 ||
-            static_cast<size_t>(load.getIndex()) >= closure.getUpvalues().size()) {
-            return {};
-        }
+        if (!closure || !capturesSlot(load, closure)) { return {}; }
         auto initial = cells.lookup(closure.getUpvalues()[static_cast<size_t>(load.getIndex())]);
         return initial ? sourceValue(initial) : mlir::Value{};
     };
     for (mlir::Operation * fn : dead) {
-        const auto noted = fn->walk([&](ctjs::CallOp call) {
-            if (!step()) { return mlir::WalkResult::interrupt(); }
-            auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
-            if (read) {
-                decideSlot(captured(read.getObject()), read);
-            } else if (auto callee = captured(call.getCallee())) {
-                if (auto helper = target(callee.getDefiningOp<ctjs::CreateClosureOp>())) {
-                    decidedHelpers.insert(helper);
+        if (!walkSteps(fn, [&](ctjs::CallOp call) {
+                auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+                if (read) {
+                    decideSlot(captured(read.getObject()), read);
+                } else if (auto callee = captured(call.getCallee())) {
+                    if (auto helper = target(callee.getDefiningOp<ctjs::CreateClosureOp>())) {
+                        decidedHelpers.insert(helper);
+                    }
                 }
-            }
-            return mlir::WalkResult::advance();
-        });
-        if (noted.wasInterrupted()) { return false; }
+                return mlir::WalkResult::advance();
+            })) {
+            return false;
+        }
     }
     for (mlir::Operation * home : homes) { home->erase(); }
     for (auto [write, key] : statics) {
@@ -258,189 +255,7 @@ bool classInitialization::dropUnreadStatics() {
     return true;
 }
 
-bool classInitialization::prove(const HostContract & contract, bool domEntry) {
-    auto entry = module.lookupSymbol<ctjs::FuncOp>(contract.entry);
-    if (!entry || !functionIndex(entry)) {
-        return refuse("class initialization requires a source entry");
-    }
-    if (contract.provider == HostContract::Provider::ctbrowserDOMDataSession &&
-        (entry.getBody().empty() ||
-         entry.getBody().front().getNumArguments() !=
-             ctjs::implicit_arguments + contract.elementParameters.size())) {
-        return refuse("class DOM preparation requires every entry element input");
-    }
-    // The DOM host passes an element for each of these; nothing else is one.
-    for (unsigned index : contract.elementParameters) {
-        if (domEntry && !entry.getBody().empty() &&
-            ctjs::implicit_arguments + index < entry.getBody().front().getNumArguments()) {
-            elementActuals[entry.getBody().front().getArgument(ctjs::implicit_arguments + index)] =
-                index;
-        }
-    }
-    for (mlir::Operation & op : module.getBody()->getOperations()) {
-        if (!step()) { return false; }
-        auto fn = llvm::dyn_cast<ctjs::FuncOp>(op);
-        auto index = fn ? functionIndex(fn) : std::nullopt;
-        if (!fn || !index || fn.getBody().empty() || fn.getBody().front().getNumArguments() < 3 ||
-            !functions.try_emplace(*index, fn).second) {
-            return refuse("class initialization requires complete source functions");
-        }
-    }
-    ctjs::FuncOp declaration;
-    if (functionIndex(entry) != 0) {
-        declaration = functions.lookup(0);
-        if (!declaration ||
-            !host_detail::isInertEntryDeclaration(declaration, entry, [&] { return step(); })) {
-            return refuse("class initialization requires an inert entry declaration");
-        }
-        // No host value may reenter source code before the fixed class
-        // helper. DOM preparation defers these uses to its final typed proof.
-        for (mlir::BlockArgument argument :
-             entry.getBody().front().getArguments().drop_front(ctjs::implicit_arguments)) {
-            if (!step() || (!domEntry &&
-                            contract.provider != HostContract::Provider::ctbrowserDOMDataSession &&
-                            !argument.use_empty())) {
-                return refuse("class initialization requires unused entry parameters");
-            }
-        }
-        for (mlir::OpOperand & use :
-             entry.getBody().front().getArgument(ctjs::arg_callee).getUses()) {
-            if (!step()) { return false; }
-            if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
-            if (!llvm::isa<ctjs::CreateClosureOp>(use.getOwner()) || use.getOperandNumber() != 0) {
-                return refuse("class initialization entry observes its callee identity");
-            }
-        }
-    }
-    llvm::DenseSet<int64_t> createdFunctions;
-    auto walked = module.walk([&](mlir::Operation * op) -> mlir::WalkResult {
-        if (!step()) { return mlir::WalkResult::interrupt(); }
-        if (op->hasAttr("ctjs.skipped")) {
-            refuse("class initialization cannot omit source functions");
-            return mlir::WalkResult::interrupt();
-        }
-        if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(op);
-            closure && !createdFunctions.insert(closure.getFunction()).second) {
-            refuse("class initialization requires unique source closure creation sites");
-            return mlir::WalkResult::interrupt();
-        }
-        if (op->getNumRegions() && op != module.getOperation() &&
-            !(llvm::isa<ctjs::FuncOp>(op) && op->getParentOp() == module.getOperation()) &&
-            !llvm::isa<mlir::scf::IfOp, mlir::scf::ForOp, mlir::scf::WhileOp,
-                       mlir::scf::IndexSwitchOp>(op)) {
-            refuse("class initialization contains an unchecked source region");
-            return mlir::WalkResult::interrupt();
-        }
-        if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(op)) {
-            if (domEntry && llvm::is_contained(contract.initialIntrinsics, store.getName())) {
-                refuse("declared DOM intrinsic binding is replaced by source");
-                return mlir::WalkResult::interrupt();
-            }
-            auto [at, fresh] = globals.try_emplace(store.getName(), store);
-            if (!fresh) { at->second = {}; }
-        }
-        if (auto call = llvm::dyn_cast<ctjs::CallOp>(op)) {
-            auto load = call.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
-            if (load && load.getName() == host_detail::classDefinedIntrinsic) {
-                calls.push_back(call);
-            }
-        }
-        return mlir::WalkResult::advance();
-    });
-    if (walked.wasInterrupted()) { return false; }
-    if (calls.empty()) { return refuse("source has no class initialization calls"); }
-    if (domEntry && llvm::is_contained(contract.initialIntrinsics, "Map")) {
-        // Map normalization may erase an owner or an unreachable arm. Prove
-        // the original binding and every use before consuming either one.
-        if (!spendWalk(module, declarationCost)) { return false; }
-        auto binding = classBindingContract(contract);
-        binding.initialIntrinsics.push_back("Map");
-        if (auto problem = host_detail::initialBindingProblem(module, binding); !problem.empty()) {
-            return refuse(problem);
-        }
-    }
-    if (llvm::is_contained(contract.initialIntrinsics, "Error")) {
-        walked = module.walk([&](ctjs::ConstructOp made) -> mlir::WalkResult {
-            if (!step()) { return mlir::WalkResult::interrupt(); }
-            auto load = made.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
-            if (!load || load.getName() != "Error" || made.getNewTarget() != load.getResult() ||
-                made.getArgs().size() != 1) {
-                return mlir::WalkResult::advance();
-            }
-            auto message = made.getArgs().front().getDefiningOp<ctjs::ConstantOp>();
-            if (!message || !llvm::isa<ctjs::StringAttr>(message.getValue())) {
-                return mlir::WalkResult::advance();
-            }
-            for (mlir::OpOperand & use : made.getResult().getUses()) {
-                if (!step()) { return mlir::WalkResult::interrupt(); }
-                if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
-                auto thrown = llvm::dyn_cast<ctjs::ThrowOp>(use.getOwner());
-                if (!thrown) {
-                    refuse("declared Error payload escapes its throw");
-                    return mlir::WalkResult::interrupt();
-                }
-                errorOperations.insert(thrown);
-            }
-            errorOperations.insert(load);
-            errorOperations.insert(made);
-            return mlir::WalkResult::advance();
-        });
-        if (walked.wasInterrupted()) { return false; }
-    }
-    for (ctjs::CallOp call : calls) {
-        auto scope = call->getParentOfType<ctjs::FuncOp>();
-        if (!proveCells(scope)) { return false; }
-        if (!llvm::is_contained(contract.initialIntrinsics, "Map")) { continue; }
-        for (ctjs::ConstructOp made : scope.getBody().front().getOps<ctjs::ConstructOp>()) {
-            if (!step()) { return false; }
-            if (!plainMapConstruction(made)) { continue; }
-            maps.insert(made.getResult());
-            mapOperations.insert(made);
-            mapOperations.insert(made.getCallee().getDefiningOp());
-        }
-    }
-    if (!proveHeritage(contract)) { return false; }
-    if (!expandStaticFactories() || !dropUnreadStatics()) { return false; }
-    if (!maps.empty()) {
-        llvm::SmallVector<unsigned> requiredHelpers;
-        for (ctjs::CallOp call : calls) {
-            if (!sinkCapturedPublication(call, contract, requiredHelpers)) { return false; }
-        }
-        llvm::DenseSet<mlir::Operation *> scopes;
-        for (ctjs::CallOp call : calls) {
-            if (!step()) { return false; }
-            auto scope = call->getParentOfType<ctjs::FuncOp>();
-            if (scopes.insert(scope).second &&
-                (!normalizeCapturedMapHelpers(scope) || !normalizeNestedMaps(scope, contract))) {
-                return false;
-            }
-        }
-        for (unsigned helper : requiredHelpers) {
-            if (!step()) { return false; }
-            if (functions.contains(helper)) {
-                return refuse("constructor registration requires complete captured Map expansion");
-            }
-        }
-    }
-    if (!heritage.empty()) {
-        if (auto problem =
-                host_detail::initialBindingProblem(module, classBindingContract(contract));
-            !problem.empty()) {
-            return refuse(problem);
-        }
-    }
-    for (ctjs::CallOp call : calls) {
-        if (!examine(call, contract, domEntry)) { return false; }
-    }
-    // Every class has recorded its getter reads; the census below sees the folds.
-    if (!domEntry && !foldEmptyEntries(contract)) { return false; }
-    if (!pendingSnapshots.empty()) {
-        return refuse("class own-key snapshot deferred to leaves lacks a folding leaf");
-    }
-    if (!earlyCaptures.empty()) {
-        return refuse("class local cell is observed before initialization");
-    }
-    if (!proveInstanceOf(contract)) { return false; }
+bool classInitialization::recordHelperCalls(ctjs::FuncOp entry, bool domEntry) {
     const auto recordHelper = [&](mlir::Operation * op) {
         auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(op);
         auto method = llvm::dyn_cast<ctjs::CallOp>(op);
@@ -466,8 +281,7 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
         auto & block = fn.getBody().front();
         if (localCall &&
             method.getArgs().size() + ctjs::implicit_arguments > block.getNumArguments()) {
-            refuse("class helper call has excess arguments");
-            return mlir::WalkResult::interrupt();
+            return refuseWalk("class helper call has excess arguments");
         }
         const bool entryLocal = domEntry && op->getParentOfType<ctjs::FuncOp>() == entry &&
                                 closure->getParentOfType<ctjs::FuncOp>() == entry &&
@@ -487,8 +301,7 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
             domEntryHelpers.insert(fn);
             if (method &&
                 method.getArgs().size() + ctjs::implicit_arguments > block.getNumArguments()) {
-                refuse("DOM class helper call has excess arguments");
-                return mlir::WalkResult::interrupt();
+                return refuseWalk("DOM class helper call has excess arguments");
             }
             inertCalleeCalls.push_back(op);
             capturedHelpers.insert(closure);
@@ -497,7 +310,7 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
     };
     // Prove holder targets before checking their enclosing direct callers,
     // whose receiver may only be saved by one of these unused-this arrows.
-    walked = module.walk([&](ctjs::CallOp call) { return recordHelper(call); });
+    auto walked = module.walk([&](ctjs::CallOp call) { return recordHelper(call); });
     if (walked.wasInterrupted() || !reason.empty()) { return false; }
     walked = module.walk([&](ctjs::CallDirectOp call) { return recordHelper(call); });
     if (walked.wasInterrupted() || !reason.empty()) { return false; }
@@ -516,49 +329,27 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
             if (domEntryHelpers.contains(function)) {
                 return refuse("static method reaches a helper requiring DOM body proof");
             }
-            auto scanned = function.walk([&](mlir::Operation * op) {
-                if (!step()) { return mlir::WalkResult::interrupt(); }
-                if (!helperCalls.contains(op)) { return mlir::WalkResult::advance(); }
-                auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(op);
-                auto call = llvm::dyn_cast<ctjs::CallOp>(op);
-                auto callee = direct ? direct.getCalleeValue() : call.getCallee();
-                auto fn =
-                    direct ? direct.getTarget() : callableCaptures.lookup(callee.getDefiningOp());
-                if (!fn) { fn = target(sourceClosure(callee)); }
-                if (!fn) {
-                    refuse("static method helper lacks a closed target");
-                    return mlir::WalkResult::interrupt();
-                }
-                pending.insert(fn);
-                return mlir::WalkResult::advance();
-            });
-            if (scanned.wasInterrupted() || !reason.empty()) { return false; }
+            if (!walkSteps(function,
+                           [&](mlir::Operation * op) {
+                               if (!helperCalls.contains(op)) {
+                                   return mlir::WalkResult::advance();
+                               }
+                               auto fn = helperCallTarget(op);
+                               if (!fn) {
+                                   return refuseWalk("static method helper lacks a closed target");
+                               }
+                               pending.insert(fn);
+                               return mlir::WalkResult::advance();
+                           }) ||
+                !reason.empty()) {
+                return false;
+            }
         }
     }
-    for (auto [read, object] : holderCaptures) {
-        (void)read;
-        if (!step() || !localHolders.contains(object.getDefiningOp())) {
-            return refuse("captured holder lacks a complete local callable proof");
-        }
-    }
-    for (auto & [publication, holder] : globalHolders) {
-        (void)publication;
-        for (ctjs::SetPropertyOp store : holder.stores) {
-            if (!step()) { return false; }
-            domEntryHelpers.erase(target(store.getValue().getDefiningOp<ctjs::CreateClosureOp>()));
-        }
-    }
-    if (!deferredPublications.empty()) {
-        return refuse("base publication lacks a completed unique leaf proof");
-    }
-    if (!proveMaps()) { return false; }
-    if ((domEntry || contract.provider == HostContract::Provider::ctbrowserDOMDataSession) &&
-        !forwardDOMDataFields(contract)) {
-        return false;
-    }
-    if (contract.provider == HostContract::Provider::ctbrowserDOMDataSession) {
-        if (!proveDOMDataFamily(contract)) { return false; }
-    }
+    return true;
+}
+
+bool classInitialization::decideUncalledHelpers(const HostContract & contract, bool domEntry) {
     // Every invocation the census below admits is a recorded call. A helper
     // or holder slot called in the source whose calls all sit in bodies that
     // never run - dropped or erased with a decided arm, in a leafBuilt original
@@ -566,14 +357,10 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
     // its census (the -unused-ambient controls).
     llvm::SmallVector<std::pair<mlir::Operation *, mlir::Operation *>> edges;
     llvm::SetVector<mlir::Operation *> uncalled = decidedHelpers;
-    walked = module.walk([&](mlir::Operation * op) {
+    module.walk([&](mlir::Operation * op) {
         if (!step()) { return mlir::WalkResult::interrupt(); }
         if (!helperCalls.contains(op)) { return mlir::WalkResult::advance(); }
-        auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(op);
-        auto call = llvm::dyn_cast<ctjs::CallOp>(op);
-        auto callee = direct ? direct.getCalleeValue() : call.getCallee();
-        auto fn = direct ? direct.getTarget() : callableCaptures.lookup(callee.getDefiningOp());
-        if (!fn) { fn = target(sourceClosure(callee)); }
+        auto fn = helperCallTarget(op);
         if (!fn) {
             uncalled.clear();
             return mlir::WalkResult::interrupt();
@@ -633,11 +420,24 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
         }
     }
     uncalledHelpers.insert(uncalled.begin(), uncalled.end());
+    return true;
+}
+
+bool classInitialization::censusSource(const HostContract & contract, bool domEntry,
+                                       ctjs::FuncOp entry, ctjs::FuncOp declaration) {
     // No ambient object, unknown callee, accessor, dynamic key or reflective
     // instruction can replace the fixed helper between entry and any call.
     // Reject the whole module, including suffixes and uncalled bodies.
-    walked = module.walk([&](mlir::Operation * op) -> mlir::WalkResult {
-        if (!step()) { return mlir::WalkResult::interrupt(); }
+    // A DOM entry, method or entry-helper operation left to the typed DOM proof.
+    const auto deferToDOM = [&](mlir::Operation * op) {
+        auto fn = op->getParentOfType<ctjs::FuncOp>();
+        if (!domEntry || (fn != entry && !methods.contains(fn) && !domEntryHelpers.contains(fn))) {
+            return false;
+        }
+        needsDOMMethodProof |= methods.contains(fn) || domEntryHelpers.contains(fn);
+        return true;
+    };
+    return walkSteps(module, [&](mlir::Operation * op) -> mlir::WalkResult {
         // This entire declaration was checked above. Retain it for the
         // entry provider, which separately decides whether it can be erased.
         if (declaration &&
@@ -735,14 +535,11 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
             accepted = load.getName() == host_detail::classDefinedIntrinsic ||
                        globalHolderLoads.contains(load) ||
                        static_cast<bool>(sourceClosure(load.getResult()));
-            auto fn = op->getParentOfType<ctjs::FuncOp>();
-            if (domEntry && (fn == entry || methods.contains(fn) || domEntryHelpers.contains(fn)) &&
-                load.getName() != "Error" &&
-                llvm::is_contained(contract.initialIntrinsics, load.getName())) {
-                // Only the complete typed DOM proof can authorize these
-                // identities and their uses, including unused method bodies.
+            // Only the complete typed DOM proof can authorize these
+            // identities and their uses, including unused method bodies.
+            if (load.getName() != "Error" &&
+                llvm::is_contained(contract.initialIntrinsics, load.getName()) && deferToDOM(op)) {
                 accepted = true;
-                needsDOMMethodProof |= methods.contains(fn) || domEntryHelpers.contains(fn);
             }
         }
         if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(op)) {
@@ -759,38 +556,232 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
             accepted = ctjs::ordinaryKey(key) ||
                        (helpers.contains(op->getParentOfType<ctjs::FuncOp>()) && constant &&
                         llvm::isa<ctjs::NumberAttr>(constant.getValue()));
-            auto fn = op->getParentOfType<ctjs::FuncOp>();
-            if (domEntry && (fn == entry || methods.contains(fn) || domEntryHelpers.contains(fn)) &&
-                (!constant ||
-                 (llvm::isa<ctjs::GetPropertyOp>(op) && ctjs::constantKey(key) == "toString"))) {
-                // Keep dynamic reads/writes for the complete typed DOM
-                // proof of their actual receiver, key and mutation order.
-                // Class/holder identity uses were checked separately above;
-                // unused methods still require the same private probes.
+            // Keep dynamic reads/writes for the complete typed DOM
+            // proof of their actual receiver, key and mutation order.
+            // Class/holder identity uses were checked separately above;
+            // unused methods still require the same private probes.
+            if ((!constant ||
+                 (llvm::isa<ctjs::GetPropertyOp>(op) && ctjs::constantKey(key) == "toString")) &&
+                deferToDOM(op)) {
                 accepted = true;
-                needsDOMMethodProof |= methods.contains(fn) || domEntryHelpers.contains(fn);
             }
         }
         // Calls and iterable materialization defer to complete private DOM
         // probes, including the existing snapshot/iterator identity proof.
         // Exact entry-called helpers
         // survive into the final proof; other helpers keep the strict census.
-        if (domEntry && llvm::isa<ctjs::CallOp, ctjs::IterableOp>(op)) {
-            auto fn = op->getParentOfType<ctjs::FuncOp>();
-            if (fn == entry || methods.contains(fn) || domEntryHelpers.contains(fn)) {
-                accepted = true;
-                needsDOMMethodProof |= methods.contains(fn) || domEntryHelpers.contains(fn);
-            }
-        }
+        if (llvm::isa<ctjs::CallOp, ctjs::IterableOp>(op) && deferToDOM(op)) { accepted = true; }
         if (accepted) { return mlir::WalkResult::advance(); }
         auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op);
-        refuse("class initialization source contains an unknown call, binding or reflective "
-               "effect" +
-               (load ? " (global \"" + load.getName().str() + "\")"
-                     : " (op " + op->getName().getStringRef().str() + ")"));
-        return mlir::WalkResult::interrupt();
+        return refuseWalk(
+            "class initialization source contains an unknown call, binding or reflective "
+            "effect" +
+            (load ? " (global \"" + load.getName().str() + "\")"
+                  : " (op " + op->getName().getStringRef().str() + ")"));
     });
-    if (walked.wasInterrupted()) { return false; }
+}
+
+bool classInitialization::prove(const HostContract & contract, bool domEntry) {
+    auto entry = module.lookupSymbol<ctjs::FuncOp>(contract.entry);
+    if (!entry || !functionIndex(entry)) {
+        return refuse("class initialization requires a source entry");
+    }
+    if (contract.provider == HostContract::Provider::ctbrowserDOMDataSession &&
+        (entry.getBody().empty() ||
+         entry.getBody().front().getNumArguments() !=
+             ctjs::implicit_arguments + contract.elementParameters.size())) {
+        return refuse("class DOM preparation requires every entry element input");
+    }
+    // The DOM host passes an element for each of these; nothing else is one.
+    for (unsigned index : contract.elementParameters) {
+        if (domEntry && !entry.getBody().empty() &&
+            ctjs::implicit_arguments + index < entry.getBody().front().getNumArguments()) {
+            elementActuals[entry.getBody().front().getArgument(ctjs::implicit_arguments + index)] =
+                index;
+        }
+    }
+    for (mlir::Operation & op : module.getBody()->getOperations()) {
+        if (!step()) { return false; }
+        auto fn = llvm::dyn_cast<ctjs::FuncOp>(op);
+        auto index = fn ? functionIndex(fn) : std::nullopt;
+        if (!fn || !index || fn.getBody().empty() || fn.getBody().front().getNumArguments() < 3 ||
+            !functions.try_emplace(*index, fn).second) {
+            return refuse("class initialization requires complete source functions");
+        }
+    }
+    ctjs::FuncOp declaration;
+    if (functionIndex(entry) != 0) {
+        declaration = functions.lookup(0);
+        if (!declaration ||
+            !host_detail::isInertEntryDeclaration(declaration, entry, [&] { return step(); })) {
+            return refuse("class initialization requires an inert entry declaration");
+        }
+        // No host value may reenter source code before the fixed class
+        // helper. DOM preparation defers these uses to its final typed proof.
+        for (mlir::BlockArgument argument :
+             entry.getBody().front().getArguments().drop_front(ctjs::implicit_arguments)) {
+            if (!step() || (!domEntry &&
+                            contract.provider != HostContract::Provider::ctbrowserDOMDataSession &&
+                            !argument.use_empty())) {
+                return refuse("class initialization requires unused entry parameters");
+            }
+        }
+        for (mlir::OpOperand & use :
+             entry.getBody().front().getArgument(ctjs::arg_callee).getUses()) {
+            if (!step()) { return false; }
+            if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
+            if (!llvm::isa<ctjs::CreateClosureOp>(use.getOwner()) || use.getOperandNumber() != 0) {
+                return refuse("class initialization entry observes its callee identity");
+            }
+        }
+    }
+    llvm::DenseSet<int64_t> createdFunctions;
+    if (!walkSteps(module, [&](mlir::Operation * op) -> mlir::WalkResult {
+            if (op->hasAttr("ctjs.skipped")) {
+                return refuseWalk("class initialization cannot omit source functions");
+            }
+            if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(op);
+                closure && !createdFunctions.insert(closure.getFunction()).second) {
+                return refuseWalk(
+                    "class initialization requires unique source closure creation sites");
+            }
+            if (op->getNumRegions() && op != module.getOperation() &&
+                !(llvm::isa<ctjs::FuncOp>(op) && op->getParentOp() == module.getOperation()) &&
+                !llvm::isa<mlir::scf::IfOp, mlir::scf::ForOp, mlir::scf::WhileOp,
+                           mlir::scf::IndexSwitchOp>(op)) {
+                return refuseWalk("class initialization contains an unchecked source region");
+            }
+            if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(op)) {
+                if (domEntry && llvm::is_contained(contract.initialIntrinsics, store.getName())) {
+                    return refuseWalk("declared DOM intrinsic binding is replaced by source");
+                }
+                auto [at, fresh] = globals.try_emplace(store.getName(), store);
+                if (!fresh) { at->second = {}; }
+            }
+            if (auto call = llvm::dyn_cast<ctjs::CallOp>(op)) {
+                auto load = call.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
+                if (load && load.getName() == host_detail::classDefinedIntrinsic) {
+                    calls.push_back(call);
+                }
+            }
+            return mlir::WalkResult::advance();
+        })) {
+        return false;
+    }
+    if (calls.empty()) { return refuse("source has no class initialization calls"); }
+    if (domEntry && llvm::is_contained(contract.initialIntrinsics, "Map")) {
+        // Map normalization may erase an owner or an unreachable arm. Prove
+        // the original binding and every use before consuming either one.
+        if (!spendWalk(module, declarationCost)) { return false; }
+        auto binding = classBindingContract(contract);
+        binding.initialIntrinsics.push_back("Map");
+        if (auto problem = host_detail::initialBindingProblem(module, binding); !problem.empty()) {
+            return refuse(problem);
+        }
+    }
+    if (llvm::is_contained(contract.initialIntrinsics, "Error")) {
+        if (!walkSteps(module, [&](ctjs::ConstructOp made) -> mlir::WalkResult {
+                auto load = made.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
+                if (!load || load.getName() != "Error" || made.getNewTarget() != load.getResult() ||
+                    made.getArgs().size() != 1) {
+                    return mlir::WalkResult::advance();
+                }
+                auto message = made.getArgs().front().getDefiningOp<ctjs::ConstantOp>();
+                if (!message || !llvm::isa<ctjs::StringAttr>(message.getValue())) {
+                    return mlir::WalkResult::advance();
+                }
+                for (mlir::OpOperand & use : made.getResult().getUses()) {
+                    if (!step()) { return mlir::WalkResult::interrupt(); }
+                    if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
+                    auto thrown = llvm::dyn_cast<ctjs::ThrowOp>(use.getOwner());
+                    if (!thrown) { return refuseWalk("declared Error payload escapes its throw"); }
+                    errorOperations.insert(thrown);
+                }
+                errorOperations.insert(load);
+                errorOperations.insert(made);
+                return mlir::WalkResult::advance();
+            })) {
+            return false;
+        }
+    }
+    for (ctjs::CallOp call : calls) {
+        auto scope = call->getParentOfType<ctjs::FuncOp>();
+        if (!proveCells(scope)) { return false; }
+        if (!llvm::is_contained(contract.initialIntrinsics, "Map")) { continue; }
+        for (ctjs::ConstructOp made : scope.getBody().front().getOps<ctjs::ConstructOp>()) {
+            if (!step()) { return false; }
+            if (plainMapConstruction(made)) { adoptMap(made); }
+        }
+    }
+    if (!proveHeritage(contract)) { return false; }
+    if (!expandStaticFactories() || !dropUnreadStatics()) { return false; }
+    if (!maps.empty()) {
+        llvm::SmallVector<unsigned> requiredHelpers;
+        for (ctjs::CallOp call : calls) {
+            if (!sinkCapturedPublication(call, contract, requiredHelpers)) { return false; }
+        }
+        llvm::DenseSet<mlir::Operation *> scopes;
+        for (ctjs::CallOp call : calls) {
+            if (!step()) { return false; }
+            auto scope = call->getParentOfType<ctjs::FuncOp>();
+            if (scopes.insert(scope).second &&
+                (!normalizeCapturedMapHelpers(scope) || !normalizeNestedMaps(scope, contract))) {
+                return false;
+            }
+        }
+        for (unsigned helper : requiredHelpers) {
+            if (!step()) { return false; }
+            if (functions.contains(helper)) {
+                return refuse("constructor registration requires complete captured Map expansion");
+            }
+        }
+    }
+    if (!heritage.empty()) {
+        if (auto problem =
+                host_detail::initialBindingProblem(module, classBindingContract(contract));
+            !problem.empty()) {
+            return refuse(problem);
+        }
+    }
+    for (ctjs::CallOp call : calls) {
+        if (!examine(call, contract, domEntry)) { return false; }
+    }
+    // Every class has recorded its getter reads; the census below sees the folds.
+    if (!domEntry && !foldEmptyEntries(contract)) { return false; }
+    if (!pendingSnapshots.empty()) {
+        return refuse("class own-key snapshot deferred to leaves lacks a folding leaf");
+    }
+    if (!earlyCaptures.empty()) {
+        return refuse("class local cell is observed before initialization");
+    }
+    if (!proveInstanceOf(contract)) { return false; }
+    if (!recordHelperCalls(entry, domEntry)) { return false; }
+    for (auto [read, object] : holderCaptures) {
+        (void)read;
+        if (!step() || !localHolders.contains(object.getDefiningOp())) {
+            return refuse("captured holder lacks a complete local callable proof");
+        }
+    }
+    for (auto & [publication, holder] : globalHolders) {
+        (void)publication;
+        for (ctjs::SetPropertyOp store : holder.stores) {
+            if (!step()) { return false; }
+            domEntryHelpers.erase(target(store.getValue().getDefiningOp<ctjs::CreateClosureOp>()));
+        }
+    }
+    if (!deferredPublications.empty()) {
+        return refuse("base publication lacks a completed unique leaf proof");
+    }
+    if (!proveMaps()) { return false; }
+    if ((domEntry || contract.provider == HostContract::Provider::ctbrowserDOMDataSession) &&
+        !forwardDOMDataFields(contract)) {
+        return false;
+    }
+    if (contract.provider == HostContract::Provider::ctbrowserDOMDataSession) {
+        if (!proveDOMDataFamily(contract)) { return false; }
+    }
+    if (!decideUncalledHelpers(contract, domEntry)) { return false; }
+    if (!censusSource(contract, domEntry, entry, declaration)) { return false; }
     for (auto & [publication, holder] : globalHolders) {
         (void)holder;
         const auto name = llvm::cast<ctjs::StoreGlobalOp>(publication).getName();
@@ -855,29 +846,26 @@ bool classInitialization::proveDOMMethods(const HostContract & contract) {
         }
         bool readKey = false;
         const auto key = ctjs::constantKey(definition.getKey());
-        const auto scanned = module.walk([&](ctjs::GetPropertyOp read) {
-            if (!step()) { return mlir::WalkResult::interrupt(); }
-            const auto selected = ctjs::constantKey(read.getKey());
-            readKey |= selected.empty() || selected == key;
-            return mlir::WalkResult::advance();
-        });
-        if (scanned.wasInterrupted()) { return false; }
+        if (!walkSteps(module, [&](ctjs::GetPropertyOp read) {
+                const auto selected = ctjs::constantKey(read.getKey());
+                readKey |= selected.empty() || selected == key;
+                return mlir::WalkResult::advance();
+            })) {
+            return false;
+        }
         if (!readKey) { unused.insert(definition); }
     }
     const auto omitUnused = [&](mlir::ModuleOp candidate, mlir::IRMapping * mapping,
                                 ctjs::SetPropertyOp keep) {
         llvm::StringSet<> dependencies;
         const auto recordDependencies = [&](ctjs::FuncOp function) {
-            return !function
-                        .walk([&](mlir::Operation * operation) {
-                            if (!step()) { return mlir::WalkResult::interrupt(); }
-                            auto call = llvm::dyn_cast<ctjs::CallDirectOp>(operation);
-                            if (call && helperNames.contains(call.getCallee())) {
-                                dependencies.insert(call.getCallee());
-                            }
-                            return mlir::WalkResult::advance();
-                        })
-                        .wasInterrupted();
+            return walkSteps(function, [&](mlir::Operation * operation) {
+                auto call = llvm::dyn_cast<ctjs::CallDirectOp>(operation);
+                if (call && helperNames.contains(call.getCallee())) {
+                    dependencies.insert(call.getCallee());
+                }
+                return mlir::WalkResult::advance();
+            });
         };
         for (mlir::Operation * operation : unused) {
             if (!step()) { return false; }
@@ -978,12 +966,14 @@ bool classInitialization::proveDOMMethods(const HostContract & contract) {
             for (size_t i = 0; i < reached.size(); ++i) {
                 auto fn = llvm::cast<ctjs::FuncOp>(reached[i]);
                 auto receiver = fn.getBody().front().getArgument(ctjs::arg_receiver);
-                auto walked = fn.walk([&](mlir::Operation * op) {
-                    if (!step()) { return mlir::WalkResult::interrupt(); }
-                    if (auto call = llvm::dyn_cast<ctjs::CallOp>(op)) { record(call, receiver); }
-                    return mlir::WalkResult::advance();
-                });
-                if (walked.wasInterrupted()) { return false; }
+                if (!walkSteps(fn, [&](mlir::Operation * op) {
+                        if (auto call = llvm::dyn_cast<ctjs::CallOp>(op)) {
+                            record(call, receiver);
+                        }
+                        return mlir::WalkResult::advance();
+                    })) {
+                    return false;
+                }
             }
         }
         return reached.contains(method);

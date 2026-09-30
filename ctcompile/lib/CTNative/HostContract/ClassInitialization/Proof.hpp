@@ -68,6 +68,29 @@ inline void setCaptures(ctjs::CreateClosureOp closure, ctjs::FuncOp function,
     function.setUpvalueCount(static_cast<uint32_t>(captures.size()));
 }
 
+// An undefined constant at `at`.
+inline ctjs::ConstantOp undefinedAt(mlir::OpBuilder & at, mlir::Location where) {
+    return ctjs::ConstantOp::create(at, where, ctjs::UndefinedAttr::get(at.getContext()));
+}
+
+// The region an index switch selects for `key`: its last equal case, else the
+// default. One `step` per case; null when `step` refuses.
+inline mlir::Region * switchArm(mlir::scf::IndexSwitchOp branch, int64_t key,
+                                llvm::function_ref<bool()> step) {
+    auto * region = &branch.getDefaultRegion();
+    for (auto [i, value] : llvm::enumerate(branch.getCases())) {
+        if (!step()) { return nullptr; }
+        if (value == key) { region = &branch.getCaseRegions()[i]; }
+    }
+    return region;
+}
+
+// Whether `load`'s slot is one of `closure`'s captures.
+inline bool capturesSlot(ctjs::LoadUpvalueOp load, ctjs::CreateClosureOp closure) {
+    return load.getIndex() >= 0 &&
+           static_cast<size_t>(load.getIndex()) < closure.getUpvalues().size();
+}
+
 inline bool rootedOnly(mlir::Operation * operation) {
     return llvm::all_of(operation->getUsers(), llvm::IsaPred<ctjs::RootOp>);
 }
@@ -167,6 +190,52 @@ struct classInitialization {
     // Precharges every operation `root` walks, keeping what was spent before a misfit.
     bool spendWalk(mlir::Operation * root, llvm::function_ref<uint64_t(mlir::Operation *)> cost);
     bool refuse(llvm::StringRef message);
+    mlir::WalkResult refuseWalk(llvm::StringRef message) {
+        refuse(message);
+        return mlir::WalkResult::interrupt();
+    }
+    // Walk `root`'s operations of `visit`'s argument type, one step before each
+    // visit. False when the budget or `visit` interrupts.
+    template <mlir::WalkOrder Order = mlir::WalkOrder::PostOrder, class Visit>
+    bool walkSteps(mlir::Operation * root, Visit && visit) {
+        using Op = mlir::detail::first_argument<std::remove_reference_t<Visit>>;
+        return !root->walk<Order>([&](Op op) -> mlir::WalkResult {
+                        if (!step()) { return mlir::WalkResult::interrupt(); }
+                        return visit(op);
+                    })
+                    .wasInterrupted();
+    }
+    // Point every cell whose recorded initial value is `from` at `to`.
+    void retargetCells(mlir::Value from, mlir::Value to) {
+        for (mlir::Value & initial : llvm::make_second_range(cells)) {
+            if (initial == from) { initial = to; }
+        }
+    }
+    // Whether only proved cell transport uses `cell`, one step per use;
+    // nullopt when the budget stops.
+    std::optional<bool> transportOnlyCell(mlir::Value cell) {
+        for (mlir::Operation * user : cell.getUsers()) {
+            if (!step()) { return std::nullopt; }
+            if (!cellOperations.contains(user)) { return false; }
+        }
+        return true;
+    }
+    // Record a plain Map construction and its constructor load.
+    void adoptMap(ctjs::ConstructOp made) {
+        maps.insert(made.getResult());
+        mapOperations.insert(made);
+        mapOperations.insert(made.getCallee().getDefiningOp());
+    }
+    // Erase a rooted Map operation and its record.
+    void eraseMapOperation(mlir::Operation * op) {
+        mapOperations.erase(op);
+        eraseRooted(op);
+    }
+    // Each class value's unique initialization call; null when initialized twice.
+    bool completedClasses(llvm::DenseMap<mlir::Value, ctjs::CallOp> & completed);
+    // The closed function a recorded helper call invokes, or null. `throughCells`
+    // resolves the callee through cell transport first.
+    ctjs::FuncOp helperCallTarget(mlir::Operation * op, bool throughCells = false);
     static bool undefined(mlir::Value value) { return ctjs::isUndefinedConstant(value); }
     ctjs::FuncOp target(ctjs::CreateClosureOp closure);
     bool proveCells(ctjs::FuncOp entry);
@@ -196,6 +265,9 @@ struct classInitialization {
                                  llvm::SmallVectorImpl<unsigned> & requiredHelpers);
     bool normalizeCapturedMapHelpers(ctjs::FuncOp scope);
     bool normalizeNestedMaps(ctjs::FuncOp scope, const HostContract & contract);
+    // One candidate outer Map of normalizeNestedMaps.
+    bool normalizeNestedMap(ctjs::FuncOp scope, const HostContract & contract,
+                            ctjs::ConstructOp map);
     bool sinkConstructorPublication(ctjs::CreateClosureOp constructor,
                                     llvm::ArrayRef<ctjs::ConstructOp> instances,
                                     const HostContract & contract);
@@ -270,6 +342,12 @@ struct classInitialization {
     bool examine(ctjs::CallOp call, const HostContract & contract, bool domEntry);
 
     bool prove(const HostContract & contract, bool domEntry = false);
+    // prove's phases: record exact helper calls, decide which helpers never
+    // run, then the complete source census of every remaining operation.
+    bool recordHelperCalls(ctjs::FuncOp entry, bool domEntry);
+    bool decideUncalledHelpers(const HostContract & contract, bool domEntry);
+    bool censusSource(const HostContract & contract, bool domEntry, ctjs::FuncOp entry,
+                      ctjs::FuncOp declaration);
     bool proveDOMDataFamily(const HostContract & contract);
     bool forwardDOMDataFields(const HostContract & contract);
     bool proveDOMDataScalars(host_detail::analyzer & analysis);

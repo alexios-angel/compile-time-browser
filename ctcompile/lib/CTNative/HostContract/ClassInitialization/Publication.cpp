@@ -192,10 +192,9 @@ bool classInitialization::sinkCapturedPublication(
     for (auto [alias, initial] : cells) {
         if (!step()) { return false; }
         if (sourceValue(initial) != constructor.getResult()) { continue; }
-        for (mlir::Operation * user : alias.getUsers()) {
-            if (!step()) { return false; }
-            if (!cellOperations.contains(user)) { return true; }
-        }
+        const auto transport = transportOnlyCell(alias);
+        if (!transport) { return false; }
+        if (!*transport) { return true; }
     }
     if (auto stop = publicationSymbolObserver(*this, function)) { return *stop; }
     // Uniform actuals can put a guarded registration in the entry block.
@@ -211,10 +210,7 @@ bool classInitialization::sinkCapturedPublication(
         if (!call || use.getOperandNumber() != 4 || call.getArgs().size() != 3) { continue; }
         auto load = call.getReceiver().getDefiningOp<ctjs::LoadUpvalueOp>();
         if (!load) { load = call.getCallee().getDefiningOp<ctjs::LoadUpvalueOp>(); }
-        if (!load || captured || load.getIndex() < 0 ||
-            static_cast<size_t>(load.getIndex()) >= constructor.getUpvalues().size()) {
-            return true;
-        }
+        if (!load || captured || !capturesSlot(load, constructor)) { return true; }
         captured = load;
     }
     if (!captured || captured.getClosure() != body.getArgument(ctjs::arg_callee) ||
@@ -236,9 +232,7 @@ bool classInitialization::sinkCapturedPublication(
         if (!step()) { return false; }
         if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
         auto load = llvm::dyn_cast<ctjs::LoadUpvalueOp>(use.getOwner());
-        if (!load || load.getIndex() < 0 ||
-            static_cast<size_t>(load.getIndex()) >= constructor.getUpvalues().size() ||
-            (!isBase && load->getBlock() != &body) ||
+        if (!load || !capturesSlot(load, constructor) || (!isBase && load->getBlock() != &body) ||
             (load.getIndex() == captureIndex && load != captured)) {
             return true;
         }
@@ -331,21 +325,18 @@ bool classInitialization::sinkCapturedPublication(
         if (!leafSetup || !normalizeSuper(leaf, constructor, contract)) { return false; }
         auto leafFunction = target(leaf);
         bool copied = false;
-        const auto restored = leafFunction.walk([&](ctjs::LoadUpvalueOp load) {
-            if (!step()) { return mlir::WalkResult::interrupt(); }
-            if (load.getIndex() < 0 ||
-                static_cast<size_t>(load.getIndex()) >= constructor.getUpvalues().size() ||
-                !undefined(load.getClosure())) {
-                refuse("inherited registration requires its original captures");
-                return mlir::WalkResult::interrupt();
-            }
-            copied |= load.getIndex() == captureIndex;
-            // Before the class census, super substitutes the base callee with
-            // undefined. Restore every original cell in the capture-free leaf.
-            load->setOperand(0, leafFunction.getBody().front().getArgument(ctjs::arg_callee));
-            return mlir::WalkResult::advance();
-        });
-        if (restored.wasInterrupted()) { return false; }
+        if (!walkSteps(leafFunction, [&](ctjs::LoadUpvalueOp load) {
+                if (!capturesSlot(load, constructor) || !undefined(load.getClosure())) {
+                    return refuseWalk("inherited registration requires its original captures");
+                }
+                copied |= load.getIndex() == captureIndex;
+                // Before the class census, super substitutes the base callee with
+                // undefined. Restore every original cell in the capture-free leaf.
+                load->setOperand(0, leafFunction.getBody().front().getArgument(ctjs::arg_callee));
+                return mlir::WalkResult::advance();
+            })) {
+            return false;
+        }
         if (!copied) { return refuse("inherited registration lost its original capture"); }
         setCaptures(leaf, leafFunction, constructor.getUpvalues());
         normalizedSuper.insert(leafFunction);
@@ -454,8 +445,7 @@ bool classInitialization::sinkCapturedPublication(
         // The formal only fed this registration. Preserve evaluation of its
         // actual, but stop transporting a host identity into the constructor.
         for (unsigned parameter : keyParameters) {
-            auto absent = ctjs::ConstantOp::create(at, invocation.getLoc(),
-                                                   ctjs::UndefinedAttr::get(module.getContext()));
+            auto absent = undefinedAt(at, invocation.getLoc());
             absent->moveBefore(made);
             made.getArgsMutable()[parameter].set(absent);
         }
@@ -468,8 +458,7 @@ bool classInitialization::sinkCapturedPublication(
             callee = ctjs::GetPropertyOp::create(at, selection.getLoc(), source, key);
             receiver = source;
         } else {
-            receiver = ctjs::ConstantOp::create(at, invocation.getLoc(),
-                                                ctjs::UndefinedAttr::get(module.getContext()));
+            receiver = undefinedAt(at, invocation.getLoc());
         }
         ctjs::CallOp::create(at, invocation.getLoc(), invocation.getType(), callee, receiver,
                              mlir::ValueRange{first, second, made.getResult()});
@@ -515,12 +504,12 @@ bool classInitialization::normalizePublicationKey(ctjs::CreateClosureOp construc
             return true;
         }
         ctjs::CreateClosureOp source;
-        auto scanned = module.walk([&](ctjs::CreateClosureOp closure) {
-            if (!step()) { return mlir::WalkResult::interrupt(); }
-            if (target(closure) == scope) { source = closure; }
-            return mlir::WalkResult::advance();
-        });
-        if (scanned.wasInterrupted()) { return false; }
+        if (!walkSteps(module, [&](ctjs::CreateClosureOp closure) {
+                if (target(closure) == scope) { source = closure; }
+                return mlir::WalkResult::advance();
+            })) {
+            return false;
+        }
         if (!source || !source.getUpvalues().empty()) { return true; }
         ctjs::StoreGlobalOp declaration;
         for (mlir::OpOperand & use : source.getResult().getUses()) {
@@ -543,22 +532,22 @@ bool classInitialization::normalizePublicationKey(ctjs::CreateClosureOp construc
         }
         llvm::DenseSet<mlir::Operation *> callers;
         bool exact = true;
-        scanned = module.walk([&](ctjs::CallDirectOp call) {
-            if (!step()) { return mlir::WalkResult::interrupt(); }
-            if (call.getTarget() != scope) { return mlir::WalkResult::advance(); }
-            auto loaded = call.getCalleeValue().getDefiningOp<ctjs::LoadGlobalOp>();
-            auto text = call->getNumOperands() == scope.getBody().front().getNumArguments()
-                            ? ctjs::constantAttr<ctjs::StringAttr>(
-                                  call->getOperand(parameter.getArgNumber()))
-                            : ctjs::StringAttr{};
-            exact &= (call.getCalleeValue() == source.getResult() ||
-                      (loaded && declaration && loaded.getName() == declaration.getName())) &&
-                     text && (!value || value == text);
-            value = text;
-            callers.insert(call);
-            return mlir::WalkResult::advance();
-        });
-        if (scanned.wasInterrupted()) { return false; }
+        if (!walkSteps(module, [&](ctjs::CallDirectOp call) {
+                if (call.getTarget() != scope) { return mlir::WalkResult::advance(); }
+                auto loaded = call.getCalleeValue().getDefiningOp<ctjs::LoadGlobalOp>();
+                auto text = call->getNumOperands() == scope.getBody().front().getNumArguments()
+                                ? ctjs::constantAttr<ctjs::StringAttr>(
+                                      call->getOperand(parameter.getArgNumber()))
+                                : ctjs::StringAttr{};
+                exact &= (call.getCalleeValue() == source.getResult() ||
+                          (loaded && declaration && loaded.getName() == declaration.getName())) &&
+                         text && (!value || value == text);
+                value = text;
+                callers.insert(call);
+                return mlir::WalkResult::advance();
+            })) {
+            return false;
+        }
         if (!exact || callers.empty()) { return true; }
         // The resolver's diagnostic table is not a caller. Every actual
         // declaration/callee was rechecked above; all other symbol attributes
@@ -604,10 +593,7 @@ bool classInitialization::normalizePublicationKey(ctjs::CreateClosureOp construc
         mlir::OpBuilder at(&scope.getBody().front(), scope.getBody().front().begin());
         auto constant = ctjs::ConstantOp::create(at, scope.getLoc(), value);
         parameter.replaceAllUsesWith(constant);
-        for (auto & [cell, initial] : cells) {
-            (void)cell;
-            if (initial == key) { initial = constant; }
-        }
+        retargetCells(key, constant);
     }
     for (ctjs::LoadUpvalueOp load : keys) {
         mlir::OpBuilder at(load);

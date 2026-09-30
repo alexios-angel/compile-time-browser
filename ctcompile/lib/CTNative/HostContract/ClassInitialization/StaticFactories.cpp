@@ -164,10 +164,7 @@ bool classInitialization::expandStaticFactories() {
                     mapping.map(body.getArgument(index), invocation.getArgs()[actual]);
                     continue;
                 }
-                if (!absent) {
-                    absent = ctjs::ConstantOp::create(
-                        at, invocation.getLoc(), ctjs::UndefinedAttr::get(module.getContext()));
-                }
+                if (!absent) { absent = undefinedAt(at, invocation.getLoc()); }
                 mapping.map(body.getArgument(index), absent);
             }
             for (mlir::Operation & op : body.without_terminator()) {

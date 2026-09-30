@@ -1294,14 +1294,14 @@ bool classInitialization::cloneReceiverMethods(
             // Keep ordinary dispatch unchanged, including calls from this
             // body back to the overridden key. Avoid all source string keys.
             llvm::StringSet<> keys;
-            auto walked = module.walk([&](ctjs::ConstantOp constant) {
-                if (!step()) { return mlir::WalkResult::interrupt(); }
-                if (auto text = llvm::dyn_cast<ctjs::StringAttr>(constant.getValue())) {
-                    keys.insert(text.getValue());
-                }
-                return mlir::WalkResult::advance();
-            });
-            if (walked.wasInterrupted()) { return false; }
+            if (!walkSteps(module, [&](ctjs::ConstantOp constant) {
+                    if (auto text = llvm::dyn_cast<ctjs::StringAttr>(constant.getValue())) {
+                        keys.insert(text.getValue());
+                    }
+                    return mlir::WalkResult::advance();
+                })) {
+                return false;
+            }
             std::string name = "__ctnative_shadow_" + std::to_string(index);
             while (keys.contains(name)) {
                 if (!step()) { return false; }
