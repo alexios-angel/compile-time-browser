@@ -64,10 +64,29 @@ void test_control_validity() {
     CHECK(!of("d").has_value());
 }
 
+// A pattern whose match runs out of the matcher's depth or step budget is a
+// mismatch, not a stack overflow: `(?:a|b)+` recursed per character.
+void test_pattern_budget() {
+    ctbrowser::browser page{ctbrowser::browser_options{400, 300}};
+    page.load_html("<!DOCTYPE html><body><input id=deep pattern=\"(?:a|b)+\" value=" +
+                   std::string(200000, 'a') +
+                   "><input id=exp pattern=\"(a+)+\" value=" + std::string(40, 'a') +
+                   "b><input id=ok pattern=\"(?:a|b)+\" value=" + std::string(100, 'b') +
+                   "></body>");
+    auto & b = page.bindings();
+    const auto of = [&](const char * id) {
+        return b.control_validity(ctbrowser_test::find_id(page, id));
+    };
+    CHECK(of("deep") == std::optional<bool>{false});
+    CHECK(of("exp") == std::optional<bool>{false});
+    CHECK(of("ok") == std::optional<bool>{true});
+}
+
 } // namespace
 
 int main() {
     test_parser_form_owner();
     test_control_validity();
+    test_pattern_budget();
     REPORT("forms_owner_validity");
 }

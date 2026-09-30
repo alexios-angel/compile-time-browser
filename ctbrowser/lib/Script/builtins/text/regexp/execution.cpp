@@ -325,6 +325,12 @@ value regexp_exec(context & cx, value rx, value subject) {
         const std::size_t start = str.locate(static_cast<std::size_t>(last)).byte;
         hit = rx::rx_search(*program, str.text, start, m, program->sticky);
     }
+    // A search that ran out of its depth or step budget has no answer: not
+    // null, which would claim the pattern does not match.
+    if (m.exhausted) {
+        cx.throw_error("RangeError", "Maximum regular expression backtracking exceeded");
+        return value::undefined();
+    }
     if (!hit) {
         if (stateful && !set_last_index(cx, rx, 0)) { return value::undefined(); }
         return value::null();

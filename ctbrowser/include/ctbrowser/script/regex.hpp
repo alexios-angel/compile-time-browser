@@ -12,6 +12,7 @@
 #include <vector>
 
 #include <ctbrowser/core/algorithms.hpp>
+#include <ctbrowser/core/depth.hpp>
 
 // A regular-expression engine.
 //
@@ -148,7 +149,31 @@ struct rx_prog {
 	std::string error;
 	// Named groups: `(?<name>...)` -> the capture slot it fills.
 	std::vector<std::pair<std::string, std::int32_t>> names;
+	// How many groups and nested classes the reader is inside (depth_guard).
+	std::int32_t parse_depth = 0;
 };
+
+// THE LIMITS, because the reader and the matcher both recurse. The reader
+// recurses once per `(` or nested `[`: past rx_max_nesting a pattern is
+// refused like a malformed one, and every walk of the tree (backreferences,
+// the destructor of its shared_ptrs) is bounded by that too. The matcher
+// recurses a few frames per repetition of a group and backtracks
+// exponentially on `(a+)+$`: past rx_max_depth nested pieces or rx_max_steps
+// pieces tried from one starting position (or rx_max_search_steps in one
+// search, rx_search) it gives up, and says so (rx_match::exhausted) - JavaScript reports it as a
+// RangeError, as V8 reports a regexp that overflows its stack, instead of the process dying on its stack
+// or never returning. A quantified single character is a loop and costs one
+// step per repetition, so `/a*/` over a megabyte is nowhere near either.
+//
+// The depth is what the STACK can hold: measured 2026-09-29, a level costs
+// about 600 bytes at -O2, 1.2 KB under ASan and 2.4 KB at -O0, so 2500 is
+// 1.5 MB of the 2 MB a MinGW .exe's main thread reserves and 6 MB of Linux's
+// 8. It is ~800 repetitions of `(?:a|b)`, or a sequence of ~1250 atoms.
+inline constexpr std::int32_t rx_max_nesting = 256;
+inline constexpr std::int32_t rx_max_depth = 2500;
+inline constexpr std::uint64_t rx_max_steps = 10'000'000;
+inline constexpr std::uint64_t rx_max_search_steps = 50'000'000;
+
 
 // A malformed pattern marks the program instead of throwing: this VM has no
 // exceptions, and a caller that gets `ok == false` can report it in its own
@@ -503,6 +528,8 @@ inline bool rx_class_set_operand(std::string_view src, std::size_t & i, rx_prog 
 // ClassSetExpression up to and past the closing `]`.
 inline bool rx_class_set_expression(std::string_view src, std::size_t & i, rx_prog & p, rx_set & out) {
 	out = rx_set{};
+	const depth_guard deeper{p.parse_depth};
+	if (p.parse_depth > rx_max_nesting) { return false; }
 	if (i < src.size() && src[i] == ']') { ++i; return true; }
 	rx_set first;
 	bool ranged = false;
@@ -956,6 +983,12 @@ inline std::shared_ptr<rx_alt> rx_parse_alt(std::string_view src, std::size_t & 
                                             bool top) {
 	auto out = std::make_shared<rx_alt>();
 	out->alts.emplace_back();
+	const depth_guard deeper{p.parse_depth};
+	if (p.parse_depth > rx_max_nesting) {
+		// Too deep: refused, and nothing more is read at this depth.
+		rx_fail(p, src);
+		return out;
+	}
 	while (i < src.size()) {
 		const char c = src[i];
 		if (c == ')') {
@@ -1078,7 +1111,23 @@ struct rx_state {
 	// backward): each atom matches the text that ENDS at the position, a
 	// sequence runs right to left, and a group's capture is [end, start).
 	bool backward = false;
+	// The budget (rx_max_depth, rx_max_steps): once `exhausted`, every piece
+	// fails at once and the search reports it rather than any match.
+	std::int32_t depth = 0;
+	std::uint64_t steps = 0;
+	std::uint64_t max_steps = rx_max_steps;
+	bool exhausted = false;
 };
+
+// Entered by every atom and piece matched; false once the budget is spent. A
+// STEP is a piece tried - backtracking runs through rx_match_piece - so the
+// loop over a quantified single character costs one however long it runs.
+inline bool rx_budget(rx_state & st, bool step) {
+	if (st.exhausted || st.depth > rx_max_depth || (step && ++st.steps > st.max_steps)) {
+		st.exhausted = true;
+	}
+	return !st.exhausted;
+}
 
 // The code point that ENDS at byte `end`, and its width - rx_utf8_decode run
 // backward. A byte that is not the end of a well-formed sequence is one code
@@ -1141,6 +1190,8 @@ using rx_cont = std::function<bool(std::size_t)>;
 inline bool rx_match_alt(const rx_alt & alt, rx_state & st, std::size_t pos, const rx_cont & k);
 
 inline bool rx_match_once(const rx_piece & pc, rx_state & st, std::size_t pos, const rx_cont & k) {
+	const depth_guard deeper{st.depth};
+	if (!rx_budget(st, false)) { return false; }
 	const std::string & s = *st.s;
 	switch (pc.kind) {
 	case rx_piece::lit:
@@ -1380,6 +1431,8 @@ inline bool rx_simple_piece(const rx_piece & pc) {
 }
 
 inline bool rx_match_piece(const rx_piece & pc, rx_state & st, std::size_t pos, const rx_cont & k) {
+	const depth_guard deeper{st.depth};
+	if (!rx_budget(st, true)) { return false; }
 	if ((pc.min != 1 || pc.max != 1) && rx_simple_piece(pc)) {
 		std::size_t end = 0;
 		const rx_cont take = [&](std::size_t np) {
@@ -1472,6 +1525,9 @@ inline bool rx_match_alt(const rx_alt & alt, rx_state & st, std::size_t pos, con
 struct rx_match {
 	std::size_t begin = 0, end = 0;
 	std::vector<std::pair<std::ptrdiff_t, std::ptrdiff_t>> caps;
+	// The search gave up (rx_max_depth / rx_max_steps) rather than finding
+	// no match; rx_search returned false.
+	bool exhausted = false;
 };
 
 // `anchored` tries `from` alone: a sticky pattern fails where it is not at
@@ -1479,6 +1535,16 @@ struct rx_match {
 // every failed sticky exec walk the rest of the input - a tokenizer fails one
 // per token, and WebIDL2's over html.idl took 21 seconds.
 inline bool rx_search(const rx_prog & p, const std::string & s, std::size_t from, rx_match & out, bool anchored = false) {
+	out.exhausted = false;
+	// rx_max_steps from each starting position, and rx_max_search_steps for
+	// the whole search: a pattern that spends most of a start's budget at
+	// every position of a long subject is the same hang, slower. Each byte
+	// of the subject adds a little, so an ordinary search over megabytes, a
+	// few steps per position, is never refused, and neither is a quadratic
+	// `/.*x/` over a line of ten thousand.
+	std::uint64_t steps = 0;
+	const std::uint64_t search_steps =
+	    rx_max_search_steps + 16 * static_cast<std::uint64_t>(s.size() - std::min(from, s.size()));
 	for (std::size_t start = from; start <= s.size(); ++start) {
 		// A MATCH STARTS ON A CODE POINT, never inside one: a continuation
 		// byte is not a character, and `[^x]` at such a position would
@@ -1494,11 +1560,21 @@ inline bool rx_search(const rx_prog & p, const std::string & s, std::size_t from
 		st.multi = p.multi;
 		st.dotall = p.dotall;
 		st.caps.assign(static_cast<std::size_t>(p.ngroups), {-1, -1});
+		st.steps = steps;
+		st.max_steps = std::min(steps + rx_max_steps, search_steps);
 		std::size_t got_end = 0;
-		if (rx_match_alt(*p.root, st, start, [&](std::size_t end) {
-			    got_end = end;
-			    return true;
-		    })) {
+		const bool hit = rx_match_alt(*p.root, st, start, [&](std::size_t end) {
+			got_end = end;
+			return true;
+		});
+		// Spent, the answer is neither: a negative lookahead that gave up
+		// would otherwise read as one that did not match.
+		if (st.exhausted) {
+			out.exhausted = true;
+			return false;
+		}
+		steps = st.steps;
+		if (hit) {
 			out.begin = start;
 			out.end = got_end;
 			out.caps = std::move(st.caps);

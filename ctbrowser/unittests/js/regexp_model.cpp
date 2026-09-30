@@ -7,6 +7,8 @@
 
 #include "vm_expect.hpp"
 
+#include <ctbrowser/script/regex.hpp>
+
 namespace {
 
 void test_accessors() {
@@ -248,6 +250,63 @@ void test_legacy_statics() {
                   "SyntaxError");
 }
 
+// The matcher recurses and backtracks; its budget (rx_max_depth,
+// rx_max_steps) and the reader's nesting cap (rx_max_nesting) make a hostile
+// pattern or subject a failed match instead of a stack overflow or a hang.
+void test_limits() {
+    namespace rx = ctbrowser::script::rx;
+    const auto search = [](std::string_view pattern, std::string_view flags,
+                           const std::string & subject) {
+        const rx::rx_prog p = rx::rx_compile(pattern, flags);
+        rx::rx_match m;
+        const bool hit = p.ok && rx::rx_search(p, subject, 0, m);
+        return std::pair{hit, m.exhausted};
+    };
+    // A quantified group recursed per repetition: 200k of them overflowed.
+    CHECK((search("^(?:a|b)+$", "", std::string(200000, 'a')) == std::pair{false, true}));
+    // Catastrophic backtracking: 2^40 ways to fail, stopped by the step budget.
+    CHECK((search("(a+)+$", "", std::string(40, 'a') + "b") == std::pair{false, true}));
+    // Given up inside a negative lookahead is not "the lookahead failed".
+    CHECK((search("(?!(a+)+$)", "", std::string(40, 'a') + "b") == std::pair{false, true}));
+    // A quantified character is a loop: one step however long the subject.
+    CHECK((search("a*", "", std::string(std::size_t{1} << 20, 'a')) == std::pair{true, false}));
+    CHECK(
+        (search("^[ab]+$", "", std::string(std::size_t{1} << 20, 'a')) == std::pair{true, false}));
+    CHECK((search("^(?:a|b)+$", "", std::string(500, 'b')) == std::pair{true, false}));
+    CHECK((search("(a+)+$", "", std::string(20, 'a')) == std::pair{true, false}));
+    // Nesting: 256 levels read, 30000 are refused rather than recursed into.
+    const auto nested = [](char open, char close, std::size_t n) {
+        return std::string(n, open) + "a" + std::string(n, close);
+    };
+    CHECK(rx::rx_compile(nested('(', ')', 250), "").ok);
+    CHECK(rx::rx_compile(nested('[', ']', 250), "v").ok);
+    CHECK(!rx::rx_compile(nested('(', ')', 30000), "").ok);
+    CHECK(!rx::rx_compile(nested('(', ')', 30000), "v").ok);
+    CHECK(!rx::rx_compile(nested('[', ']', 30000), "v").ok);
+    // In script: a pattern too deep is a SyntaxError, and a search that gave
+    // up has no answer - a RangeError, never null.
+    expect_result("try { new RegExp('['.repeat(30000) + ']'.repeat(30000), 'v'); return 'no'; }"
+                  " catch (e) { return e.name; }",
+                  "SyntaxError");
+    expect_result("try { new RegExp('('.repeat(30000) + ')'.repeat(30000)); return 'no'; }"
+                  " catch (e) { return e.name; }",
+                  "SyntaxError");
+    expect_result("try { /^(?:a|b)+$/.test('a'.repeat(200000)); return 'no'; }"
+                  " catch (e) { return e.name; }",
+                  "RangeError");
+    expect_result("try { /(a+)+$/.exec('a'.repeat(40) + 'b'); return 'no'; }"
+                  " catch (e) { return e.name; }",
+                  "RangeError");
+    expect_result("try { 'a'.repeat(40).concat('b').replace(/(a+)+$/, ''); return 'no'; }"
+                  " catch (e) { return e.name; }",
+                  "RangeError");
+    // A budget per search too: ~n steps at each of n starts is n^2/2 steps.
+    CHECK((search("a*b", "", std::string(4000, 'a')) == std::pair{false, false}));
+    CHECK((search("a*b", "", std::string(12000, 'a')) == std::pair{false, true}));
+    CHECK((search("x", "", std::string(std::size_t{1} << 22, 'a')) == std::pair{false, false}));
+    expect_result("return /a*/.exec('a'.repeat(1 << 20))[0].length;", "1048576");
+}
+
 } // namespace
 
 int main() {
@@ -258,5 +317,6 @@ int main() {
     test_symbol_methods();
     test_substitution_limits();
     test_escapes_and_repetition();
+    test_limits();
     REPORT("regexp_model");
 }
