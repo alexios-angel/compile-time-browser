@@ -245,6 +245,32 @@ void test_the_background_shorthand() {
 
 } // namespace
 
+namespace {
+
+// A HUNDRED IMPORTS OF A SHEET THAT IMPORTS THE NEXT A HUNDRED TIMES, sixteen
+// deep: 100^16 expansions inside the depth cap. The breadth is capped per
+// sheet, and the page's own rules still apply.
+void test_import_breadth_is_capped() {
+    browser page{browser_options{400, 200}};
+    for (int k = 0; k < 16; ++k) {
+        std::string css;
+        for (int i = 0; i < 100; ++i) {
+            css += "@import \"i" + std::to_string(k + 1) + ".css\";\n";
+        }
+        page.assets().add("i" + std::to_string(k) + ".css", bytes_of(css));
+    }
+    page.assets().add("i16.css", bytes_of(".x { color: rgb(1, 2, 3) }"));
+    page.load_html(R"(<html><head><link rel=stylesheet href="i0.css">
+    <style>.b { color: rgb(0, 0, 255) }</style></head>
+    <body><p class=b id=b>b</p><script>
+        console.log('color=' + getComputedStyle(document.getElementById('b')).color);
+    </script></body></html>)");
+    CHECK(page.script_error().empty());
+    CHECK_EQ(logged(page, "color="), std::string{"color=rgb(0, 0, 255)"});
+}
+
+} // namespace
+
 int main() {
     test_the_background_shorthand();
     test_leading_imports();
@@ -252,5 +278,6 @@ int main() {
     test_the_import_rule_object();
     test_the_sheets_of_a_shadow_tree();
     test_link_disabled();
+    test_import_breadth_is_capped();
     REPORT("cssom_imports");
 }

@@ -18,8 +18,21 @@ namespace {
 // `chain` is the hrefs being expanded, which refuses a cycle and caps the depth.
 // ponytail: an import's environment encoding is the document's, where CSS Syntax
 // 3 §3.2 says the importing sheet's; thread the decoded one down if a page mixes.
+//
+// THE BREADTH IS CAPPED TOO, per sheet: a hundred imports of a file that
+// imports the next a hundred times is 100^16 expansions inside the depth cap.
+// Past max_imports imports, or max_bytes of imported text, a further import
+// is skipped as one that failed to load.
+struct import_budget {
+    static constexpr std::size_t max_imports = 256;
+    static constexpr std::size_t max_bytes = 16 * 1024 * 1024;
+    std::size_t imports = 0;
+    std::size_t bytes = 0;
+};
+
 std::string expand_imports(const asset_registry & assets, std::string css, std::string_view base,
-                           std::vector<std::string> & chain, std::string_view environment) {
+                           std::vector<std::string> & chain, std::string_view environment,
+                           import_budget & budget) {
     if (chain.size() >= 16) { return css; }
     ctbrowser::atom_table atoms;
     const std::vector<ctbrowser::style::css::import_statement> imports =
@@ -32,11 +45,14 @@ std::string expand_imports(const asset_registry & assets, std::string css, std::
         at = each.end;
         const std::string href = dom_bindings::resolve_sheet_href(base, each.href);
         if (std::ranges::find(chain, href) != chain.end()) { continue; }
+        if (++budget.imports > import_budget::max_imports) { continue; }
         const std::vector<std::byte> bytes = assets.load(href);
+        budget.bytes += bytes.size();
+        if (budget.bytes > import_budget::max_bytes) { continue; }
         std::string text = ctbrowser::style::css::decode_stylesheet(
             {reinterpret_cast<const char *>(bytes.data()), bytes.size()}, {}, environment);
         chain.push_back(href);
-        text = expand_imports(assets, std::move(text), href, chain, environment);
+        text = expand_imports(assets, std::move(text), href, chain, environment, budget);
         chain.pop_back();
         // THE IMPORT'S CONDITIONS AND LAYER, as the blocks they stand for (CSS
         // Cascade 5 §5.1): `layer(a)` files the sheet's rules in layer `a` and
@@ -61,6 +77,12 @@ std::string expand_imports(const asset_registry & assets, std::string css, std::
     }
     out += css.substr(at);
     return out;
+}
+
+std::string expand_imports(const asset_registry & assets, std::string css, std::string_view base,
+                           std::vector<std::string> & chain, std::string_view environment) {
+    import_budget budget;
+    return expand_imports(assets, std::move(css), base, chain, environment, budget);
 }
 
 } // namespace
