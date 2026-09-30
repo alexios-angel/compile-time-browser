@@ -347,6 +347,21 @@ void test_the_color_well() {
                   "color(display-p3 0.791711 0.191507 0.257367)", 0.0001);
 }
 
+// A colour nests through contrast-color(), color-mix() and `from`; past the
+// depth resolve() gives up at the reader refuses it rather than recursing
+// twenty thousand frames deep.
+void test_colour_nesting_is_capped() {
+    const auto nest = [](int levels) {
+        std::string out;
+        for (int i = 0; i < levels; ++i) { out += "contrast-color("; }
+        out += "red";
+        for (int i = 0; i < levels; ++i) { out += ")"; }
+        return out;
+    };
+    CHECK(ctbrowser::style::css::check_declaration("color", nest(3)).valid);
+    CHECK(!ctbrowser::style::css::check_declaration("color", nest(20000)).valid);
+}
+
 } // namespace
 
 int main() {
@@ -357,5 +372,6 @@ int main() {
     test_the_cascade_leaves_colour_math_alone();
     test_a_colour_in_a_space();
     test_the_color_well();
+    test_colour_nesting_is_capped();
     REPORT("css_values_color");
 }

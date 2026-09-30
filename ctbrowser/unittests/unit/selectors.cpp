@@ -487,6 +487,18 @@ void test_defined() {
           "me,aa,cb");
 }
 
+namespace {
+
+// Functional pseudo-classes nest through one count; past it the selector is a
+// syntax error rather than a recursion as deep as the author typed.
+void test_nesting_past_the_cap_is_a_syntax_error() {
+    is("one(':is('.repeat(10) + '#p1' + ')'.repeat(10))", "p1");
+    is("one(':not('.repeat(40) + 'p' + ')'.repeat(40))", "threw:SyntaxError");
+    is("one(':not('.repeat(20000) + 'p' + ')'.repeat(20000))", "threw:SyntaxError");
+}
+
+} // namespace
+
 int main() {
     test_the_compound_selectors_still_work();
     test_the_four_combinators();
@@ -499,5 +511,6 @@ int main() {
     test_syntax_errors_and_the_selectors_that_are_merely_unsupported();
     test_lang_and_dir();
     test_defined();
+    test_nesting_past_the_cap_is_a_syntax_error();
     REPORT("selectors");
 }

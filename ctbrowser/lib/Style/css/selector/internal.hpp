@@ -10,6 +10,7 @@
 #include <string_view>
 
 #include <ctbrowser/core/algorithms.hpp>
+#include <ctbrowser/core/depth.hpp>
 
 namespace ctbrowser::style::css::selector_detail {
 
@@ -207,6 +208,7 @@ private:
     [[nodiscard]] bool compound_argument(std::span<const component_value> inner) {
         const std::size_t before = sheet_->selectors.size();
         selector_parser nested{*sheet_, *atoms_};
+        nested.depth_ = depth_;
         nested.nesting_ = nesting_;
         nested.in_argument_ = true;
         nested.compound_only_ = true;
@@ -217,6 +219,15 @@ private:
 
     [[nodiscard]] bool parse_functional(std::string_view name, const component_value & fn,
                                         building & into, bool & invalid) {
+        // EVERY FUNCTIONAL PSEUDO NESTS through one count, carried into each
+        // nested parser: `:not(:is(:where(:has(...))))` recurses here, and the
+        // matcher recurses over what it builds. Past the cap the selector is
+        // a syntax error, not a partial parse.
+        if (depth_ >= max_depth) {
+            invalid = true;
+            return false;
+        }
+        const depth_guard level{depth_};
         pseudo_ref ref;
         const auto inner = sheet_->children_of(fn);
         if (ascii_iequals(name, "nth-child") || ascii_iequals(name, "nth-last-child") ||
@@ -309,6 +320,7 @@ private:
         if (ascii_iequals(name, "has-slotted")) {
             const std::size_t before = sheet_->selectors.size();
             selector_parser nested{*sheet_, *atoms_};
+            nested.depth_ = depth_;
             nested.nesting_ = nesting_;
             const std::uint32_t count = nested.run(inner);
             const bool nested_bad = nested.invalid();
@@ -382,6 +394,7 @@ private:
                 std::size_t end = at;
                 while (end < inner.size() && !is_comma(inner[end])) { ++end; }
                 selector_parser one{*sheet_, *atoms_};
+                one.depth_ = depth_;
                 one.nesting_ = nesting_;
                 one.in_argument_ = true;
                 one.in_has_ = in_has_ || relative_;
@@ -416,6 +429,7 @@ private:
             // The nested list's own syntax errors are this selector's: `:not(>)` is not
             // a selector, and the flag has to come back out of the recursion to say so.
             selector_parser nested{*sheet_, *atoms_};
+            nested.depth_ = depth_;
             nested.relative_ = is_has;
             nested.in_has_ = in_has_ || relative_;
             nested.nesting_ = nesting_;
@@ -1114,6 +1128,8 @@ private:
     // (parse-not, parse-is-where; csswg-drafts#5093).
     bool compound_only_ = false;
     const nesting_context * nesting_ = nullptr;
+    static constexpr int max_depth = 32;
+    int depth_ = 0; // functional pseudo-classes around this parse, capped at max_depth
     // Per alternative: whether it wrote `&`, and whether it names the scoping
     // root (`:scope`, or `&` where that is what `&` means).
     bool saw_nesting_ = false;

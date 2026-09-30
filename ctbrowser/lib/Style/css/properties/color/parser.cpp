@@ -1,5 +1,7 @@
 #include "internal.hpp"
 
+#include <ctbrowser/core/depth.hpp>
+
 namespace ctbrowser::style::css::color_detail {
 
 [[nodiscard]] bool parse_time_answerable(const token_stream & ts, std::size_t begin,
@@ -114,6 +116,10 @@ private:
             return out;
         }
         if (t.type != token_type::function) { return nullptr; }
+        // A colour nests through `from`, color-mix() and the rest; past the
+        // depth resolve() gives up at, it is no colour.
+        if (depth_ >= max_depth) { return nullptr; }
+        const depth_guard level{depth_};
         const std::string name = ascii_lower_copy(function_name_at(at_));
         ++at_;
         skip_ws();
@@ -518,9 +524,12 @@ private:
         return out;
     }
 
+    static constexpr int max_depth = 32;
+
     const token_stream & ts_;
     std::size_t at_;
     std::size_t end_;
+    int depth_ = 0; // of color()'s functions, capped at max_depth
 };
 
 // Reader entry point.

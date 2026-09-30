@@ -7,6 +7,8 @@
 
 #include "../internal.hpp"
 
+#include <ctbrowser/core/depth.hpp>
+
 namespace ctbrowser::style::css::evaluator_detail {
 
 using namespace detail;
@@ -238,7 +240,15 @@ private:
 
     // term := <number> | <dimension> | <percentage> | <constant>
     //       | '(' sum ')' | <math-function>
+    //
+    // The ONE place the evaluator recurses - through `(` and every math
+    // function - so the nesting cap is here: past max_depth the expression is
+    // a syntax error, not a stack overflow.
+    static constexpr int max_depth = 128;
+
     [[nodiscard]] std::optional<term> single() {
+        if (depth_ >= max_depth) { return fail(); }
+        const depth_guard level{depth_};
         skip_whitespace();
         const css_token & tok = peek();
         switch (tok.type) {
@@ -555,6 +565,7 @@ private:
     bool size_symbol_ = false; // `size` is a term: the calculation of a calc-size()
     math_outcome outcome_ = math_outcome::invalid;
     std::size_t at_ = 0;
+    int depth_ = 0; // of single(), capped at max_depth
     bool ok_ = true;
     bool unresolved_ = false;
     std::uint32_t randoms_ = 0; // the random() functions read so far

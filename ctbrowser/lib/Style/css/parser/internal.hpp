@@ -11,6 +11,7 @@
 #include <vector>
 
 #include <ctbrowser/core/algorithms.hpp>
+#include <ctbrowser/core/depth.hpp>
 #include <ctbrowser/style/css/media.hpp>
 #include <ctbrowser/style/css/properties.hpp>
 #include <ctbrowser/style/css/selector.hpp>
@@ -88,6 +89,7 @@ public:
         std::vector<component_value> run;
         while (!at_eof()) { run.push_back(consume_component_value()); }
         (void)parse_selector_list(sheet_, span_of(run), *atoms_, &invalid, nesting);
+        invalid = invalid || std::ranges::any_of(run, &component_value::too_deep);
         return std::move(sheet_);
     }
 
@@ -321,6 +323,7 @@ private:
         bool invalid = false;
         const std::uint32_t count =
             parse_selector_list(sheet_, prelude, *atoms_, &invalid, nested ? &nesting : nullptr);
+        invalid = invalid || std::ranges::any_of(prelude, &component_value::too_deep);
         // A SELECTOR LIST WITH ONE INVALID SELECTOR IS INVALID WHOLE (Selectors
         // 4 §3.1), and a style rule whose prelude is not a <selector-list> is
         // dropped with its block (CSS Syntax 3 §9) - `#a::before.x, #a {}`
@@ -568,9 +571,21 @@ private:
     // sheet_.values in ONE run, because the vector reallocates while nested blocks
     // are being consumed - so a child's index is only stable once its whole run is
     // in place.
+    //
+    // NESTING IS CAPPED at max_depth: both recurse once per level, and thirty
+    // thousand `(` in one declaration would otherwise overflow the C++ stack.
+    // Past the cap the value is skipped whole, to its matching closer, and
+    // marked too_deep, which invalidates whatever declaration holds it.
+    static constexpr int max_depth = 128;
+
     [[nodiscard]] component_value consume_block() {
         const std::size_t open_index = at_;
         const token_type open = here().type;
+        const char open_char = open == token_type::open_curly    ? '{'
+                               : open == token_type::open_square ? '['
+                                                                 : '(';
+        if (depth_ >= max_depth) { return skip_too_deep(cv_kind::block, open_char); }
+        const depth_guard level{depth_};
         const token_type close = closer_for(open);
         ++at_;
         std::vector<component_value> children;
@@ -578,7 +593,7 @@ private:
         if (here().type == close) { ++at_; }
         component_value v;
         v.kind = cv_kind::block;
-        v.open = open == token_type::open_curly ? '{' : open == token_type::open_square ? '[' : '(';
+        v.open = open_char;
         v.token = static_cast<std::uint32_t>(open_index);
         v.end_token = static_cast<std::uint32_t>(at_);
         attach(v, children);
@@ -589,6 +604,8 @@ private:
     // minus the trailing `(`.
     [[nodiscard]] component_value consume_function() {
         const std::size_t name_index = at_;
+        if (depth_ >= max_depth) { return skip_too_deep(cv_kind::function, '('); }
+        const depth_guard level{depth_};
         ++at_;
         std::vector<component_value> children;
         while (!at_eof() && here().type != token_type::close_paren) {
@@ -604,7 +621,31 @@ private:
         return v;
     }
 
+    // A block or function past max_depth: its tokens up to the matching closer,
+    // counted with an explicit stack of closers rather than by recursing.
+    [[nodiscard]] component_value skip_too_deep(cv_kind kind, char open) {
+        component_value v;
+        v.kind = kind;
+        v.open = open;
+        v.too_deep = true;
+        v.token = static_cast<std::uint32_t>(at_);
+        std::vector<token_type> closers;
+        do {
+            const token_type t = here().type;
+            if (t == token_type::function || t == token_type::open_paren ||
+                t == token_type::open_square || t == token_type::open_curly) {
+                closers.push_back(closer_for(t));
+            } else if (t == closers.back()) {
+                closers.pop_back();
+            }
+            ++at_;
+        } while (!closers.empty() && !at_eof());
+        v.end_token = static_cast<std::uint32_t>(at_);
+        return v;
+    }
+
     void attach(component_value & v, const std::vector<component_value> & children) {
+        v.too_deep = std::ranges::any_of(children, &component_value::too_deep);
         if (children.empty()) { return; }
         v.first_child = static_cast<std::uint32_t>(sheet_.values.size());
         v.child_count = static_cast<std::uint32_t>(children.size());
@@ -691,6 +732,7 @@ private:
         }
         std::span<const component_value> value = run.subspan(i + 1);
         while (!value.empty() && sheet_.is_space(value.front())) { value = value.subspan(1); }
+        if (std::ranges::any_of(value, &component_value::too_deep)) { return; }
 
         raw_declaration d;
         const std::string_view property = text(name);
@@ -832,6 +874,7 @@ private:
     stylesheet sheet_;
     atom_table * atoms_;
     std::size_t at_ = 0;
+    int depth_ = 0; // of consume_block/consume_function, capped at max_depth
     std::int32_t order_ = 0;
     // The `@media` a rule being parsed sits inside. 0 is the unconditional entry.
     std::uint32_t condition_ = 0;

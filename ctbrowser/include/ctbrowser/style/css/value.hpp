@@ -48,7 +48,12 @@ struct component_value {
     // Kept so a serialiser and `@media`'s prelude walker can tell `[a]` from `(a)`
     // without going back to the token.
     char open = '\0';
-    std::uint16_t pad = 0;
+    // A block or function nested past the parser's depth limit, or one holding
+    // one: its tokens were skipped to the matching closer and it has no
+    // children. A declaration whose value holds one is invalid and dropped, as
+    // is a rule whose prelude does.
+    bool too_deep = false;
+    std::uint8_t pad = 0;
     std::uint32_t token = 0; // the first token: the preserved one, or the opener
     // ONE PAST THE LAST token belonging to this value, so [token, end_token) is
     // its whole extent - the closing bracket included.

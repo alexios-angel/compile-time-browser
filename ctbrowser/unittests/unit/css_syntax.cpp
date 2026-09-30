@@ -448,6 +448,55 @@ void test_how_much_of_bootstrap_can_match() {
     CHECK_EQ(total, std::size_t{2960});
 }
 
+// NESTING IS CAPPED, and past the cap the declaration or selector holding the
+// nesting is invalid - never a stack overflow, never a partial parse. Thirty
+// thousand `(` recursed once per level through consume_block.
+void test_deep_nesting_invalidates_only_what_holds_it() {
+    const auto nest = [](std::string_view open, std::string_view inner, std::string_view close,
+                         int levels) {
+        std::string out;
+        for (int i = 0; i < levels; ++i) { out += open; }
+        out += inner;
+        for (int i = 0; i < levels; ++i) { out += close; }
+        return out;
+    };
+    {
+        ctbrowser::atom_table atoms;
+        const std::string css = "a { color: " + nest("(", "", ")", 30000) +
+                                "; width: 1px } b { --kept: " + nest("(", "", ")", 100) +
+                                " } c { color: red }";
+        const auto sheet = ctbrowser::style::css::parse_stylesheet(css, atoms);
+        std::string names;
+        for (const auto & d : sheet.declarations) {
+            names += std::string{atoms.text(d.property)} + ",";
+        }
+        CHECK_EQ(names, std::string{"width,--kept,color,"});
+    }
+    {
+        ctbrowser::atom_table atoms;
+        const auto list = ctbrowser::style::css::parse_declaration_list(
+            "color: " + nest("f(", "", ")", 30000) + "; width: 1px", atoms);
+        CHECK_EQ(list.declarations.size(), std::size_t{1});
+    }
+    {
+        // Rules thirty thousand deep: the too-deep one styles nothing, the
+        // rule after it is untouched.
+        ctbrowser::atom_table atoms;
+        const auto sheet = ctbrowser::style::css::parse_stylesheet(
+            nest("a{", "color:red", "}", 30000) + " b { color: blue }", atoms);
+        CHECK(!sheet.declarations.empty());
+        CHECK_EQ(std::string{atoms.text(sheet.declarations.back().property)}, std::string{"color"});
+    }
+    // Functional pseudo-classes share one count: :not/:is/:where nested past
+    // it are a syntax error, and a selector the component-value cap cut short
+    // is too.
+    CHECK(ctbrowser::style::css::supports_selector(nest(":not(", "a", ")", 10)));
+    CHECK(ctbrowser::style::css::supports_selector(nest(":is(:where(", "a", "))", 8)));
+    CHECK(!ctbrowser::style::css::supports_selector(nest(":not(", "a", ")", 40)));
+    CHECK(!ctbrowser::style::css::supports_selector(nest(":is(:where(", "a", "))", 20)));
+    CHECK(!ctbrowser::style::css::supports_selector(nest(":not(", "a", ")", 20000)));
+}
+
 } // namespace
 
 int main() {
@@ -470,5 +519,6 @@ int main() {
     test_a_real_bootstrap_shaped_rule();
     test_an_escaped_identifier_is_stored_as_one();
     test_how_much_of_bootstrap_can_match();
+    test_deep_nesting_invalidates_only_what_holds_it();
     REPORT("css_syntax");
 }
