@@ -1479,6 +1479,16 @@ OUTER_SOURCES = {
 }
 
 
+# Each helper's iterator, step and close results, in the order helper_results() replaces them.
+HELPER_RESULTS = ("return this;", "return {done: done, value: anchor};", "throw anchor;")
+
+
+def helper_results(source, *results):
+    for original, result in zip(HELPER_RESULTS, results, strict=True):
+        source = source.replace(original, result)
+    return source
+
+
 # Keep the original witnesses intact; each helper gains a live unconditional edge.
 RAW_HELPER_SOURCES = {
     name + "-helper-edges": source.replace("() {", "() { do { break; } while (false);")
@@ -1513,146 +1523,78 @@ RAW_HELPER_SOURCES |= {
 }
 
 
-RAW_HELPER_SOURCES |= {
-    name
-    + "-helper-not": source.replace("return this;", "return !0 ? this : null;")
-    .replace(
-        "return {done: done, value: anchor};",
+for suffix, *results in (
+    (
+        "not",
+        "return !0 ? this : null;",
         "return !'next' ? null : {done: done, value: anchor};",
-    )
-    .replace("throw anchor;", "throw !!'close' ? anchor : null;")
-    for name, source in OUTER_SOURCES.items()
-}
-
-
-RAW_HELPER_SOURCES |= {
-    name
-    + "-helper-transported-not": source.replace(
-        "return this;", "return !(true ? 0 : 1) ? this : null;"
-    )
-    .replace(
-        "return {done: done, value: anchor};",
+        "throw !!'close' ? anchor : null;",
+    ),
+    (
+        "transported-not",
+        "return !(true ? 0 : 1) ? this : null;",
         "return !(false ? '' : 'next') ? null : {done: done, value: anchor};",
-    )
-    .replace("throw anchor;", "throw !!(true ? 'close' : '') ? anchor : null;")
-    for name, source in OUTER_SOURCES.items()
-}
-
-
-RAW_HELPER_SOURCES |= {
-    name
-    + "-helper-number-comparisons": source.replace("return this;", "return 1 < 2 ? this : null;")
-    .replace(
-        "return {done: done, value: anchor};",
+        "throw !!(true ? 'close' : '') ? anchor : null;",
+    ),
+    (
+        "number-comparisons",
+        "return 1 < 2 ? this : null;",
         "return 2 === 1 ? null : {done: done, value: anchor};",
-    )
-    .replace("throw anchor;", "throw (true ? 2 : 0) >= 1 ? anchor : null;")
-    for name, source in OUTER_SOURCES.items()
-}
-
-
-RAW_HELPER_SOURCES |= {
-    name
-    + "-helper-number-arithmetic": source.replace(
-        "return this;", "return (1 + 2) * 0 ? null : this;"
-    )
-    .replace(
-        "return {done: done, value: anchor};",
+        "throw (true ? 2 : 0) >= 1 ? anchor : null;",
+    ),
+    (
+        "number-arithmetic",
+        "return (1 + 2) * 0 ? null : this;",
         "return (5 % 2) - 1 ? null : {done: done, value: anchor};",
-    )
-    .replace("throw anchor;", "throw (true ? 8 : 0) / 2 ? anchor : null;")
-    for name, source in OUTER_SOURCES.items()
-}
-
-
-RAW_HELPER_SOURCES |= {
-    name
-    + "-helper-number-unary": source.replace("return this;", "return +0 ? null : this;")
-    .replace(
-        "return {done: done, value: anchor};",
+        "throw (true ? 8 : 0) / 2 ? anchor : null;",
+    ),
+    (
+        "number-unary",
+        "return +0 ? null : this;",
         "return -(+0) ? null : {done: done, value: anchor};",
-    )
-    .replace("throw anchor;", "throw -(true ? 2 : 0) < +0 ? anchor : null;")
-    for name, source in OUTER_SOURCES.items()
-}
-
-
-RAW_HELPER_SOURCES |= {
-    name
-    + "-helper-number-bitwise": source.replace("return this;", "return (~0 & 1) ^ 1 ? null : this;")
-    .replace(
-        "return {done: done, value: anchor};",
+        "throw -(true ? 2 : 0) < +0 ? anchor : null;",
+    ),
+    (
+        "number-bitwise",
+        "return (~0 & 1) ^ 1 ? null : this;",
         "return (1 << 33) | (8 >> 2) ? {done: done, value: anchor} : null;",
-    )
-    .replace("throw anchor;", "throw (true ? -1 : 0) >>> 31 ? anchor : null;")
-    for name, source in OUTER_SOURCES.items()
-}
-
-
-RAW_HELPER_SOURCES |= {
-    name
-    + "-helper-primitive-equality": source.replace(
-        "return this;", "return null === false ? null : this;"
-    )
-    .replace(
-        "return {done: done, value: anchor};",
+        "throw (true ? -1 : 0) >>> 31 ? anchor : null;",
+    ),
+    (
+        "primitive-equality",
+        "return null === false ? null : this;",
         "return 'next' == 'next' ? {done: done, value: anchor} : null;",
-    )
-    .replace("throw anchor;", "throw (true ? false : 0) !== 0 ? anchor : null;")
-    for name, source in OUTER_SOURCES.items()
-}
-
-
-RAW_HELPER_SOURCES |= {
-    name
-    + "-helper-number-power": source.replace("return this;", "return 1 ** (1 / 0) ? null : this;")
-    .replace(
-        "return {done: done, value: anchor};",
+        "throw (true ? false : 0) !== 0 ? anchor : null;",
+    ),
+    (
+        "number-power",
+        "return 1 ** (1 / 0) ? null : this;",
         "return (-0) ** -3 < 0 ? {done: done, value: anchor} : null;",
-    )
-    .replace("throw anchor;", "throw (true ? -2 : 0) ** 3 === -8 ? anchor : null;")
-    for name, source in OUTER_SOURCES.items()
-}
-
-
-RAW_HELPER_SOURCES |= {
-    name
-    + "-helper-scalar-loose-equality": source.replace(
-        "return this;", "return null == undefined ? this : null;"
-    )
-    .replace(
-        "return {done: done, value: anchor};",
+        "throw (true ? -2 : 0) ** 3 === -8 ? anchor : null;",
+    ),
+    (
+        "scalar-loose-equality",
+        "return null == undefined ? this : null;",
         "return false == 0 ? {done: done, value: anchor} : null;",
-    )
-    .replace("throw anchor;", "throw (true ? true : 0) != 1 ? null : anchor;")
-    for name, source in OUTER_SOURCES.items()
-}
-
-
-RAW_HELPER_SOURCES |= {
-    name
-    + "-helper-coercing-comparisons": source.replace(
-        "return this;", "return '0x10' == 16 ? this : null;"
-    )
-    .replace(
-        "return {done: done, value: anchor};",
+        "throw (true ? true : 0) != 1 ? null : anchor;",
+    ),
+    (
+        "coercing-comparisons",
+        "return '0x10' == 16 ? this : null;",
         "return null >= false ? {done: done, value: anchor} : null;",
-    )
-    .replace("throw anchor;", "throw (true ? '1' : '') >= true ? anchor : null;")
-    for name, source in OUTER_SOURCES.items()
-}
-
-
-RAW_HELPER_SOURCES |= {
-    name
-    + "-helper-string-order": source.replace("return this;", "return '10' < '2' ? this : null;")
-    .replace(
-        "return {done: done, value: anchor};",
+        "throw (true ? '1' : '') >= true ? anchor : null;",
+    ),
+    (
+        "string-order",
+        "return '10' < '2' ? this : null;",
         "return '\\uD800\\uDC01' >= '\\uD800\\uDC00' ? {done: done, value: anchor} : null;",
-    )
-    .replace("throw anchor;", "throw (true ? 'a\\0' : '') > 'a' ? anchor : null;")
-    for name, source in OUTER_SOURCES.items()
-}
+        "throw (true ? 'a\\0' : '') > 'a' ? anchor : null;",
+    ),
+):
+    RAW_HELPER_SOURCES |= {
+        f"{name}-helper-{suffix}": helper_results(source, *results)
+        for name, source in OUTER_SOURCES.items()
+    }
 # Canonical Strings whose UTF-16 order differs from their WTF-8 byte order.
 RAW_HELPER_SOURCES |= {
     name.replace("-helper-string-order", "-helper-unicode-order"): source.replace(
@@ -1663,106 +1605,48 @@ RAW_HELPER_SOURCES |= {
 }
 
 
-RAW_HELPER_SOURCES |= {
-    name
-    + "-helper-wide-string-number": source.replace(
-        "return this;", "return '000000000000000000000000000000000000000016' == 16 ? this : null;"
-    )
-    .replace(
-        "return {done: done, value: anchor};",
+for suffix, *results in (
+    (
+        "wide-string-number",
+        "return '000000000000000000000000000000000000000016' == 16 ? this : null;",
         "return '\\u00A0                                 +Infinity\\uFEFF' >= 1 ? {done: done, value: anchor} : null;",
-    )
-    .replace(
-        "throw anchor;",
         "throw (true ? '0b000000000000000000000000000000000000000001' : '') >= true ? anchor : null;",
-    )
-    for name, source in OUTER_SOURCES.items()
-}
-
-
-RAW_HELPER_SOURCES |= {
-    name
-    + "-helper-primitive-unary": source.replace(
-        "return this;", "return +'000000000000000000000000000000000000000000' ? null : this;"
-    )
-    .replace(
-        "return {done: done, value: anchor};",
+    ),
+    (
+        "primitive-unary",
+        "return +'000000000000000000000000000000000000000000' ? null : this;",
         "return -'\\u00A0+Infinity\\uFEFF' < -true ? {done: done, value: anchor} : null;",
-    )
-    .replace(
-        "throw anchor;",
         "throw ~(true ? '0b11111111111111111111111111111111' : '') === +null ? anchor : null;",
-    )
-    for name, source in OUTER_SOURCES.items()
-}
-
-
-RAW_HELPER_SOURCES |= {
-    name
-    + "-helper-primitive-binary": source.replace(
-        "return this;", "return '1' ** true ? this : null;"
-    )
-    .replace(
-        "return {done: done, value: anchor};",
+    ),
+    (
+        "primitive-binary",
+        "return '1' ** true ? this : null;",
         "return '000000000000000000000000000000000000000008' / '2' ? {done: done, value: anchor} : null;",
-    )
-    .replace(
-        "throw anchor;",
         "throw (true ? '0b11111111111111111111111111111111' : '') >>> '31' ? anchor : null;",
-    )
-    for name, source in OUTER_SOURCES.items()
-}
-
-
-RAW_HELPER_SOURCES |= {
-    name
-    + "-helper-string-add": source.replace(
-        "return this;", "return ('prefix:' + 1e21) === 'prefix:1e+21' ? this : null;"
-    )
-    .replace(
-        "return {done: done, value: anchor};",
+    ),
+    (
+        "string-add",
+        "return ('prefix:' + 1e21) === 'prefix:1e+21' ? this : null;",
         "return (true + '') === 'true' ? {done: done, value: anchor} : null;",
-    )
-    .replace(
-        "throw anchor;",
         "throw ((true ? '\\uD800' : '') + '\\uDC00') === '\\uD800\\uDC00' ? anchor : null;",
-    )
-    for name, source in OUTER_SOURCES.items()
-}
-
-
-RAW_HELPER_SOURCES |= {
-    name
-    + "-helper-template-concat": source.replace(
-        "return this;", "return `${1e21}` === '1e+21' ? this : null;"
-    )
-    .replace(
-        "return {done: done, value: anchor};",
+    ),
+    (
+        "template-concat",
+        "return `${1e21}` === '1e+21' ? this : null;",
         "return `${false}` === 'false' ? {done: done, value: anchor} : null;",
-    )
-    .replace(
-        "throw anchor;",
         "throw `${true ? '\\uD800' : ''}\\uDC00` === '\\uD800\\uDC00' ? anchor : null;",
-    )
-    for name, source in OUTER_SOURCES.items()
-}
-
-
-RAW_HELPER_SOURCES |= {
-    name
-    + "-helper-typeof-void": source.replace(
-        "return this;", "return typeof null === 'object' ? this : null;"
-    )
-    .replace(
-        "return {done: done, value: anchor};",
+    ),
+    (
+        "typeof-void",
+        "return typeof null === 'object' ? this : null;",
         "return void 'next' ? null : {done: done, value: anchor};",
-    )
-    .replace(
-        "throw anchor;",
         "throw typeof (true ? false : 0) === 'boolean' ? anchor : null;",
-    )
-    for name, source in OUTER_SOURCES.items()
-}
+    ),
+):
+    RAW_HELPER_SOURCES |= {
+        f"{name}-helper-{suffix}": helper_results(source, *results)
+        for name, source in OUTER_SOURCES.items()
+    }
 
 
 # Retain the complete source-global witnesses; the initialized provider and
