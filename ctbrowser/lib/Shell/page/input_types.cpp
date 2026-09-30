@@ -108,7 +108,11 @@ constexpr double ms_per_day = 86400000.0;
 [[nodiscard]] static bool year_digits(std::string_view text, std::size_t & at, long long & out) {
     std::size_t n = 0;
     while (at + n < text.size() && text[at + n] >= '0' && text[at + n] <= '9') { ++n; }
-    if (n < 4 || n > 9) { return false; } // 9 digits cannot overflow long long
+    // Leading zeros are a valid year's padding ("0000002020"), so the cap is on
+    // the SIGNIFICANT digits: nine cannot overflow long long, and zeros add none.
+    std::size_t zeros = 0;
+    while (zeros < n && text[at + zeros] == '0') { ++zeros; }
+    if (n < 4 || n - zeros > 9) { return false; }
     return digits(text, at, n, out) && out > 0;
 }
 [[nodiscard]] static std::optional<double> parse_date_ms(std::string_view text, std::size_t & at) {

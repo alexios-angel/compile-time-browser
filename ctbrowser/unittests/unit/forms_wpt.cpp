@@ -198,6 +198,11 @@ void test_input_numbers_and_dates() {
        "123456789012345678901234567890-01-01'; return d.value === '' && isNaN(d.valueAsNumber); "
        "})()",
        "true");
+    // Zero padding is not a digit of the year: "0000002020" is 2020 (the cap is
+    // on significant digits).
+    is("(function () { var d = document.createElement('input'); d.type = 'date'; d.value = "
+       "'0000002020-01-01'; return d.valueAsNumber === Date.UTC(2020, 0, 1); })()",
+       "true");
     is("(function () { var d = document.createElement('input'); d.type = 'date'; d.value = "
        "'2020-02-29';"
        " var o = [d.valueAsNumber, d.valueAsDate.getUTCFullYear(), d.valueAsDate.getUTCDate()];"
