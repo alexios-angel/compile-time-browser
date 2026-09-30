@@ -415,36 +415,9 @@ int main() {
 
 
 def zero_size_lifetime(args, cpp, name, mode, compiler):
-    source = args.work / f"{name}.{mode}.lifetime.cpp"
-    source.write_text(zero_size_lifetime_cpp(cpp))
-    binary = source.with_suffix(".sanitized").resolve()
-    host.run(
-        [
-            compiler,
-            *owned.FLAGS,
-            "-fsanitize=address,undefined",
-            "-fno-omit-frame-pointer",
-            str(source),
-            "-o",
-            str(binary),
-        ]
+    leak_checked_lifetime(
+        args, name, mode, compiler, zero_size_lifetime_cpp(cpp), 1, "saved zero/leaf lifetime"
     )
-    result = subprocess.run(
-        [str(binary)],
-        capture_output=True,
-        text=True,
-        timeout=30,
-        env={
-            **os.environ,
-            "ASAN_OPTIONS": "detect_leaks=1:halt_on_error=1",
-            "UBSAN_OPTIONS": "halt_on_error=1",
-        },
-    )
-    if result.returncode or result.stdout != "trace=1\n" * 2 or result.stderr:
-        raise RuntimeError(
-            f"{name}/{mode}: saved zero/leaf lifetime failed\n"
-            f"{result.returncode}: {result.stdout}{result.stderr}"
-        )
 
 
 def one_size_observer_source(source):
@@ -458,36 +431,9 @@ def one_size_lifetime_cpp(cpp):
 
 
 def one_size_lifetime(args, cpp, name, mode, compiler):
-    source = args.work / f"{name}.{mode}.lifetime.cpp"
-    source.write_text(one_size_lifetime_cpp(cpp))
-    binary = source.with_suffix(".sanitized").resolve()
-    host.run(
-        [
-            compiler,
-            *owned.FLAGS,
-            "-fsanitize=address,undefined",
-            "-fno-omit-frame-pointer",
-            str(source),
-            "-o",
-            str(binary),
-        ]
+    leak_checked_lifetime(
+        args, name, mode, compiler, one_size_lifetime_cpp(cpp), 1, "saved one/leaf lifetime"
     )
-    result = subprocess.run(
-        [str(binary)],
-        capture_output=True,
-        text=True,
-        timeout=30,
-        env={
-            **os.environ,
-            "ASAN_OPTIONS": "detect_leaks=1:halt_on_error=1",
-            "UBSAN_OPTIONS": "halt_on_error=1",
-        },
-    )
-    if result.returncode or result.stdout != "trace=1\n" * 2 or result.stderr:
-        raise RuntimeError(
-            f"{name}/{mode}: saved one/leaf lifetime failed\n"
-            f"{result.returncode}: {result.stdout}{result.stderr}"
-        )
 
 
 def delete_size_observer_source(source):
@@ -499,33 +445,12 @@ def delete_size_lifetime_cpp(cpp):
 
 
 def delete_size_lifetime(args, cpp, name, mode, compiler):
-    source = args.work / f"{name}.{mode}.lifetime.cpp"
-    source.write_text(delete_size_lifetime_cpp(cpp))
-    binary = source.with_suffix(".sanitized").resolve()
-    host.run(
-        [
-            compiler,
-            *owned.FLAGS,
-            "-fsanitize=address,undefined",
-            "-fno-omit-frame-pointer",
-            str(source),
-            "-o",
-            str(binary),
-        ]
+    leak_checked_lifetime(
+        args,
+        name,
+        mode,
+        compiler,
+        delete_size_lifetime_cpp(cpp),
+        1,
+        "saved deletion size/leaf lifetime",
     )
-    result = subprocess.run(
-        [str(binary)],
-        capture_output=True,
-        text=True,
-        timeout=30,
-        env={
-            **os.environ,
-            "ASAN_OPTIONS": "detect_leaks=1:halt_on_error=1",
-            "UBSAN_OPTIONS": "halt_on_error=1",
-        },
-    )
-    if result.returncode or result.stdout != "trace=1\n" * 2 or result.stderr:
-        raise RuntimeError(
-            f"{name}/{mode}: saved deletion size/leaf lifetime failed\n"
-            f"{result.returncode}: {result.stdout}{result.stderr}"
-        )

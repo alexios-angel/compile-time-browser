@@ -396,8 +396,22 @@ def object_argument_lifetime_source(cpp, name):
 
 
 def object_argument_lifetime(args, cpp, name, mode, compiler):
+    leak_checked_lifetime(
+        args,
+        name,
+        mode,
+        compiler,
+        object_argument_lifetime_source(cpp, name),
+        object_argument_cases()[name]["expected_trace"],
+        "object key lifetime",
+    )
+
+
+def leak_checked_lifetime(args, name, mode, compiler, text, expected, label):
+    # Its own flags, environment and 30 s timeout, and an empty stderr: not
+    # owned.check_lifetime, which builds and runs the program differently.
     source = args.work / f"{name}.{mode}.lifetime.cpp"
-    source.write_text(object_argument_lifetime_source(cpp, name))
+    source.write_text(text)
     binary = source.with_suffix(".sanitized").resolve()
     host.run(
         [
@@ -421,10 +435,9 @@ def object_argument_lifetime(args, cpp, name, mode, compiler):
             "UBSAN_OPTIONS": "halt_on_error=1",
         },
     )
-    expected = object_argument_cases()[name]["expected_trace"]
     if result.returncode or result.stdout != f"trace={expected}\n" * 2 or result.stderr:
         raise RuntimeError(
-            f"{name}/{mode}: object key lifetime failed\n"
+            f"{name}/{mode}: {label} failed\n"
             f"{result.returncode}: {result.stdout}{result.stderr}"
         )
 
