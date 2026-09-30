@@ -974,14 +974,19 @@ void dom_bindings::install_range(context & cx) {
                                      ? context::to_number(c.lookup_property(wrappers, "length"))
                                      : 0;
             for (double i = count; i-- > 0;) {
+                // Read off whatever querySelectorAll returned - a page's own
+                // list, maybe - so held here across the calls below.
                 const value wrapper =
                     c.lookup_property(wrappers, std::to_string(static_cast<std::size_t>(i)));
+                const context::rooted keep_wrapper{c, wrapper};
                 if (!wrapper.is_object_like() ||
                     c.to_string(c.lookup_property(wrapper, "namespaceURI")) != xhtml_namespace) {
                     continue;
                 }
                 const value parent = c.lookup_property(wrapper, "parentNode");
+                const context::rooted keep_parent{c, parent};
                 const value insert = c.lookup_property(parent, "insertBefore");
+                const context::rooted keep_insert{c, insert};
                 if (!insert.is_callable()) { continue; }
                 while (true) {
                     const value child = c.lookup_property(wrapper, "firstChild");

@@ -119,12 +119,19 @@ value context::invoke(value callable, std::span<const value> args, value this_va
         const value saved = current_this_;
         current_this_ = this_value;
         note_transition_into_cxx(*this);
+        // A NATIVE CALLED BY A NATIVE hands its result to a C++ local, as a
+        // script callee does through callout_scope::returned - and that
+        // result may be nothing the caller's pin range covers (a value read
+        // off a data property the page can clear), so it is pinned the same
+        // way, for the rest of the calling native's life.
+        const bool from_native = native_depth_ > 0 && frames_.size() == native_frames_;
         const value out = [&] {
             const executing_as running{*this, executing_kind::cxx};
             const native_scope pinned{*this};
             return nat->fn(*this, copy);
         }();
         current_this_ = saved;
+        if (from_native && out.is_heap()) { pinned_results_.push_back(out); }
         // A throw the native's own `call` parked leaves here, from the
         // native's call site: the enclosing fence or handler, or a fault.
         if (rethrow_pending()) { return value::undefined(); }

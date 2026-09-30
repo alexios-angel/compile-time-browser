@@ -187,12 +187,17 @@ void install_search_params(context & cx, const value iterator_proto) {
                 method.is_callable()) {
                 const value items = c.iterable_values(init);
                 if (c.throw_pending()) { return value::undefined(); }
-                const context::rooted keep_items{c, items};
-                for (const value & item :
-                     static_cast<script::array_object *>(items.as_heap())->items) {
+                // Rooted COPIES: iterable_values hands back the page's own
+                // arrays, which a toString below can grow or shrink.
+                const std::vector<value> entries =
+                    static_cast<script::array_object *>(items.as_heap())->items;
+                const context::rooted_values keep_items{c, entries};
+                for (const value & item : entries) {
                     const value pair = c.iterable_values(item);
                     if (c.throw_pending()) { return value::undefined(); }
-                    const auto & parts = static_cast<script::array_object *>(pair.as_heap())->items;
+                    const std::vector<value> parts =
+                        static_cast<script::array_object *>(pair.as_heap())->items;
+                    const context::rooted_values keep_parts{c, parts};
                     if (parts.size() != 2) {
                         c.throw_error("TypeError",
                                       "URLSearchParams constructor: each pair must have exactly "

@@ -78,7 +78,9 @@ void dom_bindings::install_window(context & cx) {
         store->prototype = storage_proto;
         auto * items = cx.allocate<script::object_object>();
         const value backing = value::object(items);
-        store->set("__items", backing);
+        // The natives below hold `items` by raw pointer, so its one heap
+        // reference must be a slot no page can delete or overwrite.
+        store->define(CTBROWSER_PRIVATE_KEY("ctbrowser:storage-items"), backing, script::attr_none);
         set_method(cx, *store, "getItem", [items](context & c, std::span<value> args) {
             value * held = items->find(arg_string(c, args, 0));
             // A MISS IS null, not undefined - pages branch on `=== null`.
@@ -102,14 +104,18 @@ void dom_bindings::install_window(context & cx) {
                 static_cast<std::size_t>(std::max(0.0, script::context::to_number(arg(args, 0))));
             return at < items->props.size() ? c.string(items->props[at].first) : value::null();
         });
-        store->define_accessor("length",
-                               value::object(cx.allocate<script::native_object>(
-                                   "length",
-                                   [items](context &, std::span<value>) {
-                                       return value::number(
-                                           static_cast<double>(items->props.size()));
-                                   })),
-                               value::undefined());
+        auto * length =
+            cx.allocate<script::native_object>("length", [items](context &, std::span<value>) {
+                return value::number(static_cast<double>(items->props.size()));
+            });
+        store->define_accessor("length", value::object(length), value::undefined());
+        // AND EACH NATIVE KEEPS IT: a page can hold `localStorage.getItem` and
+        // delete the store itself. See native_object::retained.
+        length->retained.push_back(backing);
+        for (const char * method : {"getItem", "setItem", "removeItem", "clear", "key"}) {
+            static_cast<script::native_object *>(store->find(method)->as_heap())
+                ->retained.push_back(backing);
+        }
         window->set(name, value::object(store));
         cx.define_global(name, value::object(store));
     };
@@ -175,42 +181,48 @@ void dom_bindings::install_window(context & cx) {
     // every byte of an exported image for nothing.
     auto * blob_proto = cx.allocate<script::object_object>();
     blob_prototype_ = value::object(blob_proto);
-    auto * blob_ctor = cx.allocate<script::native_object>("Blob", [this](context & c,
-                                                                         std::span<value> a) {
-        // `new Blob([parts], { type })`. A part is a string or something with
-        // bytes - a typed array, another Blob - which is what a page actually
-        // passes: `new Blob([data], { type: contentType })`.
-        value bytes = c.make_array();
-        auto * out = static_cast<script::array_object *>(bytes.as_heap());
-        out->elements = script::element_kind::u8;
-        if (!a.empty() && a[0].is_array()) {
-            for (const value & part : static_cast<script::array_object *>(a[0].as_heap())->items) {
-                if (part.is_string()) {
-                    for (const char ch : c.to_string(part)) {
-                        out->items.push_back(
-                            value::number(static_cast<double>(static_cast<unsigned char>(ch))));
+    auto * blob_ctor =
+        cx.allocate<script::native_object>("Blob", [this](context & c, std::span<value> a) {
+            // `new Blob([parts], { type })`. A part is a string or something with
+            // bytes - a typed array, another Blob - which is what a page actually
+            // passes: `new Blob([data], { type: contentType })`.
+            value bytes = c.make_array();
+            const context::rooted keep_bytes{c, bytes};
+            auto * out = static_cast<script::array_object *>(bytes.as_heap());
+            out->elements = script::element_kind::u8;
+            if (!a.empty() && a[0].is_array()) {
+                // A COPY, rooted: a part's `__bytes` getter or toString can grow or
+                // shrink the page's array while this walks it.
+                const std::vector<value> parts =
+                    static_cast<script::array_object *>(a[0].as_heap())->items;
+                const context::rooted_values keep_parts{c, parts};
+                for (const value & part : parts) {
+                    if (part.is_string()) {
+                        for (const char ch : c.to_string(part)) {
+                            out->items.push_back(
+                                value::number(static_cast<double>(static_cast<unsigned char>(ch))));
+                        }
+                        continue;
                     }
-                    continue;
-                }
-                // A typed array is bytes already; a Blob carries them in the
-                // same slot this one does.
-                value inner = part;
-                if (part.is_object()) { inner = c.lookup_property(part, "__bytes"); }
-                if (inner.is_array()) {
-                    for (const value & b :
-                         static_cast<script::array_object *>(inner.as_heap())->items) {
-                        out->items.push_back(b);
+                    // A typed array is bytes already; a Blob carries them in the
+                    // same slot this one does.
+                    value inner = part;
+                    if (part.is_object()) { inner = c.lookup_property(part, "__bytes"); }
+                    if (inner.is_array()) {
+                        for (const value & b :
+                             static_cast<script::array_object *>(inner.as_heap())->items) {
+                            out->items.push_back(b);
+                        }
                     }
                 }
             }
-        }
-        std::string type;
-        if (a.size() > 1 && a[1].is_object()) {
-            const value given = c.lookup_property(a[1], "type");
-            if (!given.is_undefined()) { type = c.to_string(given); }
-        }
-        return make_blob(c, bytes, type);
-    });
+            std::string type;
+            if (a.size() > 1 && a[1].is_object()) {
+                const value given = c.lookup_property(a[1], "type");
+                if (!given.is_undefined()) { type = c.to_string(given); }
+            }
+            return make_blob(c, bytes, type);
+        });
     blob_ctor->set("prototype", blob_prototype_);
     cx.define_builtin_global("Blob", value::object(blob_ctor));
 
@@ -284,6 +296,7 @@ void dom_bindings::install_window(context & cx) {
                                        ? c.construct(blob_ctor_value, parts)
                                        : c.make_object();
                 if (!made.is_object()) { return made; }
+                const context::rooted keep_made{c, made};
                 auto * file = static_cast<script::object_object *>(made.as_heap());
                 file->prototype = file_prototype;
                 file->set("name", c.string(a.size() > 1 ? c.to_string(a[1]) : std::string{}));
