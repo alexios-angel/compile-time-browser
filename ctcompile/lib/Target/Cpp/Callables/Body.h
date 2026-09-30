@@ -18,11 +18,20 @@ struct CallableBody {
     bool retainFunction = true;
     bool inlineCreation = false;
     bool retainBinder = true;
+
+    // What a definition prints: the lifted function, the binder, or both. An
+    // unmarked function (empty binder) is only ever the function.
+    [[nodiscard]] bool emitsFunction() const { return binder.empty() || retainFunction; }
+    [[nodiscard]] bool emitsBinder() const { return !binder.empty() && retainBinder; }
 };
 
 // Presentation of an already admitted callable. Retain a lifted function if
 // another emitted use names it, or if a const capture cannot host its body.
 mlir::FailureOr<CallableBody> callableBodyPlan(mlir::emitc::FuncOp function);
+
+// The function a `ctnative.callable_create` mark names, or null when unmarked
+// or unresolved. No validation: see callableCreationTarget.
+mlir::emitc::FuncOp callableCreationSymbol(mlir::emitc::CallOpaqueOp call);
 
 // Only a marked, signature-checked creation can become a lambda initializer.
 mlir::FailureOr<mlir::emitc::FuncOp> callableCreationTarget(mlir::emitc::CallOpaqueOp call);

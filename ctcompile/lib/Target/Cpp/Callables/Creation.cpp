@@ -7,16 +7,19 @@
 
 namespace ctcompile::cpp {
 
+mlir::emitc::FuncOp callableCreationSymbol(mlir::emitc::CallOpaqueOp call) {
+    auto symbol = call->getAttrOfType<mlir::FlatSymbolRefAttr>("ctnative.callable_create");
+    return symbol ? mlir::SymbolTable::lookupNearestSymbolFrom<mlir::emitc::FuncOp>(call, symbol)
+                  : mlir::emitc::FuncOp{};
+}
+
 mlir::FailureOr<mlir::emitc::FuncOp> callableCreationTarget(mlir::emitc::CallOpaqueOp call) {
     if (!call->hasAttr("ctnative.callable_create")) { return mlir::emitc::FuncOp{}; }
     const auto invalid = [&]() -> mlir::FailureOr<mlir::emitc::FuncOp> {
         call.emitOpError("invalid native callable creation");
         return mlir::failure();
     };
-    auto symbol = call->getAttrOfType<mlir::FlatSymbolRefAttr>("ctnative.callable_create");
-    auto function =
-        symbol ? mlir::SymbolTable::lookupNearestSymbolFrom<mlir::emitc::FuncOp>(call, symbol)
-               : mlir::emitc::FuncOp{};
+    auto function = callableCreationSymbol(call);
     if (!function || function.isExternal() || call.getArgs() || call.getTemplateArgs() ||
         call->getNumResults() != 1) {
         return invalid();

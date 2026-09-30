@@ -1,5 +1,25 @@
 // Included after the shared function/body printers. Each lambda reuses those
 // printers with independent state, without rewriting previously emitted text.
+
+// The parameters after the captures, the trailing return type and the brace
+// that opens a callable's lambda.
+static LogicalResult printLambdaSignature(CppEmitter & emitter, emitc::FuncOp function,
+                                          unsigned captures) {
+    auto & os = emitter.ostream();
+    if (failed(interleaveCommaWithError(
+            function.getArguments().drop_front(captures), os, [&](BlockArgument argument) {
+                return emitter.emitVariableDeclaration(function.getLoc(), argument.getType(),
+                                                       emitter.getOrCreateName(argument),
+                                                       emitter.isConstBinding(argument));
+            })))
+        return failure();
+    os << ") -> ";
+    if (failed(emitter.emitTypes(function.getLoc(), function.getFunctionType().getResults())))
+        return failure();
+    os << " {\n";
+    return success();
+}
+
 static LogicalResult printCallable(CppEmitter & emitter, emitc::FuncOp function,
                                    const ctcompile::cpp::CallableBody & body, bool declaration) {
     if (!declaration && !emitter.shouldDeclareVariablesAtTop() && function.getBlocks().size() > 1)
@@ -29,17 +49,7 @@ static LogicalResult printCallable(CppEmitter & emitter, emitc::FuncOp function,
         os << name << " = std::move(" << name << ")";
     }
     os << "](";
-    for (unsigned i = body.captures; i < arguments.size(); ++i) {
-        if (i != body.captures) os << ", ";
-        if (failed(emitter.emitVariableDeclaration(function.getLoc(), arguments[i].getType(),
-                                                   emitter.getOrCreateName(arguments[i]),
-                                                   emitter.isConstBinding(arguments[i]))))
-            return failure();
-    }
-    os << ") -> ";
-    if (failed(emitter.emitTypes(function.getLoc(), function.getFunctionType().getResults())))
-        return failure();
-    os << " {\n";
+    if (failed(printLambdaSignature(emitter, function, body.captures))) return failure();
     if (body.inlineBody) {
         if (failed(printFunctionBody(emitter, function, function.getBlocks()))) return failure();
     } else {
@@ -59,9 +69,8 @@ static LogicalResult printCallable(CppEmitter & emitter, emitc::FuncOp function,
 static LogicalResult printOperation(CppEmitter & emitter, emitc::FuncOp function) {
     auto body = ctcompile::cpp::callableBodyPlan(function);
     if (failed(body)) return failure();
-    if (body->binder.empty()) return printRegularFunction(emitter, function);
-    if (!body->retainBinder) return printRegularFunction(emitter, function);
-    if (body->retainFunction) {
+    if (!body->emitsBinder()) return printRegularFunction(emitter, function);
+    if (body->emitsFunction()) {
         if (failed(printRegularFunction(emitter, function))) return failure();
         emitter.ostream() << "\n// ctcompile: stored callable, ";
         if (auto provenance = function->getAttrOfType<StringAttr>("ctnative.provenance"))
@@ -81,7 +90,7 @@ static FailureOr<bool> omitCallableDefinition(Operation & op) {
     if (!function || !function->hasAttr("ctnative.callable_body")) return false;
     auto body = ctcompile::cpp::callableBodyPlan(function);
     if (failed(body)) return failure();
-    return !body->retainBinder && !body->retainFunction;
+    return !body->emitsBinder() && !body->emitsFunction();
 }
 
 static bool materializedCapture(Value value) {
@@ -139,18 +148,7 @@ static FailureOr<bool> printCallableCreation(CppEmitter & emitter, emitc::CallOp
     CppEmitter::FunctionScope scope(nested);
     nested.prepareFunction(*target, body->parameters);
     auto & lambda = nested.ostream();
-    const auto arguments = target->getArguments();
-    for (unsigned i = body->captures; i < arguments.size(); ++i) {
-        if (i != body->captures) lambda << ", ";
-        if (failed(nested.emitVariableDeclaration(target->getLoc(), arguments[i].getType(),
-                                                  nested.getOrCreateName(arguments[i]),
-                                                  nested.isConstBinding(arguments[i]))))
-            return failure();
-    }
-    lambda << ") -> ";
-    if (failed(nested.emitTypes(target->getLoc(), target->getFunctionType().getResults())))
-        return failure();
-    lambda << " {\n";
+    if (failed(printLambdaSignature(nested, *target, body->captures))) return failure();
     if (failed(printFunctionBody(nested, *target, target->getBlocks()))) return failure();
     lambda << "}";
     if (wrap) lambda << "}";

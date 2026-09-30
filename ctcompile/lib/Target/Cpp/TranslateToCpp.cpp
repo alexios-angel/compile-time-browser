@@ -63,6 +63,7 @@
 #include "mlir/Support/IndentedOstream.h"
 #include "mlir/Support/LLVM.h"
 #include "ctcompile/Target/Cpp/CppEmitter.h"
+#include "ctcompile/Support/SourceSite.h"
 #include "llvm/ADT/ScopedHashTable.h"
 #include "llvm/Support/SaveAndRestore.h"
 #include "llvm/ADT/StringExtras.h"
@@ -1579,7 +1580,7 @@ static LogicalResult printOperation(CppEmitter &emitter,
   auto callable = ctcompile::cpp::callableBodyPlan(functionOp);
   if (failed(callable))
     return failure();
-  if (!callable->binder.empty() && !callable->retainFunction)
+  if (!callable->emitsFunction())
     return printCallable(emitter, functionOp, *callable, true);
 
   emitter.prepareFunction(functionOp);
@@ -1600,7 +1601,7 @@ static LogicalResult printOperation(CppEmitter &emitter,
   if (failed(printFunctionArgs(emitter, operation, functionOp.getArguments())))
     return failure();
   os << ");";
-  if (!callable->binder.empty() && callable->retainBinder) {
+  if (callable->emitsBinder()) {
     os << "\n";
     return printCallable(emitter, functionOp, *callable, true);
   }
@@ -2129,15 +2130,7 @@ LogicalResult CppEmitter::emitOperation(Operation &op, bool trailingSemicolon) {
     Type pinned = op.getResult(0).getType();
     if (auto override = op.getAttrOfType<TypeAttr>("ctnative.pinned"))
       pinned = override.getValue();
-    // The importer fuses a NameLoc with the FileLineColLoc of the JavaScript
-    // site; the first file location found, at any depth, is the site.
-    FileLineColLoc site;
-    op.getLoc()->walk([&](Location l) {
-      if (!site)
-        if (auto file = dyn_cast<FileLineColLoc>(l))
-          site = file;
-      return site ? WalkResult::interrupt() : WalkResult::advance();
-    });
+    FileLineColLoc site = ctcompile::sourceSite(op.getLoc());
     os << "CTCOMPILE_PIN(" << getOrCreateName(op.getResult(0)) << ", \"";
     if (site)
       os << site.getFilename().getValue() << ":" << site.getLine() << ":"

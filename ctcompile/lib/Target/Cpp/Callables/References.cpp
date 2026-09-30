@@ -36,10 +36,7 @@ bool textReferences(mlir::ModuleOp module, llvm::StringRef name,
             observed |= containsIdentifier(text.getValue(), name);
         }
         if (auto call = llvm::dyn_cast<mlir::emitc::CallOpaqueOp>(op)) {
-            auto target = call->getAttrOfType<mlir::FlatSymbolRefAttr>("ctnative.callable_create");
-            if (!creationTarget || !target ||
-                mlir::SymbolTable::lookupNearestSymbolFrom<mlir::emitc::FuncOp>(call, target) !=
-                    creationTarget) {
+            if (!creationTarget || callableCreationSymbol(call) != creationTarget) {
                 observed |= containsIdentifier(call.getCallee(), name);
             }
         }
@@ -91,9 +88,7 @@ bool callableBinderNeeded(mlir::emitc::FuncOp function, llvm::StringRef binder) 
     if (!module) { return true; }
     bool creation = false;
     module.walk([&](mlir::emitc::CallOpaqueOp call) {
-        auto target = call->getAttrOfType<mlir::FlatSymbolRefAttr>("ctnative.callable_create");
-        creation |= target && mlir::SymbolTable::lookupNearestSymbolFrom<mlir::emitc::FuncOp>(
-                                  call, target) == function;
+        creation |= callableCreationSymbol(call) == function;
     });
     // Unmarked EmitC callers keep the existing binder interface. Opaque
     // address/template references also keep it, just like lifted functions.
