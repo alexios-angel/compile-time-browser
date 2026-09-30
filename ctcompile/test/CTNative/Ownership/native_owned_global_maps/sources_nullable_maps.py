@@ -39,32 +39,27 @@ def nullable_result_sources():
     return {
         # Same eighteen calls as nullable_or: only the consuming key is
         # normalized, separating the callable contract from real null Map keys.
-        "nullable_normalized": (saved, "host", 3),
-        "nullable_ternary": (
-            saved.replace("return result || null;", "return result ? result : null;"),
-            "host",
-            3,
+        "nullable_normalized": hosted(saved, 3),
+        "nullable_ternary": hosted(
+            saved.replace("return result || null;", "return result ? result : null;"), 3
         ),
         # void 0 imports as a literal; bare undefined is a separate host read.
-        "nullable_undefined": (
-            saved.replace("return result || null;", "return result || (void 0);"),
-            "host",
-            3,
+        "nullable_undefined": hosted(
+            saved.replace("return result || null;", "return result || (void 0);"), 3
         ),
-        "nullable_empty": (
+        "nullable_empty": hosted(
             saved.replace("state.set('other', 'future');", "state.set('other', '');").replace(
                 " host.slot.set(host.slot.get(true));", ""
             ),
-            "host",
             3,
         ),
-        "nullable_threeway": (threeway, "host", 3),
+        "nullable_threeway": hosted(threeway, 3),
         # No Bool key can hide an incorrect nullable-to-String conversion
         # behind the existing Bool/String variant wrapper.
-        "nullable_homogeneous_key": (homogeneous, "host", 2),
+        "nullable_homogeneous_key": hosted(homogeneous, 2),
         # Startup observes String only. A saved getter later returns null on
         # true; both results survive deletion and destruction of their Map.
-        "nullable_string_saved": (owning, "host", 2),
+        "nullable_string_saved": hosted(owning, 2),
     }
 
 
@@ -151,40 +146,34 @@ def nullable_key_sources():
     return {
         # Keep the exact eleven-call boundary and its thirteen-call identity
         # extension independent of Boolean keys and nullable stored payloads.
-        "nullable_key_homogeneous": (homogeneous, "host", 2),
-        "nullable_key_identity": (identity, "host", 4),
-        "nullable_key_identity_normalized": (
-            identity.replace("state.set(key, true)", "state.set(key || 'missing', true)"),
-            "host",
-            2,
+        "nullable_key_homogeneous": hosted(homogeneous, 2),
+        "nullable_key_identity": hosted(identity, 4),
+        "nullable_key_identity_normalized": hosted(
+            identity.replace("state.set(key, true)", "state.set(key || 'missing', true)"), 2
         ),
-        "nullable_key_second_use": (
+        "nullable_key_second_use": hosted(
             normalized.replace(
                 "state.set(key || 'missing', true)",
                 "state.set(key || 'missing', true); state.set(key, true)",
             ),
-            "host",
             3,
         ),
-        "nullable_key_mixed": (mixed, "host", 2),
-        "nullable_original_key": (
-            saved.replace("state.set(key || 'missing', true)", "state.set(key, true)"),
-            "host",
-            3,
+        "nullable_key_mixed": hosted(mixed, 2),
+        "nullable_original_key": hosted(
+            saved.replace("state.set(key || 'missing', true)", "state.set(key, true)"), 3
         ),
         # The normalized first use proves its own String key. The original
         # formal keeps null at the second use, widening only the Map schema.
-        "nullable_second_key_use": (
+        "nullable_second_key_use": hosted(
             saved.replace(
                 "state.set(key || 'missing', true)",
                 "state.set(key || 'missing', true); state.set(key, true)",
             ),
-            "host",
             4,
         ),
         # False-only startup; later saved methods delete/reinsert all nullable
         # key tags and retain owned bytes after the original caller mutates.
-        "nullable_key_string_saved": (owning, "host", 2),
+        "nullable_key_string_saved": hosted(owning, 2),
     }
 
 
@@ -241,47 +230,42 @@ def nullable_payload_sources():
     )
     return {
         # Preserve both exact sources from 1c7985a5 before adding observations.
-        "nullable_payload_write": (write, "host", 2),
-        "nullable_payload_readback": (readback, "host", 2),
+        "nullable_payload_write": hosted(write, 2),
+        "nullable_payload_readback": hosted(readback, 2),
         # Full nullable String storage represents a deleted read as Undefined;
         # its return must not reuse either the payload or its absent tag.
-        "nullable_payload_deleted": (
+        "nullable_payload_deleted": hosted(
             readback.replace("return state.get(key);", "state.delete(key); return state.get(key);"),
-            "host",
             0,
         ),
-        "nullable_payload_identity": (identity, "host", 4),
+        "nullable_payload_identity": hosted(identity, 4),
         # Scalar reads remain independently proved inside the getter even
         # when the full storage schema also contains null and Boolean.
-        "nullable_payload_mixed": (
+        "nullable_payload_mixed": hosted(
             nullable_key_sources()["nullable_original_key"][0].replace(
                 "state.set(key, true)", "state.set(key, key)"
             ),
-            "host",
             3,
         ),
         # Startup sees only false; saved methods later run both flags and
         # return an owning payload copied before overwrite and deletion.
-        "nullable_payload_saved": (saved, "host", 0),
+        "nullable_payload_saved": hosted(saved, 0),
         # The exact fourteen-call checkpoint broadens storage with a Boolean
         # while each later get retains its independent nullable payload fact.
-        "nullable_payload_mixed_readback": (mixed_readback, "host", 2),
+        "nullable_payload_mixed_readback": hosted(mixed_readback, 2),
         # Preserve the former nineteen-call refusal unchanged: its actual
         # String/Null result is a supported subset of the full Map schema.
-        "nullable_mixed_payload_readback": (original_mixed_readback, "host", 3),
-        "nullable_payload_mixed_identity": (
+        "nullable_mixed_payload_readback": hosted(original_mixed_readback, 3),
+        "nullable_payload_mixed_identity": hosted(
             mixed_readback.replace(
                 "var trace =", "host.slot.set(void 0); host.slot.set(''); var trace ="
             ),
-            "host",
             4,
         ),
         # Broader storage and a subsequent same-key Boolean overwrite cannot
         # widen a saved nullable read or leave it borrowing the old entry.
-        "nullable_payload_mixed_saved": (
-            saved.replace("state.set(key, 'overwritten');", "state.set(key, true);"),
-            "host",
-            0,
+        "nullable_payload_mixed_saved": hosted(
+            saved.replace("state.set(key, 'overwritten');", "state.set(key, true);"), 0
         ),
     }
 
@@ -381,23 +365,22 @@ def nullable_host_result_sources():
     return {
         # Preserve the exact acyclic fifteen-call, trace=1 source from ae8e021a.
         # The final size argument needs the setter's independent result proof.
-        "nullable_host_result": (source, "host", 1),
-        "nullable_host_result_both": (both, "host", 2),
-        "nullable_host_result_identity": (
+        "nullable_host_result": hosted(source, 1),
+        "nullable_host_result_both": hosted(both, 2),
+        "nullable_host_result_identity": hosted(
             source.replace(
                 "var trace =",
                 "host.slot.set(host.slot.get(true)); host.slot.set(void 0); host.slot.set(''); "
                 "var trace =",
             ),
-            "host",
             4,
         ),
         # A live conditional write joins the stored payload alternatives before
         # the host result proof; it cannot reuse the native Presence analysis.
-        "nullable_host_result_conditional": (conditional, "host", 2),
+        "nullable_host_result_conditional": hosted(conditional, 2),
         # The copied result reaches size after its Map entry was overwritten
         # with Boolean and deleted. Startup uses false; saved calls use both.
-        "nullable_host_result_saved": (saved, "host", 1),
+        "nullable_host_result_saved": hosted(saved, 1),
     }
 
 
@@ -501,25 +484,22 @@ def nullable_nested_result_sources():
         # Preserve the exact fifteen-call trace=2 refusal recorded in a8da7c27.
         # A proved invocation result seeds the next call to this same method;
         # the final generalized census still includes every actual and sibling.
-        "nullable_nested_result": (source, "host", 2),
-        "nullable_nested_result_same": (
-            source.replace("host.slot.get(true)", "host.slot.get(false)"),
-            "host",
-            1,
+        "nullable_nested_result": hosted(source, 2),
+        "nullable_nested_result_same": hosted(
+            source.replace("host.slot.get(true)", "host.slot.get(false)"), 1
         ),
         # These independent actuals occur after the nested invocation. The
         # first call cannot define the complete published method signature.
-        "nullable_nested_result_identity": (
+        "nullable_nested_result_identity": hosted(
             source.replace(
                 "var trace =",
                 "host.slot.set(void 0); host.slot.set(''); host.slot.set('later'); var trace =",
             ),
-            "host",
             5,
         ),
         # Both nested calls copy their nullable read before same-key Boolean
         # overwrite/deletion. Startup sees false; future calls run both flags.
-        "nullable_nested_result_saved": (saved, "host", 0),
+        "nullable_nested_result_saved": hosted(saved, 0),
     }
 
 

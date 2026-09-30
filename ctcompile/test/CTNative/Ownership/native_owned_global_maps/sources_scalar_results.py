@@ -46,44 +46,39 @@ OTHER_STRING_RESULT = "other-result-key-" * 12
 
 def parameter_sources():
     return {
-        "shared_parameter": (PARAMETER, "host", 1),
-        "shared_parameter_repeated": (
+        "shared_parameter": hosted(PARAMETER, 1),
+        "shared_parameter_repeated": hosted(
             PARAMETER.replace(
                 "host.slot.set('x');", "host.slot.set('x'); host.slot.set('y'); host.slot.set('x');"
             ),
-            "host",
             2,
         ),
-        "shared_parameter_number": (
+        "shared_parameter_number": hosted(
             PARAMETER.replace(
                 "host.slot.set('x');", "host.slot.set(1); host.slot.set(2); host.slot.set(1);"
             ),
-            "host",
             2,
         ),
-        "shared_parameter_bool": (
+        "shared_parameter_bool": hosted(
             PARAMETER.replace(
                 "host.slot.set('x');",
                 "host.slot.set(true); host.slot.set(false); host.slot.set(true);",
             ),
-            "host",
             2,
         ),
-        "shared_parameter_alias": (
+        "shared_parameter_alias": hosted(
             PARAMETER.replace(
                 "set(key) { state.set(key, 1)", "set(key) { const alias = key; state.set(alias, 1)"
             ),
-            "host",
             1,
         ),
-        "shared_two_parameters": (
+        "shared_two_parameters": hosted(
             PARAMETER.replace(
                 "set(key) { state.set(key, 1)", "set(key, value) { state.set(key, value)"
             ).replace(
                 "host.slot.set('x');",
                 "host.slot.set('x', 1); host.slot.set('y', 2); host.slot.set('x', 3);",
             ),
-            "host",
             2,
         ),
     }
@@ -102,38 +97,35 @@ def result_sources():
         "host.slot.set(host.slot.get()); host.slot.set(host.slot.get());",
     )
     return {
-        "parameter_call_result": (CALL_RESULT, "host", 1),
-        "result_reverse_members": (
+        "parameter_call_result": hosted(CALL_RESULT, 1),
+        "result_reverse_members": hosted(
             CALL_RESULT.replace(
                 "get() { return state.size; }, set(key) { state.set(key, 1); return state.size; }",
                 "set(key) { state.set(key, 1); return state.size; }, get() { return state.size; }",
             ),
-            "host",
             1,
         ),
-        "result_repeated": (
+        "result_repeated": hosted(
             CALL_RESULT.replace(
                 "host.slot.set(host.slot.get());",
                 "host.slot.set(host.slot.get()); host.slot.set(host.slot.get());",
             ),
-            "host",
             2,
         ),
-        "result_alias": (
+        "result_alias": hosted(
             CALL_RESULT.replace(
                 "get() { return state.size; }",
                 "get() { const result = state.size; return result; }",
             ).replace(
                 "set(key) { state.set(key, 1)", "set(key) { const alias = key; state.set(alias, 1)"
             ),
-            "host",
             1,
         ),
         # JS evaluates the two actuals left to right. The first inserts key 0
         # and yields 1; the second inserts key 1 and yields 2. The setter must
         # overwrite key 1. Reversing the actuals instead inserts key 2, making
         # the final growing getter return 4 rather than 3.
-        "result_argument_order": (
+        "result_argument_order": hosted(
             CALL_RESULT.replace(
                 "get() { return state.size; }",
                 "get() { state.set(state.size, 1); return state.size; }",
@@ -143,30 +135,26 @@ def result_sources():
                 "host.slot.set(host.slot.get());",
                 "host.slot.set(host.slot.get(), host.slot.get());",
             ),
-            "host",
             3,
         ),
-        "result_bool": (repeated_bool, "host", 2),
-        "result_delete": (
+        "result_bool": hosted(repeated_bool, 2),
+        "result_delete": hosted(
             observed_size.replace("state.has(false)", "state.delete(false)").replace(
                 "host.slot.set(host.slot.get());", "host.slot.set(host.slot.get()); " * 3
             ),
-            "host",
             2,
         ),
-        "result_string": (
+        "result_string": hosted(
             observed_size.replace(
                 "return state.has(false);",
                 "state.set('produced', 1); return '" + "result-key-" * 12 + "';",
             ),
-            "host",
             2,
         ),
-        "result_formal": (
+        "result_formal": hosted(
             observed_size.replace(
                 "get() { return state.has(false); }", "get(key) { state.has(key); return key; }"
             ).replace("host.slot.set(host.slot.get());", "host.slot.set(host.slot.get(7));"),
-            "host",
             1,
         ),
     }
@@ -181,31 +169,27 @@ def seeded_result_sources():
         "var trace = host.slot.get();", "var trace = host.slot.size();"
     )
     return {
-        "result_seeded_map_get": (SEEDED_RESULT, "host", 1),
-        "result_seeded_repeated": (
+        "result_seeded_map_get": hosted(SEEDED_RESULT, 1),
+        "result_seeded_repeated": hosted(
             SEEDED_RESULT.replace(
                 "host.slot.set(host.slot.get());",
                 "host.slot.set(host.slot.get()); host.slot.set(host.slot.get());",
             ),
-            "host",
             1,
         ),
-        "result_seeded_overwrite": (
-            SEEDED_RESULT.replace("state.set(0, 1);", "state.set(0, 1); state.set(0, 2);"),
-            "host",
-            2,
+        "result_seeded_overwrite": hosted(
+            SEEDED_RESULT.replace("state.set(0, 1);", "state.set(0, 1); state.set(0, 2);"), 2
         ),
-        "result_seeded_growing": (
+        "result_seeded_growing": hosted(
             SEEDED_RESULT.replace(
                 "state.set(0, 1); return state.get(0);",
                 "const key = state.size; state.set(key, key); return state.get(key);",
             ),
-            "host",
             1,
         ),
         # Distinct current actuals prevent the formal from being proved as a
         # single literal. Each invocation must match its own set/get SSA key.
-        "result_seeded_formal": (
+        "result_seeded_formal": hosted(
             observed_size.replace(
                 "get() { state.set(0, 1); return state.get(0); }",
                 "get(key) { state.set(key, 1); return state.get(key); }",
@@ -213,7 +197,6 @@ def seeded_result_sources():
                 "host.slot.set(host.slot.get());",
                 "host.slot.set(host.slot.get(7)); host.slot.set(host.slot.get(8));",
             ),
-            "host",
             3,
         ),
     }
@@ -221,56 +204,49 @@ def seeded_result_sources():
 
 def key_fact_sources():
     return {
-        "seeded_earlier_key": (
+        "seeded_earlier_key": hosted(
             SEEDED_RESULT.replace("return state.get(0);", "state.set(1, 2); return state.get(0);"),
-            "host",
             1,
         ),
-        "seeded_other_delete": (
+        "seeded_other_delete": hosted(
             SEEDED_RESULT.replace("return state.get(0);", "state.delete(9); return state.get(0);"),
-            "host",
             1,
         ),
-        "seeded_earlier_overwrite": (
+        "seeded_earlier_overwrite": hosted(
             SEEDED_RESULT.replace(
                 "return state.get(0);",
                 "state.set(1, 9); state.set(0, 2); state.set(1, 3); return state.get(0);",
             ),
-            "host",
             2,
         ),
-        "seeded_reseed": (
+        "seeded_reseed": hosted(
             SEEDED_RESULT.replace(
                 "return state.get(0);",
                 "state.delete(0); state.set(0, 3); state.set(1, 2); return state.get(0);",
             ),
-            "host",
             3,
         ),
-        "seeded_many_keys": (
+        "seeded_many_keys": hosted(
             SEEDED_RESULT.replace(
                 "return state.get(0);",
                 " ".join(f"state.set({key}, {key + 1});" for key in range(1, 9))
                 + " return state.get(0);",
             ),
-            "host",
             1,
         ),
-        "seeded_string_keys": (
+        "seeded_string_keys": hosted(
             SEEDED_RESULT.replace(
                 "state.set(0, 1); return state.get(0);",
                 "state.set('seed', 1); state.set('other', 2); state.delete('missing'); "
                 "return state.get('seed');",
             ).replace("state.set(key, 1)", "state.set('sink', key)"),
-            "host",
             1,
         ),
-        "seeded_bool_keys": (
+        "seeded_bool_keys": hosted(
             SEEDED_RESULT.replace(
                 "state.set(0, 1); return state.get(0);",
                 "state.set(false, 1); state.set(true, 2); state.delete(true); return state.get(false);",
             ).replace("state.set(key, 1)", "state.set(true, key)"),
-            "host",
             1,
         ),
     }
@@ -284,52 +260,46 @@ def joined_result_sources():
         "var trace = host.slot.get();", "var trace = host.slot.size();"
     )
     return {
-        "seeded_dynamic_write": (dynamic, "host", 1),
+        "seeded_dynamic_write": hosted(dynamic, 1),
         # The first getter's size key really overwrites key 1, producing 2.
         # Reusing the old payload 1 changes the setter's key and leaves one
         # entry rather than two. Observe the final setter's returned size.
-        "seeded_dynamic_overwrite": (
+        "seeded_dynamic_overwrite": hosted(
             dynamic.replace("state.set(0, 1)", "state.set(1, 1)")
             .replace("state.get(0)", "state.get(1)")
             .replace("var trace = host.slot.get();", "var trace = host.slot.set(host.slot.get());"),
-            "host",
             2,
         ),
-        "seeded_dynamic_saved_key": (
+        "seeded_dynamic_saved_key": hosted(
             SEEDED_RESULT.replace(
                 "state.set(0, 1); return state.get(0);",
                 "const key = state.size; state.set(key, 1); "
                 "state.set(state.size, 2); return state.get(key);",
             ),
-            "host",
             1,
         ),
-        "seeded_dynamic_repeated": (
+        "seeded_dynamic_repeated": hosted(
             dynamic.replace(
                 "return state.get(0);", "state.set(state.size, 3); return state.get(0);"
             ).replace(
                 "host.slot.set(host.slot.get());",
                 "host.slot.set(host.slot.get()); host.slot.set(host.slot.get());",
             ),
-            "host",
             1,
         ),
-        "seeded_dynamic_reseed": (
+        "seeded_dynamic_reseed": hosted(
             dynamic.replace(
                 "return state.get(0);",
                 "state.set(0, 3); state.set(state.size, 4); return state.get(0);",
             ),
-            "host",
             3,
         ),
-        "seeded_dynamic_runtime_payload": (
-            dynamic.replace("state.set(state.size, 2)", "state.set(state.size, state.size)"),
-            "host",
-            1,
+        "seeded_dynamic_runtime_payload": hosted(
+            dynamic.replace("state.set(state.size, 2)", "state.set(state.size, state.size)"), 1
         ),
         # Distinct calls make this a numeric formal, never a guessed constant.
         # The first getter's write aliases key 1; the second keeps key 7.
-        "seeded_dynamic_formal": (
+        "seeded_dynamic_formal": hosted(
             observed_size.replace(
                 "get() { state.set(0, 1); state.set(state.size, 2); return state.get(0); }",
                 "get(key) { state.set(key, 1); state.set(state.size, 2); return state.get(key); }",
@@ -337,16 +307,14 @@ def joined_result_sources():
                 "host.slot.set(host.slot.get());",
                 "host.slot.set(host.slot.get(1)); host.slot.set(host.slot.get(7));",
             ),
-            "host",
             4,
         ),
-        "seeded_dynamic_saved_overwrite": (
+        "seeded_dynamic_saved_overwrite": hosted(
             SEEDED_RESULT.replace(
                 "state.set(0, 1); return state.get(0);",
                 "const key = state.size; state.set(key, 1); state.set(state.size, 2); "
                 "state.set(key, 3); state.set(state.size, 4); return state.get(key);",
             ),
-            "host",
             3,
         ),
     }
@@ -370,74 +338,67 @@ def size_result_sources():
         "var trace = host.slot.get();", "var trace = host.slot.set(host.slot.get());"
     )
     return {
-        "seeded_dynamic_delete": (
+        "seeded_dynamic_delete": hosted(
             SEEDED_RESULT.replace(
                 "return state.get(0);", "state.delete(state.size); return state.get(0);"
             ),
-            "host",
             1,
         ),
         # The alias reads one immutable size before growing the Map. Re-reading
         # the current size at delete misses the saved key and leaves trace=3.
-        "seeded_size_saved": (saved, "host", 2),
+        "seeded_size_saved": hosted(saved, 2),
         # Removing all known entries cannot revoke a previous nonempty snapshot.
-        "seeded_size_saved_empty": (
+        "seeded_size_saved_empty": hosted(
             SEEDED_RESULT.replace(
                 "return state.get(0);",
                 "const saved = state.size; state.delete(0); state.set(0, 3); "
                 "state.delete(saved); return state.get(0);",
             ),
-            "host",
             3,
         ),
-        "seeded_size_two_entries": (
+        "seeded_size_two_entries": hosted(
             SEEDED_RESULT.replace(
                 "state.set(0, 1); return state.get(0);",
                 "state.set(0, 1); state.set(1, 2); state.delete(state.size); "
                 "return state.get(1);",
             ),
-            "host",
             2,
         ),
-        "seeded_size_three_entries": (
+        "seeded_size_three_entries": hosted(
             SEEDED_RESULT.replace(
                 "state.set(0, 1); return state.get(0);",
                 "state.set(0, 1); state.set(1, 2); state.set(2, 3); "
                 "state.delete(state.size); return state.get(2);",
             ),
-            "host",
             3,
         ),
         # The alias reads size >= 2 before growing the Map. Both later calls
         # must delete that saved key; rereading current size leaves trace=4.
-        "seeded_size_two_saved": (
+        "seeded_size_two_saved": hosted(
             two_saved.replace(
                 "var trace = host.slot.get();", "var trace = host.slot.set(host.slot.get());"
             ),
-            "host",
             3,
         ),
         # Remove both seeds and the prior setter's key before reseeding. The
         # saved bound still excludes key 1 after every definite entry is gone.
-        "seeded_size_two_saved_empty": (
+        "seeded_size_two_saved_empty": hosted(
             observed_size.replace(
                 "state.set(0, 1); return state.get(0);",
                 "state.set(0, 1); state.set(1, 2); const saved = state.size; "
                 "state.delete(0); state.delete(1); state.delete(3); "
                 "state.set(1, 3); state.delete(saved); return state.get(1);",
             ),
-            "host",
             2,
         ),
         # Deleting one known key leaves two distinct definite entries. The
         # numeric payload 7 makes suppressing that real delete observable.
-        "seeded_size_after_delete": (
+        "seeded_size_after_delete": hosted(
             observed_size.replace(
                 "state.set(0, 1); return state.get(0);",
                 "state.set(0, 1); state.set(1, 7); state.set(2, 3); state.delete(2); "
                 "state.delete(state.size); return state.get(1);",
             ),
-            "host",
             3,
         ),
     }
@@ -552,37 +513,34 @@ def payload_result_sources():
     )
     string = string.replace("state.set(key, 1)", "state.set(key, 'stored')")
     return {
-        "result_seeded_bool": (boolean, "host", 2),
-        "result_seeded_string": (string, "host", 2),
+        "result_seeded_bool": hosted(boolean, 2),
+        "result_seeded_string": hosted(string, 2),
         # False and empty strings overwrite their existing keys. Treating
         # either payload as missing instead creates an undefined key: size 2.
-        "result_seeded_false": (false_value, "host", 1),
-        "result_seeded_empty_string": (
+        "result_seeded_false": hosted(false_value, 1),
+        "result_seeded_empty_string": hosted(
             string.replace(
                 f"state.set('seed', '{STRING_RESULT}'); return state.get('seed');",
                 "state.set('', ''); return state.get('');",
             ),
-            "host",
             1,
         ),
-        "result_seeded_false_overwrite": (
+        "result_seeded_false_overwrite": hosted(
             false_value.replace(
                 "state.set(false, false);", "state.set(false, true); state.set(false, false);"
             ),
-            "host",
             1,
         ),
         # The returned key is present before the read. Its owning string copy
         # must survive both replacement and deletion of the source payload.
         # Returning the new payload or a missing result adds another key.
-        "result_seeded_string_saved": (
+        "result_seeded_string_saved": hosted(
             string.replace(
                 f"state.set('seed', '{STRING_RESULT}'); return state.get('seed');",
                 f"state.set('seed', '{STRING_RESULT}'); state.set('{STRING_RESULT}', 'stored'); "
                 "const saved = state.get('seed'); state.set('seed', 'changed'); "
                 "state.delete('seed'); return saved;",
             ),
-            "host",
             1,
         ),
     }
@@ -626,50 +584,44 @@ def mixed_result_sources():
         "state.set('seed', 'changed')", "state.set('seed', false)"
     ).replace("return saved;", "state.delete(false); return saved;")
     return {
-        "result_seeded_mixed_contents": (
-            observed_size.replace("state.set(0, 1);", "state.set(0, true); state.set(0, 1);"),
-            "host",
-            2,
+        "result_seeded_mixed_contents": hosted(
+            observed_size.replace("state.set(0, 1);", "state.set(0, true); state.set(0, 1);"), 2
         ),
-        "result_seeded_join_reseed": (
+        "result_seeded_join_reseed": hosted(
             observed_size.replace(
                 "return state.get(0);",
                 "state.set(state.size, true); state.set(0, 3); return state.get(0);",
             ),
-            "host",
             3,
         ),
-        "result_seeded_bool_string_contents": (
+        "result_seeded_bool_string_contents": hosted(
             payload_result_sources()["result_seeded_bool"][0].replace(
                 "state.set(false, true);", "state.set(false, 'old'); state.set(false, true);"
             ),
-            "host",
             2,
         ),
         # SameValueZero compares within a tag: false and numeric zero occupy
         # separate entries, and the produced true key creates a third entry.
-        "result_seeded_mixed_false_zero": (
+        "result_seeded_mixed_false_zero": hosted(
             observed_size.replace(
                 "state.set(0, 1); return state.get(0);",
                 "state.set(false, 1); state.set(0, true); return state.get(0);",
             ),
-            "host",
             3,
         ),
         # Returning false overwrites the setter's false key. Returning zero
         # or missing instead creates a fourth entry in the same mixed Map.
-        "result_seeded_mixed_false": (false_value, "host", 3),
-        "result_seeded_mixed_empty_key": (
+        "result_seeded_mixed_false": hosted(false_value, 3),
+        "result_seeded_mixed_empty_key": hosted(
             observed_size.replace(
                 "state.set(0, 1); return state.get(0);",
                 "state.set(false, false); state.set('', 'key'); return state.get('');",
             ).replace("state.set(key, 1)", "state.set(key, 'stored')"),
-            "host",
             3,
         ),
         # The saved string owns its bytes after a Boolean replacement, removal
         # of both source entries, and eventually destruction of the entire Map.
-        "result_seeded_mixed_string_saved": (saved_string, "host", 1),
+        "result_seeded_mixed_string_saved": hosted(saved_string, 1),
     }
 
 
@@ -728,7 +680,7 @@ def case_adder(rows, history):
 def admitted_sources(rows):
     """The (source, owner, trace) entries of the admitted rows, in row order."""
     return {
-        name: (row["source"], "host", row["expected_trace"])
+        name: hosted(row["source"], row["expected_trace"])
         for name, row in rows.items()
         if row["admitted"]
     }
@@ -739,3 +691,8 @@ def js_host_calls(source):
     return 2 + len(
         re.findall(r"\b(?:state|host\.slot)\.(?:set|get|size|has|delete|clear)\(", source)
     )
+
+
+def hosted(source, value):
+    """A source published through `host`, with its expected trace."""
+    return (source, "host", value)

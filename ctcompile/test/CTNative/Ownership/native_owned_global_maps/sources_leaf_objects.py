@@ -28,33 +28,26 @@ def leaf_object_sources():
     return {
         # These first two programs preserve the exact seven-call/five-function
         # continuation measured in e533a865, including repeated live keys.
-        "leaf_object_plain": (LEAF_OBJECT_SOURCE, "host", 2),
-        "leaf_object_number_field": (number, "host", 2),
-        "leaf_object_scalar_writes": (fields, "host", 2),
-        "leaf_object_alias": (
-            fields.replace("state.set(key, item);", "const alias = item; state.set(key, alias);"),
-            "host",
-            2,
+        "leaf_object_plain": hosted(LEAF_OBJECT_SOURCE, 2),
+        "leaf_object_number_field": hosted(number, 2),
+        "leaf_object_scalar_writes": hosted(fields, 2),
+        "leaf_object_alias": hosted(
+            fields.replace("state.set(key, item);", "const alias = item; state.set(key, alias);"), 2
         ),
         # An independently called deleting sibling provides a numeric ABI for
         # the saved-callable observer. No object crosses a published boundary.
-        "leaf_object_lifetime": (lifetime, "host", 1),
-        "leaf_object_number_repair": (
-            LEAF_OBJECT_SOURCE.replace("const item = {};", "const item = 1;"),
-            "host",
-            2,
+        "leaf_object_lifetime": hosted(lifetime, 1),
+        "leaf_object_number_repair": hosted(
+            LEAF_OBJECT_SOURCE.replace("const item = {};", "const item = 1;"), 2
         ),
-        "leaf_object_string_repair": (
-            LEAF_OBJECT_SOURCE.replace("const item = {};", "const item = 'instance';"),
-            "host",
-            2,
+        "leaf_object_string_repair": hosted(
+            LEAF_OBJECT_SOURCE.replace("const item = {};", "const item = 'instance';"), 2
         ),
-        "leaf_object_identity_repair": (
+        "leaf_object_identity_repair": hosted(
             number.replace(
                 "host.slot.set('x'); host.slot.set('x'); host.slot.set('y');\nvar trace = host.slot.size();",
                 "host.slot.size(); var trace = host.slot.set('x');",
             ),
-            "host",
             1,
         ),
     }
@@ -238,31 +231,22 @@ def leaf_readback_sources():
             2,
         ),
     }
-    result = {
-        name: (base.replace(old, body), "host", value) for name, (body, value) in rows.items()
-    }
+    result = {name: hosted(base.replace(old, body), value) for name, (body, value) in rows.items()}
     same = result["local_identity_saved"][0]
-    result["local_identity_repeated_keys"] = (
+    result["local_identity_repeated_keys"] = hosted(
         same.replace(
             "host.slot.set('x');", "host.slot.set('x') + host.slot.set('x') + host.slot.set('y');"
         ),
-        "host",
         3,
     )
     for name in ("saved_identity", "distinct_identity"):
         source, value, *_ = leaf_object_refusals()["leaf_object_" + name]
         result["historical_object_" + name] = source, "host", value
-    result["local_identity_not_equal"] = (
-        same.replace("saved === item", "saved !== item"),
-        "host",
-        0,
+    result["local_identity_not_equal"] = hosted(same.replace("saved === item", "saved !== item"), 0)
+    result["local_field_readback_test"] = hosted(
+        base.replace(old, field + "return saved.value === 1 ? 1 : 0;"), 1
     )
-    result["local_field_readback_test"] = (
-        base.replace(old, field + "return saved.value === 1 ? 1 : 0;"),
-        "host",
-        1,
-    )
-    result["local_field_export_repair"] = (
+    result["local_field_export_repair"] = hosted(
         result["local_field_get_guarded"][0]
         .replace(
             "return saved === item ? saved.value : 0;",
@@ -271,17 +255,15 @@ def leaf_readback_sources():
         .replace(
             "var trace = host.slot.set('x');", "host.slot.set('x'); var trace = host.slot.size();"
         ),
-        "host",
         1,
     )
     for name, literal in (("boolean", "false"), ("null", "null"), ("undefined", "void 0")):
-        result["local_field_" + name] = (
+        result["local_field_" + name] = hosted(
             base.replace(
                 old,
                 "const item = {value: " + literal + "}; state.set(key, item); "
                 "const saved = state.get(key); return saved.value === (" + literal + ") ? 1 : 0;",
             ),
-            "host",
             1,
         )
     lifetime = base.replace("set(key)", "set(key, value)").replace(
@@ -289,10 +271,8 @@ def leaf_readback_sources():
         field + "state.set(key, {value: 3}); state.delete(key); item.value = value; "
         "return saved === item ? saved.value : 0;",
     )
-    result["local_field_readback_lifetime"] = (
-        lifetime.replace("host.slot.set('x')", "host.slot.set('x', 2)"),
-        "host",
-        2,
+    result["local_field_readback_lifetime"] = hosted(
+        lifetime.replace("host.slot.set('x')", "host.slot.set('x', 2)"), 2
     )
     for name, (old_return, checked_return) in LEAF_READBACK_CHECKED_RETURNS.items():
         source, binding, value = result[name]
@@ -919,7 +899,7 @@ LEAF_ABSENCE_PROMOTED_REFUSALS = {
 def leaf_absence_sources():
     existing = leaf_readback_sources()
     result = {
-        name: (row["source"], "host", row["expected_trace"])
+        name: hosted(row["source"], row["expected_trace"])
         for name, row in leaf_absence_cases().items()
         if name not in LEAF_ABSENCE_UNOWNED and name not in existing
     }

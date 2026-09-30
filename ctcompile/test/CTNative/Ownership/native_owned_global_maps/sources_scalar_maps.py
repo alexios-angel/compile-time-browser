@@ -21,32 +21,30 @@ def saved_read_sources():
     return {
         # Exact next boundary from HANDOFF: an empty String read passes through
         # a nonliteral write into mixed storage and remains a present String.
-        "saved_read_write": (saved, "host", 1),
+        "saved_read_write": hosted(saved, 1),
         # The payload's old scalar value survives mutation of its source entry;
         # its SSA tag must not be recovered from the entry's later contents.
-        "saved_read_write_false": (
+        "saved_read_write_false": hosted(
             boolean.replace(
                 getter,
                 "state.set('', 'old'); state.set(false, false); const saved = state.get(false); "
                 "state.set(false, true); state.set('', saved); const result = state.get(''); "
                 "state.delete(''); return result;",
             ),
-            "host",
             1,
         ),
-        "saved_read_write_number": (number, "host", 1),
-        "saved_read_write_repeated": (
+        "saved_read_write_number": hosted(number, 1),
+        "saved_read_write_repeated": hosted(
             saved.replace(
                 "host.slot.set(host.slot.get());",
                 "host.slot.set(host.slot.get()); host.slot.set(host.slot.get());",
             ),
-            "host",
             1,
         ),
         # Both intermediate reads must own their String. The first source entry
         # is overwritten and deleted before the saved value is written back;
         # the second is overwritten and deleted before the method returns.
-        "saved_read_write_string_saved": (
+        "saved_read_write_string_saved": hosted(
             boolean.replace(
                 getter,
                 f"state.set('seed', '{STRING_RESULT}'); state.set('{STRING_RESULT}', 'stored'); "
@@ -54,22 +52,18 @@ def saved_read_sources():
                 "state.set(false, true); state.set(false, saved); const result = state.get(false); "
                 "state.set(false, false); state.delete(false); return result;",
             ),
-            "host",
             1,
         ),
         # Valid Boolean results must keep their actual tag, even after a saved
         # String read exists or has briefly been stored at the same key.
-        "saved_read_write_wrong_tag": (
-            saved.replace("state.set(false, saved);", "state.set(false, true);"),
-            "host",
-            2,
+        "saved_read_write_wrong_tag": hosted(
+            saved.replace("state.set(false, saved);", "state.set(false, true);"), 2
         ),
-        "saved_read_write_overwritten": (
+        "saved_read_write_overwritten": hosted(
             saved.replace(
                 "const result = state.get(false);",
                 "state.set(false, true); const result = state.get(false);",
             ),
-            "host",
             2,
         ),
     }
@@ -162,17 +156,15 @@ def saved_join_sources():
     return {
         # Exact 16-call boundary from the preceding handoff. Both runtime calls
         # must remain: choosing the empty arm unconditionally yields size 2.
-        "saved_join": (saved, "host", 3),
-        "saved_join_always_empty": (
-            saved.replace("flag ? state.get('other') : state.get('')", "state.get('')"),
-            "host",
-            2,
+        "saved_join": hosted(saved, 3),
+        "saved_join_always_empty": hosted(
+            saved.replace("flag ? state.get('other') : state.get('')", "state.get('')"), 2
         ),
         # Distinct result keys make either constant-arm substitution observable.
-        "saved_join_distinct": (distinct, "host", 4),
-        "saved_join_bool": (boolean, "host", 4),
-        "saved_join_number": (number, "host", 4),
-        "saved_join_string_saved": (owning, "host", 2),
+        "saved_join_distinct": hosted(distinct, 4),
+        "saved_join_bool": hosted(boolean, 4),
+        "saved_join_number": hosted(number, 4),
+        "saved_join_string_saved": hosted(owning, 2),
     }
 
 
@@ -248,24 +240,21 @@ def guarded_saved_sources():
     return {
         # Exact 18-call next boundary from HANDOFF. A deletion join loses
         # unconditional membership, but preserves the tag whenever present.
-        "guarded_saved_read": (saved, "host", 2),
-        "guarded_saved_no_delete": (
-            saved.replace("if (flag) { state.delete('other'); }", "state.has('other');"),
-            "host",
-            3,
+        "guarded_saved_read": hosted(saved, 2),
+        "guarded_saved_no_delete": hosted(
+            saved.replace("if (flag) { state.delete('other'); }", "state.has('other');"), 3
         ),
-        "guarded_saved_always_empty": (
+        "guarded_saved_always_empty": hosted(
             saved.replace(
                 "state.has('other') ? state.get('other') : state.get('')", "state.get('')"
             ),
-            "host",
             1,
         ),
-        "guarded_saved_bool": (boolean, "host", 4),
-        "guarded_saved_number": (number, "host", 4),
+        "guarded_saved_bool": hosted(boolean, 4),
+        "guarded_saved_number": hosted(number, 4),
         # The false-only startup returns STRING_RESULT. Future calls with true
         # delete the guarded entry and return the other independently owned String.
-        "guarded_saved_string_saved": (owning, "host", 2),
+        "guarded_saved_string_saved": hosted(owning, 2),
     }
 
 
@@ -382,16 +371,16 @@ def shortcircuit_sources():
     return {
         # Exact eighteen-call source from the preceding handoff. The temporary
         # && result includes false, but only String reaches the truthy || arm.
-        "shortcircuit_same_tag": (saved, "host", 2),
-        "shortcircuit_distinct": (distinct, "host", 3),
-        "shortcircuit_empty_string": (empty, "host", 3),
-        "shortcircuit_bool": (boolean, "host", 4),
-        "shortcircuit_false": (false_value, "host", 3),
-        "shortcircuit_number": (number, "host", 4),
-        "shortcircuit_zero": (zero, "host", 3),
+        "shortcircuit_same_tag": hosted(saved, 2),
+        "shortcircuit_distinct": hosted(distinct, 3),
+        "shortcircuit_empty_string": hosted(empty, 3),
+        "shortcircuit_bool": hosted(boolean, 4),
+        "shortcircuit_false": hosted(false_value, 3),
+        "shortcircuit_number": hosted(number, 4),
+        "shortcircuit_zero": hosted(zero, 3),
         # Only false runs at startup; the lifetime harness invokes both flags
         # after owner release and retains both results past final Map release.
-        "shortcircuit_string_saved": (owning, "host", 2),
+        "shortcircuit_string_saved": hosted(owning, 2),
     }
 
 
