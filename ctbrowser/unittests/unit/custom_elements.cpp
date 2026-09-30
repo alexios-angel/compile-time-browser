@@ -364,6 +364,53 @@ void test_the_parser_constructs_synchronously() {
              "ctor:0,InvalidStateError,connected:0");
 }
 
+// PAGE-CONTROLLED RECEIVERS AND COLLECTIONS DURING define(). HTMLElement
+// called on an array or proxy made to look like an instance, or on an element
+// with no upgrade running, is a TypeError - not a write through the wrong
+// object type. And define() reads the callbacks and observedAttributes through
+// page getters that may collect and mutate: what it read earlier must survive,
+// and a list that grows while it is converted is converted as it was.
+constexpr const char * churn = "function churn(){ var a = []; for (var i = 0; i < 200000; ++i)"
+                               " a.push({i: i}); return a.length; }";
+
+void test_page_controlled_receivers_are_refused() {
+    CHECK_EQ(said(std::string{"<html><body><script>"} +
+                  "function threw(f){ try { f(); return 'ok'; } catch (e) { return e.name; } }"
+                  "class C extends HTMLElement {}"
+                  "customElements.define('x-recv', C);"
+                  "var arr = []; Object.setPrototypeOf(arr, C.prototype);"
+                  "alert(threw(function(){ HTMLElement.call(arr); }));"
+                  "var px = new Proxy({}, {}); Object.setPrototypeOf(px, C.prototype);"
+                  "alert(threw(function(){ HTMLElement.call(px); }));"
+                  "var el = document.createElement('x-recv');"
+                  "alert(threw(function(){ HTMLElement.call(el); }));"
+                  "alert(el instanceof C);"
+                  "</script></body></html>"),
+             "TypeError;TypeError;TypeError;true");
+}
+
+void test_define_survives_collection_in_its_getters() {
+    CHECK_EQ(said(std::string{"<html><body><script>"} + churn +
+                  "var list = null;"
+                  "class D extends HTMLElement {"
+                  "  static get observedAttributes() {"
+                  "    list = [{toString() { for (var i = 0; i < 64; ++i) list.push('x' + i);"
+                  "      churn(); return 'a'; }}, 'b'];"
+                  "    return list; }"
+                  "  get connectedCallback() { return function() { alert('connected'); }; }"
+                  "  get adoptedCallback() { churn(); return undefined; }"
+                  "  get attributeChangedCallback() {"
+                  "    return function(n) { alert('changed:' + n); }; }"
+                  "}"
+                  "customElements.define('x-churn', D);"
+                  "churn();"
+                  "var el = document.createElement('x-churn');"
+                  "document.body.appendChild(el);"
+                  "el.setAttribute('x5', '1'); el.setAttribute('b', '1');"
+                  "</script></body></html>"),
+             "connected;changed:b");
+}
+
 } // namespace
 
 int main() {
@@ -381,5 +428,7 @@ int main() {
     test_reactions_wait_for_custom_and_a_callback();
     test_scoped_registries();
     test_the_parser_constructs_synchronously();
+    test_page_controlled_receivers_are_refused();
+    test_define_survives_collection_in_its_getters();
     REPORT("custom_elements");
 }

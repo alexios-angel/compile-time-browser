@@ -114,7 +114,11 @@ constexpr std::size_t npos = std::numeric_limits<std::size_t>::max();
         cx.throw_error("TypeError", "The provided value cannot be converted to a sequence.");
         return false;
     }
-    for (const value & entry : static_cast<script::array_object *>(items.as_heap())->items) {
+    // A rooted COPY: iterable_values may hand back the page's own array, and
+    // each toString can grow or shrink it, or collect the only reference.
+    const std::vector<value> entries = static_cast<script::array_object *>(items.as_heap())->items;
+    const context::rooted_values keep{cx, entries};
+    for (const value & entry : entries) {
         out.push_back(cx.to_string(entry));
         if (cx.throw_pending()) { return false; }
     }
@@ -465,7 +469,9 @@ value dom_bindings::custom_elements_registry(context & cx) {
 
 value dom_bindings::construct_html_element(context & c, value self,
                                            std::string_view interface_name) {
-    if (!self.is_object_like()) {
+    // An ORDINARY object only: `HTMLElement.call(array)` or a Proxy whose
+    // prototype is a defined class's must not be written through as one.
+    if (!self.is_object()) {
         c.throw_error("TypeError", "Failed to construct '" + std::string{interface_name} +
                                        "': please use the 'new' operator.");
         return value::undefined();
@@ -503,7 +509,10 @@ value dom_bindings::construct_html_element(context & c, value self,
     // constructor's `this` stays the object `new` made, since a native's
     // return cannot rebind it; what the outer `super()` then meets is the
     // marker, and that is the TypeError the page sees reported.)
-    if (is_element || !def.construction_stack.empty()) {
+    // An existing element with nothing on the stack is `HTMLElement.call(el)`
+    // outside any upgrade: there is no top to take.
+    if (is_element && def.construction_stack.empty()) { return illegal_constructor(c, {}); }
+    if (!def.construction_stack.empty()) {
         custom_element_definition::construction & top = def.construction_stack.back();
         if (top.constructed) {
             c.throw_error("TypeError", "The HTML element constructor was called twice for one "
@@ -1031,8 +1040,15 @@ void dom_bindings::install_custom_elements(context & cx) {
             def.local_name = local_name;
             def.registry = &reg;
             def.constructor = ctor;
+            // `def` is a C++ local until it joins the registry, and every read
+            // below can run a page getter that collects: what each earlier read
+            // returned is kept alive here.
+            const value holder = c.make_array();
+            const context::rooted keep_holder{c, holder};
+            auto * held = static_cast<script::array_object *>(holder.as_heap());
             const bool read = [&] {
                 def.prototype = c.lookup_property(ctor, "prototype");
+                held->items.push_back(def.prototype);
                 if (c.throw_pending()) { return false; }
                 if (!def.prototype.is_object_like()) {
                     c.throw_error("TypeError",
@@ -1042,6 +1058,7 @@ void dom_bindings::install_custom_elements(context & cx) {
                 }
                 const auto callback = [&](const char * which, value & into) {
                     into = c.lookup_property(def.prototype, which);
+                    held->items.push_back(into);
                     if (c.throw_pending()) { return false; }
                     if (!into.is_undefined() && !into.is_callable()) {
                         c.throw_error("TypeError", std::string{"Failed to execute 'define' on "
@@ -1060,6 +1077,7 @@ void dom_bindings::install_custom_elements(context & cx) {
                 }
                 if (def.attribute_changed.is_callable()) {
                     const value observed = c.lookup_property(ctor, "observedAttributes");
+                    held->items.push_back(observed);
                     if (c.throw_pending()) { return false; }
                     if (!observed.is_undefined() &&
                         !string_sequence(c, observed, def.observed_attributes)) {
@@ -1067,6 +1085,7 @@ void dom_bindings::install_custom_elements(context & cx) {
                     }
                 }
                 const value disabled = c.lookup_property(ctor, "disabledFeatures");
+                held->items.push_back(disabled);
                 if (c.throw_pending()) { return false; }
                 if (!disabled.is_undefined()) {
                     std::vector<std::string> features;
