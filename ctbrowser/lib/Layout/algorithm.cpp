@@ -2,6 +2,11 @@
 
 #include <ctbrowser/layout/flex.hpp>
 
+#include <array>
+#include <bit>
+#include <cstdint>
+#include <unordered_map>
+
 // algorithm: the function bodies.
 // The header says what these compute; this says how.
 
@@ -102,8 +107,67 @@ float content_width_of(const box_node & b, const constraints & c, const resolved
     return std::max(0.0f, outer_width_of(b, c, e, measure) - e.horizontal_inner());
 }
 
+namespace {
+
+// ONE MEASUREMENT PER (box, constraints) FOR THE DURATION OF THE OUTERMOST
+// measure_box. A flex container measures each item twice (outer_intrinsic, and
+// again for a growable one), so thirty nested `display: flex; flex-grow: 1`
+// divs made 2^30 calls. measure_box is a pure function of the box, its
+// constraints and the measure function, and the box tree is const for the whole
+// call, so a hit is the same answer bit for bit - the floats are keyed by their
+// bits, not by ==, so -0 and 0 stay distinct.
+struct measure_key {
+    const box_node * box;
+    const measure_text_fn * measure;
+    std::array<std::uint32_t, 4> c;
+    bool suppress;
+    bool operator==(const measure_key &) const = default;
+};
+struct measure_key_hash {
+    std::size_t operator()(const measure_key & k) const noexcept {
+        std::size_t h = std::hash<const void *>{}(k.box) ^ std::hash<const void *>{}(k.measure);
+        for (const std::uint32_t v : k.c) { h = h * 1099511628211u ^ v; }
+        return h ^ static_cast<std::size_t>(k.suppress);
+    }
+};
+using measure_cache = std::unordered_map<measure_key, intrinsic_sizes, measure_key_hash>;
+thread_local measure_cache * active_measure_cache = nullptr;
+
+intrinsic_sizes measure_box_uncached(const box_node & b, const constraints & c,
+                                     const measure_text_fn & measure);
+
+} // namespace
+
 intrinsic_sizes measure_box(const box_node & b, const constraints & c,
                             const measure_text_fn & measure) {
+    measure_cache local;
+    const bool outermost = active_measure_cache == nullptr;
+    if (outermost) { active_measure_cache = &local; }
+    struct restore {
+        bool on;
+        ~restore() {
+            if (on) { active_measure_cache = nullptr; }
+        }
+    } const guard{outermost};
+    const measure_key key{&b,
+                          &measure,
+                          {std::bit_cast<std::uint32_t>(c.available_width),
+                           std::bit_cast<std::uint32_t>(c.available_height),
+                           std::bit_cast<std::uint32_t>(c.font_size),
+                           std::bit_cast<std::uint32_t>(c.forced_width)},
+                          c.suppress_margin_collapse};
+    if (const auto hit = active_measure_cache->find(key); hit != active_measure_cache->end()) {
+        return hit->second;
+    }
+    const intrinsic_sizes out = measure_box_uncached(b, c, measure);
+    active_measure_cache->emplace(key, out);
+    return out;
+}
+
+namespace {
+
+intrinsic_sizes measure_box_uncached(const box_node & b, const constraints & c,
+                                     const measure_text_fn & measure) {
     if (b.kind == box_kind::text) {
         return intrinsic_sizes{inline_flow::longest_word(b, measure),
                                measure(b.text, b.font_size, b.face)};
@@ -121,6 +185,8 @@ intrinsic_sizes measure_box(const box_node & b, const constraints & c,
     if (b.establishes_inline_context()) { return inline_flow{}.measure(b, c, measure); }
     return block_flow{}.measure(b, c, measure);
 }
+
+} // namespace
 
 intrinsic_sizes outer_intrinsic(const box_node & child, const constraints & c,
                                 const measure_text_fn & measure) {

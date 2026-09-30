@@ -739,6 +739,29 @@ void test_padding_is_inside_the_flex_base_size() {
     if (a != nullptr) { expect_near(a->bounds.width, 200, "the basis names the border box"); }
 }
 
+void test_nested_growable_containers_measure_once_each() {
+    // DOS-021: a flex container measures each item twice (its contribution, and
+    // again for a growable one), so thirty nested `display: flex; flex-grow: 1`
+    // divs made 2^30 measurements before measure_box was memoised per call.
+    fixture f;
+    std::string html = "<html><body>";
+    for (int i = 0; i < 30; ++i) { html += "<div>"; }
+    html += "<span id=x>x</span>";
+    for (int i = 0; i < 30; ++i) { html += "</div>"; }
+    html += "</body></html>";
+    f.load(html, std::string{reset}.append("div { display: flex; flex-grow: 1 }").c_str());
+    std::size_t calls = 0;
+    measure_text_fn counted = monospace_measure();
+    counted.measure = [&calls, inner = counted.measure](std::string_view text, float size,
+                                                        const text_face & face) {
+        ++calls;
+        return inner(text, size, face);
+    };
+    const fragment out = engine{counted}.run(f.root, 800);
+    check(out.find(f.find_id("x")) != nullptr, "the innermost text is laid out");
+    check(calls < 100000, "nested growable flex containers measure polynomially");
+}
+
 } // namespace
 
 int main() {
@@ -777,6 +800,7 @@ int main() {
     test_a_flex_container_can_be_a_flex_item();
     test_a_descendants_padding_counts_toward_the_item();
     test_padding_is_inside_the_flex_base_size();
+    test_nested_growable_containers_measure_once_each();
 
     REPORT("flex_basics");
 }
