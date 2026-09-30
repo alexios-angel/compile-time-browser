@@ -359,51 +359,36 @@ int main() {
     )
 
 
+# The families whose failed ownership must keep every leaf object/property
+# operation; the branch families add their live branch and yield operands.
+LEAF_PREFIXES = (
+    "leaf_object",
+    "leaf_readback",
+    "local_",
+    "historical_object",
+    "field_",
+    "zero_size_",
+    "size_one_",
+    "startup_empty_",
+    "size_deleted_",
+    "size_saved_",
+    "joined_",
+    "object_argument_",
+)
+BRANCH_PREFIXES = ("saved_join", "guarded_saved", "shortcircuit", "nullable", *LEAF_PREFIXES)
+
+
 def check_call_preservation(original, output, name):
     if source_calls(original) != source_calls(output):
         raise RuntimeError(f"{name}: failed ownership changed live source call operands")
-    if name.startswith(
-        (
-            "saved_join",
-            "guarded_saved",
-            "shortcircuit",
-            "nullable",
-            "leaf_object",
-            "leaf_readback",
-            "local_",
-            "historical_object",
-            "field_",
-            "zero_size_",
-            "size_one_",
-            "startup_empty_",
-            "size_deleted_",
-            "size_saved_",
-            "joined_",
-            "object_argument_",
-        )
-    ):
+    if name.startswith(BRANCH_PREFIXES):
         pattern = (
             r"^\s*(?:%[-\w.$]+(?::\d+)? = )?((?:ctjs\.(?:truthy|cond_br|br)|"
             r"scf\.(?:if|yield))\b[^\n]*)"
         )
         if re.findall(pattern, original, re.M) != re.findall(pattern, output, re.M):
             raise RuntimeError(f"{name}: failed ownership changed live branch/yield operands")
-    if name.startswith(
-        (
-            "leaf_object",
-            "leaf_readback",
-            "local_",
-            "historical_object",
-            "field_",
-            "zero_size_",
-            "size_one_",
-            "startup_empty_",
-            "size_deleted_",
-            "size_saved_",
-            "joined_",
-            "object_argument_",
-        )
-    ):
+    if name.startswith(LEAF_PREFIXES):
         pattern = r"^\s*((?:%[-\w.$]+ = )?ctjs\.(?:create_object|set_property|get_property|compare|unary|binary|load_global|store_global)\b[^\n{]*)"
         if [match.strip() for match in re.findall(pattern, original, re.M)] != [
             match.strip() for match in re.findall(pattern, output, re.M)
