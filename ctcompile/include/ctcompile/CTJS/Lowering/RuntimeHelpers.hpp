@@ -121,6 +121,7 @@ struct runtime_helper {
     // EVERY PARAMETER, INCLUDING THE FRAME HANDLE. The .def writes the
     // parameter list as C source and this counts it, rather than a hand-kept
     // number beside each row that could disagree with the row above it.
+    // Always role_count: both come from the one splitter, classify_all.
     std::size_t arity;
     bool may_throw;
     bool may_reenter;
@@ -165,30 +166,28 @@ struct runtime_helper {
     return param_role::unknown;
 }
 
-// Every parameter's role, in order. Returns how many there were.
+// Every TOP-LEVEL parameter's role, in order. Returns how many there were -
+// the row's arity. Top-level, because a parameter's own type can contain a
+// comma - none does today, and `std::function<void(int, int)>` in a future row
+// would make a naive count wrong by one without anything saying so.
 [[nodiscard]] constexpr std::size_t classify_all(std::string_view params, param_role * into,
                                                  std::size_t capacity) {
     std::size_t depth = 0;
     std::size_t start = 0;
     std::size_t count = 0;
-    const auto take = [&](std::string_view one) {
-        if (count < capacity) { into[count] = classify(one); }
+    const auto take = [&](std::size_t end) {
+        if (count < capacity) { into[count] = classify(params.substr(start, end - start)); }
         ++count;
     };
     for (std::size_t i = 0; i < params.size(); ++i) {
         const char c = params[i];
-        if (c == '(') {
-            ++depth;
-            if (depth == 1) { start = i + 1; }
-            continue;
-        }
-        if (c == ')') {
-            if (depth == 1 && i > start) { take(params.substr(start, i - start)); }
+        if (c == '(' || c == '<' || c == '[') {
+            if (++depth == 1) { start = i + 1; }
+        } else if (c == ')' || c == '>' || c == ']') {
+            if (depth == 1 && i > start) { take(i); }
             if (depth > 0) { --depth; }
-            continue;
-        }
-        if (c == ',' && depth == 1) {
-            take(params.substr(start, i - start));
+        } else if (c == ',' && depth == 1) {
+            take(i);
             start = i + 1;
         }
     }
@@ -230,60 +229,29 @@ struct runtime_helper {
     return return_role::unknown;
 }
 
-[[nodiscard]] constexpr const char * role_name(param_role role) {
-    switch (role) {
-    case param_role::unknown: return "unknown";
-    case param_role::frame: return "frame";
-    case param_role::context: return "context";
-    case param_role::operand: return "operand";
-    case param_role::out_value: return "out_value";
-    case param_role::out_other: return "out_other";
-    case param_role::opcode: return "opcode";
-    case param_role::count: return "count";
-    case param_role::number: return "number";
-    case param_role::text: return "text";
-    case param_role::values: return "values";
-    case param_role::name: return "name";
-    case param_role::site: return "site";
-    case param_role::cache: return "cache";
-    case param_role::storage: return "storage";
-    }
-    return "unknown";
-}
+// param_role's enumerators, spelled, in declaration order.
+inline constexpr const char * param_role_names[] = {
+    "unknown", "frame", "context", "operand", "out_value", "out_other", "opcode", "count",
+    "number",  "text",  "values",  "name",    "site",      "cache",     "storage"};
+static_assert(std::size(param_role_names) == static_cast<std::size_t>(param_role::storage) + 1);
+static_assert(std::string_view{param_role_names[static_cast<std::size_t>(param_role::out_other)]} ==
+              "out_other");
 
-// How many top-level parameters a stringified parameter list declares.
-//
-// TOP-LEVEL, because a parameter's own type can contain a comma - none does
-// today, and `std::function<void(int, int)>` in a future row would make a naive
-// count wrong by one without anything saying so.
-[[nodiscard]] constexpr std::size_t count_parameters(std::string_view params) {
-    std::size_t depth = 0;
-    std::size_t count = 0;
-    bool seen_anything = false;
-    for (const char c : params) {
-        if (c == '(' || c == '<' || c == '[') { ++depth; }
-        if (c == ')' || c == '>' || c == ']') {
-            if (depth > 0) { --depth; }
-        }
-        // Depth 1 is inside the outermost parentheses, which is where a
-        // parameter separator lives.
-        if (c == ',' && depth == 1) { ++count; }
-        if (depth == 1 && c != '(' && c != ' ') { seen_anything = true; }
-    }
-    return seen_anything ? count + 1 : 0;
+[[nodiscard]] constexpr const char * role_name(param_role role) {
+    return param_role_names[static_cast<std::size_t>(role)];
 }
 
 #define CT_AOT_HELPER(name_, ret_, params_, may_throw_, may_reenter_, is_safepoint_)               \
     [] {                                                                                           \
         runtime_helper row{#name_,                                                                 \
-                           count_parameters(#params_),                                             \
+                           0,                                                                      \
                            (may_throw_) != 0,                                                      \
                            (may_reenter_) != 0,                                                    \
                            (is_safepoint_) != 0,                                                   \
                            classify_return(#ret_, #params_),                                       \
                            {},                                                                     \
                            0};                                                                     \
-        row.role_count = classify_all(#params_, row.roles, 12);                                    \
+        row.arity = row.role_count = classify_all(#params_, row.roles, std::size(row.roles));      \
         return row;                                                                                \
     }(),
 inline constexpr runtime_helper runtime_helpers[] = {

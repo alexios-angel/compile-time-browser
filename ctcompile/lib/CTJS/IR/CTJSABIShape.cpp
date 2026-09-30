@@ -138,8 +138,7 @@ mlir::LogicalResult verifyABIShape(mlir::Operation * op) {
         // ct_aot_make_closure's uint64_t is honestly declared as !ctjs.closure.
         // !ctjs.program is NOT one - it is the importer's input, a compiled
         // script::program, and no helper returns one.
-        const bool is_js_value = mlir::isa<ValueType>(first) || mlir::isa<ClosureType>(first) ||
-                                 mlir::isa<CoroutineType>(first);
+        const bool is_js_value = mlir::isa<ValueType, ClosureType, CoroutineType>(first);
         if (helper.ret == return_role::value && !is_js_value) {
             return op->emitOpError() << helper.symbol
                                      << " returns a JavaScript value, but the result is not "

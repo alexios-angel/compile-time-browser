@@ -47,6 +47,11 @@ static_assert(std::size(opcode_names) == ctbrowser::script::opcode_count,
 // and context::binary_op does the same. ctjs.binary_static of one is still
 // valid IR, meaning "the operands are already numeric": binary_op_static
 // converts nothing, which is right only once something has proved that.
+[[nodiscard]] constexpr bool is_bitwise(BinaryKind kind) {
+    return kind == BinaryKind::Shl || kind == BinaryKind::Shr || kind == BinaryKind::UShr ||
+           kind == BinaryKind::BitAnd || kind == BinaryKind::BitOr || kind == BinaryKind::BitXor;
+}
+
 [[nodiscard]] constexpr ctbrowser::script::op opcode_for_binary(BinaryKind kind) {
     using op = ctbrowser::script::op;
     switch (kind) {
@@ -67,28 +72,13 @@ static_assert(std::size(opcode_names) == ctbrowser::script::opcode_count,
     return op::halt; // never valid as a binary operator; see is_valid_binary
 }
 
+// THE SIX RE-ENTERING-ONLY KINDS ARE NOT VALID HERE. binary_op_static's switch
+// has no arm for them, so passing one would fall through to a default that
+// returns undefined - an answer, silently wrong. The caller checks this rather
+// than the callee guessing.
 [[nodiscard]] constexpr ctbrowser::script::op opcode_for_binary_static(BinaryKind kind) {
-    using op = ctbrowser::script::op;
-    switch (kind) {
-    case BinaryKind::Add: return op::add;
-    case BinaryKind::Shl: return op::shl;
-    case BinaryKind::Shr: return op::shr;
-    case BinaryKind::UShr: return op::ushr;
-    case BinaryKind::BitAnd: return op::bit_and;
-    case BinaryKind::BitOr: return op::bit_or;
-    case BinaryKind::BitXor: return op::bit_xor;
-    // THE SIX RE-ENTERING-ONLY KINDS ARE NOT VALID HERE. binary_op_static's
-    // switch has no arm for them, so passing one would fall through to a
-    // default that returns undefined - an answer, silently wrong. The caller
-    // checks this rather than the callee guessing.
-    case BinaryKind::Sub:
-    case BinaryKind::Mul:
-    case BinaryKind::Div:
-    case BinaryKind::Mod:
-    case BinaryKind::Pow:
-    case BinaryKind::Concat: break;
-    }
-    return op::halt;
+    if (kind == BinaryKind::Add) { return ctbrowser::script::op::add; }
+    return is_bitwise(kind) ? opcode_for_binary(kind) : ctbrowser::script::op::halt;
 }
 
 [[nodiscard]] constexpr bool is_valid_binary(BinaryKind kind) {
@@ -119,32 +109,39 @@ static_assert(opcode_for_binary(BinaryKind::Add) != opcode_for_binary_static(Bin
               "so folding the two families would make `x + y` and `x++` the same call");
 
 // AND EVERY OTHER KIND, so a renumbering of `enum class op` - which Phases 13
-// and 14 do deliberately - cannot quietly change what any of them means.
-static_assert(opcode_for_binary(BinaryKind::Sub) == ctbrowser::script::op::sub);
-static_assert(opcode_for_binary(BinaryKind::Mul) == ctbrowser::script::op::mul);
-static_assert(opcode_for_binary(BinaryKind::Div) == ctbrowser::script::op::div);
-static_assert(opcode_for_binary(BinaryKind::Mod) == ctbrowser::script::op::mod);
-static_assert(opcode_for_binary(BinaryKind::Pow) == ctbrowser::script::op::pow,
-              "`**` is context::exponentiate, not libm's pow - the specification's edge cases "
-              "and C's do not agree");
-static_assert(opcode_for_binary(BinaryKind::Concat) == ctbrowser::script::op::concat);
-static_assert(opcode_for_binary_static(BinaryKind::Shl) == ctbrowser::script::op::shl);
-static_assert(opcode_for_binary_static(BinaryKind::Shr) == ctbrowser::script::op::shr);
-static_assert(opcode_for_binary_static(BinaryKind::UShr) == ctbrowser::script::op::ushr);
-static_assert(opcode_for_binary_static(BinaryKind::BitAnd) == ctbrowser::script::op::bit_and);
-static_assert(opcode_for_binary_static(BinaryKind::BitOr) == ctbrowser::script::op::bit_or);
-static_assert(opcode_for_binary_static(BinaryKind::BitXor) == ctbrowser::script::op::bit_xor);
-
-// THE BITWISE SIX ARE THE SAME OPCODE IN BOTH FAMILIES - only the helper, and
-// so whether the operands are converted first, differs.
-static_assert(opcode_for_binary(BinaryKind::Shl) == opcode_for_binary_static(BinaryKind::Shl));
-static_assert(opcode_for_binary(BinaryKind::Shr) == opcode_for_binary_static(BinaryKind::Shr));
-static_assert(opcode_for_binary(BinaryKind::UShr) == opcode_for_binary_static(BinaryKind::UShr));
-static_assert(opcode_for_binary(BinaryKind::BitAnd) ==
-              opcode_for_binary_static(BinaryKind::BitAnd));
-static_assert(opcode_for_binary(BinaryKind::BitOr) == opcode_for_binary_static(BinaryKind::BitOr));
-static_assert(opcode_for_binary(BinaryKind::BitXor) ==
-              opcode_for_binary_static(BinaryKind::BitXor));
+// and 14 do deliberately - cannot quietly change what any of them means. The
+// bitwise six are the same opcode in both families - only the helper, and so
+// whether the operands are converted first, differs.
+struct pinned_opcode {
+    BinaryKind kind;
+    ctbrowser::script::op code;
+};
+inline constexpr pinned_opcode pinned_opcodes[] = {
+    {BinaryKind::Sub, ctbrowser::script::op::sub},
+    {BinaryKind::Mul, ctbrowser::script::op::mul},
+    {BinaryKind::Div, ctbrowser::script::op::div},
+    {BinaryKind::Mod, ctbrowser::script::op::mod},
+    {BinaryKind::Pow, ctbrowser::script::op::pow},
+    {BinaryKind::Concat, ctbrowser::script::op::concat},
+    {BinaryKind::Shl, ctbrowser::script::op::shl},
+    {BinaryKind::Shr, ctbrowser::script::op::shr},
+    {BinaryKind::UShr, ctbrowser::script::op::ushr},
+    {BinaryKind::BitAnd, ctbrowser::script::op::bit_and},
+    {BinaryKind::BitOr, ctbrowser::script::op::bit_or},
+    {BinaryKind::BitXor, ctbrowser::script::op::bit_xor}};
+constexpr bool every_opcode_pinned() {
+    for (const pinned_opcode & row : pinned_opcodes) {
+        if (opcode_for_binary(row.kind) != row.code ||
+            opcode_for_binary_static(row.kind) !=
+                (is_bitwise(row.kind) ? row.code : ctbrowser::script::op::halt)) {
+            return false;
+        }
+    }
+    return true;
+}
+// Pow is op::pow: `**` is context::exponentiate, not libm's pow - the
+// specification's edge cases and C's do not agree.
+static_assert(every_opcode_pinned());
 
 // A KIND THE FAMILY DOES NOT SERVE IS REFUSED rather than guessed:
 // binary_op_static's switch has no arm for concat, so passing one would
