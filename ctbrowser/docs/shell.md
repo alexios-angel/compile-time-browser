@@ -620,9 +620,6 @@ images are allowed to meet, since the shell stays SDL-free.
 **An image above 2^26 pixels decodes blank by policy** (`max_decode_pixels` in
 `shell/image/images.hpp`, shared by BMP, PNG and JPEG): a 12000x8000 photo is
 96M pixels and is refused, a documented limit rather than a decoder bug.
-**An image above 2^26 pixels decodes blank by policy** (`max_decode_pixels` in
-`shell/image/images.hpp`, shared by BMP, PNG and JPEG): a 12000x8000 photo is
-96M pixels and is refused, a documented limit rather than a decoder bug.
 
 **PNG AND JPEG CAME OUT OF THAT HOOK on 2026-08-01**, and the reason is a gap
 nothing could see: `tests/` is SDL-free by an invariant `ctbrowser/test/lint/api_surface`
