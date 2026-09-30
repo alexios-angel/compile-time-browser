@@ -1,8 +1,10 @@
 #pragma once
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -416,6 +418,7 @@ private:
     // The "adjusted current node": the context element for a fragment parse
     // when the stack holds only the root, else the current node.
     [[nodiscard]] const entry * adjusted_current() const;
+    void push(entry e);
     void pop();
     // "The option HTML element popped steps" (4.10.10): maybe clone the
     // option into its select's <selectedcontent>.
@@ -540,6 +543,16 @@ private:
     mode original_mode_ = mode::initial;
     std::vector<mode> template_modes_;
     std::vector<entry> open_;
+    // THE STACK'S INDEX: the positions of open_ holding each HTML tag, and of
+    // each scope's boundaries, ascending - so "has X in scope" compares two
+    // tops instead of walking a stack a page can make 200000 deep (the depth
+    // cap flattens the tree, not the stack). push()/pop() keep it; the rare
+    // middle edits (remove_from_stack, the adoption agency) call reindex().
+    std::map<std::string, std::vector<std::size_t>, std::less<>> tag_at_;
+    std::array<std::vector<std::size_t>, 4> bound_at_;
+    void reindex();
+    // Node visits left for option_popped's select walks this parse.
+    std::size_t option_walk_budget_ = 0;
     std::vector<formatting> active_;
     // "in table text": the character tokens collected, and whether any was
     // not whitespace - which decides whether they are all foster-parented.

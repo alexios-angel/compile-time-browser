@@ -35,7 +35,7 @@ namespace {
 [[nodiscard]] value reason_of(value promise) {
     if (!promise.is_object()) { return value::undefined(); }
     const value * held =
-        static_cast<script::object_object *>(promise.as_heap())->find(std::string_view{"__value"});
+        static_cast<script::object_object *>(promise.as_heap())->find(script::promise_result_key);
     return held == nullptr ? value::undefined() : *held;
 }
 

@@ -1155,9 +1155,9 @@ void dom_bindings::settle_fetch(context & cx, const pending_fetch & waiting) {
     value with = done;
     if (done.is_object()) {
         auto * obj = static_cast<script::object_object *>(done.as_heap());
-        if (obj->find("__settled") != nullptr) {
-            value * held = obj->find("__value");
-            value * state = obj->find("__rejected");
+        if (obj->find(script::promise_settled_key) != nullptr) {
+            value * held = obj->find(script::promise_result_key);
+            value * state = obj->find(script::promise_rejected_key);
             with = held == nullptr ? value::undefined() : *held;
             rejected = state != nullptr && context::truthy(*state);
         }

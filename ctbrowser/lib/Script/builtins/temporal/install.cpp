@@ -30,9 +30,10 @@ void install_temporal(context & cx) {
                 : nullptr) {
         detail::method(cx, date_proto, "toTemporalInstant", 0, [](context & c, std::span<value>) {
             const value self = c.current_this();
-            const value * held = self.is_object()
-                                     ? static_cast<object_object *>(self.as_heap())->find("__ms")
-                                     : nullptr;
+            const value * held =
+                self.is_object()
+                    ? static_cast<object_object *>(self.as_heap())->find(date_value_key)
+                    : nullptr;
             if (held == nullptr) {
                 c.throw_error("TypeError", "Date.prototype.toTemporalInstant called on a non-Date");
                 return value::undefined();

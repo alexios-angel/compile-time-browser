@@ -125,6 +125,17 @@ private:
         error_ = std::move(message);
     }
 
+    // THE DEPTH CAP (max_dom_depth, dom/node.hpp): a node under the innermost
+    // open element sits open_.size() + 1 below the Document, and one that
+    // would reach the cap is a fatal error like any other (libxml2 has its
+    // own "Excessive depth in document") - the HTML tree builder flattens
+    // instead, but XML has no recovery to flatten with.
+    [[nodiscard]] bool too_deep() {
+        if (open_.size() + 1 < max_dom_depth) { return false; }
+        fail("elements nested too deeply");
+        return true;
+    }
+
     // --- productions --------------------------------------------------------
 
     // Everything before the root element: the XML declaration, the doctype,
@@ -153,6 +164,7 @@ private:
     // epilogue, where nothing is open - under the Document node, beside the
     // root element. That is what `document.childNodes` on an XML document is.
     void emit(node_id id) {
+        if (too_deep()) { return; }
         builder_.append(open_.empty() ? doc_.document_node() : open_.back().id, id);
     }
 
@@ -563,6 +575,7 @@ private:
             }
         }
 
+        if (too_deep()) { return; }
         const std::string_view uri = resolve(prefix_of(qualified), true);
         const node_id id = doc_.create_element(atoms_.intern(qualified), ns_of(uri),
                                                !prefix_of(qualified).empty());
@@ -646,6 +659,7 @@ private:
             fail("CDATA section outside the document element");
             return;
         }
+        if (too_deep()) { return; }
         builder_.append(open_.back().id, doc_.create_cdata_section(without_surrogates(text)));
     }
 
@@ -666,7 +680,7 @@ private:
             text.push_back(peek());
             advance();
         }
-        if (text.empty() || open_.empty()) { return; }
+        if (text.empty() || open_.empty() || too_deep()) { return; }
         const node_id id = doc_.create_text(without_surrogates(text));
         builder_.append(open_.back().id, id);
     }

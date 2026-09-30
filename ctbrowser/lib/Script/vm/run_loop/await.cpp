@@ -88,11 +88,11 @@ std::optional<value> context::execute_await(instruction in, call_frame *& vm_fra
                     bool rejected = false;
                     if (awaited.is_object()) {
                         auto * obj = static_cast<object_object *>(awaited.as_heap());
-                        if (value * state = obj->find("__rejected");
+                        if (value * state = obj->find(promise_rejected_key);
                             state != nullptr && truthy(*state)) {
                             rejected = true;
                         }
-                        if (value * settled = obj->find("__value")) {
+                        if (value * settled = obj->find(promise_result_key)) {
                             with = *settled;
                             // An await IS a PerformPromiseThen (27.7.5.3
                             // step 3): a rejection awaited is a handled one.
@@ -110,14 +110,16 @@ std::optional<value> context::execute_await(instruction in, call_frame *& vm_fra
             reg(in.a) = awaited;
             if (awaited.is_object()) {
                 auto * obj = static_cast<object_object *>(awaited.as_heap());
-                if (obj->find("__settled") != nullptr) { mark_promise_handled(awaited); }
-                if (value * state = obj->find("__rejected"); state != nullptr && truthy(*state)) {
-                    thrown_ = obj->find("__value") != nullptr ? *obj->find("__value")
-                                                              : value::undefined();
+                if (obj->find(promise_settled_key) != nullptr) { mark_promise_handled(awaited); }
+                if (value * state = obj->find(promise_rejected_key);
+                    state != nullptr && truthy(*state)) {
+                    thrown_ = obj->find(promise_result_key) != nullptr
+                                  ? *obj->find(promise_result_key)
+                                  : value::undefined();
                     if (!unwind_to_handler()) { raise("uncaught rejection"); }
                     break;
                 }
-                if (value * settled = obj->find("__value")) { reg(in.a) = *settled; }
+                if (value * settled = obj->find(promise_result_key)) { reg(in.a) = *settled; }
             }
             break;
         }

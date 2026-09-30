@@ -24,12 +24,12 @@ namespace ctbrowser::script::builtins_detail {
 // NO TIME ZONE: this engine has none, so local time IS UTC and every local
 // method answers what its UTC twin does; getTimezoneOffset says 0 and the
 // string forms say "GMT+0000 (Coordinated Universal Time)". The time value is
-// the `__ms` slot, a non-enumerable own property, NaN for an invalid date.
+// the private date_value_key slot (value/objects.hpp), NaN for an invalid date.
 
 namespace {
 
 constexpr double ms_per_day = 86400000.0;
-constexpr std::string_view invalid_date_slot = "__ms";
+constexpr std::string_view invalid_date_slot = date_value_key;
 
 // 21.4.1.31 TimeClip.
 [[nodiscard]] double time_clip(double t) {
@@ -538,7 +538,7 @@ void install_date(context & cx) {
         // a property: a Date has no own enumerable property in the
         // specification, and `Object.defineProperties(obj, new Date)` handed
         // this Number over as a descriptor and threw.
-        made->define(invalid_date_slot, value::number(ms), attr_builtin);
+        made->define(invalid_date_slot, value::number(ms), attr_none);
         return self;
     });
     detail::constant(ctor, "prototype", value::object(date_proto));

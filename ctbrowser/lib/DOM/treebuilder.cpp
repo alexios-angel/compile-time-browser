@@ -26,6 +26,12 @@ void tree_builder::start(std::string_view input, std::string_view context, node_
     foreign_node_ = node_id{};
     foreign_depth_ = 0;
     open_.clear();
+    reindex();
+    // ponytail: a fixed budget, not per-select incremental selectedness - a
+    // parse whose option pops walk more than this many select descendants in
+    // all (a <select> of a few thousand options) stops mirroring into
+    // <selectedcontent> rather than going quadratic (DOS-018).
+    option_walk_budget_ = std::size_t{1} << 24;
     active_.clear();
     template_modes_.clear();
     insertion_points_.clear();
@@ -56,7 +62,7 @@ void tree_builder::start(std::string_view input, std::string_view context, node_
     // element is not - it stands in for the topmost node wherever the
     // algorithm asks about "the adjusted current node" or resets the mode -
     // and what is parsed lands under the root, for the caller to move.
-    open_.push_back(entry{root_, "html"});
+    push(entry{root_, "html"});
     context_entry_ = make_entry(node_id{}, context_, context_ns, {});
     // The tokenizer starts in the context element's state - an HTML one's:
     // an SVG <title> is not RCDATA - and with NO appropriate end tag, since
@@ -323,12 +329,34 @@ std::string_view tree_builder::current_tag() const {
     return open_.empty() ? std::string_view{"html"} : std::string_view{open_.back().tag};
 }
 
+void tree_builder::push(entry e) {
+    const std::size_t at = open_.size();
+    for (std::size_t which = 0; which < bound_at_.size(); ++which) {
+        if (is_scope_boundary(e, static_cast<scope>(which))) { bound_at_[which].push_back(at); }
+    }
+    if (e.ns == node_ns::html) { tag_at_[e.tag].push_back(at); }
+    open_.push_back(std::move(e));
+}
+
 void tree_builder::pop() {
     if (open_.empty()) { return; }
     const node_id popped = open_.back().id;
     const bool option = open_.back().ns == node_ns::html && open_.back().tag == "option";
+    const std::size_t at = open_.size() - 1;
+    for (auto & bounds : bound_at_) {
+        if (!bounds.empty() && bounds.back() == at) { bounds.pop_back(); }
+    }
+    if (open_.back().ns == node_ns::html) { tag_at_.find(open_.back().tag)->second.pop_back(); }
     open_.pop_back();
     if (option) { option_popped(popped); }
+}
+
+void tree_builder::reindex() {
+    std::vector<entry> stack = std::move(open_);
+    open_.clear();
+    tag_at_.clear();
+    for (auto & bounds : bound_at_) { bounds.clear(); }
+    for (entry & e : stack) { push(std::move(e)); }
 }
 
 // "WHEN AN OPTION ELEMENT IS POPPED OFF THE STACK OF OPEN ELEMENTS of an HTML
@@ -369,8 +397,14 @@ void tree_builder::option_popped(node_id option) {
         // "Get a select's enabled selectedcontent": none for a `multiple` one.
         if (!select || txn.has_attribute(select, atoms_->intern("multiple"))) { return; }
         std::vector<node_id> options;
+        bool spent = false;
         const auto walk = [&](auto && self, node_id at) -> void {
             for (const node_id child : txn.children(at)) {
+                if (spent || option_walk_budget_ == 0) {
+                    spent = true;
+                    return;
+                }
+                --option_walk_budget_;
                 if (is(child, "option") && nearest_select(child) == select) {
                     options.push_back(child);
                 }
@@ -379,7 +413,7 @@ void tree_builder::option_popped(node_id option) {
             }
         };
         walk(walk, select);
-        if (!selectedcontent) { return; }
+        if (spent || !selectedcontent) { return; }
         const atom selected = atoms_->intern("selected");
         const atom disabled = atoms_->intern("disabled");
         node_id chosen;
@@ -461,8 +495,8 @@ void tree_builder::pop_until_any(std::initializer_list<std::string_view> tags) {
 }
 
 bool tree_builder::template_on_stack() const {
-    return std::ranges::any_of(
-        open_, [](const entry & e) { return e.ns == node_ns::html && e.tag == "template"; });
+    const auto at = tag_at_.find(std::string_view{"template"});
+    return at != tag_at_.end() && !at->second.empty();
 }
 
 bool tree_builder::on_stack(node_id id) const {
@@ -478,6 +512,7 @@ std::size_t tree_builder::stack_index_of(node_id id) const {
 
 void tree_builder::remove_from_stack(node_id id) {
     std::erase_if(open_, [&](const entry & e) { return e.id == id; });
+    reindex();
 }
 
 bool tree_builder::is_scope_boundary(const entry & e, scope which) {
@@ -496,13 +531,13 @@ bool tree_builder::is_scope_boundary(const entry & e, scope which) {
                           "select", "template"});
 }
 
+// The walk down from the top meets the topmost `tag` before the topmost
+// boundary - or they are one element, whose tag is checked first.
 bool tree_builder::has_in_scope(std::string_view tag, scope which) const {
-    for (std::size_t i = open_.size(); i-- > 0;) {
-        const entry & e = open_[i];
-        if (e.ns == node_ns::html && e.tag == tag) { return true; }
-        if (is_scope_boundary(e, which)) { return false; }
-    }
-    return false;
+    const auto at = tag_at_.find(tag);
+    if (at == tag_at_.end() || at->second.empty()) { return false; }
+    const auto & bounds = bound_at_[static_cast<std::size_t>(which)];
+    return bounds.empty() || at->second.back() >= bounds.back();
 }
 
 bool tree_builder::has_in_scope(node_id id) const {
@@ -842,9 +877,9 @@ node_id tree_builder::insert_element(const std::string & tag,
         insert_at(where, element);
         if (constructed && on_inserted_) { on_inserted_(element); }
     }
-    open_.push_back(make_entry(
-        element, std::string{ns == node_ns::svg ? adjust_svg_tag(tag) : std::string_view{tag}}, ns,
-        attributes));
+    push(make_entry(element,
+                    std::string{ns == node_ns::svg ? adjust_svg_tag(tag) : std::string_view{tag}},
+                    ns, attributes));
     return element;
 }
 
@@ -1044,6 +1079,7 @@ bool tree_builder::adoption_agency(const std::string & subject) {
             }
             if (node_formatting == active_.size()) {
                 open_.erase(open_.begin() + static_cast<std::ptrdiff_t>(node_stack));
+                reindex();
                 continue;
             }
             // Step 4.13.7: a new element for the formatting entry, in place
@@ -1090,6 +1126,7 @@ bool tree_builder::adoption_agency(const std::string & subject) {
         const std::size_t fb_now = stack_index_of(furthest_block);
         open_.insert(open_.begin() + static_cast<std::ptrdiff_t>(fb_now + 1),
                      entry{fresh, replacement.tag, node_ns::html});
+        reindex();
     }
     return true;
 }

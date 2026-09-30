@@ -199,7 +199,8 @@ void install_destructuring_iteration(context & cx) {
         bool fast = v.is_array() || v.is_string() || v.is_kind(heap_kind::proxy);
         if (!fast && v.is_object()) {
             auto * obj = static_cast<object_object *>(v.as_heap());
-            fast = obj->find("__entries") != nullptr || obj->find("__items") != nullptr;
+            fast =
+                obj->find(entries_slot_key) != nullptr || obj->find(iterated_list_key) != nullptr;
             if (!fast && !c.lookup_property(v, CTBROWSER_SYMBOL_KEY("iterator")).is_callable()) {
                 const value * length = obj->find("length");
                 fast = length != nullptr && length->is_number();

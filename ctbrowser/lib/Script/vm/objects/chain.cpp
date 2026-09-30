@@ -223,9 +223,15 @@ void context::copy_own_properties(value target, value source) {
             ~unroot() { cx.temporaries_.resize(std::min(base, cx.temporaries_.size())); }
         } const keep_entries{*this, temporaries_.size()};
         std::vector<std::pair<std::string, value>> entries;
+        // A KEY A GETTER DELETED OR HID is skipped: each key is asked
+        // [[GetOwnProperty]] again at its turn - only when the source has an
+        // accessor, since nothing else in this walk runs page code.
         auto * from = static_cast<object_object *>(source.as_heap());
+        const bool getters = !from->accessors.entries.empty();
         from->each_own_entry([&](const std::string & name, std::uint8_t attrs) {
-            if ((attrs & attr_enumerable) != 0) {
+            property_descriptor now;
+            if ((attrs & attr_enumerable) != 0 &&
+                (!getters || (own_property(source, name, now) && now.enumerable))) {
                 const value item = lookup_property(source, name);
                 temporaries_.push_back(item);
                 entries.emplace_back(name, item);
@@ -233,11 +239,17 @@ void context::copy_own_properties(value target, value source) {
         });
         for (const auto & [name, item] : entries) { into->set(name, item); }
     } else if (source.is_array()) {
+        // THE KEYS ARE TAKEN ONCE (the length as it stands) but EACH ONE IS
+        // READ AT ITS TURN, as CopyDataProperties does [[GetOwnProperty]] then
+        // Get per key: an index getter that deletes or replaces a later
+        // element is seen - a deleted one skipped, a replaced one's new value
+        // copied - and no snapshot of the elements exists for it to go stale
+        // or be collected under. Without accessors nothing runs in the loop,
+        // so the per-turn re-read is the same plain vector read.
         auto * arr = static_cast<array_object *>(source.as_heap());
-        const std::vector<value> items = arr->items;
-        // Rooted: an index getter below can drop the rest from `arr` and collect.
-        const rooted_values keep_items{*this, items};
-        for (std::size_t i = 0; i < items.size(); ++i) {
+        const std::size_t count = arr->items.size();
+        for (std::size_t i = 0; i < count; ++i) {
+            if (i >= arr->items.size()) { continue; } // a getter shortened it
             if (!arr->element_attrs.empty() || arr->has_hole_run()) {
                 const std::uint8_t a = arr->element_attrs_at(static_cast<std::uint32_t>(i));
                 if ((a & array_object::elem_hole) != 0 || (a & attr_enumerable) == 0) { continue; }
@@ -247,7 +259,7 @@ void context::copy_own_properties(value target, value source) {
                     continue;
                 }
             }
-            into->set(std::to_string(i), items[i]);
+            into->set(std::to_string(i), arr->items[i]);
         }
         if (arr->named) { copy_own_properties(target, value::object(arr->named.get())); }
     } else if (source.is_kind(heap_kind::proxy)) {

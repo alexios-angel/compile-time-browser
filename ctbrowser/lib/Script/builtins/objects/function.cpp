@@ -746,9 +746,10 @@ void install_generator(context & cx) {
             // 27.5.3.2 GeneratorValidate: a receiver that is not a generator
             // object is a TypeError, not a finished iteration.
             const value self = c.current_this();
-            const value * held = self.is_object()
-                                     ? static_cast<object_object *>(self.as_heap())->find("__co")
-                                     : nullptr;
+            const value * held =
+                self.is_object()
+                    ? static_cast<object_object *>(self.as_heap())->find(generator_slot_key)
+                    : nullptr;
             if (held == nullptr || !held->is_kind(heap_kind::coroutine)) {
                 c.throw_error("TypeError", "the receiver is not a generator object");
                 return value::undefined();

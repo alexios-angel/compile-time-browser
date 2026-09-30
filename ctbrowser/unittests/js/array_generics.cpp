@@ -548,6 +548,23 @@ int main() {
         "a.push(1,2);return a.g;})()",
         "2");
     js_expect("(function(){var a=[1];a.k=2;var b={...a};return b[0]+'/'+b.k;})()", "1/2");
+    // CopyDataProperties (7.3.25) takes the keys once but asks each one again
+    // at its turn: an index getter that deletes a later element has it
+    // skipped, one that replaces it has the new value copied, and a shortened
+    // array loses its tail. `[...a]` is the array iterator, which reads a
+    // deleted index as undefined instead.
+    js_expect("(function(){var a=[1,2,3];Object.defineProperty(a,0,{enumerable:true,"
+              "configurable:true,get:function(){delete a[1];a[2]=9;return 0;}});"
+              "var b={...a};var r=[...a];return Object.keys(b).join()+'/'+b[2]+'|'+r.length+'/'+"
+              "r[1]+'/'+r[2];})()",
+              "0,2/9|3/undefined/9");
+    js_expect("(function(){var a=[1,2,3];Object.defineProperty(a,0,{enumerable:true,"
+              "configurable:true,get:function(){a.length=1;return 5;}});"
+              "return JSON.stringify({...a});})()",
+              "{\"0\":5}");
+    js_expect("(function(){var o={get a(){delete o.b;Object.defineProperty(o,'c',"
+              "{enumerable:false});return 1;},b:2,c:3,d:4};return Object.keys({...o}).join();})()",
+              "a,d");
     js_expect("(function(){var a=[];Object.freeze(a);a.k=1;return a.k;})()", "undefined");
     js_expect("(function(){var a=[9];a.k=1;var s=[];for(var i in a){s.push(i);}return s.join()+'|'"
               "+Object.getOwnPropertyNames(a).join();})()",

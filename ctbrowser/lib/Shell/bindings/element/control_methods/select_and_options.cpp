@@ -8,9 +8,9 @@ void dom_bindings::install_control_select_options(context & cx) {
     const control_helpers helpers{this};
     // --- the select and option model, HTML 4.10.7 and 4.10.10 -----------------
     //
-    // An option's SELECTEDNESS is the `__selected` slot on its wrapper when
+    // An option's SELECTEDNESS is the private selected_slot on its wrapper when
     // a script or the select has set it, else its `selected` attribute; its
-    // DIRTINESS is `__selectedDirty`. The select's list of options is its
+    // DIRTINESS is dirty_slot. The select's list of options is its
     // option descendants (customizable select), skipping a nested select's.
     // The engine paints and submits the select from its store value, so every
     // change of selectedness here is written through to that value - and a

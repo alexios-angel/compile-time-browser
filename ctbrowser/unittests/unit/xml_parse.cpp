@@ -333,6 +333,36 @@ void test_prolog() {
     const auto r = doc.read();
     CHECK_EQ(tag_of(atoms, r, out.tree.root), std::string{"html"});
 }
+// THE DEPTH CAP (max_dom_depth): 100000 nested elements are a fatal error
+// rather than a tree deeper than every recursive walk downstream can take.
+// 511 nested elements still parse (the last sits 511 below the Document), a
+// comment inside the 511th would sit at 512 and is refused, and text inside
+// the 510th parses.
+void test_nesting_is_capped() {
+    const auto nested = [](std::size_t levels, std::string_view inner) {
+        std::string out;
+        for (std::size_t i = 0; i < levels; ++i) { out += "<a>"; }
+        out += inner;
+        for (std::size_t i = 0; i < levels; ++i) { out += "</a>"; }
+        return out;
+    };
+    atom_table atoms;
+    document doc{atoms};
+    CHECK_EQ(parse_xml(doc, nested(100000, "")).error, std::string{"elements nested too deeply"});
+
+    atom_table atoms2;
+    document doc2{atoms2};
+    const xml_parse_result deepest = parse_xml(doc2, nested(max_dom_depth - 1, "<!---->"));
+    CHECK_EQ(deepest.error, std::string{"elements nested too deeply"});
+    atom_table atoms3;
+    document doc3{atoms3};
+    const xml_parse_result fits = parse_xml(doc3, nested(max_dom_depth - 1, ""));
+    CHECK(fits.error.empty());
+    CHECK_EQ(doc3.depth(fits.tree.root), std::size_t{1});
+    atom_table atoms4;
+    document doc4{atoms4};
+    CHECK(parse_xml(doc4, nested(max_dom_depth - 2, "x")).error.empty());
+}
 
 } // namespace
 
@@ -350,5 +380,6 @@ int main() {
     test_document_is_marked();
     test_extension();
     test_prolog();
+    test_nesting_is_capped();
     REPORT("xml_parse");
 }

@@ -437,7 +437,8 @@ value context::iterable_values(value v) {
     // iterator protocol in the loop. Recorded in docs/script.md rather than
     // left to be discovered: the bound is there to make the failure a
     // diagnosable one instead of a silent freeze.
-    if (value * co = obj->find("__co"); co != nullptr && co->is_kind(heap_kind::coroutine)) {
+    if (value * co = obj->find(generator_slot_key);
+        co != nullptr && co->is_kind(heap_kind::coroutine)) {
         value out = make_array();
         // ROOTED ACROSS THE RESUMES: the body can allocate, allocation can
         // collect, and the list under construction is reachable from nothing
@@ -457,8 +458,8 @@ value context::iterable_values(value v) {
     }
     // A Map or a Set, by the storage the standard library gives them. A Map
     // iterates as [key, value] pairs and a Set as bare values, which is exactly
-    // how `__entries` already holds them - so this is a copy and not a rebuild.
-    if (value * entries = obj->find("__entries"); entries != nullptr && entries->is_array()) {
+    // how their entries slot already holds them - so this is a copy and not a rebuild.
+    if (value * entries = obj->find(entries_slot_key); entries != nullptr && entries->is_array()) {
         value out = make_array();
         static_cast<array_object *>(out.as_heap())->items =
             static_cast<array_object *>(entries->as_heap())->items;
@@ -466,7 +467,7 @@ value context::iterable_values(value v) {
     }
     // The views `keys()`, `values()` and `entries()` hand back - arrays already,
     // so this is for anything that carries its items under another name.
-    if (value * items = obj->find("__items"); items != nullptr && items->is_array()) {
+    if (value * items = obj->find(iterated_list_key); items != nullptr && items->is_array()) {
         value out = make_array();
         static_cast<array_object *>(out.as_heap())->items =
             static_cast<array_object *>(items->as_heap())->items;
@@ -575,11 +576,11 @@ value context::get_iterator(value v) {
         // plain object is the TypeError too.
         const bool typed = v.is_array() &&
                            static_cast<array_object *>(v.as_heap())->elements != element_kind::none;
-        const bool known =
-            typed || v.is_kind(heap_kind::proxy) ||
-            (v.is_object() && (static_cast<object_object *>(v.as_heap())->find("__entries") ||
-                               static_cast<object_object *>(v.as_heap())->find("__items") ||
-                               static_cast<object_object *>(v.as_heap())->find("__co")));
+        const bool known = typed || v.is_kind(heap_kind::proxy) ||
+                           (v.is_object() &&
+                            (static_cast<object_object *>(v.as_heap())->find(entries_slot_key) ||
+                             static_cast<object_object *>(v.as_heap())->find(iterated_list_key) ||
+                             static_cast<object_object *>(v.as_heap())->find(generator_slot_key)));
         if (!known) {
             throw_error("TypeError", std::string{type_of(v)} + " is not iterable");
             return value::undefined();

@@ -48,7 +48,7 @@ void tree_builder::create_root() {
         root_ = doc_->create_element(atoms_->intern_lower("html"));
         if (!document_has_child(node_kind::element)) { doc_->set_document_element(root_); }
     }
-    if (!on_stack(root_)) { open_.push_back(entry{root_, "html"}); }
+    if (!on_stack(root_)) { push(entry{root_, "html"}); }
 }
 
 // Whether the Document has a child of this kind - other than the root this
@@ -222,7 +222,7 @@ bool tree_builder::declarative_shadow_root(const token & t) {
     const node_id host = current->id;
     const insertion_point where = appropriate_place();
     const node_id element = create_element(t.name, t.attributes);
-    open_.push_back(make_entry(element, t.name, node_ns::html, t.attributes));
+    push(make_entry(element, t.name, node_ns::html, t.attributes));
     const token_attribute * slots = attribute("shadowrootslotassignment");
     const bool null_registry = attribute("shadowrootcustomelementregistry") != nullptr;
     const auto root =
@@ -306,7 +306,7 @@ void tree_builder::mode_after_head(const token & t) {
         }
         if (one_of(tag, {"base", "basefont", "bgsound", "link", "meta", "noframes", "script",
                          "style", "template", "title"})) {
-            open_.push_back(entry{head_, "head"});
+            push(entry{head_, "head"});
             process(t, mode::in_head);
             remove_from_stack(head_);
             return;

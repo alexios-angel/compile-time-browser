@@ -16,10 +16,11 @@ using detail::list_iterator;
 // is what stopped it once Array and Number were there.
 //
 // Both are built on the object model rather than on a new heap kind: entries
-// live in a plain array on the instance under `__entries` - a Map's as
+// live in a plain array on the instance under the PRIVATE `entries_slot_key`
+// (value/objects.hpp; it was the page-writable `__entries`) - a Map's as
 // [key, value] pairs, a Set's as bare members, which is exactly the shape
 // for-of and spread want, and which context::iterable_values and the compiled
-// for-of open read by that name (vm/call/invoke.cpp). Which of the four
+// for-of open read by that key (vm/call/invoke.cpp). Which of the four
 // classes made the instance is a PRIVATE-keyed slot beside it, and every
 // method checks for its own: `Map.prototype.get.call(new Set)` is a TypeError
 // (24.1.3.6 step 2), not undefined.
@@ -72,7 +73,7 @@ constexpr bool weak(kind k) {
     if (self.is_object()) {
         auto * o = static_cast<object_object *>(self.as_heap());
         if (o->find(slot_of(k)) != nullptr) {
-            if (value * held = o->find("__entries"); held != nullptr && held->is_array()) {
+            if (value * held = o->find(entries_slot_key); held != nullptr && held->is_array()) {
                 return static_cast<array_object *>(held->as_heap());
             }
         }
@@ -232,7 +233,7 @@ template <typename Fn> [[nodiscard]] bool each_key(context & c, const set_record
     o->define(slot_of(kind::set), value::boolean(true), attr_none);
     const value list = c.make_array();
     static_cast<array_object *>(list.as_heap())->items = std::move(items);
-    o->define("__entries", list, attr_builtin);
+    o->define(entries_slot_key, list, attr_none);
     return out;
 }
 
@@ -343,9 +344,10 @@ value collection_iterator_next(context & c, bool map) {
     const double at = index->is_number() ? index->as_number() : 0;
     const double which = kind->is_number() ? kind->as_number() : 0;
     if (collection.is_undefined()) { return c.iter_result(value::undefined(), true); }
-    const value * held = collection.is_object()
-                             ? static_cast<object_object *>(collection.as_heap())->find("__entries")
-                             : nullptr;
+    const value * held =
+        collection.is_object()
+            ? static_cast<object_object *>(collection.as_heap())->find(entries_slot_key)
+            : nullptr;
     auto * entries = held != nullptr && held->is_array()
                          ? static_cast<array_object *>(held->as_heap())
                          : nullptr;
@@ -431,7 +433,7 @@ void install_collections(context & cx) {
                 }
                 auto * made = static_cast<object_object *>(self.as_heap());
                 made->define(slot_of(k), value::boolean(true), attr_none);
-                made->define("__entries", c.make_array(), attr_builtin);
+                made->define(entries_slot_key, c.make_array(), attr_none);
                 if (!made->prototype.is_object()) {
                     const auto which =
                         keyed(k) ? context::proto_kind::map : context::proto_kind::set;
@@ -859,7 +861,7 @@ void install_collections(context & cx) {
             const value out = make_set(c, {});
             const context::rooted keep_out{c, out};
             auto * list = static_cast<array_object *>(
-                static_cast<object_object *>(out.as_heap())->find("__entries")->as_heap());
+                static_cast<object_object *>(out.as_heap())->find(entries_slot_key)->as_heap());
             const bool ok = each_key(
                 c, other,
                 [&](value key) {
@@ -876,8 +878,10 @@ void install_collections(context & cx) {
                     const context::rooted_values keep{c, mine};
                     const value out = make_set(c, {});
                     const context::rooted keep_out{c, out};
-                    auto * list = static_cast<array_object *>(
-                        static_cast<object_object *>(out.as_heap())->find("__entries")->as_heap());
+                    auto * list =
+                        static_cast<array_object *>(static_cast<object_object *>(out.as_heap())
+                                                        ->find(entries_slot_key)
+                                                        ->as_heap());
                     const detail::unwind_watch watch{c};
                     if (static_cast<double>(mine.size()) <= other.size) {
                         for (const value & e : mine) {
@@ -902,8 +906,10 @@ void install_collections(context & cx) {
                     const context::rooted_values keep{c, result};
                     const value out = make_set(c, result);
                     const context::rooted keep_out{c, out};
-                    auto * list = static_cast<array_object *>(
-                        static_cast<object_object *>(out.as_heap())->find("__entries")->as_heap());
+                    auto * list =
+                        static_cast<array_object *>(static_cast<object_object *>(out.as_heap())
+                                                        ->find(entries_slot_key)
+                                                        ->as_heap());
                     const detail::unwind_watch watch{c};
                     if (static_cast<double>(result.size()) <= other.size) {
                         for (const value & e : result) {
@@ -927,8 +933,10 @@ void install_collections(context & cx) {
                 [](context & c, array_object & self, const set_record & other) -> value {
                     const value out = make_set(c, {});
                     const context::rooted keep_out{c, out};
-                    auto * list = static_cast<array_object *>(
-                        static_cast<object_object *>(out.as_heap())->find("__entries")->as_heap());
+                    auto * list =
+                        static_cast<array_object *>(static_cast<object_object *>(out.as_heap())
+                                                        ->find(entries_slot_key)
+                                                        ->as_heap());
                     const bool ok = each_key(
                         c, other,
                         [&](value key) {

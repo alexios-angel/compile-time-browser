@@ -37,6 +37,14 @@ using node_id = handle<node_tag>;
 // (kMaximumHTMLParserDOMTreeDepth) - the HTML tree builder flattens past it
 // and document::append_child / insert_before refuse to exceed it - so every
 // recursive tree walk downstream of the DOM is bounded by it.
+//
+// PAST THE CAP, per caller (no browser caps a script's tree, so no spec says
+// what happens): the HTML parser flattens, the XML parser fails the document
+// ("elements nested too deeply"), appendChild / insertBefore / attachShadow
+// throw HierarchyRequestError (bindings/element/pre_insert.cpp), and every
+// internal insertion that discards append_child / insert_before's result -
+// innerHTML's and textContent's moves, innerText, cloning, slot edits -
+// DROPS the node that would not fit, silently, and goes on with the rest.
 inline constexpr std::size_t max_dom_depth = 512;
 
 enum class node_kind : std::uint8_t {

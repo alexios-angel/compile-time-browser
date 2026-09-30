@@ -9,10 +9,11 @@ namespace ctbrowser::shell::detail {
 // The hidden slots on a wrapper the forms keep their non-attribute state in:
 // an option's selectedness and its dirtiness, a control's custom validity
 // message, a FormData's entries.
-inline constexpr std::string_view selected_slot = "__selected";
-inline constexpr std::string_view dirty_slot = "__selectedDirty";
-inline constexpr std::string_view custom_slot = "__customValidity";
-inline constexpr std::string_view entries_slot = "__entries";
+// PRIVATE keys (script/value/base.hpp): a page can neither read nor forge them.
+inline constexpr std::string_view selected_slot = CTBROWSER_PRIVATE_KEY("OptionSelectedness");
+inline constexpr std::string_view dirty_slot = CTBROWSER_PRIVATE_KEY("OptionDirtiness");
+inline constexpr std::string_view custom_slot = CTBROWSER_PRIVATE_KEY("CustomValidity");
+inline constexpr std::string_view entries_slot = CTBROWSER_PRIVATE_KEY("FormDataEntries");
 
 enum flag : unsigned {
     value_missing = 1u << 0,

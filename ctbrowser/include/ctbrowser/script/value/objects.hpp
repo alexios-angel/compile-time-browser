@@ -401,6 +401,23 @@ struct object_object final : heap_object {
 // wrapper's `length` and indices are answered by lookup_property, own_property
 // and own_property_names off this slot (10.4.3, the String exotic object).
 inline constexpr std::string_view primitive_slot_key = CTBROWSER_PRIVATE_KEY("PrimitiveValue");
+// THE STANDARD LIBRARY'S OTHER INTERNAL SLOTS, private-keyed for the same
+// reason. They were `__entries`, `__settled`, `__co`... - ordinary string keys
+// a page could read, overwrite or forge on a plain object, and natives cast
+// what they found there (TYPE-001: `m.__entries = [1.5e-300]; m.get(0)`).
+// A Map/Set/WeakMap/WeakSet's entry list; an array
+// iterator's list, cursor and kind; a generator's coroutine; a promise's
+// state, result and reaction list; a Date's time value.
+inline constexpr std::string_view entries_slot_key = CTBROWSER_PRIVATE_KEY("Entries");
+inline constexpr std::string_view iterated_list_key = CTBROWSER_PRIVATE_KEY("IteratedList");
+inline constexpr std::string_view iterated_index_key = CTBROWSER_PRIVATE_KEY("IteratedIndex");
+inline constexpr std::string_view iterator_kind_key = CTBROWSER_PRIVATE_KEY("IteratorKind");
+inline constexpr std::string_view generator_slot_key = CTBROWSER_PRIVATE_KEY("GeneratorState");
+inline constexpr std::string_view promise_settled_key = CTBROWSER_PRIVATE_KEY("PromiseSettled");
+inline constexpr std::string_view promise_result_key = CTBROWSER_PRIVATE_KEY("PromiseResult");
+inline constexpr std::string_view promise_rejected_key = CTBROWSER_PRIVATE_KEY("PromiseRejected");
+inline constexpr std::string_view promise_reactions_key = CTBROWSER_PRIVATE_KEY("PromiseReactions");
+inline constexpr std::string_view date_value_key = CTBROWSER_PRIVATE_KEY("DateValue");
 // The wrapped primitive, or null when `v` is not a wrapper.
 [[nodiscard]] inline value * primitive_slot(value v) noexcept {
     if (!v.is_object()) { return nullptr; }

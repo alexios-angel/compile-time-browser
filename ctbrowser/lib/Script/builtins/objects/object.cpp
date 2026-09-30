@@ -381,8 +381,9 @@ void install_object(context & cx) {
             // the prototype it was built on.
         } else if (inherits_from(c, self, c.prototype(context::proto_kind::regexp))) {
             tag = "RegExp";
-        } else if (self.is_object() && static_cast<object_object *>(self.as_heap())->find("__ms")) {
-            tag = "Date"; // [[DateValue]] is the `__ms` slot install_date defines
+        } else if (self.is_object() &&
+                   static_cast<object_object *>(self.as_heap())->find(date_value_key)) {
+            tag = "Date"; // [[DateValue]] is the private slot install_date defines
         } else if (self.is_object() && self.as_heap() == c.prototype(context::proto_kind::number)) {
             tag = "Number"; // 21.1.3: Number.prototype has [[NumberData]] +0
         } else if (self.is_object() && self.as_heap() == c.prototype(context::proto_kind::string)) {

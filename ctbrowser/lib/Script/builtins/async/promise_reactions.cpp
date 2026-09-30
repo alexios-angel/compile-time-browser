@@ -45,10 +45,10 @@ namespace promise {
     if (!self.is_object()) { self = cx.make_object(); }
     auto * p = static_cast<object_object *>(self.as_heap());
     if (!p->prototype.is_object_like()) { p->prototype = value::object(promise_prototype(cx)); }
-    p->define(value_slot, value::undefined(), attr_builtin);
-    p->define(rejected_slot, value::boolean(false), attr_builtin);
-    p->define(settled_slot, value::boolean(false), attr_builtin);
-    p->define(handlers_slot, cx.make_array(), attr_builtin);
+    p->define(value_slot, value::undefined(), attr_none);
+    p->define(rejected_slot, value::boolean(false), attr_none);
+    p->define(settled_slot, value::boolean(false), attr_none);
+    p->define(handlers_slot, cx.make_array(), attr_none);
     return self;
 }
 [[nodiscard]] value pending_promise(context & cx) {
@@ -216,9 +216,9 @@ void settle(context & cx, value promise, value with, bool rejected) {
     if (!is_promise(promise)) { return; }
     auto * p = static_cast<object_object *>(promise.as_heap());
     if (context::truthy(slot(p, settled_slot))) { return; }
-    p->define(value_slot, with, attr_builtin);
-    p->define(rejected_slot, value::boolean(rejected), attr_builtin);
-    p->define(settled_slot, value::boolean(true), attr_builtin);
+    p->define(value_slot, with, attr_none);
+    p->define(rejected_slot, value::boolean(rejected), attr_none);
+    p->define(settled_slot, value::boolean(true), attr_none);
     // RejectPromise step 7: HostPromiseRejectionTracker(promise, "reject")
     // when nothing has reacted to it yet.
     if (rejected && !context::promise_is_handled(promise)) {

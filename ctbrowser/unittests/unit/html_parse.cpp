@@ -412,11 +412,14 @@ void test_depth_is_capped() {
 
     parsed b;
     std::string select = "<select><button><selectedcontent></selectedcontent></button>";
-    // 50000 deep, not more: every <option> asks whether a <select> is in scope,
-    // a walk down the whole open-element stack, so the parse is quadratic.
-    for (int i = 0; i < 25000; ++i) { select += "<option><div>"; }
+    // The cap flattens the tree, not the open-element stack, which ends
+    // 400000 deep here: every <option> asks whether a <select> is in scope
+    // (the stack's index answers without walking it), and each of the
+    // 200000 option pops at the end walks the <select> (DOS-018; a budget
+    // stops that). Both were quadratic.
+    for (int i = 0; i < 200000; ++i) { select += "<option><div>"; }
     (void)parse_html(b.doc, select + "x");
-    check(deepest(b) < max_dom_depth, "50000 nested <option><div> stay under the depth cap");
+    check(deepest(b) < max_dom_depth, "200000 nested <option><div> stay under the depth cap");
 
     // 200000 levels inside one chosen <option>: the pop walks the <select> and
     // clones the option into its <selectedcontent>, both recursively, and the

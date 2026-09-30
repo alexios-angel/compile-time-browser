@@ -79,10 +79,10 @@ inline auto context::collect_if_due() -> std::size_t {
 
 // Whether this value is a promise that has NOT settled - the one case
 // `await` cannot answer by reading. The shape is the standard library's:
-// `__settled` present and false.
+// its settled slot present and false.
 [[nodiscard]] inline auto context::is_pending_promise(value v) -> bool {
     if (!v.is_object()) { return false; }
-    value * settled = static_cast<object_object *>(v.as_heap())->find("__settled");
+    value * settled = static_cast<object_object *>(v.as_heap())->find(promise_settled_key);
     return settled != nullptr && !truthy(*settled);
 }
 
@@ -104,7 +104,7 @@ inline auto context::collect_if_due() -> std::size_t {
 // and ordered exactly like a `then` - because that is what it is.
 inline auto context::attach_resume(value promise, value coroutine) -> void {
     if (!promise.is_object()) { return; }
-    value * handlers = static_cast<object_object *>(promise.as_heap())->find("__handlers");
+    value * handlers = static_cast<object_object *>(promise.as_heap())->find(promise_reactions_key);
     if (handlers == nullptr || !handlers->is_array()) { return; }
     auto * record = allocate<object_object>();
     record->set("co", coroutine);

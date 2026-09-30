@@ -404,7 +404,7 @@ struct cloner {
             if (slot->is_kind(heap_kind::symbol)) { return fail("a Symbol object"); }
             return remember(v, detail::box_primitive(c, *slot));
         }
-        if (const value * ms = source->find("__ms")) { // [[DateValue]]
+        if (const value * ms = source->find(date_value_key)) { // [[DateValue]]
             const value args[1] = {*ms};
             return remember(v, make("Date", args));
         }
@@ -482,13 +482,19 @@ struct cloner {
         const value made = make(map ? "Map" : "Set", {});
         if (c.throw_pending()) { return value::undefined(); }
         (void)remember(v, made);
-        const value * held = source->find("__entries");
+        const value * held = source->find(entries_slot_key);
         if (held == nullptr || !held->is_array()) { return made; }
         const std::vector<value> entries = static_cast<array_object *>(held->as_heap())->items;
         const context::rooted_values keep{c, entries};
         const value add = c.lookup_property(made, map ? "set" : "add");
         for (const value & entry : entries) {
             if (map) {
+                // The list is the engine's own, but a pair is still checked
+                // before its two items are read.
+                if (!entry.is_array() ||
+                    static_cast<array_object *>(entry.as_heap())->items.size() < 2) {
+                    continue;
+                }
                 auto * pair = static_cast<array_object *>(entry.as_heap());
                 const value key = copy(pair->items[0]);
                 if (c.throw_pending()) { return value::undefined(); }

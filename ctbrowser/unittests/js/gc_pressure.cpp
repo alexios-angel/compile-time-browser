@@ -162,5 +162,52 @@ int main() {
         CHECK(got.ok);
         CHECK_EQ(stress.to_string(got.returned), std::string{"5"});
     }
+
+    // A NATIVE CALLEE'S RESULT SURVIVES TOO. A bound Reflect.get hands `hold`
+    // a value read off a data property; the next callback clears the property
+    // and collects, and nothing but the pin holds the object any more.
+    {
+        context stress;
+        install_builtins(stress);
+        stress.set_gc_stress(true);
+        stress.define_native("hold", [](context & c, std::span<value> args) {
+            const value got = c.call(args[0], {}, value::undefined());
+            for (int k = 0; k < 4; ++k) { (void)c.call(args[1], {}, value::undefined()); }
+            return got;
+        });
+        const program held = compiler::compile(R"(
+            var box = { v: { tag: 7 } };
+            var r = hold(Reflect.get.bind(null, box, 'v'),
+                         function () { box.v = null; var junk = []; for (var i = 0; i < 100; i++) { junk.push({ i: i }); } });
+            return r.tag;
+        )");
+        const run_result got = stress.run(held);
+        CHECK(got.ok);
+        CHECK_EQ(stress.to_string(got.returned), std::string{"7"});
+    }
+
+    // A RE-ENTRY REFUSED WITHOUT A THROW is still a throw to call_fenced. The
+    // first refusal of an episode throws the RangeError; the next one, made
+    // from the same depth, answered undefined with threw=false, and an
+    // async-from-sync step cast that undefined to its result array.
+    {
+        context cx4;
+        install_builtins(cx4);
+        std::string seen;
+        cx4.define_native("dive", [&seen](context & c, std::span<value> args) {
+            bool threw = false;
+            value thrown = value::undefined();
+            (void)c.call_fenced(args[0], args, value::undefined(), threw, thrown);
+            if (threw && seen.empty()) {
+                bool again = false;
+                (void)c.call_fenced(args[0], args, value::undefined(), again, thrown);
+                seen = again ? "threw" : "silent";
+            }
+            return value::undefined();
+        });
+        const run_result got = cx4.run(cx4.own_program(compiler::compile("dive(dive); return 1;")));
+        CHECK(got.ok);
+        CHECK_EQ(seen, std::string{"threw"});
+    }
     REPORT("gc_pressure");
 }

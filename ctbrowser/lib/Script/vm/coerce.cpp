@@ -525,12 +525,15 @@ bool context::bigint_binary(op kind, value a, value b, value & out) {
     case op::mul: give_or_throw(bigint_mul(x, y), "Maximum BigInt size exceeded"); break;
     case op::div: give_or_throw(bigint_div(x, y), "Division by zero"); break;
     case op::mod: give_or_throw(bigint_rem(x, y), "Division by zero"); break;
-    case op::pow: give_or_throw(bigint_pow(x, y), "Exponent must be non-negative"); break;
+    case op::pow:
+        give_or_throw(bigint_pow(x, y),
+                      y < 0 ? "Exponent must be non-negative" : "Maximum BigInt size exceeded");
+        break;
     case op::bit_and: give(x & y); break;
     case op::bit_or: give(x | y); break;
     case op::bit_xor: give(x ^ y); break;
-    case op::shl: give_or_throw(bigint_shl(x, y), "BigInt shift is too large"); break;
-    case op::shr: give_or_throw(bigint_shr(x, y), "BigInt shift is too large"); break;
+    case op::shl: give_or_throw(bigint_shl(x, y), "Maximum BigInt size exceeded"); break;
+    case op::shr: give_or_throw(bigint_shr(x, y), "Maximum BigInt size exceeded"); break;
     default:
         // An operator with no BigInt meaning at all - `>>>` is the one the
         // specification names, because an unsigned shift needs a width and a

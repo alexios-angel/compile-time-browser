@@ -182,8 +182,8 @@ inline auto context::track_promise_rejection(value promise, bool handled) -> voi
 inline auto context::mark_promise_handled(value promise) -> void {
     if (!promise.is_object() || promise_is_handled(promise)) { return; }
     auto * p = static_cast<object_object *>(promise.as_heap());
-    const value * rejected = p->find(std::string_view{"__rejected"});
-    const value * settled = p->find(std::string_view{"__settled"});
+    const value * rejected = p->find(promise_rejected_key);
+    const value * settled = p->find(promise_settled_key);
     if (settled != nullptr && truthy(*settled) && rejected != nullptr && truthy(*rejected)) {
         track_promise_rejection(promise, true);
     }
@@ -234,7 +234,8 @@ inline auto context::settle_promise(value promise, value with, bool rejected) ->
 //   this is not "the result is always an object" and nothing may fold it
 //   that way. A context without install_builtins has no factory at all.
 [[nodiscard]] inline auto context::wrap_in_promise(value v) -> value {
-    if (v.is_object() && static_cast<object_object *>(v.as_heap())->find("__value") != nullptr) {
+    if (v.is_object() &&
+        static_cast<object_object *>(v.as_heap())->find(promise_result_key) != nullptr) {
         return v;
     }
     return make_promise(v, false);

@@ -166,5 +166,29 @@ int main() {
     js_expect("'abc'.padStart(6)", "   abc");
     js_expect("'abc'.padStart(6,'')", "abc"); // an empty filler pads nothing
 
+    // ================================================================
+    // 4. WHAT A PAGE CAN DO TO A NATIVE HALFWAY THROUGH
+    // ================================================================
+    //
+    // A SECOND RE-ENTRY OVERFLOW IN ONE EPISODE throws nothing (the first one
+    // did) and hands back undefined. A fenced caller - async-from-sync's step,
+    // casting what it got to the pair array it built - read that as its answer.
+    // Here the page catches the first RangeError deep in a toString chain and,
+    // still past the ceiling, runs a `for await` over an array.
+    js_expect("(function(){var out='none';function nest(n){return {toString:function(){"
+              "if(n===0)return 'x';try{return String(nest(n-1))}catch(e){"
+              "if(out==='none'){out='caught';(async function(){for await(const v of [1]){}})()"
+              ".then(function(){},function(){})}throw e}}}}"
+              "try{String(nest(700))}catch(e){}return out})()",
+              "caught");
+    // OBJECT SPREAD READS EACH PROPERTY, and a getter that defines more of
+    // them grew the accessor table under the walk. OwnPropertyKeys is taken
+    // once (CopyDataProperties step 4), so only the key present then is copied.
+    js_expect("(function(){var o={};Object.defineProperty(o,'a',{get:function(){"
+              "for(var i=0;i<64;i++)Object.defineProperty(o,'k'+i,{get:function(){return 1},"
+              "enumerable:true,configurable:true});return 1},enumerable:true,configurable:true});"
+              "return Object.keys({...o}).join(',')})()",
+              "a");
+
     REPORT("crash_guards");
 }

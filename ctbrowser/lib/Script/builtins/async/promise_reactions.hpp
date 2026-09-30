@@ -6,13 +6,13 @@
 
 namespace ctbrowser::script::detail::promise {
 
-inline constexpr std::string_view settled_slot = "__settled";
+inline constexpr std::string_view settled_slot = promise_settled_key;
 
-inline constexpr std::string_view value_slot = "__value";
+inline constexpr std::string_view value_slot = promise_result_key;
 
-inline constexpr std::string_view rejected_slot = "__rejected";
+inline constexpr std::string_view rejected_slot = promise_rejected_key;
 
-inline constexpr std::string_view handlers_slot = "__handlers";
+inline constexpr std::string_view handlers_slot = promise_reactions_key;
 
 inline constexpr std::string_view intrinsic_key = CTBROWSER_PRIVATE_KEY("Promise");
 

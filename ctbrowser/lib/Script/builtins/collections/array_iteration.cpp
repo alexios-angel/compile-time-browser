@@ -146,7 +146,7 @@ value array_iterator(context & cx, value target, double kind) {
 // threw "`next` is undefined" and took its shadows with it.
 //
 // So the object answers BOTH protocols. `next` and `@@iterator` are the real
-// ones; `__items` is what `iterable_values` recognises, so `for (const x of
+// ones; iterated_list_key is what `iterable_values` recognises, so `for (const x of
 // m.values())` still costs one array copy and no interpretation. A partly
 // consumed iterator handed to for..of restarts, which is the one place the two
 // disagree and is written down here rather than discovered - nothing drives an
@@ -159,11 +159,12 @@ value array_iterator(context & cx, value target, double kind) {
         kind_prototype(cx, tag, [kind = std::string{tag}](context & c, std::span<value>) {
             const value self = detail::array_this(c);
             // RequireInternalSlot (22.1.5.1, 24.1.5.1, 24.2.5.1): the
-            // receiver is an iterator of THIS kind - `__items` is the
-            // slot, `__kind` which prototype made it - or it is a TypeError.
+            // receiver is an iterator of THIS kind - iterated_list_key is
+            // the slot, iterator_kind_key which prototype made it - or it is a TypeError.
             const value * of_kind =
-                self.is_object() ? static_cast<object_object *>(self.as_heap())->find("__kind")
-                                 : nullptr;
+                self.is_object()
+                    ? static_cast<object_object *>(self.as_heap())->find(iterator_kind_key)
+                    : nullptr;
             if (of_kind == nullptr || !of_kind->is_string() || c.to_string(*of_kind) != kind) {
                 c.throw_error("TypeError", kind + " next called on an incompatible receiver");
                 return value::undefined();
@@ -173,16 +174,17 @@ value array_iterator(context & cx, value target, double kind) {
             std::size_t at = 0;
             if (self.is_object()) {
                 auto * holder = static_cast<object_object *>(self.as_heap());
-                if (value * list = holder->find("__items"); list != nullptr && list->is_array()) {
+                if (value * list = holder->find(iterated_list_key);
+                    list != nullptr && list->is_array()) {
                     items = static_cast<array_object *>(list->as_heap());
                 }
-                if (value * cursor = holder->find("__at"); cursor != nullptr) {
+                if (value * cursor = holder->find(iterated_index_key); cursor != nullptr) {
                     const double n = context::to_number(*cursor);
                     at = n > 0 ? static_cast<std::size_t>(n) : 0;
                 }
                 if (items != nullptr && at < items->items.size()) {
-                    holder->define("__at", value::number(static_cast<double>(at + 1)),
-                                   attr_builtin);
+                    holder->define(iterated_index_key, value::number(static_cast<double>(at + 1)),
+                                   attr_none);
                 }
             }
             const bool done = items == nullptr || at >= items->items.size();
@@ -192,12 +194,11 @@ value array_iterator(context & cx, value target, double kind) {
         });
     auto * it = static_cast<object_object *>(cx.make_object().as_heap());
     it->prototype = table;
-    // NON-ENUMERABLE, both: `__items` and `__at` are internal slots wearing
-    // property names - so `JSON.stringify(xs.entries())` is `{}` and
-    // `Object.keys` of one is empty, which is what a browser answers.
-    it->define("__items", items, attr_builtin);
-    it->define("__at", value::number(0), attr_builtin);
-    it->define("__kind", cx.string(std::string{tag}), attr_builtin);
+    // PRIVATE-keyed internal slots (value/objects.hpp): no own property a
+    // page can see, read or forge - `JSON.stringify(xs.entries())` is `{}`.
+    it->define(iterated_list_key, items, attr_none);
+    it->define(iterated_index_key, value::number(0), attr_none);
+    it->define(iterator_kind_key, cx.string(std::string{tag}), attr_none);
     return value::object(it);
 }
 

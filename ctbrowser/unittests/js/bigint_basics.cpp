@@ -215,6 +215,17 @@ int main() {
     throws("(1n << 268435456n) << 268435456n << 268435456n << 268435456n << 268435456n",
            "RangeError");
     throws("(1n << 536870912n) * (1n << 536870912n)", "RangeError");
+    // A size refusal says so; only a negative exponent says it is negative.
+    const auto message = [](const char * expression, const char * text) {
+        js_expect(std::string{"(function(){try{return "} + expression +
+                      "}catch(e){return e.name+\": \"+e.message}})()",
+                  std::string{"RangeError: "} + text);
+    };
+    message("2n**-1n", "Exponent must be non-negative");
+    message("3n**700000000n", "Maximum BigInt size exceeded");
+    message("1n << 1073741824n", "Maximum BigInt size exceeded");
+    message("1n >> -1073741824n", "Maximum BigInt size exceeded");
+    message("(1n << 536870912n) * (1n << 536870912n)", "Maximum BigInt size exceeded");
     {
         using namespace ctbrowser::script;
         const bigint wide = bigint{1} << 536870912;

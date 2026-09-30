@@ -165,7 +165,7 @@ value context::make_generator(closure_object * closure, value receiver,
             prototype(saved->async_gen ? proto_kind::async_generator : proto_kind::generator)) {
         obj->prototype = value::object(table);
     }
-    obj->set("__co", value::object(saved));
+    obj->define(generator_slot_key, value::object(saved), attr_none);
     // See function_proto::eager_prologue: the parameters run now, up to the
     // compiler's own yield. `started` is put back so `.throw()`/`.return()`
     // on a generator that has not been resumed still never enter the body
@@ -211,7 +211,7 @@ value context::return_marker_value(value marker) const {
 
 value context::generator_resume(value generator, value sent, resume_mode how) {
     if (!generator.is_object()) { return iter_result(value::undefined(), true); }
-    value * held = static_cast<object_object *>(generator.as_heap())->find("__co");
+    value * held = static_cast<object_object *>(generator.as_heap())->find(generator_slot_key);
     if (held == nullptr || !held->is_kind(heap_kind::coroutine)) {
         return iter_result(value::undefined(), true);
     }
@@ -528,7 +528,7 @@ value context::async_generator_request(value generator, value sent, resume_mode 
     if (!pending_promise_factory_ || !promise_settler_) { return value::undefined(); }
     const value promise = pending_promise_factory_(*this);
     value * held = generator.is_object()
-                       ? static_cast<object_object *>(generator.as_heap())->find("__co")
+                       ? static_cast<object_object *>(generator.as_heap())->find(generator_slot_key)
                        : nullptr;
     if (held == nullptr || !held->is_kind(heap_kind::coroutine) ||
         !static_cast<coroutine_object *>(held->as_heap())->async_gen) {
@@ -569,9 +569,9 @@ void context::settle_async_generator(coroutine_object * saved, value outcome, bo
     const auto rejection_of = [](value v) -> value * {
         if (!v.is_object()) { return nullptr; }
         auto * obj = static_cast<object_object *>(v.as_heap());
-        value * state = obj->find("__rejected");
+        value * state = obj->find(promise_rejected_key);
         if (state == nullptr || !truthy(*state)) { return nullptr; }
-        return obj->find("__value");
+        return obj->find(promise_result_key);
     };
     if (value * reason = rejection_of(outcome)) {
         // A return completion that ran the body's finally blocks and escaped
@@ -696,7 +696,8 @@ void context::await_for(coroutine_object * saved, value v) {
         awaited = pending_promise_factory_(*this);
         promise_settler_(*this, awaited, v, false);
     };
-    if (v.is_object() && static_cast<object_object *>(v.as_heap())->find("__settled") != nullptr) {
+    if (v.is_object() &&
+        static_cast<object_object *>(v.as_heap())->find(promise_settled_key) != nullptr) {
         // PromiseResolve(%Promise%, v), 27.2.4.7.1: a promise is awaited as
         // itself when its `constructor` is %Promise% - a getter's throw is
         // the await's rejection, so it is read under a fence - and resolved
@@ -739,10 +740,10 @@ void context::await_for(coroutine_object * saved, value v) {
     bool rejected = false;
     if (awaited.is_object()) {
         auto * obj = static_cast<object_object *>(awaited.as_heap());
-        if (value * state = obj->find("__rejected"); state != nullptr && truthy(*state)) {
+        if (value * state = obj->find(promise_rejected_key); state != nullptr && truthy(*state)) {
             rejected = true;
         }
-        if (value * settled = obj->find("__value")) {
+        if (value * settled = obj->find(promise_result_key)) {
             with = *settled;
             mark_promise_handled(awaited);
         }
@@ -862,10 +863,10 @@ void context::resume(value coroutine, value with, bool rejected) {
         // with undefined at once - `async () => { await x; return p; }`
         // finished before `p` did (select-event.html's "a second time"). A
         // pending promise goes to the settler below, whose resolve ADOPTS it.
-        if (const value * settled = obj->find("__settled");
+        if (const value * settled = obj->find(promise_settled_key);
             settled != nullptr && truthy(*settled)) {
-            value * held = obj->find("__value");
-            value * state = obj->find("__rejected");
+            value * held = obj->find(promise_result_key);
+            value * state = obj->find(promise_rejected_key);
             outcome = held == nullptr ? value::undefined() : *held;
             failed_outcome = state != nullptr && truthy(*state);
             // ADOPTED, as far as the host's rejection tracker is concerned:

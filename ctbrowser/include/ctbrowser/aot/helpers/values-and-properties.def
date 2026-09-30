@@ -302,7 +302,7 @@ CT_AOT_COVERS(/* helper */ ct_aot_bit_not, /* opcode */ bit_not)
  *   seven handlers in run_loop.cpp that now call it. DONE.
  * FAILURE: Full status, but the catchable paths reachable from THESE SEVEN
  *   are exactly: bigint_binary's mixed-type TypeError (coerce.cpp:280-286),
- *   the shl and shr 'BigInt shift is too large' RangeErrors
+ *   the shl and shr 'Maximum BigInt size exceeded' RangeErrors
  *   (coerce.cpp:309-310), and ushr's unconditional 'BigInts have no
  *   unsigned right shift' default arm (coerce.cpp:311-317). div/mod/pow
  *   RangeErrors are NOT here - none of those opcodes is in this helper.
