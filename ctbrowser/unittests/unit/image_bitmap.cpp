@@ -37,6 +37,13 @@ int main() {
             seen.push(await why(createImageBitmap(new Blob())));
             seen.push(await why(createImageBitmap(bitmap, 0, 0, 0, 1)));
             seen.push(await why(createImageBitmap({})));
+            // Dimensions that do not describe the data, a NaN crop and a
+            // crop past the pixel budget: refused, never allocated.
+            const lying = new ImageData(1, 1);
+            lying.width = 1e5; lying.height = 1e5;
+            seen.push(await why(createImageBitmap(lying)));
+            seen.push(await why(createImageBitmap(bitmap, 0, 0, NaN, 1)));
+            seen.push(await why(createImageBitmap(bitmap, 1e300, 0, 1e5, 1e5)));
             bitmap.close();
             seen.push(bitmap.width, await why(createImageBitmap(bitmap)));
             let threw = 'no';
@@ -50,8 +57,10 @@ int main() {
     const std::vector<std::string> & logged = page.bindings().console_output();
     CHECK(!logged.empty());
     if (!logged.empty()) {
-        CHECK_EQ(logged.back(), std::string{"true 4x3 2x1 255,0,0,255 1 InvalidStateError "
-                                            "RangeError TypeError 0 InvalidStateError TypeError"});
+        CHECK_EQ(logged.back(),
+                 std::string{"true 4x3 2x1 255,0,0,255 1 InvalidStateError "
+                             "RangeError TypeError InvalidStateError RangeError RangeError "
+                             "0 InvalidStateError TypeError"});
     }
     REPORT("image_bitmap");
 }

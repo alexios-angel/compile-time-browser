@@ -30,6 +30,10 @@ namespace ctbrowser::shell {
 
 namespace {
 
+// The most pixels one bitmap may hold (2^26, 256 MiB): past it an allocation
+// is a page's to choose.
+constexpr double largest_area = 67108864.0;
+
 // The crop of 8.10 step "the source rectangle": (sx, sy, sw, sh) with a
 // negative width or height measured back from its corner, and whatever falls
 // outside the source transparent black.
@@ -115,13 +119,17 @@ void dom_bindings::install_image_bitmap(context & cx) {
         const bool cropped = a.size() >= 5;
         double sx = 0, sy = 0, sw = 0, sh = 0;
         if (cropped) {
-            sx = context::to_number(a[1]);
-            sy = context::to_number(a[2]);
-            sw = context::to_number(a[3]);
-            sh = context::to_number(a[4]);
+            // IDL `long`s: a NaN or an infinity is 0, never a cast of one.
+            sx = context::to_int32(a[1]);
+            sy = context::to_int32(a[2]);
+            sw = context::to_int32(a[3]);
+            sh = context::to_int32(a[4]);
             if (c.throw_pending()) { return value::undefined(); }
             if (sw == 0 || sh == 0) {
                 return reject("RangeError", "createImageBitmap: the crop is empty");
+            }
+            if (std::fabs(sw) * std::fabs(sh) > largest_area) {
+                return reject("RangeError", "createImageBitmap: the crop is too large");
             }
         }
         std::shared_ptr<const paint::bitmap> pixels;
@@ -161,13 +169,19 @@ void dom_bindings::install_image_bitmap(context & cx) {
             pixels = std::make_shared<const paint::bitmap>(std::move(decoded));
         } else if (c.instance_of(source, c.global("ImageData"))) {
             // An ImageData: RGBA bytes, row by row.
-            const int w = static_cast<int>(context::to_number(c.lookup_property(source, "width")));
-            const int h = static_cast<int>(context::to_number(c.lookup_property(source, "height")));
+            // Its width and height are only believed when they describe its
+            // data exactly: a page can shadow them, and the loop below trusts
+            // them for an allocation.
+            const double dw = context::to_number(c.lookup_property(source, "width"));
+            const double dh = context::to_number(c.lookup_property(source, "height"));
             std::vector<std::uint8_t> rgba;
-            if (!buffer_source_bytes(c, c.lookup_property(source, "data"), rgba) || w <= 0 ||
-                h <= 0) {
+            if (!buffer_source_bytes(c, c.lookup_property(source, "data"), rgba) || !(dw >= 1) ||
+                !(dh >= 1) || dw * dh > largest_area ||
+                dw * dh * 4 != static_cast<double>(rgba.size())) {
                 return reject("InvalidStateError", "createImageBitmap: the ImageData is detached");
             }
+            const auto w = static_cast<int>(dw);
+            const auto h = static_cast<int>(dh);
             paint::bitmap image{w, h};
             for (int y = 0; y < h; ++y) {
                 for (int x = 0; x < w; ++x) {
