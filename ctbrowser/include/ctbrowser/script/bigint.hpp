@@ -53,6 +53,12 @@ namespace ctbrowser::script {
 // DIVIDEND, both as JavaScript specifies and as C++ integer division already
 // does: `5n / 2n` is 2n and `-5n % 3n` is -2n.
 
+// A RESULT WIDER THAN max_bigint_bits IS A RangeError (nullopt), estimated from
+// the operands BEFORE computing: `3n ** 4294967295n` is 6.8 billion bits.
+// V8 draws the same line.
+inline constexpr std::uint64_t max_bigint_bits = std::uint64_t{1} << 30;
+
+[[nodiscard]] std::optional<bigint> bigint_mul(const bigint & a, const bigint & b);
 [[nodiscard]] std::optional<bigint> bigint_div(const bigint & a, const bigint & b);
 [[nodiscard]] std::optional<bigint> bigint_rem(const bigint & a, const bigint & b);
 [[nodiscard]] std::optional<bigint> bigint_pow(const bigint & a, const bigint & b);

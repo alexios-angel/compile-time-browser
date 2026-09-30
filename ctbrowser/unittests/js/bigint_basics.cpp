@@ -24,6 +24,8 @@
 
 #include "js_expect.hpp"
 
+#include <ctbrowser/script/bigint.hpp>
+
 int main() {
     // --- literals, in every radix --------------------------------------------
     js_expect("1n", "1");
@@ -203,6 +205,22 @@ int main() {
     throws("1n%0n", "RangeError");
     // No fractions, so a negative exponent has none either.
     throws("2n**-1n", "RangeError");
+    // DOS-026: a result past 2^30 bits is refused from the operands' widths
+    // before a byte of it is computed; bases 0, 1 and -1 stay small at any power.
+    throws("(2n**100000n)**4000000000n", "RangeError");
+    throws("3n**4294967295n", "RangeError");
+    throws("3n**700000000n", "RangeError"); // 1.1 billion bits: past the cap, not just near it
+    js_expect("1n ** 4294967295n", "1");
+    js_expect("(-1n) ** 4294967295n", "-1");
+    throws("(1n << 268435456n) << 268435456n << 268435456n << 268435456n << 268435456n",
+           "RangeError");
+    throws("(1n << 536870912n) * (1n << 536870912n)", "RangeError");
+    {
+        using namespace ctbrowser::script;
+        const bigint wide = bigint{1} << 536870912;
+        check(!bigint_mul(wide, wide), "a product past 2^30 bits is refused");
+        check(bigint_mul(bigint{6}, bigint{7}) == bigint{42}, "and a small one is not");
+    }
     // BigInt() refuses what it cannot represent rather than truncating.
     throws("BigInt(1.5)", "RangeError");
     throws("BigInt(NaN)", "RangeError");

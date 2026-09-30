@@ -72,6 +72,11 @@ struct scanned {
     return s.negative ? -out : out;
 }
 
+// Significant bits of |a|, 0 for zero.
+[[nodiscard]] std::uint64_t bit_width(const bigint & a) {
+    return a == 0 ? 0 : static_cast<std::uint64_t>(boost::multiprecision::msb(abs(a))) + 1;
+}
+
 } // namespace
 
 std::optional<bigint> bigint_from_literal(std::string_view text) {
@@ -100,6 +105,11 @@ std::optional<bigint> bigint_from_string(std::string_view text) {
     return from_digits(s);
 }
 
+std::optional<bigint> bigint_mul(const bigint & a, const bigint & b) {
+    if (bit_width(a) + bit_width(b) > max_bigint_bits) { return std::nullopt; }
+    return a * b;
+}
+
 std::optional<bigint> bigint_div(const bigint & a, const bigint & b) {
     if (b == 0) { return std::nullopt; } // RangeError, not Infinity - there is no bigint infinity
     return a / b;
@@ -118,7 +128,17 @@ std::optional<bigint> bigint_pow(const bigint & a, const bigint & b) {
     // an absurd one is refused rather than attempted. 2**32 bits is already a
     // 512 MB number; nothing legitimate reaches it.
     if (b > 0xFFFFFFFFu) { return std::nullopt; }
-    return boost::multiprecision::pow(a, static_cast<unsigned>(b));
+    // AND SO MUST THE RESULT: a**b has floor(b * log2|a|) + 1 bits, which is 1
+    // for the three bases (0, 1, -1) whose powers stay small. log2 is exact
+    // enough in a double for a base that fits one; a wider base uses bits - 1,
+    // under 2% short of the truth.
+    const auto exponent = static_cast<unsigned>(b);
+    const std::uint64_t width = bit_width(a);
+    const double log2_base = width <= 53
+                                 ? std::log2(std::max(1.0, std::fabs(a.convert_to<double>())))
+                                 : static_cast<double>(width - 1);
+    if (log2_base * exponent >= static_cast<double>(max_bigint_bits)) { return std::nullopt; }
+    return boost::multiprecision::pow(a, exponent);
 }
 
 std::optional<bigint> bigint_shl(const bigint & a, const bigint & b) {
@@ -126,7 +146,9 @@ std::optional<bigint> bigint_shl(const bigint & a, const bigint & b) {
     // which is the specification, and not what C++ `<<` does with a negative.
     if (b < 0) { return bigint_shr(a, -b); }
     if (b > 0x10000000u) { return std::nullopt; }
-    return a << static_cast<unsigned>(b);
+    const auto count = static_cast<unsigned>(b);
+    if (a != 0 && bit_width(a) + count > max_bigint_bits) { return std::nullopt; }
+    return a << count;
 }
 
 std::optional<bigint> bigint_shr(const bigint & a, const bigint & b) {

@@ -522,7 +522,7 @@ bool context::bigint_binary(op kind, value a, value b, value & out) {
     case op::add_generic:
     case op::add: give(x + y); break;
     case op::sub: give(x - y); break;
-    case op::mul: give(x * y); break;
+    case op::mul: give_or_throw(bigint_mul(x, y), "Maximum BigInt size exceeded"); break;
     case op::div: give_or_throw(bigint_div(x, y), "Division by zero"); break;
     case op::mod: give_or_throw(bigint_rem(x, y), "Division by zero"); break;
     case op::pow: give_or_throw(bigint_pow(x, y), "Exponent must be non-negative"); break;
