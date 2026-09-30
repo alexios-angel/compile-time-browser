@@ -108,6 +108,16 @@ void test_view_hardening() {
        " Object.defineProperty(v, 'byteLength', {get: function () { return Infinity; }});"
        " return new TextDecoder().decode(v);",
        "hi");
+    // A plain-object source whose byteLength getter drops the only reference to
+    // the store and then allocates enough to collect it. The getters run before
+    // the store is looked up, so the decode sees no store and refuses the
+    // source - a plain object is not a BufferSource anyway - rather than copying
+    // out of a collected one (freed memory under ASan).
+    is("var buf = {__bytes: new Uint8Array([104, 105])};"
+       " var s = {buffer: buf, byteOffset: 0, get byteLength() { buf.__bytes = null;"
+       " for (var i = 0; i < 2e5; i++) ({}); return 2; }};"
+       " return new TextDecoder().decode(s);",
+       "threw:TypeError");
     // ISO-8859-3 leaves 0xA5 unmapped (a NUL in the index row): U+FFFD, no over-read.
     is("return new TextDecoder('iso-8859-3').decode(new Uint8Array([0xA5, 0xFF, "
        "0x41])).charCodeAt(0)"
