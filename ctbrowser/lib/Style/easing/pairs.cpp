@@ -242,7 +242,9 @@ struct gap_shape {
                 if (args.size() != 2) { return false; }
                 const std::string_view count = trim(args[0], html_whitespace);
                 if (ascii_iequals_any(count, {"auto-fill", "auto-fit"})) { return false; }
-                shape += "r" + std::string{count} + "(";
+                // Length-prefixed: a count is raw text, and `repeat(a(t)rb, X)`
+                // must not spell the shape of `repeat(a, X) repeat(b, Y)`.
+                shape += "r" + std::to_string(count.size()) + ":" + std::string{count} + "(";
                 for (const std::string_view inner : track_words(args[1])) {
                     if (inner.starts_with('[')) { continue; }
                     sizes.push_back(inner);
@@ -259,7 +261,8 @@ struct gap_shape {
     std::vector<std::string_view> a, b;
     std::string shape_a, shape_b;
     if (!shape_of(from, a, shape_a) || !shape_of(to, b, shape_b) || shape_a != shape_b ||
-        a.empty() || ascii_iequals(from, "none") || ascii_iequals(to, "none")) {
+        a.empty() || a.size() != b.size() || ascii_iequals(from, "none") ||
+        ascii_iequals(to, "none")) {
         return std::nullopt;
     }
     // The nearer end's words, its sizes replaced by the blend in order.
