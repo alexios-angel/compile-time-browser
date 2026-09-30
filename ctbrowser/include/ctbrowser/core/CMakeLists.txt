@@ -4,6 +4,7 @@ target_sources(ctbrowser-core PUBLIC FILE_SET HEADERS FILES
   atom.hpp
   containers.hpp
   core.hpp
+  depth.hpp
   geometry.hpp
   handle.hpp
   json.hpp

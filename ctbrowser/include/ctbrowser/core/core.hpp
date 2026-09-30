@@ -18,6 +18,7 @@
 #include <ctbrowser/core/allocator.hpp>
 #include <ctbrowser/core/atom.hpp>
 #include <ctbrowser/core/containers.hpp>
+#include <ctbrowser/core/depth.hpp>
 #include <ctbrowser/core/geometry.hpp>
 #include <ctbrowser/core/handle.hpp>
 #include <ctbrowser/core/scheduler.hpp>
