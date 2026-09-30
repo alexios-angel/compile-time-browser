@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 // HOW A GENERATED TRANSLATION UNIT REACHES THE RIGHT `function_proto`.
@@ -125,10 +126,10 @@ struct install_report {
     // the names would be quadratic on a real program - Phaser is 7,725
     // functions - and the resolution has to happen before any assignment
     // anyway.
-    std::vector<std::string> symbols;
+    std::unordered_map<std::string, std::size_t> symbols;
     symbols.reserve(into.functions.size());
     for (std::size_t index = 0; index < into.functions.size(); ++index) {
-        symbols.push_back(entry_symbol(into.functions[index].name, index));
+        symbols.try_emplace(entry_symbol(into.functions[index].name, index), index);
     }
 
     std::vector<std::size_t> chosen(table.binding_count, into.functions.size());
@@ -140,13 +141,8 @@ struct install_report {
             return report;
         }
         const std::string_view wanted{binding.symbol};
-        std::size_t found = into.functions.size();
-        for (std::size_t index = 0; index < symbols.size(); ++index) {
-            if (symbols[index] == wanted) {
-                found = index;
-                break;
-            }
-        }
+        const auto hit = symbols.find(std::string{wanted});
+        const std::size_t found = hit == symbols.end() ? into.functions.size() : hit->second;
         // THE REFUSAL THIS FILE IS FOR. A symbol matching nothing means the two
         // naming rules have drifted, or the table is not this program's - and
         // in both cases the application would otherwise start, interpret
