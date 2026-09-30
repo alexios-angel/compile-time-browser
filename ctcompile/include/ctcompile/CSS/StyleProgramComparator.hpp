@@ -1,7 +1,8 @@
 #pragma once
 
 #include <optional>
-#include <string>
+
+#include "ctcompile/Support/Difference.hpp"
 
 #include <ctbrowser/style/engine.hpp>
 
@@ -33,10 +34,8 @@
 // that crossed the tables would fail open with both sides equal to "".
 namespace ctcompile::css {
 
-struct difference {
-    std::string where; // "rule 12", "selector count", "font 0"
-    std::string what;
-};
+// `where`: "rule 12", "selector count", "font 0".
+using difference = ctcompile::difference;
 
 [[nodiscard]] std::optional<difference> compare(const ctbrowser::style::engine & expected,
                                                 const ctbrowser::style::engine & actual);

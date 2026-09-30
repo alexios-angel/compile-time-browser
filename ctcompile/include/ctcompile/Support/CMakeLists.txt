@@ -8,6 +8,7 @@ target_sources(ctcompile-support PUBLIC
 
 target_sources(ctcompile-support PRIVATE
   CppLiterals.hpp
+  Difference.hpp
 )
 
 if(CTCOMPILE_ENABLE_MLIR)

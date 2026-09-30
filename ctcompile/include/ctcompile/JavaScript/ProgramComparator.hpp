@@ -1,7 +1,8 @@
 #pragma once
 
 #include <optional>
-#include <string>
+
+#include "ctcompile/Support/Difference.hpp"
 
 #include <ctbrowser/script/bytecode.hpp>
 
@@ -18,10 +19,8 @@
 // -Infinity. Bits get both right, and they are what the image writes.
 namespace ctcompile::js {
 
-struct difference {
-    std::string where; // "function 12, instruction 40", "constant 3"
-    std::string what;
-};
+// `where`: "function 12, instruction 40", "constant 3".
+using difference = ctcompile::difference;
 
 [[nodiscard]] std::optional<difference> compare(const ctbrowser::script::program & expected,
                                                 const ctbrowser::script::program & actual);

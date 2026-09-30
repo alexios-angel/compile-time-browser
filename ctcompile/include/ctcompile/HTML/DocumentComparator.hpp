@@ -1,7 +1,8 @@
 #pragma once
 
 #include <optional>
-#include <string>
+
+#include "ctcompile/Support/Difference.hpp"
 
 #include <ctbrowser/dom/document.hpp>
 
@@ -39,10 +40,7 @@ namespace ctcompile::html {
 // Where two documents first disagree. `where` is a document-order path such as
 // `/html/body/div[2]/#text`, which is enough to find the node in either tree
 // without a handle that means anything in only one of them.
-struct difference {
-    std::string where;
-    std::string what;
-};
+using difference = ctcompile::difference;
 
 // Nothing when the two documents agree on every field above; otherwise the
 // FIRST disagreement in document order. First rather than all of them: a
