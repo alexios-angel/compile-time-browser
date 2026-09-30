@@ -63,7 +63,8 @@ struct lowering {
         mlir::Type fieldType;
     };
     llvm::SmallVector<ownedGlobalStorage> ownedGlobalStoragePlans;
-    llvm::StringMap<mlir::Type> ownedGlobals;
+    // Each owning global's binding -> the index of its (last) plan.
+    llvm::StringMap<unsigned> ownedGlobals;
     llvm::DenseMap<mlir::Value, mlir::Type> ownedObjectTypes;
     llvm::DenseMap<mlir::Operation *, unsigned> ownedGlobalOperations;
     void censusOwnedGlobals(const OwnedGlobalRoots & roots, llvm::ArrayRef<ctjs::FuncOp> accepted);
@@ -293,6 +294,7 @@ struct lowering {
                              llvm::StringRef member, mlir::Type type);
 
     void replace(mlir::Operation * o, bool isEntry, mlir::Type returnType);
+    void printObservations(mlir::OpBuilder & b, mlir::Location where);
     bool replaceMap(mlir::Operation * o);
 
     void applyDeclarativeRules(ctjs::FuncOp fn);
@@ -300,6 +302,15 @@ struct lowering {
     void lower(ctjs::FuncOp fn);
 
     void declareGlobals();
+    // A verbatim C++ fragment at `b`, located at the module.
+    void verbatim(mlir::OpBuilder & b, const llvm::Twine & text);
 };
+
+// A StringMap's or StringSet's keys, sorted.
+template <class Map> llvm::SmallVector<llvm::StringRef> sortedKeys(const Map & map) {
+    llvm::SmallVector<llvm::StringRef> keys(map.keys().begin(), map.keys().end());
+    llvm::sort(keys);
+    return keys;
+}
 
 } // namespace ctcompile::ctnative::lowering_detail

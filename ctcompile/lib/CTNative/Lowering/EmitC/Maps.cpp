@@ -161,16 +161,14 @@ bool lowering::replaceMap(mlir::Operation * o) {
                              mapValueSpelling(typeOf(o->getResult(0))) + ">";
             }
         }
-        const auto name = b.getStringAttr(helperName);
         if (action == "clear") {
-            callWithConstValueOperands(b, where, mlir::TypeRange{}, name, args);
+            callWithConstValueOperands(b, where, mlir::TypeRange{}, b.getStringAttr(helperName),
+                                       args);
             swap(absentConstant(b, where));
         } else if (action == "keys" || action == "values") {
             const auto localType = o->getResult(0).getType();
             const auto type = llvm::cast<ec::LValueType>(localType).getValueType();
-            mlir::Value result =
-                callWithConstValueOperands(b, where, mlir::TypeRange{type}, name, args)
-                    .getResult(0);
+            mlir::Value result = callValue(b, where, type, helperName, args);
             mlir::Value local =
                 ec::VariableOp::create(b, where, localType, ec::OpaqueAttr::get(context, ""));
             ec::AssignOp::create(b, where, local, result);
@@ -182,10 +180,8 @@ bool lowering::replaceMap(mlir::Operation * o) {
                 : action == "get" && resultType == carrierType(context, carrier::string)
                     ? mlir::Type(ec::OpaqueType::get(context, kRawStringType))
                     : resultType;
-            auto value =
-                callWithConstValueOperands(b, where, mlir::TypeRange{storageType}, name, args)
-                    .getResult(0);
-            swap(convertScalar(b, where, value, resultType));
+            swap(convertScalar(b, where, callValue(b, where, storageType, helperName, args),
+                               resultType));
         }
         return true;
     }

@@ -5,6 +5,10 @@
 
 namespace ctcompile::ctnative::lowering_detail {
 
+void lowering::verbatim(mlir::OpBuilder & b, const llvm::Twine & text) {
+    ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(text));
+}
+
 void lowering::finish() {
     // PROTOTYPES FIRST. main is the importer's function 0 and is emitted
     // first, and C++ needs a declaration before a use; one
@@ -55,24 +59,17 @@ void lowering::finish() {
         }
         // The owner carrier names a concrete class, so its storage follows
         // the class definition and precedes every function using it.
-        llvm::SmallVector<llvm::StringRef> ownerNames(ownedGlobals.keys().begin(),
-                                                      ownedGlobals.keys().end());
-        llvm::sort(ownerNames);
-        for (llvm::StringRef name : ownerNames) {
-            if (!domDataSession.empty() && llvm::isa<ec::PointerType>(ownedGlobals.lookup(name))) {
-                const auto & storage =
-                    *llvm::find_if(ownedGlobalStoragePlans,
-                                   [&](const auto & plan) { return plan.binding == name; });
-                ec::VerbatimOp::create(b, module.getLoc(),
-                                       b.getStringAttr(storage.className + " g_" + name.str() +
-                                                       "{};\n" + storage.className + " * reset_g_" +
-                                                       name.str() + "() { g_" + name.str() +
-                                                       " = {}; return &g_" + name.str() + "; }\n"));
+        for (llvm::StringRef name : sortedKeys(ownedGlobals)) {
+            const auto & storage = ownedGlobalStoragePlans[ownedGlobals.lookup(name)];
+            if (!domDataSession.empty() && llvm::isa<ec::PointerType>(storage.type)) {
+                verbatim(b, llvm::Twine(storage.className) + " g_" + name + "{};\n" +
+                                storage.className + " * reset_g_" + name + "() { g_" + name +
+                                " = {}; return &g_" + name + "; }\n");
                 continue;
             }
-            auto global = ec::GlobalOp::create(b, module.getLoc(), ("g_" + name).str(),
-                                               ownedGlobals.lookup(name), mlir::Attribute{}, false,
-                                               domDataSession.empty(), false);
+            auto global =
+                ec::GlobalOp::create(b, module.getLoc(), ("g_" + name).str(), storage.type,
+                                     mlir::Attribute{}, false, domDataSession.empty(), false);
             global->setAttr("ctnative.provenance", b.getStringAttr("owning global " + name.str()));
         }
         for (ec::FuncOp f : lowered) {
@@ -80,12 +77,8 @@ void lowering::finish() {
             ec::DeclareFuncOp::create(b, f.getLoc(),
                                       mlir::FlatSymbolRefAttr::get(context, f.getSymName()));
         }
-        if (!domSessionDefinition.empty()) {
-            ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(domSessionDefinition));
-        }
-        for (const std::string & builder : callableBuilders) {
-            ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(builder));
-        }
+        if (!domSessionDefinition.empty()) { verbatim(b, domSessionDefinition); }
+        for (const std::string & builder : callableBuilders) { verbatim(b, builder); }
     }
     if (!domDataSession.empty()) {
         std::string text;
@@ -94,16 +87,13 @@ void lowering::finish() {
             << nonmovable(domDataSession, "    ")
             << "    ctbrowser::document & document() { return document_; }\n";
         sessionInvoke(out, domDataEntry, domParameters.size(), "");
-        llvm::SmallVector<llvm::StringRef> observed(observations.keys().begin(),
-                                                    observations.keys().end());
-        llvm::sort(observed);
-        for (auto name : observed) {
+        for (auto name : sortedKeys(observations)) {
             out << "    auto observe_" << cIdentifier(name) << "() const { return g_" << name
                 << "; }\n";
         }
         out << "};\n";
         mlir::OpBuilder b = mlir::OpBuilder::atBlockEnd(module.getBody());
-        ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(text));
+        verbatim(b, text);
     }
     for (ctjs::FuncOp fn : shells) {
         if (!mlir::SymbolTable::symbolKnownUseEmpty(fn.getOperation(), module)) {
@@ -139,10 +129,8 @@ void lowering::declareGlobals() {
     // order. Everything after the include is text the program parameterises:
     // its identity struct and field accessors, its environments, its method
     // tables, its DOM session.
-    if (needsMapOrder) {
-        ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kOrderedMapsDefine));
-    }
-    if (needsDOM) { ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kDOMDefine)); }
+    if (needsMapOrder) { verbatim(b, kOrderedMapsDefine); }
+    if (needsDOM) { verbatim(b, kDOMDefine); }
     ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr(kRuntimeHeader), mlir::UnitAttr{});
     // Browser views include the live selector engine only for entries that
     // already borrow Style. Primitive-only programs keep the smaller header.
@@ -151,24 +139,12 @@ void lowering::declareGlobals() {
                               b.getStringAttr("ctcompile/CTNative/Runtime/Browser.hpp"),
                               b.getUnitAttr());
     }
-    if (needsObjectIdentity) {
-        ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(identityDefinition()));
-    }
-    if (!identityFields.empty()) {
-        ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(identityFieldHelpers()));
-    }
-    for (const std::string & definition : environments) {
-        ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(definition));
-    }
-    for (const std::string & definition : methodTables) {
-        ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(definition));
-    }
-    if (!domDataSession.empty()) {
-        ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(domDataDefinition()));
-    }
-    llvm::SmallVector<llvm::StringRef> names(globals.keys().begin(), globals.keys().end());
-    llvm::sort(names);
-    for (llvm::StringRef name : names) {
+    if (needsObjectIdentity) { verbatim(b, identityDefinition()); }
+    if (!identityFields.empty()) { verbatim(b, identityFieldHelpers()); }
+    for (const std::string & definition : environments) { verbatim(b, definition); }
+    for (const std::string & definition : methodTables) { verbatim(b, definition); }
+    if (!domDataSession.empty()) { verbatim(b, domDataDefinition()); }
+    for (llvm::StringRef name : sortedKeys(globals)) {
         // Default tagged storage is undefined until the first generated
         // store. Each observation checks its exact tag, so a missing store
         // cannot imitate a computed NaN, false or an empty String.

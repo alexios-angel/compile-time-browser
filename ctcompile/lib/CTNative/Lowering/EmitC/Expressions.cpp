@@ -35,24 +35,23 @@ mlir::Value lowering::stringConstant(mlir::OpBuilder & builder, mlir::Location w
 mlir::Type lowering::globalStorageType(llvm::StringRef name) const {
     // The entire source-store census selects one owning carrier per binding.
     // Initial undefined preserves early reads independently of output.
-    if (carrierOf(globalTypes.lookup(name)) == carrier::booleanString ||
-        carrierOf(globalTypes.lookup(name)) == carrier::nullableBooleanString) {
+    const carrier stored = carrierOf(globalTypes.lookup(name));
+    if (stored == carrier::booleanString || stored == carrier::nullableBooleanString) {
         return carrierType(context, carrier::nullableBooleanString);
     }
-    if (carrierOf(globalTypes.lookup(name)) == carrier::numberString ||
-        carrierOf(globalTypes.lookup(name)) == carrier::nullableNumberString) {
+    if (stored == carrier::numberString || stored == carrier::nullableNumberString) {
         return carrierType(context, carrier::nullableNumberString);
     }
-    return carrierType(context, isStringCarrier(carrierOf(globalTypes.lookup(name)))
-                                    ? carrier::nullableString
-                                    : carrier::nullable);
+    return carrierType(context,
+                       isStringCarrier(stored) ? carrier::nullableString : carrier::nullable);
 }
 
 mlir::Value lowering::lvalueOfGlobal(mlir::OpBuilder & b, mlir::Location where,
                                      llvm::StringRef name) {
     if (auto owned = ownedGlobals.find(name); owned != ownedGlobals.end()) {
-        return ec::GetGlobalOp::create(b, where, ec::LValueType::get(owned->second),
-                                       mlir::FlatSymbolRefAttr::get(context, ("g_" + name).str()));
+        return ec::GetGlobalOp::create(
+            b, where, ec::LValueType::get(ownedGlobalStoragePlans[owned->second].type),
+            mlir::FlatSymbolRefAttr::get(context, ("g_" + name).str()));
     }
     globals.insert(name);
     const auto storage = globalStorageType(name);

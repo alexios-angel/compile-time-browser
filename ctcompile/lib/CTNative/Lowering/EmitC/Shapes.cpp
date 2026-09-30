@@ -114,6 +114,12 @@ llvm::SmallVector<std::pair<std::string, mlir::Type>> lowering::fieldsOf(mlir::V
     };
     llvm::StringMap<mlir::Type> stored;
     llvm::StringMap<mlir::Type> read;
+    // A field seen with two different carriers is nullable.
+    const auto join = [&](llvm::StringMap<mlir::Type> & into, llvm::StringRef key,
+                          mlir::Type type) {
+        auto [at, fresh] = into.try_emplace(key, type);
+        if (!fresh && at->second != type) { at->second = carrierType(context, carrier::nullable); }
+    };
     // OVER THE GROUP. A lifted method's `this.x` is a read of this shape
     // made through a different value in a different function, and a field
     // only that method touches is still a field. Collecting them here is
@@ -133,43 +139,29 @@ llvm::SmallVector<std::pair<std::string, mlir::Type>> lowering::fieldsOf(mlir::V
             if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user)) {
                 if (get.getObject() != alias) { continue; }
                 key = get.getKey();
-                auto [at, fresh] =
-                    read.try_emplace(ctjs::constantKey(key), carried(get.getResult()));
-                if (!fresh && at->second != carried(get.getResult())) {
-                    at->second = carrierType(context, carrier::nullable);
-                }
+                join(read, ctjs::constantKey(key), carried(get.getResult()));
             } else if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user)) {
                 if (set.getObject() != alias) { continue; }
                 key = set.getKey();
-                auto [at, fresh] =
-                    stored.try_emplace(ctjs::constantKey(key), carried(set.getValue()));
-                if (!fresh && at->second != carried(set.getValue())) {
-                    at->second = carrierType(context, carrier::nullable);
-                }
+                join(stored, ctjs::constantKey(key), carried(set.getValue()));
             }
             if (key) { accessKey[user] = ctjs::constantKey(key).str(); }
         }
     }
-    llvm::SmallVector<std::pair<std::string, mlir::Type>> fields;
-    for (const auto & entry : stored) {
-        const auto observed = read.lookup(entry.getKey());
-        fields.emplace_back(entry.getKey().str(), observed && observed != entry.getValue()
-                                                      ? carrierType(context, carrier::nullable)
-                                                      : entry.getValue());
-    }
-    for (const auto & entry : read) {
-        if (!stored.contains(entry.getKey())) {
-            fields.emplace_back(entry.getKey().str(), entry.getValue());
-        }
-    }
+    // Every field, read-only ones included, with its joined carrier.
+    for (const auto & entry : read) { join(stored, entry.getKey(), entry.getValue()); }
     for (mlir::Value alias : aliasesOf(groups, object)) {
         for (mlir::Operation * user : alias.getUsers()) {
             const auto key = accessKey.find(user);
             if (key == accessKey.end()) { continue; }
-            for (const auto & field : fields) {
-                if (field.first == key->second) { accessType[user] = field.second; }
+            if (auto field = stored.find(key->second); field != stored.end()) {
+                accessType[user] = field->second;
             }
         }
+    }
+    llvm::SmallVector<std::pair<std::string, mlir::Type>> fields;
+    for (const auto & entry : stored) {
+        fields.emplace_back(entry.getKey().str(), entry.getValue());
     }
     llvm::sort(fields, [](const auto & a, const auto & b) { return a.first < b.first; });
     return fields;

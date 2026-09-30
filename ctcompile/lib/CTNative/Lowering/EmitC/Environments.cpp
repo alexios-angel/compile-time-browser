@@ -6,26 +6,26 @@ void lowering::censusEnvironments(llvm::ArrayRef<ctjs::FuncOp> accepted) {
     llvm::StringMap<unsigned> callables;
     for (ctjs::FuncOp fn : accepted) {
         fn.getBody().walk([&](ctjs::CreateClosureOp made) {
-            if (environmentTarget(made).empty()) { return; }
-            if (sessionMapTargets.contains(environmentTarget(made))) {
+            const auto target = environmentTarget(made);
+            if (target.empty()) { return; }
+            if (sessionMapTargets.contains(target)) {
                 // The member calls its exact owned Map directly. Its source
                 // closure and field initialization disappear together.
                 made->setAttr(kNativeStoredRead, mlir::UnitAttr::get(context));
                 return;
             }
             const bool stored = made->hasAttr(kNativeStoredCallable);
-            if (!sessionTargets.contains(environmentTarget(made)) &&
+            if (!sessionTargets.contains(target) &&
                 (stored || hasConcreteCallableSignature(made))) {
                 // Admission has already proved ownership and every invocation.
                 // Choose the existing callable ABI only after its concrete
                 // signature is known; other admitted signatures keep tuples.
                 made->setAttr(kNativeStoredCallable, mlir::UnitAttr::get(context));
-                callables.try_emplace(environmentTarget(made),
-                                      static_cast<unsigned>(made.getUpvalues().size()));
+                callables.try_emplace(target, static_cast<unsigned>(made.getUpvalues().size()));
                 censusStoredCallable(made, !stored);
                 return;
             }
-            const auto name = "ctn_env_" + cIdentifier(environmentTarget(made));
+            const auto name = environmentType(target);
             std::string definition = "namespace ctnative {\nusing " + name + " = std::tuple<";
             for (auto [i, captured] : llvm::enumerate(made.getUpvalues())) {
                 if (i != 0) { definition += ", "; }
@@ -48,6 +48,9 @@ void lowering::censusEnvironments(llvm::ArrayRef<ctjs::FuncOp> accepted) {
             environments.push_back(definition + ">;\n}\n");
         });
     }
+    const auto storedCall = [&](unsigned captures) {
+        return mlir::IntegerAttr::get(mlir::IntegerType::get(context, 32), captures);
+    };
     for (ctjs::FuncOp fn : accepted) {
         fn.getBody().walk([&](mlir::Operation * op) {
             if (op->hasAttr(kNativeEnvironmentRead) &&
@@ -61,17 +64,14 @@ void lowering::censusEnvironments(llvm::ArrayRef<ctjs::FuncOp> accepted) {
             if (!call) { return; }
             if (sessionCalls.contains(op)) {
                 call->setAttr(kNativeStoredCall,
-                              mlir::IntegerAttr::get(mlir::IntegerType::get(context, 32),
-                                                     sessionTargets.lookup(call.getCallee())));
+                              storedCall(sessionTargets.lookup(call.getCallee())));
                 return;
             }
             const auto found = callables.find(call.getCallee());
             if (found == callables.end()) { return; }
             const auto type = llvm::dyn_cast_or_null<ClosureType>(typeOf(call.getCalleeValue()));
             if (!type || type.getTarget() != call.getCallee()) { return; }
-            call->setAttr(
-                kNativeStoredCall,
-                mlir::IntegerAttr::get(mlir::IntegerType::get(context, 32), found->second));
+            call->setAttr(kNativeStoredCall, storedCall(found->second));
         });
     }
 }
@@ -85,7 +85,7 @@ bool lowering::replaceEnvironment(mlir::Operation * op) {
     if (auto made = llvm::dyn_cast<ctjs::CreateClosureOp>(op)) {
         const std::string builder =
             made->hasAttr(kNativeStoredCallable) && !sessionTargets.contains(target)
-                ? "ctn_bind_" + cIdentifier(target)
+                ? binderName(target)
                 : "std::make_tuple";
         result =
             callValue(at, op->getLoc(), made.getResult().getType(), builder, made.getUpvalues());

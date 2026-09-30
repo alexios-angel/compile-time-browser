@@ -17,7 +17,7 @@ void lowering::censusOwnedGlobals(const OwnedGlobalRoots & roots,
         const unsigned index = static_cast<unsigned>(ownedGlobalStoragePlans.size());
         ownedGlobalStoragePlans.push_back(
             {root.binding, name, root.property, type, accessType.lookup(field)});
-        ownedGlobals[root.binding] = type;
+        ownedGlobals[root.binding] = index;
         ownedObjectTypes[owner.getResult()] = type;
         ownedGlobalOperations[owner] = index;
         ownedGlobalOperations[root.initialization] = index;
@@ -40,7 +40,7 @@ void lowering::censusOwnedGlobals(const OwnedGlobalRoots & roots,
             index = static_cast<unsigned>(ownedGlobalStoragePlans.size());
             ownedGlobalStoragePlans.push_back(
                 {initialization.getName().str(), "ctnative::identity_object", {}, type, {}});
-            ownedGlobals[initialization.getName()] = type;
+            ownedGlobals[initialization.getName()] = index;
             ownedGlobalOperations[initialization] = index;
             needsObjectIdentity = true;
         } else {

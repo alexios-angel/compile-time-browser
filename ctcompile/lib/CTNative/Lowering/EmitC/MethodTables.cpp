@@ -72,8 +72,8 @@ void lowering::censusStoredCallable(ctjs::CreateClosureOp made, bool namedLambda
                                          : "arg" + std::to_string(index));
     }
     const auto lambdaName = callableLocal("ctn_", "lambda", 0, occupied);
-    const auto name = cIdentifier(target);
-    environments.push_back("namespace ctnative {\nusing ctn_env_" + name + " = std::function<" +
+    const auto environment = environmentType(target), binder = binderName(target);
+    environments.push_back("namespace ctnative {\nusing " + environment + " = std::function<" +
                            result + "(" + llvm::join(params, ", ") + ")>;\n}\n");
     if (namedLambda) {
         // Keep the body as IR until the final printer. Canonicalization,
@@ -89,8 +89,8 @@ void lowering::censusStoredCallable(ctjs::CreateClosureOp made, bool namedLambda
             names.lookup(target),
             attributes.getDictionaryAttr(
                 {attributes.getNamedAttr("type",
-                                         attributes.getStringAttr("ctnative::ctn_env_" + name)),
-                 attributes.getNamedAttr("binder", attributes.getStringAttr("ctn_bind_" + name)),
+                                         attributes.getStringAttr("ctnative::" + environment)),
+                 attributes.getNamedAttr("binder", attributes.getStringAttr(binder)),
                  attributes.getNamedAttr("name", attributes.getStringAttr(lambdaName)),
                  attributes.getNamedAttr("captures", strings(captureNames)),
                  attributes.getNamedAttr("parameters", strings(paramNames))}));
@@ -106,12 +106,12 @@ void lowering::censusStoredCallable(ctjs::CreateClosureOp made, bool namedLambda
         typed.push_back(type + " " + param);
     }
     forwarded.append(paramNames);
-    callableBuilders.push_back(
-        "// ctcompile: stored callable " + target.str() + ", " + siteOfFunction(fn) +
-        "\ninline ctnative::ctn_env_" + name + " ctn_bind_" + name + "(" + llvm::join(bound, ", ") +
-        ") {\n  return [" + llvm::join(moved, ", ") + "](" + llvm::join(typed, ", ") + ") -> " +
-        result + " {\n    return " + names.lookup(target) + "(" + llvm::join(forwarded, ", ") +
-        ");\n  };\n}\n");
+    callableBuilders.push_back("// ctcompile: stored callable " + target.str() + ", " +
+                               siteOfFunction(fn) + "\ninline ctnative::" + environment + " " +
+                               binder + "(" + llvm::join(bound, ", ") + ") {\n  return [" +
+                               llvm::join(moved, ", ") + "](" + llvm::join(typed, ", ") + ") -> " +
+                               result + " {\n    return " + names.lookup(target) + "(" +
+                               llvm::join(forwarded, ", ") + ");\n  };\n}\n");
 }
 
 bool lowering::censusSession(const OwnedGlobalRoots & roots,
@@ -140,7 +140,7 @@ bool lowering::censusSession(const OwnedGlobalRoots & roots,
                                  ", " + mapValueSpelling(map.getValueType()) + ">";
             const auto borrowed = ec::PointerType::get(ec::OpaqueType::get(context, mapName));
             const auto index = static_cast<unsigned>(sessionMaps.size());
-            sessionMaps.push_back({"ctnative::method_" + cIdentifier(site), mapName, borrowed, {}});
+            sessionMaps.push_back({"ctnative::" + methodTableClass(site), mapName, borrowed, {}});
             sessionAllocations[allocation] = index;
             sessionAllocations[object] = index;
             llvm::SmallVector<mlir::Value> aliases{allocation.getResult()};
@@ -181,7 +181,7 @@ bool lowering::censusSession(const OwnedGlobalRoots & roots,
                 return false;
             }
             const auto key = ctjs::constantKey(read.getKey());
-            sessionCalls[call] = "ctnative::invoke_session<&ctnative::method_" + cIdentifier(site) +
+            sessionCalls[call] = "ctnative::invoke_session<&ctnative::" + methodTableClass(site) +
                                  "::m_" + key.str() + ">";
             // The source proof admits this read only as the exact call's callee.
             // Its emitted value is the table receiver, never an extracted callable.
@@ -199,7 +199,7 @@ void lowering::censusMethodTables(llvm::ArrayRef<ctjs::FuncOp> accepted) {
             const auto site = methodTableName(made);
             if (!domDataSession.empty() && sessionTables.contains(site)) {
                 const auto & storage = sessionMaps[sessionAllocations.lookup(made)];
-                methodTables.push_back("namespace ctnative {\nstruct method_" + cIdentifier(site) +
+                methodTables.push_back("namespace ctnative {\nstruct " + methodTableClass(site) +
                                        " {\n  " + storage.mapName + " captured_map;\n};\n}\n");
                 return;
             }
@@ -215,10 +215,10 @@ void lowering::censusMethodTables(llvm::ArrayRef<ctjs::FuncOp> accepted) {
             }
             llvm::sort(fields);
             std::string definition = "namespace ctnative {\n// ctcompile: returned method table, " +
-                                     siteOf(made.getLoc()) + "\nstruct method_" +
-                                     cIdentifier(site) + " {\n";
+                                     siteOf(made.getLoc()) + "\nstruct " + methodTableClass(site) +
+                                     " {\n";
             if (session) {
-                definition += nonmovable("method_" + cIdentifier(site), "  ");
+                definition += nonmovable(methodTableClass(site), "  ");
                 if (auto found = sessionAllocations.find(made); found != sessionAllocations.end()) {
                     const auto & storage = sessionMaps[found->second];
                     definition +=
@@ -229,7 +229,7 @@ void lowering::censusMethodTables(llvm::ArrayRef<ctjs::FuncOp> accepted) {
                 }
             }
             for (const auto & [key, target] : fields) {
-                const auto environment = "ctn_env_" + cIdentifier(target);
+                const auto environment = environmentType(target);
                 if (!session) {
                     definition += "  " + environment + " m_" + key + ";\n";
                     continue;
@@ -259,11 +259,11 @@ void lowering::censusMethodTables(llvm::ArrayRef<ctjs::FuncOp> accepted) {
                                   " value) { capture_" + key + " = std::move(value); }\n";
                 }
                 definition += "  " + result + " m_" + key + "(" + parameters + ");\n";
-                callableBuilders.push_back("// ctcompile: session method " + provenance +
-                                           "\ninline " + result + " ctnative::method_" +
-                                           cIdentifier(site) + "::m_" + key + "(" + parameters +
-                                           ") {\n  return " + names.lookup(target) + "(" +
-                                           llvm::join(forwarded, ", ") + ");\n}\n");
+                callableBuilders.push_back(
+                    "// ctcompile: session method " + provenance + "\ninline " + result +
+                    " ctnative::" + methodTableClass(site) + "::m_" + key + "(" + parameters +
+                    ") {\n  return " + names.lookup(target) + "(" + llvm::join(forwarded, ", ") +
+                    ");\n}\n");
             }
             methodTables.push_back(definition + "};\n}\n");
         });
@@ -321,28 +321,25 @@ bool lowering::replaceMethodTable(mlir::Operation * op) {
         llvm::SmallVector<mlir::Value> args{call.getCalleeValue()};
         llvm::append_range(args, op->getOperands().drop_front(3 + static_cast<size_t>(captures)));
         const auto session = sessionCalls.find(op);
-        if (!domDataSession.empty() && session != sessionCalls.end()) {
+        const bool member = !domDataSession.empty() && session != sessionCalls.end();
+        if (member) {
             // The complete family proves this callee and its sole Map capture.
             // Borrow the private table's Map for the direct member call.
             const auto mapType = sessionMaps.front().borrowedType;
             args.front() =
                 callValue(at, op->getLoc(), mapType, "ctnative::data_map", call.getCalleeValue());
-            auto invoked = callValue(at, op->getLoc(), call.getResult().getType(),
-                                     names.lookup(call.getCallee()), args);
-            call.getResult().replaceAllUsesWith(invoked);
-            eraseIfUnused(op);
-            return true;
         }
-        auto invoked = callValue(
-            at, op->getLoc(), call.getResult().getType(),
-            session == sessionCalls.end() ? "ctnative::invoke_callable" : session->second, args);
+        const std::string callee = member                          ? names.lookup(call.getCallee())
+                                   : session == sessionCalls.end() ? "ctnative::invoke_callable"
+                                                                   : session->second;
+        auto invoked = callValue(at, op->getLoc(), call.getResult().getType(), callee, args);
         call.getResult().replaceAllUsesWith(invoked);
         eraseIfUnused(op);
         return true;
     }
     const auto site = methodTableName(op);
     if (site.empty()) { return false; }
-    const auto name = "ctnative::method_" + cIdentifier(site);
+    const auto name = "ctnative::" + methodTableClass(site);
     if (auto made = llvm::dyn_cast<ctjs::CreateObjectOp>(op)) {
         auto created = callValue(at, op->getLoc(), made.getResult().getType(),
                                  "std::make_shared<" + name + ">", mlir::ValueRange{});

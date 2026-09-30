@@ -24,22 +24,26 @@ mlir::Type edgeTarget(mlir::Operation * op, unsigned index) {
     return {};
 }
 
+// Each value an operation nested in `region` defines, in walk order: its
+// results, then its regions' block arguments.
+template <class Visit> static void forEachNestedValue(mlir::Region & region, Visit && visit) {
+    region.walk([&](mlir::Operation * op) {
+        for (mlir::Value result : op->getResults()) { visit(result); }
+        for (mlir::Region & nested : op->getRegions()) {
+            for (mlir::Block & block : nested) {
+                for (mlir::BlockArgument argument : block.getArguments()) { visit(argument); }
+            }
+        }
+    });
+}
+
 // Retype every JavaScript value in the function from the lattice. Done
 // BEFORE any operation is replaced, so the replacements see carriers.
 void lowering::retype(ctjs::FuncOp fn) {
     // Current contents evidence is invalidated even by retyping operands.
     // Capture every admitted vector access before changing the source IR.
-    fn.getBody().walk([&](mlir::Operation * op) {
-        for (mlir::Value result : op->getResults()) {
-            if (TypeInference::isDenseVectorSite(result)) { collectVector(result); }
-        }
-        for (mlir::Region & region : op->getRegions()) {
-            for (mlir::Block & block : region) {
-                for (mlir::BlockArgument argument : block.getArguments()) {
-                    if (TypeInference::isDenseVectorSite(argument)) { collectVector(argument); }
-                }
-            }
-        }
+    forEachNestedValue(fn.getBody(), [&](mlir::Value value) {
+        if (TypeInference::isDenseVectorSite(value)) { collectVector(value); }
     });
     // Preserve complete receiver schemas before replacements erase solver
     // identities. Read result facts must never choose the storage schema.
@@ -69,34 +73,30 @@ void lowering::retype(ctjs::FuncOp fn) {
             v.setType(ec::OpaqueType::get(context, kDOMOptionalStringType));
             return;
         }
-        if (auto call = domCalls.find(v.getDefiningOp());
-            call != domCalls.end() && call->second.returnsOptionalString()) {
-            v.setType(ec::OpaqueType::get(context, kDOMOptionalStringType));
-            return;
-        }
-        if (auto call = domCalls.find(v.getDefiningOp());
-            call != domCalls.end() &&
-            call->second.kind == HostDOMMethod::documentQuerySelectorAll) {
-            // The local snapshot owns typed views. Existing proved indexed
-            // uses extract a raw element only where it is consumed.
-            v.setType(ec::OpaqueType::get(context, kDOMElementViewVectorType));
-            return;
-        }
-        if (auto call = domCalls.find(v.getDefiningOp());
-            call != domCalls.end() && !call->second.returnsBoolean() &&
-            !call->second.returnsElement() && !call->second.returnsNumber() &&
-            !call->second.returnsSymbol() && !call->second.returnsString() &&
-            !call->second.returnsJSON() && !call->second.returnsStringVector() &&
-            !call->second.returnsElementVector()) {
-            // The effect is emitted as a void call. Any live JavaScript
-            // undefined consumer is replaced separately during emission.
-            v.setType(mlir::Float64Type::get(context));
-            return;
-        }
-        if (auto call = domCalls.find(v.getDefiningOp());
-            call != domCalls.end() && call->second.returnsStringVector()) {
-            v.setType(ec::OpaqueType::get(context, kStringVectorType));
-            return;
+        if (auto found = domCalls.find(v.getDefiningOp()); found != domCalls.end()) {
+            const HostDOMCall & call = found->second;
+            if (call.returnsOptionalString()) {
+                v.setType(ec::OpaqueType::get(context, kDOMOptionalStringType));
+                return;
+            }
+            if (call.kind == HostDOMMethod::documentQuerySelectorAll) {
+                // The local snapshot owns typed views. Existing proved indexed
+                // uses extract a raw element only where it is consumed.
+                v.setType(ec::OpaqueType::get(context, kDOMElementViewVectorType));
+                return;
+            }
+            if (!call.returnsBoolean() && !call.returnsElement() && !call.returnsNumber() &&
+                !call.returnsSymbol() && !call.returnsString() && !call.returnsJSON() &&
+                !call.returnsStringVector() && !call.returnsElementVector()) {
+                // The effect is emitted as a void call. Any live JavaScript
+                // undefined consumer is replaced separately during emission.
+                v.setType(mlir::Float64Type::get(context));
+                return;
+            }
+            if (call.returnsStringVector()) {
+                v.setType(ec::OpaqueType::get(context, kStringVectorType));
+                return;
+            }
         }
         needsObjectValue |= carrierOf(typeOf(v)) == carrier::objectValue;
         if (!llvm::isa<ctjs::ValueType>(v.getType())) { return; }
@@ -208,14 +208,7 @@ void lowering::retype(ctjs::FuncOp fn) {
     for (mlir::Block & block : fn.getBody()) {
         for (mlir::BlockArgument a : block.getArguments()) { retypeValue(a); }
     }
-    fn.getBody().walk([&](mlir::Operation * o) {
-        for (mlir::Value r : o->getResults()) { retypeValue(r); }
-        for (mlir::Region & region : o->getRegions()) {
-            for (mlir::Block & block : region) {
-                for (mlir::BlockArgument a : block.getArguments()) { retypeValue(a); }
-            }
-        }
-    });
+    forEachNestedValue(fn.getBody(), retypeValue);
     // SCF carries an address to the proved entry-scope owner. Do this
     // before scalar boundary conversion, which would otherwise load/copy it.
     fn.getBody().walk([&](mlir::Operation * op) {

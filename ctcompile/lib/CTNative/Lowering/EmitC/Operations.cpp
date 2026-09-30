@@ -67,6 +67,73 @@ mlir::Value lowering::memberAccess(mlir::OpBuilder & b, mlir::Location where, ml
     return ec::MemberOfPtrOp::create(b, where, ec::LValueType::get(type), member, local);
 }
 
+// The entry's observation of each printed global, before its `return 0`.
+void lowering::printObservations(mlir::OpBuilder & b, mlir::Location where) {
+    using namespace ctjs;
+    const auto boolean = carrierType(context, carrier::boolean);
+    // Print each global using the complete source-store type. Definite
+    // observations check their tag; optional observations retain it.
+    const auto names = sortedKeys(explicitObservations ? observations : globals);
+    const auto textType = ec::PointerType::get(ec::OpaqueType::get(context, "const char"));
+    for (llvm::StringRef name : names) {
+        const auto print = [&](llvm::StringRef helper, mlir::Value value) {
+            mlir::Value label = ec::LiteralOp::create(
+                b, where, textType, b.getStringAttr(cpp::c_string_literal(name.str())));
+            callWithConstValueOperands(b, where, mlir::TypeRange{}, b.getStringAttr(helper),
+                                       mlir::ValueRange{label, value});
+        };
+        const auto storedType = globalTypes.lookup(name);
+        static const llvm::DenseMap<carrier, llvm::StringRef> printHelpers{
+            {carrier::booleanString, "ctnative::print_boolean_string"},
+            {carrier::nullableBooleanString, "ctnative::print_nullable_boolean_string"},
+            {carrier::numberString, "ctnative::print_number_string"},
+            {carrier::nullableNumberString, "ctnative::print_nullable_number_string"}};
+        if (auto helper = printHelpers.find(carrierOf(storedType)); helper != printHelpers.end()) {
+            print(helper->second, convertScalar(b, where, lvalueOfGlobal(b, where, name),
+                                                carrierType(context, carrierOf(storedType))));
+            continue;
+        }
+        if (!isPrimitive(storedType)) {
+            if (!isScalarCarrier(carrierOf(storedType)) &&
+                !isStringCarrier(carrierOf(storedType))) {
+                llvm::report_fatal_error("native global observation lacks a proved scalar carrier");
+            }
+            print("ctnative::print_scalar",
+                  convertScalar(b, where, lvalueOfGlobal(b, where, name), globalStorageType(name)));
+            continue;
+        }
+        if (llvm::isa<StrType>(storedType)) {
+            mlir::Value loaded =
+                convertScalar(b, where, lvalueOfGlobal(b, where, name), globalStorageType(name));
+            print("ctnative::print_string",
+                  callValue(b, where, ec::OpaqueType::get(context, kRawStringType),
+                            "ctnative::global_string", loaded));
+            continue;
+        }
+        const bool isBoolean = llvm::isa<BoolType>(storedType);
+        mlir::Value loaded = convertScalar(b, where, lvalueOfGlobal(b, where, name),
+                                           carrierType(context, carrier::nullable));
+        mlir::Value current =
+            callValue(b, where, isBoolean ? boolean : ec::OpaqueType::get(context, kNumberType),
+                      isBoolean ? "ctnative::global_boolean" : "ctnative::global_number", loaded);
+        if (isBoolean) {
+            const auto literal = [&](llvm::StringRef spelling) -> mlir::Value {
+                return ec::LiteralOp::create(b, where, textType, b.getStringAttr(spelling));
+            };
+            current = ec::ConditionalOp::create(b, where, textType, truthy(b, where, current),
+                                                literal("\"true\""), literal("\"false\""));
+        } else {
+            // C varargs consume binary64, not the JavaScript value class.
+            current = memberCall(b, where, b.getF64Type(), current, "value");
+        }
+        mlir::Value format = ec::LiteralOp::create(
+            b, where, textType,
+            b.getStringAttr(("\"" + name + (isBoolean ? "=%s\\n\"" : "=%.17g\\n\"")).str()));
+        callWithConstValueOperands(b, where, mlir::TypeRange{}, b.getStringAttr("printf"),
+                                   mlir::ValueRange{format, current});
+    }
+}
+
 void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType) {
     if (replaceDOM(o)) { return; }
     if (replaceOwnedGlobal(o)) { return; }
@@ -118,6 +185,16 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
         // inert value per destination instead of giving every use NaN.
         mlir::Value emptyString, emptyNullableString, emptyNullable, emptyBoolean, emptyObjectValue,
             emptyIdentity;
+        // Each inert value is built once, at its first use.
+        const auto once = [](mlir::Value & slot, auto make) {
+            if (!slot) { slot = make(); }
+            return slot;
+        };
+        const auto opaque = [&](carrier c, llvm::StringRef spelling) {
+            return ec::ConstantOp::create(b, where, carrierType(context, c),
+                                          ec::OpaqueAttr::get(context, spelling))
+                .getResult();
+        };
         for (mlir::OpOperand & use : llvm::make_early_inc_range(o->getResult(0).getUses())) {
             mlir::Operation * user = use.getOwner();
             const unsigned index = use.getOperandNumber();
@@ -139,44 +216,36 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
                                    .getValueType();
                 }
             }
+            const auto blank = [&] {
+                return once(emptyString, [&] { return stringConstant(b, where, ""); });
+            };
             if (expected == carrierType(context, carrier::string)) {
-                if (!emptyString) { emptyString = stringConstant(b, where, ""); }
-                use.set(emptyString);
+                use.set(blank());
             } else if (isNumberStringCarrier(expected) || isBooleanStringCarrier(expected) ||
                        isNullableNumberStringCarrier(expected) ||
                        isNullableBooleanStringCarrier(expected)) {
-                if (!emptyString) { emptyString = stringConstant(b, where, ""); }
-                use.set(convertScalar(b, where, emptyString, expected));
+                use.set(convertScalar(b, where, blank(), expected));
             } else if (isNullableStringCarrier(expected)) {
-                if (!emptyNullableString) {
-                    emptyNullableString = ec::ConstantOp::create(
-                        b, where, carrierType(context, carrier::nullableString),
-                        ec::OpaqueAttr::get(context, "ctnative::nullable_string{}"));
-                }
-                use.set(emptyNullableString);
+                use.set(once(emptyNullableString, [&] {
+                    return opaque(carrier::nullableString, "ctnative::nullable_string{}");
+                }));
             } else if (isObjectValueCarrier(expected)) {
                 needsObjectValue = true;
-                if (!emptyObjectValue) {
-                    emptyObjectValue = ec::ConstantOp::create(
-                        b, where, carrierType(context, carrier::objectValue),
-                        ec::OpaqueAttr::get(context, "ctnative::object_value{}"));
-                }
-                use.set(emptyObjectValue);
+                use.set(once(emptyObjectValue, [&] {
+                    return opaque(carrier::objectValue, "ctnative::object_value{}");
+                }));
             } else if (isIdentityCarrier(expected)) {
                 needsObjectIdentity = true;
-                if (!emptyIdentity) {
-                    emptyIdentity = ec::ConstantOp::create(
-                        b, where, carrierType(context, carrier::objectIdentity),
-                        ec::OpaqueAttr::get(context,
-                                            "std::shared_ptr<ctnative::identity_object>{}"));
-                }
-                use.set(emptyIdentity);
+                use.set(once(emptyIdentity, [&] {
+                    return opaque(carrier::objectIdentity,
+                                  "std::shared_ptr<ctnative::identity_object>{}");
+                }));
             } else if (isNullableCarrier(expected)) {
-                if (!emptyNullable) { emptyNullable = absentConstant(b, where); }
-                use.set(emptyNullable);
+                use.set(once(emptyNullable, [&] { return absentConstant(b, where); }));
             } else if (expected == i1 || isBooleanCarrier(expected)) {
-                if (!emptyBoolean) { emptyBoolean = boolConstant(b, where, false); }
-                use.set(convertScalar(b, where, emptyBoolean, expected));
+                use.set(convertScalar(
+                    b, where, once(emptyBoolean, [&] { return boolConstant(b, where, false); }),
+                    expected));
             }
         }
         swap(numberConstant(b, where, std::numeric_limits<double>::quiet_NaN()));
@@ -539,76 +608,7 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
     }
     if (auto ret = llvm::dyn_cast<ReturnOp>(o)) {
         if (isEntry) {
-            // Print each global using the complete source-store type. Definite
-            // observations check their tag; optional observations retain it.
-            const auto & printedGlobals = explicitObservations ? observations : globals;
-            llvm::SmallVector<llvm::StringRef> names(printedGlobals.keys().begin(),
-                                                     printedGlobals.keys().end());
-            llvm::sort(names);
-            const auto textType = ec::PointerType::get(ec::OpaqueType::get(context, "const char"));
-            for (llvm::StringRef name : names) {
-                const auto print = [&](llvm::StringRef helper, mlir::Value value) {
-                    mlir::Value label = ec::LiteralOp::create(
-                        b, where, textType, b.getStringAttr(cpp::c_string_literal(name.str())));
-                    callWithConstValueOperands(b, where, mlir::TypeRange{}, b.getStringAttr(helper),
-                                               mlir::ValueRange{label, value});
-                };
-                const auto storedType = globalTypes.lookup(name);
-                static const llvm::DenseMap<carrier, llvm::StringRef> printHelpers{
-                    {carrier::booleanString, "ctnative::print_boolean_string"},
-                    {carrier::nullableBooleanString, "ctnative::print_nullable_boolean_string"},
-                    {carrier::numberString, "ctnative::print_number_string"},
-                    {carrier::nullableNumberString, "ctnative::print_nullable_number_string"}};
-                if (auto helper = printHelpers.find(carrierOf(storedType));
-                    helper != printHelpers.end()) {
-                    print(helper->second,
-                          convertScalar(b, where, lvalueOfGlobal(b, where, name),
-                                        carrierType(context, carrierOf(storedType))));
-                    continue;
-                }
-                if (!llvm::isa_and_nonnull<NumType, BoolType, StrType>(storedType)) {
-                    if (!isScalarCarrier(carrierOf(storedType)) &&
-                        !isStringCarrier(carrierOf(storedType))) {
-                        llvm::report_fatal_error(
-                            "native global observation lacks a proved scalar carrier");
-                    }
-                    print("ctnative::print_scalar",
-                          convertScalar(b, where, lvalueOfGlobal(b, where, name),
-                                        globalStorageType(name)));
-                    continue;
-                }
-                if (llvm::isa<StrType>(storedType)) {
-                    mlir::Value loaded = convertScalar(b, where, lvalueOfGlobal(b, where, name),
-                                                       globalStorageType(name));
-                    print("ctnative::print_string",
-                          callValue(b, where, ec::OpaqueType::get(context, kRawStringType),
-                                    "ctnative::global_string", loaded));
-                    continue;
-                }
-                const bool isBoolean = llvm::isa<BoolType>(storedType);
-                mlir::Value loaded = convertScalar(b, where, lvalueOfGlobal(b, where, name),
-                                                   carrierType(context, carrier::nullable));
-                mlir::Value current = callValue(
-                    b, where, isBoolean ? boolean : ec::OpaqueType::get(context, kNumberType),
-                    isBoolean ? "ctnative::global_boolean" : "ctnative::global_number", loaded);
-                if (isBoolean) {
-                    const auto literal = [&](llvm::StringRef spelling) -> mlir::Value {
-                        return ec::LiteralOp::create(b, where, textType, b.getStringAttr(spelling));
-                    };
-                    current =
-                        ec::ConditionalOp::create(b, where, textType, truthy(b, where, current),
-                                                  literal("\"true\""), literal("\"false\""));
-                } else {
-                    // C varargs consume binary64, not the JavaScript value class.
-                    current = memberCall(b, where, b.getF64Type(), current, "value");
-                }
-                mlir::Value format = ec::LiteralOp::create(
-                    b, where, textType,
-                    b.getStringAttr(
-                        ("\"" + name + (isBoolean ? "=%s\\n\"" : "=%.17g\\n\"")).str()));
-                callWithConstValueOperands(b, where, mlir::TypeRange{}, b.getStringAttr("printf"),
-                                           mlir::ValueRange{format, current});
-            }
+            printObservations(b, where);
             mlir::Value zero = ec::ConstantOp::create(b, where, mlir::IntegerType::get(context, 32),
                                                       b.getI32IntegerAttr(0));
             ec::ReturnOp::create(b, where, zero);
