@@ -22,6 +22,18 @@ value evaluator::allocate(node::kind kind, mlir::Location location) {
     return value::reference(id);
 }
 
+bool evaluator::implicitArgumentsUnobserved(mlir::Block & entry, size_t count) {
+    for (unsigned i = 0; i < ctjs::implicit_arguments && i < count; ++i) {
+        for (mlir::OpOperand & use : entry.getArgument(i).getUses()) {
+            if (!factoryParameterUse(use, i)) {
+                fail("callee observes receiver, constructor state or closure identity");
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 value evaluator::call(ctjs::FuncOp function, llvm::ArrayRef<value> args, unsigned depth) {
     if (depth >= maxDepth) { return fail("call-depth budget exhausted"); }
     if (!function || function.getBody().empty() || !function.isPrivate() ||
@@ -31,13 +43,7 @@ value evaluator::call(ctjs::FuncOp function, llvm::ArrayRef<value> args, unsigne
     if (args.size() != function.getBody().front().getNumArguments()) {
         return fail("callee argument count is not exact");
     }
-    for (unsigned i = 0; i < 3 && i < args.size(); ++i) {
-        for (mlir::OpOperand & use : function.getBody().front().getArgument(i).getUses()) {
-            if (!factoryParameterUse(use, i)) {
-                return fail("callee observes receiver, constructor state or closure identity");
-            }
-        }
-    }
+    if (!implicitArgumentsUnobserved(function.getBody().front(), args.size())) { return {}; }
     if (depth != 0 && constructsClosures(function)) {
         return fail("closure construction must remain in its original factory");
     }
@@ -60,26 +66,19 @@ std::optional<snapshot> evaluator::run(ctjs::FuncOp function, llvm::ArrayRef<val
 
 evaluator::completion evaluator::region(mlir::Region & body, llvm::ArrayRef<value> incoming,
                                         environment & env, unsigned depth) {
-    if (body.empty()) {
-        fail("empty region");
-        return {};
-    }
+    if (body.empty()) { return halt("empty region"); }
     mlir::Block * block = &body.front();
     llvm::SmallVector<value> args(incoming);
     while (block) {
         if (args.size() != block->getNumArguments()) {
-            fail("region argument count mismatch");
-            return {};
+            return halt("region argument count mismatch");
         }
         for (auto [argument, input] : llvm::zip(block->getArguments(), args)) {
             env[argument] = input;
         }
         mlir::Block * next = nullptr;
         for (mlir::Operation & op : *block) {
-            if (++state.steps > maxSteps) {
-                fail("step budget exhausted");
-                return {};
-            }
+            if (++state.steps > maxSteps) { return halt("step budget exhausted"); }
             const auto values = [&](mlir::ValueRange operands) {
                 llvm::SmallVector<value> result;
                 for (mlir::Value operand : operands) { result.push_back(env.lookup(operand)); }
@@ -93,10 +92,7 @@ evaluator::completion evaluator::region(mlir::Region & body, llvm::ArrayRef<valu
             }
             if (auto condition = llvm::dyn_cast<mlir::scf::ConditionOp>(op)) {
                 auto take = truthy(env.lookup(condition.getCondition()));
-                if (!take) {
-                    fail("unknown loop condition");
-                    return {};
-                }
+                if (!take) { return halt("unknown loop condition"); }
                 return {completion::kind::condition, values(condition.getArgs()), *take};
             }
             if (auto branch = llvm::dyn_cast<mlir::cf::BranchOp>(op)) {
@@ -106,27 +102,20 @@ evaluator::completion evaluator::region(mlir::Region & body, llvm::ArrayRef<valu
             }
             if (auto branch = llvm::dyn_cast<mlir::cf::CondBranchOp>(op)) {
                 const auto take = truthy(env.lookup(branch.getCondition()));
-                if (!take) {
-                    fail("unknown branch condition");
-                    return {};
-                }
+                if (!take) { return halt("unknown branch condition"); }
                 next = *take ? branch.getTrueDest() : branch.getFalseDest();
                 args = values(*take ? branch.getTrueDestOperands() : branch.getFalseDestOperands());
                 break;
             }
             if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(op)) {
                 const auto take = truthy(env.lookup(branch.getCondition()));
-                if (!take) {
-                    fail("unknown branch condition");
-                    return {};
-                }
+                if (!take) { return halt("unknown branch condition"); }
                 auto & chosen = *take ? branch.getThenRegion() : branch.getElseRegion();
                 completion result{completion::kind::yielded, {}, false};
                 if (!chosen.empty()) { result = region(chosen, {}, env, depth); }
                 if (result.tag != completion::kind::yielded ||
                     result.values.size() != op.getNumResults()) {
-                    fail("branch does not yield its declared results");
-                    return {};
+                    return halt("branch does not yield its declared results");
                 }
                 for (auto [output, v] : llvm::zip(op.getResults(), result.values)) {
                     env[output] = v;
@@ -168,8 +157,7 @@ evaluator::completion evaluator::region(mlir::Region & body, llvm::ArrayRef<valu
         }
         block = next;
     }
-    fail("region has no supported terminator");
-    return {};
+    return halt("region has no supported terminator");
 }
 
 value evaluator::operation(mlir::Operation * op, environment & env, unsigned depth) {
@@ -246,10 +234,8 @@ value evaluator::operation(mlir::Operation * op, environment & env, unsigned dep
     if (auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(op)) {
         value object = get(write.getObject()), key = get(write.getKey()),
               data = get(write.getValue());
-        if (object.tag != value::kind::reference ||
-            state.heap[object.node].tag != node::kind::object || key.tag != value::kind::constant ||
-            !llvm::isa<ctjs::StringAttr>(key.constant) ||
-            (data.tag != value::kind::constant && data.tag != value::kind::reference)) {
+        if (!isNode(object, node::kind::object) || key.tag != value::kind::constant ||
+            !llvm::isa<ctjs::StringAttr>(key.constant) || !data.known()) {
             return fail("property write outside a known plain object");
         }
         auto & entries = state.heap[object.node].entries;
@@ -277,13 +263,11 @@ value evaluator::operation(mlir::Operation * op, environment & env, unsigned dep
             entries.clear();
             return value::primitive(ctjs::UndefinedAttr::get(context));
         }
-        if (action != "get" && action != "has" && action != "set" && action != "delete") {
+        if (!nativeMapKeyAction(action)) {
             return fail("Map snapshot or callback is not evaluated");
         }
         value key = get(invoked.getArgs().front());
-        if (key.tag != value::kind::constant && key.tag != value::kind::reference) {
-            return fail("unknown Map key");
-        }
+        if (!key.known()) { return fail("unknown Map key"); }
         auto found = llvm::find_if(
             entries, [&](const auto & entry) { return sameValue(entry.first, key, true); });
         if (action == "has") { return boolean(context, found != entries.end()); }
@@ -297,9 +281,7 @@ value evaluator::operation(mlir::Operation * op, environment & env, unsigned dep
             return boolean(context, present);
         }
         value data = get(invoked.getArgs()[1]);
-        if (data.tag != value::kind::constant && data.tag != value::kind::reference) {
-            return fail("unknown Map payload");
-        }
+        if (!data.known()) { return fail("unknown Map payload"); }
         if (found != entries.end()) {
             found->second = data;
         } else {
@@ -316,8 +298,7 @@ value evaluator::operation(mlir::Operation * op, environment & env, unsigned dep
                         true);
     } else if (auto unaryOp = llvm::dyn_cast<ctjs::UnaryOp>(op)) {
         auto input = get(unaryOp.getOperand());
-        if (unaryOp.getKind() == ctjs::UnaryKind::TypeOf && input.tag == value::kind::reference &&
-            state.heap[input.node].tag == node::kind::closure) {
+        if (unaryOp.getKind() == ctjs::UnaryKind::TypeOf && isNode(input, node::kind::closure)) {
             result = value::primitive(ctjs::StringAttr::get(context, "function"));
         } else {
             result = unary(unaryOp.getKind(), input, context);

@@ -111,10 +111,7 @@ value binary(ctjs::BinaryKind kind, value left, value right, mlir::MLIRContext *
 }
 
 value compare(ctjs::CompareKind kind, value left, value right, mlir::MLIRContext * context) {
-    const auto known = [](value input) {
-        return input.tag == value::kind::constant || input.tag == value::kind::reference;
-    };
-    if (!known(left) || !known(right)) { return {}; }
+    if (!left.known() || !right.known()) { return {}; }
     if (left.tag == value::kind::reference || right.tag == value::kind::reference) {
         if (kind == ctjs::CompareKind::StrictEq ||
             (kind == ctjs::CompareKind::Eq && left.tag == right.tag)) {

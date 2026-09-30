@@ -17,28 +17,16 @@ bool retainedPrefixScaffolding(mlir::Operation * op) {
 
 std::optional<snapshot> evaluator::runPrefix(ctjs::FuncOp function, llvm::ArrayRef<value> args,
                                              llvm::function_ref<bool(mlir::Operation *)> isStatic) {
-    if (maxDepth == 0) {
-        fail("call-depth budget exhausted");
-        return {};
-    }
+    if (maxDepth == 0) { return refuse("call-depth budget exhausted"); }
     if (!function || function.getBody().empty() || function.getUpvalueCount() != 0 ||
         !function.isPrivate()) {
-        fail("prefix is not a closed capture-free function");
-        return {};
+        return refuse("prefix is not a closed capture-free function");
     }
     auto & entry = function.getBody().front();
     if (!entry.hasNoPredecessors() || args.size() != entry.getNumArguments()) {
-        fail("prefix entry has predecessors or mismatched arguments");
-        return {};
+        return refuse("prefix entry has predecessors or mismatched arguments");
     }
-    for (unsigned i = 0; i < 3 && i < args.size(); ++i) {
-        for (mlir::OpOperand & use : entry.getArgument(i).getUses()) {
-            if (!factoryParameterUse(use, i)) {
-                fail("callee observes receiver, constructor state or closure identity");
-                return {};
-            }
-        }
-    }
+    if (!implicitArgumentsUnobserved(entry, args.size())) { return std::nullopt; }
     environment env;
     for (auto [argument, input] : llvm::zip(entry.getArguments(), args)) { env[argument] = input; }
     llvm::SmallPtrSet<mlir::Operation *, 32> prefix;
@@ -51,10 +39,7 @@ std::optional<snapshot> evaluator::runPrefix(ctjs::FuncOp function, llvm::ArrayR
             state.boundary = &op;
             break;
         }
-        if (++state.steps > maxSteps) {
-            fail("step budget exhausted");
-            return {};
-        }
+        if (++state.steps > maxSteps) { return refuse("step budget exhausted"); }
         prefix.insert(&op);
         if (retainedPrefixScaffolding(&op) || llvm::isa<ctjs::FrameExitOp, ctjs::RootOp>(op)) {
             continue;
@@ -69,10 +54,7 @@ std::optional<snapshot> evaluator::runPrefix(ctjs::FuncOp function, llvm::ArrayR
             initialized = true;
         }
     }
-    if (!initialized || !state.boundary) {
-        fail("no static initialization prefix");
-        return {};
-    }
+    if (!initialized || !state.boundary) { return refuse("no static initialization prefix"); }
     const auto removedUse = [&](mlir::Operation * use) {
         // Prefix operations have no nested regions. Any use in a region of
         // the boundary, or another block, belongs to the retained suffix.
@@ -86,8 +68,7 @@ std::optional<snapshot> evaluator::runPrefix(ctjs::FuncOp function, llvm::ArrayR
                              [&](mlir::Operation * use) { return !removedUse(use); })) {
                 value evaluated = env.lookup(output);
                 if (evaluated.tag == value::kind::unknown) {
-                    fail("prefix live value cannot be residualized");
-                    return {};
+                    return refuse("prefix live value cannot be residualized");
                 }
                 state.bindings.emplace_back(output, evaluated);
             }

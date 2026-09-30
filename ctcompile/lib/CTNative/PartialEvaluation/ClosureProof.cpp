@@ -12,15 +12,13 @@ namespace ctcompile::ctnative::partial_eval {
 namespace {
 
 bool canInspect(mlir::ModuleOp module) {
-    llvm::DenseMap<unsigned, ctjs::FuncOp> functions;
+    const auto indexed = uniqueFunctionIndex(module);
+    const auto functions = indexed.value_or(llvm::DenseMap<unsigned, ctjs::FuncOp>{});
     llvm::DenseMap<unsigned, unsigned> creations;
-    bool valid = true, captured = false;
+    bool valid = indexed.has_value(), captured = false;
     module.walk([&](ctjs::FuncOp function) {
-        if (function.getBody().empty() || function.getBody().front().getNumArguments() < 3) {
-            valid = false;
-        }
-        if (auto index = functionIndex(function);
-            index && !functions.try_emplace(*index, function).second) {
+        if (function.getBody().empty() ||
+            function.getBody().front().getNumArguments() < ctjs::implicit_arguments) {
             valid = false;
         }
     });
@@ -51,6 +49,18 @@ bool canInspect(mlir::ModuleOp module) {
 }
 
 } // namespace
+
+std::optional<llvm::DenseMap<unsigned, ctjs::FuncOp>> uniqueFunctionIndex(mlir::ModuleOp module) {
+    llvm::DenseMap<unsigned, ctjs::FuncOp> functions;
+    bool unique = true;
+    module.walk([&](ctjs::FuncOp function) {
+        if (auto index = functionIndex(function)) {
+            unique &= functions.try_emplace(*index, function).second;
+        }
+    });
+    if (!unique) { return std::nullopt; }
+    return functions;
+}
 
 closureHeapProof prepareClosureHeapFacts(
     mlir::ModuleOp module, llvm::function_ref<bool(mlir::ModuleOp)> checkEnvironment) {

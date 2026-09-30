@@ -60,6 +60,11 @@ namespace {
 Fact exported(partial_eval::value value) {
     return value.tag == partial_eval::value::kind::constant ? literalFact(value.constant) : Fact{};
 }
+// The constant the evaluator folded `value` to, or nullopt.
+std::optional<Fact> folded(partial_eval::value value) {
+    const auto fact = exported(value);
+    return fact.literal ? std::optional(fact) : std::nullopt;
+}
 partial_eval::value imported(Fact fact) {
     return fact.literal ? partial_eval::value::primitive(fact.literal) : partial_eval::value{};
 }
@@ -83,10 +88,9 @@ Fact Analysis::operation(mlir::Operation * op) {
     }
     if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(op)) {
         const Fact left = get(binary.getLhs()), right = get(binary.getRhs());
-        if (auto folded = exported(
-                partial_eval::binary(binary.getKind(), imported(left), imported(right), context));
-            folded.literal) {
-            return folded;
+        if (auto fact = folded(
+                partial_eval::binary(binary.getKind(), imported(left), imported(right), context))) {
+            return *fact;
         }
         if (binary.getKind() == ctjs::BinaryKind::Concat) {
             return {String, {}};
@@ -108,18 +112,16 @@ Fact Analysis::operation(mlir::Operation * op) {
     }
     if (auto binary = llvm::dyn_cast<ctjs::BinaryStaticOp>(op)) {
         const Fact left = get(binary.getLhs()), right = get(binary.getRhs());
-        if (auto folded = exported(partial_eval::binary(binary.getKind(), imported(left),
-                                                        imported(right), context, true));
-            folded.literal) {
-            return folded;
+        if (auto fact = folded(partial_eval::binary(binary.getKind(), imported(left),
+                                                    imported(right), context, true))) {
+            return *fact;
         }
         return left.domains && right.domains ? Fact{Number, {}} : Fact{};
     }
     if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(op)) {
         const Fact input = get(unary.getOperand());
-        if (auto folded = exported(partial_eval::unary(unary.getKind(), imported(input), context));
-            folded.literal) {
-            return folded;
+        if (auto fact = folded(partial_eval::unary(unary.getKind(), imported(input), context))) {
+            return *fact;
         }
         if (unary.getKind() == ctjs::UnaryKind::TypeOf) {
             if (auto name = typeName(input.domains); !name.empty()) {
@@ -137,10 +139,9 @@ Fact Analysis::operation(mlir::Operation * op) {
     }
     if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(op)) {
         const Fact left = get(compare.getLhs()), right = get(compare.getRhs());
-        if (auto folded = exported(
-                partial_eval::compare(compare.getKind(), imported(left), imported(right), context));
-            folded.literal) {
-            return folded;
+        if (auto fact = folded(partial_eval::compare(compare.getKind(), imported(left),
+                                                     imported(right), context))) {
+            return *fact;
         }
         // No arithmetic identity is implied by a numeric type: NaN is not
         // equal to itself. Primitive boolean/string/nullish domains exclude it.
@@ -251,30 +252,26 @@ void Analysis::run() {
             auto fn = llvm::cast<ctjs::FuncOp>(operation);
             for (auto arg :
                  llvm::drop_begin(fn.getBody().front().getArguments(), ctjs::implicit_arguments)) {
-                Fact common;
-                bool first = true;
+                std::optional<Fact> common;
                 for (auto call : sites) {
                     if (!budget.spend()) { return; }
                     auto actual = get(call->getOperand(arg.getArgNumber()));
-                    common = first ? actual : join(common, actual);
-                    first = false;
+                    common = common ? join(*common, actual) : actual;
                 }
-                changed |= arguments.lookup(arg) != common;
-                arguments[arg] = common;
+                changed |= arguments.lookup(arg) != common.value_or(Fact{});
+                arguments[arg] = common.value_or(Fact{});
             }
         }
         facts.clear();
         for (ctjs::FuncOp fn : functions) {
             if (!region(fn.getBody())) { return; }
-            Fact result;
-            bool first = true;
+            std::optional<Fact> result;
             fn.getBody().walk([&](ctjs::ReturnOp ret) {
                 if (ret->getParentOfType<ctjs::FuncOp>() != fn) { return; }
-                result = first ? get(ret.getValue()) : join(result, get(ret.getValue()));
-                first = false;
+                result = result ? join(*result, get(ret.getValue())) : get(ret.getValue());
             });
-            changed |= returns.lookup(fn) != result;
-            returns[fn] = result;
+            changed |= returns.lookup(fn) != result.value_or(Fact{});
+            returns[fn] = result.value_or(Fact{});
         }
         if (!changed && (round != 0 || callers.empty())) { return; }
     }

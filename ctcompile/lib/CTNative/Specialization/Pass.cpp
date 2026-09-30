@@ -82,22 +82,15 @@ struct CTNativeSpecializePass : impl::CTNativeSpecializeBase<CTNativeSpecializeP
                     ++limited;
                     continue;
                 }
-                specialized = llvm::cast<ctjs::FuncOp>(candidate.function->clone());
-                // Never use incoming proof/provenance annotations to authorize
-                // a clone or its later native representation.
-                specialized.walk(
-                    [](mlir::Operation * op) { removeAttrsWithPrefix(op, "ctnative."); });
+                specialized =
+                    specialization::cloneWithBindings(candidate.function, candidate.arguments);
                 specialized.setSymName((candidate.function.getSymName() + "__specialized").str());
                 symbols.insert(specialized);
-                auto & entry = specialized.getBody().front();
-                mlir::OpBuilder at(&entry, entry.begin());
                 llvm::SmallVector<mlir::NamedAttribute> bindings;
                 for (auto [i, literal] : llvm::enumerate(candidate.arguments)) {
-                    if (!literal) { continue; }
-                    auto value = ctjs::ConstantOp::create(at, specialized.getLoc(), literal);
-                    entry.getArgument(static_cast<unsigned>(i))
-                        .replaceAllUsesWith(value.getResult());
-                    bindings.push_back(attributes.getNamedAttr(std::to_string(i), literal));
+                    if (literal) {
+                        bindings.push_back(attributes.getNamedAttr(std::to_string(i), literal));
+                    }
                 }
                 specialized->setAttr("ctnative.specialized_from",
                                      attributes.getStringAttr(candidate.function.getSymName()));

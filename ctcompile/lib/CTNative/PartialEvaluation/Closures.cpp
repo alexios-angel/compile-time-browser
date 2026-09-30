@@ -7,21 +7,18 @@ namespace ctcompile::ctnative::partial_eval {
 bool factoryParameterUse(mlir::OpOperand & use, unsigned parameter) {
     if (llvm::isa<ctjs::RootOp>(use.getOwner())) { return true; }
     if (!llvm::isa<ctjs::CreateClosureOp>(use.getOwner())) { return false; }
-    return (parameter == 0 && use.getOperandNumber() == 1) ||
-           (parameter == 2 && use.getOperandNumber() == 0);
+    return (parameter == ctjs::arg_receiver && use.getOperandNumber() == 1) ||
+           (parameter == ctjs::arg_callee && use.getOperandNumber() == 0);
 }
 
 value evaluator::closureOperation(mlir::Operation * op, environment & env) {
     const auto get = [&](mlir::Value input) { return env.lookup(input); };
-    const auto known = [](value input) {
-        return input.tag == value::kind::constant || input.tag == value::kind::reference;
-    };
     if (auto cell = llvm::dyn_cast<ctjs::CreateCellOp>(op)) {
         if (!immutableCaptureCell(cell, module)) {
             return fail("capture cell is mutable or escapes");
         }
         value initial = get(cell.getInitial());
-        if (!known(initial)) { return fail("capture cell has an unknown initial value"); }
+        if (!initial.known()) { return fail("capture cell has an unknown initial value"); }
         value result = allocate(node::kind::cell, op->getLoc());
         if (result.tag != value::kind::reference) { return result; }
         auto & item = state.heap[result.node];
@@ -31,15 +28,14 @@ value evaluator::closureOperation(mlir::Operation * op, environment & env) {
     }
     if (auto read = llvm::dyn_cast<ctjs::CellGetOp>(op)) {
         value cell = get(read.getCell());
-        if (cell.tag != value::kind::reference || state.heap[cell.node].tag != node::kind::cell) {
+        if (!isNode(cell, node::kind::cell)) {
             return fail("cell read is outside the evaluated heap");
         }
         return state.heap[cell.node].contents;
     }
     if (auto write = llvm::dyn_cast<ctjs::CellSetOp>(op)) {
         value cell = get(write.getCell()), data = get(write.getValue());
-        if (cell.tag != value::kind::reference || state.heap[cell.node].tag != node::kind::cell ||
-            !known(data)) {
+        if (!isNode(cell, node::kind::cell) || !data.known()) {
             return fail("cell initialization is not known");
         }
         auto & item = state.heap[cell.node];
@@ -55,8 +51,7 @@ value evaluator::closureOperation(mlir::Operation * op, environment & env) {
     llvm::SmallVector<value> captures;
     for (mlir::Value operand : made.getUpvalues()) {
         value capture = get(operand);
-        if (capture.tag != value::kind::reference ||
-            state.heap[capture.node].tag != node::kind::cell) {
+        if (!isNode(capture, node::kind::cell)) {
             return fail("closure capture is not a known local cell");
         }
         captures.push_back(capture);

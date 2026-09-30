@@ -29,6 +29,8 @@ struct value {
     static value reference(unsigned id) {
         return {kind::reference, {}, id, {}};
     }
+    // A primitive or heap reference, as opposed to unknown or a callee marker.
+    bool known() const { return tag == kind::constant || tag == kind::reference; }
 };
 
 struct node {
@@ -96,7 +98,22 @@ private:
     std::string problem;
     using environment = llvm::DenseMap<mlir::Value, value>;
     value fail(llvm::StringRef reason);
+    bool isNode(value input, node::kind kind) const {
+        return input.tag == value::kind::reference && state.heap[input.node].tag == kind;
+    }
+    // fail() for a completion or a whole attempt: the result is discarded.
+    completion halt(llvm::StringRef reason) {
+        fail(reason);
+        return {};
+    }
+    std::nullopt_t refuse(llvm::StringRef reason) {
+        fail(reason);
+        return std::nullopt;
+    }
     value allocate(node::kind kind, mlir::Location location);
+    // Fails unless each of the first `count` implicit entry arguments is used
+    // only as a factory closure parameter.
+    bool implicitArgumentsUnobserved(mlir::Block & entry, size_t count);
     value call(ctjs::FuncOp function, llvm::ArrayRef<value> args, unsigned depth);
     value directCall(ctjs::CallDirectOp invoked, environment & env, unsigned depth);
     completion region(mlir::Region & region, llvm::ArrayRef<value> args, environment & env,

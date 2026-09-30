@@ -64,7 +64,7 @@ std::string refusal(ctjs::FuncOp function, mlir::ModuleOp module) {
         return "requires a private indexed capture-free kernel with one entry block";
     }
     auto & entry = function.getBody().front();
-    if (entry.getNumArguments() < 3 || !entry.hasNoPredecessors()) {
+    if (entry.getNumArguments() < ctjs::implicit_arguments || !entry.hasNoPredecessors()) {
         return "kernel has unsupported entry arguments";
     }
     if (!implicitArgumentsRooted(entry)) { return "kernel observes implicit call state"; }

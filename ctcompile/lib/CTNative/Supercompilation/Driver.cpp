@@ -8,13 +8,16 @@
 
 namespace ctcompile::ctnative::supercompilation {
 
+constexpr const char * kDrivingExhausted =
+    "driving budget exhausted; retained identity alternative";
+
 Driver::Driver(mlir::ModuleOp module, ctjs::FuncOp source, Limits limits)
     : module(module), source(source), limits(limits), budget{limits.steps},
       drafts(mlir::ModuleOp::create(module.getLoc())) {}
 
 bool Driver::spend() {
     if (budget.spend()) { return true; }
-    problem = "driving budget exhausted; retained identity alternative";
+    problem = kDrivingExhausted;
     return false;
 }
 
@@ -56,8 +59,7 @@ ctjs::FuncOp Driver::drive(Bindings bindings, llvm::SmallVector<unsigned> histor
         problem = "configuration budget exhausted; retained identity alternative";
         return {};
     }
-    auto residual = llvm::cast<ctjs::FuncOp>(source->clone());
-    residual.walk([](mlir::Operation * op) { removeAttrsWithPrefix(op, "ctnative."); });
+    auto residual = specialization::cloneWithBindings(source, bindings);
     std::string name;
     do {
         name = (source.getSymName() + "__supercompiled_" + std::to_string(nextName++)).str();
@@ -71,22 +73,13 @@ ctjs::FuncOp Driver::drive(Bindings bindings, llvm::SmallVector<unsigned> histor
     const auto index = static_cast<unsigned>(configurations.size());
     configurations.push_back({bindings, residual});
     history.push_back(index);
-    mlir::OpBuilder at(&residual.getBody().front(), residual.getBody().front().begin());
-    for (auto [i, literal] : llvm::enumerate(bindings)) {
-        if (!literal) { continue; }
-        auto constant = ctjs::ConstantOp::create(at, residual.getLoc(), literal);
-        residual.getBody()
-            .front()
-            .getArgument(static_cast<unsigned>(i))
-            .replaceAllUsesWith(constant.getResult());
-    }
     symbolic::Analysis facts(*local, budget);
     facts.run();
     const auto changes = symbolic::rewrite(*local, facts, budget);
     stats.expressions += changes.expressions;
     stats.branches += changes.branches;
     if (budget.exhausted) {
-        problem = "driving budget exhausted; retained identity alternative";
+        problem = kDrivingExhausted;
         return {};
     }
     residual->moveBefore(drafts->getBody(), drafts->getBody()->end());
@@ -109,19 +102,21 @@ ctjs::FuncOp Driver::drive(Bindings bindings, llvm::SmallVector<unsigned> histor
 
 bool Driver::build(llvm::ArrayRef<ctjs::CallDirectOp> roots) {
     if (limits.steps == 0) {
-        problem = "driving budget exhausted; retained identity alternative";
+        problem = kDrivingExhausted;
         return false;
     }
+    const auto record = [&] {
+        stats.steps = static_cast<unsigned>(limits.steps - budget.remaining);
+        stats.contexts = static_cast<unsigned>(configurations.size());
+    };
     // No IR is redirected before the entire alternative fits its budgets.
     for (auto call : roots) {
         auto residual = drive(specialization::staticArguments(call, source), {});
-        stats.steps = static_cast<unsigned>(limits.steps - budget.remaining);
-        stats.contexts = static_cast<unsigned>(configurations.size());
+        record();
         if (!problem.empty()) { return false; }
         if (residual) { redirects.emplace_back(call, residual); }
     }
-    stats.steps = static_cast<unsigned>(limits.steps - budget.remaining);
-    stats.contexts = static_cast<unsigned>(configurations.size());
+    record();
     if (redirects.empty() || (!stats.expressions && !stats.branches)) {
         problem = "identity alternative selected: no proved local simplification";
         return false;

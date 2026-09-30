@@ -1,6 +1,8 @@
 #include "Candidates.h"
 
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
+#include "ctcompile/CTNative/Analysis/HostContract.h"
+#include "mlir/IR/Builders.h"
 #include "mlir/IR/SymbolTable.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
@@ -34,7 +36,7 @@ std::string refusal(ctjs::FuncOp function, mlir::ModuleOp module) {
         return "requires a private module function with a visible body";
     }
     auto & entry = function.getBody().front();
-    if (entry.getNumArguments() < 3 || !entry.hasNoPredecessors() ||
+    if (entry.getNumArguments() < ctjs::implicit_arguments || !entry.hasNoPredecessors() ||
         function.getUpvalueCount() != 0) {
         return "requires a capture-free function with a single entry";
     }
@@ -54,7 +56,7 @@ llvm::SmallVector<mlir::Attribute> staticArguments(ctjs::CallDirectOp call, ctjs
     // proof. Do not redirect it to a different code identity in this slice.
     auto callee = call.getCalleeValue().getDefiningOp();
     if (!llvm::isa_and_nonnull<ctjs::LoadGlobalOp, ctjs::ConstantOp>(callee)) { return known; }
-    for (unsigned i = 3; i < known.size(); ++i) {
+    for (unsigned i = ctjs::implicit_arguments; i < known.size(); ++i) {
         const bool used = llvm::any_of(entry.getArgument(i).getUsers(), [](mlir::Operation * use) {
             return !llvm::isa<ctjs::RootOp>(use);
         });
@@ -69,4 +71,17 @@ unsigned bodySize(ctjs::FuncOp function) {
     function.getBody().walk([&](mlir::Operation *) { ++count; });
     return count;
 }
+ctjs::FuncOp cloneWithBindings(ctjs::FuncOp source, llvm::ArrayRef<mlir::Attribute> bindings) {
+    auto clone = llvm::cast<ctjs::FuncOp>(source->clone());
+    clone.walk([](mlir::Operation * op) { removeAttrsWithPrefix(op, "ctnative."); });
+    auto & entry = clone.getBody().front();
+    mlir::OpBuilder at(&entry, entry.begin());
+    for (auto [i, literal] : llvm::enumerate(bindings)) {
+        if (!literal) { continue; }
+        auto constant = ctjs::ConstantOp::create(at, clone.getLoc(), literal);
+        entry.getArgument(static_cast<unsigned>(i)).replaceAllUsesWith(constant.getResult());
+    }
+    return clone;
+}
+
 } // namespace ctcompile::ctnative::specialization

@@ -21,24 +21,20 @@ namespace {
 std::string environmentProblem(mlir::ModuleOp module,
                                const partial_eval::closureHeapProof * proof = nullptr) {
     std::string reason;
-    llvm::DenseMap<unsigned, ctjs::FuncOp> indexed;
-    module.walk([&](ctjs::FuncOp function) {
-        if (auto index = functionIndex(function);
-            index && !indexed.try_emplace(*index, function).second) {
-            reason = "module has ambiguous numeric function identities";
-        }
-    });
+    const auto indexed = partial_eval::uniqueFunctionIndex(module);
+    if (!indexed) { reason = "module has ambiguous numeric function identities"; }
     module.walk([&](mlir::Operation * op) {
         if (!reason.empty()) { return; }
         if (auto made = llvm::dyn_cast<ctjs::CreateClosureOp>(op)) {
             if (made.getFunction() < 0 ||
-                !indexed.contains(static_cast<unsigned>(made.getFunction()))) {
+                !indexed->contains(static_cast<unsigned>(made.getFunction()))) {
                 reason = "module has an unproved closure target";
                 return;
             }
         }
         if (auto fn = llvm::dyn_cast<ctjs::FuncOp>(op); fn && !fn.getBody().empty()) {
-            for (unsigned i = 0; i < 2 && i < fn.getBody().front().getNumArguments(); ++i) {
+            for (unsigned i = 0; i < ctjs::arg_callee && i < fn.getBody().front().getNumArguments();
+                 ++i) {
                 for (mlir::Operation * use : fn.getBody().front().getArgument(i).getUsers()) {
                     if (!llvm::isa<ctjs::CreateClosureOp, ctjs::RootOp>(use)) {
                         reason = "module observes receiver or constructor state";
@@ -146,7 +142,7 @@ struct CTNativePartialEvaluatePass
             }
             llvm::SmallVector<partial_eval::value> args(fn.getBody().front().getNumArguments());
             bool known = true;
-            for (unsigned i = 3; i < args.size(); ++i) {
+            for (unsigned i = ctjs::implicit_arguments; i < args.size(); ++i) {
                 if (auto argument = bindingTime.knownArgument(fn, i)) {
                     args[i] = partial_eval::value::primitive(argument);
                 } else {

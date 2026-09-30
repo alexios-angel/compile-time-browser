@@ -163,7 +163,7 @@ void residualizePrefix(ctjs::FuncOp function, const snapshot & state, llvm::Arra
     function.getBody().cloneInto(&replacement, mapping);
     auto * boundary = mapping.lookup(state.boundary);
     mlir::OpBuilder at(boundary);
-    graphEmitter graph(at, state, live, replacement.front().getArgument(2));
+    graphEmitter graph(at, state, live, replacement.front().getArgument(ctjs::arg_callee));
     for (const auto & [original, value] : state.bindings) {
         auto materialized = graph.materialize(value, original.getLoc(), original.getType());
         mapping.lookup(original).replaceAllUsesWith(materialized);
@@ -207,7 +207,7 @@ void residualize(ctjs::FuncOp function, const snapshot & state, llvm::ArrayRef<u
             block->addArgument(arg.getType(), arg.getLoc());
         }
         at.setInsertionPointToEnd(block);
-        graphEmitter graph(at, state, live, replacement.front().getArgument(2));
+        graphEmitter graph(at, state, live, replacement.front().getArgument(ctjs::arg_callee));
         ctjs::ReturnOp::create(at, function.getLoc(),
                                graph.materialize(state.result, function.getLoc()));
     }

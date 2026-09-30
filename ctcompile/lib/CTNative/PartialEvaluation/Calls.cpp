@@ -34,15 +34,18 @@ value evaluator::directCall(ctjs::CallDirectOp invoked, environment & env, unsig
     llvm::SmallVector<value> args;
     for (mlir::Value operand : invoked.getOperands()) { args.push_back(env.lookup(operand)); }
     auto target = invoked.getTarget();
-    if (!target || args.size() < 3 || !undefined(args[1])) {
+    if (!target || args.size() < ctjs::implicit_arguments ||
+        !undefined(args[ctjs::arg_new_target])) {
         return fail("direct call has no proved ordinary target");
     }
-    auto original = actualCallee(invoked, args[2], state, module);
+    auto original = actualCallee(invoked, args[ctjs::arg_callee], state, module);
     if (!original) {
         // Existing handwritten native-only IR uses an inert undefined callee
         // slot for symbols without a bytecode identity. Actual callable values
         // and indexed source functions never qualify for this convention.
-        if (!functionIndex(target) && undefined(args[2])) { return call(target, args, depth); }
+        if (!functionIndex(target) && undefined(args[ctjs::arg_callee])) {
+            return call(target, args, depth);
+        }
         return fail("direct call boxed callee identity is unproved");
     }
     if (original == target) { return call(target, args, depth); }
