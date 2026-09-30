@@ -1,5 +1,7 @@
 #pragma once
 
+#include "ctcompile/CTNative/IR/CTNativeAttrNames.h"
+
 #include "mlir/Dialect/EmitC/IR/EmitC.h"
 #include "mlir/Support/LogicalResult.h"
 #include "llvm/ADT/SmallVector.h"

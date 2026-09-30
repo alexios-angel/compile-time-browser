@@ -76,7 +76,7 @@ bool callableFunctionReferenced(mlir::emitc::FuncOp function) {
     for (const auto & use : *uses) {
         if (llvm::isa<mlir::emitc::DeclareFuncOp>(use.getUser())) { continue; }
         if (auto call = llvm::dyn_cast<mlir::emitc::CallOpaqueOp>(use.getUser())) {
-            if (call->getAttr("ctnative.callable_create") == use.getSymbolRef()) { continue; }
+            if (call->getAttr(ctnative::kNativeCallableCreate) == use.getSymbolRef()) { continue; }
         }
         return true;
     }

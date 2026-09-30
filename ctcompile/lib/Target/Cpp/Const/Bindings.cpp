@@ -12,7 +12,7 @@ namespace ec = mlir::emitc;
 void ConstBindings::prepare(mlir::Operation * function) {
     mutableBindings.clear();
     const auto module = function->getParentOfType<mlir::ModuleOp>();
-    active = module && module->hasAttrOfType<mlir::UnitAttr>("ctnative.const_bindings");
+    active = module && module->hasAttrOfType<mlir::UnitAttr>(ctnative::kNativeConstBindings);
     if (!active) { return; }
 
     llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value>> owners;

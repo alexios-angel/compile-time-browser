@@ -11,7 +11,7 @@ namespace ctcompile::cpp {
 
 inline mlir::BlockArgument suppressedParameter(mlir::Operation & operation) {
     auto call = llvm::dyn_cast<mlir::emitc::CallOpaqueOp>(&operation);
-    if (!call || !call->hasAttrOfType<mlir::UnitAttr>("ctnative.parameter_suppression") ||
+    if (!call || !call->hasAttrOfType<mlir::UnitAttr>(ctnative::kNativeParameterSuppression) ||
         call.getCallee() != "static_cast<void>" || call->getNumOperands() != 1 ||
         call->getNumResults() != 0 || call.getArgs() || call.getTemplateArgs()) {
         return {};

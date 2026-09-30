@@ -51,6 +51,7 @@
 #include "ReadableFloat.h"
 #include "UnusedParameters.h"
 #include "ctcompile/CTNative/IR/CTNativeOps.h"
+#include "ctcompile/CTNative/IR/CTNativeAttrNames.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/EmitC/IR/EmitC.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -76,6 +77,7 @@
 
 using namespace mlir;
 using namespace mlir::emitc;
+namespace ctn = ctcompile::ctnative;
 using llvm::formatv;
 
 /// Convenience functions to produce interleaved output with functions returning
@@ -1328,7 +1330,7 @@ static LogicalResult printOperation(CppEmitter &emitter, ClassOp classOp) {
   // attribute the lowering sets and this is its one consumer - the same
   // divergence discipline as `ctnative.deduced` and `ctnative.provenance`.
   if (auto parameters =
-          classOp->getAttrOfType<ArrayAttr>("ctnative.template_params")) {
+          classOp->getAttrOfType<ArrayAttr>(ctn::kNativeTemplateParams)) {
     // `template <>` IS NOT A DECLARATION. It is the explicit-specialisation
     // syntax and is ill-formed on a primary template, so a family with nothing
     // to parametrise - the empty shape `var e = {};` is admitted and reaches
@@ -1982,7 +1984,7 @@ LogicalResult CppEmitter::emitAssignPrefix(Operation &op) {
     // eight of them. So the divergence is opt-in and carried in the IR, like
     // `ctnative.deduced` and `ctnative.provenance` - one ctcompile pass sets
     // it, one consumer reads it.
-    if (!shouldDeclareVariablesAtTop() && op.hasAttr("ctnative.statement")) {
+    if (!shouldDeclareVariablesAtTop() && op.hasAttr(ctn::kNativeStatement)) {
       // An opaque callee may name a type: Type(v) alone parses as a
       // declaration. Explicit discard retains construction and destruction.
       if (isa<emitc::CallOpaqueOp>(op))
@@ -1992,7 +1994,7 @@ LogicalResult CppEmitter::emitAssignPrefix(Operation &op) {
     if (shouldDeclareVariablesAtTop()) {
       if (failed(emitVariableAssignment(result)))
         return failure();
-    } else if (op.hasAttr("ctnative.deduced")) {
+    } else if (op.hasAttr(ctn::kNativeDeduced)) {
       // ctcompile Stage 53E: `auto` is an ATTRIBUTE, not a type. The policy
       // pass (--ctnative-print-deduced) marks a declaration whose initialiser
       // fixes its type; the IR keeps the proved type, and this is the one
@@ -2050,15 +2052,15 @@ LogicalResult CppEmitter::emitOperation(Operation &op, bool trailingSemicolon) {
     module = op.getParentOfType<ModuleOp>();
   llvm::SaveAndRestore readableScope(
       readableLiterals,
-      module && module->hasAttrOfType<UnitAttr>("ctnative.readable_literals"));
+      module && module->hasAttrOfType<UnitAttr>(ctn::kNativeReadableLiterals));
   llvm::SaveAndRestore aliasScope(
       numericAlias,
-      module && module->hasAttrOfType<UnitAttr>("ctnative.numeric_alias"));
+      module && module->hasAttrOfType<UnitAttr>(ctn::kNativeNumericAlias));
 
   // ctcompile Phase 63 Step 7: a provenance comment above every generated
   // definition, so a C++ diagnostic on generated code names a JavaScript
   // site. The lowering composes the text; this is its one consumer.
-  if (auto provenance = op.getAttrOfType<StringAttr>("ctnative.provenance"))
+  if (auto provenance = op.getAttrOfType<StringAttr>(ctn::kNativeProvenance))
     os << "// ctcompile: " << provenance.getValue() << "\n";
 
   LogicalResult status =
@@ -2126,9 +2128,9 @@ LogicalResult CppEmitter::emitOperation(Operation &op, bool trailingSemicolon) {
   // CTCOMPILE_PIN is defined by the policy pass at the top of the module and
   // is empty under -DCTCOMPILE_NO_TYPE_PINS.
   if (trailingSemicolon && op.getNumResults() == 1 &&
-      op.hasAttr("ctnative.deduced") && !shouldDeclareVariablesAtTop()) {
+      op.hasAttr(ctn::kNativeDeduced) && !shouldDeclareVariablesAtTop()) {
     Type pinned = op.getResult(0).getType();
-    if (auto override = op.getAttrOfType<TypeAttr>("ctnative.pinned"))
+    if (auto override = op.getAttrOfType<TypeAttr>(ctn::kNativePinned))
       pinned = override.getValue();
     FileLineColLoc site = ctcompile::sourceSite(op.getLoc());
     os << "CTCOMPILE_PIN(" << getOrCreateName(op.getResult(0)) << ", \"";

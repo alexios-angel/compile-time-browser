@@ -22,12 +22,12 @@ bool identifier(llvm::StringRef value) {
 
 mlir::FailureOr<CallableBody> callableBodyPlan(mlir::emitc::FuncOp function) {
     CallableBody result;
-    if (!function->hasAttr("ctnative.callable_body")) { return result; }
+    if (!function->hasAttr(ctnative::kNativeCallableBody)) { return result; }
     const auto invalid = [&]() -> mlir::FailureOr<CallableBody> {
         function.emitOpError("invalid native callable body description");
         return mlir::failure();
     };
-    auto description = function->getAttrOfType<mlir::DictionaryAttr>("ctnative.callable_body");
+    auto description = function->getAttrOfType<mlir::DictionaryAttr>(ctnative::kNativeCallableBody);
     if (!description || function.isExternal() || function.getFunctionType().getNumResults() != 1) {
         return invalid();
     }

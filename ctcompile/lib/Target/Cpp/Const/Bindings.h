@@ -1,5 +1,7 @@
 #pragma once
 
+#include "ctcompile/CTNative/IR/CTNativeAttrNames.h"
+
 #include "mlir/IR/Value.h"
 #include "llvm/ADT/DenseSet.h"
 

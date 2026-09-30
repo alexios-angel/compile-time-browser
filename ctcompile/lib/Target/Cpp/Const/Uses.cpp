@@ -56,7 +56,7 @@ bool readsBinding(mlir::OpOperand & operand) {
         // Native helper construction supplies it for by-value/const-reference
         // operands. Unspecified opaque calls may bind mutable references or
         // select different overloads when the actual argument gains const.
-        auto safe = call->getAttrOfType<mlir::DenseI32ArrayAttr>("ctnative.const_operands");
+        auto safe = call->getAttrOfType<mlir::DenseI32ArrayAttr>(ctnative::kNativeConstOperands);
         return safe && llvm::is_contained(safe.asArrayRef(), operand.getOperandNumber());
     }
     if (auto call = llvm::dyn_cast<ec::CallOp>(op)) {

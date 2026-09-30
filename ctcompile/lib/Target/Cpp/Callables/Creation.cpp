@@ -8,13 +8,13 @@
 namespace ctcompile::cpp {
 
 mlir::emitc::FuncOp callableCreationSymbol(mlir::emitc::CallOpaqueOp call) {
-    auto symbol = call->getAttrOfType<mlir::FlatSymbolRefAttr>("ctnative.callable_create");
+    auto symbol = call->getAttrOfType<mlir::FlatSymbolRefAttr>(ctnative::kNativeCallableCreate);
     return symbol ? mlir::SymbolTable::lookupNearestSymbolFrom<mlir::emitc::FuncOp>(call, symbol)
                   : mlir::emitc::FuncOp{};
 }
 
 mlir::FailureOr<mlir::emitc::FuncOp> callableCreationTarget(mlir::emitc::CallOpaqueOp call) {
-    if (!call->hasAttr("ctnative.callable_create")) { return mlir::emitc::FuncOp{}; }
+    if (!call->hasAttr(ctnative::kNativeCallableCreate)) { return mlir::emitc::FuncOp{}; }
     const auto invalid = [&]() -> mlir::FailureOr<mlir::emitc::FuncOp> {
         call.emitOpError("invalid native callable creation");
         return mlir::failure();
@@ -24,7 +24,7 @@ mlir::FailureOr<mlir::emitc::FuncOp> callableCreationTarget(mlir::emitc::CallOpa
         call->getNumResults() != 1) {
         return invalid();
     }
-    auto body = function->getAttrOfType<mlir::DictionaryAttr>("ctnative.callable_body");
+    auto body = function->getAttrOfType<mlir::DictionaryAttr>(ctnative::kNativeCallableBody);
     auto binder = body ? body.getAs<mlir::StringAttr>("binder") : mlir::StringAttr{};
     auto captures = body ? body.getAs<mlir::ArrayAttr>("captures") : mlir::ArrayAttr{};
     auto type = body ? body.getAs<mlir::StringAttr>("type") : mlir::StringAttr{};
@@ -51,7 +51,7 @@ bool bounded(mlir::emitc::FuncOp function, llvm::DenseSet<mlir::Operation *> & a
         if (remaining == 0) { return mlir::WalkResult::interrupt(); }
         --remaining;
         auto call = llvm::dyn_cast<mlir::emitc::CallOpaqueOp>(op);
-        if (!call || !call->hasAttr("ctnative.callable_create")) {
+        if (!call || !call->hasAttr(ctnative::kNativeCallableCreate)) {
             return mlir::WalkResult::advance();
         }
         auto target = callableCreationTarget(call);

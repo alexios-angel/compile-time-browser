@@ -73,7 +73,7 @@ static LogicalResult printOperation(CppEmitter & emitter, emitc::FuncOp function
     if (body->emitsFunction()) {
         if (failed(printRegularFunction(emitter, function))) return failure();
         emitter.ostream() << "\n// ctcompile: stored callable, ";
-        if (auto provenance = function->getAttrOfType<StringAttr>("ctnative.provenance"))
+        if (auto provenance = function->getAttrOfType<StringAttr>(ctn::kNativeProvenance))
             emitter.ostream() << provenance.getValue();
         else
             emitter.ostream() << function.getSymName();
@@ -87,7 +87,7 @@ static FailureOr<bool> omitCallableDefinition(Operation & op) {
     if (auto declaration = dyn_cast<emitc::DeclareFuncOp>(&op))
         function = SymbolTable::lookupNearestSymbolFrom<emitc::FuncOp>(
             declaration, declaration.getSymNameAttr());
-    if (!function || !function->hasAttr("ctnative.callable_body")) return false;
+    if (!function || !function->hasAttr(ctn::kNativeCallableBody)) return false;
     auto body = ctcompile::cpp::callableBodyPlan(function);
     if (failed(body)) return failure();
     return !body->emitsBinder() && !body->emitsFunction();
@@ -116,14 +116,14 @@ static FailureOr<bool> printCallableCreation(CppEmitter & emitter, emitc::CallOp
 
     auto & os = emitter.ostream();
     if (!emitter.isEmittingExpression()) {
-        if (auto source = (*target)->getAttrOfType<StringAttr>("ctnative.provenance"))
+        if (auto source = (*target)->getAttrOfType<StringAttr>(ctn::kNativeProvenance))
             os << "// ctcompile: " << source.getValue() << "\n";
     }
     if (failed(emitter.emitAssignPrefix(*call))) return failure();
     // auto and expression operands must retain std::function's concrete ABI;
     // a discarded construction must still perform that owning conversion.
-    const bool wrap = emitter.isEmittingExpression() || call->hasAttr("ctnative.deduced") ||
-                      call->hasAttr("ctnative.statement");
+    const bool wrap = emitter.isEmittingExpression() || call->hasAttr(ctn::kNativeDeduced) ||
+                      call->hasAttr(ctn::kNativeStatement);
     if (wrap) os << body->type << "{";
     os << "[";
     for (auto [i, capture] : llvm::enumerate(call->getOperands())) {
