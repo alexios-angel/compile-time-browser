@@ -227,6 +227,25 @@ void test_the_raster_cache_is_keyed_on_size() {
     check(other->width == 32, "cache: and it really was rendered at that size");
 }
 
+// DOS-023/044/053: a 40000x40000 box is 1.6 billion pixels. The store renders
+// within the decoders' 2^26-pixel budget at the box's aspect ratio, and the
+// rasteriser itself refuses anything larger rather than allocating it.
+void test_a_huge_box_is_rendered_within_the_pixel_budget() {
+    check(raster::render_svg(circle, 40000, 40000).empty(),
+          "render_svg: past the pixel budget there is no surface at all");
+    if (!raster::svg_available()) { return; }
+    shell::svg_store store;
+    const node_id id{};
+    store.set_source(id, std::string{circle});
+    const auto big = store.pixels_for(id, 40000, 40000);
+    check(big != nullptr, "huge: the graphic still draws");
+    check(big != nullptr &&
+              static_cast<std::uint64_t>(big->width) * static_cast<std::uint64_t>(big->height) <=
+                  shell::max_decode_pixels,
+          "huge: within the pixel budget");
+    check(big != nullptr && big->width == big->height, "huge: at the box's aspect ratio");
+}
+
 // The capture: an <svg> element in the tree, its children NOT in the tree, and
 // the source recovered byte-for-byte with its capitals intact. That last part
 // is the whole reason for the design - `viewBox` lowercased is a `viewbox` no
@@ -565,6 +584,7 @@ int main() {
     test_natural_size_comes_from_the_markup();
     test_svg_image_lays_out_and_draws_at_its_box_size();
     test_the_raster_cache_is_keyed_on_size();
+    test_a_huge_box_is_rendered_within_the_pixel_budget();
     test_inline_svg_is_captured_verbatim();
     test_an_svg_does_not_leak_into_the_page();
     test_inline_svg_is_a_replaced_inline_box();

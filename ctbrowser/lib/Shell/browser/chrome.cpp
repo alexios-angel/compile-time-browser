@@ -336,8 +336,13 @@ std::string browser::option_value_at(const read_txn & txn, node_id select, std::
 }
 
 bool browser::paint_svg(node_id id, const rect & box, ctbrowser::paint::display_list & into) {
-    const int width = std::max(1, static_cast<int>(std::lround(box.width)));
-    const int height = std::max(1, static_cast<int>(std::lround(box.height)));
+    // Clamped BEFORE the conversion: lround of a 1e30px box is not an int.
+    // svg_store::pixels_for scales anything past the decode budget down.
+    const auto snap = [](float v) {
+        return v >= 1.0f ? static_cast<int>(std::lround(std::min(v, 1.0e9f))) : 1;
+    };
+    const int width = snap(box.width);
+    const int height = snap(box.height);
     auto pixels = svg_.pixels_for(id, width, height);
     if (!pixels) { return false; }
     into.draw_image(rect{box.x, box.y, static_cast<float>(width), static_cast<float>(height)},

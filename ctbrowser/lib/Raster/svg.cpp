@@ -53,6 +53,13 @@ paint::bitmap render_svg([[maybe_unused]] std::string_view source, [[maybe_unuse
                          [[maybe_unused]] int height) {
 #if CTBROWSER_WITH_SVG
     if (width <= 0 || height <= 0 || source.empty()) { return {}; }
+    // The same 2^26-pixel budget as shell::max_decode_pixels, which raster
+    // cannot include: svg_store::pixels_for scales down to it, so only a
+    // caller that skipped that gets nothing rather than a 400 TB surface.
+    if (static_cast<std::uint64_t>(width) * static_cast<std::uint64_t>(height) >
+        (std::uint64_t{1} << 26)) {
+        return {};
+    }
 
     // The container size, which is what resolves a `width="100%"` on the root.
     // Passing the size we are about to render at means a percentage-sized

@@ -4,10 +4,12 @@
 #include <boost/container_hash/hash.hpp>
 #include <cctype>
 #include <charconv>
+#include <cmath>
 #include <utility>
 
 #include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/raster/svg.hpp>
+#include <ctbrowser/shell/image/images.hpp>
 
 namespace ctbrowser::shell {
 
@@ -184,7 +186,24 @@ std::shared_ptr<const paint::bitmap> svg_store::pixels_for(node_id id, int width
     const auto source = sources_.find(e->content);
     if (source == sources_.end()) { return nullptr; }
 
-    paint::bitmap pixels = raster::render_svg(source->second, width, height);
+    // A BOX CAN BE ANY SIZE, A RASTER CANNOT: `width: 1e7px` asked plutosvg for
+    // a 400 TB surface. Past the decoders' own budget the graphic is rendered
+    // at the largest size that fits with the same aspect ratio, and
+    // draw_image's nearest-neighbour scale fills the box from that.
+    int render_w = width;
+    int render_h = height;
+    if (const double area = static_cast<double>(width) * static_cast<double>(height);
+        area > static_cast<double>(max_decode_pixels)) {
+        const double scale = std::sqrt(static_cast<double>(max_decode_pixels) / area);
+        render_w = std::max(1, static_cast<int>(static_cast<double>(width) * scale));
+        render_h = std::max(1, static_cast<int>(static_cast<double>(height) * scale));
+        // A sliver's short side rounds up to 1, so the long side gives way.
+        render_w = std::min(
+            render_w, static_cast<int>(max_decode_pixels / static_cast<std::uint64_t>(render_h)));
+        render_h = std::min(
+            render_h, static_cast<int>(max_decode_pixels / static_cast<std::uint64_t>(render_w)));
+    }
+    paint::bitmap pixels = raster::render_svg(source->second, render_w, render_h);
     // Cached even when empty. A document plutosvg cannot render fails the same
     // way every frame, and without this the engine would retry the parse on
     // every single one.
