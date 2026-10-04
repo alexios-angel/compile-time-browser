@@ -83,10 +83,8 @@ BAD = {
     "receiver": METHOD.replace("() => !seen", "() => this === seen"),
     "new-target": METHOD.replace("() => !seen", "function() { return new.target === seen; }"),
     "extra-argument": METHOD.replace("mark();", "mark(target);"),
-    "conditional-call": METHOD.replace("mark();", "if (target.hasAttribute('ready')) mark();"),
-    "conditional-store": METHOD.replace(
-        "const after", "if (target.hasAttribute('ready')) seen = false; const after"
-    ),
+    # The original conditional-call/store bodies are positive witnesses in
+    # native_class_dom_boolean_branches.py.
     "loop-call": METHOD.replace(
         "mark();",
         "while (target.hasAttribute('ready')) { mark(); target.removeAttribute('ready'); }",

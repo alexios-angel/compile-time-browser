@@ -31,13 +31,29 @@ bool classInitialization::retainBooleanCaptures(ctjs::FuncOp owner) {
     }
     llvm::SmallVector<ctjs::CreateClosureOp> callbacks;
     llvm::DenseSet<mlir::Operation *> callbackOperations;
+    llvm::DenseSet<mlir::Operation *> stateBranches;
     llvm::SmallVector<ctjs::RootOp> roots;
+    const auto orderedUse = [&](mlir::Operation * creator, mlir::Operation * user) {
+        auto * position = user;
+        unsigned nesting = 0;
+        while (position->getBlock() != &block) {
+            if (!step()) { return false; }
+            auto branch = llvm::dyn_cast_or_null<mlir::scf::IfOp>(position->getParentOp());
+            if (!branch || ++nesting == 64) {
+                return refuse("class Boolean state requires bounded local conditional uses");
+            }
+            position = branch;
+        }
+        if (!creator->isBeforeInBlock(position)) {
+            return refuse("class Boolean state requires creation before its conditional uses");
+        }
+        if (position != user) { stateBranches.insert(position); }
+        return true;
+    };
     for (mlir::OpOperand & use : cell.getResult().getUses()) {
         if (!step()) { return false; }
         auto * user = use.getOwner();
-        if (user->getBlock() != &block || !cell->isBeforeInBlock(user)) {
-            return refuse("class Boolean state requires ordered owner-block uses");
-        }
+        if (!orderedUse(cell, user)) { return false; }
         if (auto root = llvm::dyn_cast<ctjs::RootOp>(user); root && use.getOperandNumber() == 1) {
             roots.push_back(root);
             continue;
@@ -47,28 +63,16 @@ bool classInitialization::retainBooleanCaptures(ctjs::FuncOp owner) {
         }
         auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(user);
         auto function = target(closure);
-        if (!closure || use.getOperandNumber() != 2 || closure.getUpvalues().size() != 1 ||
-            hasOuterCapture(closure) || !function || function == owner ||
-            function.getUpvalueCount() != 1 || !function.getBody().hasOneBlock() ||
+        if (!closure || closure->getBlock() != &block || use.getOperandNumber() != 2 ||
+            closure.getUpvalues().size() != 1 || hasOuterCapture(closure) || !function ||
+            function == owner || function.getUpvalueCount() != 1 ||
+            !function.getBody().hasOneBlock() ||
             function.getBody().front().getNumArguments() != ctjs::implicit_arguments ||
             closure.getEnclosingClosure() != block.getArgument(ctjs::arg_callee)) {
             return refuse("class Boolean state requires exact local leaf capture slots");
         }
         callbacks.push_back(closure);
         callbackOperations.insert(closure);
-    }
-    bool initialized = !undefined(cell.getInitial());
-    for (auto & operation : block) {
-        if (!step()) { return false; }
-        if (auto write = llvm::dyn_cast<ctjs::CellSetOp>(operation);
-            write && write.getCell() == cell.getResult()) {
-            initialized = true;
-        }
-        auto read = llvm::dyn_cast<ctjs::CellGetOp>(operation);
-        if (!initialized && ((read && read.getCell() == cell.getResult()) ||
-                             callbackOperations.contains(&operation))) {
-            return refuse("class Boolean state is read or captured before initialization");
-        }
     }
     llvm::DenseSet<mlir::Operation *> leaves, calls;
     for (auto closure : callbacks) {
@@ -125,9 +129,7 @@ bool classInitialization::retainBooleanCaptures(ctjs::FuncOp owner) {
         for (mlir::OpOperand & use : closure.getResult().getUses()) {
             if (!step()) { return false; }
             auto * user = use.getOwner();
-            if (user->getBlock() != &block || !closure->isBeforeInBlock(user)) {
-                return refuse("class Boolean leaf requires ordered owner-block calls");
-            }
+            if (!orderedUse(closure, user)) { return false; }
             if (auto root = llvm::dyn_cast<ctjs::RootOp>(user);
                 root && use.getOperandNumber() == 1) {
                 roots.push_back(root);
@@ -144,6 +146,22 @@ bool classInitialization::retainBooleanCaptures(ctjs::FuncOp owner) {
             called = true;
         }
         if (!called) { return refuse("class Boolean leaf lacks an original local call"); }
+    }
+    // Only owner-block stores initialize this proof. A store in an arm cannot
+    // authorize another arm, a later join, or callback creation before the If.
+    bool initialized = !undefined(cell.getInitial());
+    for (auto & operation : block) {
+        if (!step()) { return false; }
+        if (auto write = llvm::dyn_cast<ctjs::CellSetOp>(operation);
+            write && write.getCell() == cell.getResult()) {
+            initialized = true;
+        }
+        auto read = llvm::dyn_cast<ctjs::CellGetOp>(operation);
+        if (!initialized &&
+            ((read && read.getCell() == cell.getResult()) ||
+             callbackOperations.contains(&operation) || stateBranches.contains(&operation))) {
+            return refuse("class Boolean state is used before unconditional initialization");
+        }
     }
     // The module's initial census already enforces unique closure creators.
     // Reject symbolic callers/attributes not selected through those creators.
