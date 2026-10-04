@@ -32,6 +32,10 @@ return first && second && third;
 """
 CASES = {
     "read-write-read": METHOD,
+    # Compose retained source captures with the exact numeric-origin proof.
+    "numeric-origins": METHOD.replace("seen = false", "seen = !1").replace(
+        "seen = true", "seen = !0"
+    ),
     "sibling-writers": METHOD.replace(
         "const before", "const reset = () => { seen = false; };\n    const before"
     ).replace(
@@ -290,6 +294,13 @@ def main():
         oracle(args, name, text)
         ir, contract = dom.prepare(args, name, text, 2, entry_name="probe")
         shape(ir.read_text())
+        if name == "numeric-origins":
+            owner, _, _, writer, _ = shape(ir.read_text())
+            for body, bits in ((owner, "4607182418800017408"), (writer, "0")):
+                literal = re.search(rf"(%\w+) = ctjs\.constant #ctjs.number<{bits}>", body[0])
+                assert literal and re.search(
+                    rf"ctjs\.unary not {re.escape(literal[1])}\b", body[0]
+                ), "source lost its original !0/!1 producer"
         if name == "structured-exit":
             assert "scf.index_switch" in ir.read_text(), "fixture lost method cloning boundary"
         declared = dict(contract, initial_intrinsics=["__ctbrowser_class_defined"])
