@@ -324,7 +324,9 @@ def oracle(args, name, body, attributes, expected):
 
 
 OPERATIONS = re.compile(
-    r"^\s*(?:%[^=\n]+ = )?(ctjs\.(?:create_cell|cell_get|cell_set|call_direct|load_global|store_global))\b",
+    # Successful refusals use custom syntax; pass errors print generic quoted
+    # operations. Count all source operations, including ordinary call effects.
+    r'^\s*(?:%[^=\n]+ = )?"?(ctjs\.[a-z_]+)\b',
     re.M,
 )
 
@@ -334,6 +336,7 @@ def budget_boundary(args, ir, contract):
     config = args.work / "budget-boundary.json"
     config.write_text(json.dumps(contract) + "\n")
     original = OPERATIONS.findall(ir.read_text())
+    assert original, ir
     refusals = 0
 
     def lowers(limit, *, require_source=False):
@@ -353,14 +356,12 @@ def budget_boundary(args, ir, contract):
             timeout=120,
         )
         assert result.returncode in (0, 1), result.stderr
-        if require_source:
-            assert result.returncode == 0, result.stderr
         text = output.read_text() if result.returncode == 0 else result.stderr
         if result.returncode == 0 and dom.NATIVE.search(text):
             assert not dom.FUNCTION.search(text), text
             return True
         assert "budget exhausted" in text, text
-        if result.returncode == 0:
+        if require_source or result.returncode == 0:
             assert OPERATIONS.findall(text) == original, text
         refusals += 1
         return False
@@ -402,6 +403,7 @@ def main():
     for name, text in bad_programs().items():
         ir, contract = prepare(args, "bad-" + name, text)
         original = OPERATIONS.findall(ir.read_text())
+        assert original, ir
         for owned, optimize, manifest in dom.variants(contract):
             diagnostic = dom.lower(
                 args,
