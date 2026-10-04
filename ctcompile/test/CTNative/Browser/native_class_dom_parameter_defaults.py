@@ -248,7 +248,7 @@ def root_variants(text, cell, start):
     }
 
 
-def budget_boundary(args, ir, contract):
+def budget_boundary(args, ir, contract, *, subject="Class parameter-default"):
     config = args.work / "budget-boundary.json"
     config.write_text(json.dumps(contract) + "\n")
     original = source_operations(args, ir.read_text())
@@ -284,9 +284,7 @@ def budget_boundary(args, ir, contract):
     assert not lowers(0) and lowers(1000000)
     first = threshold(lowers, high=1000000)
     assert not lowers(first - 1, preserve=True) and lowers(first)
-    print(
-        f"Class parameter-default minimum work budget: {first}; preceding cutoff preserves source"
-    )
+    print(f"{subject} minimum work budget: {first}; preceding cutoff preserves source")
     return refusals
 
 

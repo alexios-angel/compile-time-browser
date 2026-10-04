@@ -239,6 +239,7 @@ struct classInitialization {
     static bool undefined(mlir::Value value) { return ctjs::isUndefinedConstant(value); }
     ctjs::FuncOp target(ctjs::CreateClosureOp closure);
     bool selectParameterDefaults(ctjs::FuncOp entry);
+    bool scalarizeConditionalCells(ctjs::FuncOp entry);
     bool proveCells(ctjs::FuncOp entry);
     bool proveMaps();
     mlir::Value sourceValue(mlir::Value value);
