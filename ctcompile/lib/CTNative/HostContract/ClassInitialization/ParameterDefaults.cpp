@@ -101,7 +101,8 @@ bool classInitialization::selectParameterDefaults(ctjs::FuncOp entry) {
                                                       : mlir::Value(formal));
             read.erase();
         }
-        for (auto root : roots) { root.erase(); }
+        // Preserve the original root positions and contexts for frame proof.
+        for (auto root : roots) { root.getValueMutable().assign(formal); }
         assignment.erase();
         branch.erase();
         cell.erase();
