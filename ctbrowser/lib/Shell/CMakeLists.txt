@@ -10,6 +10,7 @@ target_sources(ctbrowser-shell PUBLIC FILE_SET HEADERS BASE_DIRS "${CTBROWSER_IN
 target_sources(ctbrowser-shell PRIVATE
   app_bundle.cpp
   embedded_fonts.cpp
+  timer_queue.cpp
 )
 
 add_subdirectory(bindings)

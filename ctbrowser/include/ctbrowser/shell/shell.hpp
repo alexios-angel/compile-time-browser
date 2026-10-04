@@ -33,3 +33,4 @@
 #include <ctbrowser/shell/page/forms.hpp>
 #include <ctbrowser/shell/page/svg_cache.hpp>
 #include <ctbrowser/shell/page/webgl.hpp>
+#include <ctbrowser/shell/timer_queue.hpp>
