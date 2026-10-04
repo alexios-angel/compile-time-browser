@@ -872,86 +872,82 @@ void install_collections(context & cx) {
                 [&] { list->items = self.items; });
             return ok ? out : value::undefined();
         });
-        algebra("intersection",
-                [](context & c, array_object & self, const set_record & other) -> value {
-                    const std::vector<value> mine = self.items;
-                    const context::rooted_values keep{c, mine};
-                    const value out = make_set(c, {});
-                    const context::rooted keep_out{c, out};
-                    auto * list =
-                        static_cast<array_object *>(static_cast<object_object *>(out.as_heap())
-                                                        ->find(entries_slot_key)
-                                                        ->as_heap());
-                    const detail::unwind_watch watch{c};
-                    if (static_cast<double>(mine.size()) <= other.size) {
-                        for (const value & e : mine) {
-                            const bool in = record_has(c, other, e);
-                            if (watch.threw()) { return value::undefined(); }
-                            if (in && find_member(*list, e) < 0) { list->items.push_back(e); }
-                        }
-                        return out;
+        algebra(
+            "intersection",
+            [](context & c, array_object & self, const set_record & other) -> value {
+                const std::vector<value> mine = self.items;
+                const context::rooted_values keep{c, mine};
+                const value out = make_set(c, {});
+                const context::rooted keep_out{c, out};
+                auto * list = static_cast<array_object *>(
+                    static_cast<object_object *>(out.as_heap())->find(entries_slot_key)->as_heap());
+                const detail::unwind_watch watch{c};
+                if (static_cast<double>(mine.size()) <= other.size) {
+                    for (const value & e : mine) {
+                        const bool in = record_has(c, other, e);
+                        if (watch.threw()) { return value::undefined(); }
+                        if (in && find_member(*list, e) < 0) { list->items.push_back(e); }
                     }
-                    const bool ok = each_key(c, other, [&](value key) {
+                    return out;
+                }
+                const bool ok = each_key(c, other, [&](value key) {
+                    const value v = normalise_key(key);
+                    if (find_member(self, v) >= 0 && find_member(*list, v) < 0) {
+                        list->items.push_back(v);
+                    }
+                    return true;
+                });
+                return ok ? out : value::undefined();
+            });
+        algebra(
+            "difference", [](context & c, array_object & self, const set_record & other) -> value {
+                std::vector<value> result = self.items;
+                const context::rooted_values keep{c, result};
+                const value out = make_set(c, result);
+                const context::rooted keep_out{c, out};
+                auto * list = static_cast<array_object *>(
+                    static_cast<object_object *>(out.as_heap())->find(entries_slot_key)->as_heap());
+                const detail::unwind_watch watch{c};
+                if (static_cast<double>(result.size()) <= other.size) {
+                    for (const value & e : result) {
+                        const bool in = record_has(c, other, e);
+                        if (watch.threw()) { return value::undefined(); }
+                        if (const std::ptrdiff_t at = find_member(*list, e); in && at >= 0) {
+                            list->items.erase(list->items.begin() + at);
+                        }
+                    }
+                    return out;
+                }
+                const bool ok = each_key(c, other, [&](value key) {
+                    if (const std::ptrdiff_t at = find_member(*list, key); at >= 0) {
+                        list->items.erase(list->items.begin() + at);
+                    }
+                    return true;
+                });
+                return ok ? out : value::undefined();
+            });
+        algebra(
+            "symmetricDifference",
+            [](context & c, array_object & self, const set_record & other) -> value {
+                const value out = make_set(c, {});
+                const context::rooted keep_out{c, out};
+                auto * list = static_cast<array_object *>(
+                    static_cast<object_object *>(out.as_heap())->find(entries_slot_key)->as_heap());
+                const bool ok = each_key(
+                    c, other,
+                    [&](value key) {
                         const value v = normalise_key(key);
-                        if (find_member(self, v) >= 0 && find_member(*list, v) < 0) {
+                        const std::ptrdiff_t at = find_member(*list, v);
+                        if (find_member(self, v) >= 0) {
+                            if (at >= 0) { list->items.erase(list->items.begin() + at); }
+                        } else if (at < 0) {
                             list->items.push_back(v);
                         }
                         return true;
-                    });
-                    return ok ? out : value::undefined();
-                });
-        algebra("difference",
-                [](context & c, array_object & self, const set_record & other) -> value {
-                    std::vector<value> result = self.items;
-                    const context::rooted_values keep{c, result};
-                    const value out = make_set(c, result);
-                    const context::rooted keep_out{c, out};
-                    auto * list =
-                        static_cast<array_object *>(static_cast<object_object *>(out.as_heap())
-                                                        ->find(entries_slot_key)
-                                                        ->as_heap());
-                    const detail::unwind_watch watch{c};
-                    if (static_cast<double>(result.size()) <= other.size) {
-                        for (const value & e : result) {
-                            const bool in = record_has(c, other, e);
-                            if (watch.threw()) { return value::undefined(); }
-                            if (const std::ptrdiff_t at = find_member(*list, e); in && at >= 0) {
-                                list->items.erase(list->items.begin() + at);
-                            }
-                        }
-                        return out;
-                    }
-                    const bool ok = each_key(c, other, [&](value key) {
-                        if (const std::ptrdiff_t at = find_member(*list, key); at >= 0) {
-                            list->items.erase(list->items.begin() + at);
-                        }
-                        return true;
-                    });
-                    return ok ? out : value::undefined();
-                });
-        algebra("symmetricDifference",
-                [](context & c, array_object & self, const set_record & other) -> value {
-                    const value out = make_set(c, {});
-                    const context::rooted keep_out{c, out};
-                    auto * list =
-                        static_cast<array_object *>(static_cast<object_object *>(out.as_heap())
-                                                        ->find(entries_slot_key)
-                                                        ->as_heap());
-                    const bool ok = each_key(
-                        c, other,
-                        [&](value key) {
-                            const value v = normalise_key(key);
-                            const std::ptrdiff_t at = find_member(*list, v);
-                            if (find_member(self, v) >= 0) {
-                                if (at >= 0) { list->items.erase(list->items.begin() + at); }
-                            } else if (at < 0) {
-                                list->items.push_back(v);
-                            }
-                            return true;
-                        },
-                        [&] { list->items = self.items; });
-                    return ok ? out : value::undefined();
-                });
+                    },
+                    [&] { list->items = self.items; });
+                return ok ? out : value::undefined();
+            });
         algebra("isSubsetOf",
                 [](context & c, array_object & self, const set_record & other) -> value {
                     if (static_cast<double>(self.items.size()) > other.size) {
