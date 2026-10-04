@@ -22,6 +22,66 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Synchronous local helpers in native DOM classes, 2026-10-04 UTC
+
+**Landed: `5f9f3a878` on `ctcompile-v1`, based on `6ff31283b`.**
+Class initialization now admits capture-free nested helpers whose complete uses
+are ordered, same-block calls with exact arity and undefined receiver. Direct
+calls must also match the closure target and have undefined `new.target`.
+The implicit-argument and no-capture checks remain; bodies survive for the
+complete source/typed DOM proof. Existing closure lifting keeps a branch-local
+call in its original branch. Browser APIs, native storage and ownership are
+unchanged. A read-only review found no blocking issue.
+
+The new `native-class-dom-callbacks.test` exercises methods, captured outer
+helpers, discarded results, repeated calls and conditional calls. It checks
+exact DOM write order, distinct documents and aliases against Node/VM results.
+Ordinary-call IR admission and direct target/receiver/new.target/arity controls
+use refreshed module fingerprints. Captured, returned, stored, delayed and
+escaping callbacks, invalid actuals and hidden effects still refuse, including
+unused methods and inactive branches.
+
+**Measured, devbox only:** explicit `tools/remote-build.sh ctjs-opt
+ctjs-translate ctcompile-test-native-reference` targets passed before and after
+the change (6 baseline build steps, then 3 changed steps; final sync needed no
+rebuild). The final exact lit filter
+`^ctcompile :: CTNative/Browser/native-class-dom-callbacks[.]test$`
+passed **1/1 in 149.98 s: 96 native executions / 95 refusals**, with five source
+checks against both Node and the VM. GCC and pinned Clang, optimization off/on,
+both DOM providers, explicit/deduced C++, and generated-source/`nm` no-Script
+checks passed. All three changed source/test hashes match the tested devbox.
+
+The existing captured-Map regression also passed in the initial run selected by
+`^ctcompile :: CTNative/Browser/native-class-dom-(callbacks|map)[.]test$`
+(149.90 s). That run's callback case failed only because its conditional source
+was incorrectly expected to refuse; the source was retained and promoted to a
+positive after tracing closure lifting, then the corrected fixture passed.
+Repeated executions are not added to the final callback totals. Four original
+sources reproduced the baseline `captured helper callback escapes its intrinsic
+call` refusal before the change.
+
+`tools/format.sh --check` still reports exactly the baseline's **83 pre-existing
+formatting diagnostics** in `ctbrowser/lib/Script/builtins/collections/keyed.cpp`;
+the baseline and final logs are byte-identical. Scoped pinned clang-format,
+Black and `git diff --check` pass. Full lit/CTest, broad corpus/native matrices,
+WPT/test262, Windows, sanitizers, performance measurements and full native
+Bootstrap execution were not run. No browser implementation changed or push
+was made. Commands, logs, review, hashes and the 12,831,335-byte devbox archive are
+preserved at
+`/home/alex/.ctbrowser-auto/codex/ctcompile/artifacts/2026-10-04-synchronous-callbacks/`.
+
+**Next native/Bootstrap boundary:** the unchanged closed vendor prefix and
+complete Button class still agree in Node/VM on the retained element, exact Data
+registration, empty config and two toggles. Native lowering still refuses
+**`native DOM class: captured helper observes its implicit callee`**. This
+increment proves the synchronous leaf shape; it does not prove the transition
+helper's captured event listener and timeout. Those need shared mutable capture
+state, captured function/self identity and explicit deferred callback lifetime
+through the public browser API. The complete dormant `_queueCallback` body must
+remain checked. W -> B -> U publication, method-used/mutable `_element`, computed
+`DATA_KEY`, config/Set and entry/session record ownership remain later boundaries;
+the native application driver is still incomplete.
+
 ## Fixed primitive captures in class initialization, 2026-09-29 UTC
 
 **Landed: `3cd8ffd27` directly on `ctcompile-v1`, after integration merge
