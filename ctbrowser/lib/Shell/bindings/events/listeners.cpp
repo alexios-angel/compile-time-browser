@@ -551,8 +551,8 @@ void dom_bindings::fire_at(path_step step, std::string_view type, value event, b
     // during it is in the copy and is skipped by its `removed` flag.
     //
     // Walking the live vector by index cannot do the second half here, because
-    // registry removal MOVES every entry after the one it takes, so the index the loop is
-    // holding now names the NEXT listener and that one is silently skipped. A
+    // registry removal MOVES every entry after the one it takes, so the index
+    // the loop is holding names the NEXT listener and that one is silently skipped. A
     // handler that removes itself is not exotic; it is the shape of every
     // "run this once" listener written before `{once: true}` existed, and
     // Event-dispatch-handlers-changed.html removes one at each of eight targets.

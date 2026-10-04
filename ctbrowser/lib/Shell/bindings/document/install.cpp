@@ -239,9 +239,8 @@ void dom_bindings::install_document(context & cx) {
     // fault happened inside an image-load callback, what it actually looked
     // like was Babylon's PBR material painting nothing, three layers away.
     //
-    // The body is the window's, and identical on purpose: `listener::target`
-    // empty means document-or-window by design, so the two share a bucket and
-    // removing from one has always been able to remove the other's.
+    // Its argument handling matches the window's, while the target kind keeps
+    // their registrations separate.
     // AND THE CAPTURE FLAG IS PART OF THE IDENTITY. A listener is
     // (type, callback, capture) and only `add_listener` was enforcing all
     // three, so this removed by two: `removeEventListener(t, f)` took away a
