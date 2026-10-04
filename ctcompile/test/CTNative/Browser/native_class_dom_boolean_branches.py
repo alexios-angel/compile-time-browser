@@ -56,10 +56,7 @@ BAD = {
     "initialization-after-capture": BASE.replace("let seen = false;", "let seen;").replace(
         "const before", "seen = false; const before"
     ),
-    "branch-local-creator": BASE.replace("    const mark = () => { seen = true; };\n", "").replace(
-        "if (target.hasAttribute('ready')) mark();",
-        "if (target.hasAttribute('ready')) { const mark = () => { seen = true; }; mark(); }",
-    ),
+    # Original branch-local-creator is a positive in the dedicated scope test.
     "escaping-callback": BASE.replace("mark();", "{ target.saved = mark; mark(); }"),
     "argument": BASE.replace("mark();", "mark(target);"),
     "nonboolean-store": BASE.replace("mark();", "{ mark(); seen = target; }"),
@@ -109,9 +106,9 @@ def scenarios(name):
             )
 
 
-def oracle(args, name, text):
+def oracle(args, name, text, *, outcome=None):
     text += "var result = true;\n"
-    for first, second, alias, expected, events in scenarios(name):
+    for first, second, alias, expected, events in scenarios(outcome or name):
         text += f"var first = {callbacks.ELEMENT}, second = {callbacks.ELEMENT};\n"
         for variable, flags in (("first", first), ("second", second)):
             for key, present in zip(("ready", "other"), flags):

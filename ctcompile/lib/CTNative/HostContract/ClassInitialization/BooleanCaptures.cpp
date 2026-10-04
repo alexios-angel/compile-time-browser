@@ -34,9 +34,10 @@ bool classInitialization::retainBooleanCaptures(ctjs::FuncOp owner) {
     llvm::DenseSet<mlir::Operation *> stateBranches;
     llvm::SmallVector<ctjs::RootOp> roots;
     const auto orderedUse = [&](mlir::Operation * creator, mlir::Operation * user) {
+        auto * scope = creator->getBlock();
         auto * position = user;
         unsigned nesting = 0;
-        while (position->getBlock() != &block) {
+        while (position->getBlock() != scope) {
             if (!step()) { return false; }
             auto branch = llvm::dyn_cast_or_null<mlir::scf::IfOp>(position->getParentOp());
             if (!branch || ++nesting == 64) {
@@ -47,7 +48,9 @@ bool classInitialization::retainBooleanCaptures(ctjs::FuncOp owner) {
         if (!creator->isBeforeInBlock(position)) {
             return refuse("class Boolean state requires creation before its conditional uses");
         }
-        if (position != user) { stateBranches.insert(position); }
+        // Cell uses reach the owner block; a callback's own users must stay
+        // within its creation arm. The capture already records that outer If.
+        if (scope == &block && position != user) { stateBranches.insert(position); }
         return true;
     };
     for (mlir::OpOperand & use : cell.getResult().getUses()) {
@@ -63,10 +66,9 @@ bool classInitialization::retainBooleanCaptures(ctjs::FuncOp owner) {
         }
         auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(user);
         auto function = target(closure);
-        if (!closure || closure->getBlock() != &block || use.getOperandNumber() != 2 ||
-            closure.getUpvalues().size() != 1 || hasOuterCapture(closure) || !function ||
-            function == owner || function.getUpvalueCount() != 1 ||
-            !function.getBody().hasOneBlock() ||
+        if (!closure || use.getOperandNumber() != 2 || closure.getUpvalues().size() != 1 ||
+            hasOuterCapture(closure) || !function || function == owner ||
+            function.getUpvalueCount() != 1 || !function.getBody().hasOneBlock() ||
             function.getBody().front().getNumArguments() != ctjs::implicit_arguments ||
             closure.getEnclosingClosure() != block.getArgument(ctjs::arg_callee)) {
             return refuse("class Boolean state requires exact local leaf capture slots");
