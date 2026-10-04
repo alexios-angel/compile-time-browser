@@ -48,9 +48,9 @@ CASES = {
         "return before !== after;",
         "target.setAttribute('owner', seen); return before === after;",
     ),
-    # The frontend folds these identical returns to one common exit. The
-    # separate identity dispatch below forces the method-cloning proof seam.
-    "structured-exit": METHOD.replace(
+    # These identical returns coalesce into one exit. This source exercises
+    # the original query and branch; it makes no method-cloning claim.
+    "coalesced-switch": METHOD.replace(
         "return before !== after;",
         "switch (target.hasAttribute('ready')) {\n"
         "      case true: return before !== after;\n"
@@ -90,6 +90,17 @@ BAD = {
     "loop-call": METHOD.replace(
         "mark();",
         "while (target.hasAttribute('ready')) { mark(); target.removeAttribute('ready'); }",
+    ),
+    # Unlike loop-call, state stays outside this loop. Its real completion
+    # dispatch reaches an independent, currently unsupported arithmetic guard.
+    "completion-loop": METHOD.replace(
+        "return before !== after;",
+        "const limit = target.hasAttribute('ready') ? 5 : 3;\n"
+        "    for (var i = 0; i < limit; i = i + 1) {\n"
+        "      if (i === 1) { continue; }\n"
+        "      if (i === 3) { break; }\n"
+        "      if (limit === 5) { return before; }\n"
+        "    }\n    return !after;",
     ),
     "effect-leaf": METHOD.replace("seen = true;", "seen = true; ambient();"),
     "effect-before": METHOD.replace("const before", "ambient(); const before"),
@@ -135,7 +146,7 @@ def shape(text):
 
 
 def identity_dispatch(text):
-    """Preserve the oracle's return value while forcing a real IndexSwitch."""
+    """Force method cloning, then reach the unsupported dynamic-index guard."""
     owner, _, _, _, _ = shape(text)
     returned = re.search(r"^    ctjs\.return (%\w+)", owner[0], re.M)
     exited = re.search(r"^    ctjs\.frame_exit %\w+", owner[0], re.M)
@@ -321,12 +332,6 @@ def main():
                 assert literal and re.search(
                     rf"ctjs\.unary not {re.escape(literal[1])}\b", body[0]
                 ), "source lost its original !0/!1 producer"
-        if name == "structured-exit":
-            # Both dispatch arms return the original SSA snapshot. The key
-            # still takes both values in the oracle/native ready scenarios.
-            ir.write_text(identity_dispatch(ir.read_text()))
-            contract = dict(contract, module_sha256=dom.fingerprint(args.opt, ir))
-            assert "scf.index_switch" in ir.read_text(), "fixture lost method cloning boundary"
         declared = dict(contract, initial_intrinsics=["__ctbrowser_class_defined"])
         for owned, optimize, manifest in dom.variants(declared):
             label = f"{name}-{owned}-{optimize}"
@@ -338,9 +343,8 @@ def main():
             args, ir, declared, name, [0, 8], "{budget} did not exhaust Boolean capture proof"
         )
         refusals += 4
-        if name in ("read-write-read", "structured-exit"):
-            refusals += budget_boundary(args, ir, declared, subject=f"Class Boolean {name}")
         if name == "read-write-read":
+            refusals += budget_boundary(args, ir, declared, subject="Class Boolean capture")
             for label, valid, invalid in roots(ir.read_text()):
                 path = args.work / f"rooted-{label}.mlir"
                 path.write_text(valid)
@@ -361,14 +365,47 @@ def main():
                 manifest = dict(declared, module_sha256=dom.fingerprint(args.opt, path))
                 dom.refuse(args, path, manifest, label)
                 refusals += 2
+        if name == "coalesced-switch":
+            # This verifier-valid identity wrapper reaches method cloning,
+            # but the final DOM proof cannot type its dynamic index cast.
+            # Preserve the entire CTJS/SCF input on that downstream refusal.
+            path = args.work / "unsupported-dispatch.mlir"
+            path.write_text(identity_dispatch(ir.read_text()))
+            assert "scf.index_switch" in path.read_text()
+            manifest = dict(declared, module_sha256=dom.fingerprint(args.opt, path))
+            original = source_operations(args, path.read_text())
+            for owned, optimize, variant in dom.variants(manifest):
+                diagnostic = dom.lower(
+                    args,
+                    path,
+                    variant,
+                    f"dispatch-{owned}-{optimize}",
+                    optimize=optimize,
+                    success=False,
+                    max_steps=1000000,
+                )
+                assert (
+                    "DOM entry operation lacks a typed browser contract: arith.index_castui"
+                    in diagnostic
+                ), diagnostic
+                assert source_operations(args, diagnostic) == original, diagnostic
+                retained = diagnostic.partition("note: see current operation:")[2]
+                assert "arith.index_castui" in retained and "cases = array<i64: 0>" in retained
+                refusals += 1
     for name, method in BAD.items():
         ir, contract = dom.prepare(
             args, name, callbacks.source(method + CALLS), 2, entry_name="probe"
         )
         if name == "loop-call":
             assert "scf.while" in ir.read_text(), "loop refusal lost its actual loop"
+        if name == "completion-loop":
+            assert "scf.index_switch" in ir.read_text(), "completion refusal lost its dispatch"
         declared = dict(contract, initial_intrinsics=["__ctbrowser_class_defined"])
-        original = source_operations(args, ir.read_text()) if name.startswith("effect-") else None
+        original = (
+            source_operations(args, ir.read_text())
+            if name.startswith("effect-") or name == "completion-loop"
+            else None
+        )
         for owned, optimize, manifest in dom.variants(declared):
             diagnostic = dom.lower(
                 args,
@@ -381,6 +418,10 @@ def main():
             )
             if original is not None:
                 assert source_operations(args, diagnostic) == original, diagnostic
+            if name == "completion-loop":
+                assert (
+                    "DOM completion arithmetic must be a Boolean constant" in diagnostic
+                ), diagnostic
             refusals += 1
     print(
         f"DOM class Boolean captures: {len(CASES)} Node/VM sources, {executions} native executions, {refusals} refusals"
