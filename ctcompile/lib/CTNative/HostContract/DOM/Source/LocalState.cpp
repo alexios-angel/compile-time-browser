@@ -73,16 +73,35 @@ bool DOMSource::normalizeBooleanCell(ctjs::FuncOp function, unsigned depth) {
         }
     }
     llvm::DenseSet<mlir::Operation *> stateBranches;
-    for (mlir::OpOperand & use : cell.getResult().getUses()) {
-        if (!step()) { return false; }
-        auto * position = use.getOwner();
-        if (llvm::isa<ctjs::RootOp>(position)) { continue; }
-        while (position->getBlock() != scope) {
+    const auto findBranches = [&](bool afterInlining) {
+        stateBranches.clear();
+        for (mlir::OpOperand & use : cell.getResult().getUses()) {
             if (!step()) { return false; }
-            position = position->getParentOp();
-            stateBranches.insert(position);
+            auto * position = use.getOwner();
+            if (llvm::isa<ctjs::RootOp>(position) && use.getOperandNumber() == 1) { continue; }
+            if (!((llvm::isa<ctjs::CellGetOp, ctjs::CellSetOp>(position) &&
+                   use.getOperandNumber() == 0) ||
+                  (!afterInlining && llvm::isa<ctjs::CallDirectOp>(position) &&
+                   use.getOperandNumber() == ctjs::implicit_arguments))) {
+                return refuse("DOM Boolean state has an unproved use after expansion");
+            }
+            bool reachedScope = position->getBlock() == scope;
+            unsigned nesting = 0;
+            while (position->getBlock() != &block) {
+                if (!step()) { return false; }
+                auto branch = llvm::dyn_cast_or_null<mlir::scf::IfOp>(position->getParentOp());
+                if (!branch || ++nesting == 64) {
+                    return refuse("DOM Boolean state requires bounded local conditional uses");
+                }
+                if (!reachedScope) { stateBranches.insert(branch); }
+                position = branch;
+                reachedScope |= position->getBlock() == scope;
+            }
+            if (!reachedScope) { return refuse("DOM Boolean state escaped its selected scope"); }
         }
-    }
+        return true;
+    };
+    if (!findBranches(false)) { return false; }
 
     llvm::SmallVector<ctjs::CallDirectOp> calls;
     const auto collect = [&](auto && self, mlir::Block & source, bool initialized,
@@ -146,56 +165,95 @@ bool DOMSource::normalizeBooleanCell(ctjs::FuncOp function, unsigned depth) {
         selectedCalls.insert(call);
         if (!helpers.insert(target).second) { continue; }
         // Keep the ordinary frame, dominance, completion and implicit-argument
-        // proof. The extra census below narrows these bodies to flat Boolean
-        // leaves; it does not infer their behavior from native annotations.
+        // proof. The extra census below narrows these bodies to conditional
+        // Boolean leaves; it does not trust native annotations.
         if (!checkBody(target, false)) { return false; }
         auto & body = target.getBody().front();
         const auto formal = body.getArgument(ctjs::implicit_arguments);
         for (mlir::OpOperand & use : formal.getUses()) {
             if (!step()) { return false; }
             auto * user = use.getOwner();
-            if (user->getBlock() == &body &&
-                ((llvm::isa<ctjs::CellGetOp, ctjs::CellSetOp>(user) &&
-                  use.getOperandNumber() == 0) ||
-                 (llvm::isa<ctjs::RootOp>(user) && use.getOperandNumber() == 1))) {
+            auto * position = user;
+            unsigned nesting = 0;
+            while (position->getBlock() != &body) {
+                if (!step()) { return false; }
+                auto branch = llvm::dyn_cast_or_null<mlir::scf::IfOp>(position->getParentOp());
+                if (!branch || ++nesting == 64) {
+                    return refuse("DOM Boolean borrower has an unproved conditional use");
+                }
+                position = branch;
+            }
+            if ((llvm::isa<ctjs::CellGetOp, ctjs::CellSetOp>(user) &&
+                 use.getOperandNumber() == 0) ||
+                (llvm::isa<ctjs::RootOp>(user) && use.getOperandNumber() == 1)) {
                 continue;
             }
             return refuse("DOM Boolean borrower forwards or exposes its cell");
         }
         llvm::DenseSet<mlir::Value> booleans;
-        for (auto & leaf : body) {
-            if (!step(1 + leaf.getNumOperands() + leaf.getNumResults())) { return false; }
-            if (leaf.getNumRegions() || leaf.getNumSuccessors()) {
-                return refuse("DOM Boolean borrower requires a flat leaf body");
+        const auto proveLeaf = [&](auto && self, mlir::Block & source, unsigned nesting) -> bool {
+            if (nesting == 64) {
+                return refuse("DOM Boolean borrower conditional depth exhausted");
             }
-            if (auto literal = llvm::dyn_cast<ctjs::ConstantOp>(leaf)) {
-                if (ctjs::constantAttr<ctjs::BooleanAttr>(literal.getResult())) {
-                    booleans.insert(literal.getResult());
-                } else if (!undefined(literal.getResult()) && !numericBit(literal.getResult())) {
-                    return refuse("DOM Boolean borrower has a non-Boolean literal");
+            for (auto & leaf : source) {
+                if (!step(1 + leaf.getNumOperands() + leaf.getNumResults())) { return false; }
+                if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(leaf)) {
+                    auto truth = branch.getCondition().getDefiningOp<ctjs::TruthyOp>();
+                    if (branch.getNumResults() || !truth || !booleans.contains(truth.getValue())) {
+                        return refuse(
+                            "DOM Boolean borrower requires a result-free Boolean conditional");
+                    }
+                    for (auto & region : branch->getRegions()) {
+                        if (!step()) { return false; }
+                        if (region.empty()) { continue; }
+                        if (!self(self, region.front(), nesting + 1)) { return false; }
+                    }
+                    continue;
                 }
-            } else if (auto read = llvm::dyn_cast<ctjs::CellGetOp>(leaf);
-                       read && read.getCell() == formal) {
-                booleans.insert(read.getResult());
-            } else if (auto write = llvm::dyn_cast<ctjs::CellSetOp>(leaf);
-                       write && write.getCell() == formal && booleanOrigin(write.getValue())) {
-                continue;
-            } else if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(leaf);
-                       unary && unary.getKind() == ctjs::UnaryKind::Not &&
-                       (booleans.contains(unary.getOperand()) || numericBit(unary.getOperand()))) {
-                booleans.insert(unary.getResult());
-            } else if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(leaf);
-                       compare && compare.getKind() == ctjs::CompareKind::StrictEq &&
-                       booleans.contains(compare.getLhs()) && booleans.contains(compare.getRhs())) {
-                booleans.insert(compare.getResult());
-            } else if (auto returned = llvm::dyn_cast<ctjs::ReturnOp>(leaf);
-                       returned &&
-                       (booleans.contains(returned.getValue()) || undefined(returned.getValue()))) {
-                continue;
-            } else if (!llvm::isa<ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::RootOp>(leaf)) {
-                return refuse("DOM Boolean borrower contains an unproved operation");
+                if (leaf.getNumRegions() || leaf.getNumSuccessors()) {
+                    return refuse("DOM Boolean borrower requires an If-only leaf body");
+                }
+                if (auto literal = llvm::dyn_cast<ctjs::ConstantOp>(leaf)) {
+                    if (ctjs::constantAttr<ctjs::BooleanAttr>(literal.getResult())) {
+                        booleans.insert(literal.getResult());
+                    } else if (!undefined(literal.getResult()) &&
+                               !numericBit(literal.getResult())) {
+                        return refuse("DOM Boolean borrower has a non-Boolean literal");
+                    }
+                } else if (auto read = llvm::dyn_cast<ctjs::CellGetOp>(leaf);
+                           read && read.getCell() == formal) {
+                    booleans.insert(read.getResult());
+                } else if (auto write = llvm::dyn_cast<ctjs::CellSetOp>(leaf);
+                           write && write.getCell() == formal && booleanOrigin(write.getValue())) {
+                    continue;
+                } else if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(leaf);
+                           unary && unary.getKind() == ctjs::UnaryKind::Not &&
+                           (booleans.contains(unary.getOperand()) ||
+                            numericBit(unary.getOperand()))) {
+                    booleans.insert(unary.getResult());
+                } else if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(leaf);
+                           compare && compare.getKind() == ctjs::CompareKind::StrictEq &&
+                           booleans.contains(compare.getLhs()) &&
+                           booleans.contains(compare.getRhs())) {
+                    booleans.insert(compare.getResult());
+                } else if (auto truth = llvm::dyn_cast<ctjs::TruthyOp>(leaf);
+                           truth && booleans.contains(truth.getValue())) {
+                    continue;
+                } else if (auto returned = llvm::dyn_cast<ctjs::ReturnOp>(leaf);
+                           returned && nesting == 0 &&
+                           (booleans.contains(returned.getValue()) ||
+                            undefined(returned.getValue()))) {
+                    continue;
+                } else if (auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(leaf);
+                           yield && nesting && yield.getNumOperands() == 0) {
+                    continue;
+                } else if (!llvm::isa<ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::RootOp>(leaf)) {
+                    return refuse("DOM Boolean borrower contains an unproved operation");
+                }
             }
-        }
+            return true;
+        };
+        if (!proveLeaf(proveLeaf, body, 0)) { return false; }
     }
     // Both symbol scopes matter: a second owner or an attribute naming a
     // borrower is not made safe by the calls found through this cell's uses.
@@ -214,18 +272,38 @@ bool DOMSource::normalizeBooleanCell(ctjs::FuncOp function, unsigned depth) {
             })) {
         return refuse("DOM Boolean borrower has an unproved symbolic user");
     }
-    // Reserve operand copying and use replacement before any call is erased.
-    // inlineCall additionally charges its ordinary mapping and clone work.
-    for (auto call : calls) {
-        if (!step()) { return false; }
-        for (auto & operation : call.getTarget().getBody().front()) {
-            if (!step(operationWork(&operation, false))) { return false; }
+    // Reserve every nested operation and result use before erasing any call.
+    // Count even branches without cell uses toward the combined nesting limit.
+    const auto reserveClone = [&](auto && self, mlir::Block & source, unsigned nesting) -> bool {
+        if (nesting == 64) {
+            return refuse("DOM Boolean borrower combined conditional depth exhausted");
+        }
+        for (auto & operation : source) {
+            if (!step(operationWork(&operation, true))) { return false; }
             for (auto result : operation.getResults()) {
                 for (auto & use : result.getUses()) {
                     (void)use;
                     if (!step()) { return false; }
                 }
             }
+            for (auto & region : operation.getRegions()) {
+                for (auto & nested : region) {
+                    if (!self(self, nested, nesting + 1)) { return false; }
+                }
+            }
+        }
+        return true;
+    };
+    for (auto call : calls) {
+        if (!step()) { return false; }
+        unsigned nesting = 0;
+        for (auto * position = call.getOperation(); position->getBlock() != &block;
+             position = position->getParentOp()) {
+            if (!step()) { return false; }
+            ++nesting;
+        }
+        if (!reserveClone(reserveClone, call.getTarget().getBody().front(), nesting)) {
+            return false;
         }
         for (auto & use : call.getResult().getUses()) {
             (void)use;
@@ -240,6 +318,10 @@ bool DOMSource::normalizeBooleanCell(ctjs::FuncOp function, unsigned depth) {
         callDepth.erase(call);
         call.erase();
     }
+    // Inlining introduces fresh If operations. Rebuild their ancestry from the
+    // actual cell uses, then prove initialization and every state edge again.
+    calls.clear();
+    if (!findBranches(true) || !collect(collect, *scope, initiallyBoolean, 0)) { return false; }
     // Each read snapshots the current value at its original source position.
     // Keep every producer and unrelated effect for the complete DOM reproof;
     // only the already-proved local storage operations disappear.

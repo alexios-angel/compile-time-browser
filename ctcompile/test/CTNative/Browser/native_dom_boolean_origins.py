@@ -64,7 +64,7 @@ CASES = {
         True,
     ),
 }
-for name in ("sibling-writers", "repeated-calls"):
+for name in ("sibling-writers", "repeated-calls", "conditional-store"):
     text, body, attributes, expected = cells.CASES[name]
     CASES[name] = negated_literals(text), negated_source(body), attributes, expected
 
@@ -98,7 +98,6 @@ def bad_programs():
         "callee",
         "extra-formal",
         "second-owner",
-        "conditional-store",
         "loop-call",
         "effect-before",
         "effect-after",
