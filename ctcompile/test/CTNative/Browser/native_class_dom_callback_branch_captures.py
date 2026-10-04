@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Prove fixed primitive captures created and called in conditional arms."""
 
+import re
+
 from CTNative.Browser import native_dom as dom
 from CTNative.Browser import native_class_dom_callbacks as callbacks
 from CTNative.harness import run
@@ -88,7 +90,11 @@ BAD = {
 BAD = {name: method + callbacks.CALLS for name, method in BAD.items()}
 BAD["default-parameter"] = METHOD.replace("run(target)", "run(target, enabled = true)").replace(
     "target.hasAttribute('ready')", "enabled"
-) + callbacks.CALLS.replace("item.run(element)", "item.run(element, false)")
+).replace(
+    "return node.getAttribute", "return enabled && node.getAttribute"
+) + callbacks.CALLS.replace(
+    "item.run(element)", "item.run(element, false)"
+)
 
 
 def main():
@@ -137,6 +143,13 @@ def main():
         ir, contract = dom.prepare(args, name, callbacks.source(body), 2, entry_name="probe")
         if name == "loop-creation":
             assert "scf.while" in ir.read_text(), "loop refusal lost its source loop"
+        if name == "default-parameter":
+            text = ir.read_text()
+            cell = re.search(r"(%\w+) = ctjs\.create_cell %arg4\b", text)
+            assert cell, "default refusal lost its captured parameter cell"
+            assert re.search(
+                rf"scf\.if\b[^{{]*\{{[^}}]*ctjs\.cell_set {re.escape(cell[1])},", text
+            ), "default refusal lost its conditional parameter write"
         declared = dict(contract, initial_intrinsics=["__ctbrowser_class_defined"])
         for owned, optimize, manifest in dom.variants(declared):
             diagnostic = dom.lower(
