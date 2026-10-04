@@ -22,6 +22,141 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Shared class Boolean captures and minified origins, 2026-10-04 UTC
+
+**Landed: `933f934c9` on `ctcompile-v1`, based on `b1a44f8e4`.**
+The independently approved code tree is
+`2198dfb4cb659ebc92a8216e4bb6e643e31130b4`.
+The production checkpoints are `cbaf2270d` (class capture transport) and
+`9a9c51bee` (numeric Boolean origins). `89245a456` adds the real-JS composition
+case; `7d1d9ca3e` retains unsupported completion shapes as rollback controls.
+Two authors used separate worktrees while one validator tested immutable
+revisions on the warm devbox. No browser source changed.
+
+Class normalization now retains one method-local cell shared by exact,
+synchronous zero-argument leaf callbacks. It preserves the actual capture
+slots for ordinary closure lifting and then the existing DOM Boolean proof.
+Mutable state never enters the fixed-value map. Exact slot/operand roles,
+ordered owner-block uses, complete leaf bodies, unique creators and every
+symbolic caller remain checked. Every selected leaf must have an original
+local call. Extra captures, hidden writers, cell aliases, escaping/deferred
+callbacks, loops and conditional state uses remain diagnostics.
+
+The DOM proof now accepts direct Boolean literals and exact `!0`/`!1` origins
+(including a raw signed-zero operand). Original numeric and unary producers
+remain for typed lowering. Arbitrary computed stores, other literals and
+nonliteral operands remain unsupported. The combined source test exercises
+minified origins through actual class capture transport, repeated calls,
+shared element aliases and distinct documents.
+
+Original cell, callback and implicit-callee roots retain their positions and
+contexts; only their inert values are replaced with local undefined before
+closure erasure. Independent before/after-frame controls admit valid roots
+and reject invalid ones. Review also replaced an uncharged repeated callback
+vector scan with set lookup before the class checkpoint was frozen.
+
+The original switch fixture coalesced before method cloning. Additional raw
+and source completion forms reached separate unsupported arithmetic guards.
+Those cases now require full CTJS+SCF rollback, with the dynamic cast and case
+key retained explicitly. Positive runtime coverage of retained state through
+method cloning is not claimed; its bookkeeping is source-reviewed and its
+unsupported dispatch failure is tested. No production rule was widened to
+make a fixture pass.
+
+**Measured baseline:** unchanged class/origin code agreed with four Node/VM
+source oracles and rejected all 20 native attempts. The baseline explicit
+build was warm/no-work in 8 s. Every build, test and measurement used the
+exclusive devbox lock. The explicit production build command was
+`DEVBOX_DIR=projects/compile-time-browser tools/remote-build.sh ctjs-opt ctjs-translate ctcompile-test-native-reference`.
+
+The first frozen origin gate, commit `2f25ff55b` and tree
+`aa929d6eea9bbe11df8872c703ba055d6a402fbb`, passed three cases in 307.75 s:
+19 Node/VM sources, 304 native executions, 440 refusals and 152 generated C++
+files with no Script runtime. The filter was
+`^ctcompile :: CTNative/Browser/native-dom-boolean-(origins|cells|branches)[.]test$`.
+Minimum budgets were 659 for origins, 431 for cells and 548 for branches;
+the immediately preceding cutoffs preserve original source operations.
+
+The final class filter was
+`^ctcompile :: CTNative/Browser/native-class-dom-(boolean-captures|callback-captures|conditional-cells|parameter-defaults)[.]test$`.
+Both runs used `~/.lit-venv/bin/lit -va -j 2 build/ctcompile/test`. The final
+four cases passed in **293.61 s**, with **22 Node/VM sources, 352 native
+executions and 462 refusals**. The origin production build took 11 s, the
+combined class production build took 21 s, and the last fixture-only build
+took 7 s with no Ninja work. All 11 source hashes match before and after
+validation and after landing.
+
+The earlier three raw-DOM cases are retained by exact DOM subtree and 36
+source/helper hashes. All 493 checked raw contracts omit the class intrinsic,
+so their route bypasses class normalization. The closed probe and independent
+root/caller controls also use byte-identical production. Unique focused
+coverage is **seven cases, 41 Node/VM sources, 656 native executions and
+902 refusals**:
+
+| Case | Node/VM sources | Native executions | Refusals/controls |
+| --- | ---: | ---: | ---: |
+| Shared Boolean captures | 6 | 96 | 163 |
+| Fixed captures | 6 | 96 | 96 |
+| Parameter defaults | 5 | 80 | 93 |
+| Conditional locals | 5 | 80 | 110 |
+| Boolean origins, unchanged evidence | 8 | 128 | 200 |
+| Boolean cells, unchanged evidence | 5 | 80 | 150 |
+| Boolean branches, unchanged evidence | 6 | 96 | 90 |
+
+Both DOM providers, optimization policies, explicit/deduced C++, GCC 13 and
+pinned Clang passed. Every binary passed its forbidden-symbol check;
+independent scans found no Script runtime in **328 generated C++ files**.
+The archives contain 2,394 text artifacts. Reviewed output has scalar Boolean
+and numeric values, ordinary branches, owning strings, borrowed element
+handles and public DOM calls. It has no runtime cell, closure, frame or VM
+value. The final class budgets are 19889 for shared captures, 24961 for
+defaults and 16915 for conditional locals; each preceding cutoff preserves
+source. Two new completion controls separately passed eight refusal/rollback
+checks; these and other preflights are not added to the execution totals.
+
+Early class preflight passed six source oracles, 44 native lowerings and
+183 refusals. Independent archived-source controls passed 24 lowerings and
+32 refusals, covering all five root identities and duplicate/hidden callers.
+Those counts are separate from the final runtime totals.
+
+`tools/format.sh --check` continues to report the same 83 pre-existing
+formatting diagnostics in untouched `ctbrowser/lib/Script/builtins/collections/keyed.cpp`;
+log SHA256 `421f6a23f5b220c8c0f549fec3f417dc6bea95c5b524e109bf9bf366532c0090`.
+Scoped C++/Python formatting, Python parsing and diff checks pass. No full
+CTest/lit, broad native/corpus matrix, WPT/test262, Windows, sanitizer or
+performance run was made. No browser CTest was needed. No push was made.
+
+Artifacts are in
+`/home/alex/.ctbrowser-auto/codex/ctcompile/artifacts/2026-10-04-native-stack-5/`.
+The origin evidence SHA256 is
+`c464554de8ccab487152d39d25099f31c4111df6a1200214d6d80f9d2275be97`.
+The final evidence SHA256 is
+`939659597bc1cc79d68c55b3a1477356b08667d76e1b0617c1aad726f91316d7`.
+`validation/final-gate/APPROVAL.md`, `summary.json` and `reuse.json` identify
+the exact tested tree, retained evidence and dependency hashes.
+
+**Next native/Bootstrap boundary:** the exact closed vendor prefix and complete
+Button still agree in Node/VM on retained input, Data registration, empty
+configuration and two toggles. Native reports
+**`native DOM class: class Boolean state requires ordered owner-block uses`**.
+The source hash is unchanged (`a667ce87e4180390632562645458203dbbb36354690c7b5fd2c355b7f47499ff`);
+all 320552 bytes of prepared function bodies match the previous probe. Only
+module diagnostic directory names differ. This was measured on unchanged
+production at `3cd860039`; closed evidence SHA256 is
+`bf68fbfc85fac601f611e2b4133a938e17d0d8d7c0d3f55c5a825da1cea2fbaa`.
+
+The next narrow compiler step is If-only synchronous calls/stores after
+unconditional Boolean initialization. The existing DOM state proof supports
+that shape; class transport currently requires owner-block uses. Bootstrap's
+flag `%972` instead initializes only in an else arm, then joins multi-slot
+listener/timer captures, callable/self identity and deferred lifetime. That
+operation attribution remains source inference because the diagnostic does
+not name an operation. Preserve the full dormant `_queueCallback` body.
+Read `captures-author/next-boundary.md`, `root/next-boundary.md` and the
+[parallel-work plan](plans/native-bootstrap-stacks.md). Native Bootstrap is
+not complete.
+
+
 ## Conditional defaults and branch-local state, 2026-10-04 UTC
 
 **Landed: `520e907d9` on `ctcompile-v1`, based on `3b879cc7a`.**

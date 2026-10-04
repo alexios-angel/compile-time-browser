@@ -125,37 +125,81 @@ exact reads`. Its function bodies are unchanged. Source-order inspection
 points past duration cell `%970` to shared flag `%972`; the diagnostic itself
 does not identify the operation, so that attribution remains an inference.
 
+## Fifth feature wave (landed 2026-10-04)
+
+Combined commit `933f934c9` retains one shared Boolean class cell for exact
+synchronous leaf callbacks and admits direct Boolean literals or numeric
+`!0`/`!1` origins. The existing closure lifter and DOM state proof reduce these
+to scalar values. Mutable state stays out of the fixed-value map. Complete
+creator, caller, slot, effect, ordering and root-lifetime proofs remain.
+
+The origin author froze a disjoint DOM-source checkpoint while the class
+author finished capture transport. The validator first approved three raw-DOM
+cases, then four affected class cases on the combined tree. A real-JavaScript
+composition fixture exercises both changes. The final production needed no
+repair during validation; subsequent commits corrected test observations.
+
+The original switch fixture coalesced instead of exercising method cloning.
+Explicit raw dispatch and real-JavaScript completion-loop controls reach
+unsupported downstream arithmetic, so the final tests require clean refusal
+and complete source rollback. Successful runtime coverage for shared state
+through method cloning is not claimed. Source review covers charged remapping.
+
+Seven selected cases passed: 656 native executions, 902 refusals, 41 Node/VM
+source comparisons and 328 generated C++ files with no Script runtime. The
+final four-class run took 293.61 seconds; the retained three-case raw-DOM run
+took 307.75 seconds. Its exact DOM subtree, 36 source/helper hashes and 493
+contracts without the class intrinsic justify reuse. See the handoff for
+commands, independent controls, hashes and skipped coverage.
+
+The unchanged closed Button now reports `class Boolean state requires ordered
+owner-block uses`. All 320552 bytes of prepared function bodies match the
+preceding probe. Source inspection still points to shared flag `%972`, whose
+initialization and users are in an else arm, with multi-slot/deferred captures
+later. The diagnostic itself does not identify the operation.
+
 ## Next features, based on source and IR traces
 
-1. Retain one class-local Boolean cell and exact leaf callbacks through class
-   normalization and ordinary closure lifting, reusing the new DOM proof.
-   Keep mutable storage out of fixed-value maps and remap its records when
-   methods are cloned. Begin with straight-line read/mark/read and fresh state
-   on repeated calls, then conditional state. Complete cell, capture-slot and
-   callable-use censuses must reject hidden writers and deferred consumers.
-   This lane owns ClassInitialization files and the corresponding source cases.
-2. Independently admit proved Boolean origins such as Bootstrap's `!1` and
-   `!0` in DOM local state. The current proof requires direct BooleanAttr
-   stores, and its leaf-body whitelist separately rejects the numeric producer.
-   Ordinary class lifting and CTJS UnaryOp do not fold these expressions; the
-   existing exactUnary helper is restricted to custom iterator bodies. Start
-   with separate owner-origin, helper-store and combined raw/JS witnesses.
-   Preserve original expressions and effects for full body/type reproof.
-   This lane owns DOM source files and can run beside the class-retention lane.
-3. Prove typed callable and self identity, then a session-owned transition
-   record shared by timer/listener handles. It needs explicit element/document
-   borrows, cancellation and destruction rules; a stack borrow cannot survive
-   an entry return. A unique record owned until the existing timeout fires,
-   with the listener borrowing it, is one source-based candidate. Completion
-   removes the listener and sets the flag, making the later timeout a no-op.
-   This remains a design inference pending cancellation, reentrancy and
-   document-lifetime proofs. Test real completion, fallback, recursive dispatch
-   and teardown before claiming deferred support.
+1. Extend class transport to If-only synchronous calls, reads and later stores
+   after unconditional Boolean initialization. Keep the cell and callback
+   creators in the owner block initially. Project ordering only through
+   bounded If ancestry, charge each participating ancestor and retain full
+   creator/caller/slot/effect checks. Reuse the existing DOM state threading;
+   test both arms, missing else, nesting, original snapshots/results, repeated
+   methods, aliases and distinct documents. Branch-local callback creation
+   needs a separate creator-to-call dominance proof. This author owns exact
+   ClassInitialization paths and the corresponding class fixtures.
+2. Independently prove a narrower DOM-source lifetime for a cell initialized
+   only inside one arm, with every read, write and synchronous borrower
+   dominated by that initialization in the same arm. Measure a raw-IR/JS
+   witness first. The existing DOM proof requires initialization before every
+   participating branch; it does not yet support this shape. Preserve the
+   untouched edge and all original effects rather than hoisting or freezing
+   the value. Reject cross-arm/join reads, before-store calls and deferred
+   borrowers. This author can own disjoint DOM/Source paths and raw fixtures;
+   integration with class transport is a later frozen composition checkpoint.
+3. Prove typed callable and self identity, then an owned transition record
+   shared by timer/listener handles. Bootstrap's listener captures six slots
+   and one event formal; its timer captures three slots. Both exceed the
+   current flat one-cell leaf proof. A unique record owned until the pending
+   timeout fires, with the listener borrowing its stable pointee, is a design
+   candidate. Cancellation must remove listeners before deletion, reentrant
+   callbacks must retain an active owner, and element/document borrows must
+   remain valid. Never borrow a registry vector row across callback execution.
+   Real completion, fallback, recursive dispatch and teardown need focused
+   native/browser parity checks before deferred support is claimed.
+
+General completion arithmetic remains a separate compiler prerequisite. The
+new negative dispatch controls preserve its observed boundary; do not widen
+production solely to convert them into positive cloning coverage. The
+validator can prepare exact baseline and rollback controls while these design
+and implementation lanes proceed, then test immutable candidates serially.
+Keep the current limit of one dependent feature per author while a gate runs.
 
 The current measured evidence and proposed follow-up details are archived in
-`/home/alex/.ctbrowser-auto/codex/ctcompile/artifacts/2026-10-04-native-stack-4/`:
-`next-boundary.md`, `state-author/next-boundary.md`,
-`defaults-author/conditional-cell-boundary.md` and `validation/final-gate/`.
+`/home/alex/.ctbrowser-auto/codex/ctcompile/artifacts/2026-10-04-native-stack-5/`:
+`captures-author/next-boundary.md`, `root/next-boundary.md`,
+`validation/closed-3cd860039/` and `validation/final-gate/`.
 Future admissions listed above have not been measured.
 
 The public timer/listener cores are prerequisites, not native callback ownership
