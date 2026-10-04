@@ -61,7 +61,9 @@ METHODS = r"""function methods() {
     (typeof first === 'symbol' ? ':type' : ':wrong');
 }
 """
-METHOD_TRANSCRIPT = "copy:fresh:loop:value:absent:text:undefined:empty:nul:unicode:known:distinct:truthy:type"
+METHOD_TRANSCRIPT = (
+    "copy:fresh:loop:value:absent:text:undefined:empty:nul:unicode:known:distinct:truthy:type"
+)
 DESCRIPTIONS = r"""function descriptions() {
   let key = Symbol('saved');
   const saved = key.description;
@@ -104,9 +106,7 @@ PARAMETER_STATE = """function parameterState(first, second, text, count, enabled
   return enabled ? Symbol(text) : key;
 }
 """
-PARAMETER_DESCRIPTION = (
-    "function parameterDescription(key) { return key.description; }\n"
-)
+PARAMETER_DESCRIPTION = "function parameterDescription(key) { return key.description; }\n"
 PARAMETER_TEXT = "function parameterText(text) { return text; }\n"
 PARAMETER_NUMBER = "function parameterNumber(value) { return value; }\n"
 PARAMETER_BOOLEAN = "function parameterBoolean(value) { return value; }\n"
@@ -180,9 +180,7 @@ HELPER_EQUALITY = """function helperEquality(number, flag, count) {
 }
 """
 # Preserve the complete former global-helper refusal as its first positive.
-GLOBAL_HELPER = (
-    "function helper() { return Symbol.iterator; } function bad() { return helper(); }"
-)
+GLOBAL_HELPER = "function helper() { return Symbol.iterator; } function bad() { return helper(); }"
 GLOBAL_STATE = """function globalState(first, second, text, count, enabled) {
   const key = cycleGlobal(first, second, count);
   return enabled ? makeGlobal(text) : selectGlobal(key, first, false);
@@ -2158,9 +2156,7 @@ def number_escape_check(call, value):
     if math.isnan(value):
         return f"std::isnan({call}.value())"
     # Compare the sign too: -0 must stay -0.
-    magnitude = (
-        "std::numeric_limits<double>::infinity()" if math.isinf(value) else abs(value)
-    )
+    magnitude = "std::numeric_limits<double>::infinity()" if math.isinf(value) else abs(value)
     negative = math.copysign(1, value) < 0
     return (
         f"{call}.value() == {'-' if negative else ''}{magnitude} && "
@@ -2169,9 +2165,7 @@ def number_escape_check(call, value):
 
 
 for name, (source, expected) in NUMBER_ESCAPE_WITNESSES.items():
-    result = {bool: "js_boolean_t", str: "js_string", float: "ctnative::js_num"}[
-        type(expected[0])
-    ]
+    result = {bool: "js_boolean_t", str: "js_string", float: "ctnative::js_num"}[type(expected[0])]
     CASES[name] = (
         source,
         f"""
@@ -2229,9 +2223,7 @@ for name, (source, _) in UNDEFINED_WITNESSES.items():
     method = "charat" if name == "default-index-charat-undefined" else "slice"
     checks = CASES[f"string-index-{method}-missing"][1]
     if len(PARAMETER_TYPES[name]) == 1:
-        checks = checks.replace(", ctnative::js_num)", ")").replace(
-            ", ctnative::js_num{0.0}", ""
-        )
+        checks = checks.replace(", ctnative::js_num)", ")").replace(", ctnative::js_num{0.0}", "")
     CASES[name] = source, checks, "true\n"
 CASES["string-undefined-indices"] = (
     UNDEFINED_INDICES["string-undefined-indices"],
@@ -2346,11 +2338,7 @@ CASES["number-nested-add"] = (
 )
 for name, (source, expected) in NEGATED_PRIMITIVE_WITNESSES.items():
     parameter = "js_boolean_t" if name.startswith("primitive-") else "ctnative::js_num"
-    argument = (
-        "js_boolean_t{false}"
-        if name.startswith("primitive-")
-        else "ctnative::js_num{0.0}"
-    )
+    argument = "js_boolean_t{false}" if name.startswith("primitive-") else "ctnative::js_num{0.0}"
     CASES[name] = (
         source,
         "    using namespace ctnative;\n"
@@ -2547,56 +2535,30 @@ def oracle(args):
         + CAPTURE_DESCRIPTION
         + "".join(DESCRIPTION_GUARDS.values())
         + "".join(
-            body
-            for name, body in STRING_METHODS.items()
-            if name not in NESTED_PREFIX_WITNESSES
+            body for name, body in STRING_METHODS.items() if name not in NESTED_PREFIX_WITNESSES
         )
         + "".join(STRING_INDICES.values())
-        + "".join(
-            body for name, body in STRING_SLICES.items() if name != "string-slice-end"
-        )
+        + "".join(body for name, body in STRING_SLICES.items() if name != "string-slice-end")
         + "".join(
             body
             for name, body in SIGNED_SLICES.items()
             if name not in ("string-slice-negative", "string-slice-end-negative")
         )
+        + "".join(body for name, body in SIGNED_CHARAT.items() if name != "string-charat-negative")
         + "".join(
-            body
-            for name, body in SIGNED_CHARAT.items()
-            if name != "string-charat-negative"
+            body for name, body in FRACTIONAL_INDICES.items() if name not in FRACTIONAL_WITNESSES
+        )
+        + "".join(body for name, body in WIDE_INDICES.items() if name not in WIDE_WITNESSES)
+        + "".join(body for name, body in DEFAULT_INDICES.items() if name not in DEFAULT_WITNESSES)
+        + "".join(
+            body for name, body in UNDEFINED_INDICES.items() if name not in UNDEFINED_WITNESSES
         )
         + "".join(
-            body
-            for name, body in FRACTIONAL_INDICES.items()
-            if name not in FRACTIONAL_WITNESSES
+            body for name, body in PRIMITIVE_INDICES.items() if name not in PRIMITIVE_WITNESSES
         )
+        + "".join(body for name, body in DIVISION_INDICES.items() if name not in DIVISION_WITNESSES)
         + "".join(
-            body for name, body in WIDE_INDICES.items() if name not in WIDE_WITNESSES
-        )
-        + "".join(
-            body
-            for name, body in DEFAULT_INDICES.items()
-            if name not in DEFAULT_WITNESSES
-        )
-        + "".join(
-            body
-            for name, body in UNDEFINED_INDICES.items()
-            if name not in UNDEFINED_WITNESSES
-        )
-        + "".join(
-            body
-            for name, body in PRIMITIVE_INDICES.items()
-            if name not in PRIMITIVE_WITNESSES
-        )
-        + "".join(
-            body
-            for name, body in DIVISION_INDICES.items()
-            if name not in DIVISION_WITNESSES
-        )
-        + "".join(
-            body
-            for name, body in SUBTRACTION_INDICES.items()
-            if name not in SUBTRACTION_WITNESSES
+            body for name, body in SUBTRACTION_INDICES.items() if name not in SUBTRACTION_WITNESSES
         )
         + "".join(
             body
@@ -2604,33 +2566,17 @@ def oracle(args):
             if name not in MULTIPLICATION_WITNESSES
         )
         + "".join(
-            body
-            for name, body in REMAINDER_INDICES.items()
-            if name not in REMAINDER_WITNESSES
+            body for name, body in REMAINDER_INDICES.items() if name not in REMAINDER_WITNESSES
         )
-        + "".join(
-            body
-            for name, body in ADDITION_INDICES.items()
-            if name not in ADDITION_WITNESSES
-        )
-        + "".join(
-            body for name, body in POWER_INDICES.items() if name not in POWER_WITNESSES
-        )
-        + "".join(
-            body
-            for name, body in NEGATED_INDICES.items()
-            if name not in NEGATED_WITNESSES
-        )
+        + "".join(body for name, body in ADDITION_INDICES.items() if name not in ADDITION_WITNESSES)
+        + "".join(body for name, body in POWER_INDICES.items() if name not in POWER_WITNESSES)
+        + "".join(body for name, body in NEGATED_INDICES.items() if name not in NEGATED_WITNESSES)
         + "".join(
             body
             for name, body in SIGNED_OPERAND_INDICES.items()
             if name not in SIGNED_OPERAND_WITNESSES
         )
-        + "".join(
-            body
-            for name, body in NESTED_INDICES.items()
-            if name not in NESTED_WITNESSES
-        )
+        + "".join(body for name, body in NESTED_INDICES.items() if name not in NESTED_WITNESSES)
         + "".join(
             body
             for name, body in NEGATED_PRIMITIVE_INDICES.items()
@@ -3007,9 +2953,7 @@ var symbol183StringUnicodeNestedPrefix = stringNestedPrefix('bs\u00e9') === 'pre
   stringNestedPrefix('\ud801\udc00') === 'other:empty:plain' &&
   stringNestedPrefix('\ud800') === 'other:empty:plain';
 """
-        + witnesses(
-            "NegatedPrimitive", NEGATED_PRIMITIVE_WITNESSES, 184, argument=", false"
-        )
+        + witnesses("NegatedPrimitive", NEGATED_PRIMITIVE_WITNESSES, 184, argument=", false")
         + r"""
 """
         + index_observers("NegatedPrimitive", 188)
@@ -3021,9 +2965,7 @@ var symbol183StringUnicodeNestedPrefix = stringNestedPrefix('bs\u00e9') === 'pre
             f"\nfunction observeNumberEscape{i}() {{ {body}return "
             + " && ".join(
                 f"Object.is(bad({json.dumps(text)}, {index}), {json.dumps(value)})"
-                for (text, index), value in zip(
-                    NUMBER_ESCAPE_INPUTS, expected, strict=True
-                )
+                for (text, index), value in zip(NUMBER_ESCAPE_INPUTS, expected, strict=True)
             )
             + f"; }}\nvar symbol{i}NumberEscapeWitness{i} = observeNumberEscape{i}();\n"
             for i, (body, expected) in enumerate(NUMBER_ESCAPE_WITNESSES.values(), 198)
@@ -3169,9 +3111,7 @@ var symbol183StringUnicodeNestedPrefix = stringNestedPrefix('bs\u00e9') === 'pre
         "StringUTF16DoubleNegatedIndices",
         *(f"NumberEscapeWitness{i}" for i in range(198, 228)),
     )
-    expected = "".join(
-        f"symbol{i:02}{name}=true\n" for i, name in enumerate(observations, 1)
-    )
+    expected = "".join(f"symbol{i:02}{name}=true\n" for i, name in enumerate(observations, 1))
     actual = run([args.reference, str(vm)]).stdout
     # The VM has matched Node here since its Unicode casing (8f61dcf9c) and
     # UTF-16 String indices (2b710a0d2); native uses the same Core API.
@@ -3199,9 +3139,7 @@ def standalone(args, native, name, checks, expected, compilers, includes, librar
         or dom.FUNCTION.search(text)
         or "ctnative.not_native" in text
     ):
-        raise RuntimeError(
-            f"{name}: expected one typed native export without a launcher"
-        )
+        raise RuntimeError(f"{name}: expected one typed native export without a launcher")
     deduced = args.work / f"{name}.deduced.mlir"
     run([args.opt, str(native), "--ctnative-print-deduced", "-o", str(deduced)])
     client = (
@@ -3212,9 +3150,7 @@ def standalone(args, native, name, checks, expected, compilers, includes, librar
     for mode, ir in (("explicit", native), ("deduced", deduced)):
         cpp = run([args.translate, "--mlir-to-cpp", str(ir)]).stdout
         if FORBIDDEN.search(cpp) or re.search(r"\bmain\s*\(", cpp):
-            raise RuntimeError(
-                f"{name}/{mode}: intrinsic export acquired a DOM/VM dependency"
-            )
+            raise RuntimeError(f"{name}/{mode}: intrinsic export acquired a DOM/VM dependency")
         source = args.work / f"{name}.{mode}.cpp"
         source.write_text(cpp + client)
         for index, compiler in enumerate(compilers):
@@ -3232,13 +3168,9 @@ def standalone(args, native, name, checks, expected, compilers, includes, librar
             if observed.stdout != expected:
                 raise RuntimeError(f"{name}/{mode}: native Symbol observations differ")
             if name == "absent-description-False" and mode == "explicit" and index == 0:
-                mutant, count = re.subn(
-                    r"ctnative::undefined_t\{\}", "ctnative::js_null_t{}", cpp
-                )
+                mutant, count = re.subn(r"ctnative::undefined_t\{\}", "ctnative::js_null_t{}", cpp)
                 if not count:
-                    raise RuntimeError(
-                        "description absence mutation did not replace undefined"
-                    )
+                    raise RuntimeError("description absence mutation did not replace undefined")
                 mutant_source = args.work / "null-description.cpp"
                 mutant_binary = args.work / "null-description"
                 mutant_source.write_text(mutant + client)
@@ -3263,9 +3195,7 @@ def standalone(args, native, name, checks, expected, compilers, includes, librar
             if name == "construct-False" and mode == "explicit" and index == 0:
                 mutant, count = re.subn(r"\bctnative::Symbol\(", "symbol_mutant(", cpp)
                 if count != 1:
-                    raise RuntimeError(
-                        "fresh identity mutation did not replace one construction"
-                    )
+                    raise RuntimeError("fresh identity mutation did not replace one construction")
                 mutant_source = args.work / "shared-identity.cpp"
                 mutant_binary = args.work / "shared-identity"
                 mutant_source.write_text(
@@ -3286,13 +3216,8 @@ def standalone(args, native, name, checks, expected, compilers, includes, librar
                         str(mutant_binary),
                     ]
                 )
-                if (
-                    "first != second"
-                    not in run([str(mutant_binary)], success=False).stderr
-                ):
-                    raise RuntimeError(
-                        "fresh identity mutation failed for an unrelated reason"
-                    )
+                if "first != second" not in run([str(mutant_binary)], success=False).stderr:
+                    raise RuntimeError("fresh identity mutation failed for an unrelated reason")
 
 
 def main():
@@ -3351,13 +3276,9 @@ def main():
             if string:
                 contract["initial_intrinsics"] = ["Symbol", "String"]
             for optimize in (False, True):
-                reason = refuse(
-                    ir, contract, f"{prefix}{name}-{optimize}", optimize=optimize
-                )
+                reason = refuse(ir, contract, f"{prefix}{name}-{optimize}", optimize=optimize)
                 if expect and name == expect[0] and expect[1] not in reason:
-                    raise RuntimeError(
-                        f"{prefix}{name}-{optimize}: other refusal\n{reason}"
-                    )
+                    raise RuntimeError(f"{prefix}{name}-{optimize}: other refusal\n{reason}")
 
     def stale(
         label,
@@ -3385,9 +3306,7 @@ def main():
             raise RuntimeError(f"changed {noun or what} accepted a stale fingerprint")
 
     for name, body in REFUSALS.items():
-        ir, contract = prepare(
-            args, name, f"function bad() {{ {body} }}\n", entry_name="bad"
-        )
+        ir, contract = prepare(args, name, f"function bad() {{ {body} }}\n", entry_name="bad")
         for optimize in (False, True):
             refuse(ir, contract, name + str(optimize), optimize=optimize)
     source_refusals = {
@@ -3455,8 +3374,7 @@ def main():
         ir, contract = prepare(
             args,
             "global-local-" + name,
-            "function bad(key) { return helper(key); }\n"
-            f"function helper(value) {{ {body} }}\n",
+            "function bad(key) { return helper(key); }\n" f"function helper(value) {{ {body} }}\n",
             entry_name="bad",
             parameter_types=["symbol"],
         )
@@ -3547,9 +3465,7 @@ def main():
     )
     ir, contract = accepted["capture-witness-local"]
     captures = [
-        name
-        for name in dom.FUNCTION.findall(ir.read_text())
-        if name.rsplit("$", 1)[0] == "helper"
+        name for name in dom.FUNCTION.findall(ir.read_text()) if name.rsplit("$", 1)[0] == "helper"
     ]
     if len(captures) != 1:
         raise RuntimeError("captured entry control did not find the source helper")
@@ -3839,9 +3755,7 @@ def main():
         raise RuntimeError("wide index NaN control did not replace its infinity")
     contract = dict(contract, module_sha256=fingerprint(args.opt, changed))
     for optimize in (False, True):
-        refuse(
-            changed, contract, f"wide-index-nan-literal-{optimize}", optimize=optimize
-        )
+        refuse(changed, contract, f"wide-index-nan-literal-{optimize}", optimize=optimize)
 
     family(
         "default-index-",
@@ -4229,13 +4143,9 @@ def main():
     if "fingerprint mismatch" not in refuse(stale, contract, "stale"):
         raise RuntimeError("changed Symbol identity accepted a stale fingerprint")
 
-    forged, manifest = prepare(
-        args, "forged", "function bad() { return typeof Symbol.for('x'); }"
-    )
+    forged, manifest = prepare(args, "forged", "function bad() { return typeof Symbol.for('x'); }")
     forged.write_text(
-        forge_module(
-            forged.read_text(), 'ctnative.host_proved = true, ctnative.host_reason = ""'
-        )
+        forge_module(forged.read_text(), 'ctnative.host_proved = true, ctnative.host_reason = ""')
     )
     manifest["module_sha256"] = fingerprint(args.opt, forged)
     refuse(forged, manifest, "forged-refused")
