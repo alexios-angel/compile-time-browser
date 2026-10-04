@@ -25,6 +25,7 @@
 #include <ctbrowser/shell/embedded_fonts.hpp>
 #include <ctbrowser/shell/image/images.hpp>
 #include <ctbrowser/shell/input.hpp>
+#include <ctbrowser/shell/listener_registry.hpp>
 #include <ctbrowser/shell/metrics.hpp>
 #include <ctbrowser/shell/net/net.hpp>
 #include <ctbrowser/shell/net/url.hpp>

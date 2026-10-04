@@ -7,8 +7,9 @@ endif()
 add_subdirectory(unit)
 add_subdirectory(js)
 
-# Public Core clients also run without the browser or interpreter.
-foreach(client core_basics core_text core_uri core_json)
+# Public Core clients and the header-only listener registry run without the
+# browser or interpreter.
+foreach(client core_basics core_text core_uri core_json listener_registry)
   get_target_property(_core_libs ctbrowser-test-${client} LINK_LIBRARIES)
   list(FILTER _core_libs EXCLUDE REGEX "^ctbrowser::(dom|script|style|layout|paint|raster|shell|ctbrowser)$")
   set_property(TARGET ctbrowser-test-${client} PROPERTY LINK_LIBRARIES "${_core_libs}")
@@ -48,12 +49,13 @@ target_include_directories(ctbrowser-test-vm_operators PRIVATE
 # three foreach blocks above) and do not include the umbrella - forcing it onto
 # them would reference libraries their link line drops. `selectors` is the
 # arbitrary full-engine anchor that builds the shared PCH. timer_queue uses
-# only its public scheduling header so its binary can be checked without Script.
+# only its public scheduling header, and listener_registry its registration
+# header, so their binaries can be checked without Script.
 set(_pch_anchor ctbrowser-test-selectors)
 target_precompile_headers(${_pch_anchor} PRIVATE <ctbrowser.hpp>)
 set(_pch_excluded core_basics core_text core_uri core_json
                   dom_token_list dom_element dom_shadow dom_dataset
-                  style_easing style_closest timer_queue)
+                  style_easing style_closest timer_queue listener_registry)
 get_property(_unit_targets DIRECTORY unit PROPERTY BUILDSYSTEM_TARGETS)
 get_property(_js_targets DIRECTORY js PROPERTY BUILDSYSTEM_TARGETS)
 foreach(_pch_target IN LISTS _unit_targets _js_targets)
