@@ -48,8 +48,8 @@ CASES = {
         "return before !== after;",
         "target.setAttribute('owner', seen); return before === after;",
     ),
-    # All state uses precede the switch, but structured-exit normalization
-    # clones the complete method. Its retained cell record must follow that copy.
+    # The frontend folds these identical returns to one common exit. The
+    # separate identity dispatch below forces the method-cloning proof seam.
     "structured-exit": METHOD.replace(
         "return before !== after;",
         "switch (target.hasAttribute('ready')) {\n"
@@ -132,6 +132,26 @@ def shape(text):
         assert all("upvalue_count = 1 : i32" in body[0] for body in leaves)
         return owner, cell, captures, writer, reader
     raise AssertionError("source lost exact shared load/store capture slots")
+
+
+def identity_dispatch(text):
+    """Preserve the oracle's return value while forcing a real IndexSwitch."""
+    owner, _, _, _, _ = shape(text)
+    returned = re.search(r"^    ctjs\.return (%\w+)", owner[0], re.M)
+    exited = re.search(r"^    ctjs\.frame_exit %\w+", owner[0], re.M)
+    predicate = list(re.finditer(r"(%\w+) = ctjs\.truthy %\w+", owner[0]))[-1][1]
+    assert exited.end() < returned.start()
+    dispatch = (
+        f"    %dispatch_index = arith.index_castui {predicate} : i1 to index\n"
+        '    %dispatch_result = "scf.index_switch"(%dispatch_index) <{cases = array<i64: 0>}> ({\n'
+        f"      scf.yield {returned[1]} : !ctjs.value\n"
+        "    }, {\n"
+        f"      scf.yield {returned[1]} : !ctjs.value\n"
+        "    }) : (index) -> !ctjs.value\n"
+    )
+    body = owner[0][: exited.start()] + dispatch + owner[0][exited.start() :]
+    body = body.replace(returned[0], "    ctjs.return %dispatch_result")
+    return text[: owner.start()] + body + text[owner.end() :]
 
 
 def events(name):
@@ -302,6 +322,10 @@ def main():
                     rf"ctjs\.unary not {re.escape(literal[1])}\b", body[0]
                 ), "source lost its original !0/!1 producer"
         if name == "structured-exit":
+            # Both dispatch arms return the original SSA snapshot. The key
+            # still takes both values in the oracle/native ready scenarios.
+            ir.write_text(identity_dispatch(ir.read_text()))
+            contract = dict(contract, module_sha256=dom.fingerprint(args.opt, ir))
             assert "scf.index_switch" in ir.read_text(), "fixture lost method cloning boundary"
         declared = dict(contract, initial_intrinsics=["__ctbrowser_class_defined"])
         for owned, optimize, manifest in dom.variants(declared):
@@ -314,8 +338,9 @@ def main():
             args, ir, declared, name, [0, 8], "{budget} did not exhaust Boolean capture proof"
         )
         refusals += 4
+        if name in ("read-write-read", "structured-exit"):
+            refusals += budget_boundary(args, ir, declared, subject=f"Class Boolean {name}")
         if name == "read-write-read":
-            refusals += budget_boundary(args, ir, declared, subject="Class Boolean capture")
             for label, valid, invalid in roots(ir.read_text()):
                 path = args.work / f"rooted-{label}.mlir"
                 path.write_text(valid)
