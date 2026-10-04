@@ -23,11 +23,23 @@ bool DOMSource::normalizeBooleanCell(ctjs::FuncOp function, unsigned depth) {
         !undefined(cell.getInitial())) {
         return refuse("DOM Boolean state requires a literal initialization");
     }
+    llvm::DenseSet<mlir::Operation *> stateBranches;
     for (mlir::OpOperand & use : cell.getResult().getUses()) {
         if (!step()) { return false; }
         auto * user = use.getOwner();
-        if (user->getBlock() != &block || !cell->isBeforeInBlock(user)) {
-            return refuse("DOM Boolean state requires flat ordered local uses");
+        auto * position = user;
+        unsigned nesting = 0;
+        while (position->getBlock() != &block) {
+            if (!step()) { return false; }
+            auto branch = llvm::dyn_cast_or_null<mlir::scf::IfOp>(position->getParentOp());
+            if (!branch || ++nesting == 64) {
+                return refuse("DOM Boolean state requires bounded local conditional uses");
+            }
+            stateBranches.insert(branch);
+            position = branch;
+        }
+        if (!cell->isBeforeInBlock(position)) {
+            return refuse("DOM Boolean state requires ordered local uses");
         }
         if ((llvm::isa<ctjs::RootOp>(user) && use.getOperandNumber() == 1) ||
             (llvm::isa<ctjs::CellGetOp, ctjs::CellSetOp>(user) && use.getOperandNumber() == 0) ||
@@ -39,26 +51,60 @@ bool DOMSource::normalizeBooleanCell(ctjs::FuncOp function, unsigned depth) {
     }
 
     llvm::SmallVector<ctjs::CallDirectOp> calls;
-    llvm::DenseSet<mlir::Operation *> selectedCalls, helpers;
-    bool initialized = static_cast<bool>(ctjs::constantAttr<ctjs::BooleanAttr>(cell.getInitial()));
-    for (auto & operation : block) {
-        if (!step(1 + operation.getNumOperands() + operation.getNumResults())) { return false; }
-        if (auto write = llvm::dyn_cast<ctjs::CellSetOp>(operation);
-            write && write.getCell() == cell.getResult()) {
-            if (!ctjs::constantAttr<ctjs::BooleanAttr>(write.getValue())) {
-                return refuse("DOM Boolean state stores must be literal Booleans");
+    const auto collect = [&](auto && self, mlir::Block & source, bool initialized,
+                             unsigned nesting) -> bool {
+        if (nesting == 64) { return refuse("DOM Boolean state conditional depth exhausted"); }
+        for (auto & operation : source) {
+            if (!step(1 + operation.getNumOperands() + operation.getNumResults())) { return false; }
+            if (stateBranches.contains(&operation)) {
+                if (!initialized) {
+                    return refuse("DOM Boolean state must be initialized before a conditional");
+                }
+                for (auto & region : operation.getRegions()) {
+                    if (!step()) { return false; }
+                    if (region.empty() && operation.getNumResults() == 0) { continue; }
+                    if (!region.hasOneBlock() || region.front().getNumArguments() ||
+                        region.front().empty()) {
+                        return refuse("DOM Boolean state requires complete conditional arms");
+                    }
+                    auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(region.front().back());
+                    if (!step(1 + (yield ? yield.getNumOperands() : 0))) { return false; }
+                    if (!yield || yield.getOperandTypes() != operation.getResultTypes() ||
+                        !self(self, region.front(), true, nesting + 1)) {
+                        return refuse("DOM Boolean state requires complete conditional yields");
+                    }
+                }
             }
-            initialized = true;
+            if (auto write = llvm::dyn_cast<ctjs::CellSetOp>(operation);
+                write && write.getCell() == cell.getResult()) {
+                if (!ctjs::constantAttr<ctjs::BooleanAttr>(write.getValue())) {
+                    return refuse("DOM Boolean state stores must be literal Booleans");
+                }
+                initialized = true;
+            }
+            if (auto read = llvm::dyn_cast<ctjs::CellGetOp>(operation);
+                read && read.getCell() == cell.getResult() && !initialized) {
+                return refuse("DOM Boolean state is read before initialization");
+            }
+            auto call = llvm::dyn_cast<ctjs::CallDirectOp>(operation);
+            if (!call || !llvm::is_contained(call->getOperands(), cell.getResult())) { continue; }
+            if (!initialized) {
+                return refuse("DOM Boolean state is borrowed before initialization");
+            }
+            calls.push_back(call);
         }
-        if (auto read = llvm::dyn_cast<ctjs::CellGetOp>(operation);
-            read && read.getCell() == cell.getResult() && !initialized) {
-            return refuse("DOM Boolean state is read before initialization");
-        }
-        auto call = llvm::dyn_cast<ctjs::CallDirectOp>(operation);
-        if (!call || !llvm::is_contained(call->getOperands(), cell.getResult())) { continue; }
+        return true;
+    };
+    if (!collect(collect, block,
+                 static_cast<bool>(ctjs::constantAttr<ctjs::BooleanAttr>(cell.getInitial())), 0)) {
+        return false;
+    }
+    llvm::DenseSet<mlir::Operation *> selectedCalls, helpers;
+    for (auto call : calls) {
+        if (!step()) { return false; }
         auto target = call.getTarget();
         const auto index = target ? functionIndex(target) : std::nullopt;
-        if (!initialized || !index || functions.lookup(*index) != target || target == function ||
+        if (!index || functions.lookup(*index) != target || target == function ||
             !target.isPrivate() || creations.lookup(*index) != 0 || target.getUpvalueCount() != 0 ||
             call.getArgs().size() != 1 || call.getArgs().front() != cell.getResult() ||
             target.getBody().front().getNumArguments() != ctjs::implicit_arguments + 1 ||
@@ -66,7 +112,6 @@ bool DOMSource::normalizeBooleanCell(ctjs::FuncOp function, unsigned depth) {
             !undefined(call.getCalleeValue()) || depth + callDepth.lookup(call) >= 63) {
             return refuse("DOM Boolean state requires initialized exact local leaf calls");
         }
-        calls.push_back(call);
         selectedCalls.insert(call);
         if (!helpers.insert(target).second) { continue; }
         // Keep the ordinary frame, dominance, completion and implicit-argument
@@ -168,23 +213,70 @@ bool DOMSource::normalizeBooleanCell(ctjs::FuncOp function, unsigned depth) {
     // Each read snapshots the current value at its original source position.
     // Keep every producer and unrelated effect for the complete DOM reproof;
     // only the already-proved local storage operations disappear.
-    mlir::Value current = cell.getInitial();
-    for (auto & operation : llvm::make_early_inc_range(block)) {
-        if (!step()) { return false; }
-        if (auto read = llvm::dyn_cast<ctjs::CellGetOp>(operation);
-            read && read.getCell() == cell.getResult()) {
-            for (auto & use : read.getResult().getUses()) {
-                (void)use;
-                if (!step()) { return false; }
+    const auto scalarize = [&](auto && self, mlir::Block & source, mlir::Value & current,
+                               unsigned nesting) -> bool {
+        if (nesting == 64) { return refuse("DOM Boolean state conditional depth exhausted"); }
+        for (auto & operation : llvm::make_early_inc_range(source)) {
+            if (!step()) { return false; }
+            if (stateBranches.contains(&operation)) {
+                // Retain the original result prefix and arm bodies. Only the
+                // private Boolean state becomes one additional value per edge.
+                if (!step(operationWork(&operation, true) + 1)) { return false; }
+                for (auto result : operation.getResults()) {
+                    for (auto & use : result.getUses()) {
+                        (void)use;
+                        if (!step()) { return false; }
+                    }
+                }
+                mlir::OperationState built(operation.getLoc(), operation.getName());
+                built.addOperands(operation.getOperands());
+                built.addTypes(operation.getResultTypes());
+                built.addTypes(current.getType());
+                built.addAttributes(operation.getAttrs());
+                for (auto & region : operation.getRegions()) {
+                    if (!step()) { return false; }
+                    built.addRegion()->takeBody(region);
+                }
+                mlir::OpBuilder at(&operation);
+                auto * joined = at.create(built);
+                for (auto & region : joined->getRegions()) {
+                    if (!step()) { return false; }
+                    auto armState = current;
+                    if (region.empty()) {
+                        if (!step(2)) { return false; }
+                        auto & arm = region.emplaceBlock();
+                        mlir::OpBuilder inside(&arm, arm.end());
+                        mlir::scf::YieldOp::create(inside, operation.getLoc(), armState);
+                        ++operationCount;
+                    } else {
+                        if (!self(self, region.front(), armState, nesting + 1)) { return false; }
+                        auto * yield = region.front().getTerminator();
+                        if (!step(1 + yield->getNumOperands())) { return false; }
+                        yield->insertOperands(yield->getNumOperands(), armState);
+                    }
+                }
+                operation.replaceAllUsesWith(
+                    joined->getResults().take_front(operation.getNumResults()));
+                current = joined->getResults().back();
+                operation.erase();
+            } else if (auto read = llvm::dyn_cast<ctjs::CellGetOp>(operation);
+                       read && read.getCell() == cell.getResult()) {
+                for (auto & use : read.getResult().getUses()) {
+                    (void)use;
+                    if (!step()) { return false; }
+                }
+                read.getResult().replaceAllUsesWith(current);
+                read.erase();
+            } else if (auto write = llvm::dyn_cast<ctjs::CellSetOp>(operation);
+                       write && write.getCell() == cell.getResult()) {
+                current = write.getValue();
+                write.erase();
             }
-            read.getResult().replaceAllUsesWith(current);
-            read.erase();
-        } else if (auto write = llvm::dyn_cast<ctjs::CellSetOp>(operation);
-                   write && write.getCell() == cell.getResult()) {
-            current = write.getValue();
-            write.erase();
         }
-    }
+        return true;
+    };
+    mlir::Value current = cell.getInitial();
+    if (!scalarize(scalarize, block, current, 0)) { return false; }
     if (!eraseRootedUses(cell.getResult(), "DOM Boolean state has a residual use")) {
         return false;
     }
