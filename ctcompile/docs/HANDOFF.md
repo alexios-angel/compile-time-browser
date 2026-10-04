@@ -22,6 +22,114 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Forwarded callback captures and public listeners, 2026-10-04 UTC
+
+**Landed together: `47beeaf52` on `ctcompile-v1`, based on `5ad1d7498`.**
+The independently reviewed and tested source tree is
+`eeec31e01fa7f32bf93716a3beef9a92ad757637`. Feature commits are `e74a22a37`
+(forwarded primitive callback captures), `85db74721` (public listener registry),
+`2dfa960b3` (VM listener adapter and regressions), and `fcaede30`
+(comment corrections). The validator first tested compiler/registry commit
+`c92372c4` while the browser author completed the dependent adapter. Both authors
+used separate worktrees; only the validator synchronized or built on the devbox.
+
+Class initialization now resolves forwarded captures through an exact parent
+callee, unique creator, valid slot and undefined placeholder to an ordered
+fixed primitive initialization. A charged class-local use census rejects hidden
+sibling/descendant writes and escapes; a 64-edge limit bounds forwarding. Full
+callback body/use checks and rollback remain. The unchanged previous forwarded
+refusal is now a positive case. New differential sources combine all five
+primitive kinds, mixed local/forwarded captures and helpers. Shared mutable,
+object/input, function/self and deferred captures remain unproved.
+
+The public `ctbrowser::shell::listener_registry<Payload>` owns metadata and typed
+payloads in one ordinary vector, including move-only payloads. The existing VM
+binding delegates registration, phase snapshots, membership, removal and reap
+operations to it. It retains propagation, callback roots, realms, exceptions,
+microtasks and outermost-dispatch cleanup. Target/callback/capture identity,
+duplicate handling, once-before-invoke, handler position and abort/document/media
+cleanup preserve their prior behavior. Native and VM witnesses also preserve
+same-identity remove/re-add selection and nested dispatch. The registry does
+not dispatch events or prove an executing/deferred payload's lifetime.
+
+A concrete adjacent bug was measured and fixed: a handler-property getter can
+remove/re-add listeners and move another row into the selected row's slot. The
+old code then read the wrong passive flag. The unchanged witness returned
+`1,true,false` before the adapter and **`1,false,true`** afterward because the
+flag is now copied before the reentrant getter. A focused regression retains
+this behavior; the original eight-line listener witness is otherwise identical.
+
+**Measured, devbox only:** explicit `tools/remote-build.sh` targets were
+`ctjs-opt ctjs-translate ctcompile-test-native-reference` plus
+`ctbrowser-test-{event_dispatch,event_handlers,events_wpt,frames,bindings_rooting,event_listeners,media_query_list,document_write,listener_registry}`.
+The final build passed **139 affected steps**; the sync/configure/build command
+took **130 s**. The exact CTest selection
+`^(event_dispatch|event_handlers|events_wpt|frames|bindings_rooting|event_listeners|media_query_list|document_write|listener_registry)$`
+passed **9/9 in 1.46 s**. A standalone public-header client also compiled and ran
+with GCC 13 and pinned Clang, with no `ctbrowser::script` symbols. All 22 changed
+source hashes match the devbox. The eight existing browser executables passed
+before the adapter in three focused groups: 5/5 in 1.40 s, 1/1 in 0.04 s and
+2/2 in 0.06 s.
+
+The exact lit filter
+`^ctcompile :: CTNative/Browser/native-class-dom-(callback-forwarding|callback-captures|callback-regions|callbacks)[.]test$`
+passed **4/4 in 220.60 s**. Observed driver results: callback captures
+**96 native / 96 refusals**, callbacks **96 / 95**, structured calls **32 / 50**,
+and forwarding **48 / 81**.
+Total: **272 native executions, 322 refusals and 16 Node/VM source comparisons**.
+Both DOM providers, both optimization policies,
+explicit/deduced C++, GCC/pinned Clang and generated-source/`nm` no-Script guards
+passed; all 136 current generated C++ files also passed an independent no-Script
+text check. Separate early preflights passed 16 lowerings, 60 source refusals,
+16 contract/budget refusals, six valid-IR mutation refusals and three verifier
+rejections; they are not added to the final runtime totals. The original three
+new positive sources refused in all 12 baseline provider/policy variants.
+
+`tools/format.sh --check` still reports exactly the **83 pre-existing diagnostics**
+in `ctbrowser/lib/Script/builtins/collections/keyed.cpp`; baseline and final logs
+are byte-identical. All 18 changed C++ files, two Python drivers and
+`git diff --check` pass. Full CTest/lit, Map reruns, broad corpus/native matrices,
+WPT/test262, Windows, sanitizers and performance measurements were not run.
+Captured filter/replace variants were not directly exercised.
+No push was made. Exact commands, hashes, review, source patch and captured
+outputs are retained at
+`/home/alex/.ctbrowser-auto/codex/ctcompile/artifacts/2026-10-04-native-stack-2/`.
+The final evidence archive retains 915 current-run native text artifacts;
+SHA256 `0ac866cb3a534a0594c36aabc3d5c7af73a317e958a422bfcb30e84537414cb5`.
+
+**Next native/Bootstrap boundary:** the unchanged closed vendor prefix and
+complete Button source still agree in Node/VM on retained input, exact Data
+registration, empty config and two toggles. Native lowering now refuses
+**`native DOM class: class local cell has a nonlocal or unordered use`**.
+Shared mutable state, function/self identity and
+deferred transition callback ownership remain required; the complete dormant
+`_queueCallback` body must remain checked.
+
+The source walk points first to transition helper `fn$43`: its callback-parameter
+cell `%962` is captured by listener creation `%990` inside an `scf.if` arm.
+`proveCells` only lifts read positions through structured parents, so this
+branch-local capture fails its same-block check. This attribution is a
+deterministic source/IR inference, not an instrumented execution. Conditional
+default-parameter writes are a separate later hurdle. A bounded branch-local
+capture proof should first admit a fixed literal captured by a synchronous
+callback created/called inside a later `if` arm, preserving ordering, lifetime
+and the complete use census. Conditional writes need real state selection;
+the same ordering relaxation would incorrectly freeze a supplied argument.
+
+An independent prerequisite is one Boolean cell borrowed by exact synchronous
+helpers in DOM source expansion. Reuse the existing call inliner, then replace
+reads/writes with the current SSA value in source order before fixed-cell
+resolution. Preserve every other producer for the complete DOM proof. Next,
+retain class-local storage/callbacks through class normalization and ordinary
+closure lifting. Simply admitting upvalue stores would freeze or erase shared
+state. The read-only trace, schematic IR and proposed refusal controls are in
+`next-boundary.md` in the artifact directory; these future admissions have not
+been measured. A typed owner must later keep element/document borrows alive
+through removal, cancellation, reentrant completion and teardown. W -> B -> U
+publication, method-used/mutable `_element`, computed `DATA_KEY`, config/Set,
+entry/session ownership and the native application driver remain later work.
+Native Bootstrap is not complete.
+
 ## Parallel native callback and timer work, 2026-10-04 UTC
 
 **Landed together: `c277883bd` on `ctcompile-v1`, based on `a4b5ee2d8`.**

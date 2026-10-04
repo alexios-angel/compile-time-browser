@@ -48,27 +48,67 @@ The timer API owns scheduling metadata. Callback objects and their lifetimes
 remain a separate proof. The primitive capture feature copies only proved
 literal values; it does not authorize arbitrary captured cells.
 
-## Next features, based on the retained Bootstrap trace
+## Second feature wave (landed 2026-10-04)
 
-1. Prove synchronous sibling callbacks sharing one Boolean cell, reusing native
-   closure lifting and primitive-cell storage. A witness should read `false`,
-   call a sibling that stores `true`, then observe `true`. Hidden writers,
-   escape, delayed calls and object/input captures must remain diagnostics.
-2. Extract listener registration/membership and phase snapshots into a public
-   Shell core while retaining the existing event dispatcher. Preserve exact
-   callback/capture identity, duplicate registration, once-before-invoke,
-   removal/re-addition, nested dispatch and passive/stop semantics. Native code
-   must not grow a second DOM dispatcher.
-3. Prove forwarded capture slots and a typed, session-owned transition record
-   shared by timer/listener handles. It needs explicit element/document borrows, callable and self
-   identity, cancellation and destruction rules; a stack borrow cannot survive
-   an entry return. Test real transition completion, timeout fallback, recursive
-   dispatch and teardown before claiming deferred callback support. One source-based
-   candidate is a unique transition record owned until the existing timeout fires,
-   with the listener borrowing it; completion removes the listener and sets the
-   flag, so the later timeout becomes a no-op. This remains a design inference
-   pending cancellation, reentrancy and document-lifetime proofs.
+Combined commit `47beeaf52` passed 272 native executions, 322 refusals,
+16 Node/VM source comparisons and nine browser test executables. The unchanged
+closed Button now refuses at a nonlocal/unordered class-cell use. The detailed
+source/IR trace identifies a branch-local listener capture as the first such
+use; conditional writes and shared state are separate later hurdles.
 
-These are prerequisite boundaries, not a claim that complete native Bootstrap
-works. The retained vendor Button probe must continue to check its original
-source, effects and Node/VM behavior as each proof advances.
+The compiler checkpoint proves fixed primitive captures forwarded through
+exact enclosing slots. It uses a class-local, budgeted use census and keeps
+mutable, escaping, function/self and deferred captures as diagnostics. New
+mixed-capture/helper cases and the original forwarded source exercise it.
+
+The browser checkpoints extract `shell::listener_registry<Payload>` and adapt
+all existing listener consumers. One vector owns typed payloads and metadata;
+the existing dispatcher retains propagation, realms, exceptions and microtasks.
+Native/VM tests preserve identity-based phase snapshots and nested once behavior.
+A separate before/after witness verifies copying the selected passive flag
+before a handler getter can invalidate the registration row.
+
+The validator tested A3 plus the registry first while the adapter author kept
+working. It then assembled all frozen commits for the final focused gate. See
+the handoff for exact revisions, commands, counts and remaining limitations.
+
+## Next features, based on source and IR traces
+
+1. Prove a fixed literal captured by a synchronous callback created/called
+   inside a later `if` arm. Project exact capture uses to their enclosing
+   position in both the class cell census and literal-order proof. Preserve
+   the full writer/escape/use census and test both branches. Do not apply that
+   relaxation to conditional cell writes: a default assignment must not erase
+   a supplied argument. This is the smallest proposed construct suggested by
+   the latest Button refusal; typed parameter/deferred captures remain later.
+2. Prove one local Boolean cell borrowed by exact synchronous direct helpers
+   in DOM source expansion. Reuse the existing call inliner, then replace reads
+   and writes with the current SSA value in source order. Start with one owning
+   block and literal initialization/stores. Keep the other operations for the
+   complete DOM effect/type proof. Unknown callees, escaped/forwarded addresses,
+   non-Boolean stores, reads before initialization and unsupported regions
+   remain diagnostics. Caller-supplied native annotations provide no proof.
+3. Preserve that cell and exact leaf callbacks through class normalization and
+   existing closure lifting. Class fixed-value maps currently erase storage;
+   the class and DOM stages both need explicit support. The positive witness
+   reads `false`, calls a sibling that stores `true`, then observes `true`, with
+   fresh state on repeated method calls. Test hidden writers, shallow budget
+   exhaustion, late failure/rollback and complete dormant bodies.
+4. Prove typed callable and self identity, then a session-owned transition
+   record shared by timer/listener handles. It needs explicit element/document
+   borrows, cancellation and destruction rules; a stack borrow cannot survive
+   an entry return. A unique record owned until the existing timeout fires,
+   with the listener borrowing it, is one source-based candidate. Completion
+   removes the listener and sets the flag, making the later timeout a no-op.
+   This remains a design inference pending cancellation, reentrancy and
+   document-lifetime proofs. Test real completion, fallback, recursive dispatch
+   and teardown before claiming deferred support.
+
+The detailed read-only trace and schematic IR are archived in
+`/home/alex/.ctbrowser-auto/codex/ctcompile/artifacts/2026-10-04-native-stack-2/next-boundary.md`.
+These future admissions have not been measured.
+
+The public timer/listener cores are prerequisites, not native callback ownership
+proofs. Preserve the original vendor Button probe, all source bodies/effects,
+and Node/VM behavior as each boundary advances. Native Bootstrap remains
+incomplete.
