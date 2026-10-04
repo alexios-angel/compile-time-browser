@@ -238,6 +238,7 @@ struct classInitialization {
     ctjs::FuncOp helperCallTarget(mlir::Operation * op, bool throughCells = false);
     static bool undefined(mlir::Value value) { return ctjs::isUndefinedConstant(value); }
     ctjs::FuncOp target(ctjs::CreateClosureOp closure);
+    bool selectParameterDefaults(ctjs::FuncOp entry);
     bool proveCells(ctjs::FuncOp entry);
     bool proveMaps();
     mlir::Value sourceValue(mlir::Value value);
