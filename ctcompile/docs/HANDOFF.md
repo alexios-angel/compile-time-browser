@@ -22,6 +22,104 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Parallel native callback and timer work, 2026-10-04 UTC
+
+**Landed together: `c277883bd` on `ctcompile-v1`, based on `a4b5ee2d8`.**
+The reviewed and tested source tree is
+`1ed7a78a3a5644f90b1019ab643950ceb887a47f`. The feature commits are
+`ecd5b730c` (fixed callback captures), `a4302efa4` (structured callback calls),
+`9e2dc6c38` (literal/global undefined fixture correction), `35fe4df20`
+(public timer queue), `2e3790fe6` (VM timer adapter), and `d71bc8a25`
+(executable modes for two build/format scripts).
+
+Two authors worked in isolated worktrees while an independent validator tested
+frozen revisions in one warm devbox directory. Each author prepared at most one
+untested dependent feature. The integrator separately reviewed both stacks and
+landed only the combined approved tree. The retained plan is
+[plans/native-bootstrap-stacks.md](plans/native-bootstrap-stacks.md).
+
+Class initialization now copies proved local primitive literals into
+synchronous callbacks, using the shared immutable-cell census to reject hidden
+sibling writers and escapes. Captures must have exact slots and ordered local
+initialization. Calls may be nested in supported structured conditionals and
+loops after the closure definition. Exact callee, receiver, arity, implicit
+arguments, full-body effect proof and budget/rollback checks remain. Five new
+capture sources and two structured-call sources exercise exact DOM write
+order, return values, repeated calls, aliases and distinct documents. Object,
+input, mutable, forwarded, self-observing and deferred captures remain unproved.
+The new focused cases cover ordinary synchronous calls; captured filter/replace
+callback variants were not separately measured.
+
+The public `ctbrowser::shell::timer_queue` owns only value-based scheduling
+metadata and exposes a borrowed read-only registration view. The existing VM
+binding now delegates due selection, cancellation, interval deadlines and
+cleanup to it. Callback objects, GC roots, realms, exceptions, microtasks and
+the shared timer/rAF ID allocator remain in the binding. Focused native and VM
+cases preserve registration order, host/page filtering, cancellation during a
+microtask, scheduling during a callback, interval rearming and duplicate IDs.
+This provides a native browser API prerequisite; the compiler does not yet
+emit deferred timers or prove their callback ownership.
+
+**Measured, devbox only:** explicit `tools/remote-build.sh` targets were
+`ctjs-opt ctjs-translate ctcompile-test-native-reference
+ctbrowser-test-timer_queue ctbrowser-test-page_async ctbrowser-test-frames
+ctbrowser-test-event_handlers ctbrowser-test-promise_rejection_events`.
+The combined build passed 135 affected steps. The exact CTest selection
+`^(timer_queue|page_async|frames|event_handlers|promise_rejection_events)$`
+passed **5/5 in 0.36 s**, and the public timer executable has no
+`ctbrowser::script` symbols. Pre-change browser baselines passed 3/3 in 0.34 s
+and the separately selected promise/details regression passed 1/1 in 0.02 s.
+All 28 positive lowering preflights passed; the two structured-call sources
+refused in all eight variants on the A1 parent.
+
+The exact lit filter
+`^ctcompile :: CTNative/Browser/native-class-dom-(callback-captures|callback-regions|callbacks|map)[.]test$`
+passed **4/4 in 267.22 s** with two workers.
+Observed cases: callbacks **96 native / 95 refusals**, captured Maps **96 / 102**,
+fixed callback captures **80 / 96**, and structured callback calls **32 / 50**.
+Total: **304 native executions, 343 refusals and 18 source checks against both
+Node and the VM**. Preflights and the closed Button probe are separate.
+GCC and pinned Clang, both optimization policies, both DOM providers,
+explicit/deduced C++, and generated-source/`nm` no-Script checks passed.
+All 20 changed local/devbox file hashes match.
+
+A clean Linux worktree exposed tracked non-executable modes hidden by the WSL
+checkout: the first baseline attempt stopped at `fetch-angle.sh` with exit126.
+Only the executable bits of that script and `tools/format.sh` changed; both
+passed `bash -n`. The first mixed-capture preflight also caught a fixture
+reading the global `undefined`; it now uses literal `void 0`, with the original
+source retained as a refusal. Neither issue widened the compiler proof.
+
+`tools/format.sh --check` still reports exactly **83 pre-existing diagnostics**
+in `ctbrowser/lib/Script/builtins/collections/keyed.cpp`. Baseline and final logs
+are byte-identical; all 11 changed C++ files, all three Python drivers, shell
+syntax and `git diff --check` pass. Full CTest/lit, broad corpus/native matrices,
+WPT/test262, Windows, sanitizers and performance measurements were not run.
+No push was made. Commands, review, queue state, source hashes and captured
+outputs are retained in
+`/home/alex/.ctbrowser-auto/codex/ctcompile/artifacts/2026-10-04-native-stack/`.
+The final devbox evidence archive is 408,220 bytes, including 1,008 native text
+outputs; SHA256 `8d5a623dfe7a640cf787bff47251b5e37a3eb4df4afca845b2541f91dd6801e0`.
+
+**Next native/Bootstrap boundary:** the unchanged closed vendor prefix and complete Button
+class still agree in Node/VM on retained input, exact Data registration, empty
+config and two toggles. Native lowering now refuses **`native DOM class: class
+callback requires exact local capture slots`**, replacing the prior implicit
+callee refusal.
+The retained transition helper has a listener sharing a mutable Boolean,
+captured completion/element values and its own identity with a deferred timer.
+The next independent prerequisites are synchronous shared-Boolean capture
+proof and public listener registration/membership, preserving the existing
+event dispatcher. Forwarded slots, typed callable and self identity also need
+proof. After those, a typed owner must keep the transition record
+and element/document borrows alive through cancellation and reentrant
+completion. A timer-owned record with a borrowing listener is a source-based
+design candidate, not implemented or measured behavior. The complete dormant
+`_queueCallback` body must remain checked. W -> B -> U publication, method-used
+or mutable `_element`, computed `DATA_KEY`, config/Set, entry/session ownership
+and the native application driver remain later work. Native Bootstrap is not
+complete.
+
 ## Synchronous local helpers in native DOM classes, 2026-10-04 UTC
 
 **Landed: `5f9f3a878` on `ctcompile-v1`, based on `6ff31283b`.**
