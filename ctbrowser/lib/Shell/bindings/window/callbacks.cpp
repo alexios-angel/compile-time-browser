@@ -67,26 +67,18 @@ std::size_t dom_bindings::run_timers(bool queued_tasks_only) {
     // iterating the live list while it does is how a timer that
     // re-registers itself becomes an infinite loop inside one tick.
     std::vector<timer> due;
-    for (timer & t : timers_) {
-        if (!t.cancelled && t.due_ms <= now_ms_ && !(queued_tasks_only && t.page_timer)) {
-            due.push_back(t);
-        }
+    const auto entries = timer_schedule_.entries();
+    for (std::size_t i = 0; i < timers_.size(); ++i) {
+        if (entries[i].due(now_ms_, queued_tasks_only)) { due.push_back(timers_[i]); }
     }
     for (const timer & t : due) {
-        const auto still = std::ranges::find_if(
-            timers_, [&](const timer & x) { return x.id == t.id && !x.cancelled; });
-        if (still == timers_.end()) { continue; }
+        const auto index = timer_schedule_.find_active(t.id);
+        if (!index) { continue; }
+        const timer & still = timers_[*index];
         // A REMOVED FRAME'S TIMER is dropped, not run: its task's document is
         // no longer fully active (settimeout-detached-iframe.html).
-        if (still->window.is_heap() && find_bindings_of(still->window) == nullptr) {
-            still->cancelled = true;
-            continue;
-        }
-        if (still->repeating) {
-            still->due_ms = now_ms_ + still->interval_ms;
-        } else {
-            still->cancelled = true;
-        }
+        const bool eligible = !still.window.is_heap() || find_bindings_of(still.window) != nullptr;
+        if (!timer_schedule_.begin(t.id, now_ms_, eligible)) { continue; }
         // BEHIND A FENCE, and REPORTED TO THE PAGE: HTML 8.6's timer task
         // "reports the exception" - `window.onerror` hears a throw in a
         // setTimeout callback (window-runtime-error.html), where before it
@@ -133,7 +125,16 @@ std::size_t dom_bindings::run_timers(bool queued_tasks_only) {
         // timer, not after the whole batch.
         cx_->drain_microtasks();
     }
-    std::erase_if(timers_, [](const timer & t) { return t.cancelled; });
+    const auto completed = timer_schedule_.entries();
+    std::size_t kept = 0;
+    for (std::size_t i = 0; i < timers_.size(); ++i) {
+        if (!completed[i].cancelled) {
+            if (kept != i) { timers_[kept] = std::move(timers_[i]); }
+            ++kept;
+        }
+    }
+    timers_.resize(kept);
+    timer_schedule_.discard_cancelled();
     return ran;
 }
 
@@ -325,12 +326,7 @@ void dom_bindings::note_callback_fault(std::string_view source) {
 
 double dom_bindings::next_callback_ms() const {
     if (!animation_callbacks_.empty()) { return 0; }
-    double soonest = std::numeric_limits<double>::infinity();
-    for (const timer & t : timers_) {
-        if (t.cancelled) { continue; }
-        soonest = std::min(soonest, std::max(0.0, t.due_ms - now_ms_));
-    }
-    return soonest;
+    return timer_schedule_.next_delay(now_ms_);
 }
 
 std::size_t dom_bindings::pending_animation_frames() const noexcept {
@@ -385,8 +381,7 @@ void dom_bindings::install_timers(context & cx) {
             if (c.throw_pending()) { return value::undefined(); }
         }
         const double timeout = context::to_int32(arg(args, 1));
-        const std::uint32_t id = add_timer(handler, timeout, repeating);
-        timers_.back().page_timer = true;
+        const std::uint32_t id = add_timer(handler, timeout, repeating, timer_source::page);
         if (args.size() > 2 && handler.is_callable()) {
             timers_.back().arguments.assign(args.begin() + 2, args.end());
         }
@@ -406,9 +401,7 @@ void dom_bindings::install_timers(context & cx) {
     });
     const auto cancel = [this](context &, std::span<value> args) {
         const auto id = static_cast<std::uint32_t>(arg_number(args, 0));
-        for (timer & t : timers_) {
-            if (t.id == id) { t.cancelled = true; }
-        }
+        timer_schedule_.cancel(id);
         return value::undefined();
     };
     cx.define_native("clearTimeout", cancel);
@@ -487,17 +480,16 @@ void dom_bindings::install_timers(context & cx) {
     });
 }
 
-std::uint32_t dom_bindings::add_timer(value callback, double delay_ms, bool repeating) {
+std::uint32_t dom_bindings::add_timer(value callback, double delay_ms, bool repeating,
+                                      timer_source source) {
     const std::uint32_t id = ++next_timer_id_;
-    timers_.push_back(timer{id,
-                            callback,
-                            {},
-                            now_ms_ + std::max(0.0, delay_ms),
-                            std::max(0.0, delay_ms),
-                            repeating,
-                            false,
-                            value::undefined(),
-                            false});
+    timers_.push_back(timer{id, callback, {}, value::undefined()});
+    try {
+        timer_schedule_.schedule(id, now_ms_, delay_ms, repeating, source);
+    } catch (...) {
+        timers_.pop_back();
+        throw;
+    }
     return id;
 }
 
