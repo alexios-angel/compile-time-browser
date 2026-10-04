@@ -216,9 +216,39 @@ def mutations(text):
         + branch["then"]
         + text[branch.end("else") :]
     )
+    for name, changed in root_variants(text, store[1], start).items():
+        if name != "valid":
+            yield name, changed
 
 
-def budget_boundary(args, ir, contract):
+def root_variants(text, cell, start):
+    """Keep root placement and malformed-frame controls verifier-valid."""
+    end = text.find("\n  }", start)
+    body = text[start:end]
+    frame = re.search(r"(%\w+) = ctjs\.frame_enter \d+", body)[1]
+    created = re.search(rf"^    {re.escape(cell)} = ctjs\.create_cell [^\n]+", body, re.M)
+    exited = re.search(rf"^( +)ctjs\.frame_exit {re.escape(frame)}\b", body, re.M)
+    assert created and exited
+
+    def insert(after, extra):
+        at = start + after.end()
+        return text[:at] + "\n" + extra + text[at:]
+
+    return {
+        "valid": insert(created, f"    ctjs.root {cell} in {frame}"),
+        "after-frame-exit": insert(exited, f"{exited[1]}ctjs.root {cell} in {frame}"),
+        # The extra frame is an independent malformed-frame control; the
+        # after-exit variant above specifically exercises root retention.
+        "repeated-frame": insert(
+            created,
+            "    %foreign_frame = ctjs.frame_enter 1\n"
+            f"    ctjs.root {cell} in %foreign_frame\n"
+            "    ctjs.frame_exit %foreign_frame",
+        ),
+    }
+
+
+def budget_boundary(args, ir, contract, *, subject="Class parameter-default"):
     config = args.work / "budget-boundary.json"
     config.write_text(json.dumps(contract) + "\n")
     original = source_operations(args, ir.read_text())
@@ -254,9 +284,7 @@ def budget_boundary(args, ir, contract):
     assert not lowers(0) and lowers(1000000)
     first = threshold(lowers, high=1000000)
     assert not lowers(first - 1, preserve=True) and lowers(first)
-    print(
-        f"Class parameter-default minimum work budget: {first}; preceding cutoff preserves source"
-    )
+    print(f"{subject} minimum work budget: {first}; preceding cutoff preserves source")
     return refusals
 
 
@@ -280,6 +308,12 @@ def main():
         refusals += 4
         if name == "original":
             refusals += budget_boundary(args, ir, declared)
+            _, store, _, start = shape(ir.read_text())
+            rooted = args.work / "rooted-default.mlir"
+            rooted.write_text(root_variants(ir.read_text(), store[1], start)["valid"])
+            rooted_contract = dict(declared, module_sha256=dom.fingerprint(args.opt, rooted))
+            for owned, optimize, manifest in dom.variants(rooted_contract):
+                dom.lower(args, rooted, manifest, f"rooted-{owned}-{optimize}", optimize=optimize)
             for label, changed in mutations(ir.read_text()):
                 path = args.work / f"mutated-{label}.mlir"
                 path.write_text(changed)

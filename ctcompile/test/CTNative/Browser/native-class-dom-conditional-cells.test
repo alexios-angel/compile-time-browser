@@ -1,0 +1,2 @@
+# One uncaptured store and all reads share an ordered conditional arm.
+# RUN: python3 %S/native_class_dom_conditional_cells.py %dom_driver --node %node --reference %native_reference
