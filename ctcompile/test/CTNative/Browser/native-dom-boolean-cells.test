@@ -1,0 +1,2 @@
+# One owner-local Boolean is shared by exact synchronous borrowed-cell helpers.
+# RUN: python3 %S/native_dom_boolean_cells.py %dom_driver --node %node --reference %native_reference
