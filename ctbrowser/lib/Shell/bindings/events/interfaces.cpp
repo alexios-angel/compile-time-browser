@@ -951,14 +951,7 @@ void dom_bindings::install_event_interfaces(context & cx) {
                                      ? context::truthy(c.lookup_property(options, "capture"))
                                      : context::truthy(options);
             const path_step at = owner.step_of(self);
-            std::erase_if(owner.listeners_, [&](const listener & l) {
-                if (l.on != at.on || l.type != type || l.capture != capture ||
-                    l.callback.bits() != callback.bits()) {
-                    return false;
-                }
-                return at.on == listen_on::object ? l.host.bits() == at.host.bits()
-                                                  : l.target == at.node;
-            });
+            owner.listeners_.remove(listener_target_of(at), type, callback.bits(), capture);
             return value::undefined();
         },
         script::attr_builtin);

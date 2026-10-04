@@ -961,10 +961,7 @@ void dom_bindings::install_window_listeners(context & cx, script::object_object 
             const bool capture = options.is_object()
                                      ? context::truthy(c.lookup_property(options, "capture"))
                                      : context::truthy(options);
-            std::erase_if(listeners_, [&](const listener & l) {
-                return l.on == listen_on::window && l.type == type && l.capture == capture &&
-                       l.callback.bits() == callback.bits();
-            });
+            listeners_.remove({listen_on::window, 0}, type, callback.bits(), capture);
             return value::undefined();
         }));
     window.set("addEventListener", add_listener);

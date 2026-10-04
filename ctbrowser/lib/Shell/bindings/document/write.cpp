@@ -360,7 +360,8 @@ void dom_bindings::document_open(context & cx) {
     // Steps 7-8: every event listener and handler on the document, its nodes
     // and its window goes. The standalone EventTargets a page made are not the
     // document's and keep theirs.
-    std::erase_if(listeners_, [](const listener & held) { return held.on != listen_on::object; });
+    listeners_.erase_if(
+        [](const listener & held) { return held.target.kind != listen_on::object; });
     // A handler lives in the wrapper's `__on<name>` slot (events/dispatch.cpp:
     // the assigned value, the compiled content attribute and its source); a
     // present null there is "assigned null", which also deactivates the

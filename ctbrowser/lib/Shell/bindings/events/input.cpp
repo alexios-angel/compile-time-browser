@@ -26,13 +26,16 @@ void adopt_interface(context & cx, script::object_object & object, std::string_v
 
 // Whether any listener of these types on the path is NOT passive - the one
 // question the cancelability of a wheel or touch event turns on.
-[[nodiscard]] bool blocking_listener(const std::vector<binding_detail::listener> & listeners,
+[[nodiscard]] bool blocking_listener(std::span<const binding_detail::listener> listeners,
                                      const std::vector<binding_detail::path_step> & path,
                                      std::initializer_list<std::string_view> types) {
     return std::ranges::any_of(path, [&](const binding_detail::path_step & step) {
         return std::ranges::any_of(listeners, [&](const binding_detail::listener & l) {
-            if (l.spent || l.passive || l.on != step.on) { return false; }
-            if (l.on == binding_detail::listen_on::node && l.target != step.node) { return false; }
+            if (l.spent || l.passive || l.target.kind != step.on) { return false; }
+            if (l.target.kind == binding_detail::listen_on::node &&
+                l.target.identity != step.node.key()) {
+                return false;
+            }
             return std::ranges::find(types, std::string_view{l.type}) != types.end();
         });
     });
@@ -321,9 +324,9 @@ bool dom_bindings::dispatch_wheel(node_id target, const input_event & input) {
     const context::rooted keep{*cx_, event};
     auto * object = static_cast<script::object_object *>(event.as_heap());
     adopt_interface(*cx_, *object, "WheelEvent");
-    object->set("cancelable",
-                value::boolean(blocking_listener(
-                    listeners_, propagation_path(step_at(target), true), {"wheel", "mousewheel"})));
+    object->set("cancelable", value::boolean(blocking_listener(
+                                  listeners_.entries(), propagation_path(step_at(target), true),
+                                  {"wheel", "mousewheel"})));
     object->set("deltaX", value::number(input.wheel_x * 100.0));
     object->set("deltaY", value::number(-input.wheel_y * 100.0));
     object->set("deltaZ", value::number(0));
@@ -393,10 +396,10 @@ bool dom_bindings::dispatch_touch(std::string_view phase, node_id target, float 
     auto * object = static_cast<script::object_object *>(event.as_heap());
     adopt_interface(cx, *object, "TouchEvent");
     object->set("composed", value::boolean(true));
-    object->set(
-        "cancelable",
-        value::boolean(end || blocking_listener(listeners_, propagation_path(step_at(target), true),
-                                                {std::string_view{touch_type}})));
+    object->set("cancelable",
+                value::boolean(end || blocking_listener(listeners_.entries(),
+                                                        propagation_path(step_at(target), true),
+                                                        {std::string_view{touch_type}})));
     object->set("detail", value::number(0));
     object->set("view", window_view_.is_heap() ? window_view_ : window_);
     for (const char * key : {"altKey", "metaKey", "ctrlKey", "shiftKey"}) {

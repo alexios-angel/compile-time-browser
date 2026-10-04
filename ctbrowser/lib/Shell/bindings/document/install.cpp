@@ -239,9 +239,8 @@ void dom_bindings::install_document(context & cx) {
     // fault happened inside an image-load callback, what it actually looked
     // like was Babylon's PBR material painting nothing, three layers away.
     //
-    // The body is the window's, and identical on purpose: `listener::target`
-    // empty means document-or-window by design, so the two share a bucket and
-    // removing from one has always been able to remove the other's.
+    // Its argument handling matches the window's, while the target kind keeps
+    // their registrations separate.
     // AND THE CAPTURE FLAG IS PART OF THE IDENTITY. A listener is
     // (type, callback, capture) and only `add_listener` was enforcing all
     // three, so this removed by two: `removeEventListener(t, f)` took away a
@@ -259,10 +258,7 @@ void dom_bindings::install_document(context & cx) {
         const bool capture = options.is_object()
                                  ? context::truthy(c.lookup_property(options, "capture"))
                                  : context::truthy(options);
-        std::erase_if(listeners_, [&](const listener & l) {
-            return l.on == listen_on::document && l.type == type && l.capture == capture &&
-                   l.callback.bits() == callback.bits();
-        });
+        listeners_.remove({listen_on::document, 0}, type, callback.bits(), capture);
         return value::undefined();
     });
     // LIVE, and an HTMLCollection. It used to build an array-shaped plain

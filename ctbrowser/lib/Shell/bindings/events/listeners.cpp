@@ -153,11 +153,10 @@ bool dom_bindings::prevented(value event) {
 dom_bindings::listener dom_bindings::make_listener(context & cx, path_step target,
                                                    std::span<value> args) {
     listener made;
-    made.target = target.node;
-    made.on = target.on;
-    made.host = target.host;
+    made.target = listener_target_of(target);
+    made.payload.host = target.host;
     made.type = arg_string(cx, args, 0);
-    made.callback = arg(args, 1);
+    made.payload.callback = arg(args, 1);
     const value options = arg(args, 2);
     if (options.is_object()) {
         made.capture = context::truthy(cx.lookup_property(options, "capture"));
@@ -189,7 +188,7 @@ dom_bindings::listener dom_bindings::make_listener(context & cx, path_step targe
                 made.spent = true;
                 return made;
             }
-            made.abort_signal = signal;
+            made.payload.abort_signal = signal;
             // AN ALREADY-ABORTED SIGNAL ADDS NOTHING. The signal's abort steps
             // are what remove a listener, and one registered after the abort
             // would never have them run - so it would live forever, which is
@@ -208,7 +207,7 @@ dom_bindings::listener dom_bindings::make_listener(context & cx, path_step targe
     // listener is built rather than storing one that can never be invoked, and
     // it matters now that a listener object without a callable `handleEvent` is
     // a TypeError: a stored `null` would report one on every dispatch.
-    if (made.callback.is_nullish()) { made.spent = true; }
+    if (made.payload.callback.is_nullish()) { made.spent = true; }
     return made;
 }
 
@@ -249,26 +248,13 @@ bool dom_bindings::default_passive_value(std::string_view type, const path_step 
 }
 
 void dom_bindings::add_listener(listener made) {
-    // A listener the options refused - a null signal, or one already aborted -
-    // is not registered at all. `spent` is the flag the reap pass already reads,
-    // so nothing else has to learn about the case.
-    if (made.spent) { return; }
-    // (type, callback, capture) ON ONE TARGET is a listener's identity, and the
-    // DOM says a second registration of the same three does nothing at all.
-    // Without this a page that registers in a function it calls twice got two
-    // calls per event, and a `once` listener registered twice fired twice.
-    const bool already = std::ranges::any_of(listeners_, [&](const listener & l) {
-        return l.on == made.on && l.target == made.target && l.host.bits() == made.host.bits() &&
-               l.type == made.type && l.capture == made.capture && !l.spent &&
-               l.callback.bits() == made.callback.bits();
-    });
-    if (already) { return; }
-    listeners_.push_back(std::move(made));
+    made.callback_id = made.payload.callback.bits();
+    (void)listeners_.add(std::move(made));
 }
 
 void dom_bindings::reap_spent_listeners() {
     if (dispatch_depth_ > 0) { return; }
-    std::erase_if(listeners_, [](const listener & l) { return l.spent; });
+    listeners_.reap_spent();
 }
 
 // THE FENCE, COMPILED ONCE PER PAGE.
@@ -565,9 +551,8 @@ void dom_bindings::fire_at(path_step step, std::string_view type, value event, b
     // during it is in the copy and is skipped by its `removed` flag.
     //
     // Walking the live vector by index cannot do the second half here, because
-    // `removeEventListener` is `std::erase_if` in five places across four files
-    // - it MOVES every entry after the one it takes, so the index the loop is
-    // holding now names the NEXT listener and that one is silently skipped. A
+    // registry removal MOVES every entry after the one it takes, so the index
+    // the loop is holding names the NEXT listener and that one is silently skipped. A
     // handler that removes itself is not exotic; it is the shape of every
     // "run this once" listener written before `{once: true}` existed, and
     // Event-dispatch-handlers-changed.html removes one at each of eight targets.
@@ -585,28 +570,21 @@ void dom_bindings::fire_at(path_step step, std::string_view type, value event, b
     // legacy, the four webkit-*-event files). Answers whether anything ran.
     const auto inner_invoke = [&](std::string_view type) -> bool {
         bool found = false;
-        std::vector<std::uint64_t> queued;
-        const auto belongs = [&](const listener & l) {
-            if (l.on != step.on || l.type != type || l.capture != capturing) { return false; }
-            if (l.on == listen_on::node && l.target != step.node) { return false; }
-            if (l.on == listen_on::object && l.host.bits() != step.host.bits()) { return false; }
-            return true;
-        };
-        for (const listener & l : listeners_) {
-            if (!l.spent && belongs(l)) { queued.push_back(l.callback.bits()); }
-        }
+        const listener_target at = listener_target_of(step);
+        const auto queued = listeners_.snapshot(at, type, capturing);
         for (const std::uint64_t identity : queued) {
             // RE-READ THE FLAG EACH TIME. stopImmediatePropagation is defined by
             // stopping the listeners that would have run next at this very step, so
             // a check hoisted out of the loop implements the other method.
             if (flag_of(*cx_, event, stop_immediate_property)) { return found; }
-            const auto entry = std::ranges::find_if(listeners_, [&](const listener & l) {
-                return !l.spent && l.callback.bits() == identity && belongs(l);
-            });
+            const auto * entry = listeners_.begin(at, type, identity, capturing);
             // Gone since the copy was taken - removed by a listener that ran
             // earlier at this step, or by its AbortSignal.
-            if (entry == listeners_.end()) { continue; }
+            if (entry == nullptr) { continue; }
             found = true;
+            // No row reference survives a property lookup or callback: either
+            // can register or remove listeners and invalidate the vector.
+            const bool passive = entry->passive;
             if (entry->handler) {
                 // The event handler's listener: the handler property AS IT IS NOW,
                 // at the place the handler was first set (HTML 8.1.8.1).
@@ -617,7 +595,6 @@ void dom_bindings::fire_at(path_step step, std::string_view type, value event, b
                 // In the passive listener flag like any listener: a passive
                 // `onwheel` returning false does not cancel.
                 auto * carrier = static_cast<script::object_object *>(event.as_heap());
-                const bool passive = entry->passive;
                 if (passive) { carrier->set(std::string{passive_property}, value::boolean(true)); }
                 invoking(handler, [&] {
                     const bool threw = fire_handler_property(target, type, event, &thrown);
@@ -628,12 +605,10 @@ void dom_bindings::fire_at(path_step step, std::string_view type, value event, b
                 });
                 continue;
             }
-            if (entry->once) { entry->spent = true; }
-            // COPIED OUT BEFORE THE CALL. `entry` is an iterator into a vector a
+            // COPIED OUT BEFORE THE CALL. `entry` points into a vector a
             // listener can grow (addEventListener) or shrink (an AbortSignal), so
             // nothing may touch it once script is running.
-            const value callback = entry->callback;
-            const bool passive = entry->passive;
+            const value callback = entry->payload.callback;
             // SET AND CLEARED rather than saved and restored: an event that is
             // already being dispatched is refused, so one can never be inside two
             // of these at once. It stays set across a NESTED dispatch on purpose -

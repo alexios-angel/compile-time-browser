@@ -66,13 +66,13 @@ void dom_bindings::register_roots(context & cx) {
 dom_bindings::~dom_bindings() = default;
 
 void dom_bindings::mark_roots(const context::root_visitor & mark) const {
-    for (const listener & l : listeners_) {
-        mark(l.callback);
-        mark(l.abort_signal);
+    for (const listener & l : listeners_.entries()) {
+        mark(l.payload.callback);
+        mark(l.payload.abort_signal);
         // A STANDALONE EventTarget can be reachable from nowhere else: a
         // page may `new EventTarget()`, register on it and drop the
         // variable, and the listener is then the only reference there is.
-        mark(l.host);
+        mark(l.payload.host);
     }
     for (const timer & t : timers_) {
         mark(t.callback);

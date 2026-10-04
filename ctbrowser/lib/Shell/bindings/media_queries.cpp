@@ -99,14 +99,16 @@ void dom_bindings::report_media_query_changes() {
     // per-list registry if a page holds thousands of listeners.
     std::vector<value> lists;
     const auto collect = [&](const dom_bindings & owner) {
-        for (const listener & l : owner.listeners_) {
-            if (l.on != listen_on::object || !is_media_query_list(l.host) ||
-                &owner_of_media_query_list(l.host) != this) {
+        for (const listener & l : owner.listeners_.entries()) {
+            if (l.target.kind != listen_on::object || !is_media_query_list(l.payload.host) ||
+                &owner_of_media_query_list(l.payload.host) != this) {
                 continue;
             }
             bool seen = false;
-            for (const value & have : lists) { seen = seen || have.as_heap() == l.host.as_heap(); }
-            if (!seen) { lists.push_back(l.host); }
+            for (const value & have : lists) {
+                seen = seen || have.as_heap() == l.payload.host.as_heap();
+            }
+            if (!seen) { lists.push_back(l.payload.host); }
         }
     };
     collect(top);
