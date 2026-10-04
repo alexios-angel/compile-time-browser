@@ -20,21 +20,14 @@ using namespace detail;
 }
 
 bool dom_bindings::has_handler_listener(path_step at, std::string_view type) const {
-    for (const listener & l : listeners_) {
-        if (!l.handler || l.on != at.on || l.type != type) { continue; }
-        if (l.on == listen_on::node && l.target != at.node) { continue; }
-        if (l.on == listen_on::object && l.host.bits() != at.host.bits()) { continue; }
-        return true;
-    }
-    return false;
+    return listeners_.has_handler(listener_target_of(at), type);
 }
 
 void dom_bindings::activate_event_handler(context & cx, path_step at, std::string_view type) {
     if (has_handler_listener(at, type)) { return; }
     listener made;
-    made.target = at.node;
-    made.on = at.on;
-    made.host = at.host;
+    made.target = listener_target_of(at);
+    made.payload.host = at.host;
     made.type = std::string{type};
     made.handler = true;
     // "Add an event listener" computes the default passive value for it like
@@ -42,18 +35,13 @@ void dom_bindings::activate_event_handler(context & cx, path_step at, std::strin
     // is as passive as an addEventListener("wheel") there.
     made.passive = default_passive_value(made.type, at);
     // An identity of its own, traced through the listener list.
-    made.callback = value::object(cx.allocate<script::native_object>(
+    made.payload.callback = value::object(cx.allocate<script::native_object>(
         "event handler", [](context &, std::span<value>) { return value::undefined(); }));
-    listeners_.push_back(std::move(made));
+    add_listener(std::move(made));
 }
 
 void dom_bindings::deactivate_event_handler(path_step at, std::string_view type) {
-    std::erase_if(listeners_, [&](const listener & l) {
-        if (!l.handler || l.on != at.on || l.type != type) { return false; }
-        if (l.on == listen_on::node && l.target != at.node) { return false; }
-        if (l.on == listen_on::object && l.host.bits() != at.host.bits()) { return false; }
-        return true;
-    });
+    listeners_.remove_handler(listener_target_of(at), type);
 }
 
 namespace {

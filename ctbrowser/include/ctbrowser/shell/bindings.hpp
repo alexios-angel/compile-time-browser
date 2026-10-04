@@ -1044,7 +1044,7 @@ private:
     using performance_entry = binding_detail::performance_entry;
     std::vector<performance_entry> performance_entries_;
 
-    std::vector<listener> listeners_;
+    listener_registry<binding_detail::listener_payload> listeners_;
     // Payloads follow timer_schedule_ in registration order, including canceled
     // entries until the batch ends so callback roots remain alive throughout it.
     std::vector<timer> timers_;

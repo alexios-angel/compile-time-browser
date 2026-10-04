@@ -1,6 +1,7 @@
 #pragma once
 
 #include "helpers.hpp"
+#include <ctbrowser/shell/listener_registry.hpp>
 
 namespace ctbrowser::shell {
 
@@ -29,18 +30,7 @@ struct timer {
     value window = value::undefined();
 };
 
-// WHICH EVENT TARGET A LISTENER IS ON. The document and the window are not
-// nodes and must not share a bucket: `currentTarget` reports each, and
-// `removeEventListener` on one must not take the other's listener away.
-enum class listen_on : std::uint8_t {
-    node,     // an element; `target` names it
-    document, // document.addEventListener
-    window,   // window.addEventListener, and the bare global spelling
-    // `new EventTarget()`, and anything that inherits from one. It has no
-    // node and no place in the tree, so it is identified by the OBJECT -
-    // `host` below - and its path is itself and nothing else.
-    object
-};
+using listen_on = event_target_kind;
 
 // One stop on the path an event travels. A node, one of the two event
 // targets that have no node, or a standalone EventTarget.
@@ -50,41 +40,24 @@ struct path_step {
     value host = value::undefined(); // set only when `on` is `object`
 };
 
-struct listener {
-    node_id target; // set only when `on` is `node`
-    listen_on on = listen_on::node;
-    // The standalone EventTarget this listener is on, when `on` is `object`.
+// All path constructors use one canonical key per target. In particular,
+// document and window remain distinct despite both having no node identity.
+[[nodiscard]] inline listener_target listener_target_of(const path_step & at) {
+    if (at.on == listen_on::node) { return {at.on, at.node.key()}; }
+    if (at.on == listen_on::object) { return {at.on, at.host.bits()}; }
+    return {at.on, 0};
+}
+
+struct listener_payload {
+    value callback;
+    // Aborting removes every listener that carries this signal.
+    value abort_signal = value::undefined();
+    // The standalone EventTarget this listener is registered on, if any.
     // A GC root: nothing else may be holding it while a listener is.
     value host = value::undefined();
-    std::string type;
-    value callback;
-    // The AbortSignal this listener was registered with, if any. Aborting
-    // it removes every listener that carries it - which is how a library
-    // takes down a whole sketch's listeners in one call.
-    value abort_signal = value::undefined();
-    // `{ once: true }` - fire and remove.
-    bool once = false;
-    // `{ capture: true }` - fired on the way DOWN to the target rather than
-    // on the way back up. It is the whole reason to pass it: a capturing
-    // listener on an ancestor sees the event BEFORE the target does, which
-    // is how a page intercepts one.
-    bool capture = false;
-    // `{ passive: true }` - a promise that this listener will not call
-    // preventDefault, which the DOM ENFORCES rather than trusts: the
-    // canceled flag is not set while a passive listener runs.
-    // `AddEventListenerOptions-passive.any.js` is three tests about exactly
-    // that and `passive-by-default.html` is a hundred more.
-    bool passive = false;
-    // Set when a `once` listener has fired, so the pass that removes them
-    // runs after the dispatch rather than mutating the list being walked.
-    bool spent = false;
-    // THE EVENT HANDLER'S LISTENER (HTML 8.1.8.1): appended when the
-    // handler - the IDL attribute or the content attribute - was first
-    // set to something, removed when it is deactivated, and at its
-    // place in the list it runs the CURRENT handler property. `callback`
-    // is a placeholder object that gives it an identity.
-    bool handler = false;
 };
+
+using listener = listener_registry<listener_payload>::entry;
 
 // --- CSSOM VIEW GEOMETRY (bindings/element/views.cpp) -------------------
 // The first fragment for a node in tree order, with its absolute border

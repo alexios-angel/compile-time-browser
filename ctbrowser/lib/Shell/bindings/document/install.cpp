@@ -259,10 +259,7 @@ void dom_bindings::install_document(context & cx) {
         const bool capture = options.is_object()
                                  ? context::truthy(c.lookup_property(options, "capture"))
                                  : context::truthy(options);
-        std::erase_if(listeners_, [&](const listener & l) {
-            return l.on == listen_on::document && l.type == type && l.capture == capture &&
-                   l.callback.bits() == callback.bits();
-        });
+        listeners_.remove({listen_on::document, 0}, type, callback.bits(), capture);
         return value::undefined();
     });
     // LIVE, and an HTMLCollection. It used to build an array-shaped plain

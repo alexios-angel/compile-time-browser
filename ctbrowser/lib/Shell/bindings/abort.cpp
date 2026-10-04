@@ -113,8 +113,9 @@ void dom_bindings::signal_abort(context & cx, value signal, value reason) {
         // removed - on this document and on any it made, since a frame's
         // element can be listened to with the page's signal.
         const auto remove_from = [&](auto && self, dom_bindings & owner) -> void {
-            std::erase_if(owner.listeners_, [&](const listener & l) {
-                return l.abort_signal.is_heap() && l.abort_signal.as_heap() == at.as_heap();
+            owner.listeners_.erase_if([&](const listener & l) {
+                return l.payload.abort_signal.is_heap() &&
+                       l.payload.abort_signal.as_heap() == at.as_heap();
             });
             for (const auto & made : owner.secondary_documents_) { self(self, *made); }
         };

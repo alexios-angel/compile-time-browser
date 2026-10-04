@@ -170,6 +170,149 @@ void test_the_listener_list_is_copied_before_it_runs() {
           "a {once: true} listener fires exactly once");
 }
 
+void test_native_registry_matches_reentrant_dispatch() {
+    using registry = shell::listener_registry<std::string>;
+    constexpr shell::listener_target target{shell::event_target_kind::object, 1};
+    const auto make_listener = [&](std::uint64_t id, std::string label, bool once = false) {
+        return registry::entry{.target = target,
+                               .type = "x",
+                               .callback_id = id,
+                               .once = once,
+                               .payload = std::move(label)};
+    };
+    browser page{browser_options{300, 200}};
+    page.load_html("<body><div id=parent><span id=child></span></div></body>");
+
+    registry readded;
+    CHECK(readded.add(make_listener(1, "a")));
+    CHECK(readded.add(make_listener(2, "b")));
+    std::string native_readded;
+    for (const auto id : readded.snapshot(target, "x", false)) {
+        const auto * current = readded.begin(target, "x", id, false);
+        if (!current) { continue; }
+        if (!native_readded.empty()) { native_readded += ','; }
+        native_readded += current->payload;
+        if (id == 1) {
+            readded.remove(target, "x", 2, false);
+            CHECK(readded.add(make_listener(2, "b")));
+        }
+    }
+    CHECK_EQ(native_readded, "a,b");
+    CHECK_EQ(one_log(page, R"((function () {
+        var e = new EventTarget(), seen = [];
+        function b() { seen.push('b'); }
+        function a() {
+            seen.push('a'); e.removeEventListener('x', b); e.addEventListener('x', b);
+        }
+        e.addEventListener('x', a); e.addEventListener('x', b);
+        e.dispatchEvent(new Event('x'));
+        console.log(seen.join(','));
+    })())"),
+             native_readded);
+
+    registry nested;
+    CHECK(nested.add(make_listener(1, "a", true)));
+    CHECK(nested.add(make_listener(2, "b")));
+    std::string native_nested;
+    for (const auto id : nested.snapshot(target, "x", false)) {
+        const auto * current = nested.begin(target, "x", id, false);
+        if (!current) { continue; }
+        if (!native_nested.empty()) { native_nested += ','; }
+        native_nested += current->payload;
+        if (id == 1) {
+            for (const auto inner_id : nested.snapshot(target, "x", false)) {
+                const auto * inner = nested.begin(target, "x", inner_id, false);
+                if (inner) { native_nested += ',' + inner->payload; }
+            }
+        }
+    }
+    nested.reap_spent();
+    CHECK_EQ(native_nested, "a,b,b");
+    CHECK_EQ(one_log(page, R"((function () {
+        var e = new EventTarget(), seen = [], nested = false;
+        function a() {
+            seen.push('a');
+            if (!nested) { nested = true; e.dispatchEvent(new Event('x')); }
+        }
+        e.addEventListener('x', a, {once: true});
+        e.addEventListener('x', function () { seen.push('b'); });
+        e.dispatchEvent(new Event('x'));
+        console.log(seen.join(','));
+    })())"),
+             native_nested);
+
+    CHECK_EQ(one_log(page, R"((function () {
+        var parent = document.getElementById('parent');
+        var child = document.getElementById('child'), seen = [];
+        function bubble() { seen.push('bubble'); }
+        parent.addEventListener('phase', function () {
+            seen.push('capture'); parent.addEventListener('phase', bubble);
+        }, true);
+        child.dispatchEvent(new Event('phase', {bubbles: true}));
+        console.log(seen.join(','));
+    })())"),
+             "capture,bubble");
+}
+
+// Bootstrap's transition helper filters child events, removes its own
+// listener before calling the continuation, and leaves a guarded timer.
+void test_transition_listener_removal_before_nested_dispatch() {
+    browser page{browser_options{300, 200}};
+    page.load_html(R"(<body><div id=parent><span id=child></span></div><script>
+        (function () {
+            var parent = document.getElementById('parent');
+            var child = document.getElementById('child');
+            var seen = [], complete = false;
+            function listener(event) {
+                if (event.target !== parent) { return; }
+                complete = true;
+                parent.removeEventListener('transitionend', listener);
+                seen.push('complete');
+                parent.dispatchEvent(new Event('transitionend'));
+            }
+            parent.addEventListener('transitionend', listener);
+            setTimeout(function () {
+                if (!complete) { parent.dispatchEvent(new Event('transitionend')); }
+            }, 5);
+            child.dispatchEvent(new Event('transitionend', {bubbles: true}));
+            console.log('child=' + seen.join(','));
+            parent.dispatchEvent(new Event('transitionend'));
+            console.log('parent=' + seen.join(','));
+            setTimeout(function () { console.log('later=' + seen.join(',')); }, 10);
+        })();
+    </script></body>)");
+    page.tick(20);
+    CHECK(page.script_error().empty());
+    CHECK_EQ(log_of(page),
+             (std::vector<std::string>{"child=", "parent=complete", "later=complete"}));
+}
+
+void test_handler_getter_preserves_selected_passive_flag() {
+    browser page{browser_options{300, 200}};
+    page.load_html("<body></body>");
+    // The getter moves a nonpassive registration into the selected handler's
+    // old vector slot. Its passive flag must already have been copied out.
+    CHECK_EQ(one_log(page, R"((function () {
+        var target = document.body, calls = 0, changed = false;
+        function handler(event) { ++calls; event.preventDefault(); return false; }
+        var setter = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'onwheel').set;
+        setter.call(target, handler);
+        target.addEventListener('unused', function () {}, {passive: false});
+        Object.defineProperty(target, 'onwheel', {configurable: true, get: function () {
+            if (!changed) {
+                changed = true;
+                setter.call(target, null);
+                setter.call(target, handler);
+            }
+            return handler;
+        }});
+        var event = new Event('wheel', {cancelable: true});
+        var allowed = target.dispatchEvent(event);
+        console.log(calls + ',' + event.defaultPrevented + ',' + allowed);
+    })())"),
+             "1,false,true");
+}
+
 // A LISTENER THAT THROWS DOES NOT STOP THE DISPATCH, and the throw does not
 // come back out of `dispatchEvent`: the page is told through an `error` event
 // instead. dom/events/Event-dispatch-throwing.html and the last case of
@@ -311,6 +454,9 @@ void test_window_event_is_set_and_restored() {
 int main() {
     test_a_scroll_blocking_listener_is_passive_by_default();
     test_the_listener_list_is_copied_before_it_runs();
+    test_native_registry_matches_reentrant_dispatch();
+    test_transition_listener_removal_before_nested_dispatch();
+    test_handler_getter_preserves_selected_passive_flag();
     test_a_throwing_listener_is_reported_and_the_rest_still_run();
     test_a_listener_object_needs_a_callable_handle_event();
     test_the_event_target_methods_are_bare_globals();
