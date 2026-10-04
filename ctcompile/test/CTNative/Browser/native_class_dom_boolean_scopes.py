@@ -42,10 +42,7 @@ CASES = {
     ),
 }
 BAD = {
-    "arm-only-state": captures.METHOD.replace(
-        "let seen = false;",
-        "let seen; if (target.hasAttribute('ready')) { seen = false;",
-    ).replace("return before !== after;", "} return true;"),
+    # Exact arm-only-state source is now positive in the dedicated arm-state test.
     "initialization-in-arm": METHOD.replace("let seen = false;", "let seen;").replace(
         "{ const mark", "{ seen = false; const mark"
     ),

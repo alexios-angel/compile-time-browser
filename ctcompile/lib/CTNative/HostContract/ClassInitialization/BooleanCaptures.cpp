@@ -31,11 +31,14 @@ bool classInitialization::retainBooleanCaptures(ctjs::FuncOp owner) {
     }
     llvm::SmallVector<ctjs::CreateClosureOp> callbacks;
     llvm::DenseSet<mlir::Operation *> callbackOperations;
-    llvm::DenseSet<mlir::Operation *> stateBranches;
     llvm::SmallVector<ctjs::RootOp> roots;
-    const auto orderedUse = [&](mlir::Operation * creator, mlir::Operation * user) {
+    const bool initiallySet = !undefined(cell.getInitial());
+    mlir::Block * stateScope = initiallySet ? &block : nullptr;
+    const auto orderedUse = [&](mlir::Operation * creator, mlir::Operation * user,
+                                llvm::DenseSet<mlir::Block *> * ancestors = nullptr) {
         auto * scope = creator->getBlock();
         auto * position = user;
+        if (ancestors) { ancestors->insert(position->getBlock()); }
         unsigned nesting = 0;
         while (position->getBlock() != scope) {
             if (!step()) { return false; }
@@ -44,22 +47,28 @@ bool classInitialization::retainBooleanCaptures(ctjs::FuncOp owner) {
                 return refuse("class Boolean state requires bounded local conditional uses");
             }
             position = branch;
+            if (ancestors) { ancestors->insert(position->getBlock()); }
         }
         if (!creator->isBeforeInBlock(position)) {
             return refuse("class Boolean state requires creation before its conditional uses");
         }
-        // Cell uses reach the owner block; a callback's own users must stay
-        // within its creation arm. The capture already records that outer If.
-        if (scope == &block && position != user) { stateBranches.insert(position); }
         return true;
     };
     for (mlir::OpOperand & use : cell.getResult().getUses()) {
         if (!step()) { return false; }
         auto * user = use.getOwner();
-        if (!orderedUse(cell, user)) { return false; }
+        llvm::DenseSet<mlir::Block *> ancestors;
+        if (!orderedUse(cell, user, &ancestors)) { return false; }
         if (auto root = llvm::dyn_cast<ctjs::RootOp>(user); root && use.getOperandNumber() == 1) {
             roots.push_back(root);
             continue;
+        }
+        // Like the later DOM state proof, include every write and capture in
+        // the common scope. Roots keep their frame obligation, not a lifetime.
+        if (!stateScope) { stateScope = user->getBlock(); }
+        while (!ancestors.contains(stateScope)) {
+            if (!step()) { return false; }
+            stateScope = stateScope->getParentOp()->getBlock();
         }
         if (llvm::isa<ctjs::CellGetOp, ctjs::CellSetOp>(user) && use.getOperandNumber() == 0) {
             continue;
@@ -149,10 +158,23 @@ bool classInitialization::retainBooleanCaptures(ctjs::FuncOp owner) {
         }
         if (!called) { return refuse("class Boolean leaf lacks an original local call"); }
     }
-    // Only owner-block stores initialize this proof. A store in an arm cannot
-    // authorize another arm, a later join, or callback creation before the If.
-    bool initialized = !undefined(cell.getInitial());
-    for (auto & operation : block) {
+    llvm::DenseSet<mlir::Operation *> stateBranches;
+    for (mlir::OpOperand & use : cell.getResult().getUses()) {
+        if (!step()) { return false; }
+        auto * position = use.getOwner();
+        if (llvm::isa<ctjs::RootOp>(position)) { continue; }
+        while (position->getBlock() != stateScope) {
+            if (!step()) { return false; }
+            position = position->getParentOp();
+            stateBranches.insert(position);
+        }
+    }
+    // A store must initialize the complete common scope before any read,
+    // capture or deeper state-bearing If. Nested stores cannot initialize
+    // siblings or a join. Callback uses already stay within their creator's
+    // dominated arm, so no borrowed state outlives its capture here.
+    bool initialized = initiallySet;
+    for (auto & operation : *stateScope) {
         if (!step()) { return false; }
         if (auto write = llvm::dyn_cast<ctjs::CellSetOp>(operation);
             write && write.getCell() == cell.getResult()) {
@@ -162,7 +184,7 @@ bool classInitialization::retainBooleanCaptures(ctjs::FuncOp owner) {
         if (!initialized &&
             ((read && read.getCell() == cell.getResult()) ||
              callbackOperations.contains(&operation) || stateBranches.contains(&operation))) {
-            return refuse("class Boolean state is used before unconditional initialization");
+            return refuse("class Boolean state is used before its scope initialization");
         }
     }
     // The module's initial census already enforces unique closure creators.
