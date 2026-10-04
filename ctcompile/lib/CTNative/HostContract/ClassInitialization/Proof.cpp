@@ -507,7 +507,18 @@ bool classInitialization::censusSource(const HostContract & contract, bool domEn
             // normalizer and local cells for the DOM capture proof. Neither
             // status edges nor local state disappear in this census.
             accepted = domEntryHelpers.contains(op->getParentOfType<ctjs::FuncOp>());
+            mlir::Value cell;
+            if (auto created = llvm::dyn_cast<ctjs::CreateCellOp>(op)) {
+                cell = created.getResult();
+            }
+            if (auto read = llvm::dyn_cast<ctjs::CellGetOp>(op)) { cell = read.getCell(); }
+            if (auto write = llvm::dyn_cast<ctjs::CellSetOp>(op)) { cell = write.getCell(); }
+            accepted |= domEntry && cell && booleanCells.contains(cell);
             needsDOMMethodProof |= accepted;
+        }
+        if (llvm::isa<ctjs::LoadUpvalueOp, ctjs::StoreUpvalueOp>(op) &&
+            booleanLeaves.contains(op->getParentOfType<ctjs::FuncOp>())) {
+            accepted = domEntry;
         }
         if (auto fn = llvm::dyn_cast<ctjs::FuncOp>(op)) {
             auto & block = fn.getBody().front();
@@ -519,16 +530,17 @@ bool classInitialization::censusSource(const HostContract & contract, bool domEn
                         (constructors.contains(fn) || getters.contains(fn) ||
                          (((declaration && fn == entry) || block.getNumArguments() == 3) &&
                           receiverUnused && block.getArgument(ctjs::arg_new_target).use_empty())));
-            accepted &= fn.getUpvalueCount() == 0 || methods.contains(fn) ||
-                        llvm::any_of(capturedClosures, [&](ctjs::CreateClosureOp closure) {
-                            return target(closure) == fn;
-                        });
+            accepted &=
+                fn.getUpvalueCount() == 0 || methods.contains(fn) || booleanLeaves.contains(fn) ||
+                llvm::any_of(capturedClosures,
+                             [&](ctjs::CreateClosureOp closure) { return target(closure) == fn; });
         }
         if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(op)) {
             auto fn = target(closure);
             accepted =
                 fn && fn != entry &&
-                (closure.getUpvalues().empty() || llvm::is_contained(capturedClosures, closure)) &&
+                (closure.getUpvalues().empty() || llvm::is_contained(capturedClosures, closure) ||
+                 booleanLeaves.contains(fn)) &&
                 (undefined(closure.getEnclosingThis()) || helpers.contains(fn));
         }
         if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op)) {
@@ -1060,7 +1072,7 @@ bool classInitialization::normalizeMethods() {
         // property reads. Expansion must follow the private copy too.
         uint64_t cost = getterReads.size() + constructorReads.size() + staticMethodReads.size() +
                         cellReads.size() + cells.size() + inertReceiverClosures.size() +
-                        captureReads.size();
+                        captureReads.size() + booleanCells.size();
         for (auto & item : globalHolders) {
             cost += item.second.reads.size() + item.second.loads.size();
         }
@@ -1080,6 +1092,9 @@ bool classInitialization::normalizeMethods() {
             mappedCells[mapping.lookupOrDefault(cell)] = mapping.lookupOrDefault(value);
         }
         cells.swap(mappedCells);
+        llvm::DenseSet<mlir::Value> mappedBooleans;
+        for (auto cell : booleanCells) { mappedBooleans.insert(mapping.lookupOrDefault(cell)); }
+        booleanCells.swap(mappedBooleans);
         for (auto & closure : inertReceiverClosures) { remap(closure); }
         for (ctjs::LoadUpvalueOp & read : captureReads) {
             if (auto * mapped = mapping.lookupOrNull(read.getOperation())) {
