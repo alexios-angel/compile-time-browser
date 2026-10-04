@@ -213,6 +213,19 @@ bool classInitialization::helperCallback(mlir::OpOperand & use) {
     for (mlir::OpOperand & callbackUse : callback.getResult().getUses()) {
         if (!step()) { return false; }
         if (llvm::isa<ctjs::RootOp>(callbackUse.getOwner())) { continue; }
+        // A synchronous leaf cannot retain its enclosing helper. Keep its body
+        // for the complete source/DOM proof and bind actuals during expansion.
+        auto local = host_detail::jsCallOf(callbackUse.getOwner());
+        if (local && callbackUse.getOperandNumber() == (local->direct ? 2u : 0u) &&
+            undefined(local->receiver) &&
+            (!local->direct ||
+             (local->direct.getTarget() == function && undefined(local->direct.getNewTarget()))) &&
+            local->args.size() + ctjs::implicit_arguments ==
+                function.getBody().front().getNumArguments() &&
+            callbackUse.getOwner()->getBlock() == callback->getBlock() &&
+            callback->isBeforeInBlock(callbackUse.getOwner())) {
+            continue;
+        }
         auto call = llvm::dyn_cast<ctjs::CallOp>(callbackUse.getOwner());
         auto read =
             call ? call.getCallee().getDefiningOp<ctjs::GetPropertyOp>() : ctjs::GetPropertyOp{};
@@ -228,8 +241,8 @@ bool classInitialization::helperCallback(mlir::OpOperand & use) {
             return refuse("captured helper callback escapes its intrinsic call");
         }
     }
-    // Retain the original callback for the shared no-match or typed
-    // Array filter proof, including its complete body and uses.
+    // Retain the original callback for local expansion, the shared no-match
+    // or typed Array filter proof, including its complete body and uses.
     helpers.insert(function);
     domEntryHelpers.insert(function);
     return true;
