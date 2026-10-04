@@ -96,31 +96,53 @@ The generated output contains scalar values and public DOM calls, with no
 runtime cell or callback object. This does not yet retain mutable class
 captures through the earlier class normalization stage.
 
+## Fourth feature wave (landed 2026-10-04)
+
+Combined commit `520e907d9` adds conditional parameter-default selection,
+Boolean state through bounded `if` arms, and uncaptured locals with a unique
+conditional store dominating every read in its arm. Original producers,
+effects, snapshots and source checks remain. Neither class normalization nor
+DOM lowering creates a runtime cell or callback object.
+
+The first frozen five-case gate passed 400 native executions while the author
+prepared the single-store successor and the other author reviewed it. Review
+found that deleting roots could conceal invalid frame placement. A separate
+new commit preserves root positions and contexts. The validator measured the
+old failure and corrected refusal, then ran four affected class cases on the
+final tree. Two unchanged Boolean cases were reused by exact DOM subtree and
+fixture identities, with their route bypassing class normalization checked
+explicitly.
+
+Unique validated coverage is six cases, 480 native executions, 639 refusals,
+30 Node/VM source comparisons and 240 generated C++ files with no Script
+runtime. The final four-case run took 268.54 seconds; the earlier five-case run
+took 342.40 seconds. See the handoff for exact commands and skipped coverage.
+The example demonstrates why a passing matrix does not override a concrete
+review finding and why submitted revisions stay immutable.
+
+The unchanged closed Button now reports `class conditional cell escapes its
+exact reads`. Its function bodies are unchanged. Source-order inspection
+points past duration cell `%970` to shared flag `%972`; the diagnostic itself
+does not identify the operation, so that attribution remains an inference.
+
 ## Next features, based on source and IR traces
 
-1. Prove conditional default selection for the class cell holding transition
-   parameter `n`. The unchanged Button diagnostic remains nonlocal/unordered;
-   the source walk now passes the first two parameter capture positions and
-   reaches `%964`'s conditional write. This attribution is a source/IR inference,
-   not an instrumented failing-operation report. Preserve a supplied false
-   argument versus an omitted one through explicit SSA selection. Do not map
-   the conditional store to an unconditional fixed value. Keep initial reads
-   used by the undefined test distinct from later selected-value reads, and
-   preserve the original default expression and all producers/effects.
-2. Independently extend the DOM Boolean normalizer through bounded `if` arms.
-   Start with already initialized state and exact leaf calls in the original
-   arm. Yield each arm's final state as an extra result; an absent else retains
-   incoming state. Preserve existing result positions and the complete
-   use/body/symbol census. Use the existing iterator state-edge algorithm as a
-   reference. Loops, incoming/multiple cells and deferred calls remain later.
-   This lane touches DOM source files and can run separately from class work.
-3. Retain one class-local Boolean cell and exact leaf callbacks through class
+1. Retain one class-local Boolean cell and exact leaf callbacks through class
    normalization and ordinary closure lifting, reusing the new DOM proof.
    Keep mutable storage out of fixed-value maps and remap its records when
    methods are cloned. Begin with straight-line read/mark/read and fresh state
-   on repeated calls, then conditional state. This overlaps the class-default
-   proof files, so stack it after that lane rather than editing them in parallel.
-4. Prove typed callable and self identity, then a session-owned transition
+   on repeated calls, then conditional state. Complete cell, capture-slot and
+   callable-use censuses must reject hidden writers and deferred consumers.
+   This lane owns ClassInitialization files and the corresponding source cases.
+2. Independently admit proved Boolean origins such as Bootstrap's `!1` and
+   `!0` in DOM local state. The current proof requires direct BooleanAttr
+   stores, and its leaf-body whitelist separately rejects the numeric producer.
+   Ordinary class lifting and CTJS UnaryOp do not fold these expressions; the
+   existing exactUnary helper is restricted to custom iterator bodies. Start
+   with separate owner-origin, helper-store and combined raw/JS witnesses.
+   Preserve original expressions and effects for full body/type reproof.
+   This lane owns DOM source files and can run beside the class-retention lane.
+3. Prove typed callable and self identity, then a session-owned transition
    record shared by timer/listener handles. It needs explicit element/document
    borrows, cancellation and destruction rules; a stack borrow cannot survive
    an entry return. A unique record owned until the existing timeout fires,
@@ -131,8 +153,9 @@ captures through the earlier class normalization stage.
    and teardown before claiming deferred support.
 
 The current measured evidence and proposed follow-up details are archived in
-`/home/alex/.ctbrowser-auto/codex/ctcompile/artifacts/2026-10-04-native-stack-3/`:
-`next-boundary.md`, `next-wave-plan.md` and `validation/combined-07a33a29/`.
+`/home/alex/.ctbrowser-auto/codex/ctcompile/artifacts/2026-10-04-native-stack-4/`:
+`next-boundary.md`, `state-author/next-boundary.md`,
+`defaults-author/conditional-cell-boundary.md` and `validation/final-gate/`.
 Future admissions listed above have not been measured.
 
 The public timer/listener cores are prerequisites, not native callback ownership

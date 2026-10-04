@@ -22,6 +22,128 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Conditional defaults and branch-local state, 2026-10-04 UTC
+
+**Landed: `520e907d9` on `ctcompile-v1`, based on `3b879cc7a`.**
+The independently approved code tree is
+`66b65b4176f3e7fd6f53b75e19a1988404a30751`. Feature commits are `f1094609d`
+(parameter defaults), `d7aec7193` (conditional Boolean state), and `b146769f0`
+(uncaptured conditional locals). `b57c62f7a` preserves source root lifetimes;
+`2afe007f8` and `eddaa50c2` correct rollback test observations. Two authors
+worked in isolated branches while one validator owned the warm devbox. The
+conditional-local successor was prepared while the first frozen stack ran.
+
+Parameter-default cells now become an explicit selection between the supplied
+formal and the original default expression. The proof requires the exact
+undefined guard, one conditional store, ordered reads and no captured cell.
+Reads before selection retain their original snapshot; supplied false remains
+false. Original default producers and effects remain conditional. The real-JS
+witness uses a shadowed inner formal to reproduce conservative frontend boxing
+without actually capturing the outer parameter. An initial nonshadowed witness
+was already supported; its evidence was retained rather than counted as a gain.
+
+The DOM Boolean normalizer now threads one initialized local through bounded
+`if` arms and exact synchronous leaf borrowers. Existing results stay first;
+one state result is appended, and a missing else retains incoming state.
+Nested branches, sibling writers, owner writes and skipped calls preserve
+their order. Full body, use, caller, frame and budget checks remain.
+
+An uncaptured undefined-initialized local may now have one store inside an
+`if` arm when every read is dominated by that store in the same arm or a nested
+`if`. The exact stored value replaces reads; its computation and surrounding
+effects stay in place. Multiple writes, captures, identity escapes, loops,
+before-store reads and sibling/join reads remain diagnostics. Five real-JS
+cases cover both arms, nesting, computed snapshots, aliases and distinct DOMs.
+
+Independent review found a concrete issue before landing: deleting a cell's
+roots could hide a root placed after frame exit. The first candidate incorrectly
+lowered that verifier-valid input in all four modes. Both new class normalizers
+now preserve each root's position and context, retargeting only its value to the
+dominating original formal or undefined initializer. On byte-identical controls,
+all four valid roots lower and all eight invalid cell/formal roots refuse.
+The earlier five-case runtime pass alone was not accepted as approval.
+
+**Measured, devbox only:** the explicit build command was
+`DEVBOX_DIR=projects/compile-time-browser tools/remote-build.sh ctjs-opt ctjs-translate ctcompile-test-native-reference`,
+under `/tmp/ctbrowser-devbox-build.lock`. The final production build passed
+**15 steps in 20 s**. All **13 changed source hashes** matched before and after
+validation and after landing. No browser source changed.
+
+Both lit runs used `~/.lit-venv/bin/lit -va -j 2 build/ctcompile/test`.
+The first filter was
+`^ctcompile :: CTNative/Browser/(native-class-dom-(parameter-defaults|callback-branch-captures|callback-captures)|native-dom-boolean-(branches|cells))[.]test$`.
+It passed **5/5 in 342.40 s**, with **400 native executions, 526 refusals and
+25 Node/VM source comparisons** at `9b54c78b3`. That whole tree was withheld
+because of the separate root-lifetime finding.
+
+The corrected final filter was
+`^ctcompile :: CTNative/Browser/native-class-dom-(conditional-cells|parameter-defaults|callback-branch-captures|callback-captures)[.]test$`.
+It passed **4/4 in 268.54 s**, with **304 native executions, 397 refusals and
+19 Node/VM source comparisons**. The two earlier Boolean cases are retained:
+their complete DOM subtree and fixtures are byte-identical, and their raw
+manifests do not enter class normalization. Unique coverage is therefore
+**six cases, 480 native executions, 639 refusals and 30 Node/VM sources**.
+The 704 executions across both runs include repeated class checks; they are
+not added to the unique totals.
+
+| Case | Node/VM sources | Native executions | Refusals/controls |
+| --- | ---: | ---: | ---: |
+| Parameter defaults | 5 | 80 | 92 |
+| Conditional locals | 5 | 80 | 109 |
+| Fixed captures | 6 | 96 | 96 |
+| Conditional captures | 3 | 48 | 100 |
+| Boolean cells, unchanged evidence | 5 | 80 | 153 |
+| Boolean branches, unchanged evidence | 6 | 96 | 89 |
+
+Both DOM providers, optimization policies, explicit/deduced C++, GCC 13 and
+pinned Clang passed. Every binary passed its forbidden-symbol check; independent
+scans found no Script/AOT runtime in **240 unique generated C++ files**. Reviewed
+output uses scalar values, strings/optionals, ordinary conditionals and public
+DOM calls, with no runtime cell, closure object, frame or VM value.
+
+The separate conditional-local preflight passed five oracles/shape checks,
+24 lowerings and 82 refusals, including seven valid-IR mutations. Minimum work
+budgets are **24952** for defaults, **16908** for conditional locals, **426** for
+Boolean cells and **543** for Boolean branches. The immediately preceding
+cutoffs preserve the original CTJS+SCF operation sequence. Rollback comparisons
+now parse and print both sides generically so implicit empty yields agree;
+an explicit lost-If control still fails. Preflight counts are not added above.
+
+`tools/format.sh --check` retains exactly **83 existing diagnostics** in untouched
+`ctbrowser/lib/Script/builtins/collections/keyed.cpp`, with baseline log SHA256
+`421f6a23f5b220c8c0f549fec3f417dc6bea95c5b524e109bf9bf366532c0090`.
+Scoped C++/Python formatting, Python parsing and diff checks pass. Browser CTest
+was not needed. No full CTest/lit, broad corpus/native matrix, WPT/test262,
+Windows, sanitizer or performance run was made. No push was made.
+
+Reviews, immutable checkpoints, exact commands, failures and corrected evidence
+are in `/home/alex/.ctbrowser-auto/codex/ctcompile/artifacts/2026-10-04-native-stack-4/`.
+The final `validation/final-gate/evidence.tar.gz` SHA256 is
+`0142b217c02f3d9e0669405ea81bbd585e3d5c276ad439c7af740dbe0825e026`;
+`validation/final-gate/APPROVAL.md` records the exact approved tree and evidence
+reuse. Final and retained output archives contain **1,716 unique text artifacts**.
+
+**Next native/Bootstrap boundary:** the unchanged closed vendor prefix and
+complete Button still agree in Node/VM on retained input, Data registration,
+empty config and two toggles. Native now reports
+**`native DOM class: class conditional cell escapes its exact reads`**.
+All prepared function bodies remain byte-identical; only temporary directory
+names in module diagnostic attributes differ. The source walk points past
+uncaptured duration `%970` to shared flag `%972` in `fn$43`, captured by both
+listener and timeout. That attribution remains source/IR inference: the
+diagnostic does not identify an operation. Listener self-identity `%974` follows.
+
+The next disjoint lanes are class-retained Boolean captures through ordinary
+closure lifting, and DOM Boolean origins such as Bootstrap's `!1`/`!0`.
+The latter currently fail both direct-literal checks and the leaf-body whitelist;
+the ordinary path has no earlier numeric-negation folder. Typed callable/self
+identity and owned deferred timer/listener lifetime remain dependent work.
+Preserve the complete dormant `_queueCallback` body and its effects. See
+`next-boundary.md`, the author traces in the artifact directory, and the
+[parallel-work plan](plans/native-bootstrap-stacks.md). Native Bootstrap remains
+incomplete.
+
+
 ## Conditional captures and scalar helper state, 2026-10-04 UTC
 
 **Landed together: `07a33a29e` on `ctcompile-v1`, based on `b2e130cd4`.**
