@@ -85,6 +85,8 @@ struct DOMSource {
 
     bool resolveCell(ctjs::CreateCellOp cell);
 
+    bool normalizeBooleanCell(ctjs::FuncOp function, unsigned depth);
+
     bool forwardFields(ctjs::FuncOp function);
 
     bool dataObject(ctjs::CreateObjectOp object);

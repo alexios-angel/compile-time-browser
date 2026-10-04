@@ -892,6 +892,7 @@ bool DOMSource::expand(ctjs::FuncOp function, unsigned depth, bool entry, bool d
     if (!normalizeCompletion(function) || !checkBody(function, entry, directReceiver, true)) {
         return false;
     }
+    if (!normalizeBooleanCell(function, depth)) { return false; }
     // Parameters with nested source functions may have an otherwise local
     // cell. Resolve those reads before specializing their intrinsic calls;
     // captured cells still wait for the unchanged child/capture proof.

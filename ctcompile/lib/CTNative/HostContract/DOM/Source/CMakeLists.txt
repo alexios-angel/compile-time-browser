@@ -4,5 +4,6 @@ target_sources(${CTNATIVE_ANALYSIS_SOURCE_TARGET} PRIVATE
   Completion.cpp
   Bodies.cpp
   Expansion.cpp
+  LocalState.cpp
   Proof.hpp
 )
