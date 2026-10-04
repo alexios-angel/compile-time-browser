@@ -1,0 +1,2 @@
+# Fixed local primitives stay values when a class helper captures them.
+# RUN: python3 %S/native_class_dom_callback_captures.py %dom_driver --node %node --reference %native_reference

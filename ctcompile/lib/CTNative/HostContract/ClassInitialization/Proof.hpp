@@ -242,6 +242,8 @@ struct classInitialization {
     bool proveMaps();
     mlir::Value sourceValue(mlir::Value value);
     llvm::SmallVector<mlir::OpOperand *> sourceUses(mlir::Value value);
+    bool copyPrimitiveCapture(ctjs::LoadUpvalueOp load, ctjs::ConstantOp literal);
+    bool fixedCallbackCaptures(ctjs::CreateClosureOp callback, ctjs::FuncOp function);
     bool helperCallback(mlir::OpOperand & use);
     bool helperCallbacks(ctjs::FuncOp helper);
     bool methodCaptures(ctjs::CreateClosureOp method, ctjs::CreateClosureOp constructor,
