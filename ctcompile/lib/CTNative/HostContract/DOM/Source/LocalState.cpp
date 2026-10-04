@@ -19,9 +19,24 @@ bool DOMSource::normalizeBooleanCell(ctjs::FuncOp function, unsigned depth) {
         }
     }
     if (!cell) { return true; }
-    if (!ctjs::constantAttr<ctjs::BooleanAttr>(cell.getInitial()) &&
-        !undefined(cell.getInitial())) {
-        return refuse("DOM Boolean state requires a literal initialization");
+    const auto numericBit = [](mlir::Value value) {
+        auto number = ctjs::constantAttr<ctjs::NumberAttr>(value);
+        return number && (number.getDouble() == 0.0 || number.getDouble() == 1.0);
+    };
+    // Bootstrap spells Boolean literals !0 and !1. Prove that exact origin,
+    // retaining the original numeric constant and not operation for typed
+    // lowering. Other computed stores keep their existing refusal boundary.
+    const auto booleanOrigin = [&](mlir::Value value) {
+        if (!step()) { return false; }
+        if (ctjs::constantAttr<ctjs::BooleanAttr>(value)) { return true; }
+        if (!step(2)) { return false; }
+        auto unary = value.getDefiningOp<ctjs::UnaryOp>();
+        return unary && unary.getKind() == ctjs::UnaryKind::Not && numericBit(unary.getOperand());
+    };
+    const bool initiallyBoolean = booleanOrigin(cell.getInitial());
+    if (!reason.empty()) { return false; }
+    if (!initiallyBoolean && !undefined(cell.getInitial())) {
+        return refuse("DOM Boolean state requires a literal or !0/!1 initialization");
     }
     llvm::DenseSet<mlir::Operation *> stateBranches;
     for (mlir::OpOperand & use : cell.getResult().getUses()) {
@@ -77,8 +92,8 @@ bool DOMSource::normalizeBooleanCell(ctjs::FuncOp function, unsigned depth) {
             }
             if (auto write = llvm::dyn_cast<ctjs::CellSetOp>(operation);
                 write && write.getCell() == cell.getResult()) {
-                if (!ctjs::constantAttr<ctjs::BooleanAttr>(write.getValue())) {
-                    return refuse("DOM Boolean state stores must be literal Booleans");
+                if (!booleanOrigin(write.getValue())) {
+                    return refuse("DOM Boolean state stores must be literal Booleans or !0/!1");
                 }
                 initialized = true;
             }
@@ -95,10 +110,7 @@ bool DOMSource::normalizeBooleanCell(ctjs::FuncOp function, unsigned depth) {
         }
         return true;
     };
-    if (!collect(collect, block,
-                 static_cast<bool>(ctjs::constantAttr<ctjs::BooleanAttr>(cell.getInitial())), 0)) {
-        return false;
-    }
+    if (!collect(collect, block, initiallyBoolean, 0)) { return false; }
     llvm::DenseSet<mlir::Operation *> selectedCalls, helpers;
     for (auto call : calls) {
         if (!step()) { return false; }
@@ -140,19 +152,18 @@ bool DOMSource::normalizeBooleanCell(ctjs::FuncOp function, unsigned depth) {
             if (auto literal = llvm::dyn_cast<ctjs::ConstantOp>(leaf)) {
                 if (ctjs::constantAttr<ctjs::BooleanAttr>(literal.getResult())) {
                     booleans.insert(literal.getResult());
-                } else if (!undefined(literal.getResult())) {
+                } else if (!undefined(literal.getResult()) && !numericBit(literal.getResult())) {
                     return refuse("DOM Boolean borrower has a non-Boolean literal");
                 }
             } else if (auto read = llvm::dyn_cast<ctjs::CellGetOp>(leaf);
                        read && read.getCell() == formal) {
                 booleans.insert(read.getResult());
             } else if (auto write = llvm::dyn_cast<ctjs::CellSetOp>(leaf);
-                       write && write.getCell() == formal &&
-                       ctjs::constantAttr<ctjs::BooleanAttr>(write.getValue())) {
+                       write && write.getCell() == formal && booleanOrigin(write.getValue())) {
                 continue;
             } else if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(leaf);
                        unary && unary.getKind() == ctjs::UnaryKind::Not &&
-                       booleans.contains(unary.getOperand())) {
+                       (booleans.contains(unary.getOperand()) || numericBit(unary.getOperand()))) {
                 booleans.insert(unary.getResult());
             } else if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(leaf);
                        compare && compare.getKind() == ctjs::CompareKind::StrictEq &&
