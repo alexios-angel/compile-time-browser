@@ -22,6 +22,102 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Conditional captures and scalar helper state, 2026-10-04 UTC
+
+**Landed together: `07a33a29e` on `ctcompile-v1`, based on `b2e130cd4`.**
+The independently reviewed and tested code tree is
+`1e453883d75b1bed47be0311c9b8bec7e8c19270`. Feature commits are `1146462bb`
+(conditional fixed captures) and `40fc798fe` (Boolean helper state).
+`2204d9b11` and `0b9a737a4` correct only test observations. Two authors used
+separate worktrees while one validator owned the warm devbox. The validator
+approved the capture checkpoint first while Boolean work continued, then
+checked the exact combined tree. No production correction was needed during
+these validation runs.
+
+Fixed primitive captures may now be created and synchronously called inside a
+later `if` arm. Both the class cell census and literal-order proof project
+only the capture through conditional parents. Writes retain their original
+ordering checks; complete writer, escape, identity and callback-body proofs
+remain. The original proposed source, mixed literals and nested branches now
+pass, including both outcomes, aliasing and distinct documents.
+
+The independent DOM source normalizer proves one local Boolean cell borrowed
+by exact private direct leaf helpers. It checks the original bodies, every
+cell/formal use and every symbolic caller before using the existing inliner.
+Source-order read replacement preserves snapshots across literal stores;
+other producers and effects remain for complete DOM reproof. Five direct-call
+CTJS fixtures are paired with equivalent Node/VM JavaScript oracles. They cover
+read/write/read, direct initialization and frame roots, sibling writers,
+repeated calls and owner writes. This is a DOM lowering prerequisite;
+class-retained mutable captures are not admitted by it alone.
+
+Generated C++ examples use scalar Boolean values, ordinary `if` blocks,
+value strings/optionals and the existing public DOM calls. They contain no
+callback or cell runtime. The existing Boolean wrapper stores one `bool`,
+and the string wrapper owns a `std::string`.
+
+**Measured, devbox only:** under `/tmp/ctbrowser-devbox-build.lock`, the explicit
+build command was `DEVBOX_DIR=projects/compile-time-browser tools/remote-build.sh ctjs-opt ctjs-translate ctcompile-test-native-reference`.
+The combined production build passed **13 steps in 19 s**. The final test-only
+sync/build took **7 s**, with Ninja reporting no work. All nine changed source
+hashes matched before and after the final run.
+
+The command `~/.lit-venv/bin/lit -va -j 2 build/ctcompile/test` with exact filter
+`^ctcompile :: CTNative/Browser/(native-class-dom-(callback-branch-captures|callback-captures|callbacks|callback-regions|callback-forwarding)|native-dom-boolean-cells)[.]test$`
+passed **6/6 in 341.30 s**. Totals: **400 native executions, 579 refusals and
+24 Node/VM source comparisons**. The new branch fixture contributed
+**48 native / 100 refusals / 3 sources**; Boolean state contributed
+**80 / 157 / 5**. Both DOM providers, both optimization policies, explicit and
+deduced C++, GCC and pinned Clang passed. Per-binary symbol checks and an
+independent scan of all **200 generated C++ files** found no Script runtime.
+
+The final Boolean preflight separately checked **39 valid raw forms**, five
+oracles, 20 lowerings, 155 proof/budget refusals and two malformed verifier
+controls. The representative nonoptimized `ctbrowser-dom-v1` state proof first
+succeeded at work budget **423**; budget **422** retained the original CTJS
+operation sequence. Unknown effects also preserve the original source.
+These preflight counts are not added to the runtime totals. Before the change,
+the three exact branch sources refused in all 12 provider/policy variants and
+the basic Boolean source refused in all four variants. The capture-only gate
+passed 48 native executions and 100 refusals in 72.93 s before combined testing.
+
+`tools/format.sh --check` still reports exactly the **83 pre-existing diagnostics**
+in `ctbrowser/lib/Script/builtins/collections/keyed.cpp`, with byte-identical
+baseline log SHA256 `421f6a23f5b220c8c0f549fec3f417dc6bea95c5b524e109bf9bf366532c0090`.
+All four changed C++ files, both Python drivers, AST checks and
+`git diff --check` pass. No browser code changed; browser CTest was not needed.
+Full CTest/lit, broad corpus/native matrices, WPT/test262, Windows, sanitizers
+and performance measurements were not run. No push was made.
+
+Exact commands, reviews, source patch, baseline/failure evidence and final
+outputs are retained at
+`/home/alex/.ctbrowser-auto/codex/ctcompile/artifacts/2026-10-04-native-stack-3/`.
+The final `validation/combined-07a33a29/evidence.tar.gz` contains 1,499 current-run
+native text artifacts; SHA256
+`9c5c62c13129e9575a4ae97b23feedf4f206c46c5c4321e73e8ee223a14b7d57`.
+
+**Next native/Bootstrap boundary:** the unchanged closed vendor prefix and
+complete Button still agree in Node/VM on retained input, exact Data
+registration, empty config and two toggles. Native still reports
+**`native DOM class: class local cell has a nonlocal or unordered use`**.
+The source walk now passes the first two parameter-cell capture positions and
+points to the conditional default write for parameter `n`, cell `%964`, in
+`fn$43` (`closed-button.js:66`, prepared IR:2547). This cell attribution is a
+source/IR inference; the diagnostic itself does not name an operation.
+
+Conditional default selection must preserve supplied false versus omitted
+arguments. Simply treating its write as a fixed initialization is unsound.
+The next disjoint lanes can prove this class-cell selection and extend the
+DOM Boolean state normalizer through bounded `if` arms. Class-local mutable
+storage/callback retention through normalization and ordinary closure lifting
+is then a dependent class change. Typed parameter/callable/self identity,
+computed transition state and owned deferred listener/timer lifetimes remain
+separate obligations. Preserve the complete dormant `_queueCallback` body.
+The detailed trace and proposed split are in `next-boundary.md` and
+`next-wave-plan.md` in the artifact directory and the retained
+[parallel-work plan](plans/native-bootstrap-stacks.md). Native Bootstrap is
+not complete.
+
 ## Forwarded callback captures and public listeners, 2026-10-04 UTC
 
 **Landed together: `47beeaf52` on `ctcompile-v1`, based on `5ad1d7498`.**

@@ -72,28 +72,54 @@ The validator tested A3 plus the registry first while the adapter author kept
 working. It then assembled all frozen commits for the final focused gate. See
 the handoff for exact revisions, commands, counts and remaining limitations.
 
+## Third feature wave (landed 2026-10-04)
+
+Combined commit `07a33a29e` passed 400 native executions, 579 refusals and
+24 Node/VM source comparisons across six focused cases. The validator first
+approved the conditional-capture stack while the Boolean author continued,
+then checked the combined tree. See the handoff for exact commands, hashes,
+baseline failures, test-only corrections and skipped coverage.
+
+The class checkpoint proves fixed primitive captures created and synchronously
+called inside a later `if` arm. It projects capture positions in both ordering
+checks, retaining the full writer/escape census and conditional-write refusals.
+The three new source cases exercise both arms, nested branches, aliases and
+distinct documents.
+
+The independent DOM checkpoint proves one Boolean cell borrowed by exact
+private direct leaf helpers, uses the existing call inliner, then replaces
+reads and writes with scalar values in source order. Complete bodies and
+symbolic callers are checked before mutation; all remaining effects are
+reproved. Five direct-call IR cases are paired with JavaScript oracles. The
+last refused budget and unknown-effect cases preserve the original source.
+The generated output contains scalar values and public DOM calls, with no
+runtime cell or callback object. This does not yet retain mutable class
+captures through the earlier class normalization stage.
+
 ## Next features, based on source and IR traces
 
-1. Prove a fixed literal captured by a synchronous callback created/called
-   inside a later `if` arm. Project exact capture uses to their enclosing
-   position in both the class cell census and literal-order proof. Preserve
-   the full writer/escape/use census and test both branches. Do not apply that
-   relaxation to conditional cell writes: a default assignment must not erase
-   a supplied argument. This is the smallest proposed construct suggested by
-   the latest Button refusal; typed parameter/deferred captures remain later.
-2. Prove one local Boolean cell borrowed by exact synchronous direct helpers
-   in DOM source expansion. Reuse the existing call inliner, then replace reads
-   and writes with the current SSA value in source order. Start with one owning
-   block and literal initialization/stores. Keep the other operations for the
-   complete DOM effect/type proof. Unknown callees, escaped/forwarded addresses,
-   non-Boolean stores, reads before initialization and unsupported regions
-   remain diagnostics. Caller-supplied native annotations provide no proof.
-3. Preserve that cell and exact leaf callbacks through class normalization and
-   existing closure lifting. Class fixed-value maps currently erase storage;
-   the class and DOM stages both need explicit support. The positive witness
-   reads `false`, calls a sibling that stores `true`, then observes `true`, with
-   fresh state on repeated method calls. Test hidden writers, shallow budget
-   exhaustion, late failure/rollback and complete dormant bodies.
+1. Prove conditional default selection for the class cell holding transition
+   parameter `n`. The unchanged Button diagnostic remains nonlocal/unordered;
+   the source walk now passes the first two parameter capture positions and
+   reaches `%964`'s conditional write. This attribution is a source/IR inference,
+   not an instrumented failing-operation report. Preserve a supplied false
+   argument versus an omitted one through explicit SSA selection. Do not map
+   the conditional store to an unconditional fixed value. Keep initial reads
+   used by the undefined test distinct from later selected-value reads, and
+   preserve the original default expression and all producers/effects.
+2. Independently extend the DOM Boolean normalizer through bounded `if` arms.
+   Start with already initialized state and exact leaf calls in the original
+   arm. Yield each arm's final state as an extra result; an absent else retains
+   incoming state. Preserve existing result positions and the complete
+   use/body/symbol census. Use the existing iterator state-edge algorithm as a
+   reference. Loops, incoming/multiple cells and deferred calls remain later.
+   This lane touches DOM source files and can run separately from class work.
+3. Retain one class-local Boolean cell and exact leaf callbacks through class
+   normalization and ordinary closure lifting, reusing the new DOM proof.
+   Keep mutable storage out of fixed-value maps and remap its records when
+   methods are cloned. Begin with straight-line read/mark/read and fresh state
+   on repeated calls, then conditional state. This overlaps the class-default
+   proof files, so stack it after that lane rather than editing them in parallel.
 4. Prove typed callable and self identity, then a session-owned transition
    record shared by timer/listener handles. It needs explicit element/document
    borrows, cancellation and destruction rules; a stack borrow cannot survive
@@ -104,9 +130,10 @@ the handoff for exact revisions, commands, counts and remaining limitations.
    document-lifetime proofs. Test real completion, fallback, recursive dispatch
    and teardown before claiming deferred support.
 
-The detailed read-only trace and schematic IR are archived in
-`/home/alex/.ctbrowser-auto/codex/ctcompile/artifacts/2026-10-04-native-stack-2/next-boundary.md`.
-These future admissions have not been measured.
+The current measured evidence and proposed follow-up details are archived in
+`/home/alex/.ctbrowser-auto/codex/ctcompile/artifacts/2026-10-04-native-stack-3/`:
+`next-boundary.md`, `next-wave-plan.md` and `validation/combined-07a33a29/`.
+Future admissions listed above have not been measured.
 
 The public timer/listener cores are prerequisites, not native callback ownership
 proofs. Preserve the original vendor Button probe, all source bodies/effects,
