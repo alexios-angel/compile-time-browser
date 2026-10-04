@@ -42,7 +42,7 @@ bool classInitialization::proveCells(ctjs::FuncOp entry) {
     // ordered bindings are transport; their original producers stay live.
     for (ctjs::CreateCellOp cell : entry.getBody().front().getOps<ctjs::CreateCellOp>()) {
         if (!step()) { return false; }
-        if (cells.count(cell.getResult())) { continue; }
+        if (cells.count(cell.getResult()) || booleanCells.contains(cell.getResult())) { continue; }
         ctjs::CellSetOp first;
         const auto usePosition = [&](mlir::Operation * op) {
             if (llvm::isa<ctjs::CellGetOp>(op)) {
@@ -390,6 +390,11 @@ bool classInitialization::fixedCallbackCaptures(ctjs::CreateClosureOp callback,
 bool classInitialization::helperCallback(mlir::OpOperand & use) {
     auto callback = llvm::dyn_cast<ctjs::CreateClosureOp>(use.getOwner());
     auto function = target(callback);
+    // The separate state proof retains the exact slot and all original
+    // operations for closure lifting and DOM reproof, never a literal copy.
+    if (callback && use.getOperandNumber() == 0 && booleanLeaves.contains(function)) {
+        return true;
+    }
     if (!callback || use.getOperandNumber() != 0 || !function ||
         !fixedCallbackCaptures(callback, function) ||
         llvm::any_of(function.getBody().front().getArguments().take_front(ctjs::implicit_arguments),
@@ -455,6 +460,7 @@ bool classInitialization::methodCaptures(ctjs::CreateClosureOp method,
     // ponytail: bound the proof stack; use an explicit worklist for deeper chains.
     if (depth >= 64) { return refuse("class helper capture nesting limit exceeded"); }
     auto fn = target(method);
+    if (domEntry && !retainBooleanCaptures(fn)) { return false; }
     const auto constructorValue = constructor ? constructor.getResult() : mlir::Value{};
     if (fn.getUpvalueCount() != static_cast<int64_t>(method.getUpvalues().size()) ||
         hasOuterCapture(method)) {

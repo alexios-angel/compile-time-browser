@@ -8,7 +8,8 @@ bool classInitialization::scalarizeConditionalCells(ctjs::FuncOp entry) {
     for (auto & operation : block) {
         if (!step()) { return false; }
         if (auto cell = llvm::dyn_cast<ctjs::CreateCellOp>(operation);
-            cell && undefined(cell.getInitial()) && !cells.count(cell.getResult())) {
+            cell && undefined(cell.getInitial()) && !cells.count(cell.getResult()) &&
+            !booleanCells.contains(cell.getResult())) {
             candidates.push_back(cell);
         }
     }

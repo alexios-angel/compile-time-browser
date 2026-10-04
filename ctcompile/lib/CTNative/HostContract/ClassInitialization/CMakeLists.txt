@@ -2,6 +2,7 @@ target_sources(ctcompile-ctnative-lowering PRIVATE
   Sources.cpp
   ParameterDefaults.cpp
   ConditionalCells.cpp
+  BooleanCaptures.cpp
   Publication.cpp
   CapturedMapHelpers.cpp
   DOMData.cpp

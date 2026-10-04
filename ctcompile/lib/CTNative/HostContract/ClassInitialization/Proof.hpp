@@ -163,6 +163,10 @@ struct classInitialization {
     llvm::SmallVector<std::pair<ctjs::GetPropertyOp, ctjs::FuncOp>> staticMethodReads;
     llvm::SmallVector<ctjs::CreateClosureOp> staticMethodClosures;
     llvm::MapVector<mlir::Value, mlir::Value> cells;
+    // Actual shared storage, never a fixed snapshot. The ordinary closure
+    // lifter and complete DOM Boolean proof consume these retained bodies.
+    llvm::DenseSet<mlir::Value> booleanCells;
+    llvm::DenseSet<mlir::Operation *> booleanLeaves;
     llvm::DenseSet<mlir::Operation *> cellOperations;
     llvm::DenseSet<mlir::Operation *> earlyCaptures;
     llvm::SmallVector<ctjs::CellGetOp> cellReads;
@@ -239,6 +243,7 @@ struct classInitialization {
     static bool undefined(mlir::Value value) { return ctjs::isUndefinedConstant(value); }
     ctjs::FuncOp target(ctjs::CreateClosureOp closure);
     bool selectParameterDefaults(ctjs::FuncOp entry);
+    bool retainBooleanCaptures(ctjs::FuncOp owner);
     bool scalarizeConditionalCells(ctjs::FuncOp entry);
     bool proveCells(ctjs::FuncOp entry);
     bool proveMaps();
