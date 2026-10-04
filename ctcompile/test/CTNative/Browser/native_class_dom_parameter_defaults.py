@@ -7,6 +7,7 @@ import subprocess
 
 from CTNative.Browser import native_dom as dom
 from CTNative.Browser import native_class_dom_callbacks as callbacks
+from CTNative.Browser.native_dom_boolean_cells import source_operations
 from CTNative.harness import run, threshold
 
 # The inner formal shadows the outer one. Conservative frontend name analysis
@@ -72,7 +73,6 @@ BAD = {
     "returned-callback": METHOD.replace("return local(target)", "return local"),
     "timer": METHOD.replace("return local(target)", "return setTimeout(local, 0)"),
 }
-OPERATIONS = re.compile(r'^\s*(?:%[^=\n]+ = )?"?(ctjs\.[a-z_]+)\b', re.M)
 BRANCH = re.compile(
     r"^    scf\.if (%\w+) \{\n(?P<then>.*?)^    \} else \{\n(?P<else>.*?)^    \}",
     re.M | re.S,
@@ -221,7 +221,7 @@ def mutations(text):
 def budget_boundary(args, ir, contract):
     config = args.work / "budget-boundary.json"
     config.write_text(json.dumps(contract) + "\n")
-    original = OPERATIONS.findall(ir.read_text())
+    original = source_operations(args, ir.read_text())
     refusals = 0
 
     def lowers(limit, *, preserve=False):
@@ -247,7 +247,7 @@ def budget_boundary(args, ir, contract):
             return True
         assert "budget exhausted" in text, text
         if preserve or result.returncode == 0:
-            assert OPERATIONS.findall(text) == original, text
+            assert source_operations(args, text) == original, text
         refusals += 1
         return False
 
@@ -291,6 +291,7 @@ def main():
             args, name, callbacks.source(method + CALLS), 2, entry_name="probe"
         )
         declared = dict(contract, initial_intrinsics=["__ctbrowser_class_defined"])
+        original = source_operations(args, ir.read_text()) if "effect" in name else None
         for owned, optimize, manifest in dom.variants(declared):
             diagnostic = dom.lower(
                 args,
@@ -302,9 +303,7 @@ def main():
                 max_steps=1000000,
             )
             if "effect" in name:
-                assert OPERATIONS.findall(diagnostic) == OPERATIONS.findall(
-                    ir.read_text()
-                ), diagnostic
+                assert source_operations(args, diagnostic) == original, diagnostic
             refusals += 1
     print(
         f"DOM class parameter defaults: {len(CASES)} Node/VM sources, {executions} native executions, {refusals} refusals"

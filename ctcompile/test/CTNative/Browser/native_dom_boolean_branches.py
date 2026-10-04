@@ -299,8 +299,7 @@ def main():
             refusals += cells.budget_boundary(args, ir, contract)
     for name, text in bad_programs().items():
         ir, contract = cells.prepare(args, "bad-" + name, text)
-        original = cells.OPERATIONS.findall(ir.read_text())
-        assert original, ir
+        original = cells.source_operations(args, ir.read_text())
         for owned, optimize, manifest in dom.variants(contract):
             diagnostic = dom.lower(
                 args,
@@ -312,7 +311,7 @@ def main():
                 max_steps=1000000,
             )
             if name.startswith("unknown-effect"):
-                assert cells.OPERATIONS.findall(diagnostic) == original, diagnostic
+                assert cells.source_operations(args, diagnostic) == original, diagnostic
             refusals += 1
     for name, text in {
         "missing-result": cells.program(
