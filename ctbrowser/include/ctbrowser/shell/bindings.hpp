@@ -1,6 +1,7 @@
 #pragma once
 
 #include "bindings/document_types.hpp"
+#include <ctbrowser/shell/timer_queue.hpp>
 
 namespace ctbrowser::shell {
 
@@ -889,7 +890,8 @@ private:
     void each_window_in_tree(const std::function<void(dom_bindings &)> & visit);
     double last_activation_ = std::numeric_limits<double>::infinity();
 
-    [[nodiscard]] std::uint32_t add_timer(value callback, double delay_ms, bool repeating);
+    [[nodiscard]] std::uint32_t add_timer(value callback, double delay_ms, bool repeating,
+                                          timer_source source = timer_source::host);
 
     // --- events -----------------------------------------------------------
 
@@ -1043,7 +1045,10 @@ private:
     std::vector<performance_entry> performance_entries_;
 
     std::vector<listener> listeners_;
+    // Payloads follow timer_schedule_ in registration order, including canceled
+    // entries until the batch ends so callback roots remain alive throughout it.
     std::vector<timer> timers_;
+    timer_queue timer_schedule_;
 
     using animation_frame_callback = binding_detail::animation_frame_callback;
     std::vector<animation_frame_callback> animation_callbacks_;

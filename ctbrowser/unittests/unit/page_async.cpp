@@ -473,6 +473,98 @@ void test_interval_repeats_and_can_be_cleared() {
     check(page.bindings().pending_timers() == 0, "and is no longer armed");
 }
 
+void test_timer_batch_matches_native_queue() {
+    browser page{browser_options{200, 200}};
+    page.load_html(R"(<body><script>
+        var trace = [];
+        setTimeout(function () {
+            trace.push('first');
+            queueMicrotask(function () { trace.push('micro'); clearTimeout(cancelled); });
+            setTimeout(function () { trace.push('nested'); }, 0);
+        }, 50);
+        var cancelled = setTimeout(function () { trace.push('cancelled'); }, 5);
+        setTimeout(function () { trace.push('last'); }, 0);
+    </script></body>)");
+
+    shell::timer_queue queue;
+    queue.schedule(1, 0, 50, false, shell::timer_source::page);
+    queue.schedule(2, 0, 5, false, shell::timer_source::page);
+    queue.schedule(3, 0, 0, false, shell::timer_source::page);
+    std::string native_trace;
+    std::vector<std::uint32_t> due;
+    for (const auto & timer : queue.entries()) {
+        if (timer.due(100)) { due.push_back(timer.id); }
+    }
+    for (const auto id : due) {
+        if (!queue.begin(id, 100)) { continue; }
+        if (id == 1) {
+            native_trace += "first,micro";
+            queue.cancel(2);
+            queue.schedule(4, 100, 0, false, shell::timer_source::page);
+        } else if (id == 3) {
+            native_trace += ",last";
+        } else {
+            native_trace += ",cancelled";
+        }
+    }
+    queue.discard_cancelled();
+    CHECK_EQ(native_trace, "first,micro,last");
+    CHECK_EQ(page.tick(100), 2u);
+    (void)page.run_script("console.log(trace.join(','));");
+    CHECK_EQ(log_of(page).back(), native_trace);
+    CHECK_EQ(page.bindings().pending_timers(), queue.entries().size());
+    CHECK_EQ(queue.entries().size(), 1u);
+    CHECK_EQ(page.bindings().next_callback_ms(), queue.next_delay(100));
+
+    CHECK(queue.begin(4, 100));
+    native_trace += ",nested";
+    queue.discard_cancelled();
+    CHECK_EQ(page.tick(0), 1u);
+    (void)page.run_script("console.log(trace.join(','));");
+    CHECK_EQ(log_of(page).back(), native_trace);
+    CHECK_EQ(page.bindings().pending_timers(), queue.entries().size());
+}
+
+void test_host_tasks_precede_page_timers() {
+    browser page{browser_options{200, 200}};
+    page.load_html(R"(<body><details id="details"></details><script>
+        var trace = [];
+        var details = document.getElementById('details');
+        details.addEventListener('toggle', function () { trace.push('host'); });
+        details.open = true;
+        setTimeout(function () { trace.push('page'); }, 0);
+    </script></body>)");
+    CHECK_EQ(page.bindings().run_timers(true), 1u);
+    (void)page.run_script("console.log(trace.join(','));");
+    CHECK_EQ(log_of(page).back(), "host");
+    CHECK_EQ(page.bindings().pending_timers(), 1u);
+    CHECK_EQ(page.bindings().run_timers(false), 1u);
+    (void)page.run_script("console.log(trace.join(','));");
+    CHECK_EQ(log_of(page).back(), "host,page");
+}
+
+void test_timer_ids_and_interval_deadlines() {
+    browser page{browser_options{200, 200}};
+    page.load_html(R"(<body><script>
+        var first = setTimeout(function () {}, 0);
+        var frame = requestAnimationFrame(function () {});
+        var last = setTimeout(function () {}, 0);
+        console.log(frame === first + 1 && last === frame + 1);
+        clearTimeout(first);
+        cancelAnimationFrame(frame);
+        clearTimeout(last);
+        setInterval(function () { console.log('interval'); }, 10);
+    </script></body>)");
+    CHECK_EQ(log_of(page).back(), "true");
+    CHECK_EQ(page.tick(100), 1u);
+    CHECK_EQ(log_of(page).back(), "interval");
+    CHECK_EQ(page.bindings().next_callback_ms(), 10.0);
+    CHECK_EQ(page.tick(0), 0u);
+    CHECK_EQ(page.tick(9), 0u);
+    CHECK_EQ(page.tick(1), 1u);
+    CHECK_EQ(log_of(page).size(), 3u);
+}
+
 void test_request_animation_frame() {
     browser page{browser_options{200, 200}};
     page.load_html(R"(<html><body><script>
@@ -564,6 +656,9 @@ int main() {
     test_timers();
     test_timer_arguments_are_converted_by_the_idl();
     test_interval_repeats_and_can_be_cleared();
+    test_timer_batch_matches_native_queue();
+    test_host_tasks_precede_page_timers();
+    test_timer_ids_and_interval_deadlines();
     test_request_animation_frame();
     test_cancel_animation_frame_and_a_throw();
     test_fetch_is_async();

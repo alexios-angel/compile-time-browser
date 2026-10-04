@@ -542,9 +542,7 @@ void dom_bindings::queue_details_toggle(node_id details, bool was_open, bool ope
     const auto held = std::ranges::find(details_toggles_, details, &details_toggle::details);
     if (held != details_toggles_.end()) {
         was_open = held->was_open;
-        for (timer & t : top.timers_) {
-            if (t.id == held->task) { t.cancelled = true; }
-        }
+        top.timer_schedule_.cancel(held->task);
         details_toggles_.erase(held);
     }
     const auto state = [](bool is_open) { return is_open ? "open" : "closed"; };

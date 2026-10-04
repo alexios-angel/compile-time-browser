@@ -24,14 +24,9 @@ struct timer {
     std::uint32_t id = 0;
     value callback;
     std::vector<value> arguments; // setTimeout's third and later, for a Function
-    double due_ms = 0;
-    double interval_ms = 0;
-    bool repeating = false;
-    bool cancelled = false;
     // A FRAME'S window it was set on, or undefined: a timer of a frame that has
     // since been removed never fires (its document is not fully active).
     value window = value::undefined();
-    bool page_timer = false; // setTimeout/setInterval's, not a task the host queued
 };
 
 // WHICH EVENT TARGET A LISTENER IS ON. The document and the window are not
