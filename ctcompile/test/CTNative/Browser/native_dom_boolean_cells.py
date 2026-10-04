@@ -324,12 +324,24 @@ OPERATIONS = re.compile(
 )
 
 
+def source_operations(args, text):
+    """Verify and generically print source or a pass error's retained module."""
+    _, diagnostic, retained = text.partition("note: see current operation:")
+    if diagnostic:
+        text = retained.strip()
+    # Custom assembly omits implicit empty yields; generic assembly prints
+    # them. Normalize both sides so rollback checks include those state edges.
+    generic = run([args.opt, "--mlir-print-op-generic"], input_text=text).stdout
+    operations = OPERATIONS.findall(generic)
+    assert operations, generic
+    return operations
+
+
 def budget_boundary(args, ir, contract):
     """Check the last refused budget and source rollback on one representative."""
     config = args.work / "budget-boundary.json"
     config.write_text(json.dumps(contract) + "\n")
-    original = OPERATIONS.findall(ir.read_text())
-    assert original, ir
+    original = source_operations(args, ir.read_text())
     refusals = 0
 
     def lowers(limit, *, require_source=False):
@@ -355,7 +367,7 @@ def budget_boundary(args, ir, contract):
             return True
         assert "budget exhausted" in text, text
         if require_source or result.returncode == 0:
-            assert OPERATIONS.findall(text) == original, text
+            assert source_operations(args, text) == original, text
         refusals += 1
         return False
 
@@ -395,8 +407,7 @@ def main():
             refusals += budget_boundary(args, ir, contract)
     for name, text in bad_programs().items():
         ir, contract = prepare(args, "bad-" + name, text)
-        original = OPERATIONS.findall(ir.read_text())
-        assert original, ir
+        original = source_operations(args, ir.read_text())
         for owned, optimize, manifest in dom.variants(contract):
             diagnostic = dom.lower(
                 args,
@@ -410,7 +421,7 @@ def main():
             if name.startswith("effect-"):
                 # The state proof can finish before the original unknown effect
                 # fails DOM reproof. Every original cell/call must survive.
-                assert OPERATIONS.findall(diagnostic) == original, diagnostic
+                assert source_operations(args, diagnostic) == original, diagnostic
             refusals += 1
     for name, text in {
         "missing-argument": program(
