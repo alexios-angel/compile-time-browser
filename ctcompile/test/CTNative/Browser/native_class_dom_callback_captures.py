@@ -83,6 +83,7 @@ BAD = {
     + callbacks.CALLS
     for name, method in BAD.items()
 }
+CASES["forwarded-capture"] = BAD.pop("forwarded-capture")
 
 
 def main():

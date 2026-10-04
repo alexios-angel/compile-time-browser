@@ -243,6 +243,10 @@ struct classInitialization {
     mlir::Value sourceValue(mlir::Value value);
     llvm::SmallVector<mlir::OpOperand *> sourceUses(mlir::Value value);
     bool copyPrimitiveCapture(ctjs::LoadUpvalueOp load, ctjs::ConstantOp literal);
+    bool fixedCaptureSlot(ctjs::CreateClosureOp closure, unsigned slot, unsigned depth = 0);
+    bool fixedCallbackCell(ctjs::CreateCellOp cell);
+    ctjs::ConstantOp callbackPrimitive(ctjs::CreateClosureOp closure, unsigned slot,
+                                       unsigned depth = 0);
     bool fixedCallbackCaptures(ctjs::CreateClosureOp callback, ctjs::FuncOp function);
     bool helperCallback(mlir::OpOperand & use);
     bool helperCallbacks(ctjs::FuncOp helper);

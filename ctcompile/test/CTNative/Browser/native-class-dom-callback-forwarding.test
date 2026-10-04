@@ -1,0 +1,2 @@
+# Forwarded primitive captures retain their original cell and complete use proof.
+# RUN: python3 %S/native_class_dom_callback_forwarding.py %dom_driver --node %node --reference %native_reference

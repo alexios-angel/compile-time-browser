@@ -1,5 +1,4 @@
 #include "Proof.hpp"
-#include "ctcompile/CTNative/Analysis/ImmutableCaptures.h"
 #include "llvm/ADT/StringMap.h"
 
 #include <bit>
@@ -217,42 +216,151 @@ bool classInitialization::copyPrimitiveCapture(ctjs::LoadUpvalueOp load, ctjs::C
     return true;
 }
 
-bool classInitialization::fixedCallbackCaptures(ctjs::CreateClosureOp callback,
-                                                ctjs::FuncOp function) {
-    if (callback.getUpvalues().empty()) { return function.getUpvalueCount() == 0; }
-    if (function.getUpvalueCount() != static_cast<int64_t>(callback.getUpvalues().size()) ||
-        hasOuterCapture(callback)) {
-        return refuse("class callback requires exact local capture slots");
+bool classInitialization::fixedCaptureSlot(ctjs::CreateClosureOp closure, unsigned slot,
+                                           unsigned depth) {
+    if (!step()) { return false; }
+    // The class census has already required one creator per source function.
+    // Follow every forwarding edge, including unused sibling writers.
+    // ponytail: bound recursion; use a worklist if deeper source chains matter.
+    if (depth >= 64) { return refuse("class callback forwarding depth limit exceeded"); }
+    auto function = target(closure);
+    auto parent = closure->getParentOfType<ctjs::FuncOp>();
+    if (!function || !parent || slot >= closure.getUpvalues().size() ||
+        function.getUpvalueCount() != static_cast<int64_t>(closure.getUpvalues().size()) ||
+        closure.getEnclosingClosure() != parent.getBody().front().getArgument(ctjs::arg_callee)) {
+        return refuse("class callback capture lacks its exact enclosing identity");
     }
-    if (!proveCells(callback->getParentOfType<ctjs::FuncOp>())) { return false; }
-    if (earlyCaptures.contains(callback)) {
-        return refuse("class callback capture precedes its initialization");
-    }
-    llvm::SmallVector<ctjs::ConstantOp> literals;
-    for (mlir::Value capture : callback.getUpvalues()) {
-        auto cell = capture.getDefiningOp<ctjs::CreateCellOp>();
-        if (!step() || !cell || !cells.count(capture)) {
-            return refuse("class callback capture lacks a fixed local cell");
+    for (mlir::OpOperand & use :
+         function.getBody().front().getArgument(ctjs::arg_callee).getUses()) {
+        if (!step()) { return false; }
+        if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
+        auto load = llvm::dyn_cast<ctjs::LoadUpvalueOp>(use.getOwner());
+        auto store = llvm::dyn_cast<ctjs::StoreUpvalueOp>(use.getOwner());
+        if (load || store) {
+            const auto index = load ? load.getIndex() : store.getIndex();
+            if (use.getOperandNumber() != 0 || index < 0 ||
+                static_cast<size_t>(index) >= closure.getUpvalues().size() ||
+                (store && static_cast<unsigned>(index) == slot)) {
+                return refuse("class callback capture is mutable or has an invalid slot");
+            }
+            continue;
         }
-        // The shared query checks every capturing sibling, including unused
-        // writers. Charge its cell walk and module/target scans before calling it.
-        for (mlir::Operation * user : cell->getUsers()) {
-            if (!spend(2)) { return false; }
-            if (llvm::isa<ctjs::CreateClosureOp>(user) &&
-                !spendWalk(module, [](mlir::Operation * op) {
-                    return uint64_t(4) + op->getNumOperands();
-                })) {
+        auto child = llvm::dyn_cast<ctjs::CreateClosureOp>(use.getOwner());
+        if (!child || use.getOperandNumber() != 0) {
+            return refuse("class callback capture observes its enclosing identity");
+        }
+        auto indices = child.getEnclosingIndicesAttr();
+        if (!indices) { continue; }
+        for (auto [index, source] : llvm::enumerate(indices.asArrayRef())) {
+            if (!step()) { return false; }
+            if (source < -1 ||
+                (source >= 0 && (static_cast<size_t>(source) >= closure.getUpvalues().size() ||
+                                 !undefined(child.getUpvalues()[index])))) {
+                return refuse("class callback forwarding lacks an exact enclosing slot");
+            }
+            if (source >= 0 && static_cast<unsigned>(source) == slot &&
+                !fixedCaptureSlot(child, static_cast<unsigned>(index), depth + 1)) {
                 return false;
             }
         }
-        if (!immutableCaptureCell(cell, module)) {
+    }
+    return true;
+}
+
+bool classInitialization::fixedCallbackCell(ctjs::CreateCellOp cell) {
+    unsigned writes = 0;
+    for (mlir::OpOperand & use : cell.getResult().getUses()) {
+        if (!step()) { return false; }
+        if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
+        if (llvm::isa<ctjs::CellGetOp>(use.getOwner()) && use.getOperandNumber() == 0) { continue; }
+        if (llvm::isa<ctjs::CellSetOp>(use.getOwner()) && use.getOperandNumber() == 0 &&
+            ++writes <= 1) {
+            continue;
+        }
+        auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(use.getOwner());
+        if (!closure || use.getOperandNumber() < 2) {
             return refuse("class callback capture is mutable or escapes");
         }
-        auto literal = sourceValue(cells.lookup(capture)).getDefiningOp<ctjs::ConstantOp>();
-        if (!literal || !ctjs::isPrimitiveAttr(literal.getValue()) ||
-            literal->getBlock() != callback->getBlock() || !literal->isBeforeInBlock(callback)) {
-            return refuse("class callback capture requires an ordered local primitive");
+        const unsigned slot = use.getOperandNumber() - 2;
+        auto indices = closure.getEnclosingIndicesAttr();
+        if ((indices && indices[slot] != -1) || !fixedCaptureSlot(closure, slot)) {
+            return refuse("class callback capture lacks a fixed local slot");
         }
+    }
+    return true;
+}
+
+ctjs::ConstantOp classInitialization::callbackPrimitive(ctjs::CreateClosureOp closure,
+                                                        unsigned slot, unsigned depth) {
+    if (!step()) { return {}; }
+    if (depth >= 64) {
+        refuse("class callback forwarding depth limit exceeded");
+        return {};
+    }
+    auto function = target(closure);
+    auto parent = closure->getParentOfType<ctjs::FuncOp>();
+    if (!function || !parent || slot >= closure.getUpvalues().size() ||
+        function.getUpvalueCount() != static_cast<int64_t>(closure.getUpvalues().size()) ||
+        closure.getEnclosingClosure() != parent.getBody().front().getArgument(ctjs::arg_callee)) {
+        refuse("class callback capture lacks its exact enclosing identity");
+        return {};
+    }
+    auto indices = closure.getEnclosingIndicesAttr();
+    const int32_t enclosing = indices ? indices[slot] : -1;
+    if (enclosing != -1) {
+        if (enclosing < 0 || static_cast<int64_t>(enclosing) >= parent.getUpvalueCount() ||
+            !undefined(closure.getUpvalues()[slot])) {
+            refuse("class callback forwarding lacks an exact enclosing slot");
+            return {};
+        }
+        ctjs::CreateClosureOp creator;
+        // Resolve the actual creator after normalization. Its local cell and
+        // initialization order, not the forwarded placeholder, carry the proof.
+        if (!walkSteps(module, [&](mlir::Operation * op) {
+                if (auto candidate = llvm::dyn_cast<ctjs::CreateClosureOp>(op);
+                    candidate && target(candidate) == parent) {
+                    if (creator) {
+                        return refuseWalk("class callback forwarding has ambiguous creators");
+                    }
+                    creator = candidate;
+                }
+                return mlir::WalkResult::advance();
+            })) {
+            return {};
+        }
+        if (!creator) {
+            refuse("class callback forwarding lacks an enclosing creator");
+            return {};
+        }
+        return callbackPrimitive(creator, static_cast<unsigned>(enclosing), depth + 1);
+    }
+    if (!proveCells(parent)) { return {}; }
+    if (earlyCaptures.contains(closure)) {
+        refuse("class callback capture precedes its initialization");
+        return {};
+    }
+    auto capture = closure.getUpvalues()[slot];
+    auto cell = capture.getDefiningOp<ctjs::CreateCellOp>();
+    if (!cell || !cells.count(capture) || !fixedCallbackCell(cell)) {
+        refuse("class callback capture lacks a fixed local cell");
+        return {};
+    }
+    auto literal = sourceValue(cells.lookup(capture)).getDefiningOp<ctjs::ConstantOp>();
+    if (!literal || !ctjs::isPrimitiveAttr(literal.getValue()) ||
+        literal->getBlock() != closure->getBlock() || !literal->isBeforeInBlock(closure)) {
+        refuse("class callback capture requires an ordered local primitive");
+        return {};
+    }
+    return literal;
+}
+
+bool classInitialization::fixedCallbackCaptures(ctjs::CreateClosureOp callback,
+                                                ctjs::FuncOp function) {
+    if (callback.getUpvalues().empty()) { return function.getUpvalueCount() == 0; }
+    llvm::SmallVector<ctjs::ConstantOp> literals;
+    for (unsigned slot = 0; slot < callback.getUpvalues().size(); ++slot) {
+        auto literal = callbackPrimitive(callback, slot);
+        if (!literal) { return false; }
         literals.push_back(literal);
     }
     for (mlir::OpOperand & use : llvm::make_early_inc_range(
