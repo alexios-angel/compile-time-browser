@@ -43,16 +43,21 @@ bool classInitialization::proveCells(ctjs::FuncOp entry) {
         if (!step()) { return false; }
         if (cells.count(cell.getResult())) { continue; }
         ctjs::CellSetOp first;
-        const auto readPosition = [&](mlir::Operation * op) {
-            return llvm::isa<ctjs::CellGetOp>(op)
-                       ? positionIn<mlir::scf::IfOp, mlir::scf::WhileOp, mlir::scf::IndexSwitchOp>(
-                             op, cell->getBlock())
+        const auto usePosition = [&](mlir::Operation * op) {
+            if (llvm::isa<ctjs::CellGetOp>(op)) {
+                return positionIn<mlir::scf::IfOp, mlir::scf::WhileOp, mlir::scf::IndexSwitchOp>(
+                    op, cell->getBlock());
+            }
+            // A conditional capture is ordered by its enclosing branch.
+            // Writes still require their original ordered block.
+            return llvm::isa<ctjs::CreateClosureOp>(op)
+                       ? positionIn<mlir::scf::IfOp>(op, cell->getBlock())
                        : op;
         };
         for (mlir::OpOperand & use : cell.getResult().getUses()) {
             if (!step()) { return false; }
             auto * op = use.getOwner();
-            auto * position = readPosition(op);
+            auto * position = usePosition(op);
             if (position->getBlock() != cell->getBlock() || !cell->isBeforeInBlock(position)) {
                 return refuse("class local cell has a nonlocal or unordered use");
             }
@@ -71,9 +76,9 @@ bool classInitialization::proveCells(ctjs::FuncOp entry) {
                 cellOperations.insert(op);
                 continue;
             }
-            // A fixed cell may be read in a later arm or loop. All
-            // writes/captures still belong to its original ordered block.
-            if (first && !first->isBeforeInBlock(readPosition(op))) {
+            // Reads and conditional captures follow the fixed assignment;
+            // writes still belong to the cell's original ordered block.
+            if (first && !first->isBeforeInBlock(usePosition(op))) {
                 // Capturing the cell does not read it. Only the exact publication
                 // helper normalization can discharge this deferred obligation.
                 if (!llvm::isa<ctjs::CreateClosureOp>(op)) {
@@ -346,8 +351,9 @@ ctjs::ConstantOp classInitialization::callbackPrimitive(ctjs::CreateClosureOp cl
         return {};
     }
     auto literal = sourceValue(cells.lookup(capture)).getDefiningOp<ctjs::ConstantOp>();
+    auto * position = positionIn<mlir::scf::IfOp>(closure, cell->getBlock());
     if (!literal || !ctjs::isPrimitiveAttr(literal.getValue()) ||
-        literal->getBlock() != closure->getBlock() || !literal->isBeforeInBlock(closure)) {
+        literal->getBlock() != position->getBlock() || !literal->isBeforeInBlock(position)) {
         refuse("class callback capture requires an ordered local primitive");
         return {};
     }
