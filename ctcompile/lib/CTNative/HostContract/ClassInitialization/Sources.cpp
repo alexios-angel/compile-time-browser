@@ -37,6 +37,7 @@ ctjs::FuncOp classInitialization::target(ctjs::CreateClosureOp closure) {
 }
 
 bool classInitialization::proveCells(ctjs::FuncOp entry) {
+    if (!selectParameterDefaults(entry)) { return false; }
     // The importer boxes entry locals when one is captured. Only fixed,
     // ordered bindings are transport; their original producers stay live.
     for (ctjs::CreateCellOp cell : entry.getBody().front().getOps<ctjs::CreateCellOp>()) {
