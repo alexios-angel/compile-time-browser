@@ -22,6 +22,137 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Conditional shared state and callback scopes, 2026-10-04 UTC
+
+**Landed: `b7136ba92` on `ctcompile-v1`, based on `ba8208d39`.**
+The independently approved code tree is
+`ce49ff8dc6e71a4343b0f79ba41a76cf5e294034`.
+Feature commits are `fb7462576` (class conditional uses), `1f8f43f33`
+(DOM arm-local state) and `679221c5f` (branch-local callback creation).
+Two authors used separate worktrees while one validator checked immutable
+revisions on the warm devbox. The callback-creation successor was prepared
+while the first runtime gate ran. No browser source or public API changed.
+
+Class transport now retains one shared Boolean cell across bounded `if`
+reads, writes and exact synchronous leaf calls after unconditional owner
+initialization. A callback may be created within an arm when its calls remain
+dominated by that creator in the same arm or nested `if`. The complete slot,
+callee, symbolic-caller, body and source-root proofs remain. Sibling arms and
+joins cannot use an arm-local callback.
+
+The separate DOM proof accepts an undefined owner cell whose entire meaningful
+lifetime, including every write and borrower, is confined to one initializing
+arm. It selects that common scope before ordered initialization proof and
+scalarization. Original branch results, effects, unselected edges and read
+snapshots remain. Roots retain frame validation but do not select the state
+lifetime. Arbitrary stores, identity escapes, unproved callers, loops and
+deferred uses still refuse. Earlier class transport preserves root positions
+and contexts, replacing only inert values; the complete original DOM frame
+proof runs before scalarization.
+
+**Measured baseline:** unchanged `ba8208d39` agreed with three Node/VM sources
+and rejected all 12 native attempts. Its warm explicit build took 7 s with no
+Ninja work. On `f30089d59`, all four original callback-scope sources agreed in
+Node/VM and rejected all 16 native attempts at the exact local leaf slots
+guard. Two artifact-only observer corrections were needed: an indirect call
+was initially assumed direct, and the old oracle helper lacked a new keyword.
+Neither correction changed production or the original witness source.
+
+All builds, tests and measurements held `/tmp/ctbrowser-devbox-build.lock`.
+The explicit build command was
+`DEVBOX_DIR=projects/compile-time-browser tools/remote-build.sh ctjs-opt ctjs-translate ctcompile-test-native-reference`.
+The first combined build took 12 s / five Ninja steps; the final build took
+12 s / three steps. All nine changed source hashes matched before and after
+validation and after landing.
+
+Both lit runs used `~/.lit-venv/bin/lit -va -j 2 build/ctcompile/test`.
+The first filter was
+`^ctcompile :: CTNative/Browser/(native-dom-boolean-(scopes|cells|branches|origins)|native-class-dom-(boolean-branches|boolean-captures|callback-branch-captures))[.]test$`.
+It passed **7/7 in 526.08 s** on `f30089d59`, tree
+`55bf75f33eba9aeac671c2b7389f779b9fa17741`: 39 Node/VM sources,
+624 native executions and 1,001 rejection/control checks.
+The final filter was
+`^ctcompile :: CTNative/Browser/native-class-dom-(boolean-scopes|boolean-branches|boolean-captures|callback-branch-captures)[.]test$`.
+It passed **4/4 in 247.81 s** on the approved tree: 18 Node/VM sources,
+288 native executions and 467 rejection/control checks.
+
+The four earlier raw-DOM cases are retained by the exact DOM subtree and 35
+source/helper hashes. All 690 checked raw contracts omit the class intrinsic;
+that route bypasses class normalization. The three repeated first-gate class
+cases are excluded from unique totals. Unique focused coverage is **eight
+cases, 43 Node/VM sources, 688 native executions and 1,087 rejection/control
+checks**, including nine separately identified verifier-only controls:
+
+| Case | Node/VM sources | Native executions | Rejections/controls |
+| --- | ---: | ---: | ---: |
+| Class Boolean scopes | 4 | 64 | 90 |
+| Class Boolean branches | 5 | 80 | 122 |
+| Shared Boolean captures | 6 | 96 | 155 |
+| Fixed branch captures | 3 | 48 | 100 |
+| DOM Boolean scopes, retained evidence | 6 | 96 | 183 |
+| DOM Boolean cells, retained evidence | 5 | 80 | 150 |
+| DOM Boolean branches, retained evidence | 6 | 96 | 87 |
+| DOM Boolean origins, retained evidence | 8 | 128 | 200 |
+
+Both DOM providers, optimization policies, explicit/deduced C++, GCC 13 and
+pinned Clang passed. Every native binary passed its forbidden-symbol check;
+independent scans found no Script runtime in **344 generated C++ files**.
+The selected archives retain 2,779 text artifacts. Reviewed output uses scalar
+values, ordinary branches, owning strings, borrowed element handles and public
+DOM operations, with no runtime cell, closure, frame or VM value.
+Minimum successful budgets are 22667 for class scopes, 22249 for class branches,
+19889 for shared captures, 723 for DOM scopes, 435 for cells, 553 for branches
+and 665 for origins. Every immediately preceding cutoff preserves source.
+
+Separate preflights are not added to those runtime totals. The first combined
+preflight passed 11 source oracles, 76 lowerings, 296 proof refusals and two
+verifier controls; independent root/init controls added 16 lowerings and 12
+refusals. The final scope preflight passed four oracles, 36 lowerings, 80 proof
+refusals and three verifier controls, then repeated the 16/12 independent
+root/init checks. Valid roots lower; roots after frame exit and accesses before
+initialization refuse without losing original source operations.
+
+`tools/format.sh --check` still reports the same 83 pre-existing diagnostics in
+untouched `ctbrowser/lib/Script/builtins/collections/keyed.cpp`; log SHA256
+`421f6a23f5b220c8c0f549fec3f417dc6bea95c5b524e109bf9bf366532c0090`.
+Scoped C++/Python formatting, Python parsing and diff checks pass. No full
+CTest/lit, broad native/corpus matrix, WPT/test262, Windows, sanitizer or
+performance run was made. No browser CTest was needed. No push was made.
+
+Artifacts are in
+`/home/alex/.ctbrowser-auto/codex/ctcompile/artifacts/2026-10-04-native-stack-6/`.
+`validation/APPROVAL.md` and `validation/final-gate/{summary,reuse}.json` identify
+exact revisions, dependency hashes and retained evidence. First runtime
+archive SHA256: `b832225854829ef2f322113982765e1a15444ba2db6a6a54c469b813598dc3da`.
+Final runtime archive: `7a89661b91bb50bf949e8c037b261a9676f8220ece9ca458c1be8f24e6e9d334`.
+Final preflight/closed archive: `f38cceebe10d3d63fd8549f7e07c5115c942df5c461d9e126927ea47ab356b5e`.
+
+**Next native/Bootstrap boundary:** the unchanged closed vendor prefix and
+complete Button still agree in Node/VM on retained input, Data registration,
+empty configuration and two toggles. Native now reports
+**`native DOM class: class Boolean state requires exact local leaf capture slots`**.
+Its source hash remains `a667ce87e4180390632562645458203dbbb36354690c7b5fd2c355b7f47499ff`;
+all 320552 prepared function-body bytes match wave5 and both wave6 probes.
+Only module diagnostic directory names differ.
+
+The next narrow class composition is already measured: `arm-only-state`
+imports to one undefined owner cell, one arm-local false store, two direct
+captures and all uses inside that arm, but refuses in all four modes at
+`class Boolean state is used before unconditional initialization`. Retain that
+actual cell through class transport, then reuse the DOM scope proof. A disjoint
+future lane can prove conditional Boolean borrower bodies, rebuilding state
+ancestry and initialization proof after inlining introduces new branches.
+
+Bootstrap's flag `%972` additionally reaches six-slot listener and three-slot
+timer captures, callable/self identity, an event formal, host effects and
+deferred lifetime. That operation attribution remains source inference
+because the diagnostic does not name an operation. Preserve the full dormant
+`_queueCallback` body. Successful retained-state completion cloning also
+remains unproved. See `root/next-boundary.md`, the author traces and the
+[parallel-work plan](plans/native-bootstrap-stacks.md). Native Bootstrap is
+not complete.
+
+
 ## Shared class Boolean captures and minified origins, 2026-10-04 UTC
 
 **Landed: `933f934c9` on `ctcompile-v1`, based on `b1a44f8e4`.**
