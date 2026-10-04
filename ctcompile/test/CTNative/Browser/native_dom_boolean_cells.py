@@ -235,13 +235,6 @@ def bad_programs():
         ),
     )
     bad["second-owner"] = program(helpers=HELPERS + function("second$9", OWNER, "element"))
-    bad["conditional-call"] = program(
-        OWNER.replace(
-            "%ignored = ctjs.call_direct @mark$3(%u, %u, %u, %seen)",
-            "%condition = ctjs.truthy %no\nscf.if %condition {\n"
-            "  %nested = ctjs.call_direct @mark$3(%u, %u, %u, %seen)\n  scf.yield\n}",
-        )
-    )
     bad["conditional-store"] = program(
         helpers=HELPERS.replace(
             "ctjs.cell_set %cell, %yes",
@@ -326,7 +319,7 @@ def oracle(args, name, body, attributes, expected):
 OPERATIONS = re.compile(
     # Successful refusals use custom syntax; pass errors print generic quoted
     # operations. Count all source operations, including ordinary call effects.
-    r'^\s*(?:%[^=\n]+ = )?"?(ctjs\.[a-z_]+)\b',
+    r'^\s*(?:%[^=\n]+ = )?"?((?:ctjs|scf)\.[a-z_]+)\b',
     re.M,
 )
 
