@@ -38,11 +38,15 @@ bool DOMSource::normalizeBooleanCell(ctjs::FuncOp function, unsigned depth) {
     if (!initiallyBoolean && !undefined(cell.getInitial())) {
         return refuse("DOM Boolean state requires a literal or !0/!1 initialization");
     }
-    llvm::DenseSet<mlir::Operation *> stateBranches;
+    // An undefined owner cell may have its entire initialized lifetime inside
+    // one arm. Select the common block of every non-root use, including writes;
+    // the ordered census below must still prove initialization in that block.
+    mlir::Block * scope = initiallyBoolean ? &block : nullptr;
     for (mlir::OpOperand & use : cell.getResult().getUses()) {
         if (!step()) { return false; }
         auto * user = use.getOwner();
         auto * position = user;
+        llvm::DenseSet<mlir::Block *> ancestors{position->getBlock()};
         unsigned nesting = 0;
         while (position->getBlock() != &block) {
             if (!step()) { return false; }
@@ -50,19 +54,34 @@ bool DOMSource::normalizeBooleanCell(ctjs::FuncOp function, unsigned depth) {
             if (!branch || ++nesting == 64) {
                 return refuse("DOM Boolean state requires bounded local conditional uses");
             }
-            stateBranches.insert(branch);
             position = branch;
+            ancestors.insert(position->getBlock());
         }
         if (!cell->isBeforeInBlock(position)) {
             return refuse("DOM Boolean state requires ordered local uses");
         }
-        if ((llvm::isa<ctjs::RootOp>(user) && use.getOperandNumber() == 1) ||
-            (llvm::isa<ctjs::CellGetOp, ctjs::CellSetOp>(user) && use.getOperandNumber() == 0) ||
-            (llvm::isa<ctjs::CallDirectOp>(user) &&
-             use.getOperandNumber() == ctjs::implicit_arguments)) {
-            continue;
+        if (llvm::isa<ctjs::RootOp>(user) && use.getOperandNumber() == 1) { continue; }
+        if (!((llvm::isa<ctjs::CellGetOp, ctjs::CellSetOp>(user) && use.getOperandNumber() == 0) ||
+              (llvm::isa<ctjs::CallDirectOp>(user) &&
+               use.getOperandNumber() == ctjs::implicit_arguments))) {
+            return refuse("DOM Boolean state identity escapes its local borrowers");
         }
-        return refuse("DOM Boolean state identity escapes its local borrowers");
+        if (!scope) { scope = user->getBlock(); }
+        while (!ancestors.contains(scope)) {
+            if (!step()) { return false; }
+            scope = scope->getParentOp()->getBlock();
+        }
+    }
+    llvm::DenseSet<mlir::Operation *> stateBranches;
+    for (mlir::OpOperand & use : cell.getResult().getUses()) {
+        if (!step()) { return false; }
+        auto * position = use.getOwner();
+        if (llvm::isa<ctjs::RootOp>(position)) { continue; }
+        while (position->getBlock() != scope) {
+            if (!step()) { return false; }
+            position = position->getParentOp();
+            stateBranches.insert(position);
+        }
     }
 
     llvm::SmallVector<ctjs::CallDirectOp> calls;
@@ -110,7 +129,7 @@ bool DOMSource::normalizeBooleanCell(ctjs::FuncOp function, unsigned depth) {
         }
         return true;
     };
-    if (!collect(collect, block, initiallyBoolean, 0)) { return false; }
+    if (!collect(collect, *scope, initiallyBoolean, 0)) { return false; }
     llvm::DenseSet<mlir::Operation *> selectedCalls, helpers;
     for (auto call : calls) {
         if (!step()) { return false; }
@@ -287,7 +306,7 @@ bool DOMSource::normalizeBooleanCell(ctjs::FuncOp function, unsigned depth) {
         return true;
     };
     mlir::Value current = cell.getInitial();
-    if (!scalarize(scalarize, block, current, 0)) { return false; }
+    if (!scalarize(scalarize, *scope, current, 0)) { return false; }
     if (!eraseRootedUses(cell.getResult(), "DOM Boolean state has a residual use")) {
         return false;
     }
