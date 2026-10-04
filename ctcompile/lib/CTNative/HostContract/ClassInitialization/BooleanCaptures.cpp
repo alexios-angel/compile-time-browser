@@ -109,33 +109,62 @@ bool classInitialization::retainBooleanCaptures(ctjs::FuncOp owner) {
                 return refuse("class Boolean leaf observes its callee identity");
             }
         }
-        // This is transport of non-reentrant primitive leaves. The later DOM
-        // proof establishes actual Boolean origins, stores and result types.
-        for (auto & operation : body) {
-            if (!spend(cloneCost(&operation))) { return false; }
-            if (operation.getNumRegions() || operation.getNumSuccessors()) {
-                return refuse("class Boolean callback requires a flat leaf body");
+        // This transports non-reentrant primitive leaves. The later DOM proof
+        // establishes actual Boolean conditions, stores and result types.
+        const auto proveLeaf = [&](auto && self, mlir::Block & source, unsigned nesting) -> bool {
+            if (nesting == 64) { return refuse("class Boolean leaf conditional depth exhausted"); }
+            for (auto & operation : source) {
+                if (!spend(cloneCost(&operation))) { return false; }
+                if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(operation)) {
+                    if (branch.getNumResults() ||
+                        !branch.getCondition().getDefiningOp<ctjs::TruthyOp>()) {
+                        return refuse("class Boolean leaf requires a result-free conditional");
+                    }
+                    for (auto & region : branch->getRegions()) {
+                        if (!step()) { return false; }
+                        if (region.empty()) { continue; }
+                        if (!region.hasOneBlock() || region.front().empty() ||
+                            region.front().getNumArguments()) {
+                            return refuse("class Boolean leaf requires argument-free arms");
+                        }
+                        auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(region.front().back());
+                        if (!yield || yield.getNumOperands()) {
+                            return refuse("class Boolean leaf requires result-free arms");
+                        }
+                        if (!self(self, region.front(), nesting + 1)) { return false; }
+                    }
+                    continue;
+                }
+                if (operation.getNumRegions() || operation.getNumSuccessors()) {
+                    return refuse("class Boolean callback requires an If-only leaf body");
+                }
+                bool accepted =
+                    llvm::isa<ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::RootOp, ctjs::TruthyOp>(
+                        operation);
+                if (llvm::isa<ctjs::ReturnOp>(operation)) { accepted = nesting == 0; }
+                if (auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(operation)) {
+                    accepted = nesting && yield.getNumOperands() == 0;
+                }
+                if (auto literal = llvm::dyn_cast<ctjs::ConstantOp>(operation)) {
+                    accepted = ctjs::isPrimitiveAttr(literal.getValue());
+                }
+                if (auto load = llvm::dyn_cast<ctjs::LoadUpvalueOp>(operation)) {
+                    accepted = load.getClosure() == callee && load.getIndex() == 0;
+                }
+                if (auto store = llvm::dyn_cast<ctjs::StoreUpvalueOp>(operation)) {
+                    accepted = store.getClosure() == callee && store.getIndex() == 0;
+                }
+                if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(operation)) {
+                    accepted = unary.getKind() == ctjs::UnaryKind::Not;
+                }
+                if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(operation)) {
+                    accepted = compare.getKind() == ctjs::CompareKind::StrictEq;
+                }
+                if (!accepted) { return refuse("class Boolean leaf has an unproved operation"); }
             }
-            bool accepted =
-                llvm::isa<ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::RootOp, ctjs::ReturnOp>(
-                    operation);
-            if (auto literal = llvm::dyn_cast<ctjs::ConstantOp>(operation)) {
-                accepted = ctjs::isPrimitiveAttr(literal.getValue());
-            }
-            if (auto load = llvm::dyn_cast<ctjs::LoadUpvalueOp>(operation)) {
-                accepted = load.getClosure() == callee && load.getIndex() == 0;
-            }
-            if (auto store = llvm::dyn_cast<ctjs::StoreUpvalueOp>(operation)) {
-                accepted = store.getClosure() == callee && store.getIndex() == 0;
-            }
-            if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(operation)) {
-                accepted = unary.getKind() == ctjs::UnaryKind::Not;
-            }
-            if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(operation)) {
-                accepted = compare.getKind() == ctjs::CompareKind::StrictEq;
-            }
-            if (!accepted) { return refuse("class Boolean leaf has an unproved operation"); }
-        }
+            return true;
+        };
+        if (!proveLeaf(proveLeaf, body, 0)) { return false; }
         bool called = false;
         for (mlir::OpOperand & use : closure.getResult().getUses()) {
             if (!step()) { return false; }
