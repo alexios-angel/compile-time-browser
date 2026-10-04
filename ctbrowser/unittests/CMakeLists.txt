@@ -44,15 +44,16 @@ target_include_directories(ctbrowser-test-vm_operators PRIVATE
 # parse. Built ONCE here and reused across the targets, which roughly halves
 # the unittests' compile time.
 #
-# LEFT OUT: the ten tests that deliberately link a SUBSET of the libraries (the
+# LEFT OUT: tests that deliberately link a SUBSET of the libraries (the
 # three foreach blocks above) and do not include the umbrella - forcing it onto
 # them would reference libraries their link line drops. `selectors` is the
-# arbitrary full-engine anchor that builds the shared PCH.
+# arbitrary full-engine anchor that builds the shared PCH. timer_queue uses
+# only its public scheduling header so its binary can be checked without Script.
 set(_pch_anchor ctbrowser-test-selectors)
 target_precompile_headers(${_pch_anchor} PRIVATE <ctbrowser.hpp>)
 set(_pch_excluded core_basics core_text core_uri core_json
                   dom_token_list dom_element dom_shadow dom_dataset
-                  style_easing style_closest)
+                  style_easing style_closest timer_queue)
 get_property(_unit_targets DIRECTORY unit PROPERTY BUILDSYSTEM_TARGETS)
 get_property(_js_targets DIRECTORY js PROPERTY BUILDSYSTEM_TARGETS)
 foreach(_pch_target IN LISTS _unit_targets _js_targets)
