@@ -69,9 +69,9 @@ BAD = {
         "target.addEventListener('click', local); const result = true;",
     )
     + CALLS,
-    "capture": METHOD.replace("const local =", "const label = 'inside'; const local =").replace(
-        "node.setAttribute('inside', 'done')", "node.setAttribute('inside', label)"
-    )
+    "mutable-capture": METHOD.replace("const local =", "let label = 'inside'; const local =")
+    .replace("node.setAttribute('inside', 'done')", "node.setAttribute('inside', label)")
+    .replace("const result = local(target);", "label = 'changed'; const result = local(target);")
     + CALLS,
     "receiver": METHOD.replace("node.getAttribute('inside') === 'done'", "this === node") + CALLS,
     "new-target": METHOD.replace("node =>", "function(node)").replace(

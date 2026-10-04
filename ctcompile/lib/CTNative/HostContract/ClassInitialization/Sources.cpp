@@ -1,4 +1,5 @@
 #include "Proof.hpp"
+#include "ctcompile/CTNative/Analysis/ImmutableCaptures.h"
 #include "llvm/ADT/StringMap.h"
 
 #include <bit>
@@ -201,11 +202,81 @@ bool classInitialization::proveMaps() {
     return reason.empty();
 }
 
+bool classInitialization::copyPrimitiveCapture(ctjs::LoadUpvalueOp load, ctjs::ConstantOp literal) {
+    for (mlir::OpOperand & selected : load.getResult().getUses()) {
+        (void)selected;
+        if (!step()) { return false; }
+    }
+    if (!spend(cloneCost(literal))) { return false; }
+    // Preserve the exact primitive before super/method bodies are copied.
+    // The complete source or typed DOM proof still checks every consumer.
+    mlir::OpBuilder at(load);
+    auto local = ctjs::ConstantOp::create(at, load.getLoc(), literal.getValue());
+    load.getResult().replaceAllUsesWith(local.getResult());
+    load.erase();
+    return true;
+}
+
+bool classInitialization::fixedCallbackCaptures(ctjs::CreateClosureOp callback,
+                                                ctjs::FuncOp function) {
+    if (callback.getUpvalues().empty()) { return function.getUpvalueCount() == 0; }
+    if (function.getUpvalueCount() != static_cast<int64_t>(callback.getUpvalues().size()) ||
+        hasOuterCapture(callback)) {
+        return refuse("class callback requires exact local capture slots");
+    }
+    if (!proveCells(callback->getParentOfType<ctjs::FuncOp>())) { return false; }
+    if (earlyCaptures.contains(callback)) {
+        return refuse("class callback capture precedes its initialization");
+    }
+    llvm::SmallVector<ctjs::ConstantOp> literals;
+    for (mlir::Value capture : callback.getUpvalues()) {
+        auto cell = capture.getDefiningOp<ctjs::CreateCellOp>();
+        if (!step() || !cell || !cells.count(capture)) {
+            return refuse("class callback capture lacks a fixed local cell");
+        }
+        // The shared query checks every capturing sibling, including unused
+        // writers. Charge its cell walk and module/target scans before calling it.
+        for (mlir::Operation * user : cell->getUsers()) {
+            if (!spend(2)) { return false; }
+            if (llvm::isa<ctjs::CreateClosureOp>(user) &&
+                !spendWalk(module, [](mlir::Operation * op) {
+                    return uint64_t(4) + op->getNumOperands();
+                })) {
+                return false;
+            }
+        }
+        if (!immutableCaptureCell(cell, module)) {
+            return refuse("class callback capture is mutable or escapes");
+        }
+        auto literal = sourceValue(cells.lookup(capture)).getDefiningOp<ctjs::ConstantOp>();
+        if (!literal || !ctjs::isPrimitiveAttr(literal.getValue()) ||
+            literal->getBlock() != callback->getBlock() || !literal->isBeforeInBlock(callback)) {
+            return refuse("class callback capture requires an ordered local primitive");
+        }
+        literals.push_back(literal);
+    }
+    for (mlir::OpOperand & use : llvm::make_early_inc_range(
+             function.getBody().front().getArgument(ctjs::arg_callee).getUses())) {
+        if (!step()) { return false; }
+        auto load = llvm::dyn_cast<ctjs::LoadUpvalueOp>(use.getOwner());
+        if (!load || use.getOperandNumber() != 0 || !capturesSlot(load, callback)) {
+            return refuse("class callback observes its captured identity");
+        }
+        if (!copyPrimitiveCapture(load, literals[static_cast<size_t>(load.getIndex())])) {
+            return false;
+        }
+    }
+    // This proof runs on a disposable module. Clear the consumed slots before
+    // method normalization can replace the operation with a private copy.
+    setCaptures(callback, function, {});
+    return true;
+}
+
 bool classInitialization::helperCallback(mlir::OpOperand & use) {
     auto callback = llvm::dyn_cast<ctjs::CreateClosureOp>(use.getOwner());
     auto function = target(callback);
-    if (!callback || use.getOperandNumber() != 0 || !function || !callback.getUpvalues().empty() ||
-        function.getUpvalueCount() != 0 ||
+    if (!callback || use.getOperandNumber() != 0 || !function ||
+        !fixedCallbackCaptures(callback, function) ||
         llvm::any_of(function.getBody().front().getArguments().take_front(ctjs::implicit_arguments),
                      [](mlir::BlockArgument argument) { return !argument.use_empty(); })) {
         return refuse("captured helper observes its implicit callee");
@@ -364,17 +435,7 @@ bool classInitialization::methodCaptures(ctjs::CreateClosureOp method,
         auto value = sourceValue(cells.lookup(method.getUpvalues()[load.getIndex()]));
         if (auto literal = value.getDefiningOp<ctjs::ConstantOp>();
             literal && ctjs::isPrimitiveAttr(literal.getValue())) {
-            for (mlir::OpOperand & selected : load.getResult().getUses()) {
-                (void)selected;
-                if (!step()) { return false; }
-            }
-            if (!spend(cloneCost(literal))) { return false; }
-            // Preserve the exact primitive before super/method bodies are copied.
-            // The complete source or typed DOM proof still checks every consumer.
-            mlir::OpBuilder at(load);
-            auto local = ctjs::ConstantOp::create(at, load.getLoc(), literal.getValue());
-            load.getResult().replaceAllUsesWith(local.getResult());
-            load.erase();
+            if (!copyPrimitiveCapture(load, literal)) { return false; }
             continue;
         }
         if (maps.contains(value)) {
