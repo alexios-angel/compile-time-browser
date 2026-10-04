@@ -143,6 +143,20 @@ CASES = {
         cells.JS.replace("mark();", "if (false) { mark(); }"),
         {"skipped": True},
     ),
+    # Preserve the exact previously refused conditional borrower source.
+    "conditional-borrower": (
+        cells.program(
+            owner(),
+            cells.HELPERS.replace(
+                "ctjs.cell_set %cell, %yes",
+                "%test = ctjs.truthy %yes\nscf.if %test {\nctjs.cell_set %cell, %yes\nscf.yield\n}",
+            ),
+        ),
+        cells.JS.replace("seen = true;", "if (true) seen = true;").replace(
+            "mark();", "if (element.hasAttribute('ready')) { mark(); }"
+        ),
+        {},
+    ),
 }
 
 
@@ -192,13 +206,6 @@ def bad_programs():
         "skipped-bad-borrower": cells.program(
             owner(predicate="%condition = ctjs.truthy %no"),
             cells.HELPERS.replace("#ctjs.boolean<true>", '#ctjs.string<"bad">'),
-        ),
-        "conditional-borrower": cells.program(
-            body,
-            cells.HELPERS.replace(
-                "ctjs.cell_set %cell, %yes",
-                "%test = ctjs.truthy %yes\nscf.if %test {\nctjs.cell_set %cell, %yes\nscf.yield\n}",
-            ),
         ),
         "symbol-observer": cells.program(body).replace(
             "module {", "module attributes {test.borrow_ref = @mark$3} {"

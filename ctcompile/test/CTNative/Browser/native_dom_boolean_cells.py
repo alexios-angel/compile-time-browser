@@ -123,6 +123,18 @@ CASES = {
         {"before": True, "after": True},
         False,
     ),
+    # The original conditional-store refusal now has a complete borrower proof.
+    "conditional-store": (
+        program(
+            helpers=HELPERS.replace(
+                "ctjs.cell_set %cell, %yes",
+                "%condition = ctjs.truthy %yes\nscf.if %condition {\n  ctjs.cell_set %cell, %yes\n  scf.yield\n}",
+            )
+        ),
+        JS.replace("seen = true;", "if (true) seen = true;"),
+        {"before": True, "after": False},
+        True,
+    ),
 }
 
 
@@ -235,12 +247,6 @@ def bad_programs():
         ),
     )
     bad["second-owner"] = program(helpers=HELPERS + function("second$9", OWNER, "element"))
-    bad["conditional-store"] = program(
-        helpers=HELPERS.replace(
-            "ctjs.cell_set %cell, %yes",
-            "%condition = ctjs.truthy %yes\nscf.if %condition {\n  ctjs.cell_set %cell, %yes\n  scf.yield\n}",
-        )
-    )
     bad["loop-call"] = program(
         OWNER.replace(
             "%ignored = ctjs.call_direct @mark$3(%u, %u, %u, %seen)",
