@@ -287,14 +287,17 @@ bool classInitialization::helperCallback(mlir::OpOperand & use) {
         // A synchronous leaf cannot retain its enclosing helper. Keep its body
         // for the complete source/DOM proof and bind actuals during expansion.
         auto local = host_detail::jsCallOf(callbackUse.getOwner());
+        auto * position =
+            local ? positionIn<mlir::scf::IfOp, mlir::scf::WhileOp, mlir::scf::IndexSwitchOp>(
+                        callbackUse.getOwner(), callback->getBlock())
+                  : nullptr;
         if (local && callbackUse.getOperandNumber() == (local->direct ? 2u : 0u) &&
             undefined(local->receiver) &&
             (!local->direct ||
              (local->direct.getTarget() == function && undefined(local->direct.getNewTarget()))) &&
             local->args.size() + ctjs::implicit_arguments ==
                 function.getBody().front().getNumArguments() &&
-            callbackUse.getOwner()->getBlock() == callback->getBlock() &&
-            callback->isBeforeInBlock(callbackUse.getOwner())) {
+            position->getBlock() == callback->getBlock() && callback->isBeforeInBlock(position)) {
             continue;
         }
         auto call = llvm::dyn_cast<ctjs::CallOp>(callbackUse.getOwner());

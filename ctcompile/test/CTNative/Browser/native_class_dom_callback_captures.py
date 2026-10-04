@@ -12,10 +12,10 @@ METHOD = callbacks.METHOD.replace("const local =", "const label = 'done'; const 
 ORIGINAL = METHOD.replace("const label = 'done'", "const label = 'inside'")
 MIXED = METHOD.replace(
     "const local =",
-    "const count = 3, flag = true, empty = null, missing = undefined; const local =",
+    "const count = 3, flag = true, empty = null, missing = void 0; const local =",
 ).replace(
     "return node.getAttribute('inside') === 'done';",
-    "return count === 3 && flag && empty === null && missing === undefined"
+    "return count === 3 && flag && empty === null && missing === void 0"
     " && node.getAttribute('inside') === 'done';",
 )
 CASES = {
@@ -37,6 +37,7 @@ CASES = {
     + callbacks.CALLS,
 }
 BAD = {
+    "global-undefined": MIXED.replace("void 0", "undefined"),
     "later-write": METHOD.replace("const label", "let label").replace(
         "const result =", "label = 'changed'; const result ="
     ),
