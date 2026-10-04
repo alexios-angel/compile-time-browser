@@ -182,59 +182,78 @@ small class witness is measured separately: all state and two callbacks are
 inside one initializing arm, and all four native variants refuse unconditional
 initialization. No callable cell obscures that witness.
 
+## Seventh feature wave (landed 2026-10-04)
+
+Combined commit `f73350ff1` retains Boolean class state initialized entirely
+inside one arm, proves conditional synchronous Boolean borrowers, and carries
+those conditional bodies through class capture transport. The existing closure
+lifter and DOM scalarizer produce native values and branches. Complete original
+slots, callers, frames, effects and source rollback remain checked.
+
+The two independent commits were frozen and combined for a nine-case gate while
+the class author prepared one successor. The first gate passed in 695.54 seconds.
+The successor then passed the five affected class cases in 399.09
+seconds. The five raw-DOM results were retained by exact subtree identity,
+41 source/helper hashes and 845 contracts without the class intrinsic. Unique
+coverage is ten cases, 61 Node/VM sources, 976 native
+executions and 1,397 rejection/control checks, including
+13 verifier-only controls. All 488 selected generated
+C++ files and the native binaries passed no-Script gates. See the handoff for
+commands, preflights, root controls and skipped coverage.
+
+The unchanged closed Button still refuses exact local leaf capture slots; all
+320552 prepared function-body bytes match wave6. A new synchronous two-slot
+witness agrees in Node/VM and refuses in all four native modes. Its two callbacks
+share a mutable Boolean at different original slot indices, alongside immutable
+Boolean data. This is a smaller measured boundary than the complete deferred
+listener/timer pair.
+
 ## Next features, based on source and IR traces
 
-1. **Class lane:** retain the original mutable cell when initialization and
-   every meaningful read, write and capture belong to one dominating arm.
-   Start from the measured `arm-only-state` refusal. Keep exact creator-to-call
-   containment and the complete symbolic-caller/body census. Roots may be
-   irrelevant to value initialization but must keep their original positions
-   and frame obligations. Do not hoist initialization or enter mutable state
-   into the fixed-cell map. Test then/else initialization, nested uses,
-   snapshots, repeated calls, aliases and distinct documents; refuse reads,
-   captures or calls before initialization, sibling/join uses and escapes.
-   Own `ClassInitialization/BooleanCaptures.cpp` and the class scope fixtures.
-2. **Independent DOM lane:** measure and then prove exact synchronous Boolean
-   borrowers with bounded zero-result `if` bodies, Boolean predicates, literal
-   or `!0`/`!1` stores and one top-level return. Preserve all original helper
-   bodies, formal uses, callers, frames and effects before inlining. The current
-   branch set and initialization census precede inlining: newly cloned helper
-   branches require a fresh actual-cell ancestry and initialization proof
-   afterward. Reserve recursive clone work; `operationWork` alone is not a
-   recursive charge. Reuse the existing inliner and scalarizer, preserving
-   complete rollback on late failure. Own `DOM/Source/LocalState.cpp`, a new
-   borrower fixture and the raw cells/branches/origins refusal promotions.
-   This lane is source-reviewed design only, not an observed admission. It
-   does not change the separate class flat-body rule.
-3. **Later composition and ownership:** prove typed multiple captures and
-   callable/self identity, then complete conditional callback bodies and an
-   owned transition record shared by listener/timer handles. Bootstrap's
-   listener captures six slots and takes an event formal; its timer captures
-   three slots. A unique record held until the pending timeout completes,
-   with listeners borrowing a stable pointee, remains a design candidate.
-   Cancellation must unlink before deletion, reentry needs an active owner,
-   and document/element borrows must remain valid. Never borrow a registry
-   vector row across callback execution. Completion, fallback, recursive
-   dispatch and teardown require native/browser parity before admission.
+1. **Class lane:** prove one mutable Boolean plus immutable Boolean captures.
+   Start from the measured `next-multi-capture.js` witness, whose mutable slots
+   are indices 1 and 0 in its two callbacks. Prove all original slots, writers,
+   creators, callers, roots and effects before consuming fixed reads. Reuse the
+   existing primitive-copy and slot-remapping seams, leaving one actual mutable
+   slot for the existing lifter and DOM proof. `callbackPrimitive` invokes
+   `proveCells(parent)`: resolve that ordering without passing changing state
+   through the fixed-cell map. Include hidden writers, swapped/invalid slots,
+   early capture, multiple mutable cells and late rollback controls. Likely
+   paths are `ClassInitialization/BooleanCaptures.cpp`, its existing `Sources.cpp`
+   helper seam and a dedicated class fixture; claim the exact needed paths.
+2. **Independent DOM lane:** measure the next result-bearing Boolean helper
+   branch before extending the current zero-result rule. Prove each yielded
+   result and its corresponding arm value, preserve saved reads and caller
+   result prefixes, and keep complete original body/caller/frame checks plus
+   recursive clone reservation and post-inline state reproof. Start from the
+   retained result-bearing helper refusal; early-return completion arithmetic
+   remains a separate boundary. Own `DOM/Source/LocalState.cpp` and raw borrower
+   fixtures. A later class composition is a dependent checkpoint, not proof
+   supplied by this independent lane alone.
+3. **Later typed captures and ownership:** prove element/event and callable/self
+   identity, host effects and an owned transition record before deferred native
+   callbacks. Bootstrap's listener has six slots and an event formal; its timer
+   has three slots. A unique record kept through timeout completion, with
+   listeners borrowing a stable pointee, is still a design candidate. Unlink
+   registrations before deletion, retain an active owner across reentry and
+   prove document/element borrow lifetimes. Never retain a registry vector row
+   across callback execution. Completion, fallback, nested dispatch and teardown
+   need focused native/browser parity before admission.
 
-The first two lanes have disjoint production and test paths and independently
-measurable boundaries. The validator can prepare their unchanged witnesses,
-root controls and budget/rollback cases while authors work, then check the
-frozen commits serially. Keep the limit of one dependent feature per author
-while a gate runs. A composition checkpoint must pass on the actual merged
-tree; successful prerequisites alone do not establish it.
+The first two lanes have disjoint production paths and separately measurable
+boundaries. The validator can prepare baseline, root and budget controls while
+authors work, then check immutable commits serially in the warm build directory.
+Keep at most one dependent feature per author while a gate runs. Full combined
+proof must pass before landing a composition.
 
-General completion arithmetic and positive runtime coverage of retained state
-through method cloning remain separate compiler prerequisites. Keep their
-negative dispatch controls until the corresponding behavior is proved.
+Current evidence is in
+`/home/alex/.ctbrowser-auto/codex/ctcompile/artifacts/2026-10-04-native-stack-7/`:
+`validation/APPROVAL.md`, `validation/conditional-preflight/`,
+`validation/final-gate/`, `root/next-boundary.md` and
+`borrowers-author/peer-and-next-boundary.md`. Proposed next admissions are not
+implemented. General completion arithmetic and successful retained-state method
+cloning remain unproved; preserve their negative dispatch controls.
 
-Current evidence and follow-up traces are in
-`/home/alex/.ctbrowser-auto/codex/ctcompile/artifacts/2026-10-04-native-stack-6/`:
-`root/next-boundary.md`, `branches-author/next-boundary.md`,
-`state-author/conditional-borrowers-feasibility.md`, `validation/scope-preflight/`
-and `validation/final-gate/`. Proposed admissions above have not been measured.
-
-The public timer/listener cores supply metadata; they do not establish native
-callback ownership. Preserve the original vendor Button probe, all source
-bodies/effects and Node/VM behavior as each boundary advances. Native Bootstrap
-remains incomplete.
+The public timer/listener cores supply metadata, not callback ownership. Preserve
+the original full vendor/Button source, including dormant `_queueCallback`, and
+its Node/VM behavior. Native Bootstrap remains incomplete.

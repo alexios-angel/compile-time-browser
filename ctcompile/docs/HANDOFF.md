@@ -22,6 +22,137 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Arm-local state and conditional Boolean callbacks, 2026-10-04 UTC
+
+**Landed: `f73350ff1` on `ctcompile-v1`, based on `16fb16c1f`.**
+The independently approved code tree is
+`8fe36ec14b6ad974d90b8855e037a0c83540eda7`.
+Feature commits are `aadd75d69` (class arm-local initialization), `0f7d1fe57`
+(conditional Boolean borrowers) and `51a218ef8` (conditional class callbacks).
+Two authors worked on separate branches while one validator tested immutable
+commits on the warm devbox. The class successor was prepared during the first
+runtime gate. No browser source, public API or VM semantics changed.
+
+Class transport retains the actual mutable cell when initialization and every
+meaningful read, write and capture share one dominating arm. Every callback
+still stays within its creator's dominated scope. The complete original slot,
+identity, caller, body, root and frame obligations remain; changing state never
+enters the fixed-cell map.
+
+Exact synchronous Boolean borrowers now admit bounded zero-result `if` bodies.
+The proof checks all original arms, formal uses, frames and symbolic callers,
+then reserves recursive clone work for each call. After inlining, it rebuilds
+actual cell-use ancestry and repeats initialization/arm proof before replacing
+state with scalar values. Conditions must be proved Boolean; stores remain
+literal Booleans or exact `!0`/`!1`. Read snapshots, original caller result
+prefixes and effects survive. The class successor carries that same syntax
+through ordinary closure lifting and the complete DOM proof. No runtime cell,
+callback environment, frame, GC or VM fallback is introduced.
+
+**Measured baselines:** four original sources agreed in Node/VM and refused
+all 16 native attempts on unchanged `16fb16c1f`. Five additional arm-state
+sources agreed and refused all 20 attempts. The exact conditional-class source
+also agreed and refused all 4 attempts. Its SHA256 is
+`ef07e8ff2cb61d4d8cfbeafd00a6e44b20b85d8f0824fd08ea3b8b3fef18cb16`.
+The first class witness stopped at unconditional initialization; the raw
+borrowers stopped at cell forwarding/exposure; the conditional class writer
+stopped at an unproved leaf operation. Original witness bytes are retained.
+
+All builds, tests and measurements held `/tmp/ctbrowser-devbox-build.lock`.
+Explicit builds used
+`DEVBOX_DIR=projects/compile-time-browser tools/remote-build.sh ctjs-opt ctjs-translate ctcompile-test-native-reference`.
+The baseline build took 7 s with no Ninja work; combined and final builds took
+12 s and 11 s. All 12 changed source hashes match the approved candidate and
+landed checkout.
+
+Both focused lit runs used `~/.lit-venv/bin/lit -va -j 2 build/ctcompile/test`.
+The first filter was
+`^ctcompile :: CTNative/Browser/(native-dom-boolean-(borrowers|cells|branches|origins|scopes)|native-class-dom-boolean-(arm-state|scopes|branches|captures))[.]test$`.
+It passed **9/9 in 695.54 s** on `6d7b1b827`, tree
+`8fb6416a4323fadb95314d31818fcc1cc56ae527`: 55 Node/VM sources, 880 native
+executions and 1,244 rejection/control checks. The final filter was
+`^ctcompile :: CTNative/Browser/native-class-dom-boolean-(conditionals|arm-state|scopes|branches|captures)[.]test$`.
+It passed **5/5 in 399.09 s** on the approved tree: 27
+Node/VM sources, 432 native executions and 650 controls.
+
+The five earlier raw-DOM cases are retained by exact DOM subtree
+`a5b158411b47a219ef57e6363e433fa84d44cf37`, 41 source/helper hashes and 845
+contracts without the class intrinsic. Their route bypasses class normalization.
+Repeated first-gate class cases are excluded from the unique totals:
+**10 cases, 61 Node/VM sources, 976 native executions
+and 1,397 rejection/control checks**, including 13
+separately identified verifier-only controls.
+
+| Case | Node/VM sources | Native executions | Rejections/controls | Minimum budget |
+| --- | ---: | ---: | ---: | ---: |
+| Class arm-local state | 6 | 96 | 134 | 22427 |
+| Class conditional callbacks | 6 | 96 | 153 | 22149 |
+| Class Boolean scopes | 4 | 64 | 87 | 22672 |
+| Class Boolean branches | 5 | 80 | 122 | 22252 |
+| Shared Boolean captures | 6 | 96 | 154 | 19892 |
+| Conditional Boolean borrowers | 6 | 96 | 133 | 989 |
+| DOM Boolean cells | 6 | 96 | 147 | 505 |
+| DOM Boolean branches | 7 | 112 | 88 | 647 |
+| DOM Boolean origins | 9 | 144 | 197 | 779 |
+| DOM Boolean scopes | 6 | 96 | 182 | 817 |
+
+Both DOM providers, optimization policies, explicit/deduced C++, GCC 13 and
+pinned Clang passed. Native binaries pass the forbidden-symbol gate; independent
+scans found no Script runtime in 488 selected generated C++ files.
+Reviewed output uses scalar Boolean values, ordinary branches, owning strings,
+borrowed element handles and public DOM operations. All immediately preceding
+budget cutoffs retain the complete original CTJS/SCF operations.
+
+Preflight counts are separate from runtime totals. The first combined preflight
+passed 12 source oracles, 72 lowerings, 232 proof refusals and 4 verifier controls.
+The final successor preflight passed 6 oracles, 52 lowerings and 132 proof refusals.
+Both repeated the independent original-root group: 28 lowerings and 16 refusals.
+Roots after frame exit, hidden effects, unproved callers and excessive combined
+caller/helper depth refuse with source rollback. Valid roots before value
+initialization or within a live conditional arm still lower.
+
+`tools/format.sh --check` retains the exact 83 pre-existing diagnostics in untouched
+`ctbrowser/lib/Script/builtins/collections/keyed.cpp`; log SHA256
+`421f6a23f5b220c8c0f549fec3f417dc6bea95c5b524e109bf9bf366532c0090`.
+Scoped formatting, Python parsing and diff checks pass. Full CTest/lit, broad
+native/corpus matrices, WPT/test262, Windows, sanitizers and performance runs
+were skipped. No browser CTest was needed. No push was made.
+
+Artifacts are in
+`/home/alex/.ctbrowser-auto/codex/ctcompile/artifacts/2026-10-04-native-stack-7/`.
+`validation/APPROVAL.md`, `validation/final-gate/summary.json` and
+`validation/reuse.json` record exact revisions and retained evidence. First runtime archive SHA256:
+`ae8bf27888a7a40532a954664684bc5f7ecef8895e12f1c2fdd6f6489b044826`.
+Final runtime archive: `d8165f69ae798e2feb45cb612201e487dba0390e9081f9d5c6ef07396f5a5220`.
+Final preflight/closed archive:
+`782063f08270b6cde17b3149bbd843d0867050ea5b01316eb05dfd4491d27c86`.
+
+**Next native/Bootstrap boundary:** the unchanged full vendor prefix and Button
+still agree in Node/VM on retained input, Data registration, empty configuration
+and two toggles. Native still reports
+**`native DOM class: class Boolean state requires exact local leaf capture slots`**.
+Source SHA256 remains
+`a667ce87e4180390632562645458203dbbb36354690c7b5fd2c355b7f47499ff`;
+all 320552 prepared function-body bytes match wave6, SHA256
+`eea9295b6a0128b8d7eec15cd71e2665ab6cf8eb5404d666be7e8a5df9d88523`.
+
+A smaller mixed-slot source now reproduces that refusal in all 4 native modes,
+while agreeing in Node/VM. Its two callbacks share one mutable Boolean at
+original indices 1 and 0 and each also captures an immutable Boolean. Source
+SHA256: `3d7d43ec563abf14d1a857681cacd3c6b72658ac423da145d07f47bb3fe4535d`.
+Prove and consume fixed slots only after the complete mutable-cell census;
+`callbackPrimitive` calling `proveCells(parent)` is an ordering hazard. See
+`borrowers-author/peer-and-next-boundary.md` and `root/next-boundary.md`.
+
+The actual Bootstrap listener/timer still need multiple typed captures, event
+and element identities, callable/self identity, host effects and deferred
+ownership. Preserve the dormant `_queueCallback` body. Result-bearing helper
+branches, general completion arithmetic and successful retained-state cloning
+runtime coverage remain separate proof work. The
+[parallel-work plan](plans/native-bootstrap-stacks.md) records the next lanes.
+Native Bootstrap is not complete.
+
+
 ## Conditional shared state and callback scopes, 2026-10-04 UTC
 
 **Landed: `b7136ba92` on `ctcompile-v1`, based on `ba8208d39`.**
