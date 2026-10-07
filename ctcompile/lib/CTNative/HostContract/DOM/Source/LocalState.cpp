@@ -190,7 +190,7 @@ bool DOMSource::normalizeBooleanCell(ctjs::FuncOp function, unsigned depth) {
             }
             return refuse("DOM Boolean borrower forwards or exposes its cell");
         }
-        llvm::DenseSet<mlir::Value> booleans;
+        llvm::DenseSet<mlir::Value> booleans, strings;
         const auto proveLeaf = [&](auto && self, mlir::Block & source, unsigned nesting) -> bool {
             if (nesting == 64) {
                 return refuse("DOM Boolean borrower conditional depth exhausted");
@@ -219,6 +219,8 @@ bool DOMSource::normalizeBooleanCell(ctjs::FuncOp function, unsigned depth) {
                 if (auto literal = llvm::dyn_cast<ctjs::ConstantOp>(leaf)) {
                     if (ctjs::constantAttr<ctjs::BooleanAttr>(literal.getResult())) {
                         booleans.insert(literal.getResult());
+                    } else if (ctjs::constantAttr<ctjs::StringAttr>(literal.getResult())) {
+                        strings.insert(literal.getResult());
                     } else if (!undefined(literal.getResult()) &&
                                !numericBit(literal.getResult())) {
                         return refuse("DOM Boolean borrower has a non-Boolean literal");
@@ -236,8 +238,10 @@ bool DOMSource::normalizeBooleanCell(ctjs::FuncOp function, unsigned depth) {
                     booleans.insert(unary.getResult());
                 } else if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(leaf);
                            compare && compare.getKind() == ctjs::CompareKind::StrictEq &&
-                           booleans.contains(compare.getLhs()) &&
-                           booleans.contains(compare.getRhs())) {
+                           ((booleans.contains(compare.getLhs()) &&
+                             booleans.contains(compare.getRhs())) ||
+                            (strings.contains(compare.getLhs()) &&
+                             strings.contains(compare.getRhs())))) {
                     booleans.insert(compare.getResult());
                 } else if (auto truth = llvm::dyn_cast<ctjs::TruthyOp>(leaf);
                            truth && booleans.contains(truth.getValue())) {

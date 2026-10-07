@@ -1,0 +1,2 @@
+# Literal String equality yields Boolean facts without widening shared state.
+# RUN: python3 %S/native_dom_boolean_strings.py %dom_driver --node %node --reference %native_reference
