@@ -198,9 +198,9 @@ def checks(name, *, observed=None, expected=True):
             result += f"ready(doc, atoms, button, {str(flag).lower()});\n"
             result += f"ready(foreign_doc, foreign_atoms, other_button, {str(not flag).lower()});\n"
             result += (
-                "assert(@ENTRY@(element, "
+                "assert(static_cast<bool>(@ENTRY@(element, "
                 + ("alias" if alias else "foreign")
-                + ") == "
+                + ")) == "
                 + str(expected).lower()
                 + ");\n"
             )
