@@ -23,7 +23,8 @@ adding more untested features.
 
 The validator assembles the actual candidate tree in its own worktree and may
 combine ready independent changes to avoid redundant builds. Run inexpensive
-lowering preflights before native execution matrices. Keep baseline failures
+lowering preflights before native execution matrices, including existing
+negative cases whose admission boundary changed. Keep baseline failures
 separate from regressions. Record exact commands, results, local/remote source
 hashes and the tested tree. The integrator lands only that approved tree under
 `/tmp/ctbrowser-repo-git.lock`; changed integration content requires an affected
@@ -208,52 +209,83 @@ share a mutable Boolean at different original slot indices, alongside immutable
 Boolean data. This is a smaller measured boundary than the complete deferred
 listener/timer pair.
 
+## Eighth feature wave (landed 2026-10-07)
+
+Commit `1ce2d7f41` adds mixed fixed/mutable Boolean captures, exact
+Boolean results from synchronous helper branches, and the dependent class
+transport. All original captures are proved before fixed reads are consumed
+and the retained local state slot is compacted. The existing lifter, Boolean
+proof and scalarizer remain responsible for the native program.
+
+The initial preflight found fixed-cell roots being erased after frame exit.
+The shared retirement fix preserves their original position and context.
+The first runtime gate then caught an explicit Boolean conversion missing in
+the test client. Both corrections are separate commits; expectations remain
+strict. The final class-result successor was authored while the first gate ran.
+
+The final two-case gate passed in 186.29 s after the four-case gate exposed an
+old conditional-return negative that now has a fully proved Boolean-result
+shape. Its unchanged source and consumed returns passed a separate differential
+check before fixture reclassification; trailing effects/types and roots after
+arm frame exits still refuse. The original two runtime gates remain recorded
+with their failures, and only justified passing evidence is reused.
+
+Accepted coverage is eight cases, 54 Node/VM source-case checks, 864 native
+executions and 1109 controls (including 13 verifier checks). All 432 selected
+C++ files and native binaries pass no-Script gates. The final fixture-only
+build took 7 s with no Ninja work; full formatting passes. See the handoff for
+exact filters, source hashes, rejected checkpoints and skipped coverage.
+
+The unchanged closed Button still stops at exact local leaf capture slots,
+with identical 320552-byte prepared function bodies. The next small source
+forwards a fixed outer Boolean alongside local mutable state. It agrees in
+Node/VM and refuses all four native modes on this candidate. The actual reader
+metadata is `enclosing_indices = [0, -1]`; the writer uses local slot 0.
+
 ## Next features, based on source and IR traces
 
-1. **Class lane:** prove one mutable Boolean plus immutable Boolean captures.
-   Start from the measured `next-multi-capture.js` witness, whose mutable slots
-   are indices 1 and 0 in its two callbacks. Prove all original slots, writers,
-   creators, callers, roots and effects before consuming fixed reads. Reuse the
-   existing primitive-copy and slot-remapping seams, leaving one actual mutable
-   slot for the existing lifter and DOM proof. `callbackPrimitive` invokes
-   `proveCells(parent)`: resolve that ordering without passing changing state
-   through the fixed-cell map. Include hidden writers, swapped/invalid slots,
-   early capture, multiple mutable cells and late rollback controls. Likely
-   paths are `ClassInitialization/BooleanCaptures.cpp`, its existing `Sources.cpp`
-   helper seam and a dedicated class fixture; claim the exact needed paths.
-2. **Independent DOM lane:** measure the next result-bearing Boolean helper
-   branch before extending the current zero-result rule. Prove each yielded
-   result and its corresponding arm value, preserve saved reads and caller
-   result prefixes, and keep complete original body/caller/frame checks plus
-   recursive clone reservation and post-inline state reproof. Start from the
-   retained result-bearing helper refusal; early-return completion arithmetic
-   remains a separate boundary. Own `DOM/Source/LocalState.cpp` and raw borrower
-   fixtures. A later class composition is a dependent checkpoint, not proof
-   supplied by this independent lane alone.
-3. **Later typed captures and ownership:** prove element/event and callable/self
-   identity, host effects and an owned transition record before deferred native
-   callbacks. Bootstrap's listener has six slots and an event formal; its timer
-   has three slots. A unique record kept through timeout completion, with
-   listeners borrowing a stable pointee, is still a design candidate. Unlink
-   registrations before deletion, retain an active owner across reentry and
-   prove document/element borrow lifetimes. Never retain a registry vector row
-   across callback execution. Completion, fallback, nested dispatch and teardown
-   need focused native/browser parity before admission.
+1. **Class lane: forwarded fixed Boolean with local shared state.** Start from
+   `results-author/next-forwarded-boolean.js`, SHA256
+   `90d5173b81686931d5c41656c6024956bfde265474cb7f7e1985da914d8df182`.
+   Reuse `callbackPrimitive` and `fixedCaptureSlot` for exact ancestor slots and
+   the complete dormant-writer census. The retained mutable slot must still
+   have enclosing index -1. Require exact undefined placeholders and bounds for
+   every forwarded slot; resolve every original fixed capture before any table
+   is compacted. Keep parent, creator, caller, root and rollback proofs. Do not
+   merely remove `hasOuterCapture`. Likely production path:
+   `ClassInitialization/BooleanCaptures.cpp`; claim exact needed fixtures.
+2. **Parallel Bootstrap trace and ownership lane.** Preserve the complete
+   vendor prefix and dormant `_queueCallback`. Prepare the next exact typed
+   witness without competing for the class lane's source path. The listener
+   has six captures and an event formal; the timer has three captures. Trace
+   String, element/event and callable/self identities through registration,
+   completion, fallback, nested dispatch and teardown. A native owning record
+   with borrowing registrations is still a design candidate, not an established
+   lifetime proof. Reuse public timer/listener metadata APIs; unlink before
+   destruction, keep an owner through reentry and never retain a registry vector
+   row across callback execution. Any needed browser extraction requires claims,
+   process checks, isolation and focused browser/native parity.
+3. **Optional independent DOM backlog: computed Boolean stores.** The existing
+   `computed-result-store` refusal is measured, SHA256
+   `fec278ab2479003df2a42da54f74a80032197670311615c4b3398d33a3356063`.
+   It writes a proved Boolean branch result back to its cell. Both helper proof
+   and post-inline owner census currently require literal or `!0`/`!1` stores.
+   A future change needs complete Boolean facts, ordered initialization and
+   saved-read semantics through both stages. Exact disjoint paths are
+   `DOM/Source/LocalState.cpp` and `native_dom_boolean_borrowers.py`. Bootstrap's
+   observed transition writes are already literal; this is not its current
+   blocker and should not displace the first two lanes.
 
-The first two lanes have disjoint production paths and separately measurable
-boundaries. The validator can prepare baseline, root and budget controls while
-authors work, then check immutable commits serially in the warm build directory.
-Keep at most one dependent feature per author while a gate runs. Full combined
-proof must pass before landing a composition.
+The validator can prepare source, root and budget controls while authors work,
+then test immutable commits serially in the warm build directory. Keep at most
+one dependent feature per author while a gate runs. Full combined proof must
+pass before landing a composition.
 
 Current evidence is in
-`/home/alex/.ctbrowser-auto/codex/ctcompile/artifacts/2026-10-04-native-stack-7/`:
-`validation/APPROVAL.md`, `validation/conditional-preflight/`,
-`validation/final-gate/`, `root/next-boundary.md` and
-`borrowers-author/peer-and-next-boundary.md`. Proposed next admissions are not
-implemented. General completion arithmetic and successful retained-state method
-cloning remain unproved; preserve their negative dispatch controls.
-
-The public timer/listener cores supply metadata, not callback ownership. Preserve
-the original full vendor/Button source, including dormant `_queueCallback`, and
-its Node/VM behavior. Native Bootstrap remains incomplete.
+`/home/alex/.ctbrowser-auto/codex/ctcompile/artifacts/2026-10-07-native-stack-8/`:
+`validation/APPROVAL.md`, `validation/acceptance-gate/`,
+`validation/final-preflight/`, `validation/first-gate/`,
+`results-author/next-forwarded-boolean.md`, and
+`results-author/peer-and-boundary.md`. General completion arithmetic and
+successful retained-state method cloning remain unproved; preserve their
+negative controls. Native Bootstrap remains incomplete.
