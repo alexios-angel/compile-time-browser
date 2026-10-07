@@ -75,8 +75,7 @@ bool classInitialization::retainBooleanCaptures(ctjs::FuncOp owner) {
         }
         auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(user);
         auto function = target(closure);
-        if (!closure || use.getOperandNumber() < 2 || hasOuterCapture(closure) || !function ||
-            function == owner ||
+        if (!closure || use.getOperandNumber() < 2 || !function || function == owner ||
             function.getUpvalueCount() != static_cast<int64_t>(closure.getUpvalues().size()) ||
             !function.getBody().hasOneBlock() ||
             function.getBody().front().getNumArguments() != ctjs::implicit_arguments ||
@@ -84,7 +83,14 @@ bool classInitialization::retainBooleanCaptures(ctjs::FuncOp owner) {
             !callbackOperations.insert(closure).second) {
             return refuse("class Boolean state requires exact local leaf capture slots");
         }
-        callbacks.emplace_back(closure, use.getOperandNumber() - 2);
+        const unsigned mutableSlot = use.getOperandNumber() - 2;
+        // Only fixed captures may follow an enclosing slot. Keep the actual
+        // local mutable identity; callbackPrimitive proves every other slot.
+        if (auto indices = closure.getEnclosingIndicesAttr();
+            indices && indices[mutableSlot] != -1) {
+            return refuse("class Boolean state requires a local mutable capture");
+        }
+        callbacks.emplace_back(closure, mutableSlot);
     }
     llvm::DenseSet<mlir::Operation *> leaves, calls;
     for (auto [closure, mutableSlot] : callbacks) {
