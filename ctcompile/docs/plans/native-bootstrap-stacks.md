@@ -242,50 +242,87 @@ forwards a fixed outer Boolean alongside local mutable state. It agrees in
 Node/VM and refuses all four native modes on this candidate. The actual reader
 metadata is `enclosing_indices = [0, -1]`; the writer uses local slot 0.
 
+## Ninth feature wave (landed 2026-10-07)
+
+Commit `e70c6eaaa` combines forwarded fixed Boolean captures (`816b65b0d`),
+fixed String capture transport (`88605ed07`) and strict equality of literal
+Strings inside Boolean borrowers (`827da5f53`). The mutable Boolean slot must
+remain local. Existing ancestor-slot, dormant-writer, body, caller, frame,
+initialization, root and rollback proofs remain. Generated code uses existing
+owning String values, native equality and branches, and public DOM calls.
+
+Two isolated authors prepared the String composition while the validator ran
+the frozen Boolean gate. A new String-return negative accidentally selected
+the fixed-only callback path by removing the mutable capture. Its unchanged
+source agreed in Node, VM and 16 native diagnosis runs. The fixture-only fix
+`ad64f4b5b` retains and asserts the original mutable store; it now refuses.
+This diagnostic run is excluded from the accepted counts.
+
+Accepted coverage is six cases, 41 Node/VM source-case checks, 656 native
+executions and 954 refusal/control checks (20 verifier controls). All 328
+selected C++ files and linked binaries pass no-Script gates. The first gate
+took 310.53 s; the final four-case gate took 390.57 s. Earlier mixed/results
+executions are retained after 56 final-tree lowerings and 112 regenerated
+clients matched except exact directory metadata, with unchanged tools,
+flags, libraries and 1,042 dependency hashes. Full formatting passes; the
+handoff records exact filters, controls, approval and skipped coverage.
+
+The complete unchanged Button still refuses exact local leaf capture slots,
+with identical 320,552 prepared function-body bytes. The next reduced source
+compares captured method/entry elements around local Boolean state. Node/VM
+agree for aliases and distinct elements; all four native modes refuse an
+ordered local primitive capture. Its typed borrow is the next compiler proof.
+
 ## Next features, based on source and IR traces
 
-1. **Class lane: forwarded fixed Boolean with local shared state.** Start from
-   `results-author/next-forwarded-boolean.js`, SHA256
-   `90d5173b81686931d5c41656c6024956bfde265474cb7f7e1985da914d8df182`.
-   Reuse `callbackPrimitive` and `fixedCaptureSlot` for exact ancestor slots and
-   the complete dormant-writer census. The retained mutable slot must still
-   have enclosing index -1. Require exact undefined placeholders and bounds for
-   every forwarded slot; resolve every original fixed capture before any table
-   is compacted. Keep parent, creator, caller, root and rollback proofs. Do not
-   merely remove `hasOuterCapture`. Likely production path:
-   `ClassInitialization/BooleanCaptures.cpp`; claim exact needed fixtures.
-2. **Parallel Bootstrap trace and ownership lane.** Preserve the complete
-   vendor prefix and dormant `_queueCallback`. Prepare the next exact typed
-   witness without competing for the class lane's source path. The listener
-   has six captures and an event formal; the timer has three captures. Trace
-   String, element/event and callable/self identities through registration,
-   completion, fallback, nested dispatch and teardown. A native owning record
-   with borrowing registrations is still a design candidate, not an established
-   lifetime proof. Reuse public timer/listener metadata APIs; unlink before
-   destruction, keep an owner through reentry and never retain a registry vector
-   row across callback execution. Any needed browser extraction requires claims,
-   process checks, isolation and focused browser/native parity.
-3. **Optional independent DOM backlog: computed Boolean stores.** The existing
-   `computed-result-store` refusal is measured, SHA256
-   `fec278ab2479003df2a42da54f74a80032197670311615c4b3398d33a3356063`.
-   It writes a proved Boolean branch result back to its cell. Both helper proof
-   and post-inline owner census currently require literal or `!0`/`!1` stores.
-   A future change needs complete Boolean facts, ordered initialization and
-   saved-read semantics through both stages. Exact disjoint paths are
-   `DOM/Source/LocalState.cpp` and `native_dom_boolean_borrowers.py`. Bootstrap's
-   observed transition writes are already literal; this is not its current
-   blocker and should not displace the first two lanes.
+1. **Preserve borrowed element captures beside local Boolean state.** Start
+   from `captures-author/next-element-identity.js`, SHA256
+   `c01a90eaa4cef7a12e52a9118fa70960469ddbb6fabd6cbdf3f69b1eba56e873`.
+   Node/VM agree for aliased and distinct elements; all four native modes
+   refuse `class callback capture requires an ordered local primitive`.
+   One element comes from a method formal and one from an entry element
+   parameter. Neither is a primitive constant. Preserve actual borrowed
+   identity through class transport and closure lifting, then prove its
+   owner at each synchronous call. `LocalState.cpp` currently admits one
+   explicit cell formal; accepting extra element arguments needs a complete
+   original-formal/caller/type/lifetime proof, not a wider arity check.
+   Keep snapshots, roots, reinitialization, alias equality and full rollback.
+2. **Trace the actual event and deferred-owner composition in parallel.**
+   Preserve the complete vendor prefix and dormant `_queueCallback`. The
+   listener has six captures plus an event formal; the timer has three.
+   The real comparison is `event.target === element`; String capture support
+   alone does not prove it. Reuse the public listener and timer metadata
+   APIs, and extract needed Event dispatch/property behavior into its owning
+   browser subsystem rather than duplicating the VM binding in the compiler.
+   Real completion removes its listener but leaves the timer scheduled;
+   fallback dispatch can be stopped before that listener runs. Neither
+   completion, timer return nor `dispose` alone proves all borrows have ended.
+   Retain an owner through reentry and every remaining registration; never
+   retain a registry vector row across callback execution. Current synchronous
+   HostContracts do not authorize deferred captures. Live computed-style
+   duration parsing remains another platform/source proof. Any browser edit
+   requires exact claims, fresh process checks, isolation when availability
+   is uncertain, and focused browser/native parity checks.
+3. **Keep computed Boolean stores as optional backlog.** The measured
+   `computed-result-store` case, SHA256
+   `fec278ab2479003df2a42da54f74a80032197670311615c4b3398d33a3356063`,
+   remains refused. Both helper and post-inline owner scans require literal
+   or exact `!0`/`!1` stores. A future extension needs complete Boolean facts,
+   ordered initialization and saved-read semantics through both stages.
+   Bootstrap's observed flag writes are already literal, so this should not
+   displace the first two lanes.
 
-The validator can prepare source, root and budget controls while authors work,
-then test immutable commits serially in the warm build directory. Keep at most
-one dependent feature per author while a gate runs. Full combined proof must
-pass before landing a composition.
+Use isolated immutable author commits and one serialized validator. Authors
+may prepare one dependent feature while its base gate runs; test the complete
+composition before landing. Reused execution evidence needs exact unchanged
+inputs/dependencies and regenerated output equivalence. Normalize only known
+source-directory metadata when comparing generated files. Preflight existing
+negative fixtures before runtime, and verify that a new negative still reaches
+its intended source-proof route.
 
 Current evidence is in
-`/home/alex/.ctbrowser-auto/codex/ctcompile/artifacts/2026-10-07-native-stack-8/`:
-`validation/APPROVAL.md`, `validation/acceptance-gate/`,
-`validation/final-preflight/`, `validation/first-gate/`,
-`results-author/next-forwarded-boolean.md`, and
-`results-author/peer-and-boundary.md`. General completion arithmetic and
-successful retained-state method cloning remain unproved; preserve their
-negative controls. Native Bootstrap remains incomplete.
+`/home/alex/.ctbrowser-auto/codex/ctcompile/artifacts/2026-10-07-native-stack-9/`:
+`validation/APPROVAL.md`, `validation/approval.json`, `validation/reuse.json`,
+`root/independent-reuse-review.json`, `bootstrap-trace/bootstrap-lifetime.md`
+and `captures-author/next-element-identity.md`. General completion arithmetic,
+retained-state method cloning and native Bootstrap remain incomplete.

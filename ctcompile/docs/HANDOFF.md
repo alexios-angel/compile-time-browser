@@ -22,6 +22,148 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Forwarded captures and literal String equality, 2026-10-07 UTC
+
+**Landed: `e70c6eaaa` on `ctcompile-v1`, based on clean `30c7fca65`.**
+The independently approved code tree is
+`7b8b3e1f195a5582066e7af3bb8a25a3cec4e13f`.
+This stack contains `816b65b0d` (forwarded fixed Boolean captures),
+`88605ed07` (fixed String capture transport), `827da5f53` (literal String
+equality in Boolean borrowers) and `ad64f4b5b` (String-return refusal fixture).
+Two isolated authors prepared the String composition while one validator
+tested the frozen Boolean stack.
+No browser implementation, public API or VM semantics changed.
+
+The class proof now permits a fixed capture to follow exact enclosing slots.
+The actual mutable Boolean capture must still be local. Existing
+`callbackPrimitive` / `fixedCaptureSlot` prove ancestor creators, placeholders,
+initialization order and dormant writers. All original fixed slots resolve
+before any capture table is compacted. Fixed Strings use that same proof.
+
+The DOM borrower proof tracks literal Strings separately from Boolean values.
+Strict equality between two proved Strings now produces a Boolean fact.
+Boolean state stores, conditions, yields and Boolean-or-undefined returns keep
+their existing rules. Original bodies, callers, frames, initialization,
+recursive clone reservation and post-inline state checks remain. The native
+backend uses existing String values and equality; no dynamic carrier or
+callback runtime was added.
+
+The original forwarded Boolean source is preserved byte for byte, SHA256
+`90d5173b81686931d5c41656c6024956bfde265474cb7f7e1985da914d8df182`.
+On the unchanged baseline it agreed in Node/VM and refused all four native
+modes. The String witnesses were measured on the frozen Boolean candidate:
+local and forwarded sources both agreed in Node/VM and refused the fixed
+Boolean capture guard in all four modes. Their SHA256 values are
+`d428825418d63d02b4efb9cbd44d690da7adee91e3698f8e32fde6d00f9c26f7` and
+`f353c255ce729af9022f0d3680f2ee59caa2bb418fddc9c267e1c5ea916d2297`.
+The independently retained raw String source refused the DOM non-Boolean
+literal guard in all four modes: MLIR SHA256
+`6ef2487faab931dd143bf0eebe21945d3518fe3d280692e61ebe906fd568161e`,
+JS SHA256 `3be9b5c5a86921d8db1bffe741d752bac8008c65c73b3a0a7650327451beb020`.
+
+All builds and measurements used the devbox under
+`/tmp/ctbrowser-devbox-build.lock`. Explicit targets:
+`DEVBOX_DIR=projects/compile-time-browser tools/remote-build.sh ctjs-opt ctjs-translate ctcompile-test-native-reference`.
+The unchanged baseline build took 7 s with no Ninja work; the Boolean build
+12 s. Its three-case runtime passed in 310.53 s. The exact filter was
+`^ctcompile :: CTNative/Browser/native-class-dom-boolean-(forwarded-captures|mixed-captures|results)[.]test$`
+with `~/.lit-venv/bin/lit -va -j 2 build/ctcompile/test`.
+Before runtime, all 97 existing BAD sources and 46 raw controls retained their
+572 four-mode refusals; new forwarded preflight passed five source oracles,
+48 lowerings, 128 rollback refusals and six verifier controls.
+
+The composed build took 11 s. Preflight exposed a fixture mistake: replacing
+the whole pending expression with a String return removed the mutable capture.
+The exact original, SHA256
+`7c96144e3082f2e2690b9bf474cd44ff44d8991801c548428e13a77f76935bd7`,
+selected the existing fixed-only callback path. Node, VM and 16 native runs
+agreed: false result, with both attributes equal to `transitionend`. The
+fixture-only correction keeps `seen = false` before returning `eventName`,
+and asserts the original reader's mutable-slot store in prepared IR. It now
+refuses with full rollback. No production guard changed for this finding;
+the 16 diagnosis runs are excluded from the accepted totals.
+
+Composed preflight passed ten source oracles, 92 positive lowerings and 824
+existing refusal attempts. The initial 204 other new refusals and three
+verifier controls passed; the corrected ten class negatives subsequently
+passed all 40 four-mode refusals. The final build took 7 s with no Ninja work.
+The final four-case runtime gate passed on `e70c6eaaa` in 390.57 s, using
+`~/.lit-venv/bin/lit -va -j 2 build/ctcompile/test` with the exact filter
+`^ctcompile :: CTNative/Browser/native-(dom-boolean-(strings|borrowers)|class-dom-boolean-(string-captures|forwarded-captures))[.]test$`.
+
+Accepted coverage across both gates is six cases, **41 Node/VM source-case
+checks, 656 native executions, 934 proof refusals and 20 verifier controls**
+(954 controls total). Repeated cases and preflight attempts are not added to
+these totals. Both DOM providers, optimization policies, explicit/deduced
+C++ and GCC/Clang are covered. All 328 selected generated C++ files and
+linked native binaries passed their no-Script gates.
+
+| Case | Source checks | Native executions | Proof refusals | Verifiers | Minimum budget |
+|---|---:|---:|---:|---:|---|
+| class results | 7 | 112 | 163 | 2 | 23109 |
+| mixed captures | 7 | 112 | 171 | 3 | 22297 |
+| Boolean borrowers | 12 | 192 | 187 | 6 | 989, 1224 |
+| forwarded captures | 5 | 80 | 159 | 6 | 21455 |
+| class String captures | 4 | 64 | 166 | 3 | 23885 |
+| raw Boolean Strings | 6 | 96 | 88 | 0 | 828 |
+
+The earlier mixed/results execution evidence is retained after regenerating
+56 lowerings and all 112 C++ clients on the final tree. They are byte-identical
+apart from directory prefixes in function provenance comments and the quoted
+location argument of `CTCOMPILE_PIN`. Basenames, line/column coordinates, types
+and executable bytes match. Compiler binaries, versions, flags, link inputs,
+library hashes and 1,042 runtime/header/test dependency hashes match. Root
+independently checked the exact normalization fields and all 6,032 artifact
+manifest entries, plus 1,306 earlier and 1,649 final archived text hashes.
+Direct C++ review confirms owning `ctnative::js_string` values, actual native
+comparisons/branches, and public DOM calls; embedded NUL literals retain
+explicit byte lengths and differing suffixes.
+
+Full `tools/format.sh --check` passed for 1,210 C++, 183 Python and 116 web
+files; `git diff --check` passed. No full CTest, full compiler lit, WPT/test262,
+broad corpus/native matrix, Windows, sanitizer or performance run was done.
+Browser regressions were not needed for this compiler-only change. No push.
+
+**Next native/Bootstrap boundary:** captured DOM element identity, then the
+actual listener/event/deferred-owner composition. The synchronous source
+`captures-author/next-element-identity.js`, SHA256
+`c01a90eaa4cef7a12e52a9118fa70960469ddbb6fabd6cbdf3f69b1eba56e873`,
+compares captured method and entry elements around shared Boolean state.
+Node/VM agree (`result=true`) for aliased and distinct inputs; all four native
+modes refuse `native DOM class: class callback capture requires an ordered local primitive`.
+Prepared IR SHA256 is
+`b98c5a22ffaa2affdd6688dcf0516259f1b8f9765819f9c50399800ef6a18388`.
+Fixed bindings are not primitive constants: preserve document-qualified
+identity and prove the original borrow through each synchronous call. The
+current transport keeps only the mutable state slot, and the DOM borrower
+requires exactly one cell formal; both seams need a real typed-borrow proof.
+
+The complete Bootstrap vendor prefix and dormant `_queueCallback` remain.
+The unchanged Button source, SHA256
+`a667ce87e4180390632562645458203dbbb36354690c7b5fd2c355b7f47499ff`,
+still refuses `native DOM class: class Boolean state requires exact local leaf capture slots`.
+Its 320,552 prepared function-body bytes retain SHA256
+`eea9295b6a0128b8d7eec15cd71e2665ab6cf8eb5404d666be7e8a5df9d88523`.
+Node/VM agree on the retained input, Data registration, empty config and two
+toggles. The listener has six captures plus an event formal; the timer has
+three. Real Bootstrap compares `event.target === element`; these String
+fixtures prove smaller typed prerequisites, not that event path.
+Real completion removes the listener but does not cancel the fallback timer,
+which later reads the flag. Timer-driven dispatch may be stopped before the
+listener runs; dispose does not itself cancel these raw registrations.
+Ownership must cover each remaining registration and active reentrant call.
+Existing public listener/timer metadata APIs do not establish these lifetimes;
+Event dispatch and live computed-style behavior still require public subsystem
+seams. No deferred capture or complete Bootstrap admission is claimed.
+
+Evidence is in
+`/home/alex/.ctbrowser-auto/codex/ctcompile/artifacts/2026-10-07-native-stack-9/`.
+See `validation/APPROVAL.md`, `validation/approval.json`,
+`validation/reuse.json`, `validation/ARTIFACTS.sha256`,
+`root/review.md`, `root/approved-evidence-review.json`,
+`root/independent-reuse-review.json`, `bootstrap-trace/bootstrap-lifetime.md` and
+`captures-author/next-element-identity.md`.
+
 ## Mixed Boolean captures and callback results, 2026-10-07 UTC
 
 **Landed: `1ce2d7f41` on `ctcompile-v1`, based on `8561b6823`.**
