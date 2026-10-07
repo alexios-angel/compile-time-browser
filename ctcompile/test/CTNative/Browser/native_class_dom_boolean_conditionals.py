@@ -37,9 +37,7 @@ CASES = {
 BAD = {
     "nonboolean-store": METHOD.replace("seen = true;", "seen = 'true';"),
     "computed-store": METHOD.replace("seen = true;", "seen = !seen;"),
-    "extra-capture": METHOD.replace("const pending", "const flag = true; const pending").replace(
-        "if (!seen)", "if (seen === flag)"
-    ),
+    # The original extra-capture source is positive in the mixed-capture test.
     "conditional-early-return": METHOD.replace(
         WRITE, "if (!seen) { seen = true; return true; } return false;"
     ),
