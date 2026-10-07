@@ -22,6 +22,11 @@ REPEATED = METHOD.replace(
     "    target.setAttribute('first', snap1); target.setAttribute('second', snap2);\n"
     "    target.setAttribute('third', snap3);",
 )
+# This source's early return already forms a complete result-bearing If before
+# class transport; it does not require a nested return or completion cell.
+EARLY = conditionals.METHOD.replace(
+    conditionals.WRITE, "if (!seen) { seen = true; return true; } return false;"
+)
 CASES = {
     "original-helper-result": conditionals.METHOD.replace(
         conditionals.WRITE, "const chosen = seen ? true : false; if (chosen) { seen = true; }"
@@ -32,6 +37,12 @@ CASES = {
         RESULT,
         "return seen ? (seen ? (seen = false, true) : false) : (seen = true, false);",
     ),
+    "early-return": EARLY,
+    "early-return-observed": EARLY.replace(
+        "    mark();",
+        "    const once = mark(), twice = mark();\n"
+        "    target.setAttribute('first', once); target.setAttribute('second', twice);",
+    ),
     "mixed-results": mixed.METHOD.replace(
         "const before = seen; seen = on; return before;",
         "return seen ? (seen = off, on) : (seen = on, off);",
@@ -40,6 +51,8 @@ CASES = {
 SOURCE_HASHES = {
     "original-helper-result": "cbb816c38edf148a7d97ff50abfdb8e1500e6e36f96696f614351bc2be34fcd7",
     "stateful-helper-result": "4d1f45cef62a755065a9e379c69436ce2b87b0c17c4a22f9fbf5b9e49ecb24cd",
+    "early-return": "8bfa015e220550281f774b48cda01c1c58d6e7372500c32fffe63fee9b17a30c",
+    "early-return-observed": "a8173cae99c5f19ec46006da634e80a6bc3838b87792b0673b2ab4b844126ce2",
 }
 BAD = {
     "undefined-result": METHOD.replace("false, true", "false, void 0"),
@@ -51,6 +64,8 @@ BAD = {
     "effect-after": METHOD.replace(
         "    return before !== after;", "    ambient(); return before !== after;"
     ),
+    "early-tail-effect": EARLY.replace("} return false;", "} ambient(); return false;"),
+    "early-nonboolean-tail": EARLY.replace("} return false;", "} return 0;"),
 }
 
 
@@ -58,6 +73,8 @@ def observations(name):
     result = []
     if name in ("repeated-results", "nested-results"):
         result = [("first", "false"), ("second", "true"), ("third", "false")]
+    elif name == "early-return-observed":
+        result = [("first", "true"), ("second", "false")]
     return result + [
         ("before", "true"),
         ("after", "true" if name == "original-helper-result" else "false"),
@@ -77,7 +94,13 @@ def shape(text, name="stateful-helper-result"):
     )
     assert branch, "source lost its original result-bearing helper conditional"
     assert len(re.findall(r"scf\.yield %\w+ : !ctjs.value", branch[0])) >= 2, branch[0]
-    if name != "original-helper-result":
+    if name.startswith("early-return"):
+        assert len(re.findall(r"ctjs\.store_upvalue", branch[0])) == 1, branch[0]
+        assert len(re.findall(r"ctjs\.frame_exit", branch[0])) == 2, branch[0]
+        assert len(re.findall(r"ctjs\.return", writer[0])) == 1, writer[0]
+        assert f"    ctjs.return {branch[1]}\n" in writer[0], writer[0]
+        assert not re.search(r"ctjs\.create_cell|scf\.index_switch", writer[0]), writer[0]
+    elif name != "original-helper-result":
         assert len(re.findall(r"ctjs\.store_upvalue", branch[0])) >= 2, branch[0]
     return writer, branch
 
@@ -91,6 +114,21 @@ def result_roots(text):
     yield "branch-result", captures.insert(text, writer, branch.end(), root), captures.insert(
         text, writer, exit_op.end(), root
     )
+
+
+def early_roots(text):
+    writer, branch = shape(text, "early-return")
+    frame = re.search(r"(%\w+) = ctjs\.frame_enter \d+", writer[0])[1]
+    callee = re.findall(r"(%\w+): !ctjs.value", writer[0].split("\n")[0])[2]
+    exits = list(re.finditer(rf"^      ctjs\.frame_exit {re.escape(frame)}\b", branch[0], re.M))
+    assert len(exits) == 2, branch[0]
+    root = f"      ctjs.root {callee} in {frame}"
+    for index, exit_op in enumerate(exits):
+        yield (
+            f"early-arm-{index}",
+            captures.insert(text, writer, branch.start() + exit_op.start(), root),
+            captures.insert(text, writer, branch.start() + exit_op.end(), root),
+        )
 
 
 def mutations(text):
@@ -179,10 +217,14 @@ def main():
             args, ir, declared, name, [0, 8], "{budget} did not exhaust Boolean result proof"
         )
         refusals += 4
-        if name != "stateful-helper-result":
+        if name == "early-return":
+            roots = early_roots(ir.read_text())
+        elif name == "stateful-helper-result":
+            refusals += budget_boundary(args, ir, declared, subject="Class Boolean result")
+            roots = result_roots(ir.read_text())
+        else:
             continue
-        refusals += budget_boundary(args, ir, declared, subject="Class Boolean result")
-        for label, valid, invalid in result_roots(ir.read_text()):
+        for label, valid, invalid in roots:
             path = args.work / f"rooted-{label}.mlir"
             path.write_text(valid)
             manifest = dict(declared, module_sha256=dom.fingerprint(args.opt, path))
@@ -205,6 +247,8 @@ def main():
                 )
                 assert source_operations(args, diagnostic) == original, diagnostic
                 refusals += 1
+        if name != "stateful-helper-result":
+            continue
         for label, changed in mutations(ir.read_text()):
             assert changed != ir.read_text(), label
             path = args.work / f"mutated-{label}.mlir"

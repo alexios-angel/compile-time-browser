@@ -38,10 +38,8 @@ BAD = {
     "nonboolean-store": METHOD.replace("seen = true;", "seen = 'true';"),
     "computed-store": METHOD.replace("seen = true;", "seen = !seen;"),
     # The original extra-capture source is positive in the mixed-capture test.
-    "conditional-early-return": METHOD.replace(
-        WRITE, "if (!seen) { seen = true; return true; } return false;"
-    ),
-    # The original helper-result-if is positive in the Boolean-results test.
+    # Original conditional-early-return and helper-result-if sources are
+    # positive in the Boolean-results test after structured result transport.
     "loop-leaf": METHOD.replace(WRITE, "while (!seen) { seen = true; }"),
     "nested-callback": METHOD.replace(
         WRITE, "if (!seen) { const nested = () => { seen = true; }; nested(); seen = true; }"
