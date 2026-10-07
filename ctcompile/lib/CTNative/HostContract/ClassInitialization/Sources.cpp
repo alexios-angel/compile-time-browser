@@ -70,10 +70,21 @@ bool classInitialization::proveCells(ctjs::FuncOp entry) {
                 if (!first || write->isBeforeInBlock(first)) { first = write; }
             }
         }
-        for (mlir::OpOperand & use : cell.getResult().getUses()) {
+        for (mlir::OpOperand & use : llvm::make_early_inc_range(cell.getResult().getUses())) {
             if (!step()) { return false; }
             auto * op = use.getOwner();
-            if (llvm::isa<ctjs::RootOp, ctjs::CellSetOp>(op)) {
+            if (auto root = llvm::dyn_cast<ctjs::RootOp>(op)) {
+                if (use.getOperandNumber() != 1) {
+                    return refuse("class local cell has an invalid root operand");
+                }
+                if (!spend(3)) { return false; }
+                // Both fixed-cell retirement paths erase its remaining users.
+                // Keep the original root position/context for frame validation.
+                mlir::OpBuilder at(root);
+                root.getValueMutable().assign(undefinedAt(at, root.getLoc()));
+                continue;
+            }
+            if (llvm::isa<ctjs::CellSetOp>(op)) {
                 cellOperations.insert(op);
                 continue;
             }
