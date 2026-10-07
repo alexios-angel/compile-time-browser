@@ -38,7 +38,8 @@ BAD = {
     # Preserve earlier String/Boolean comparisons as refusals.
     "old-local-mixed-types": mixed.BAD["string-fixed"],
     "old-forwarded-mixed-types": forwarded.BAD["string-fixed"],
-    "string-return": LOCAL.replace(PENDING, "eventName"),
+    # Keep an actual state write: a fixed-only String reader is supported.
+    "string-return": LOCAL.replace(PENDING, "{ seen = false; return eventName; }"),
     "string-yield": LOCAL.replace(PENDING, "eventName === 'transitionend' ? eventName : seen"),
     "string-truth": LOCAL.replace(PENDING, "eventName ? !seen : seen"),
     "string-store": FORWARDED.replace("seen = true;", "seen = eventName;"),
@@ -185,6 +186,9 @@ def main():
         ir, contract = dom.prepare(
             args, name, callbacks.source(method + captures.CALLS), 2, entry_name="probe"
         )
+        if name == "string-return":
+            _, _, _, leaves, _, indices = mixed.shape(ir.read_text())
+            assert re.search(rf"ctjs\.store_upvalue %\w+\[{indices[0]}\]", leaves[0][0])
         declared = dict(contract, initial_intrinsics=["__ctbrowser_class_defined"])
         original = source_operations(args, ir.read_text())
         for owned, optimize, manifest in dom.variants(declared):
