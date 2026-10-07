@@ -254,8 +254,8 @@ bool classInitialization::retainBooleanCaptures(ctjs::FuncOp owner) {
             if (!step()) { return false; }
             if (slot == mutableSlot) { continue; }
             auto literal = callbackPrimitive(closure, slot);
-            if (!literal || !llvm::isa<ctjs::BooleanAttr>(literal.getValue())) {
-                return refuse("class Boolean leaf requires fixed Boolean captures");
+            if (!literal || !llvm::isa<ctjs::BooleanAttr, ctjs::StringAttr>(literal.getValue())) {
+                return refuse("class Boolean leaf requires fixed Boolean or String captures");
             }
             literals[slot] = literal;
         }
