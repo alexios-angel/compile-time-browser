@@ -199,15 +199,18 @@ bool DOMSource::normalizeBooleanCell(ctjs::FuncOp function, unsigned depth) {
                 if (!step(1 + leaf.getNumOperands() + leaf.getNumResults())) { return false; }
                 if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(leaf)) {
                     auto truth = branch.getCondition().getDefiningOp<ctjs::TruthyOp>();
-                    if (branch.getNumResults() || !truth || !booleans.contains(truth.getValue())) {
-                        return refuse(
-                            "DOM Boolean borrower requires a result-free Boolean conditional");
+                    if (!truth || !booleans.contains(truth.getValue())) {
+                        return refuse("DOM Boolean borrower requires a Boolean conditional");
                     }
                     for (auto & region : branch->getRegions()) {
                         if (!step()) { return false; }
                         if (region.empty()) { continue; }
                         if (!self(self, region.front(), nesting + 1)) { return false; }
                     }
+                    // checkBody proved complete arm/result correspondence and
+                    // dominance. Every yielded value must now be Boolean before
+                    // any result is used as a fact by a later operation.
+                    booleans.insert(branch.getResults().begin(), branch.getResults().end());
                     continue;
                 }
                 if (leaf.getNumRegions() || leaf.getNumSuccessors()) {
@@ -245,8 +248,12 @@ bool DOMSource::normalizeBooleanCell(ctjs::FuncOp function, unsigned depth) {
                             undefined(returned.getValue()))) {
                     continue;
                 } else if (auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(leaf);
-                           yield && nesting && yield.getNumOperands() == 0) {
-                    continue;
+                           yield && nesting) {
+                    for (auto value : yield.getOperands()) {
+                        if (!booleans.contains(value)) {
+                            return refuse("DOM Boolean borrower requires Boolean yields");
+                        }
+                    }
                 } else if (!llvm::isa<ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::RootOp>(leaf)) {
                     return refuse("DOM Boolean borrower contains an unproved operation");
                 }

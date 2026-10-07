@@ -53,6 +53,56 @@ NESTED = CONDITIONAL.replace(
     "%same = ctjs.compare strict_eq %read, %read\n%inner = ctjs.truthy %same\n"
     "scf.if %inner {\n" + WRITE + "\nctjs.root %cell in %frame\nscf.yield\n}",
 )
+RETAINED_RESULT = CONDITIONAL.replace(
+    "scf.if %condition {", "%selected = scf.if %condition -> (!ctjs.value) {"
+).replace(
+    "scf.yield\n}",
+    "scf.yield %read : !ctjs.value\n} else {\nscf.yield %read : !ctjs.value\n}",
+)
+SELECTED_RESULT = RETAINED_RESULT.replace("ctjs.return %read", "ctjs.return %selected")
+MULTIPLE_RESULTS = """%read = ctjs.cell_get %cell
+%pending = ctjs.unary not %read
+%condition = ctjs.truthy %pending
+%selected:2 = scf.if %condition -> (!ctjs.value, !ctjs.value) {
+  %yes = ctjs.constant #ctjs.boolean<true>
+  ctjs.cell_set %cell, %yes
+  %after = ctjs.cell_get %cell
+  scf.yield %read, %after : !ctjs.value, !ctjs.value
+} else {
+  %no = ctjs.constant #ctjs.boolean<false>
+  ctjs.cell_set %cell, %no
+  %after = ctjs.cell_get %cell
+  scf.yield %read, %after : !ctjs.value, !ctjs.value
+}
+%old_condition = ctjs.truthy %selected#0
+%answer = scf.if %old_condition -> (!ctjs.value) {
+  scf.yield %selected#1 : !ctjs.value
+} else {
+  %yes = ctjs.constant #ctjs.boolean<true>
+  scf.yield %yes : !ctjs.value
+}
+ctjs.return %answer"""
+JS_MULTIPLE = "const mark = () => { const before = seen; if (!before) seen = true; else seen = false; const after = seen; return before ? after : true; };"
+NESTED_RESULTS = MULTIPLE_RESULTS.replace(
+    "scf.yield %selected#1 : !ctjs.value",
+    "%inner = ctjs.truthy %selected#1\n"
+    "%nested = scf.if %inner -> (!ctjs.value) {\n"
+    "  scf.yield %selected#0 : !ctjs.value\n} else {\n"
+    "  ctjs.root %cell in %frame\n"
+    "  scf.yield %selected#1 : !ctjs.value\n}\n"
+    "scf.yield %nested : !ctjs.value",
+)
+RESULT_ONLY = """%read = ctjs.cell_get %cell
+%pending = ctjs.unary not %read
+%condition = ctjs.truthy %read
+%yes = ctjs.constant #ctjs.boolean<true>
+ctjs.cell_set %cell, %yes
+%selected = scf.if %condition -> (!ctjs.value) {
+  scf.yield %read : !ctjs.value
+} else {
+  scf.yield %pending : !ctjs.value
+}
+ctjs.return %selected"""
 CASES = {
     "return-snapshots": (
         cells,
@@ -103,6 +153,73 @@ CASES = {
         scopes.CASES["nested-state"][1].replace("const mark = () => { seen = true; };", JS_MARK),
         {"nested_state": True},
     ),
+    # Preserve the exact previously refused result-bearing helper source.
+    "retained-result": (
+        cells,
+        cells.program(OWNER, cells.function("mark$3", RETAINED_RESULT)),
+        JS,
+        {"before": False, "after": True},
+        True,
+    ),
+    "selected-result": (
+        cells,
+        cells.program(OWNER, cells.function("mark$3", SELECTED_RESULT)),
+        JS,
+        {"before": False, "after": True},
+        True,
+    ),
+    "multiple-results": (
+        cells,
+        cells.program(THREE, cells.function("mark$3", MULTIPLE_RESULTS)),
+        JS.replace(JS_MARK, JS_MULTIPLE)
+        .replace(
+            "element.setAttribute('before'", "const again = mark();\nelement.setAttribute('before'"
+        )
+        .replace(
+            "return before !== after;",
+            "element.setAttribute('again', again);\nreturn before !== after;",
+        ),
+        {"before": True, "after": False, "again": True},
+        True,
+    ),
+    "nested-results-roots": (
+        cells,
+        origins.negated_literals(
+            cells.program(OWNER, cells.function("mark$3", cells.framed(NESTED_RESULTS)))
+        ),
+        origins.negated_source(
+            JS.replace(
+                JS_MARK,
+                JS_MULTIPLE.replace(
+                    "return before ? after : true;",
+                    "return before ? (after ? before : after) : true;",
+                ),
+            )
+        ),
+        {"before": True, "after": False},
+        True,
+    ),
+    "result-only-snapshot": (
+        cells,
+        cells.program(OWNER, cells.function("mark$3", RESULT_ONLY)),
+        JS.replace(
+            JS_MARK,
+            "const mark = () => { const before = seen, pending = !seen; seen = true; return before ? before : pending; };",
+        ),
+        {"before": True, "after": True},
+        False,
+    ),
+    "owner-result-prefix": (
+        branches,
+        cells.program(
+            branches.owner(branches.RESULTS, extra=branches.RESULT_WRITES),
+            cells.function("pending$2", cells.PENDING) + cells.function("mark$3", MULTIPLE_RESULTS),
+        ),
+        branches.CASES["original-results"][1].replace(
+            "const mark = () => { seen = true; };", JS_MULTIPLE
+        ),
+        {"results": True},
+    ),
 }
 
 
@@ -145,12 +262,35 @@ def bad_programs():
                 "%condition = ctjs.truthy %pending", "%condition = arith.constant true"
             )
         ),
-        "result-bearing-if": program(
-            CONDITIONAL.replace(
-                "scf.if %condition {", "%selected = scf.if %condition -> (!ctjs.value) {"
-            ).replace(
-                "scf.yield\n}",
-                "scf.yield %read : !ctjs.value\n} else {\nscf.yield %read : !ctjs.value\n}",
+        "undefined-result": program(
+            SELECTED_RESULT.replace(
+                "%read =", "%u = ctjs.constant #ctjs.undefined\n%read ="
+            ).replace("} else {\nscf.yield %read", "} else {\nscf.yield %u")
+        ),
+        "numeric-result": program(
+            SELECTED_RESULT.replace(
+                "%read =", "%zero = ctjs.constant #ctjs.number<0>\n%read ="
+            ).replace("scf.yield %read", "scf.yield %zero", 1)
+        ),
+        "nonboolean-unused-result": program(
+            MULTIPLE_RESULTS.replace("%read =", "%u = ctjs.constant #ctjs.undefined\n%read =")
+            .replace("scf.yield %read, %after", "scf.yield %read, %u", 1)
+            .split("%old_condition =", 1)[0]
+            + "ctjs.return %selected#0"
+        ),
+        "computed-result-store": program(
+            SELECTED_RESULT.replace(
+                "ctjs.return %selected", "ctjs.cell_set %cell, %selected\nctjs.return %selected"
+            )
+        ),
+        "nested-nonboolean-result": program(
+            cells.framed(NESTED_RESULTS).replace(
+                "scf.yield %selected#0", "%u = ctjs.constant #ctjs.undefined\nscf.yield %u"
+            )
+        ),
+        "result-only-nonboolean": program(
+            RESULT_ONLY.replace("%read =", "%u = ctjs.constant #ctjs.undefined\n%read =").replace(
+                "scf.yield %read", "scf.yield %u"
             )
         ),
         "forwarded-cell": program(
@@ -200,6 +340,23 @@ def bad_programs():
             owner=OWNER.replace(
                 "%equal =", ambient.replace("%u = ctjs.constant #ctjs.undefined\n", "") + "%equal ="
             )
+        ),
+        "effect-result-then": program(SELECTED_RESULT.replace(WRITE, ambient + WRITE)),
+        "effect-result-else": program(SELECTED_RESULT.replace("} else {", "} else {\n" + ambient)),
+        "result-root-after-exit": program(
+            cells.framed(NESTED_RESULTS).replace(
+                "ctjs.frame_exit %frame", "ctjs.frame_exit %frame\nctjs.root %selected#0 in %frame"
+            )
+        ),
+        "result-hidden-caller": program(
+            MULTIPLE_RESULTS,
+            extra=cells.function(
+                "hidden$9",
+                "%u = ctjs.constant #ctjs.undefined\n%result = ctjs.call_direct @mark$3(%u, %u, %u, %cell)\nctjs.return %result",
+            ),
+        ),
+        "result-symbol-observer": program(MULTIPLE_RESULTS).replace(
+            "module {", "module attributes {test.borrow_ref = @mark$3} {"
         ),
         "hidden-caller": program(
             extra=cells.function(
@@ -264,7 +421,7 @@ def main():
             args, ir, contract, name, [0, 8], "{budget} did not exhaust conditional borrower proof"
         )
         refusals += 2
-        if name == "scoped-owner":
+        if name in ("scoped-owner", "owner-result-prefix"):
             refusals += cells.budget_boundary(args, ir, contract)
     for name, text in bad_programs().items():
         ir, contract = cells.prepare(args, "bad-" + name, text)
@@ -282,7 +439,7 @@ def main():
             if (
                 name.startswith("effect-")
                 or name.startswith("combined-depth-")
-                or name == "root-after-exit"
+                or name in ("root-after-exit", "result-root-after-exit")
             ):
                 assert cells.source_operations(args, diagnostic) == original, diagnostic
             if name.startswith("combined-depth-"):
@@ -291,6 +448,19 @@ def main():
     for name, text in {
         "nested-return": program(CONDITIONAL.replace(WRITE, "ctjs.return %read\n" + WRITE)),
         "yield-result": program(CONDITIONAL.replace("scf.yield", "scf.yield %read : !ctjs.value")),
+        "yield-missing-result": program(
+            MULTIPLE_RESULTS.replace(
+                "scf.yield %read, %after : !ctjs.value, !ctjs.value",
+                "scf.yield %read : !ctjs.value",
+                1,
+            )
+        ),
+        "yield-type-mismatch": program(
+            SELECTED_RESULT.replace("scf.yield %read : !ctjs.value", "scf.yield %condition : i1", 1)
+        ),
+        "yield-sibling-value": program(
+            SELECTED_RESULT.replace("} else {\nscf.yield %read", "} else {\nscf.yield %yes")
+        ),
         "missing-argument": program(
             owner=OWNER.replace("@mark$3(%u, %u, %u, %seen)", "@mark$3(%u, %u, %u)")
         ),
