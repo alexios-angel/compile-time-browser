@@ -62,9 +62,7 @@ BAD = {
         "const before",
         "let other = false; const change = () => { other = true; }; change(); const before",
     ),
-    "extra-capture": METHOD.replace("const pending", "const flag = true; const pending").replace(
-        "() => !seen", "() => seen === flag"
-    ),
+    # The original extra-capture source is positive in the mixed-capture test.
     "uncalled-writer": METHOD.replace(
         "const before", "const unused = () => { seen = false; }; const before"
     ),
@@ -174,7 +172,7 @@ def events(name):
     return result
 
 
-def checks(name):
+def checks(name, *, observed=None, expected=True):
     result = r"""
         (void)classes;
         (void)pressed;
@@ -199,32 +197,44 @@ def checks(name):
         for alias in (False, True):
             result += f"ready(doc, atoms, button, {str(flag).lower()});\n"
             result += f"ready(foreign_doc, foreign_atoms, other_button, {str(not flag).lower()});\n"
-            result += "assert(@ENTRY@(element, " + ("alias" if alias else "foreign") + "));\n"
+            result += (
+                "assert(@ENTRY@(element, "
+                + ("alias" if alias else "foreign")
+                + ") == "
+                + str(expected).lower()
+                + ");\n"
+            )
             owners = (
                 ("doc", "atoms", "button", 3 if alias else 2),
                 ("foreign_doc", "foreign_atoms", "other_button", 0 if alias else 1),
             )
             for owner, table, node, count in owners:
-                expected = events(name) * count
-                keys = ", ".join(json.dumps(key) for key, _ in expected)
+                writes = (events(name) if observed is None else observed) * count
+                keys = ", ".join(json.dumps(key) for key, _ in writes)
                 result += f"check({owner}, {table}, {node}, {{{keys}}});\n"
-                for key, value in dict(expected).items():
+                for key, value in dict(writes).items():
                     result += f"assert({owner}.read().attribute_value({node}, {table}.intern({json.dumps(key)})) == {json.dumps(value)});\n"
     return result
 
 
-def oracle(args, name, text):
+def oracle(args, name, text, *, observed=None, expected=True):
     text += "var result = true;\n"
     for flag in (False, True):
         for alias in (False, True):
             text += f"var first = {callbacks.ELEMENT}, second = {callbacks.ELEMENT};\n"
             text += ("first" if flag else "second") + ".attributes.ready = '';\n"
-            text += "result = probe(first, " + ("first" if alias else "second") + ") && result;\n"
+            text += (
+                "result = (probe(first, "
+                + ("first" if alias else "second")
+                + ") === "
+                + str(expected).lower()
+                + ") && result;\n"
+            )
             for variable, count in (("first", 3 if alias else 2), ("second", 0 if alias else 1)):
-                expected = events(name) * count
-                trace = "".join(key + "," for key, _ in expected)
+                writes = (events(name) if observed is None else observed) * count
+                trace = "".join(key + "," for key, _ in writes)
                 text += f"result = result && {variable}.trace === {json.dumps(trace)};\n"
-                for key, value in dict(expected).items():
+                for key, value in dict(writes).items():
                     text += (
                         f"result = result && {variable}.attributes.{key} === {json.dumps(value)};\n"
                     )

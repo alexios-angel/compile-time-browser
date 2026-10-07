@@ -29,7 +29,7 @@ bool classInitialization::retainBooleanCaptures(ctjs::FuncOp owner) {
     if (cells.count(cell.getResult())) {
         return refuse("class Boolean state was already treated as a fixed snapshot");
     }
-    llvm::SmallVector<ctjs::CreateClosureOp> callbacks;
+    llvm::SmallVector<std::pair<ctjs::CreateClosureOp, unsigned>> callbacks;
     llvm::DenseSet<mlir::Operation *> callbackOperations;
     llvm::SmallVector<ctjs::RootOp> roots;
     const bool initiallySet = !undefined(cell.getInitial());
@@ -75,18 +75,19 @@ bool classInitialization::retainBooleanCaptures(ctjs::FuncOp owner) {
         }
         auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(user);
         auto function = target(closure);
-        if (!closure || use.getOperandNumber() != 2 || closure.getUpvalues().size() != 1 ||
-            hasOuterCapture(closure) || !function || function == owner ||
-            function.getUpvalueCount() != 1 || !function.getBody().hasOneBlock() ||
+        if (!closure || use.getOperandNumber() < 2 || hasOuterCapture(closure) || !function ||
+            function == owner ||
+            function.getUpvalueCount() != static_cast<int64_t>(closure.getUpvalues().size()) ||
+            !function.getBody().hasOneBlock() ||
             function.getBody().front().getNumArguments() != ctjs::implicit_arguments ||
-            closure.getEnclosingClosure() != block.getArgument(ctjs::arg_callee)) {
+            closure.getEnclosingClosure() != block.getArgument(ctjs::arg_callee) ||
+            !callbackOperations.insert(closure).second) {
             return refuse("class Boolean state requires exact local leaf capture slots");
         }
-        callbacks.push_back(closure);
-        callbackOperations.insert(closure);
+        callbacks.emplace_back(closure, use.getOperandNumber() - 2);
     }
     llvm::DenseSet<mlir::Operation *> leaves, calls;
-    for (auto closure : callbacks) {
+    for (auto [closure, mutableSlot] : callbacks) {
         if (!step()) { return false; }
         auto function = target(closure);
         leaves.insert(function);
@@ -149,10 +150,11 @@ bool classInitialization::retainBooleanCaptures(ctjs::FuncOp owner) {
                     accepted = ctjs::isPrimitiveAttr(literal.getValue());
                 }
                 if (auto load = llvm::dyn_cast<ctjs::LoadUpvalueOp>(operation)) {
-                    accepted = load.getClosure() == callee && load.getIndex() == 0;
+                    accepted = load.getClosure() == callee && capturesSlot(load, closure);
                 }
                 if (auto store = llvm::dyn_cast<ctjs::StoreUpvalueOp>(operation)) {
-                    accepted = store.getClosure() == callee && store.getIndex() == 0;
+                    accepted = store.getClosure() == callee && store.getIndex() >= 0 &&
+                               static_cast<unsigned>(store.getIndex()) == mutableSlot;
                 }
                 if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(operation)) {
                     accepted = unary.getKind() == ctjs::UnaryKind::Not;
@@ -233,6 +235,44 @@ bool classInitialization::retainBooleanCaptures(ctjs::FuncOp owner) {
         return refuse("class Boolean leaf has an unproved symbolic caller");
     }
     if (!spend(uint64_t(3) * (roots.size() + leaves.size()) + 1)) { return false; }
+    // Complete the original mutable-cell/body/caller census before invoking
+    // callbackPrimitive: its owner-cell proof must never freeze this cell.
+    // Failure still discards the complete disposable module and proof state.
+    booleanCells.insert(cell.getResult());
+    llvm::SmallVector<llvm::SmallVector<ctjs::ConstantOp>> fixed;
+    for (auto [closure, mutableSlot] : callbacks) {
+        auto & literals = fixed.emplace_back(closure.getUpvalues().size());
+        for (unsigned slot = 0; slot < literals.size(); ++slot) {
+            if (!step()) { return false; }
+            if (slot == mutableSlot) { continue; }
+            auto literal = callbackPrimitive(closure, slot);
+            if (!literal || !llvm::isa<ctjs::BooleanAttr>(literal.getValue())) {
+                return refuse("class Boolean leaf requires fixed Boolean captures");
+            }
+            literals[slot] = literal;
+        }
+    }
+    // Resolve every original fixed slot, including dormant sibling uses,
+    // before deleting any read or compacting another callback's slot table.
+    for (auto [index, callback] : llvm::enumerate(callbacks)) {
+        auto [closure, mutableSlot] = callback;
+        auto function = target(closure);
+        const auto callee = function.getBody().front().getArgument(ctjs::arg_callee);
+        for (mlir::OpOperand & use : llvm::make_early_inc_range(callee.getUses())) {
+            if (!step()) { return false; }
+            if (auto load = llvm::dyn_cast<ctjs::LoadUpvalueOp>(use.getOwner())) {
+                if (static_cast<unsigned>(load.getIndex()) == mutableSlot) {
+                    load.setIndex(0);
+                } else if (!copyPrimitiveCapture(
+                               load, fixed[index][static_cast<size_t>(load.getIndex())])) {
+                    return false;
+                }
+            } else if (auto store = llvm::dyn_cast<ctjs::StoreUpvalueOp>(use.getOwner())) {
+                store.setIndex(0);
+            }
+        }
+        setCaptures(closure, function, cell.getResult());
+    }
     // Roots of cell/closure/implicit-callee identities would otherwise obstruct
     // lifting or disappear with a lifted closure. Preserve every original
     // position and context for the later complete frame proof.
@@ -240,7 +280,6 @@ bool classInitialization::retainBooleanCaptures(ctjs::FuncOp owner) {
         mlir::OpBuilder at(root);
         root.getValueMutable().assign(undefinedAt(at, root.getLoc()).getResult());
     }
-    booleanCells.insert(cell.getResult());
     for (auto * leaf : leaves) {
         booleanLeaves.insert(leaf);
         helpers.insert(leaf);
