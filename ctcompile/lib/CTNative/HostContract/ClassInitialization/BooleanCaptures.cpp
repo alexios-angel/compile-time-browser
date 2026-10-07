@@ -117,20 +117,22 @@ bool classInitialization::retainBooleanCaptures(ctjs::FuncOp owner) {
             for (auto & operation : source) {
                 if (!spend(cloneCost(&operation))) { return false; }
                 if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(operation)) {
-                    if (branch.getNumResults() ||
-                        !branch.getCondition().getDefiningOp<ctjs::TruthyOp>()) {
-                        return refuse("class Boolean leaf requires a result-free conditional");
+                    if (!branch.getCondition().getDefiningOp<ctjs::TruthyOp>() ||
+                        !llvm::all_of(branch.getResultTypes(), [](mlir::Type type) {
+                            return llvm::isa<ctjs::ValueType>(type);
+                        })) {
+                        return refuse("class Boolean leaf requires a value conditional");
                     }
                     for (auto & region : branch->getRegions()) {
                         if (!step()) { return false; }
-                        if (region.empty()) { continue; }
+                        if (region.empty() && branch.getNumResults() == 0) { continue; }
                         if (!region.hasOneBlock() || region.front().empty() ||
                             region.front().getNumArguments()) {
                             return refuse("class Boolean leaf requires argument-free arms");
                         }
                         auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(region.front().back());
-                        if (!yield || yield.getNumOperands()) {
-                            return refuse("class Boolean leaf requires result-free arms");
+                        if (!yield || yield.getOperandTypes() != branch.getResultTypes()) {
+                            return refuse("class Boolean leaf requires matching arm results");
                         }
                         if (!self(self, region.front(), nesting + 1)) { return false; }
                     }
@@ -144,7 +146,7 @@ bool classInitialization::retainBooleanCaptures(ctjs::FuncOp owner) {
                         operation);
                 if (llvm::isa<ctjs::ReturnOp>(operation)) { accepted = nesting == 0; }
                 if (auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(operation)) {
-                    accepted = nesting && yield.getNumOperands() == 0;
+                    accepted = nesting != 0;
                 }
                 if (auto literal = llvm::dyn_cast<ctjs::ConstantOp>(operation)) {
                     accepted = ctjs::isPrimitiveAttr(literal.getValue());

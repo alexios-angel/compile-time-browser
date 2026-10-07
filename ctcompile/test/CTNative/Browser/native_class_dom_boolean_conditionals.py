@@ -41,9 +41,7 @@ BAD = {
     "conditional-early-return": METHOD.replace(
         WRITE, "if (!seen) { seen = true; return true; } return false;"
     ),
-    "helper-result-if": METHOD.replace(
-        WRITE, "const chosen = seen ? true : false; if (chosen) { seen = true; }"
-    ),
+    # The original helper-result-if is positive in the Boolean-results test.
     "loop-leaf": METHOD.replace(WRITE, "while (!seen) { seen = true; }"),
     "nested-callback": METHOD.replace(
         WRITE, "if (!seen) { const nested = () => { seen = true; }; nested(); seen = true; }"
@@ -147,7 +145,7 @@ def mutations(text):
     assert branch
     store = re.search(r"ctjs\.store_upvalue (%\w+)\[0\], (%\w+)", branch[0])
     assert store
-    # A result-bearing helper If remains unsupported even when its result is unused.
+    # An undefined arm result remains unsupported even when its result is unused.
     result_if = (
         branch[0]
         .replace("scf.if", "%conditional_result = scf.if", 1)

@@ -1,0 +1,2 @@
+# Original arm results keep Boolean snapshots through capture lifting and state proof.
+# RUN: python3 %S/native_class_dom_boolean_results.py %dom_driver --node %node --reference %native_reference
