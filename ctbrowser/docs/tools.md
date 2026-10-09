@@ -62,6 +62,19 @@ with it.
   is not known to work. `ctcompile-test-type-oracle` produces the recordings and
   is a SECOND implementation of the same check, compared against this one by
   `ctcompile/test/Analysis/Types/check-oracle.cmake`.
+- `tools/check/check-emitter-merge.py` — **the merge check for the forked C++
+  emitter**. `ctcompile/lib/Target/Cpp/TranslateToCpp.cpp` is a fork of upstream
+  MLIR's emitter, and every line it changes may need resolving by hand at the
+  next rebase onto upstream. This trial-merges the working copy and `HEAD` into
+  the pinned LLVM's upstream file (`--upstream` picks another tag or branch).
+  The merge runs from the fork base the header records, using
+  `git merge-file --diff3`. It then explains each conflict in prose meant for an
+  LLM: where it is, which function, what each side changed, and whether the
+  change under test added it (exit 1); `--format json` carries the same data.
+  Upstream files come from a 33 MB sparse clone cached in
+  `~/.cache/ctcompile-emitter-merge`. On 2026-10-09 the fork carried 13
+  conflicts against 23.1.0. `--self-test` checks the analysis on a planted
+  example.
 - `tools/mingw/build-boost-mingw.sh` — compiles Boost.URL for the llvm-mingw target
   into the cross sysroot. Boost.URL is the one COMPILED Boost library the engine
   links (it cannot be header-only), so the Windows presets need this run once.
