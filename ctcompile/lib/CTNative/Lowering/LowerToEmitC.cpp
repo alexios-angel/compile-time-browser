@@ -462,7 +462,8 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                                 << lifted.bound << " were made direct from another frame; "
                                 << lifted.callbackCalls << " callback call(s) named, "
                                 << lifted.callbackParameters
-                                << " call-only function parameter(s) erased";
+                                << " call-only function parameter(s) erased; " << lifted.statics
+                                << " box(es) of run-once functions made static variables";
         }
 
         // Compute the alias groups once the lift has written its attributes

@@ -128,6 +128,7 @@
 #include "ctcompile/CTJS/IR/CTJSAttrs.h"
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
 #include "ctcompile/CTJS/IR/CTJSOps.h"
+#include "ctcompile/CTJS/Lowering/NativeRealm.h"
 #include "ctcompile/CTJS/Transforms/Passes.h"
 
 #include "mlir/IR/Builders.h"
@@ -699,6 +700,35 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
             }
         }
 
+        // Absent names. When nothing writes the globals table dynamically, a
+        // name the program never stores, that no refused body stores, that is
+        // not written through the global object and that the native realm does
+        // not provide (NativeRealm.h) does not exist at run time. `typeof` of
+        // it is "undefined", so each such read becomes that constant, which
+        // lets precomputation drop the branches a feature test guards (a UMD
+        // wrapper's AMD and CommonJS arms). A plain read throws a
+        // ReferenceError in the VM; it is left alone, and native admission
+        // refuses it.
+        llvm::DenseMap<mlir::StringAttr, std::size_t> folded;
+        if (!dynamic) {
+            for (auto & [name, facts] : world.bindings) {
+                if (!facts.stores.empty() || bound_through.contains(name) ||
+                    world.refused.contains(name) || nativeRealmProvides(name.getValue())) {
+                    continue;
+                }
+                llvm::erase_if(facts.loads, [&](LoadGlobalOp load) {
+                    if (!load.getTypeofLookup()) { return false; }
+                    mlir::OpBuilder at(load);
+                    auto undefined = ConstantOp::create(at, load.getLoc(), load.getType(),
+                                                        UndefinedAttr::get(context));
+                    load.getResult().replaceAllUsesWith(undefined.getResult());
+                    load.erase();
+                    ++folded[name];
+                    return true;
+                });
+            }
+        }
+
         llvm::SmallVector<mlir::Attribute> rows;
         const auto record = [&](mlir::StringAttr name, std::size_t stores, FuncOp resolved,
                                 const std::string & reason) {
@@ -726,6 +756,12 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
                 record(name, facts.stores.size(), FuncOp{},
                        "written through " + name_of(written->second.through) + " (" +
                            written->second.at + "), which binds this name");
+                continue;
+            }
+            if (const auto absent = folded.find(name); absent != folded.end()) {
+                record(name, facts.stores.size(), FuncOp{},
+                       "absent: never stored and not provided by the native realm; " +
+                           std::to_string(absent->second) + " typeof read(s) folded to undefined");
                 continue;
             }
             // Clauses 1-3 and 6, which known_callee() also asks.
