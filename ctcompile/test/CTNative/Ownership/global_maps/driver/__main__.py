@@ -1,7 +1,21 @@
 """Execute checked published Map methods and live primitive results without the VM."""
 
+from concurrent.futures import ThreadPoolExecutor
+import os
+
 from .execution import *
 from ..harness.map_results import check_result_calls
+
+
+def parallel(function, items):
+    """`function` over `items` on every CPU, results in order. The first
+    failure is raised once the calls already running finish; the rest never
+    start."""
+    pool = ThreadPoolExecutor(os.cpu_count())
+    try:
+        return list(pool.map(function, items))
+    finally:
+        pool.shutdown(cancel_futures=True)
 
 
 def main():
@@ -11,10 +25,30 @@ def main():
         return
     positives = positive_cases()
     check_source_observations(args, node, reference, positives)
-    saved = {
-        name: check_positive(args, node, reference, compilers, nm, name, spec)
-        for name, spec in positives.items()
-    }
+    # Four hundred independent programs, each built by both compilers in both
+    # layouts, and every file one of them writes is named for it - but they
+    # are one lit case, so lit's pool cannot spread them.
+    saved = dict(
+        zip(
+            positives,
+            parallel(
+                lambda item: check_positive(args, node, reference, compilers, nm, *item),
+                positives.items(),
+            ),
+        )
+    )
+    # Every control reads only what the programs above left and writes only
+    # files no other control reads or writes, so they run side by side too.
+    rollbacks = parallel(
+        lambda control: control(args, node, reference, compilers, nm, positives, saved), CONTROLS
+    )
+    report(
+        positives, shared_refusals(), [budget for found in rollbacks if found for budget in found]
+    )
+
+
+def forged_evidence(args, node, reference, compilers, nm, positives, saved):
+    """Forged leaf and nullable reports, and mutated observation and field tags."""
     check_primitive_absence_forgeries(args, saved, node, reference)
     check_leaf_object_forgeries(args, saved)
     check_leaf_object_forgeries(
@@ -162,6 +196,10 @@ def main():
                         f"{forged_name}: forged scalar tags changed nullable storage"
                     )
 
+
+def ordinary_controls(args, node, reference, compilers, nm, positives, saved):
+    """The ordinary program's no-manifest, stale, forged, rerun and budget controls, the
+    result budgets, and the source, shared, argument, result and seeded refusals."""
     ir, config, output = saved["ordinary"]
     boundary.native(args, ir, "no-manifest", 4)
     absent = owned.contract(args, ir, "no-intrinsic")
@@ -327,16 +365,7 @@ def main():
                         f"{forged_name}: forged result facts changed nullable output"
                     )
 
-    shared_refusals = {
-        "shared_uncalled": SHARED.replace("host.slot.set(); ", ""),
-        "shared_effect": SHARED.replace("state.set('x', 1)", "inspect(state)"),
-        "shared_return_map": SHARED.replace(
-            "get() { return state.size; }", "get() { return state; }"
-        ),
-        "shared_rewrite": SHARED + "\nhost.slot.set = function() { return 1; };",
-        "shared_detached": SHARED + "\nvar saved = host.slot.set;",
-    }
-    for name, source in shared_refusals.items():
+    for name, source in shared_refusals().items():
         _, rejected, _ = boundary.prepare(args, name, source)
         fresh = contract(args, rejected, name)
         methods.refused(args, rejected, name, fresh)
@@ -384,7 +413,17 @@ def main():
             forged_config = contract(args, forged, forged_name)
             failed = methods.refused(args, forged, forged_name, forged_config, admitted=0)
             check_call_preservation(forged.read_text(), failed.read_text(), forged_name)
+    return rollback
+
+
+def absent_carriers(args, node, reference, compilers, nm, positives, saved):
+    """The exact absent-result carrier refusals."""
     check_primitive_absence_carriers(args, node, reference, compilers, nm)
+
+
+def missing_value_refusals(args, node, reference, compilers, nm, positives, saved):
+    """Size-key, missing-payload and saved-read refusals, and the nullable and leaf
+    object refusals."""
     for name, (source, value) in size_result_refusals().items():
         js, rejected, count = boundary.prepare(args, name, source)
         if count != 5:
@@ -563,6 +602,10 @@ def main():
     check_leaf_object_refusals(args, positives, node, reference, leaf_clear_refusals())
     check_leaf_object_refusals(args, positives, node, reference, numeric_entry_refusals())
     check_leaf_object_refusals(args, positives, node, reference, scalar_global_refusals())
+
+
+def scalar_and_field_refusals(args, node, reference, compilers, nm, positives, saved):
+    """Scalar, constant, readback, String-field and zero-size refusals."""
     check_scalar_global_carriers(args, positives, node, reference)
     check_constant_global_observations(args, node, reference)
     check_constant_global_refusals(args, positives, node, reference)
@@ -574,6 +617,10 @@ def main():
     check_leaf_object_forgeries(
         args, saved, ("local_clear_zero_size_key", "zero_size_saved_lifetime")
     )
+
+
+def size_refusals(args, node, reference, compilers, nm, positives, saved):
+    """Finite, deleted, joined and mutated size refusals and their forgeries."""
     check_one_size_refusals(args, positives)
     check_delete_size_refusals(args, positives)
     check_join_size_refusals(args, positives)
@@ -596,6 +643,10 @@ def main():
     check_leaf_object_forgeries(
         args, saved, ("zero_size_read_after_write", "size_one_saved_lifetime")
     )
+
+
+def mixed_reads(args, node, reference, compilers, nm, positives, saved):
+    """Historical String fields, mixed nullable reads and the missing return result."""
     check_historical_string_field_carriers(args, positives, node, reference, compilers, nm)
     # A result contract does not narrow Map storage or supply an implemented
     # callable signature. Preserve the prepared producer/consumer operands.
@@ -734,6 +785,16 @@ def main():
             raise RuntimeError(f"{label}: lost the typed Undefined result/key carriers")
         check_result_calls(cpp, "result_missing_return", mode)
         standalone(args, missing_output, label, 1, compilers, nm)
+
+
+def published_reruns(args, node, reference, compilers, nm, positives, saved):
+    """No-manifest, stale and rerun controls of the published programs, and the leaf
+    budgets."""
+    shared_ir, _, _ = saved["shared_growing"]
+    parameter_ir, parameter_config, parameter_output = saved["shared_parameter"]
+    result_ir, result_config, result_output = saved["parameter_call_result"]
+    seeded_ir, seeded_config, seeded_output = saved["result_seeded_map_get"]
+    rollback = []
     boundary.native(args, shared_ir, "shared-no-manifest", 5)
     methods.refused(
         args,
@@ -914,7 +975,31 @@ def main():
     ):
         ir, config, _ = saved[name]
         rollback += check_budgets(args, ir, config, name, functions=5)
-    report(positives, shared_refusals, rollback)
+    return rollback
+
+
+def shared_refusals():
+    return {
+        "shared_uncalled": SHARED.replace("host.slot.set(); ", ""),
+        "shared_effect": SHARED.replace("state.set('x', 1)", "inspect(state)"),
+        "shared_return_map": SHARED.replace(
+            "get() { return state.size; }", "get() { return state; }"
+        ),
+        "shared_rewrite": SHARED + "\nhost.slot.set = function() { return 1; };",
+        "shared_detached": SHARED + "\nvar saved = host.slot.set;",
+    }
+
+
+CONTROLS = (
+    forged_evidence,
+    ordinary_controls,
+    absent_carriers,
+    missing_value_refusals,
+    scalar_and_field_refusals,
+    size_refusals,
+    mixed_reads,
+    published_reruns,
+)
 
 
 if __name__ == "__main__":
