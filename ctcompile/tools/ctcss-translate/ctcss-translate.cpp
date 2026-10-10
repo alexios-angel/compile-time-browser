@@ -75,7 +75,7 @@ int main(int argc, char ** argv) {
 
     ctbrowser::atom_table atoms;
     const auto sheet = ctbrowser::style::css::parse_stylesheet(bytes, atoms);
-    const auto compiled = ctbrowser::style::css::compile(sheet, atoms);
+    auto compiled = ctbrowser::style::css::compile(sheet, atoms);
 
     // Written to a string first, so a failure leaves no half-written file
     // for the build to mistake for a current one.

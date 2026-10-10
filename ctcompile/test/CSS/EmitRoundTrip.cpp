@@ -21,6 +21,7 @@
 
 #include <cstdio>
 #include <string>
+#include <string_view>
 
 namespace css = ctbrowser::style::css;
 
@@ -75,5 +76,11 @@ int main(int argc, char ** argv) {
     }
     expect_generated_matches(argv[1], ctcss::features);
     expect_generated_matches(argv[2], ctcss::bootstrap);
+    // Bootstrap is here on purpose: its pool is past the 64 KiB a single
+    // literal may hold, so the generated file has to cut it into chunks.
+    std::size_t bootstrap_pool = 0;
+    for (const std::string_view chunk : ctcss::bootstrap.pool) { bootstrap_pool += chunk.size(); }
+    check(bootstrap_pool > 65536 && ctcss::bootstrap.pool.size() > 2,
+          "bootstrap.css's pool is past 64 KiB and written as several chunks");
     REPORT("css_emit");
 }

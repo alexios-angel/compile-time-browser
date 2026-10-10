@@ -3,7 +3,9 @@
 // Writes a compiled stylesheet (ctbrowser/style/css/compiled.hpp) as C++
 // constants: one `inline constexpr` table per kind of record, each record a
 // designated initializer naming only the fields that differ from the default,
-// and one `compiled_sheet` constant pointing at the tables. A program that
+// and one `compiled_sheet` constant pointing at the tables. Long text (the
+// pool, the names) is a table of chunks, each a string literal of at most
+// 32 KiB, which compilers accept without -Woverlength-strings. A program that
 // includes the file materializes the sheet without parsing CSS. The output
 // starts with a comment naming the source file and its SHA-256, so a stale
 // file can be told from a current one.

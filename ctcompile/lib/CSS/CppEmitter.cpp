@@ -245,11 +245,33 @@ void literal(std::ostream & out, std::string_view bytes) {
     out << "\"";
 }
 
-/// `inline constexpr std::string_view <name>{"...", N};`, which keeps any NUL.
-void string_constant(std::ostream & out, std::string_view name, std::string_view bytes) {
-    out << "inline constexpr std::string_view " << name << "{\n    ";
-    literal(out, bytes);
-    out << ",\n    " << bytes.size() << "};\n\n";
+/// The text of `chunks` joined, as one string.
+[[nodiscard]] std::string joined(css::text_chunks chunks) {
+    std::string out;
+    for (const std::string_view chunk : chunks) { out += chunk; }
+    return out;
+}
+
+/// `inline constexpr std::string_view <name>[] = {{"...", n}, ...};`: the text
+/// as chunks of at most 32 KiB, each one literal with its length, which keeps
+/// any NUL. A single literal past 64 KiB is longer than compilers are required
+/// to accept (-Woverlength-strings), and joining the chunks into one array at
+/// compile time would copy every byte in constant evaluation, which runs into
+/// the compilers' evaluation limits on a large sheet; css::materialize joins
+/// them at load instead. Empty text writes nothing and its span stays empty.
+/// Returns whether a table was written.
+bool chunked_text(std::ostream & out, std::string_view name, std::string_view bytes) {
+    constexpr std::size_t chunk_size = 32 * 1024;
+    if (bytes.empty()) { return false; }
+    out << "inline constexpr std::string_view " << name << "[] = {\n";
+    for (std::size_t at = 0; at < bytes.size(); at += chunk_size) {
+        const std::string_view chunk = bytes.substr(at, chunk_size);
+        out << "    {";
+        literal(out, chunk);
+        out << ",\n     " << chunk.size() << "},\n";
+    }
+    out << "};\n\n";
+    return true;
 }
 
 /// One table. An empty table is not written, since C++ has no empty array; the
@@ -294,19 +316,19 @@ void close_file(std::ostream & out, std::string_view ns) {
 
 void emit_tokens(std::ostream & out, const css::compiled_tokens & tokens, std::string_view name) {
     const std::string n{name};
-    string_constant(out, n + "_pool", tokens.pool);
+    const bool pool = chunked_text(out, n + "_pool", joined(tokens.pool));
     table(out, "css::css_token", n + "_tokens", tokens.tokens,
           [&](const css::css_token & t) { write(out, t); });
-    out << "inline constexpr css::compiled_tokens " << n << "{\n"
-        << "    .pool = " << n << "_pool,\n";
+    out << "inline constexpr css::compiled_tokens " << n << "{\n";
+    if (pool) { out << "    .pool = " << n << "_pool,\n"; }
     if (!tokens.tokens.empty()) { out << "    .tokens = " << n << "_tokens,\n"; }
     out << "    .source_length = " << tokens.source_length << ",\n};\n\n";
 }
 
 void emit_sheet(std::ostream & out, const css::compiled_sheet & s, std::string_view name) {
     const std::string n{name};
-    string_constant(out, n + "_pool", s.pool);
-    string_constant(out, n + "_strings", s.strings);
+    const bool pool = chunked_text(out, n + "_pool", joined(s.pool));
+    const bool strings = chunked_text(out, n + "_strings", joined(s.strings));
 
     table(out, "css::compiled_namespace", n + "_namespaces", s.namespaces,
           [&](const css::compiled_namespace & r) {
@@ -507,9 +529,9 @@ void emit_sheet(std::ostream & out, const css::compiled_sheet & s, std::string_v
 
     // The sheet, naming each table that was written.
     const css::compiled_sheet d{};
-    out << "inline constexpr css::compiled_sheet " << n << "{\n"
-        << "    .pool = " << n << "_pool,\n"
-        << "    .strings = " << n << "_strings,\n";
+    out << "inline constexpr css::compiled_sheet " << n << "{\n";
+    if (pool) { out << "    .pool = " << n << "_pool,\n"; }
+    if (strings) { out << "    .strings = " << n << "_strings,\n"; }
     if (s.prefixes_checked != d.prefixes_checked) {
         out << "    .prefixes_checked = " << cpp(s.prefixes_checked) << ",\n";
     }

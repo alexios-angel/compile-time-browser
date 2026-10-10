@@ -177,13 +177,19 @@ struct compiled_container_condition {
     compiled_range queries{};
 };
 
+/// A run of text given as chunks joined in order. A generated file writes a
+/// long block as several string literals, because one past 64 KiB is longer
+/// than compilers are required to accept (Clang's -Woverlength-strings).
+/// Offsets into the text count across the joined chunks.
+using text_chunks = std::span<const std::string_view>;
+
 /// A stylesheet as flat, constant-friendly data; see the file comment. The
 /// tables that hold no atom, string or nested list are the stylesheet's own
 /// record types. Every view borrows: a generated file points them at its
 /// constants, compiled_sheet_data at its vectors.
 struct compiled_sheet {
-    std::string_view pool{};    // stylesheet::pool.
-    std::string_view strings{}; // Every compiled_text's bytes.
+    text_chunks pool{};    // stylesheet::pool.
+    text_chunks strings{}; // Every compiled_text's bytes.
     bool prefixes_checked = true;
     bool forgiving = true;
     std::uint32_t source_length = 0;
@@ -251,8 +257,14 @@ struct compiled_sheet_data {
     std::vector<compiled_container_condition> containers;
     std::vector<compiled_container_query> container_queries;
 
-    /// The tables as a compiled_sheet; valid while this object is unchanged.
-    [[nodiscard]] compiled_sheet view() const noexcept;
+    /// The tables as a compiled_sheet; valid while this object is neither
+    /// changed nor moved. Not const: the pool and the strings are handed out
+    /// as one chunk each, and the chunk views live here.
+    [[nodiscard]] compiled_sheet view() noexcept;
+
+private:
+    std::string_view pool_chunk_;
+    std::string_view strings_chunk_;
 };
 
 /// Flattens `sheet`, whose atoms belong to `atoms`.
@@ -264,7 +276,7 @@ struct compiled_sheet_data {
 
 /// A token stream as constant data: the pool and the tokens tokenize() made.
 struct compiled_tokens {
-    std::string_view pool{};
+    text_chunks pool{};
     std::span<const css_token> tokens{};
     std::uint32_t source_length = 0;
 };
