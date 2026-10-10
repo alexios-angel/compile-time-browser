@@ -13,6 +13,7 @@
 //===----------------------------------------------------------------------===//
 #define CTNATIVE_DOM 1
 #define CTNATIVE_ORDERED_MAPS 1
+#include "ctcompile/CTNative/Runtime/Array.hpp"
 #include "ctcompile/CTNative/Runtime/Browser.hpp"
 #include "ctcompile/CTNative/Runtime/Json.hpp"
 #include "ctcompile/CTNative/Runtime/ctnative.hpp"
@@ -1047,6 +1048,52 @@ int main() {
         CHECK(json_stringify(json_value{json_value::object{}}) == js_string{"{}"});
         CHECK(json_stringify(json_value{json_value::array{}}) == js_string{"[]"});
         CHECK(json_stringify(json_value{false}) == js_string{"false"});
+    }
+
+    // Arrays of Strings: push returns the new length, an index past the end or
+    // a fractional one is undefined, join of none or one element, sort in
+    // UTF-16 order (U+1F600 sorts before U+FF21 there, after it by code point).
+    {
+        const auto strings = [](std::initializer_list<const char *> texts) {
+            std::vector<js_string> out;
+            for (const char * text : texts) { out.emplace_back(std::string{text}); }
+            return out;
+        };
+        std::vector<js_string> list;
+        CHECK(array_join(list, js_string{","}) == js_string{});
+        CHECK(vec_length(list) == ctnative::js_num{0.0});
+        CHECK(array_push(list, js_string{"b"}) == ctnative::js_num{1.0});
+        CHECK(array_join(list, js_string{"."}) == js_string{"b"});
+        vec_push(list, js_string{"a"});
+        CHECK(vec_at(list, nullable_scalar{1.0}) == to_nullable_string(js_string{"a"}));
+        CHECK(vec_at(list, nullable_scalar{-0.0}) == to_nullable_string(js_string{"b"}));
+        CHECK(vec_at(list, nullable_scalar{2.0}).tag == nullable_string::kind::undefined);
+        CHECK(vec_at(list, nullable_scalar{0.5}).tag == nullable_string::kind::undefined);
+        CHECK(array_join(list, js_string{", "}) == js_string{"b, a"});
+        auto mixed = strings({"\xEF\xBC\xA1", "\xF0\x9F\x98\x80", "b", "", "B", "ab", "a"});
+        array_sort(mixed);
+        CHECK(mixed == strings({"", "B", "a", "ab", "b", "\xF0\x9F\x98\x80", "\xEF\xBC\xA1"}));
+        // Two halves that meet at the seam become one code point.
+        CHECK(array_join(strings({"\xED\xA0\xBD", "\xED\xB8\x80"}), js_string{}) ==
+              js_string{"\xF0\x9F\x98\x80"});
+
+        CHECK(string_split(js_string{"a,b,,c"}, js_string{","}) == strings({"a", "b", "", "c"}));
+        CHECK(string_split(js_string{"abc"}, js_string{"x"}) == strings({"abc"}));
+        CHECK(string_split(js_string{""}, js_string{"x"}) == strings({""}));
+        CHECK(string_split(js_string{""}, js_string{""}).empty());
+        CHECK(string_split(js_string{"ab"}, js_string{""}) == strings({"a", "b"}));
+        CHECK(string_split(js_string{"\xF0\x9F\x98\x80"}, js_string{""}) ==
+              strings({"\xED\xA0\xBD", "\xED\xB8\x80"}));
+        CHECK(string_split(js_string{"x\xF0\x9F\x98\x80y"}, js_string{"\xED\xB8\x80"}) ==
+              strings({"x\xED\xA0\xBD", "y"}));
+        CHECK(string_split(js_string{"a\nb\n"}, js_string{"\n"}) == strings({"a", "b", ""}));
+
+        CHECK(split_js_space(js_string{"btn  btn-primary\tx"}) ==
+              strings({"btn", "btn-primary", "x"}));
+        CHECK(split_js_space(js_string{" a\xC2\xA0"
+                                       "b "}) == strings({"", "a", "b", ""}));
+        CHECK(split_js_space(js_string{}) == strings({""}));
+        CHECK(split_js_space(js_string{"\xC3\xA9"}) == strings({"\xC3\xA9"}));
     }
 
     CHECK(unbound());
