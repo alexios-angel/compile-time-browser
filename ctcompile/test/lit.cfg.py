@@ -193,3 +193,10 @@ config.substitutions.append(("%build", config.build_root))
 # The Python drivers import each other across directories (CTNative/harness.py
 # explains how), and running one by hand needs the same path.
 config.environment["PYTHONPATH"] = config.test_source_root
+
+# A driver that loops over named fixtures runs only those CTCOMPILE_FIXTURES
+# selects (comma-separated globs; CTNative/harness.py selected_fixtures), so a
+# change can be checked on the fixtures it touches. lit clears the environment,
+# so the variable is passed through when set; unset, every fixture runs.
+if "CTCOMPILE_FIXTURES" in os.environ:
+    config.environment["CTCOMPILE_FIXTURES"] = os.environ["CTCOMPILE_FIXTURES"]
