@@ -1,3 +1,10 @@
+//===- focus_and_canvas.cpp - Focus and canvas bindings ---------*- C++ -*-===//
+//
+// The form-control test hooks (getValue/setValue/isChecked/setChecked),
+// focus() and blur(), and the canvas methods getContext, toDataURL and toBlob.
+//
+//===----------------------------------------------------------------------===//
+
 #include "helpers.hpp"
 
 #include "../../canvas_objects.hpp"
@@ -50,7 +57,7 @@ void dom_bindings::install_control_focus_canvas(context & cx) {
         if (!id || !on_focus_) { return value::undefined(); }
         // A <label> that is not itself a focusable area - no valid tabindex,
         // or not being rendered - hands focus to its labeled control
-        // (4.10.4), which is the element the user meant.
+        // (HTML 4.10.4), which is the element the user meant.
         {
             const auto txn = doc_->read();
             const control_helpers helpers{this};
@@ -83,41 +90,18 @@ void dom_bindings::install_control_focus_canvas(context & cx) {
         const node_id id = receiver(c);
         const std::string kind = arg_string(c, args, 0);
         if (c.throw_pending()) { return value::undefined(); }
-        // "2d" and "webgl". `webgl2` IS NOT IMPLEMENTED AND RETURNS NULL, and
-        // getting that right took two wrong answers.
-        //
-        // It first threw for the whole WebGL family, on the grounds that a null
-        // was the silent-wrong-answer shape: p5 would take it, fall back to its
-        // 2D renderer, and a WEBGL sketch would draw nothing 3D while reporting
-        // nothing. A blank canvas and a clear conscience.
-        //
-        // When a real context arrived, `webgl2` kept throwing - and the comment
-        // here claimed the throw was what made p5 fall back to `webgl`. That was
-        // backwards, and measurably so. p5's RendererGL asks for `webgl2` first
-        // and relies on `getContext(...) || getContext('webgl')`, so it needs a
-        // FALSY VALUE to fall through. It catches nothing, so the throw escaped
-        // the constructor, escaped createCanvas, and left the sketch on the
-        // Renderer2D it already had - which is precisely the outcome the throw
-        // was supposed to prevent.
-        //
-        // Null is also simply what the specification says: an unsupported
-        // context id returns null, and feature detection is BUILT on that. It is
-        // a documented "not supported" signal rather than a plausible wrong
-        // answer, which is the distinction the loud-failure rule turns on.
+        // "webgl", "experimental-webgl" and "webgl2" return a WebGL context and
+        // "2d" a 2D one. Any other id returns null, as the specification
+        // requires: feature detection such as p5's
+        // `getContext('webgl2') || getContext('webgl')` relies on a falsy
+        // answer, and a throw would escape p5's createCanvas.
         if (kind == "webgl" || kind == "experimental-webgl") {
             if (!id) { return value::null(); }
             return webgl_context_object(c, id, 1);
         }
-        // `webgl2` RETURNS A CONTEXT NOW (2026-08-02). Everything above is the
-        // history of it returning null, and every word of it was right at the
-        // time; what changed is that the language and the two capabilities
-        // behind it exist - see docs/history/webgl2.md stages 1 to 3.
-        //
-        // p5's RendererGL asks for this FIRST, so from here on every p5 WEBGL
-        // sketch takes a path it has never taken in this engine.
-        // examples/pages/p5-webgl.html's golden is the tripwire: the same
-        // sketch must produce the same pixels through either context, and if
-        // that image moves, this path is wrong rather than new.
+        // p5's RendererGL asks for `webgl2` first. The golden image for
+        // examples/pages/p5-webgl.html checks that the same sketch draws the
+        // same pixels through either context version.
         if (kind == "webgl2") {
             if (!id) { return value::null(); }
             return webgl_context_object(c, id, 2);
@@ -137,12 +121,12 @@ void dom_bindings::install_control_focus_canvas(context & cx) {
         return made;
     });
 
-    // `canvas.toDataURL()` and `canvas.toBlob()` - READING A CANVAS BACK OUT.
+    // `canvas.toDataURL()` and `canvas.toBlob()` read a canvas back out.
     //
     // Both mean PNG: that is what p5's save() asks for, and encode_png writes one
-    // with no compression library (see shell/image/images.hpp). A `type` argument
-    // naming anything else still gets PNG rather than a lie about the format -
-    // the data URL says image/png, so a page that reads it back is not misled.
+    // with no compression library (see include/ctbrowser/shell/image/images.hpp).
+    // A `type` argument naming anything else still gets PNG, and the data URL
+    // says image/png, so a page that reads it back is not misled about the format.
     const auto canvas_bytes = [this](context & c) -> std::vector<std::byte> {
         const node_id id = receiver(c);
         if (!id || canvases_ == nullptr) { return {}; }
@@ -158,8 +142,8 @@ void dom_bindings::install_control_focus_canvas(context & cx) {
     };
     define_operation(cx, canvas, "toDataURL", 0, [canvas_bytes](context & c, std::span<value>) {
         const std::vector<std::byte> png = canvas_bytes(c);
-        // The bytes themselves, through core's encoder - not the page's `btoa`,
-        // which a page may have replaced and which takes a string.
+        // Encoded with core's base64_encode, not the page's `btoa`, which a page
+        // may have replaced and which takes a string.
         return c.string("data:image/png;base64," +
                         base64_encode(std::string_view{reinterpret_cast<const char *>(png.data()),
                                                        png.size()}));
@@ -169,9 +153,9 @@ void dom_bindings::install_control_focus_canvas(context & cx) {
                          const value callback = arg(args, 0);
                          if (!callback.is_callable()) { return value::undefined(); }
                          const std::vector<std::byte> png = canvas_bytes(c);
-                         // QUEUED, not called: toBlob is asynchronous, and a page that wraps it in
-                         // a promise - which is what p5's p5.Image.toBlob does - depends on the
-                         // callback landing after the call returns.
+                         // Queued, not called: toBlob is asynchronous, and a page that wraps
+                         // it in a promise (as p5's p5.Image.toBlob does) depends on the
+                         // callback running after the call returns.
                          const value blob_value = make_blob(c, make_u8_array(c, png), "image/png");
                          c.queue_microtask(callback, std::vector<value>{blob_value});
                          return value::undefined();

@@ -1,6 +1,11 @@
-// dom_bindings' CSSOM - the source text and the object slots: the comment-,
-// string- and bracket-aware scanner over a rule's bytes, url() and @page
-// serialisation, and the private-slot helpers every CSSOM object shares.
+//===- source.cpp - CSSOM source scanning -----------------------*- C++ -*-===//
+//
+// The CSSOM's handling of source text and object slots: the comment-, string-
+// and bracket-aware scanner over a rule's bytes, url() and @page selector
+// serialisation, @page and @font-face descriptor grammars, and the
+// private-slot and indexed-collection helpers every CSSOM object shares.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -10,23 +15,19 @@ using namespace detail;
 
 namespace detail {
 
-// --- the one scanner over a rule's bytes -------------------------------------
-//
-// STRING-, COMMENT- AND BRACKET-AWARE, which is the whole trick: `[title="{"]`
-// is a selector with a brace in it, `@media (a:1);` has a semicolon inside
-// parentheses, and `a { /* } */ }` has a brace in a comment. A scanner that did
-// not know about the three would cut a rule in half at each - the same defect
-// the CSS front end was written to fix one level down, answered the same way
-// one level up. Five questions are asked of a rule's bytes (where its block
-// opens and closes, where a prelude's component ends, where a query list's
-// commas are, where the next top-level rule starts) and all five have the
-// same answer to "which one": not the one inside a string, a comment or a
-// bracket. So one scanner, and the five are a stop set each.
-//
-// The first byte of `stop` at or after `from` that is at nesting depth zero,
-// or `text.size()` when there is none. `\` escapes the byte after it, in a
-// string or out (`\{` in a selector is an ident character, not a block).
+// --- The one scanner over a rule's bytes ------------------------------------
 
+/// Returns the index of the first byte of `stop` at or after `from` that is at
+/// nesting depth zero and outside any string or comment, or `text.size()` when
+/// there is none. `\` escapes the byte after it, in a string or out (`\{` in a
+/// selector is an ident character, not a block).
+///
+/// String-, comment- and bracket-aware: `[title="{"]` is a selector with a
+/// brace in it, `@media (a:1);` has a semicolon inside parentheses, and
+/// `a { /* } */ }` has a brace in a comment. A naive scanner would cut a rule
+/// in half at each. All five questions asked of a rule's bytes (block open and
+/// close, end of a prelude component, query-list commas, start of the next
+/// rule) share this scanner with a different stop set.
 [[nodiscard]] std::size_t scan_to(std::string_view text, std::size_t from, std::string_view stop) {
     std::size_t depth = 0;
     char quote = '\0';
@@ -53,29 +54,33 @@ namespace detail {
     return text.size();
 }
 
-// --- splitting one rule into a prelude and a block -------------------------
+// --- Splitting one rule into a prelude and a block -------------------------
 
+/// The index of the `{` that opens a rule's block, or npos when it has none.
 [[nodiscard]] std::size_t brace_at(std::string_view text) {
     const std::size_t at = scan_to(text, 0, "{");
     return at < text.size() ? at : std::string_view::npos;
 }
 
+/// The index of the `}` that closes the block opened at `open`, or npos when
+/// the block is unterminated.
 [[nodiscard]] std::size_t block_end(std::string_view text, std::size_t open) {
     const std::size_t at = scan_to(text, open + 1, "}");
     return at < text.size() ? at : std::string_view::npos;
 }
 
-// --- an at-rule's prelude ---------------------------------------------------
+// --- An at-rule's prelude ---------------------------------------------------
 //
-// `@import` and `@namespace` have no block, so their prelude is the WHOLE rule
+// `@import` and `@namespace` have no block, so their prelude is the whole rule
 // and the interface reports its pieces one by one: `href`, `media`,
-// `supportsText`, `prefix`, `namespaceURI`. Answering those from the author's
-// bytes is not possible - `@import url(a.css)` and `@import "a.css"` are the
+// `supportsText`, `prefix`, `namespaceURI`. Those cannot be answered from the
+// author's bytes alone: `@import url(a.css)` and `@import "a.css"` are the
 // same URL spelled two ways, and CSSOM serialises both as `url("a.css")`.
 
-// The next whitespace-delimited component of a prelude, with any bracketed part
-// of it kept whole: `supports((display: flex) or (a: b))` is ONE component, and
-// so is `url("a b.css")`.
+/// The next whitespace-delimited component of a prelude, starting at `at` and
+/// advancing it, with any bracketed part kept whole:
+/// `supports((display: flex) or (a: b))` is one component, and so is
+/// `url("a b.css")`.
 [[nodiscard]] std::string_view next_component(std::string_view text, std::size_t & at) {
     while (at < text.size() && html_whitespace.find(text[at]) != std::string_view::npos) { ++at; }
     const std::size_t start = at;
@@ -83,10 +88,10 @@ namespace detail {
     return text.substr(start, at - start);
 }
 
-// The VALUE of a `<url>`, whichever of the three spellings the author used:
-// `url("x")`, `url(x)` and a bare `"x"` are one URL and CSSOM reports the
-// string, not the token. A `url()` unquoted inside is NOT unescaped further -
-// the tokenizer has already done that to the pool this came from.
+/// The value of a `<url>`, whichever of the three spellings the author used:
+/// `url("x")`, `url(x)` and a bare `"x"` are one URL, and CSSOM reports the
+/// string, not the token. An unquoted `url()` is not unescaped further,
+/// because the tokenizer has already done that to the text this came from.
 [[nodiscard]] std::string url_value(std::string_view text) {
     std::string_view inner = trim(text, html_whitespace);
     if (inner.size() >= 5 && ascii_iequals(inner.substr(0, 4), "url(") && inner.back() == ')') {
@@ -104,25 +109,26 @@ namespace detail {
     return std::string{inner};
 }
 
-// CSSOM §2.1's "serialize a URL": the keyword, the value as a STRING, and the
-// closing parenthesis. `url(a.css)` comes back `url("a.css")` from every engine.
+/// CSSOM §2.1 "serialize a URL": the keyword, the value as a string, and the
+/// closing parenthesis. `url(a.css)` comes back as `url("a.css")` in every
+/// engine.
 [[nodiscard]] std::string serialize_url(std::string_view value) {
     return "url(" + quoted_string(value) + ")";
 }
 
-// CSS Paged Media 3 §3's `<page-selector-list>`: comma-separated
-// `<page-selector>`s, each an optional identifier followed by any number of
-// `:left`, `:right`, `:first` or `:blank`, with NO whitespace inside one -
-// `named :first` is two selectors and therefore not one. `@page a, b` is one
-// rule for two page names, and an empty entry - `@page , { }`, `a,` - is no
-// list at all (page-rules-001).
-//
-// Read as TOKENS, so an escaped name is one identifier (`name1\{\}name2`) and
-// comes back in its canonical escaped form. The name keeps the author's case
-// and the pseudo-pages are lowercased, which is the split
-// `css/cssom/cssom-pagerule.html` asserts by writing `:First` and demanding
-// `:first` back. `ok` is false for a list this grammar refuses, and CSSOM 6.4.5
-// says a refused one leaves the rule alone.
+/// Serialises a CSS Paged Media 3 §3 `<page-selector-list>`: comma-separated
+/// `<page-selector>`s, each an optional identifier followed by any number of
+/// `:left`, `:right`, `:first` or `:blank`, with no whitespace inside one
+/// (`named :first` is invalid). `@page a, b` is one rule for two page names,
+/// and an empty entry (`@page , { }`, `a,`) makes the whole list invalid
+/// (WPT css/cssom/page-rules-001.html).
+///
+/// The text is read as tokens, so an escaped name is one identifier
+/// (`name1\{\}name2`) and comes back in its canonical escaped form. The name
+/// keeps the author's case and the pseudo-pages are lowercased
+/// (css/cssom/cssom-pagerule.html writes `:First` and expects `:first`). `ok`
+/// is set to false for a list this grammar refuses; CSSOM 6.4.5 says a refused
+/// one leaves the rule unchanged.
 [[nodiscard]] std::string serialize_page_selector(std::string_view text, bool & ok) {
     using style::css::token_type;
     const style::css::token_stream s = style::css::tokenize(text);
@@ -164,29 +170,22 @@ namespace detail {
     return out;
 }
 
-// --- the top level of a sheet, as source spans ------------------------------
-//
-// CSS Syntax 3 §5.4's "consume a list of rules", stopping at the SPAN of bytes
-// each rule occupies rather than parsing what is in it.
-//
-// It exists because the style front end's `css::stylesheet` has nowhere to put
-// most of them. It models qualified rules, `@media` and `@font-face` and
-// DISCARDS every other at-rule, so a CSSOM assembled from that structure does
-// not report an `@import`, an `@namespace`, a `@page` or a `@keyframes` at all -
-// and the damage is not the missing rule, it is that `cssRules[0]` is then the
-// wrong rule and every index after it is off by one. It also drops a qualified
-// rule with an EMPTY block, which is what `@media all { * {} }` is made of and
-// what every fixture in `css/cssom/CSSGroupingRule-*.html` builds.
-//
-// Splitting here and handing each span to `parse_one_rule` gives a sheet and
-// `insertRule` ONE answer to what a rule is - the same reason `insertRule` does
-// not have a parser of its own.
+// --- The top level of a sheet, as source spans ------------------------------
+
+/// CSS Syntax 3 §5.4 "consume a list of rules", returning the span of bytes
+/// each top-level rule occupies rather than parsing its contents.
+///
+/// The style front end's `css::stylesheet` cannot be used: it keeps only
+/// qualified rules, `@media` and `@font-face`, and drops qualified rules with
+/// an empty block (`@media all { * {} }`), so every `cssRules` index after a
+/// dropped rule would be wrong. Each span is instead handed to
+/// `parse_one_rule`, so a sheet and `insertRule` parse a rule the same way.
 [[nodiscard]] std::vector<std::string_view> split_top_level_rules(std::string_view css) {
     std::vector<std::string_view> out;
     std::size_t at = 0;
     while (at < css.size()) {
-        // Whitespace, comments, and the CDO/CDC pair `<!--` `-->`, which §5.4
-        // drops at the top level and which a `<style>` inside old HTML has.
+        // Skip whitespace, comments, and the CDO/CDC pair `<!--` `-->`, which
+        // §5.4 drops at the top level and which old HTML puts in a `<style>`.
         if (html_whitespace.find(css[at]) != std::string_view::npos) {
             ++at;
             continue;
@@ -205,10 +204,10 @@ namespace detail {
             continue;
         }
         const std::size_t start = at;
-        // ONLY AN AT-RULE ENDS AT A SEMICOLON. A `;` in a qualified rule's
-        // prelude is part of the prelude - the spec keeps consuming to the
-        // block - so treating one as a terminator would split `a;b { }` into two
-        // rules where the sheet parser sees one bad one.
+        // Only an at-rule ends at a semicolon. A `;` in a qualified rule's
+        // prelude is part of the prelude (the spec keeps consuming to the
+        // block), so treating it as a terminator would split `a;b { }` into two
+        // rules where the sheet parser sees one invalid one.
         const bool at_rule = css[start] == '@';
         std::size_t end = scan_to(css, start, at_rule ? "{;" : "{");
         if (end < css.size() && css[end] == '{') { end = scan_to(css, end + 1, "}"); }
@@ -219,8 +218,10 @@ namespace detail {
     return out;
 }
 
-// --- the JS side, in general -----------------------------------------------
+// --- JS object helpers --------------------------------------------------------
 
+/// The non-negative number stored under `key` on `obj`, as an index, or
+/// no_index when it is absent or not a number.
 [[nodiscard]] std::size_t slot_index(script::object_object * obj, std::string_view key) {
     if (obj == nullptr) { return no_index; }
     const value * held = obj->find(key);
@@ -230,15 +231,16 @@ namespace detail {
     return static_cast<std::size_t>(at);
 }
 
-// The indexed properties of a platform collection: enumerable, non-writable,
-// non-configurable, plus a `length` that tracks them. Written this way rather
-// than as a proxy because the collection is small, is rebuilt whenever it
-// changes, and has to keep its OWN identity - a page's expando on
-// `document.styleSheets` survives a re-read.
-//
-// ...OR WITHOUT THE `length`, for an interface that has it as an ATTRIBUTE on
-// its prototype - a CSSStyleDeclaration (cssom/idlharness: "must inherit
-// property length"). The stale indices are then found by asking.
+/// Sets the indexed properties of a platform collection: enumerable,
+/// non-writable, non-configurable, plus a `length` that tracks them. Written as
+/// plain properties rather than a proxy because the collection is small, is
+/// rebuilt whenever it changes, and must keep its own identity (a page's
+/// expando on `document.styleSheets` survives a re-read).
+///
+/// When `own_length` is false (an interface whose `length` is an attribute on
+/// its prototype, such as CSSStyleDeclaration; WPT cssom/idlharness: "must
+/// inherit property length"), no own `length` is defined and stale indices are
+/// removed by erasing upward from items.size() until one is missing.
 void set_indexed(script::object_object & obj, std::span<const value> items, bool own_length) {
     if (!own_length) {
         for (std::size_t i = items.size(); obj.erase(std::to_string(i)); ++i) {}
@@ -258,21 +260,20 @@ void set_indexed(script::object_object & obj, std::span<const value> items, bool
     }
 }
 
-// `item(index)` for every collection here: the indexed property, or NULL past
-// the end - which is the difference from the indexed getter, whose answer is
-// `undefined`. Both are asserted, separately, in `css/cssom/CSSRuleList.html`.
+/// `item(index)` for every collection here: the indexed property, or null past
+/// the end, unlike the indexed getter, which answers `undefined` (both checked
+/// by css/cssom/CSSRuleList.html).
 [[nodiscard]] value collection_item(context & cx, std::span<value> args) {
     const value self = cx.current_this();
     script::object_object * obj = object_of(self);
-    // A PROXY RECEIVER - `document.styleSheets` is one - answers through its
+    // A proxy receiver (`document.styleSheets` is one) answers through its
     // `get` trap, which is where its list is brought up to date.
     const bool proxied = obj == nullptr && self.is_kind(script::heap_kind::proxy);
     if (obj == nullptr && !proxied) { return value::null(); }
     const double at = args.empty() ? 0 : context::to_number(args[0]);
-    // BOUNDED BEFORE THE CAST. `list.item(1e30)` is one keystroke, and a
-    // float-to-integer conversion out of the destination's range is undefined
-    // behaviour rather than a large number - the same hazard `el.style[1e30]`
-    // has in element/views.cpp, answered the same way.
+    // Bounded before the cast: converting a double outside uint32_t's range is
+    // undefined behaviour, and `list.item(1e30)` is easy to write.
+    // 4294967294 (2^32 - 2) is the largest valid array index.
     if (!(at >= 0) || at > 4294967294.0) { return value::null(); }
     const std::string key = std::to_string(static_cast<std::uint32_t>(at));
     if (proxied) {
@@ -283,15 +284,20 @@ void set_indexed(script::object_object & obj, std::span<const value> items, bool
     return held == nullptr ? value::null() : *held;
 }
 
+/// Whether `name: value` may appear in `rule`'s block. Descriptor blocks
+/// (@page, @font-face, @counter-style, @font-feature-values) reject
+/// sibling-index(), sibling-count() and random(), because there is no element
+/// to evaluate them against. A keyframe rejects the animation properties, and
+/// @page accepts only its descriptors and the page-context properties.
 bool declaration_allowed(const dom_bindings::css_rule_record & rule, std::string_view name,
                          std::string_view value) {
-    // A DESCRIPTOR IS NOT ON AN ELEMENT, so the tree-counting functions have
-    // nothing to count there and the declaration is invalid (CSS Values 5
-    // §tree-counting, tree-counting/sibling-function-descriptors).
+    // A descriptor does not apply to an element, so the tree-counting functions
+    // have nothing to count and the declaration is invalid (CSS Values 5
+    // §tree-counting; WPT tree-counting/sibling-function-descriptors).
     const bool descriptor = rule.type == page_rule || rule.type == font_face_rule ||
                             rule.type == counter_style_rule ||
                             rule.type == font_feature_values_rule;
-    // ...and neither has an element to draw a random() for (random-in-descriptors).
+    // Nor is there an element to draw a random() for (WPT random-in-descriptors).
     if (descriptor) {
         for (std::size_t i = 0; i + 7 <= value.size(); ++i) {
             const char before = i == 0 ? ' ' : value[i - 1];
@@ -306,9 +312,9 @@ bool declaration_allowed(const dom_bindings::css_rule_record & rule, std::string
         }
     }
     if (name.starts_with("--")) { return true; }
-    // A keyframe takes every property but the animation ones - save the two
-    // that are ABOUT the keyframe, its easing and its composite operation (CSS
-    // Animations 1 §4.3, 2 §4.4; keyframes-allowed-properties).
+    // A keyframe takes every property except the animation ones, apart from
+    // the two that describe the keyframe itself: its easing and its composite
+    // operation (CSS Animations 1 §4.3, 2 §4.4; WPT keyframes-allowed-properties).
     if (rule.type == keyframe_rule) {
         return !name.starts_with("animation") || name == "animation-timing-function" ||
                name == "animation-composition";
@@ -336,14 +342,12 @@ bool declaration_allowed(const dom_bindings::css_rule_record & rule, std::string
     return false;
 }
 
-// ONE WRITE THROUGH THE DECLARATION BLOCK, the same functions `el.style`
-// writes through: an invalid value is a no-op, an empty one removes, and a
-// shorthand lands as its longhands. Answers whether the block changed.
-// THE TWO `@page` DESCRIPTORS WITH A GRAMMAR OF THEIR OWN, CSS Paged Media 3
-// §7.1-7.2: `size` is `<length>{1,2} | auto | [ <page-size> || [ portrait |
-// landscape ] ]` and `page-orientation` is three keywords. They are not
-// properties, so the property table does not know them and a value is
-// checked here: the canonical form (keywords lowercased) or nothing.
+/// The two `@page` descriptors with a grammar of their own (CSS Paged Media 3
+/// §7.1-7.2): `size` is `<length>{1,2} | auto | [ <page-size> || [ portrait |
+/// landscape ] ]` and `page-orientation` is three keywords. They are not
+/// properties, so the property table does not know them. Returns the canonical
+/// form (keywords lowercased), or an empty string for an invalid value. Any
+/// other name is returned unchanged.
 [[nodiscard]] std::string page_descriptor_value(std::string_view name, std::string_view text) {
     if (name == "page-orientation") {
         const std::string word = ascii_lower_copy(trim(text, html_whitespace));
@@ -365,6 +369,8 @@ bool declaration_allowed(const dom_bindings::css_rule_record & rule, std::string
                    std::find(std::begin(sizes), std::end(sizes), word) != std::end(sizes)) {
             ++keywords;
         } else {
+            // outline-offset's grammar is a plain <length>, so it validates and
+            // canonicalises one.
             const style::css::value_check checked =
                 check_declaration("outline-offset", part, false);
             if (!checked.valid) { return {}; }
@@ -379,8 +385,9 @@ bool declaration_allowed(const dom_bindings::css_rule_record & rule, std::string
     const bool ok = (lengths == static_cast<int>(parts.size())) ||
                     (lengths == 0 && keywords <= 1 && orientations <= 1);
     if (!ok) { return {}; }
-    // `portrait` beside a page size is the size as it is, and the shortest
-    // spelling leaves it out: `letter portrait` is `letter` (size-valid).
+    // `portrait` beside a page size is the size's natural orientation, so the
+    // shortest spelling leaves it out: `letter portrait` is `letter`
+    // (WPT size-valid).
     if (keywords == 1 && orientations == 1 && lengths == 0) {
         const std::size_t space = out.find(' ');
         const std::string first = out.substr(0, space);
@@ -394,11 +401,11 @@ bool declaration_allowed(const dom_bindings::css_rule_record & rule, std::string
     return out;
 }
 
-// `@font-face`'s `src` (CSS Fonts 4 §4.3): a comma list of `<url> [
-// format(<font-format>) ]? [ tech(<font-tech>#) ]?` and `local(<family-name>)`,
-// each entry read on its own - one that does not parse is dropped, not the
-// descriptor - and the descriptor invalid only when no entry is left. The
-// canonical text of what is left, or nothing.
+/// `@font-face`'s `src` (CSS Fonts 4 §4.3): a comma list of `<url> [
+/// format(<font-format>) ]? [ tech(<font-tech>#) ]?` and `local(<family-name>)`.
+/// Each entry is read on its own: one that does not parse is dropped, and the
+/// descriptor is invalid only when no entry is left. Returns the canonical text
+/// of the remaining entries, or an empty string.
 [[nodiscard]] std::string font_face_src(std::string_view text) {
     using style::css::token_type;
     const style::css::token_stream ts = style::css::tokenize(text);
@@ -425,8 +432,8 @@ bool declaration_allowed(const dom_bindings::css_rule_record & rule, std::string
         const std::string_view raw = ts.text_of(ts.tokens[i]);
         return ascii_lower_copy(raw.substr(0, raw.size() - 1));
     };
-    // The significant tokens of the function opened at entry[k], and where
-    // the entry goes on after its `)`.
+    // The significant tokens of the function opened at entry[k], or nullopt
+    // when it is unclosed; k is left just past its `)`.
     const auto arguments = [&](const std::vector<std::size_t> & entry, std::size_t & k) {
         std::vector<std::size_t> inner;
         int level = 0;
@@ -478,8 +485,8 @@ bool declaration_allowed(const dom_bindings::css_rule_record & rule, std::string
                     continue;
                 }
                 location = ts.value_of(ts.tokens[inner->front()]);
-                // Its <url-modifier>s (CSS Values 4 §4.5.1.1) - cross-origin(),
-                // integrity(), referrer-policy() - as written.
+                // Its <url-modifier>s (CSS Values 4 §4.5.1.1: cross-origin(),
+                // integrity(), referrer-policy()), kept as written.
                 for (std::size_t n = 1; n < inner->size(); ++n) {
                     const style::css::css_token & t = ts.tokens[(*inner)[n]];
                     const bool tight =
@@ -529,10 +536,11 @@ bool declaration_allowed(const dom_bindings::css_rule_record & rule, std::string
     return out;
 }
 
-// The `@font-face` descriptors with a grammar checked here (CSS Fonts 4 §4):
-// `src`, the three metric overrides - `[ normal | <percentage [0,∞]> ]{1,2}` -
-// and `size-adjust`, a `<percentage [0,∞]>`. The canonical text, empty for a
-// value the grammar refuses, and nullopt for any other descriptor.
+/// The `@font-face` descriptors with a grammar checked here (CSS Fonts 4 §4):
+/// `src`, the three metric overrides (`[ normal | <percentage [0,∞]> ]{1,2}`)
+/// and `size-adjust` (a `<percentage [0,∞]>`). Returns the canonical text, an
+/// empty string for a value the grammar refuses, and nullopt for any other
+/// descriptor.
 [[nodiscard]] std::optional<std::string> font_face_descriptor(std::string_view name,
                                                               std::string_view text) {
     if (name == "src") { return font_face_src(text); }
@@ -555,6 +563,11 @@ bool declaration_allowed(const dom_bindings::css_rule_record & rule, std::string
     return out;
 }
 
+/// Writes one declaration into a rule's block through the same functions
+/// `el.style` uses: an invalid value is a no-op, an empty one removes the
+/// property, and a shorthand is stored as its longhands. `@font-face` and
+/// `@page` descriptors are checked against their own grammars first. Returns
+/// whether the block changed.
 bool store_declaration(dom_bindings::css_rule_record & rule, const std::string & css_name,
                        std::string_view text, bool important) {
     if (!declaration_allowed(rule, css_name, text)) { return false; }
@@ -574,9 +587,9 @@ bool store_declaration(dom_bindings::css_rule_record & rule, const std::string &
     return style::css::set_declaration(rule.declarations, css_name, text, important);
 }
 
-// THE DECLARATIONS OF A BLOCK, through the same parser a `style` attribute goes
-// through. A value the grammar refuses is one the cascade drops, so publishing
-// it would advertise a declaration that does not apply.
+/// Parses a block's declarations through the same parser a `style` attribute
+/// uses. A value the grammar refuses is one the cascade drops, so keeping it
+/// would advertise a declaration that does not apply.
 void parse_declarations_into(dom_bindings::css_rule_record & rule, std::string_view body) {
     style::css::parse_declaration_block(
         rule.declarations, body,
@@ -623,9 +636,9 @@ void mirror_rule_list(script::object_object & rule_obj) {
     set_indexed(rule_obj, items);
 }
 
-// A property name as the CSSOM's own methods take it: a custom property keeps
-// its case, everything else is lowercased. `setProperty`/`getPropertyValue` are
-// the only way to reach `--x`, which no identifier can name.
+/// A property name as the CSSOM's own methods take it: a custom property keeps
+/// its case, everything else is lowercased. `setProperty`/`getPropertyValue`
+/// are the only way to reach `--x`, which no identifier can name.
 [[nodiscard]] std::string asked_name(context & cx, std::span<value> args) {
     const std::string given = arg_string(cx, args, 0);
     return given.starts_with("--") ? given : ascii_lower_copy(given);

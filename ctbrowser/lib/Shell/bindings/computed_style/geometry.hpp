@@ -1,9 +1,18 @@
+//===- computed_style/geometry.hpp - Layout-dependent values ----*- C++ -*-===//
+//
+// getComputedStyle resolved values that depend on layout: used sizes, insets,
+// margins and paddings, border/outline/column-rule widths, line-height,
+// display, and the automatic minimum size. resolved_geometry is the entry
+// point; computed_probe carries the layout facts it needs.
+//
+//===----------------------------------------------------------------------===//
 #pragma once
 #include "internal.hpp"
 
 #include <ctbrowser/shell/metrics.hpp>
 
 namespace ctbrowser::shell::detail {
+/// The box generated for element `id` under `root`, or null if it has none.
 [[nodiscard]] inline const layout::box_node * box_for(const layout::box_node * root, node_id id) {
     if (root == nullptr || !id) { return nullptr; }
     if (root->source == id) { return root; }
@@ -13,6 +22,7 @@ namespace ctbrowser::shell::detail {
     return nullptr;
 }
 
+/// The fragment laid out for element `id` under `root`, or null if it has none.
 [[nodiscard]] inline const layout::fragment * fragment_for(const layout::fragment * root,
                                                            node_id id) {
     if (root == nullptr || !id) { return nullptr; }
@@ -23,22 +33,23 @@ namespace ctbrowser::shell::detail {
     return nullptr;
 }
 
-// The properties whose value is a LENGTH resolved against the containing block.
-// Each is resolved with the same parse_length + length::resolve that layout used,
-// so a percentage or an em gives layout's answer rather than a second one. Note
-// what that inherits from layout: `rem` has a hardcoded 16px basis and vh/vw/pt
-// fall through to pixels (include/ctbrowser/layout/values.hpp). Those are real
-// differences from Chrome and they are supposed to show up in the diff.
-//
-// THE FOUR INSETS ARE NOT HERE any more: their resolved value is a used value
-// for a positioned box and a computed value otherwise, which is a rule of its
-// own further down rather than a length lookup.
+/// The properties whose value is a length resolved against the containing
+/// block. Each is resolved with the same parse_length + length::resolve that
+/// layout used, so a percentage or an em gives layout's answer rather than a
+/// second one. That inherits layout's gaps: `rem` has a hardcoded 16px basis
+/// and vh/vw/pt fall through to pixels (include/ctbrowser/layout/values.hpp).
+/// Those are real differences from Chrome and are meant to show up in the diff.
+///
+/// The four insets are not here: their resolved value is a used value for a
+/// positioned box and a computed value otherwise, handled by step 2d of
+/// resolved_geometry.
 constexpr std::array<std::string_view, 12> length_properties{
     "margin-top",  "margin-right",  "margin-bottom",  "margin-left",
     "padding-top", "padding-right", "padding-bottom", "padding-left",
     "min-width",   "max-width",     "min-height",     "max-height"};
 
-// The four sizing constraints, whose percentages survive into the computed value.
+/// The four sizing constraints, whose percentages survive into the computed
+/// value.
 [[nodiscard]] inline bool is_min_or_max_property(std::string_view property) {
     return property == "min-width" || property == "max-width" || property == "min-height" ||
            property == "max-height";
@@ -49,112 +60,108 @@ constexpr std::array<std::string_view, 12> length_properties{
            length_properties.end();
 }
 
+/// top, right, bottom or left.
 [[nodiscard]] inline bool is_inset_property(std::string_view property) {
     return property == "top" || property == "right" || property == "bottom" || property == "left";
 }
 
-// Every property the table types as a `<color>`, and the shorthand of four.
+/// Every property the table types as a `<color>`, plus the `border-color`
+/// shorthand.
 [[nodiscard]] inline bool is_color_property(std::string_view property) {
     if (property == "border-color") { return true; }
     const style::css::property_syntax * known = style::css::find_property(property);
     return known != nullptr && known->kind == style::css::value_kind::color;
 }
 
-// A BORDER WIDTH IS NOT REPORTED AS THE KEYWORD IT WAS WRITTEN AS, and it is not
-// reported as what the sheet asked for either: CSS Backgrounds 3 §4.3 makes the
-// used width zero when the matching style is `none` or `hidden`, which is every
-// element on a page with no borders. The initial value in the property table is
-// `medium`, so without this an ordinary <div> would answer `medium` for all four
-// sides where Chrome answers `0px`.
+/// The four border-*-width longhands. Their used width is 0 when the matching
+/// style is `none` or `hidden` (CSS Backgrounds 3 §4.3); see step 2e of
+/// resolved_geometry.
 [[nodiscard]] inline bool is_border_width_property(std::string_view property) {
     return property == "border-top-width" || property == "border-right-width" ||
            property == "border-bottom-width" || property == "border-left-width";
 }
 
-// CSS Values 4's "snap as a border width": a length of at least one pixel
-// rounds down to whole pixels, and a smaller non-zero one is one pixel - by
-// magnitude, so an outline offset of -2.5px is -2px.
+/// CSS Values 4's "snap as a border width": a length of at least one pixel
+/// rounds down to whole pixels, and a smaller non-zero one is one pixel. The
+/// rule applies to the magnitude, so an outline offset of -2.5px is -2px.
 [[nodiscard]] inline float snapped_line_width(float px) {
     const float magnitude = std::fabs(px);
     const float snapped = magnitude >= 1 ? std::floor(magnitude) : (magnitude > 0 ? 1.0f : 0.0f);
     return px < 0 ? -snapped : snapped;
 }
 
-// `border-top-width` -> `border-top-style`, `outline-width` -> `outline-style`.
+/// `border-top-width` -> `border-top-style`, `outline-width` -> `outline-style`.
 [[nodiscard]] inline std::string style_property_for_width(std::string_view width_property) {
     return std::string{width_property.substr(0, width_property.size() - 5)} + "style";
 }
 
-// Per-property tree walks would be O(properties x boxes): the object publishes
-// every property in the table, and rebuilding this for each of them would mean
-// 125 walks over the whole box tree per getComputedStyle call.
-//
-// The ancestor CHAIN is held as ids rather than as a read transaction, so
-// gathering does not pin a document version for as long as a page keeps the
-// object alive.
+/// The layout facts about one element that resolved_geometry needs, gathered
+/// once per getComputedStyle object. Per-property tree walks would cost
+/// O(properties x boxes): the object publishes every property in the table,
+/// which would mean about 125 walks over the whole box tree per call.
+///
+/// The ancestor chain is held as ids rather than as a read transaction, so
+/// gathering does not pin a document version for as long as a page keeps the
+/// object alive.
 struct computed_probe {
     const layout::box_node * box = nullptr;
     const layout::fragment * frag = nullptr;
-    float basis = 0;        // the containing block's content width
-    float basis_height = 0; // and its content height, for a relative inset
-    // ...WHICH IS A PERCENTAGE'S BASIS only when the parent's own height is
-    // definite (CSS 2.1 §10.5); layout's `height: 50%` under an auto-height
-    // parent is `auto`, and an animated one must agree.
+    float basis = 0;        ///< The containing block's content width.
+    float basis_height = 0; ///< Its content height, for a relative inset.
+    /// Whether basis_height is a percentage's basis: only when the parent's
+    /// own height is definite (CSS 2.1 §10.5). Layout treats `height: 50%`
+    /// under an auto-height parent as `auto`, and an animated one must agree.
     bool definite_height = true;
     float font_size = 16;
-    float root_font_size = 16; // the <html> element's, for a `rem` folded here
-    // Is this element a FLEX ITEM? A fact about its parent rather than about it,
-    // and the two properties whose reported value depends on it - `min-width`
-    // and `min-height` - are answered nowhere else, so it is gathered with the
-    // rest of the parent lookup rather than costing a second tree walk.
+    float root_font_size = 16; ///< The <html> element's, for a `rem` folded here.
+    /// Whether this element is a flex item. It is a fact about the parent, and
+    /// only `min-width`/`min-height` depend on it, so it is gathered with the
+    /// rest of the parent lookup rather than costing a second tree walk.
     bool flex_item = false;
-    // ...AND IS IT A GRID ITEM? The same question and the same two properties,
-    // but it cannot be asked of the box tree the way `flex_item` is: there is no
-    // grid box kind, because there is no grid algorithm - `display: grid` lays
-    // out as a block. The parent's DECLARED display is where the fact survives,
-    // and getComputedStyle-resolved-min-size-auto asks about a grid item by name.
+    /// Whether this element is a grid item. Unlike flex_item it cannot be read
+    /// from the box tree: there is no grid layout algorithm, so `display: grid`
+    /// lays out as a block. The parent's declared display is where the fact
+    /// survives (getComputedStyle-resolved-min-size-auto asks about grid items).
     bool grid_item = false;
-    // DOES THIS ELEMENT GENERATE A PRINCIPAL BOX? Everything CSSOM reports as a
-    // USED value has no answer when it does not - `display: none`,
-    // `display: contents`, and anything inside such a subtree - and the rule
-    // then is the computed value. Read from the box tree AND from the cascade,
-    // because the two disagree about `display: contents`: it generates no box by
-    // definition and this engine's layout makes one anyway, which is a layout
-    // gap rather than a licence to report a used width for a box the page
-    // cannot see.
+    /// Whether this element generates a principal box. Everything CSSOM
+    /// reports as a used value has no answer without one (`display: none`,
+    /// `display: contents`, and anything inside such a subtree), and the
+    /// computed value is reported instead. Read from both the box tree and the
+    /// cascade, because they disagree about `display: contents`: it generates
+    /// no box by definition, but this engine's layout makes one anyway, and a
+    /// used width must not be reported for a box the page cannot see.
     bool has_box = false;
-    // A NON-REPLACED INLINE has no used width or height either (CSS 2.1 §10.3.1),
-    // and css/cssom's getComputedStyle-resolved-min-max-clamping asserts that
-    // for a <span> beside the two boxless cases.
+    /// A non-replaced inline has no used width or height either (CSS 2.1
+    /// §10.3.1); getComputedStyle-resolved-min-max-clamping asserts that for a
+    /// <span>.
     bool inline_non_replaced = false;
-    // POSITIONING, for the four inset properties. Chrome reports their USED
-    // values for a positioned element - a number, not the `auto` that was
-    // written - and `auto` only for a static one, so answering the declared text
-    // differed on 104 of one fixture's 222 remaining values. Deriving them needs
-    // the element's absolute rectangle and its containing block's, which are two
-    // tree walks, so they are gathered here with everything else.
+    /// Positioning, for the inset properties: Chrome reports a positioned
+    /// element's used insets, so the element's and its containing block's
+    /// absolute rectangles are gathered here.
     layout::position_kind position = layout::position_kind::static_;
     rect box_abs{};
-    rect containing{};          // the padding box of the nearest positioned ancestor
-    std::vector<node_id> chain; // self first, then ancestors
-    bool is_root = false;       // the document element itself
-    // A PSEUDO-ELEMENT: `chain.front()` is the originating element, whose box
-    // and fragment stand in for the parent's, and `declared` reads this style.
+    rect containing{};          ///< The padding box of the nearest positioned ancestor.
+    std::vector<node_id> chain; ///< Self first, then ancestors.
+    bool is_root = false;       ///< Whether this is the document element itself.
+    /// Set for a pseudo-element: `chain.front()` is then the originating
+    /// element, whose box and fragment stand in for the parent's, and
+    /// `declared` reads this style.
     style::computed_style_ptr pseudo;
 };
 
-// AN ANIMATED WIDTH OR HEIGHT, which layout never saw, in the box box-sizing
-// names (the author's number names that box, so the specified size IS the used
-// one). A length resolves against the containing block as a pseudo-element's
-// does. A keyword, or a calc-size() over one, runs its calculation over the
-// size the keyword names for this box (CSS Values 5 §calc-size): on the block
-// axis the height the content came to, which the fragment kept whatever the
-// cascade's height was, or the containing block's for `stretch`; on the
-// inline axis layout's own answer for the keyword. A percentage of an
-// indefinite height is `auto` (CSS 2.1 §10.5) - and so is a whole calc-size()
-// over one, the `100%` an interpolation canonicalizes a percentage basis to -
-// while a percentage inside a calculation is zero there. nullopt where the box
-// cannot say, and the fragment's size stands.
+/// The used size of an animated width or height, which layout never saw, in
+/// the box `box-sizing` names (the author's number names that box, so the
+/// specified size is the used one).
+///
+/// A length resolves against the containing block, as a pseudo-element's
+/// does. A keyword, or a calc-size() over one, runs its calculation over the
+/// size the keyword names for this box (CSS Values 5 §calc-size): on the block
+/// axis the content height the fragment kept, or the containing block's for
+/// `stretch`; on the inline axis layout's own answer for the keyword. A
+/// percentage of an indefinite height is `auto` (CSS 2.1 §10.5), and so is a
+/// whole calc-size() over one, while a percentage inside a calculation is zero
+/// there. Returns nullopt when the box cannot say, so the fragment's size
+/// stands.
 [[nodiscard]] inline std::optional<float> animated_size(const computed_probe & at, bool horizontal,
                                                         std::string_view text) {
     layout::length len = layout::parse_length(text);
@@ -168,8 +175,8 @@ struct computed_probe {
     const bool border_box = at.box->border_box;
     if (horizontal) {
         // ponytail: text is measured in the built-in 8x8 face, not the page's
-        // fonts - the bindings are not handed the browser's measure; hand it
-        // over when an animated intrinsic width over text has to be exact.
+        // fonts, because the bindings are not handed the browser's measure.
+        // Hand it over when an animated intrinsic width over text must be exact.
         const float border = layout::intrinsic_border_width(*at.box, c, e, font8x8_metrics(), len);
         return border_box ? border : border - e.horizontal_inner();
     }
@@ -190,8 +197,13 @@ struct computed_probe {
     return len.apply(size, indefinite ? 0.0f : basis, at.font_size);
 }
 
-// A disengaged result leaves the property's remaining non-geometric rules to the caller.
-// Callbacks retain the already-gathered cascade state without copying or type erasure.
+/// Returns getComputedStyle's resolved value for `property` when it depends on
+/// layout, or nullopt to let the caller apply the non-geometric rules.
+/// `declared(p)` reads this element's cascaded text for p, `declared_on(id, p)`
+/// another element's, and `computed_length(text)` serialises a computed length.
+/// `text` is set to the declared value as a side effect. The callbacks are
+/// template parameters so they can use the caller's gathered cascade state
+/// without copying or type erasure.
 template <class Declared, class DeclaredOn, class ComputedLength>
 std::optional<std::string> resolved_geometry(std::string_view property, std::string_view & text,
                                              const computed_probe & at, const Declared & declared,
@@ -200,29 +212,16 @@ std::optional<std::string> resolved_geometry(std::string_view property, std::str
                                              const layout::box_node * boxes_,
                                              const layout::fragment * fragments_,
                                              int viewport_width_) {
-    // 1. USED SIZES, from the fragment - and WHICH BOX depends on box-sizing.
-    //
-    //    `width` names the content box by default and the border box under
-    //    `box-sizing: border-box`, and getComputedStyle reports the used value
-    //    of `width` - so the same element answers with a different rectangle
-    //    depending on one other property. Measured rather than assumed: Chrome
-    //    answers 960 for a `.container` whose fragment is 960 wide and whose
-    //    horizontal padding is 12 a side, and 936 would be the content box.
-    //
-    //    Bootstrap sets `box-sizing: border-box` on `*`, so this is not an edge
-    //    case on any page that uses it - it was 399 of 3,518 differences, all of
-    //    them exactly the padding.
-    //
-    //    ...UNLESS THERE IS NO USED SIZE. An element with no box and a
-    //    non-replaced inline both report the computed value instead, and
-    //    getComputedStyle-resolved-min-max-clamping asserts it for all three
-    //    of them: `width: 10%` reads back `10%`, and a `width` outside its own
-    //    min/max is NOT clamped, because clamping is something the used value
-    //    goes through and there is no used value here.
+    // 1. width/height: the used size from the fragment, as the content box or
+    //    the border box per `box-sizing` (Chrome reports 960 for a 960-wide
+    //    border-box `.container` with 12px padding a side, not 936). With no
+    //    box, or for a non-replaced inline, the computed value is reported
+    //    instead, unclamped by min/max, since clamping applies only to a used
+    //    value (getComputedStyle-resolved-min-max-clamping).
     if (property == "width" || property == "height") {
-        // A calc-size() with no used size to report - no box - serialises
-        // as written: its computed value is the function (CSS Values 5
-        // §10.2), not a number this cannot make without laying out.
+        // A calc-size() with no used size to report (no box) serialises as
+        // written: its computed value is the function (CSS Values 5 §10.2),
+        // not a number, which would need layout.
         const auto as_computed = [&]() -> std::string {
             const std::string_view given = trim(declared(property), html_whitespace);
             if (ascii_istarts_with(given, "calc-size(")) { return std::string{given}; }
@@ -236,8 +235,8 @@ std::optional<std::string> resolved_geometry(std::string_view property, std::str
         }
         if (!at.has_box || at.inline_non_replaced || at.frag == nullptr) { return as_computed(); }
         const bool horizontal = property == "width";
-        // AN ANIMATED SIZE IS NOT THE FRAGMENT'S: layout ran on the cascade's
-        // value, and a running animation's is the one owed.
+        // An animated size is not the fragment's: layout ran on the cascade's
+        // value, and the running animation's value is the one to report.
         if (const std::string_view animated = declared(property);
             !at.chain.empty() && animated != declared_on(at.chain.front(), property)) {
             if (const std::optional<float> size = animated_size(at, horizontal, animated)) {
@@ -245,9 +244,8 @@ std::optional<std::string> resolved_geometry(std::string_view property, std::str
             }
         }
         float used = horizontal ? at.frag->bounds.width : at.frag->bounds.height;
-        // The fragment is the border box; under content-box the padding AND
-        // the border come off it, which is the same arithmetic layout's
-        // border_box_size did in the other direction.
+        // The fragment is the border box; under content-box the padding and
+        // the border come off it, the inverse of layout's border_box_size.
         const bool border_box = ascii_iequals(declared("box-sizing"), "border-box");
         if (at.box != nullptr && !border_box) {
             const layout::constraints c{at.basis, at.basis_height, at.font_size};
@@ -256,54 +254,33 @@ std::optional<std::string> resolved_geometry(std::string_view property, std::str
         }
         return used_px_text(std::max(0.0f, used));
     }
-    // 2. FONT SIZE and LINE HEIGHT, already absolute on the box - the two
-    //    lengths this engine resolves eagerly, and font-size is the basis every
-    //    `em` here resolves against.
-    //
-    //    LINE HEIGHT MUST COME FROM THE BOX when a sheet gave it one. Chrome
-    //    reports a declared line-height as a length, so a unitless
-    //    `line-height: 1.5` answered as `1.5` differs from `24px` on every
-    //    text-bearing element on the page - which it did, on 34 of 40 elements
-    //    of one fixture, for a reason that had nothing to do with layout being
-    //    wrong.
-    //
-    //    `normal` IS NOT A LENGTH, though, and that is the other half of the
-    //    same rule: Chrome answers the keyword verbatim for it, and answers it
-    //    for an element no rule reached, because `normal` is the initial value.
-    //    The box carries a resolved number there whatever the cascade said -
-    //    it has to, to lay text out - so asking the box alone reported a px
-    //    figure for every element on a page that declares no line-height at
-    //    all. css/cssom's getComputedStyle-line-height is four assertions
-    //    about exactly this.
+    // 2. font-size and line-height, already absolute. A declared line-height
+    //    is reported in px, as Chrome does (`1.5` reads back as `24px`);
+    //    `normal`, declared or initial, is reported as the keyword even though
+    //    the box carries a number for it (getComputedStyle-line-height).
     if (property == "font-size") {
-        // NOT `at.box->font_size` directly: a boxless element's size is the
-        // one the cascade declared, gathered above.
+        // Not `at.box->font_size` directly: a boxless element's size is the
+        // one the cascade declared, gathered into the probe.
         return px_text(at.font_size);
     }
     if (property == "line-height") {
         const std::string_view given = declared(property);
         if (given.empty() || ascii_iequals(given, "normal")) { return "normal"; }
         // Resolved from the cascade's text the way the box builder resolves
-        // it, rather than read off the box: the ROOT's box is the viewport
-        // and does not carry one, so `:root { line-height: 2rem }` read
-        // back as `normal`'s figure (rem-unit-root-element).
+        // it, rather than read off the box: the root's box is the viewport
+        // and does not carry one, so `:root { line-height: 2rem }` would
+        // read back as `normal`'s figure (rem-unit-root-element).
         return px_text(layout::box_builder::resolve_line_height(given, at.font_size));
     }
     text = declared(property);
-    // 2b. DISPLAY, from the box tree when nothing declared it. The CSS initial
-    //     value is `inline`, but almost nothing renders as its initial value -
-    //     a <div> is `block` because a UA SHEET says so, and this engine's UA
-    //     sheet (include/ctbrowser/style/ua.hpp) is deliberately trimmed to
-    //     the properties that have a consumer, so it does not say `display`
-    //     for a div at all. Falling through to the property table's `inline`
-    //     would then report a difference on every block element on the page -
-    //     hundreds of lines about one absent declaration.
-    //
-    //     What layout USED is the honest answer, and the box knows it. Note
-    //     the deliberate ordering: a DECLARED `display: flex` is reported as
-    //     `flex` even though parse_display collapses it to a block box, so
-    //     `display` agrees with Chrome and the missing flex algorithm shows up
-    //     where it actually bites - in the geometry.
+    // 2b. display, from the box tree when nothing declared it. The initial
+    //     value is `inline`, and a <div> is `block` only because a UA sheet
+    //     says so; this engine's UA sheet (include/ctbrowser/style/ua.hpp) is
+    //     trimmed to properties that have a consumer and does not set
+    //     `display` for a div. So the box layout used is the answer here.
+    //     A declared value is handled below and wins: `display: flex` is
+    //     reported as `flex` even though parse_display may lay it out as a
+    //     block box, so any layout gap shows up in the geometry instead.
     if (property == "display" && text.empty()) {
         // A pseudo-element's initial display is `inline`, blockified as a
         // flex or grid item is (CSS Display 3 §2.7).
@@ -312,22 +289,22 @@ std::optional<std::string> resolved_geometry(std::string_view property, std::str
         switch (at.box->kind) {
         case layout::box_kind::block:
         case layout::box_kind::anonymous:
-            // `inline_level` is the OUTSIDE of the display value, and it is
-            // what makes a `<button>` report `inline-block` rather than
-            // `block` now that it is not a replaced element.
+            // `inline_level` is the outer display type; it is what makes a
+            // `<button>` (not a replaced element) report `inline-block`
+            // rather than `block`.
             return at.box->inline_level ? "inline-block" : "block";
         case layout::box_kind::inline_: return "inline";
         case layout::box_kind::table: return "table";
         case layout::box_kind::flex: return at.box->inline_level ? "inline-flex" : "flex";
         case layout::box_kind::text:
-        case layout::box_kind::replaced: break; // the table's `inline` is right
+        case layout::box_kind::replaced: break; // The table's `inline` is right.
         }
         return std::string{};
     }
-    // ...AND A DECLARED DISPLAY, BLOCKIFIED where CSS Display 3 §2.7 says the
+    //     A declared display is blockified where CSS Display 3 §2.7 says the
     //     box is: the root, a flex or grid item, and an absolutely positioned
     //     or floated box. The inner display survives and the outer becomes
-    //     block - `inline-table` is `table`, `ruby` is `block ruby`, and an
+    //     block: `inline-table` is `table`, `ruby` is `block ruby`, and an
     //     internal table or ruby display, `inline` and `run-in` are `block`.
     if (property == "display") {
         const std::string shown = collapse_keyword(text);
@@ -350,42 +327,13 @@ std::optional<std::string> resolved_geometry(std::string_view property, std::str
         }
         return shown;
     }
-    // 2c. THE AUTOMATIC MINIMUM SIZE, reported the way Chrome reports it. The
-    //     initial value of `min-width`/`min-height` is `auto`, and Chrome
-    //     answers that verbatim for a FLEX ITEM - where `auto` means the
-    //     content-based minimum and really is not a length - while resolving
-    //     it to `0px` everywhere else, because outside a flex or grid
-    //     container `auto` behaves as zero.
-    //
-    //     Answering one of the two for both is not a small error: it was 139
-    //     of the grid fixture's 490 differences, every one of them about
-    //     which parent the element has rather than about the element. Nor can
-    //     the property table's initial value fix it - it says `auto`, which is
-    //     what the specification says and what moved 566 differences the WRONG
-    //     way when css-parity.py tried it, because most elements on most pages
-    //     are not flex items.
-    //
-    //     `auto` "resolves to zero when no box is generated" whatever the
-    //     parent is (CSS Sizing 3), which is the second half of
-    //     getComputedStyle-resolved-min-size-auto.
-    //
-    //     AN `auto` THE AUTHOR WROTE IS THE SAME `auto`. This asked
-    //     `text.empty()`, so the rule applied to the INITIAL value and to
-    //     nothing else: `min-width: auto` in a style attribute fell through
-    //     to the length branch below and came back as the keyword. That is
-    //     half of getComputedStyle-resolved-min-size-auto by construction -
-    //     the file asserts each element twice, once as the initial value and
-    //     once with the same `auto` set through `style.setProperty`, and
-    //     seven of its fourteen failures were the second assertion of a pair
-    //     whose first one passed.
-    //
-    //     AND THREE THINGS PRESERVE IT, not one. A flex item, a GRID item -
-    //     which is a declaration on the parent rather than a box kind, since
-    //     `display: grid` lays out as a block here - and any element with a
-    //     specified `aspect-ratio`, where the automatic minimum is the
-    //     transferred size and genuinely is not zero. A degenerate ratio
-    //     (`0/1`) and the two-part form (`auto 1/1`) preserve it too: the
-    //     rule is "an aspect-ratio was specified", not "it is usable".
+    // 2c. min-width/min-height `auto`, initial or author-written. Chrome
+    //     reports `auto` for a flex or grid item and for an element with a
+    //     specified aspect-ratio (even a degenerate `0/1` or the `auto 1/1`
+    //     form), where the automatic minimum is content-based; otherwise
+    //     `0px`, since outside those cases `auto` behaves as zero. With no box
+    //     it is always `0px` (CSS Sizing 3;
+    //     getComputedStyle-resolved-min-size-auto).
     if (property == "min-width" || property == "min-height") {
         const std::string given = collapse_keyword(text);
         if (given.empty() || given == "auto") {
@@ -395,27 +343,20 @@ std::optional<std::string> resolved_geometry(std::string_view property, std::str
             return !ratio.empty() && ratio != "auto" ? "auto" : "0px";
         }
     }
-    // 2d. THE INSETS. CSSOM §6.7.2 gives them the longest special case in the
-    //     specification, and all three of its arms are here:
+    // 2d. The insets, per CSSOM §6.7.2:
     //
-    //       no box, or not positioned  -> the COMPUTED value. An inset does
-    //         not apply to a static box, so `top: 10%` reads back `10%` and
-    //         `top: auto` reads back `auto`. This answered `auto` for all
-    //         four sides of every static element, which is every element on
-    //         most pages, and is what getComputedStyle-insets-static and
-    //         -insets-nobox assert 216 times each.
-    //       over-constrained           -> the COMPUTED value, again. When
-    //         both sides and the size in that axis are given, one of the
-    //         three is ignored, and CSSOM refuses to report a used value it
-    //         would have to pick a loser for.
-    //       otherwise                  -> the USED value.
+    //       no box, or not positioned  -> the computed value (`top: 10%`
+    //         reads back `10%`; getComputedStyle-insets-static/-nobox).
+    //       over-constrained           -> the computed value. When both
+    //         sides and the size in that axis are given, one of the three is
+    //         ignored, and CSSOM does not report a used value for the axis.
+    //       otherwise                  -> the used value.
     //
-    //     A SIDE THE AUTHOR GAVE A LENGTH IS ITS OWN USED VALUE. Deriving it
-    //     from the geometry instead - `containing.width - left - width` -
-    //     is arithmetic on floats that the author's `20.7px` does not
-    //     survive, which is getComputedStyle-insets-absolute-roundtrip. The
-    //     geometry is still what answers for a side that says `auto`,
-    //     because that one really was decided by layout.
+    //     A side the author gave a length is its own used value. Deriving it
+    //     from the geometry (`containing.width - left - width`) would lose
+    //     the author's `20.7px` to float arithmetic
+    //     (getComputedStyle-insets-absolute-roundtrip). The geometry answers
+    //     only for a side that is `auto`, which layout really did decide.
     if (is_inset_property(property)) {
         const bool horizontal = property == "left" || property == "right";
         const bool start = property == "top" || property == "left";
@@ -429,11 +370,11 @@ std::optional<std::string> resolved_geometry(std::string_view property, std::str
         if (!at.has_box || at.position == layout::position_kind::static_) {
             return computed_length(text);
         }
-        // A STICKY INSET RESOLVES AGAINST THE SCROLLPORT - the nearest
-        // scroll container, or the viewport when there is none (CSS
-        // Position 3 §3.4; getComputedStyle-sticky-pos-percent puts
-        // `top: 50%` under an `overflow: hidden` ancestor and expects half
-        // of THAT). `auto` is its own value; both sides may be given.
+        // A sticky inset resolves against the scrollport: the nearest scroll
+        // container, or the viewport when there is none (CSS Position 3 §3.4;
+        // getComputedStyle-sticky-pos-percent puts `top: 50%` under an
+        // `overflow: hidden` ancestor and expects half of that ancestor).
+        // `auto` is reported as itself; both sides may be given.
         if (at.position == layout::position_kind::sticky) {
             float scrollport = horizontal
                                    ? static_cast<float>(viewport_width_)
@@ -448,8 +389,8 @@ std::optional<std::string> resolved_geometry(std::string_view property, std::str
                 const layout::constraints c{frag->bounds.width, frag->bounds.height,
                                             scroller->font_size};
                 const layout::resolved_edges e = layout::resolve_edges(*scroller, c);
-                // Its CONTENT box, which is what the getComputedStyle-insets-
-                // sticky rows measure (clientHeight less the paddings).
+                // Its content box, which is what getComputedStyle-insets-sticky
+                // measures (clientHeight less the paddings).
                 scrollport = horizontal ? frag->bounds.width - e.horizontal_inner()
                                         : frag->bounds.height - e.vertical_inner();
                 break;
@@ -474,15 +415,14 @@ std::optional<std::string> resolved_geometry(std::string_view property, std::str
             return px_text(mine.resolve(scrollport, at.font_size));
         }
         if (at.position == layout::position_kind::relative) {
-            // A relative box's containing block is the one it would have had
-            // staying put - its parent's content box - and NOT the nearest
-            // positioned ancestor, which is the absolute rule.
+            // A relative box's containing block is its parent's content box,
+            // not the nearest positioned ancestor (that is the absolute rule).
             const float relative_basis = horizontal ? at.basis : at.basis_height;
-            // A side that is given is its own used value, against that
-            // containing block - both sides given included: CSSOM's
-            // over-constrained special case is about an absolutely positioned
-            // box's size, and getComputedStyle-insets-relative absolutizes all
-            // four of a relative box's insets.
+            // A side that is given is its own used value against that
+            // containing block, even when both sides are given: CSSOM's
+            // over-constrained case is about an absolutely positioned box's
+            // size, and getComputedStyle-insets-relative absolutizes all four
+            // of a relative box's insets.
             if (!mine.is_auto()) { return px_text(mine.resolve(relative_basis, at.font_size)); }
             // `auto` against a given opposite side is its negation: the box
             // moved, and this side records the move from the other end.
@@ -490,7 +430,7 @@ std::optional<std::string> resolved_geometry(std::string_view property, std::str
             if (other.is_auto()) { return "0px"; }
             return px_text(-other.resolve(relative_basis, at.font_size));
         }
-        // Absolute or fixed. Over-constrained needs the SIZE as well: with
+        // Absolute or fixed. Over-constrained needs the size as well: with
         // both insets and a definite size, CSS 10.3.7 ignores `right` (and
         // 10.6.4 ignores `bottom`), and CSSOM reports computed values for
         // the whole axis rather than a used value with a loser in it.
@@ -507,10 +447,10 @@ std::optional<std::string> resolved_geometry(std::string_view property, std::str
         }
         return used_px_text(at.containing.height - top - at.box_abs.height);
     }
-    // 2e. THE BORDER AND OUTLINE WIDTHS, whose used value is zero unless the
-    //     matching style draws something. Answered here rather than left to
-    //     the initial value because the initial value is `medium` and no box
-    //     with no border is three pixels wide.
+    // 2e. Border widths, whose used value is zero unless the matching style
+    //     draws something (CSS Backgrounds 3 §4.3). The initial value is
+    //     `medium`, so without this an ordinary <div> would report `medium`
+    //     where Chrome reports `0px`.
     if (is_border_width_property(property)) {
         const std::string style_name = style_property_for_width(property);
         const std::string_view drawn = declared(style_name);
@@ -519,7 +459,7 @@ std::optional<std::string> resolved_geometry(std::string_view property, std::str
         }
         return px_text(border_width_px(text, at.font_size));
     }
-    // AN OUTLINE'S WIDTH AND OFFSET ARE LINE WIDTHS, snapped as one, and
+    // An outline's width and offset are line widths, snapped as one, and
     // unlike a border's the width does not become zero when the style is
     // `none` (CSS UI 4 §5.2): an outline is drawn outside layout, so there is
     // no used width for the style to take away.
@@ -543,8 +483,9 @@ std::optional<std::string> resolved_geometry(std::string_view property, std::str
          ascii_iequals(text, "thick"))) {
         return px_text(border_width_px(text, at.font_size));
     }
-    // ...and each is a line width, snapped as one item by item (CSS Gaps 1
-    // §3.3): `14.1px` is `14px`. A list with a repeat() is left as it is.
+    // Each item of a rule-width list is a line width, snapped item by item
+    // (CSS Gaps 1 §3.3): `14.1px` is `14px`. A list with a repeat() is left
+    // as it is.
     if (property == "column-rule-width" || property == "row-rule-width") {
         style::css::length_context lengths;
         lengths.font_size = at.font_size;
@@ -565,27 +506,24 @@ std::optional<std::string> resolved_geometry(std::string_view property, std::str
         if (!widths.empty()) { return widths; }
     }
     if (text.empty()) { return std::string{}; }
-    // 3. LENGTHS, through layout's own parser against layout's own basis.
+    // 3. Lengths, through layout's own parser against layout's own basis.
     //    `auto` stays `auto`, which is what Chrome returns for a margin that
     //    was never resolved to a used value.
     if (is_length_property(property)) {
-        // ...WHEN THERE IS A BOX. A margin and a padding are on CSSOM's list
-        // of properties whose resolved value is the USED one, and that list
-        // is conditioned on the element generating a box: a `display: none`
-        // element has no used margin, so `margin-left: 10%` reads back as
-        // `10%` rather than as a share of a containing block it does not
-        // have. Same sentence, same rule, as `width` above.
+        // Margins and paddings report their used value only when there is a
+        // box (CSSOM), as `width` does: a `display: none` element reads
+        // `margin-left: 10%` back as `10%`.
         if (!at.has_box) { return computed_length(text); }
-        // An out-of-flow box's percentages are of ITS containing block, the
+        // An out-of-flow box's percentages are of its containing block, the
         // positioned ancestor's padding box, not of its parent (CSS 2.1
         // §10.1; padding-computed's absolutely positioned target).
         const bool out_of_flow = at.position == layout::position_kind::absolute ||
                                  at.position == layout::position_kind::fixed;
         const float percent_basis = out_of_flow ? at.containing.width : at.basis;
-        // A MATH FUNCTION THE CASCADE COULD NOT FOLD is folded here, against
-        // the containing block: this is the used value, and the used value
-        // is where `round(10%, 1px)` finally has a basis. A percentage in a
-        // min or max survives as one below and never comes this way.
+        // A math function the cascade could not fold is folded here, against
+        // the containing block: the used value is where `round(10%, 1px)`
+        // finally has a basis. A percentage in a min or max survives as one
+        // below and never comes this way.
         if (style::css::may_have_math(text) && !is_min_or_max_property(property)) {
             style::css::length_context ctx;
             ctx.font_size = at.font_size;
@@ -596,13 +534,13 @@ std::optional<std::string> resolved_geometry(std::string_view property, std::str
             const style::css::math_answer used = style::css::evaluate_math(text, ctx);
             if (used.outcome == style::css::math_outcome::resolved &&
                 used.value.type == style::css::numeric_type::length && !used.value.has_percent) {
-                // The same bound the cascade's fold applies (calc/fold.cpp):
-                // an infinity lands on it and a NaN on zero.
+                // Clamp like the cascade's fold (calc/fold.cpp): infinity to
+                // +/-2^25 px (33554432), NaN to 0.
                 double px = used.value.px;
                 if (std::isnan(px)) { px = 0; }
                 if (std::isinf(px)) { px = std::copysign(33554432.0, px); }
-                // ...and a padding is never negative, `calc(10% - 40px)`
-                // against a narrow block included (CSS Box 4 §4.2).
+                // A padding is never negative, `calc(10% - 40px)` against a
+                // narrow block included (CSS Box 4 §4.2).
                 if (property.starts_with("padding-")) { px = std::max(px, 0.0); }
                 return px_text(static_cast<float>(px));
             }
@@ -617,14 +555,12 @@ std::optional<std::string> resolved_geometry(std::string_view property, std::str
             return std::string{text};
         }
         if (len.is_auto()) {
-            // A MARGIN'S USED VALUE IS A NUMBER, and `auto` is a value only
-            // for a box no flow has placed: a centred block's `margin: 0
-            // auto` and an absolutely positioned box's between two offsets
-            // are the pixels the flow gave them (computed-style-005). Every
-            // other length answers `auto` still - a width, an inset, which
-            // have their own rows above.
+            // A margin's used value is a number: a centred block's `margin: 0
+            // auto`, or an absolutely positioned box's between two offsets,
+            // reports the pixels the flow gave it (computed-style-005). Other
+            // lengths here (paddings, min/max) still report `auto`.
             if (at.frag != nullptr && property.starts_with("margin-")) {
-                // AN ANIMATED `auto` IS NOT THE FRAGMENT'S - layout placed the
+                // An animated `auto` is not the fragment's: layout placed the
                 // box on the cascade's margin. On the block axis, and beside
                 // an `auto` width that leaves no remainder, an auto margin is
                 // zero (CSS 2.1 §10.3.3, §10.6.3; margin-left-composition).
@@ -644,17 +580,10 @@ std::optional<std::string> resolved_geometry(std::string_view property, std::str
             }
             return "auto";
         }
-        // A PERCENTAGE MIN OR MAX STAYS A PERCENTAGE. Their computed value is the
-        // percentage as specified - resolving it needs a containing block, which
-        // is a used-value question, and unlike width there is no used value to
-        // report because a max is a constraint rather than a size. Chrome answers
-        // `100%` for `.row > * { max-width: 100% }` and this answered 960px, on
-        // 62 of the grid fixture's 111 elements.
-        //
-        // Margin and padding are NOT in this exception, deliberately: Chrome
-        // resolves their percentages to pixels, because there a percentage does
-        // have a used value and reporting it is what makes an auto margin
-        // comparable at all.
+        // A percentage min/max size is reported as written: it is a constraint,
+        // not a size, so it has no used value (Chrome reports `100%` for
+        // `max-width: 100%`). Margin and padding percentages do resolve to px,
+        // as Chrome reports.
         if (len.u == layout::unit::percent && is_min_or_max_property(property)) {
             return std::string{text};
         }

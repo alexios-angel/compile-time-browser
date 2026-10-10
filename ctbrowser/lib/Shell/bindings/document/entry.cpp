@@ -1,5 +1,9 @@
-// dom_bindings - the entry points: install(), the GC roots, location and
+//===- entry.cpp - Document bindings entry points ---------------*- C++ -*-===//
+//
+// dom_bindings' entry points: install(), the GC roots, location and
 // navigation, and the small mutators the rest of the bindings share.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -11,13 +15,13 @@ namespace ctbrowser::shell {
 
 using namespace detail;
 
+/// Records the page's new address and updates what depends on it: the
+/// document's URL properties and the `:target` element.
 void dom_bindings::observe_location(std::string href, std::string hash) {
     location_href_ = std::move(href);
     location_hash_ = std::move(hash);
-    // THE DOCUMENT'S THREE NAMES FOR THE URL are data, written through: set
-    // once at install they were a snapshot, and a page that followed a link
-    // and then read `document.URL` got the address it started at. The
-    // Location object's members are getters over the same two strings.
+    // Keep document.URL, documentURI and baseURI in step with the address.
+    // The Location getters read the same two strings.
     if (cx_ != nullptr) {
         if (auto * doc = document_object()) {
             for (const char * name : {"URL", "documentURI", "baseURI"}) {
@@ -25,8 +29,8 @@ void dom_bindings::observe_location(std::string href, std::string hash) {
             }
         }
     }
-    // THE INDICATED ELEMENT, HTML 7.4.6.3: the fragment names an id - as
-    // written, then percent-decoded - and that element is what `:target`
+    // The indicated element, HTML 7.4.6.3: the fragment names an id (as
+    // written, then percent-decoded), and that element is what `:target`
     // matches. Kept as a state bit on the selector engine, exactly as `:focus`
     // is, so a query and a sheet both see it; the browser re-resolves on the
     // mutation hook, and a frame document's own engine answers its queries.
@@ -46,18 +50,20 @@ void dom_bindings::observe_location(std::string href, std::string hash) {
     if (on_mutation_) { on_mutation_(); }
 }
 
-// THE REALM HAS ONE EXTERNAL-ROOTS CALLBACK. `set_external_roots` REPLACES
-// rather than appends, so a second dom_bindings registering its own would
-// silently unhook the primary's and the page's own document would be swept on
-// the next collection. The primary therefore walks itself and then every
-// document it has made; a secondary never registers.
+/// Registers this document's GC roots and its weak live-range list with the
+/// realm. Only the primary calls this.
+///
+/// The realm has one external-roots callback: `set_external_roots` replaces
+/// rather than appends, so a second dom_bindings registering its own would
+/// silently unhook the primary's and the page's own document would be swept
+/// on the next collection. The primary therefore walks itself and then every
+/// document it has made; a secondary never registers.
 void dom_bindings::register_roots(context & cx) {
     cx.set_external_roots([this](const context::root_visitor & mark) { mark_roots(mark); });
-    // THE LIVE RANGES ARE WEAK (DOM 5.5: a live range is updated while it
-    // exists, and nothing keeps it existing). As roots, every Range and
-    // NodeIterator a page ever made lived for good and every mutation walked
-    // them all: dom/ranges/Range-surroundContents.html made thousands and
-    // reached the 4 GB cap in 22 seconds.
+    // Live ranges are weak (DOM 5.5): nothing keeps a Range or NodeIterator
+    // alive. Dead ones are pruned after each collection rather than marked.
+    // Marking them leaked every range a page made and made every mutation walk
+    // them all.
     cx.set_weak_prune([this](const context::survives_fn & survives) {
         std::erase_if(live_ranges_, [&](const value & range) { return !survives(range); });
     });
@@ -65,11 +71,13 @@ void dom_bindings::register_roots(context & cx) {
 
 dom_bindings::~dom_bindings() = default;
 
+/// Marks every value only these bindings keep alive, then recurses into each
+/// document this one made.
 void dom_bindings::mark_roots(const context::root_visitor & mark) const {
     for (const listener & l : listeners_.entries()) {
         mark(l.payload.callback);
         mark(l.payload.abort_signal);
-        // A STANDALONE EventTarget can be reachable from nowhere else: a
+        // A standalone EventTarget can be reachable from nowhere else: a
         // page may `new EventTarget()`, register on it and drop the
         // variable, and the listener is then the only reference there is.
         mark(l.payload.host);
@@ -79,20 +87,20 @@ void dom_bindings::mark_roots(const context::root_visitor & mark) const {
         mark(t.window);
         for (const value held : t.arguments) { mark(held); }
     }
-    // A QUEUED FETCH holds the only reference to the promise a page is
+    // A queued fetch holds the only reference to the promise a page is
     // waiting on, and to the signal that may cancel it. Neither is reachable
     // from anywhere else between the call and the turn that settles it.
     for (const pending_fetch & waiting : fetches_) {
         mark(waiting.promise);
         mark(waiting.signal);
     }
-    // A QUEUED IMAGE LOAD holds the only reference to the wrapper whose
+    // A queued image load holds the only reference to the wrapper whose
     // onload will run and to decode()'s promise.
     for (const pending_image & waiting : image_loads_) {
         mark(waiting.target);
         mark(waiting.promise);
     }
-    // A QUEUED READ holds the only reference to the reader whose onload will
+    // A queued read holds the only reference to the reader whose onload will
     // run and to the blob it is reading.
     for (const pending_read & waiting : reads_) {
         mark(waiting.reader);
@@ -111,14 +119,14 @@ void dom_bindings::mark_roots(const context::root_visitor & mark) const {
             if (obj != nullptr) { mark(value::object(obj)); }
         }
     }
-    // Blob.prototype is held here as well as on the global, and the global
-    // is what keeps it alive - but a page can delete a global, and a Blob
-    // whose prototype was collected stops being `instanceof Blob`.
     // A WebGL context object is reachable only from here once the page has
-    // dropped its variable, and getContext must still hand back the same one.
+    // dropped its variable, and getContext must still return the same one.
     for (const auto & [packed, obj] : webgl_objects_) {
         if (obj != nullptr) { mark(value::object(obj)); }
     }
+    // Blob.prototype is held here as well as on the global, which normally
+    // keeps it alive; but a page can delete a global, and a Blob whose
+    // prototype was collected stops being `instanceof Blob`.
     mark(blob_prototype_);
     // The rendering contexts' prototypes: their natives capture the
     // CanvasGradient, CanvasPattern and TextMetrics prototypes by pointer and
@@ -135,11 +143,11 @@ void dom_bindings::mark_roots(const context::root_visitor & mark) const {
     mark(event_target_prototype_);
     mark(abort_signal_prototype_);
     mark(media_query_list_prototype_);
-    // EVERY ANIMATION'S OBJECTS, here and not only in the `retained` list of
-    // an `Animation` interface (sync_animation_roots): a frame document's CSS
-    // animations are made by a style flush whether or not its bindings have
-    // that interface, and their `finished` promises were reachable from
-    // nothing (ASan, 2026-09-26: freed, then read by cancel_record).
+    // Mark every animation's objects here, not only those in an `Animation`
+    // interface's `retained` list (sync_animation_roots). A style flush creates
+    // a frame document's CSS animations even when its bindings lack that
+    // interface. Without this, their `finished` promises were collected and
+    // then read by cancel_record (found by AddressSanitizer).
     for (const animation_record & a : animations_) {
         mark(a.self);
         mark(a.finished);
@@ -155,24 +163,24 @@ void dom_bindings::mark_roots(const context::root_visitor & mark) const {
     mark(css_interface_);
     mark(location_);
     mark(document_);
-    // The proxy traces its own target, so this is belt and braces - but the
+    // The proxy traces its own target, so this is belt and braces, but the
     // two are set in two statements and a collection between them would
     // otherwise sweep the object the proxy is about to point at.
     mark(document_target_);
     mark(window_);
     mark(window_view_);
-    // AND EVERY DOCUMENT THIS ONE MADE, recursively - a document made by a
+    // And every document this one made, recursively: a document made by a
     // document made by the page is still reachable only from here.
     for (const auto & made : secondary_documents_) { made->mark_roots(mark); }
 }
 
-// The parser's question for DOM 4.8 step 3 (dom/document.hpp): does a custom
-// element definition - the page's registry holds them all - disable a shadow
-// root on `host`?
+/// Installs the document's answer to the parser's question for DOM 4.8 step 3
+/// (dom/document.hpp): does a custom element definition (the page's registry
+/// holds them all) disable a shadow root on `host`?
 void dom_bindings::watch_shadow_disabled() {
     if (doc_ == nullptr) { return; }
-    // THE HOOK MAY OUTLIVE THESE BINDINGS - a reload makes new ones over the
-    // same document, and a navigation destroys the document first - so it
+    // The hook may outlive these bindings (a reload makes new ones over the
+    // same document, and a navigation destroys the document first), so it
     // holds a weak token rather than trusting `this`, and nothing here
     // touches the document on the way out.
     doc_->set_shadow_disabled_hook([this, alive = std::weak_ptr<int>{lifetime_}](node_id host) {
@@ -185,6 +193,8 @@ void dom_bindings::watch_shadow_disabled() {
     });
 }
 
+/// Installs the whole page-facing API into `cx`'s global object. The order of
+/// the calls below matters; each constraint is noted where it applies.
 void dom_bindings::install(context & cx) {
     cx_ = &cx;
     watch_shadow_disabled();
@@ -193,16 +203,16 @@ void dom_bindings::install(context & cx) {
     location_ = make_location(cx);
     install_document(cx);
     install_window(cx);
-    // AFTER install_window, which is where `window_` is assigned: this puts
+    // After install_window, which is where `window_` is assigned: this puts
     // `dispatchEvent` on the window object.
     install_event_interfaces(cx);
-    // AFTER install_window: it defines the `window` proxy whose handler falls
+    // After install_window: it defines the `window` proxy whose handler falls
     // back to the globals, which is what makes one bare global answer both
     // `getComputedStyle(el)` and `window.getComputedStyle(el)`.
     install_computed_style(cx);
-    // BEFORE anything that may throw one.
+    // Before anything that may throw a DOMException.
     install_dom_exception(cx);
-    // AFTER both: a signal is an EventTarget and aborts with a DOMException.
+    // After both: a signal is an EventTarget and aborts with a DOMException.
     install_abort(cx);
     install_media_queries(cx);
     install_promise_rejections(cx);
@@ -210,41 +220,35 @@ void dom_bindings::install(context & cx) {
     install_css_interface(cx);
     install_mutation_observer(cx);
     install_range(cx);
-    // AFTER install_css_interface, because the sheet objects throw through
+    // After install_css_interface, because the sheet objects throw through
     // `dom_exception_prototype_` and hang their state off `document_`.
     install_style_sheets(cx);
     install_timers(cx);
     install_image_bitmap(cx);
     install_resources(cx);
     install_navigation(cx);
-    // AND THE INTERFACE OBJECTS, LAST AND EAGERLY.
-    //
-    // `ensure_dom_interfaces` is a no-op until `event_target_prototype_` exists,
-    // which is why it cannot run earlier than this; everything else about it is
-    // lazy, and lazily is not good enough. The ninety interface objects are
-    // GLOBALS - `Text`, `Comment`, `HTMLDivElement`, `NodeList` - and they were
-    // defined on the first `wrap()`, so a page whose first statement was
-    // `new Text("x")` or `x instanceof HTMLDivElement` asked about a name that
-    // did not exist yet and got a TypeError or `false`. A page that had touched
-    // one element first got the right answer. That is the shape of defect that
-    // reads as flakiness, and it was the same one behind `createHTMLDocument`
-    // and `make_live_collection` earlier on this branch.
+    // The interface objects, last and eagerly. ensure_dom_interfaces does
+    // nothing until event_target_prototype_ exists, so it cannot run earlier.
+    // It must run eagerly: the interface objects (`Text`, `HTMLDivElement`,
+    // `NodeList`, ...) are globals. If they were built lazily on the first
+    // wrap(), a page whose first statement is `new Text("x")` or
+    // `x instanceof HTMLDivElement` would get a TypeError or `false`.
     ensure_dom_interfaces(cx);
-    // `Image` IS A LEGACY FACTORY FUNCTION for HTMLImageElement (HTML 4.8.4.1):
-    // its `prototype` is HTMLImageElement.prototype, so `new Image() instanceof
-    // Image` - and every <img> - answers true. Set here, where the interface
-    // prototypes exist.
+    // `Image` is a legacy factory function for HTMLImageElement (HTML
+    // 4.8.4.1): its `prototype` is HTMLImageElement.prototype, so
+    // `new Image() instanceof Image` answers true, as does every <img>. Set
+    // here, where the interface prototypes exist.
     if (const value image = cx.global("Image"); image.is_kind(script::heap_kind::native)) {
         if (const value proto = interface_prototype("HTMLImageElement"); proto.is_object()) {
             static_cast<script::native_object *>(image.as_heap())
                 ->define("prototype", proto, script::attr_none);
         }
     }
-    // AFTER the interface table: `document.getSelection` goes on
+    // After the interface table: `document.getSelection` goes on
     // Document.prototype, which does not exist until ensure_dom_interfaces
     // has built it.
     install_selection(cx);
-    // AFTER the interface table for the same reason: HTMLSlotElement.prototype,
+    // After the interface table for the same reason: HTMLSlotElement.prototype,
     // Element.prototype and ShadowRoot.prototype are where slots and
     // setHTMLUnsafe go.
     install_shadow_dom(cx);
@@ -252,20 +256,13 @@ void dom_bindings::install(context & cx) {
     install_xml_serializer(cx);
 }
 
-// THE HANDLE HAS TO BE ONE OF OURS, and that is what the second half of this
-// checks. `node_id.key()` is a slot and a generation into ONE slab, so the
-// same number names a different node in a different document - and there are
-// two documents now. Reading a foreign wrapper's handle would hand back
-// whatever node happens to sit in that slot HERE, which is exactly the silent
-// wrong answer `createHTMLDocument` was refused over.
-//
-// The test is exact and costs one lookup: a wrapper is ours if and only if OUR
-// table maps its key to THAT object. Nothing is ever erased from `wrappers_`,
-// so a node that has been removed from the tree still answers - which is what
-// a page holding a detached element needs.
-//
-// It also refuses a handle a page FABRICATED. `{__node: 5}` used to name node
-// 5; it now names nothing, which is what it always meant.
+/// Returns the node a wrapper stands for, or an empty id when `v` is not one
+/// of this document's wrappers. node_id keys are slot/generation pairs in one
+/// document's slab, so a wrapper from another document (createHTMLDocument,
+/// a frame) would otherwise name an unrelated node here. A wrapper counts as
+/// ours only if wrappers_ maps its key to that exact object, so an object a
+/// page builds by hand, such as `{__node: 5}`, names nothing. Entries are
+/// never erased, so a detached element still resolves.
 node_id dom_bindings::handle_of(value v) {
     v = unwrap_legacy_proxy(v); // a form's or a select's wrapper is a proxy over this one
     if (!v.is_object()) { return node_id{}; }
@@ -278,6 +275,7 @@ node_id dom_bindings::handle_of(value v) {
     return unpack(packed);
 }
 
+/// The concatenated text of `id` and all its descendants, in tree order.
 std::string dom_bindings::text_of(node_id id) const {
     const auto txn = doc_->read();
     std::string out;
@@ -292,7 +290,7 @@ std::string dom_bindings::text_of(node_id id) const {
 void dom_bindings::set_text(node_id id, std::string text) {
     if (!id) { return; }
     // CharacterData: `textContent = x` on a Text, Comment, CDATA section or PI
-    // sets ITS data - "replace data" - and a DocumentType ignores it. Only an
+    // sets its own data ("replace data"), and a DocumentType ignores it. Only an
     // element or a fragment replaces its children.
     switch (doc_->read().kind(id).value_or(node_kind::element)) {
     case node_kind::text:
@@ -316,9 +314,9 @@ void dom_bindings::set_text(node_id id, std::string text) {
         for (const node_id child : txn.children(id)) { existing.push_back(child); }
     }
     for (const node_id child : existing) { (void)doc_->remove_child(child); }
-    // "String replace all", DOM 4.4: the Text node is made ONLY IF the string
-    // is not empty. `el.textContent = ""` leaves no child, and
-    // `Node-textContent.html` asserts `firstChild` is null afterwards.
+    // "String replace all", DOM 4.4: the Text node is made only if the string
+    // is not empty. `el.textContent = ""` leaves no child, and WPT
+    // Node-textContent.html asserts `firstChild` is null afterwards.
     if (!text.empty()) {
         if (const node_id created = doc_->create_text(text)) {
             (void)doc_->append_child(id, created);
@@ -327,10 +325,13 @@ void dom_bindings::set_text(node_id id, std::string text) {
     mutated();
 }
 
+/// The funnel every native that changes the document calls afterwards: it
+/// drains the document's write log and runs everything that reacts to a
+/// mutation, script-running steps last.
 void dom_bindings::mutated() {
-    // THE MUTATION OBSERVERS FIRST, and from here rather than from each of the 23
-    // natives that change the document: this is the funnel they all already go
-    // through. It costs one branch on a page that never made an observer.
+    // Mutation observers first. This runs here, not in each native that
+    // changes the document, because every such native already calls
+    // mutated(). It costs one branch on a page with no observer.
     // The document's write log, drained once and read twice: the observers'
     // records, then the attribute change steps this engine models.
     const std::vector<document::write_note> writes =
@@ -342,9 +343,9 @@ void dom_bindings::mutated() {
     signal_slot_changes(writes);
     // A "replace all" note is for the mutation it preceded and no other.
     replace_all_.reset();
-    // AN <input> WHOSE TYPE MOVED runs HTML 4.10.5's type-change steps now,
-    // and a `value` attribute those steps carry over is written here - the
-    // store reads under a read transaction and cannot. Guarded, because that
+    // An <input> whose type changed runs HTML 4.10.5's type-change steps now,
+    // and a `value` attribute those steps carry over is written here, because
+    // the store reads under a read transaction and cannot write. Guarded, because that
     // write comes back through this funnel.
     if (forms_ != nullptr && !settling_types_) {
         settling_types_ = true;
@@ -365,26 +366,31 @@ void dom_bindings::mutated() {
     frames_dirty_ = true;
     if (on_mutation_) { on_mutation_(); }
     moved_by_mutation_.clear();
-    // THE TWO THAT RUN SCRIPT, last: an inserted <script>'s post-connection
-    // steps, then the custom element reactions - a connectedCallback may mutate
-    // again and arrive back here - and everything above it is bookkeeping.
+    // The steps that run script go last: an inserted <script>'s
+    // post-connection steps, then the custom element reactions (a
+    // connectedCallback may mutate again and arrive back here). Everything
+    // above is bookkeeping.
     run_inserted_scripts();
-    // ...and the insertion steps of the blank <iframe>s it connected, which a
-    // script of the same insertion that PRECEDED them did not see
+    // Then the insertion steps of the blank <iframe>s it connected, which a
+    // script of the same insertion that preceded them did not see
     // (frames.cpp, connect_inserted_frames).
     connect_inserted_frames(writes);
     react_custom_elements();
 }
 
-// HTML 4.12.1 "prepare the script element", for a script a page inserted:
-// connected, with a src or non-empty text, and not `already started` - which
-// is what leaving the list means. THE BATCH IS TAKEN FIRST: every script the
-// mutation made ready leaves the list before any of them runs, so a script
-// that gives a later one its text arrives back here from that insertion and
-// finds only the later one - which runs nested, ahead of the rest of the
-// batch, and that is the order the post-connection steps have.
-// ponytail: creation order, not tree order - the corpus inserts in the order
-// it creates. Sort by tree position if a page ever depends on it.
+/// HTML 4.12.1 "prepare the script element" for scripts a page inserted: each
+/// one connected, with a src or non-empty text, and not "already started"
+/// (leaving unstarted_scripts_ is what starting means).
+///
+/// The batch is taken first: every script the mutation made ready leaves the
+/// list before any of them runs. So a script that gives a later one its text
+/// arrives back here from that insertion and finds only the later one, which
+/// runs nested, ahead of the rest of the batch; that is the order the
+/// post-connection steps have.
+///
+/// ponytail: scripts run in creation order, not tree order. The test pages
+/// insert scripts in the order they create them. Sort by tree position if a
+/// page ever depends on the difference.
 void dom_bindings::run_inserted_scripts() {
     // A frame's document runs what its scripts insert, in the frame's realm; a
     // document with no browsing context (createHTMLDocument's) runs nothing.
@@ -435,10 +441,10 @@ void dom_bindings::run_inserted_scripts() {
         }
     }
     for (auto & [id, source, src, type] : batch) {
-        // AN EARLIER SCRIPT OF THE BATCH MAY HAVE REMOVED THIS ONE, and a
-        // script that is not connected when its turn comes does not run - it
-        // was never started, so it stays on the list for a later insertion
-        // (later-script-removed-by-earlier-script.html).
+        // An earlier script of the batch may have removed this one. A script
+        // that is not connected when its turn comes does not run; it was never
+        // started, so it goes back on the list for a later insertion (WPT
+        // later-script-removed-by-earlier-script.html).
         {
             const auto txn = doc_->read();
             if (root_of_tree(txn, id, true) != txn.root()) {
@@ -455,14 +461,13 @@ void dom_bindings::run_inserted_scripts() {
         }
         if (type == "module") { continue; }
         if (!src.empty()) {
-            // AN EXTERNAL SCRIPT RUNS IN A LATER TASK (HTML 4.12.1.1 "prepare
+            // An external script runs in a later task (HTML 4.12.1.1 "prepare
             // the script element" step 33: a script-inserted classic script
-            // with a src is fetched and executed "as soon as possible" - after
+            // with a src is fetched and executed "as soon as possible", after
             // the script that inserted it has finished, whether or not the
-            // element is still connected by then). Running it inside the
-            // insertion made `executeExternalScript()` in the fetched file see
-            // the null the page had not yet replaced (Document-prototype-
-            // currentScript.html). Its `load` fires after it ran.
+            // element is still connected by then). WPT
+            // Document-prototype-currentScript.html depends on it. Its `load`
+            // fires after it ran.
             (void)add_timer(
                 native(cx, "external script",
                        [this, id, src](context & c, std::span<value>) {
@@ -474,11 +479,12 @@ void dom_bindings::run_inserted_scripts() {
                                                 bytes.size());
                                execute_script_element(c, id, text);
                            }
-                           // IN THIS TASK, not the next tick's: "execute the
-                           // script element" fires `load` - and a failed fetch
-                           // `error` - as part of the task that ran it, so a
-                           // task queued meanwhile (a rejection notification)
-                           // comes after (promise-resolution-order.html).
+                           // In this task, not the next tick's: "execute the
+                           // script element" fires `load` (or, for a failed
+                           // fetch, `error`) as part of the task that ran it,
+                           // so a task queued meanwhile (a rejection
+                           // notification) comes after (WPT
+                           // promise-resolution-order.html).
                            settle_frame(c, pending_frame{id, !bytes.empty(), true});
                            return value::undefined();
                        }),
@@ -489,33 +495,33 @@ void dom_bindings::run_inserted_scripts() {
     }
 }
 
-// "Execute the script element" (HTML 4.12.1.2) for a classic script's source:
-// `document.currentScript` is the element while it runs - null for one in a
-// shadow tree, which is not in the document tree - and what it was before
-// afterwards; an uncaught throw is reported, and the caller carries on.
+/// "Execute the script element" (HTML 4.12.1.2) for a classic script's
+/// source: `document.currentScript` is the element while it runs (null for one
+/// in a shadow tree, which is not in the document tree) and what it was before
+/// afterwards; an uncaught throw is reported, and the caller carries on.
 void dom_bindings::execute_script_element(context & cx, node_id id, const std::string & source) {
     if (doc_ == nullptr) { return; }
-    // IN THIS DOCUMENT'S REALM - a frame's script declares into the frame's
+    // In this document's realm: a frame's script declares into the frame's
     // globals and reads the frame's `document` (frames.cpp).
     const auto in_realm = enter_realm(cx);
     {
-        // `document.currentScript` is this element while it runs - and while
-        // its parse error is reported - and what it was, the outer script when
-        // there is one, afterwards.
+        // `document.currentScript` is this element while it runs (and while
+        // its parse error is reported), and afterwards what it was before: the
+        // outer script when there is one.
         value outer = value::null();
         if (auto * doc = document_object()) {
             if (const value * had = doc->find("currentScript"); had != nullptr) { outer = *had; }
         }
-        // POST-CONNECTION ORDER, DOM "insert" step 7.7: the post-connection
+        // Post-connection order, DOM "insert" step 7.7: the post-connection
         // steps run per inserted node in tree order, and an <iframe>'s are
-        // what give it a document. So a frame that PRECEDES this script has
-        // one by the time the script runs, and a frame that FOLLOWS it does
-        // not yet - `iframe.contentWindow` is null from inside the script
-        // (Node-appendChild-script-and-iframe.html). The frames before are
+        // what give it a document. So a frame that precedes this script has
+        // one by the time the script runs, and a frame that follows it does
+        // not yet: `iframe.contentWindow` is null from inside the script (WPT
+        // Node-appendChild-script-and-iframe.html). The frames before are
         // loaded here and the lazy reconcile is held off while the script
         // runs; a mutation the script makes re-arms it.
         // ponytail: tree order stands in for insertion order, so a frame an
-        // EARLIER mutation inserted later in the tree is held off too; keep
+        // earlier mutation inserted later in the tree is held off too; keep
         // the batch's own nodes if a page ever shows the difference.
         {
             std::vector<std::pair<node_id, std::string>> preceding;
@@ -571,13 +577,13 @@ void dom_bindings::execute_script_element(context & cx, node_id id, const std::s
         bool threw = false;
         value thrown = value::undefined();
         (void)cx.call_fenced(value::object(entry), {}, cx.global_this(), threw, thrown);
-        // AN UNCAUGHT THROW IS REPORTED AND THE INSERTING SCRIPT CARRIES ON,
-        // exactly as a listener's is - see fire_at for the two ways to fail.
-        // Reported BEFORE currentScript is put back: "run a classic script"
-        // reports the exception inside "execute the script element" step 6,
-        // and step 7 is the restore - so a window.onerror reading
-        // document.currentScript sees the script that threw
-        // (Document.currentScript.html, "script-window-error").
+        // An uncaught throw is reported and the inserting script carries on,
+        // exactly as for a listener; see fire_at for the two ways to fail.
+        // It is reported before currentScript is put back: "run a classic
+        // script" reports the exception inside "execute the script element"
+        // step 6, and step 7 is the restore, so a window.onerror reading
+        // document.currentScript sees the script that threw (WPT
+        // Document.currentScript.html, "script-window-error").
         if (threw || cx.failed()) {
             const context::rooted keep_thrown{cx, thrown};
             const std::string fault =
@@ -594,6 +600,8 @@ void dom_bindings::execute_script_element(context & cx, node_id id, const std::s
     }
 }
 
+/// Installs `alert`, the global `location`, and the document's URL,
+/// `location` and `defaultView` properties.
 void dom_bindings::install_navigation(context & cx) {
     cx.define_native("alert", [this](context & c, std::span<value> args) {
         const std::string message = arg_string(c, args, 0);
@@ -601,60 +609,46 @@ void dom_bindings::install_navigation(context & cx) {
         return value::undefined();
     });
     cx.define_global("location", location_);
-    // `document.location` and `window.location` are the SAME object as the
-    // global one, not three copies - a page reads whichever it learned, and
+    // `document.location` and `window.location` are the same object as the
+    // global one, not three copies: a page reads whichever it learned, and
     // they have to agree.
     if (auto * doc = document_object()) {
         define_location_property(cx, *doc);
         // `document.URL`, `documentURI` and `baseURI` are the same string as
-        // location.href and are set beside it so they cannot drift. Three
-        // spellings because three specifications named it: URL is HTML's,
-        // documentURI is the DOM's, and baseURI is what a relative link is
-        // resolved against - which is the document's URL here, there being no
-        // <base> support to move it.
+        // location.href and are set beside it so they cannot drift.
+        // ponytail: baseURI should be the document base URL, which a <base>
+        // element moves; it ignores <base> here although link resolution
+        // honours it (document_base_url). Use that if a page needs it.
         for (const char * name : {"URL", "documentURI", "baseURI"}) {
             doc->set(name, cx.string(location_href_));
         }
-        // `document.defaultView` IS THE WINDOW, and it has to be the PROXY -
-        // the same object `window` and `self` name - rather than the object
-        // behind it. A page compares the two by identity, and a second window
-        // object that answered the same questions would still fail
-        // `document.defaultView === window`.
-        //
-        // MEASURED, and it is worth the note because the failure was nowhere
-        // near the cause. `assert_throws_dom` takes an optional DOMException
-        // CONSTRUCTOR as its second argument so a test can say which global the
-        // exception must have come from, and `Document-createElementNS.html`
-        // passes `doc.defaultView.DOMException` for every one of its throwing
-        // cases. With defaultView undefined that argument was undefined, so
-        // testharness took its no-constructor branch, treated the undefined as
-        // the FUNCTION to call, and reported 110 assertions as "threw an object
-        // that is not a DOMException" - a message about the exception, from a
-        // test that had not yet called anything.
-        //
-        // Set here rather than in install_document because the window proxy
-        // does not exist until install_window has run, and install_navigation
-        // is the first thing after it that already reaches for both.
+        // document.defaultView must be the window proxy, the same object
+        // `window` and `self` name, because pages compare them by identity.
+        // testharness's assert_throws_dom reads `doc.defaultView.DOMException`,
+        // so a missing defaultView fails every DOMException assertion with a
+        // misleading message. Set here because the proxy exists only after
+        // install_window.
         doc->set("defaultView", cx.global("window"));
     }
     if (auto * window = window_object()) { define_location_property(cx, *window); }
 }
 
-// THE LOCATION OBJECT, HTML 7.2.4 - this document's, over its URL. Every
-// member is [LegacyUnforgeable], so an OWN, non-configurable property of the
-// object rather than a prototype's: the getters read the document's address
-// as it is now, so a navigation is seen without the object being rewritten.
-//
-// THE SETTERS NAVIGATE ("Location-object navigate"). `href`, assign() and
-// replace() parse the new URL against the ENTRY document's base URL - the
-// realm the calling script runs in - and a failure is a SyntaxError; the
-// part setters edit a copy of this URL. What differs from the current URL
-// only in its fragment is a fragment navigation, here: the address moves,
-// `:target` follows, and `hashchange` fires on a later task when the fragment
-// changed. Anything else navigates this document's navigable - a frame's
-// <iframe>, planned with the rest (bindings/frames.cpp, navigate_frame).
-// ponytail: the TOP-LEVEL page is the embedder's to navigate, and a script
-// cannot ask it to yet; such a navigation is dropped, as it always was.
+/// Builds this document's Location object (HTML 7.2.4) over its URL. Every
+/// member is [LegacyUnforgeable], so an own, non-configurable property of the
+/// object rather than a prototype's: the getters read the document's address
+/// as it is now, so a navigation is seen without the object being rewritten.
+///
+/// The setters navigate ("Location-object navigate"). `href`, assign() and
+/// replace() parse the new URL against the entry document's base URL (the
+/// realm the calling script runs in), and a failure is a SyntaxError; the
+/// part setters edit a copy of this URL. A URL that differs from the current
+/// one only in its fragment is a fragment navigation, handled here: the
+/// address moves, `:target` follows, and `hashchange` fires on a later task
+/// when the fragment changed. Anything else navigates this document's
+/// navigable, a frame's <iframe> (bindings/frames.cpp, navigate_frame).
+/// ponytail: a script cannot navigate the top-level page, which belongs to
+/// the embedder, so such a navigation is dropped. Route it to the embedder if
+/// a page needs it.
 value dom_bindings::make_location(context & cx) {
     auto * loc = cx.allocate<script::object_object>();
     constexpr std::uint8_t unforgeable = script::attr_enumerable;
@@ -665,8 +659,8 @@ value dom_bindings::make_location(context & cx) {
             std::string_view{location_href_}.substr(0, location_href_.find('#'));
         if (hash != std::string::npos && !location_href_.empty() &&
             std::string_view{url}.substr(0, hash) == current) {
-            // NAVIGATE TO A FRAGMENT (7.4.2.3.3): synchronous, and `hashchange`
-            // a task later when the fragment moved.
+            // Navigate to a fragment (HTML 7.4.2.3.3). This is synchronous,
+            // and `hashchange` fires a task later if the fragment changed.
             const std::string old_url = location_href_;
             const std::size_t old_mark = old_url.find('#');
             const std::optional<std::string> old_fragment =
@@ -734,9 +728,9 @@ value dom_bindings::make_location(context & cx) {
             return c.string(origin.empty() ? "null" : origin);
         },
         nullptr);
-    // THE PARTS: each getter a piece of the address, each setter the URL
-    // Standard's setter over a copy of it (6.1, set_url_part) - then the
-    // navigation. `hash` is the one a page writes most, and the fragment
+    // The URL parts: each getter is a piece of the address, each setter the
+    // URL Standard's setter (URL 6.1, set_url_part) over a copy of it,
+    // followed by the navigation. `hash` is the one a page writes most, and the fragment
     // navigation above is what it does.
     struct part {
         const char * name;
@@ -762,8 +756,8 @@ value dom_bindings::make_location(context & cx) {
                 std::optional<url_record> copy = parse_url(location_href_);
                 if (!copy) { return value::undefined(); }
                 if (which == url_part::hash) {
-                    // Location's own steps: the fragment is SET, never nulled
-                    // - `location.hash = ""` goes to `#` - and a fragment that
+                    // Location's own steps: the fragment is set, never nulled
+                    // (`location.hash = ""` goes to `#`), and a fragment that
                     // did not change navigates nowhere.
                     const std::optional<std::string> before = copy->fragment;
                     (void)set_url_part(*copy, url_part::hash, given.empty() ? "#" : given);
@@ -816,10 +810,11 @@ value dom_bindings::make_location(context & cx) {
     return value::object(loc);
 }
 
-// `window.location` and `document.location`: [PutForwards=href], so an
-// ACCESSOR whose setter is `location.href = v` - `frame.contentWindow.location
-// = url` navigates the frame (and throws a SyntaxError for a URL that does not
-// parse) rather than replacing the property with a string.
+/// Defines `location` on `holder` (the window or the document) as
+/// [PutForwards=href]: an accessor whose setter is `location.href = v`. So
+/// `frame.contentWindow.location = url` navigates the frame (and throws a
+/// SyntaxError for a URL that does not parse) rather than replacing the
+/// property with a string.
 void dom_bindings::define_location_property(context & cx, script::object_object & holder) {
     holder.define_accessor(
         "location",
@@ -834,15 +829,17 @@ void dom_bindings::define_location_property(context & cx, script::object_object 
         script::attr_enumerable);
 }
 
-// THE TARGET, not the proxy. Everything in these bindings that writes a
-// property on the document goes through here, and a write to the proxy would
-// be a write to a `set` trap that does not exist. See the two members.
+/// The document object behind the named-access proxy, not the proxy.
+/// Everything in these bindings that writes a property on the document goes
+/// through here; the proxy has no `set` trap to take the write. See the
+/// document_ and document_target_ members.
 script::object_object * dom_bindings::document_object() {
     return document_target_.is_object()
                ? static_cast<script::object_object *>(document_target_.as_heap())
                : nullptr;
 }
 
+/// The window object, or null before install_window.
 script::object_object * dom_bindings::window_object() {
     return window_.is_object() ? static_cast<script::object_object *>(window_.as_heap()) : nullptr;
 }

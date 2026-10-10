@@ -1,13 +1,21 @@
+//===- view_geometry.hpp - Element view geometry helpers --------*- C++ -*-===//
+//
+// Small helpers shared by the element view accessors (views.cpp,
+// style_views.cpp): IDL-to-CSS property name conversion and the "is this an
+// inline box" test that CSSOM View's client metrics depend on.
+//
+//===----------------------------------------------------------------------===//
 #pragma once
 #include "internal.hpp"
 
 namespace ctbrowser::shell::detail {
-// `backgroundColor` -> `background-color`; the conversion lives with the property
-// table, see declarations.cpp.
+/// `backgroundColor` -> `background-color`; defined beside the property table in
+/// lib/Style/css/properties/table.cpp.
 using style::css::css_name_of;
 
-// An INLINE box in §7's sense - `display: inline` - and not an inline-level
-// block or replaced box, which have client edges of their own.
+/// True for an inline box as CSSOM View §7 uses the term (`display: inline`).
+/// Inline-level blocks and replaced boxes are excluded because they have their
+/// own client edges.
 [[nodiscard]] inline bool is_inline_box(const layout::fragment & f) noexcept {
     return f.box != nullptr && f.box->kind == layout::box_kind::inline_;
 }

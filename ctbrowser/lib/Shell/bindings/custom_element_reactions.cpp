@@ -1,3 +1,11 @@
+//===- bindings/custom_element_reactions.cpp - CE reactions -----*- C++ -*-===//
+//
+// Custom element reactions (HTML 4.13.6). After each DOM mutation the tree is
+// scanned to queue upgrades and connected, disconnected, adopted,
+// attributeChanged and form callbacks, which are then drained one element
+// queue at a time.
+//
+//===----------------------------------------------------------------------===//
 #include <ctbrowser/shell/bindings.hpp>
 
 #include <algorithm>
@@ -13,8 +21,8 @@ namespace ctbrowser::shell {
 namespace {
 constexpr std::size_t npos = std::numeric_limits<std::size_t>::max();
 
-// The definition's lifecycle callback for a reaction kind - undefined for the
-// upgrade, which is not a callback.
+/// The definition's lifecycle callback for a reaction kind; undefined for an
+/// upgrade, which is not a callback.
 [[nodiscard]] value callback_for(const binding_detail::custom_element_definition & def,
                                  binding_detail::custom_element_reaction::kind what) {
     using kind = binding_detail::custom_element_reaction::kind;
@@ -33,13 +41,13 @@ constexpr std::size_t npos = std::numeric_limits<std::size_t>::max();
 }
 } // namespace
 
-// --- the scan ----------------------------------------------------------------------
+// The scan.
 
 void dom_bindings::walk_custom_elements(const read_txn & txn, node_id start, bool connected,
                                         bool upgrade, flat_map<std::uint64_t, bool> & roots_seen) {
     struct frame {
         node_id at;
-        bool moved; // an ancestor changed parent while connected
+        bool moved; // An ancestor changed parent while connected.
     };
     const std::vector<custom_element_definition> & defs = primary().custom_definitions_;
     const auto observed = [](const custom_element_definition & def, std::string_view name) {
@@ -48,8 +56,7 @@ void dom_bindings::walk_custom_elements(const read_txn & txn, node_id start, boo
         }
         return false;
     };
-    // The observed attributes as they are now, diffed against `was`.
-    // THE LOCAL NAME is what observedAttributes names and what the callback
+    // The local name is what observedAttributes names and what the callback
     // receives: `svg:title` in a namespace is the attribute `title`.
     const auto local_name = [this](const attribute & held) {
         const std::string_view qualified = atoms_->text(held.name);
@@ -60,10 +67,12 @@ void dom_bindings::walk_custom_elements(const read_txn & txn, node_id start, boo
     const auto same = [](const attribute & a, const attribute & b) {
         return a.name == b.name && a.ns == b.ns;
     };
-    // QUIET brings the snapshot up to date and enqueues nothing: an element
-    // that is not yet custom has no reactions (HTML 4.13.6, "if element is
-    // custom"), and neither does a definition with no attributeChangedCallback
-    // (step 4 of "enqueue a custom element callback reaction").
+    // Diffs the observed attributes as they are now against the snapshot in
+    // `state`. `quiet` brings the snapshot up to date and enqueues nothing:
+    // an element that is not yet custom has no reactions (HTML 4.13.6, "if
+    // element is custom"), and neither does a definition with no
+    // attributeChangedCallback (step 4 of "enqueue a custom element callback
+    // reaction").
     const auto diff_attributes = [&](const custom_element_definition & def,
                                      custom_element_state & state, node_id at, bool quiet) {
         if (def.observed_attributes.empty()) { return; }
@@ -77,9 +86,9 @@ void dom_bindings::walk_custom_elements(const read_txn & txn, node_id start, boo
             for (const attribute & old : state.attributes) {
                 if (same(old, held)) { before = &old.value; }
             }
-            // THE SAME VALUE WRITTEN AGAIN is a change too (HTML 4.13.6, "attribute
-            // changed" runs for every set): the write log said so, the diff
-            // cannot - see note_attribute_writes.
+            // The same value written again is a change too (HTML 4.13.6,
+            // "attribute changed" runs for every set). The diff cannot see
+            // that; the write log can (see note_attribute_writes).
             bool rewritten = false;
             if (before != nullptr && *before == held.value) {
                 if (const auto noted = written_attributes_.find(at.key());
@@ -120,7 +129,7 @@ void dom_bindings::walk_custom_elements(const read_txn & txn, node_id start, boo
     };
     const auto enqueue = [this, &defs](node_id at, std::size_t definition,
                                        custom_element_reaction::kind what) {
-        // No callback, no reaction - and the element is not put on the
+        // No callback, no reaction, and the element is not put on the
         // element queue, so what it already has pending waits where it is.
         if (what != custom_element_reaction::kind::upgrade &&
             !callback_for(defs[definition], what).is_callable()) {
@@ -134,7 +143,7 @@ void dom_bindings::walk_custom_elements(const read_txn & txn, node_id start, boo
     };
     using kind = binding_detail::custom_element_reaction::kind;
     // HTML 4.13.7.2: a form-associated element's form owner and disabledness,
-    // diffed - formAssociatedCallback(form) when the owner changes (the
+    // diffed: formAssociatedCallback(form) when the owner changes (the
     // "reset the form owner" steps), formDisabledCallback(disabled) when
     // the `disabled` attribute or a <fieldset> ancestor changes it.
     const auto diff_form = [&](const custom_element_definition & def, custom_element_state & state,
@@ -166,8 +175,8 @@ void dom_bindings::walk_custom_elements(const read_txn & txn, node_id start, boo
     while (!pending.empty()) {
         const frame here = pending.back();
         pending.pop_back();
-        // Below the node moveBefore moved - a plain host whose shadow tree
-        // holds the custom element, say - everything moved with it
+        // Below the node moveBefore moved (say, a plain host whose shadow tree
+        // holds the custom element), everything moved with it
         // (custom-element-move-reactions.html, "nested within a shadow root").
         bool moved = here.moved || (moving_ && here.at && here.at == move_root_);
         node_id shadow;
@@ -177,15 +186,15 @@ void dom_bindings::walk_custom_elements(const read_txn & txn, node_id start, boo
             const std::uint64_t key = here.at.key();
             const auto found = custom_elements_.find(key);
             if (found == custom_elements_.end() && upgrade) {
-                // In the element's own registry - and for upgrade(root) and
-                // initialize(root), only when that registry is the caller.
+                // In the element's own registry, and for upgrade(root) and
+                // initialize(root) only when that registry is the caller.
                 const std::size_t index = custom_definition_for(txn, here.at, connected);
                 if (index != npos &&
                     (upgrade_filter_ == nullptr || defs[index].registry == upgrade_filter_)) {
                     // "Upgrade an element", HTML 4.13.5, queued: its
                     // attributeChangedCallbacks and connectedCallback are
-                    // enqueued when it RUNS (run_upgrade), from the element
-                    // as it is then; until that the snapshot just follows.
+                    // enqueued when it runs (run_upgrade), from the element
+                    // as it is then; until then the snapshot just follows.
                     const custom_element_definition & def = defs[index];
                     custom_element_state state;
                     state.definition = index;
@@ -203,21 +212,21 @@ void dom_bindings::walk_custom_elements(const read_txn & txn, node_id start, boo
                 custom_element_state & state = found->second;
                 state.seen = scan_generation_;
                 if (state.state != custom_element_state::status::failed) {
-                    // ONLY A CUSTOM ELEMENT REACTS. One whose upgrade is
+                    // Only a custom element reacts. One whose upgrade is
                     // queued or whose constructor is running is not custom
-                    // yet: what is done to it - `this.remove()` in its own
-                    // constructor, another element's constructor setting
-                    // its attributes - enqueues nothing, and its upgrade
-                    // reads it as it is (custom-element-reaction-queue.html).
+                    // yet: what is done to it (`this.remove()` in its own
+                    // constructor, another element's constructor setting its
+                    // attributes) enqueues nothing, and its upgrade reads it
+                    // as it is (custom-element-reaction-queue.html).
                     const bool quiet = state.state != custom_element_state::status::custom;
                     const custom_element_definition & def = defs[state.definition];
                     const node_id parent = txn.parent(here.at);
                     moved = moved || (connected && state.connected && parent != state.parent);
                     if (quiet) {
-                        // ...but one that becomes CONNECTED is tried again -
-                        // the insertion steps' "try to upgrade", a second
-                        // upgrade reaction - which puts it on this element
-                        // queue: its pending upgrade runs now, inside the
+                        // One that becomes connected is tried again (the
+                        // insertion steps' "try to upgrade", a second upgrade
+                        // reaction), which puts it on this element queue:
+                        // its pending upgrade runs now, inside the
                         // native that connected it (upgrading.html's
                         // "infinite constructor recursion with appendChild").
                         if (!state.connected && connected &&
@@ -246,8 +255,8 @@ void dom_bindings::walk_custom_elements(const read_txn & txn, node_id start, boo
                 }
             }
         }
-        // SHADOW-INCLUDING TREE ORDER: a host's shadow tree comes before its
-        // own children. Pushed last so it is popped first.
+        // Shadow-including tree order: a host's shadow tree comes before its
+        // own children. It is pushed last so it is popped first.
         const std::span<const node_id> children = txn.children(here.at);
         for (std::size_t i = children.size(); i-- > 0;) {
             pending.push_back(frame{children[i], moved});
@@ -281,31 +290,28 @@ void dom_bindings::scan_custom_elements() {
     ++scan_generation_;
     flat_map<std::uint64_t, bool> roots_seen;
     const bool upgrade = may_upgrade();
-    // THE SHADOW-INCLUDING WALK crosses every shadow tree of a connected host.
+    // The shadow-including walk crosses every shadow tree of a connected host.
     // A shadow tree whose host is detached is a detached subtree: nothing in
     // it is upgraded until it connects, and what is tracked in it is walked
-    // below like any other loose element - so the shadow roots are not
+    // below like any other loose element, so the shadow roots are not
     // enumerated here (a page can hold 100,000 of them).
     walk_custom_elements(txn, txn.root(), true, upgrade, roots_seen);
-    // WHAT NO ROOT REACHED IS DETACHED - AND IS STILL A CUSTOM ELEMENT.
+    // Tracked elements no root reached are detached, and are still custom
+    // elements. A disconnected element's reactions do not stop:
+    // `el.setAttribute(...)` on one a page made and has not inserted still
+    // runs attributeChangedCallback (most of custom-elements/reactions/*
+    // tests exactly this). Walking it with connected=false does both the
+    // disconnect and the attribute diff through the same code a connected
+    // element goes through.
     //
-    // A disconnected element's reactions do not stop: `el.setAttribute(...)`
-    // on one a page made and has not inserted still runs
-    // attributeChangedCallback, and that is most of what
-    // custom-elements/reactions/* measures - every one of those files creates
-    // its element, mutates it, and reads the log before anything is in the
-    // document. Walking it with connected=false does both halves at once, the
-    // disconnect and the attribute diff, through the same code a connected one
-    // goes through.
-    //
-    // THE KEYS ARE COLLECTED FIRST: an upgrade inside a detached subtree
+    // The keys are collected first: an upgrade inside a detached subtree
     // inserts into this map, and a flat_map rehashes under an iterator.
     //
-    // AND ONLY THE ONES THAT CAN SAY SOMETHING: a detached element that was
+    // Only elements in loose_watch_ are walked: a detached element that was
     // already detached, observes no attribute and is not form-associated has
-    // no reaction left to make until it connects - and a page that keeps
-    // 100,000 of them (ElementInternals-target-element-is-held-strongly)
-    // pays a walk of each on every mutation otherwise.
+    // no reaction to make until it connects, and a page that keeps 100,000 of
+    // them (ElementInternals-target-element-is-held-strongly) would otherwise
+    // pay a walk of each on every mutation.
     std::vector<node_id> loose;
     for (const auto & [key, watched] : loose_watch_) {
         const auto held = custom_elements_.find(key);
@@ -313,9 +319,9 @@ void dom_bindings::scan_custom_elements() {
             loose.push_back(unpack(key));
         }
     }
-    // IN TREE ORDER where it matters: one whose ancestor is loose too is left
-    // to that ancestor's walk, so a removed parent's disconnectedCallback is
-    // queued ahead of its child's - the map's own order is a hash's.
+    // Tree order where it matters: an element whose ancestor is loose too is
+    // left to that ancestor's walk, so a removed parent's disconnectedCallback
+    // is queued ahead of its child's (the map's own order is a hash's).
     flat_map<std::uint64_t, bool> loose_set;
     for (const node_id at : loose) { loose_set.emplace(at.key(), true); }
     for (const node_id at : loose) {
@@ -326,8 +332,8 @@ void dom_bindings::scan_custom_elements() {
         }
         if (!covered) { walk_custom_elements(txn, at, false, false, roots_seen); }
     }
-    // A node whose WRAPPER LEFT WITH IT - `node_from` adopted it into another
-    // document and rebound the page's object to the copy - is that
+    // A node whose wrapper left with it (`node_from` adopted it into another
+    // document and rebound the page's object to the copy) is that
     // document's custom element now: its state moves over, and the adopting
     // steps (HTML 4.13.6) enqueue adoptedCallback there, after the
     // disconnectedCallback the walk above queued here.
@@ -346,9 +352,9 @@ void dom_bindings::scan_custom_elements() {
                 bool noted = false;
                 for (const auto & [other, from] : adoptees_) { noted = noted || other == now; }
                 if (!noted) { adoptees_.emplace_back(now, now->custom_reactions_.size()); }
-                // THE ELEMENT'S REACTION QUEUE GOES WITH IT: what it still has
-                // pending here - a connectedCallback its adopter's own callback
-                // interrupted - is ahead of adoptedCallback in the one queue
+                // The element's reaction queue goes with it: what it still has
+                // pending here (a connectedCallback its adopter's own callback
+                // interrupted) is ahead of adoptedCallback in the one queue
                 // an element has, and runs first when the adoption drains it.
                 // With no adoptedCallback nothing is enqueued, the element
                 // joins no element queue, and what it has pending stays where
@@ -384,10 +390,10 @@ void dom_bindings::scan_custom_elements() {
         loose_watch_.erase(key);
         custom_elements_.erase(it);
     }
-    // A node that is GONE, rather than merely detached, is forgotten - swept
-    // when the map has doubled since the last sweep, not on every mutation:
-    // a stale entry costs a hash slot and nothing else (a slot reused by a
-    // new node has a new generation, so a new key).
+    // A node that is gone, rather than merely detached, is forgotten. Entries
+    // are swept when the map has doubled since the last sweep, not on every
+    // mutation: a stale entry costs a hash slot and nothing else (a slot
+    // reused by a new node has a new generation, so a new key).
     if (custom_elements_.size() >= sweep_at_) {
         for (auto it = custom_elements_.begin(); it != custom_elements_.end();) {
             if (it->second.seen != scan_generation_ && !txn.contains(unpack(it->first))) {
@@ -402,7 +408,7 @@ void dom_bindings::scan_custom_elements() {
 }
 
 void dom_bindings::watch_loose(std::uint64_t key, const custom_element_state & state) {
-    // What a DETACHED element can still say: disconnectedCallback if it was
+    // What a detached element can still say: disconnectedCallback if it was
     // connected, attributeChangedCallback if it observes anything, and the
     // form callbacks if it is form-associated. One that can say nothing is
     // not walked until it connects.
@@ -418,15 +424,16 @@ void dom_bindings::run_upgrade(context & cx, std::size_t index, node_id target, 
     dom_bindings & reg = primary();
     const auto found = custom_elements_.find(target.key());
     if (found == custom_elements_.end()) { return; }
-    // Step 1: only an element that is not yet custom upgrades - and one whose
-    // constructor is RUNNING (it is on the construction stack; the
+    // "Upgrade an element" (HTML 4.13.5) step 1: only an element that is not
+    // yet custom upgrades, and one whose constructor is running (it is on the
+    // construction stack; the
     // specification marks it "failed" for the duration) is not upgraded
     // again by a reaction its own constructor caused.
     if (found->second.state != custom_element_state::status::precustomized) { return; }
     for (const auto & entry : reg.custom_definitions_[index].construction_stack) {
         if (entry.element == target) { return; }
     }
-    // Steps 5 and 6, from the element AS IT IS NOW rather than as it was
+    // Steps 5 and 6, from the element as it is now rather than as it was
     // when the upgrade was queued: attributeChangedCallback for each observed
     // attribute in the attribute list, in order, then connectedCallback if it
     // is connected. The reactions follow the upgrade in the element's queue,
@@ -469,8 +476,8 @@ void dom_bindings::run_upgrade(context & cx, std::size_t index, node_id target, 
     }
     bool threw = false;
     value thrown = value::undefined();
-    // 8.1: a definition that disabled shadow roots refuses an element that
-    // already has one.
+    // Step 8.1: a definition that disables shadow roots refuses an element
+    // that already has one.
     if (reg.custom_definitions_[index].disable_shadow && shadow_root_of(target)) {
         threw = true;
         thrown = make_dom_exception(cx, "NotSupportedError",
@@ -478,8 +485,8 @@ void dom_bindings::run_upgrade(context & cx, std::size_t index, node_id target, 
                                     "disables shadow");
     } else {
         reg.custom_definitions_[index].construction_stack.push_back({target, false});
-        // COPIED OUT: the constructor may define another element and grow
-        // the vector under a reference.
+        // Copied out: the constructor may define another element and grow the
+        // vector under a reference.
         const value constructor = reg.custom_definitions_[index].constructor;
         const value made =
             cx.call_fenced(constructor, {}, wrapper, threw, thrown, /*constructing*/ true);
@@ -490,9 +497,9 @@ void dom_bindings::run_upgrade(context & cx, std::size_t index, node_id target, 
             threw = true;
             thrown = cx.make_error("Error", cx.take_error());
         }
-        // 8.4: the constructor must have answered THIS element - a class body
-        // that returns some other object did not construct it, and one that
-        // never reached `super()` left `this` uninitialised.
+        // Step 8.4: the constructor must have produced this element. A class
+        // body that returns some other object did not construct it, and one
+        // that never reached `super()` left `this` uninitialised.
         if (!threw && ((made.is_object_like() && made.bits() != wrapper.bits()) || !constructed)) {
             threw = true;
             thrown = cx.make_error("TypeError", constructed
@@ -520,12 +527,12 @@ void dom_bindings::run_upgrade(context & cx, std::size_t index, node_id target, 
         return;
     }
     again->second.state = custom_element_state::status::custom;
-    // Step 11: a form-associated element resets its form owner - and says so,
+    // Step 11: a form-associated element resets its form owner and says so:
     // formAssociatedCallback with the form it has, formDisabledCallback when
     // it is disabled.
     const custom_element_definition & def = reg.custom_definitions_[index];
     if (def.form_associated) {
-        // ...and is a form control now: `form.elements` and the other live
+        // It is a form control now, so `form.elements` and the other live
         // collections cached by version must see it (form-elements-namedItem).
         doc_->note_unversioned_change();
         custom_element_state & state = again->second;
@@ -553,21 +560,22 @@ void dom_bindings::run_upgrade(context & cx, std::size_t index, node_id target, 
 
 void dom_bindings::flush_custom_element_reactions(std::size_t from) {
     context & cx = *cx_;
-    // HTML 4.13.6's "invoke custom element reactions" over an ELEMENT QUEUE:
-    // the elements enqueued by this [CEReactions] native - the reactions at
-    // `from` and after, in the order they were first enqueued - and for each
-    // of them EVERY reaction its own queue holds, wherever it sits in the
+    // HTML 4.13.6's "invoke custom element reactions" over an element queue:
+    // the elements enqueued by this [CEReactions] native (the reactions at
+    // `from` and after, in the order they were first enqueued), and for each
+    // of them every reaction its own queue holds, wherever it sits in the
     // vector. A native re-entered from a callback (a `define()` or a
     // setAttribute inside a constructor) pushes its own element queue: it
-    // runs the pending reactions of what IT touched, pending ones included,
-    // and leaves the rest of the outer queue for the outer pop.
+    // runs the pending reactions of what it touched, and leaves the rest of
+    // the outer queue for the outer pop.
     //
-    // THE FLOORS ARE A STACK: a nested pop that takes a pending reaction from
+    // The floors are a stack: a nested pop that takes a pending reaction from
     // below an outer floor shifts the outer's region down, and the floor
     // moves with it, so nothing an outer native enqueued is skipped.
     //
-    // ONE ELEMENT'S WHOLE QUEUE BEFORE THE NEXT ELEMENT'S, the reactions its
-    // own upgrade adds included (4.13.6: "repeat until reactions is empty").
+    // One element's whole queue runs before the next element's, including
+    // the reactions its own upgrade adds (4.13.6: "repeat until reactions is
+    // empty").
     reaction_floors_.push_back(from);
     const std::size_t level = reaction_floors_.size() - 1;
     node_id element;
@@ -599,7 +607,7 @@ void dom_bindings::flush_custom_element_reactions(std::size_t from) {
             run_upgrade(cx, reaction.definition, reaction.target, wrapper);
             continue;
         }
-        // COPIED OUT: a callback may define another element and grow the
+        // Copied out: a callback may define another element and grow the
         // vector under a reference.
         const custom_element_definition def = primary().custom_definitions_[reaction.definition];
         value callback = value::undefined();
@@ -632,10 +640,9 @@ void dom_bindings::flush_custom_element_reactions(std::size_t from) {
         case kind::form_reset: callback = def.form_reset; break;
         }
         if (!callback.is_callable()) { continue; }
-        // FENCED, so one callback's throw is reported and the next still
-        // runs: `call` from a native parks the throw and refuses every later
-        // call from the same native, which is the opposite of what
-        // with-exceptions.html measures.
+        // Fenced, so one callback's throw is reported and the next still runs:
+        // a plain `call` from a native parks the throw and refuses every later
+        // call from the same native, which with-exceptions.html forbids.
         const context::rooted_values keep_args{cx, args};
         bool threw = false;
         value thrown = value::undefined();
@@ -649,10 +656,10 @@ void dom_bindings::flush_custom_element_reactions(std::size_t from) {
     reaction_floors_.pop_back();
 }
 
-// THE ATTRIBUTE WRITES OF THIS MUTATION, from the document's write log (the one
-// mutated() drains): which attributes of which tracked element were SET, so
-// that the scan's diff - which sees values, not writes - still enqueues
-// attributeChangedCallback for a value written over itself.
+/// Records the attribute writes of this mutation, from the document's write
+/// log (the one mutated() drains): which attributes of which tracked element
+/// were set, so the scan's diff, which sees values rather than writes, still
+/// enqueues attributeChangedCallback for a value written over itself.
 void dom_bindings::note_attribute_writes(const std::vector<document::write_note> & writes) {
     if (custom_elements_.empty()) { return; }
     for (const document::write_note & note : writes) {
@@ -673,7 +680,7 @@ void dom_bindings::react_custom_elements() {
     scan_custom_elements();
     written_attributes_.clear();
     flush_custom_element_reactions(from);
-    // The adopting steps' reactions run in the ADOPTING document's turn, which
+    // The adopting steps' reactions run in the adopting document's turn, which
     // may have no mutation of its own coming (document.adoptNode alone).
     while (!adoptees_.empty()) {
         const auto [other, other_from] = adoptees_.back();

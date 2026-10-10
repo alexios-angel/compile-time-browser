@@ -1,3 +1,11 @@
+//===- text_selection.cpp - Text control selection API --------------------===//
+//
+// The HTML text selection API (HTML 4.10.19.5) on <textarea> and text-like
+// <input>: selectionStart/End/Direction, setSelectionRange, select and
+// setRangeText. Section numbers in this file refer to the HTML standard.
+//
+//===----------------------------------------------------------------------===//
+
 #include "helpers.hpp"
 
 namespace ctbrowser::shell {
@@ -6,11 +14,10 @@ using namespace input_types;
 
 void dom_bindings::install_control_text_selection(context & cx) {
     const control_helpers helpers{this};
-    // --- the selection API, HTML 4.10.19.5 --------------------------------------------
-    //
-    // On a textarea and on an input of a text-like type. The store keeps the
-    // caret and the anchor as byte offsets into the UTF-8 value; the API
-    // speaks UTF-16 code units, and `direction` is a slot on the wrapper.
+    // The selection API applies to a textarea and to an input of a text-like
+    // type. The store keeps the caret and the anchor as byte offsets into the
+    // UTF-8 value; the API speaks UTF-16 code units, and `direction` is a slot
+    // on the wrapper.
     const auto selection_applies = [helpers](const read_txn & txn, dom_bindings * b, node_id id) {
         if (helpers.is(txn, id, "textarea")) { return true; }
         if (!helpers.is(txn, id, "input")) { return false; }
@@ -19,7 +26,7 @@ void dom_bindings::install_control_text_selection(context & cx) {
                type == "password";
     };
     struct text_selection {
-        std::size_t start = 0; // code units
+        std::size_t start = 0; // UTF-16 code units, like `end`.
         std::size_t end = 0;
         std::string direction = "none";
     };
@@ -257,13 +264,14 @@ void dom_bindings::install_control_text_selection(context & cx) {
                     if (old_end > start && old_end < end) { e = new_end; }
                 }
                 {
-                    // The value, with the selection LEFT WHERE IT WAS: the
-                    // replacement itself moves no boundary (HTML 4.10.19.7
+                    // Store the value with the selection left where it was:
+                    // the replacement itself moves no boundary (HTML 4.10.19.7
                     // step 12 sets the range afterwards), so `select` fires
                     // only when that range differs from the one before the
-                    // call - a second identical setRangeText fires nothing
-                    // (select-event.html). store_value would have put the
-                    // caret at the end and made every call a change.
+                    // call, and a second identical setRangeText fires nothing
+                    // (WPT select-event.html). store_value is not used
+                    // because it would put the caret at the end and make
+                    // every call a change.
                     const auto txn = b->doc_->read();
                     control_state & held = b->forms_->state_of(txn, *b->atoms_, id);
                     const std::size_t caret = std::min(held.caret, text.size());

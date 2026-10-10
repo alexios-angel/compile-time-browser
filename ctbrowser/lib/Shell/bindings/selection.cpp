@@ -1,36 +1,40 @@
-// dom_bindings - the Selection API (https://w3c.github.io/selection-api/):
+//===- ctbrowser/lib/Shell/bindings/selection.cpp - Selection API ---------===//
+//
+// dom_bindings' Selection API (https://w3c.github.io/selection-api/):
 // `window.getSelection()`, `document.getSelection()` and the Selection
 // interface over them.
 //
-// A SELECTION IS A RANGE AND A DIRECTION, and nothing else. The specification
+// A selection is a range and a direction, and nothing else. The specification
 // says a selection has "a range, which may be null", an anchor and a focus
 // derived from that range, and a direction that says which end is which. So
-// this holds a Range OBJECT - the one document/range.cpp installs - in a
-// hidden slot, and every operation that moves a boundary goes through that
-// object's OWN script surface (`setStart`, `setEnd`, `selectNodeContents`,
+// this holds a Range object (the one document/range.cpp installs) in a hidden
+// slot, and every operation that moves a boundary goes through that object's
+// own script surface (`setStart`, `setEnd`, `selectNodeContents`,
 // `deleteContents`, `comparePoint`). That is where DOM 5.5's validity checks
 // already live: `collapse` on a doctype is an InvalidNodeTypeError and an
 // offset past the end an IndexSizeError because `setStart` says so, not
-// because this file says so a second time and disagrees with it.
+// because this file repeats the check and might disagree with it.
 //
-// `addRange(r)` stores the caller's own Range, so `getRangeAt(0) === r` - and
+// `addRange(r)` stores the caller's own Range, so `getRangeAt(0) === r`, and
 // a later `r.setStart(...)` moves the selection, which is what the API means
 // by the range being live.
 //
-// THE OBJECT IS PER WINDOW AND STABLE: `getSelection() === getSelection()` is
-// the first thing every test asserts. The page's is made here and retained by
-// the `getSelection` function object, which is a global and therefore a root
-// - the arrangement install_custom_elements uses for its registry. A FRAME'S
-// is its own (getSelection.html), made the first time its window or document
-// asks and kept on its window object; the methods are the page's, and each
-// works in the bindings of the document the selection carries in its
-// `__document` slot.
+// The object is per window and stable: `getSelection() === getSelection()`.
+// The page's is made here and retained by the `getSelection` function object,
+// which is a global and therefore a root (the arrangement
+// install_custom_elements uses for its registry). A frame has its own, made
+// the first time its window or document asks and kept on its window object;
+// the methods are the page's, and each works in the bindings of the document
+// the selection carries in its `__document` slot.
 //
-// THE USER'S SELECTION IS THIS ONE: a press on text collapses it and a drag
-// extends it, through these same methods (events/input.cpp, select_by_user).
+// The user's selection is this same object: a press on text collapses it and
+// a drag extends it, through these same methods (events/input.cpp,
+// select_by_user).
 //
 // ponytail: no `selectstart` event, no selectionchange for a boundary a Range
 // method or a tree edit moves, and no `modify()`.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/shell/bindings.hpp>
 
@@ -46,27 +50,30 @@
 namespace ctbrowser::shell {
 namespace {
 
-// The Range this selection holds, and which end the focus is at.
+/// The Range this selection holds.
 constexpr std::string_view range_slot = "__range";
+/// Which end the focus is at: true for backwards, false for forwards,
+/// undefined for directionless.
 constexpr std::string_view backwards_slot = "__backwards";
-// The document's "has scheduled selectionchange event" flag, kept on the one
-// Selection of the window.
+/// The document's "has scheduled selectionchange event" flag, kept on the one
+/// Selection of the window.
 constexpr std::string_view scheduled_slot = "__selectionchangeScheduled";
-// THE ANCHOR AND THE FOCUS THEMSELVES, which are not always the range's ends:
-// a selection whose two points are in different trees of the document - one
-// inside a shadow root - has a live range collapsed at one of them (DOM's
-// "set the start or end" across roots), and getComposedRanges() and
-// `isCollapsed` answer from these.
+/// The anchor and the focus themselves, which are not always the range's ends:
+/// a selection whose two points are in different trees of the document (one
+/// inside a shadow root) has a live range collapsed at one of them (DOM's
+/// "set the start or end" across roots), and getComposedRanges() answers from
+/// these.
 constexpr std::string_view anchor_node_slot = "__anchorNode";
 constexpr std::string_view anchor_offset_slot = "__anchorOffset";
 constexpr std::string_view focus_node_slot = "__focusNode";
 constexpr std::string_view focus_offset_slot = "__focusOffset";
-// ...and whether they are such a pair. Otherwise the range's own ends are the
-// answer, read live - a range the page added may since have been moved.
+/// Whether the anchor and focus slots hold such a cross-tree pair. Otherwise
+/// the range's own ends are the answer, read live, since a range the page
+/// added may since have been moved.
 constexpr std::string_view across_slot = "__across";
-// The document the selection is of - the page's, or a frame's.
+/// The document the selection belongs to: the page's, or a frame's.
 constexpr std::string_view document_slot = "__document";
-// Where a frame's window keeps its selection once one is asked for.
+/// Where a frame's window keeps its selection once one is asked for.
 constexpr std::string_view window_selection_key = CTBROWSER_SYMBOL_KEY("sym:ctbrowser:selection");
 
 [[nodiscard]] value held_slot(script::object_object * self, std::string_view name) {
@@ -74,16 +81,16 @@ constexpr std::string_view window_selection_key = CTBROWSER_SYMBOL_KEY("sym:ctbr
     return held == nullptr ? value::undefined() : *held;
 }
 
-// The selection's range, or undefined - the slot is undefined until something
-// sets it, so `null` never leaks out of here.
-//
-// AND ONLY WHILE IT IS STILL THIS DOCUMENT'S. The range is live and the page
-// holds it: `getRangeAt(0).selectNode(nodeInAFragment)` moves it out of the
-// document, and removing a shadow host takes a range inside its tree out with
-// it. A selection's range is in its document, so the moment one is found
-// outside - an end that is neither the document nor a connected node of it -
-// the selection lets it go (move-selection-range-into-different-root and
-// selection-range-in-shadow-after-the-shadow-removed, both tentative).
+/// Returns the selection's range, or undefined. The slot is undefined until
+/// something sets it, so `null` never leaks out of here.
+///
+/// The range is returned only while it is still in this document. The range is
+/// live and the page holds it: `getRangeAt(0).selectNode(nodeInAFragment)`
+/// moves it out of the document, and removing a shadow host takes a range
+/// inside its tree out with it. So the moment an end is found that is neither
+/// the document nor a connected node of it, the selection lets the range go
+/// (WPT move-selection-range-into-different-root and
+/// selection-range-in-shadow-after-the-shadow-removed, both tentative).
 [[nodiscard]] value range_of(context & c) {
     script::object_object * self = self_object(c);
     if (self == nullptr) { return value::undefined(); }
@@ -105,10 +112,12 @@ constexpr std::string_view window_selection_key = CTBROWSER_SYMBOL_KEY("sym:ctbr
     return range;
 }
 
-// DIRECTIONLESS is the third direction (the Definition): what a selection is
-// that nobody made by indicating one point and then another - a click, and
-// the collapse() a click comes to - kept as an undefined `__backwards`, so
-// the anchor is the start as it is for a forwards one.
+/// Stores `range` and its direction, and records its ends as the anchor and
+/// focus. A selection has three directions (Selection API): forwards,
+/// backwards and directionless. Directionless is a selection not made by
+/// indicating one point then another, such as a click or collapse(); it is
+/// stored as an undefined `__backwards` and reads its anchor at the start,
+/// like a forwards one.
 void store_range(context & c, value range, bool backwards, bool directionless = false) {
     if (script::object_object * self = self_object(c)) {
         self->set(std::string{range_slot}, range);
@@ -132,8 +141,8 @@ void store_range(context & c, value range, bool backwards, bool directionless = 
     return self != nullptr && context::truthy(held_slot(self, backwards_slot));
 }
 
-// One method of the Range, called the way a page would call it - so what it
-// refuses, it refuses with the exception a page would see.
+/// Calls the method `name` on `target` the way a page would, so what it
+/// refuses, it refuses with the exception a page would see.
 value call_on(context & c, value target, const std::string & name, std::vector<value> args) {
     const value fn = c.lookup_property(target, name);
     return fn.is_callable() ? c.call(fn, args, target) : value::undefined();
@@ -147,11 +156,10 @@ void dom_bindings::install_selection(context & cx) {
 
     // --- the attributes ------------------------------------------------------
     //
-    // The anchor is where the selection STARTED and the focus where it ended,
-    // so a BACKWARDS selection reads its range's end as the anchor. With no
-    // range the nodes are null, the offsets 0 and `isCollapsed` is TRUE -
-    // which is the specification's answer, not an accident of there being
-    // nothing to ask.
+    // The anchor is where the selection started and the focus where it ended,
+    // so a backwards selection reads its range's end as the anchor. With no
+    // range the nodes are null, the offsets 0 and `isCollapsed` is true, which
+    // is the specification's answer.
     for (const auto & [name, at_start, at_end] :
          std::initializer_list<std::tuple<const char *, const char *, const char *>>{
              {"anchorNode", "startContainer", "endContainer"},
@@ -170,10 +178,10 @@ void dom_bindings::install_selection(context & cx) {
                           return c.lookup_property(range, is_backwards(c) ? backwards : forwards);
                       });
     }
-    // "The anchor and the focus are the same", of the selection's RANGE - so a
-    // selection across a shadow boundary, whose range is collapsed at one of
-    // its points, is collapsed; only its composed range is not
-    // (Selection-isCollapsed.html, tentative).
+    // "The anchor and the focus are the same", read from the selection's range:
+    // a selection across a shadow boundary, whose range is collapsed at one of
+    // its points, is collapsed; only its composed range is not (WPT
+    // Selection-isCollapsed.html, tentative).
     define_getter(cx, *proto, "isCollapsed", [](context & c, std::span<value>) {
         const value range = range_of(c);
         if (!range.is_object()) { return value::boolean(true); }
@@ -199,8 +207,7 @@ void dom_bindings::install_selection(context & cx) {
     });
 
     // Each operation's `length` is its count of required arguments, from the
-    // Selection API's IDL (WebIDL 3.7.6) - `deleteFromDocument.length` is 0,
-    // which deleteFromDocument.html asserts first.
+    // Selection API's IDL (WebIDL 3.7.6); `deleteFromDocument.length` is 0.
     const auto method = [&](const char * name, script::native_fn fn) {
         static constexpr std::pair<std::string_view, int> required[] = {
             {"getRangeAt", 1},       {"addRange", 1},          {"removeRange", 1},
@@ -216,8 +223,8 @@ void dom_bindings::install_selection(context & cx) {
         proto->set_attrs(name, script::attr_builtin);
     };
 
-    // THE BINDINGS OF THE SELECTION'S DOCUMENT - the page's, or the frame's
-    // whose selection `this` is - which every method below works in.
+    // The bindings of the selection's document (the page's, or the frame's
+    // whose selection `this` is), which every method below works in.
     const auto home = [this](context & c) -> dom_bindings & {
         dom_bindings & top = primary();
         const value self = c.current_this();
@@ -234,7 +241,7 @@ void dom_bindings::install_selection(context & cx) {
     // --- what a node has to be for the selection to point at it ---------------
     //
     // "If node's root is not the document associated with this, abort these
-    // steps" - ABORT, not throw, and it is why a selection cannot be moved
+    // steps": abort, not throw. It is why a selection cannot be moved
     // into a detached fragment or into another document's tree.
     const auto rooted_here = [](dom_bindings & d, value v) {
         if (d.is_the_document(v)) { return true; }
@@ -247,16 +254,9 @@ void dom_bindings::install_selection(context & cx) {
                txn.kind(top).value_or(node_kind::element) == node_kind::document;
     };
 
-    // EVERY CHANGE OF THE RANGE GOES THROUGH HERE, and schedules a
-    // `selectionchange` (Selection API 5): a new range, none, or one a method
-    // moved. ONE task per burst - the flag is set until the task runs - and
-    // the task CLEARS it before it fires, so a listener that moves the
-    // selection again gets one more event, in a later task. The event bubbles
-    // and cannot be cancelled, and it is fired at the document.
-    // A SELECTION PUT INSIDE AN EDITING HOST FOCUSES THAT HOST, as every
-    // browser does (contenteditable/collapse.html moves it from host to host,
-    // and into one nested in another). The host is the outermost element of
-    // the run of editable ancestors the focus sits in - `contenteditable`
+    // A selection put inside an editing host focuses that host, as browsers do
+    // (WPT selection/contenteditable/collapse.html). The host is the outermost
+    // element of the run of editable ancestors around the focus: contenteditable
     // true, empty or plaintext-only, inherited through an invalid value and
     // stopped by `false`.
     const auto focus_editing_host = [](context & c, dom_bindings & d, value range, bool backwards) {
@@ -289,6 +289,12 @@ void dom_bindings::install_selection(context & cx) {
         (void)call_on(c, element, "focus", {});
     };
 
+    // Every change of the selection's range goes through here and schedules one
+    // `selectionchange` task per burst (Selection API section 5): the scheduled
+    // flag stays set until the task runs, and the task clears it before firing,
+    // so a listener that moves the selection again gets one more event in a
+    // later task. The event is fired at the document, bubbles and is not
+    // cancelable.
     const auto store = [this, home, focus_editing_host](context & c, value range, bool backwards,
                                                         bool directionless = false) {
         script::object_object * self = self_object(c);
@@ -300,9 +306,9 @@ void dom_bindings::install_selection(context & cx) {
         if (!before.is_object() && !range.is_object()) { return; }
         if (context::truthy(held_slot(self, scheduled_slot))) { return; }
         self->set(std::string{scheduled_slot}, value::boolean(true));
-        // ON THE PAGE'S QUEUE, which is the one the tick runs - a frame's
-        // own timers are not - and guarded, because a frame can be removed
-        // before the task comes round.
+        // Queued on the page's timers, which are the ones the tick runs (a
+        // frame's own timers are not), and guarded, because a frame can be
+        // removed before the task comes round.
         (void)primary().add_timer(
             native(c, "selectionchange",
                    [this, at, self](context & inner, std::span<value>) {
@@ -333,8 +339,8 @@ void dom_bindings::install_selection(context & cx) {
         return c.throw_pending() ? value::undefined() : made;
     };
 
-    // A RANGE, as the argument conversion of addRange/removeRange means it: a
-    // live range of the realm - a Selection, a StaticRange or a plain object
+    // A Range, as the argument conversion of addRange/removeRange means it: a
+    // live range of the realm. A Selection, a StaticRange or a plain object
     // is a TypeError.
     const auto is_live_range = [this](value v) {
         if (!v.is_object()) { return false; }
@@ -346,11 +352,12 @@ void dom_bindings::install_selection(context & cx) {
 
     // --- points in different trees of the document ---------------------------
     //
-    // THE SHADOW-INCLUDING ORDER OF TWO BOUNDARY POINTS: each is lifted out of
-    // the shadow trees the other is not inside - a point in a shadow tree
-    // stands at its host, BETWEEN (parent, index) and (parent, index + 1),
-    // which the half offset says - and the two are then compared in one tree
-    // as DOM 5.2 compares boundary points. -1, 0 or 1.
+    // The shadow-including order of two boundary points, as -1, 0 or 1. Each
+    // is lifted out of the shadow trees the other is not inside (a point in a
+    // shadow tree stands at its host, between (parent, index) and
+    // (parent, index + 1), which the offset index + 0.5 encodes), and the two
+    // are then compared in one tree as DOM 5.2 compares boundary points. The
+    // walks up nested shadow trees stop after 64 levels as a cycle guard.
     const auto node_of = [](dom_bindings & d, value v) {
         return d.is_the_document(v) ? d.doc_->document_node() : d.handle_of(v);
     };
@@ -412,10 +419,11 @@ void dom_bindings::install_selection(context & cx) {
         if (shared == 0) { return 0; }
         return index_of(a_up[shared]) < index_of(b_up[shared]) ? -1 : 1;
     };
-    // THE DOCUMENT IS IN ITS OWN TREE: root_of_tree stops at the document
-    // element, which has no parent pointer, so a point at (document, n) and
-    // one inside the element are told apart unless the two roots are read as
-    // the one Document (extend-00.html's `[document, 0]` points).
+    // The document is in the same tree as its element: root_of_tree stops at
+    // the document element, which has no parent pointer, so a point at
+    // (document, n) and one inside the element would be told apart unless the
+    // two roots are read as the one Document (WPT selection/extend-00.html's
+    // `[document, 0]` points).
     const auto same_tree = [](dom_bindings & d, node_id a, node_id b) {
         const auto txn = d.doc_->read();
         const auto top = [&](node_id n) {
@@ -424,9 +432,9 @@ void dom_bindings::install_selection(context & cx) {
         };
         return top(a) == top(b);
     };
-    // A selection whose anchor and focus are in DIFFERENT trees: the live
+    // A selection whose anchor and focus are in different trees: the live
     // range collapses where DOM's "set the start" then "set the end" leave it
-    // - at the later point - and the two points are kept beside it.
+    // (at the later point), and the two points are kept beside it.
     const auto store_across = [store](context & c, value anchor_node, value anchor_offset,
                                       value focus_node, value focus_offset, bool backwards,
                                       value collapsed) {
@@ -450,8 +458,8 @@ void dom_bindings::install_selection(context & cx) {
         }
         return range;
     });
-    // THE CALLER'S OWN Range OBJECT, KEPT: `getRangeAt(0) === range`. A second
-    // range is ignored - this engine, like every shipping one, holds one.
+    // The caller's own Range object is kept: `getRangeAt(0) === range`. A
+    // second range is ignored; this engine, like every shipping one, holds one.
     method("addRange", [home, rooted_here, store, is_live_range](context & c, std::span<value> a) {
         const value range = arg(a, 0);
         if (!is_live_range(range)) {
@@ -487,7 +495,7 @@ void dom_bindings::install_selection(context & cx) {
             return value::undefined();
         });
     }
-    // `collapse(null)` is `removeAllRanges()` - the one place in this API
+    // `collapse(null)` is `removeAllRanges()`, the one place in this API
     // where null is a value an argument may have rather than a missing one.
     for (const char * name : {"collapse", "setPosition"}) {
         method(name, [home, range_at, rooted_here, store](context & c, std::span<value> a) {
@@ -496,9 +504,9 @@ void dom_bindings::install_selection(context & cx) {
                 store(c, value::undefined(), false);
                 return value::undefined();
             }
-            // VALIDATE, THEN ABORT - in that order, which is observable: a
+            // Validate, then abort, in that order, which is observable: a
             // detached node with an offset past its end is an IndexSizeError
-            // and NOT a silent no-op, because the specification checks the
+            // and not a silent no-op, because the specification checks the
             // node kind and the offset before it asks where the node is.
             const value made = range_at(c, node, value::number(arg_number(a, 1)));
             if (c.throw_pending() || !rooted_here(home(c), node)) { return value::undefined(); }
@@ -522,9 +530,9 @@ void dom_bindings::install_selection(context & cx) {
                    return value::undefined();
                });
     }
-    // `extend(node, offset)`: the ANCHOR stays where it is and the focus moves
+    // `extend(node, offset)`: the anchor stays where it is and the focus moves
     // to the new point, so the range grows in whichever direction that point
-    // lies - and the direction follows it.
+    // lies, and the direction follows it.
     method("extend", [this, home, rooted_here, store, range_at, node_of, same_tree,
                       compare_composed, store_across](context & c, std::span<value> a) {
         dom_bindings & d = home(c);
@@ -541,9 +549,9 @@ void dom_bindings::install_selection(context & cx) {
             c.lookup_property(range, backwards ? "endContainer" : "startContainer");
         const value anchor_offset =
             c.lookup_property(range, backwards ? "endOffset" : "startOffset");
-        // Step 6: A NEW FOCUS IN ANOTHER TREE than the range - inside a
-        // shadow root the anchor is outside of, or the other way round - and
-        // the range collapses at the new focus. The two points are kept beside
+        // Selection API extend() step 6: a new focus in another tree than the
+        // range (inside a shadow root the anchor is outside of, or the other
+        // way round) collapses the range at the new focus. The two points are kept beside
         // it, as setBaseAndExtent keeps them, for getComposedRanges().
         if (const node_id anchor_id = node_of(d, anchor_node), focus_id = node_of(d, node);
             anchor_id && focus_id && !same_tree(d, anchor_id, focus_id)) {
@@ -571,7 +579,7 @@ void dom_bindings::install_selection(context & cx) {
     method("setBaseAndExtent", [home, rooted_here, store, range_at, node_of, same_tree,
                                 compare_composed, store_across](context & c, std::span<value> a) {
         dom_bindings & d = home(c);
-        // FOUR REQUIRED ARGUMENTS: fewer is WebIDL's TypeError, before any of
+        // Four required arguments: fewer is WebIDL's TypeError, before any of
         // them is converted.
         if (a.size() < 4) {
             c.throw_error("TypeError", "Failed to execute 'setBaseAndExtent' on 'Selection': 4 "
@@ -582,9 +590,9 @@ void dom_bindings::install_selection(context & cx) {
         const value anchor_offset = value::number(arg_number(a, 1));
         const value focus_node = arg(a, 2);
         const value focus_offset = value::number(arg_number(a, 3));
-        // The offsets are checked against each node BEFORE the root is (steps
-        // 1-2) - an IndexSizeError from either comes first - by collapsing a
-        // fresh range at each point.
+        // The offsets are checked against each node before the root is
+        // (setBaseAndExtent steps 1-2, so an IndexSizeError from either comes
+        // first), by collapsing a fresh range at each point.
         const value made = range_at(c, anchor_node, anchor_offset);
         if (c.throw_pending()) { return value::undefined(); }
         const value focus_at = range_at(c, focus_node, focus_offset);
@@ -609,17 +617,17 @@ void dom_bindings::install_selection(context & cx) {
         store(c, made, side < 0);
         return value::undefined();
     });
-    // `selectAllChildren(node)`: (node, 0) to (node, THE NUMBER OF CHILDREN) -
-    // which is not `selectNodeContents`, and the difference is a text node.
-    // Range's "length" is a text node's DATA length, so selectNodeContents on
-    // one selects its text; selectAllChildren counts children and selects
-    // nothing. selectAllChildren.html asserts `focusOffset ===
-    // node.childNodes.length` for every node it has, text nodes included.
+    // `selectAllChildren(node)`: (node, 0) to (node, number of children). This
+    // is not `selectNodeContents`, and the difference is a text node: Range's
+    // "length" is a text node's data length, so selectNodeContents on one
+    // selects its text, while selectAllChildren counts children and selects
+    // nothing (WPT selection/selectAllChildren.html checks `focusOffset ===
+    // node.childNodes.length` for text nodes too).
     method("selectAllChildren", [home, rooted_here, store](context & c, std::span<value> a) {
         dom_bindings & d = home(c);
         const value node = arg(a, 0);
-        // `is_object_like`: a Document is a PROXY, and `is_object()` is false
-        // for one - selectAllChildren(document) is a call on a Node.
+        // `is_object_like`: a Document is a proxy, and `is_object()` is false
+        // for one, yet selectAllChildren(document) is a call on a Node.
         if (!node.is_object_like()) {
             c.throw_error("TypeError", "Failed to execute 'selectAllChildren' on 'Selection': "
                                        "parameter 1 is not of type 'Node'.");
@@ -644,7 +652,7 @@ void dom_bindings::install_selection(context & cx) {
     });
     // `containsNode(node, allowPartial)`: partial containment is exactly
     // `intersectsNode`; full containment is the node's own range inside this
-    // one at BOTH ends - START_TO_START and END_TO_END, the two constants
+    // one at both ends: START_TO_START and END_TO_END, the two constants
     // compareBoundaryPoints numbers 0 and 2.
     method("containsNode", [home](context & c, std::span<value> a) {
         dom_bindings & d = home(c);
@@ -658,10 +666,10 @@ void dom_bindings::install_selection(context & cx) {
         }
         const node_id id = d.handle_of(node);
         if (!id || !dom_parent(d.doc_->read(), id)) { return value::boolean(false); }
-        // NOT IN THE FLAT TREE, NOT IN THE SELECTION: a host's child no slot
-        // took, or a slot's fallback content while something is assigned to
-        // it, is not rendered - and so not selected, whatever the DOM range
-        // spans (selection-at-nodes-not-part-of-flattened-tree.html).
+        // A node not in the flat tree is not in the selection: a host's child
+        // no slot took, or a slot's fallback content while something is
+        // assigned to it, is not rendered and so not selected, whatever the
+        // DOM range spans (WPT selection-at-nodes-not-part-of-flattened-tree.html).
         {
             const auto txn = d.doc_->read();
             for (node_id at = id; at;) {
@@ -691,14 +699,10 @@ void dom_bindings::install_selection(context & cx) {
         if (!range.is_object()) { return c.string(""); }
         return c.string(c.to_string(call_on(c, range, "toString", {})));
     });
-    // `getComposedRanges()`: the selection as StaticRanges, with the boundary
-    // points rescoped out of any shadow tree the caller did NOT pass. No
-    // selection this engine makes is inside a shadow tree yet, so what comes
-    // back is the range's own two points.
     // `getComposedRanges(options)` (Selection API): the selection as a
-    // StaticRange from its first point to its last, each RESCOPED out of every
-    // shadow tree the caller did not name - a point inside one stands at its
-    // host, before it for the start and after it for the end - so a page is
+    // StaticRange from its first point to its last, each rescoped out of every
+    // shadow tree the caller did not name (a point inside one stands at its
+    // host, before it for the start and after it for the end), so a page is
     // told nothing about a tree it was not given. `shadowRoots` must hold
     // ShadowRoots; the older variadic spelling is taken as the same list.
     method("getComposedRanges", [home, node_of](context & c, std::span<value> args) {
@@ -730,7 +734,7 @@ void dom_bindings::install_selection(context & cx) {
         script::object_object * self = self_object(c);
         const value ctor = c.global("StaticRange");
         if (!range.is_object() || self == nullptr || !ctor.is_callable()) { return made; }
-        // The range's own ends, unless the selection is across trees - then
+        // The range's own ends, unless the selection is across trees; then
         // the anchor and focus, first one first.
         const bool across = context::truthy(held_slot(self, across_slot));
         const bool backwards = is_backwards(c);
@@ -793,14 +797,14 @@ void dom_bindings::install_selection(context & cx) {
     proto->define("constructor", value::object(ctor), script::attr_builtin);
     cx.define_builtin_global("Selection", value::object(ctor));
 
-    // THE PAGE'S SELECTION, made now, of this document.
+    // The page's selection, made now, of this document.
     auto * selection = cx.allocate<script::object_object>();
     selection->prototype = proto_value;
     selection->set(std::string{document_slot}, document_);
     const value selection_value = value::object(selection);
 
-    // A FRAME'S, made the first time its window or its document is asked and
-    // kept on its window object from then on - so `getSelection() ===
+    // A frame's selection is made the first time its window or its document is
+    // asked and kept on its window object from then on, so `getSelection() ===
     // document.getSelection()` inside it, and neither is the page's. A
     // document with no browsing context (createHTMLDocument, DOMParser) has
     // none, and answers null.
@@ -853,15 +857,12 @@ void dom_bindings::install_selection(context & cx) {
     getter->retained.push_back(selection_value);
     cx.define_global("getSelection", value::object(getter));
 
-    // `document.getSelection()` - THE SAME OBJECT, and null for a document with
+    // `document.getSelection()`: the same object, and null for a document with
     // no browsing context.
     //
-    // ON THE PAGE'S OWN DOCUMENT IT IS AN OWN PROPERTY, and that is not
-    // belt and braces: `document` is a PROXY, and a method reached through it
-    // does not arrive with the document as its receiver - the prototype method
-    // below could not tell the page's document from another, so
-    // `getSelection() === document.getSelection()` was false. This one
-    // answers with the selection and asks nothing.
+    // On the page's document it is an own property: `document` is a proxy, and a
+    // method reached through it does not receive the document as `this`, so the
+    // prototype method below could not identify the page's document.
     if (auto * doc = document_object()) {
         auto * own = cx.allocate<script::native_object>(
             "getSelection",
@@ -870,13 +871,13 @@ void dom_bindings::install_selection(context & cx) {
         doc->set("getSelection", value::object(own));
         doc->set_attrs("getSelection", script::attr_builtin);
     }
-    // AND ON Document.prototype for every OTHER document of the realm: a
+    // Document.prototype carries it for every other document of the realm: a
     // frame's answers with the frame's selection, and one from
     // createHTMLDocument or DOMParser, which has no browsing context, null.
     if (const value document_proto = interface_prototype("Document"); document_proto.is_object()) {
         auto * on = static_cast<script::object_object *>(document_proto.as_heap());
-        // RETAINED HERE TOO. A captured `value` is invisible to the collector,
-        // and a page may delete the `getSelection` global - which would
+        // Retained here too. A captured `value` is invisible to the collector,
+        // and a page may delete the `getSelection` global, which would
         // otherwise leave this method holding a swept object.
         auto * method = cx.allocate<script::native_object>(
             "getSelection", [this, selection_of](context & c, std::span<value>) {
@@ -896,16 +897,16 @@ void dom_bindings::install_selection(context & cx) {
     }
 }
 
-// A SELECTION'S RANGE INSIDE A SHADOW TREE WHOSE HOST WAS JUST REMOVED - the
-// host itself or an ancestor of it - is no longer the selection's, even when
+// A selection's range inside a shadow tree whose host was just removed (the
+// host itself or an ancestor of it) is no longer the selection's, even when
 // the host comes straight back (`host.replaceWith(host)`,
 // `parent.replaceChild(host, host)`). The live range steps leave the range
 // where it is, since its ends are not inclusive descendants of the removed
 // node, and the lazy check in range_of would find it connected again; so it
-// is let go here, from the removal's note, as the first two cases of
-// selection-range-in-shadow-after-the-shadow-removed let it go on removal
-// alone. A range whose end is a PLAIN descendant was moved to the parent by
-// the live range steps and stays. The page's Range object is untouched.
+// is let go here, on removal (WPT
+// selection-range-in-shadow-after-the-shadow-removed). A range whose end is a
+// plain descendant was moved to the parent by the live range steps and stays.
+// The page's Range object is untouched.
 void dom_bindings::forget_selection_under(node_id removed) {
     if (cx_ == nullptr || doc_ == nullptr || !removed || !doc_->has_shadow_roots()) { return; }
     context & c = *cx_;
@@ -942,17 +943,17 @@ void dom_bindings::forget_selection_under(node_id removed) {
     self->set(std::string{across_slot}, value::boolean(false));
 }
 
-// AN EDITING HOST THAT GAINS FOCUS GETS A CARET, where every browser puts one
-// (selection/contenteditable/initial-selection-on-focus.tentative.html): if
+// An editing host that gains focus gets a caret where browsers put one (WPT
+// selection/contenteditable/initial-selection-on-focus.tentative.html): if
 // the document's selection is not already inside the host, it collapses at
-// the host's FIRST CARET POSITION - the first text node's first visible
+// the host's first caret position: the first text node's first visible
 // character, before the first <br>, or, when an element the caret cannot
 // enter (contenteditable=false, a replaced or form control) comes first, the
 // start of the block it sits in; the host's start when there is none of these.
 //
-// ponytail: "visible" is read from the markup - leading white space of a text
+// ponytail: "visible" is read from the markup (leading white space of a text
 // node collapses unless an ancestor up to the host is <pre>/<textarea> or says
-// `white-space: pre|pre-wrap|break-spaces` in its style attribute - not from
+// `white-space: pre|pre-wrap|break-spaces` in its style attribute), not from
 // computed style, which may not have been recomputed since the host's content
 // changed.
 void dom_bindings::place_caret_on_focus(node_id element) {

@@ -1,3 +1,10 @@
+//===- mutation_types.hpp - Mutation records --------------------*- C++ -*-===//
+//
+// Plain data records dom_bindings keeps for MutationObserver: observe()
+// options, registered observers and node snapshots. The records chain-include
+// each other and are all reached through bindings.hpp.
+//
+//===----------------------------------------------------------------------===//
 #pragma once
 
 #include "lifecycle_types.hpp"
@@ -10,10 +17,10 @@ namespace binding_detail {
 
 using css_declaration = style::css::declaration;
 
-// ONE `observe()` CALL'S OPTIONS, after the dictionary's own defaulting.
-// `attributeOldValue` or `attributeFilter` PRESENT with `attributes`
-// ABSENT turns `attributes` on - which is why `attributes` is a field here
-// and not just a read of the dictionary.
+/// One `observe()` call's options, after the dictionary's own defaulting.
+/// `attributeOldValue` or `attributeFilter` present with `attributes` absent
+/// turns `attributes` on, which is why `attributes` is a field here and not
+/// just a read of the dictionary.
 struct mutation_options {
     bool child_list = false;
     bool attributes = false;
@@ -25,29 +32,28 @@ struct mutation_options {
     std::vector<std::string> attribute_filter;
 };
 
-// A REGISTERED OBSERVER, DOM §4.3.1: one (observer, target) pair with its
-// options. `observe()` on a target already registered for this observer
-// REPLACES the options rather than adding a second entry.
+/// A registered observer (DOM §4.3.1): one (observer, target) pair with its
+/// options. `observe()` on a target already registered for this observer
+/// replaces the options rather than adding a second entry.
 struct mutation_registration {
-    std::size_t observer = 0; // index into mutation_observers_
+    std::size_t observer = 0; // Index into mutation_observers_.
     node_id target;
-    // `observe(document, ...)`: the document object carries no node handle
-    // here - this tree builder has no Document node above `<html>` - so the
-    // registration is on the root element and remembers that it stands for
-    // the document.
+    /// Set for `observe(document, ...)`. This tree builder has no Document
+    /// node above `<html>`, so the registration is on the root element and
+    /// remembers that it stands for the document.
     bool whole_document = false;
     mutation_options options;
 };
 
-// ONE OBSERVED NODE AS IT WAS, which is what a record is a difference from.
-// All three are captured for every observed node regardless of which the
-// registration asked for: a node may be observed by two registrations that
-// want different things, and one snapshot that answers both is cheaper than
-// keeping the union of their options per node.
+/// One observed node as it was last seen; mutation records are computed as a
+/// difference from it. All three fields are captured for every observed node
+/// regardless of what the registration asked for: a node may be observed by
+/// two registrations that want different things, and one snapshot that
+/// answers both is cheaper than keeping the union of their options per node.
 struct mutation_node_state {
     std::vector<node_id> children;
     std::vector<attribute> attributes;
-    std::string text; // CharacterData nodes only
+    std::string text; // CharacterData nodes only.
 };
 
 } // namespace binding_detail

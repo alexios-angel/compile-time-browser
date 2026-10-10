@@ -1,16 +1,20 @@
-// dom_bindings - user activation (HTML 6.4.3) and `navigator.userActivation`.
+//===- activation.cpp - User activation -------------------------*- C++ -*-===//
 //
-// A window's LAST ACTIVATION TIMESTAMP is +inf until a trusted activation-
-// triggering input event - a mousedown, a keydown other than Escape - reaches
-// its document (events/input.cpp calls notify_activation before dispatching
-// one). Activation is TRANSIENT for a few seconds after that and STICKY for
-// good; consuming it (showPicker, and whatever else an activation gates) sets
-// every window in the tree that had one to -inf, which ends the transient part
-// and keeps the sticky one.
+// User activation (HTML 6.4.3) and `navigator.userActivation`.
+//
+// A window's last activation timestamp is +inf until a trusted
+// activation-triggering input event (a mousedown, or a keydown other than
+// Escape) reaches its document; events/input.cpp calls notify_activation()
+// before dispatching one. Activation is transient for a few seconds after that
+// and sticky for good. Consuming it (showPicker, and anything else an
+// activation gates) sets every window in the tree that had one to -inf, which
+// ends the transient part and keeps the sticky one.
 //
 // ponytail: notification reaches this window, its frames and the top-level
 // one, not a nested frame's intermediate ancestors; and the frame tree is
 // taken as one origin, which is all this engine loads.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/shell/bindings.hpp>
 
@@ -22,9 +26,10 @@ namespace ctbrowser::shell {
 
 namespace {
 
-// The transient activation duration: HTML leaves it to the user agent ("at
-// most a few seconds"); this is Chromium's.
+/// The transient activation duration. HTML leaves it to the user agent ("at
+/// most a few seconds"); 5000 ms is Chromium's value.
 constexpr double transient_activation_ms = 5000;
+/// The timestamp of a window that has never been activated.
 constexpr double never = std::numeric_limits<double>::infinity();
 
 } // namespace

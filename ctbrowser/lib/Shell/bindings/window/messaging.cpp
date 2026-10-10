@@ -1,16 +1,20 @@
-// dom_bindings - `window.postMessage`, HTML 9.4.3: a message between the
-// windows of one agent, which since frames run their own scripts in their own
-// realms (bindings/frames.cpp) means between a page and its frames.
+//===- messaging.cpp - window.postMessage -----------------------*- C++ -*-===//
 //
-// WHAT IT IS: the "window post message steps" - the origin check, the
-// structured clone, and a TASK that fires a MessageEvent at the target window
+// `window.postMessage` (HTML 9.4.3): a message between the windows of one
+// agent. Frames run their own scripts in their own realms
+// (bindings/frames.cpp), so in practice that is between a page and its frames.
+//
+// This implements the "window post message steps": the origin check, the
+// structured clone, and a task that fires a MessageEvent at the target window
 // later. The task is what a page observes most: the event never arrives
-// inside postMessage, so `w.postMessage(x); w.onmessage = f` still hears x.
+// inside postMessage, so `w.postMessage(x); w.onmessage = f` still receives x.
 //
-// WHAT IS NOT HERE: MessagePort. With no ports the transfer list holds
-// ArrayBuffers or nothing - anything else is the DataCloneError a
-// non-transferable value gets (StructuredSerializeWithTransfer step 4) - and
+// MessagePort is not implemented. With no ports the transfer list holds
+// ArrayBuffers or nothing (anything else is the DataCloneError a
+// non-transferable value gets, StructuredSerializeWithTransfer step 4), and
 // `ports` is always the empty frozen array.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -25,10 +29,12 @@ namespace ctbrowser::shell {
 
 namespace {
 
-// A window's origin, serialized - from ITS DOCUMENT'S URL, as the `origin`
-// getter computes it, and never by reading that property: a page can shadow
-// `window.origin`, and the event's `origin` and the targetOrigin check are
-// the receiver's only proof of who sent it (ACCESS-006).
+/// A window's serialized origin, computed from its document's URL `href` as
+/// the `origin` getter does ("null" for an empty or opaque one), never by
+/// reading that property: a page can shadow `window.origin`, and the event's
+/// `origin` and the targetOrigin check are the receiver's only proof of who
+/// sent it (test_a_shadowed_origin_does_not_forge_a_message in
+/// unittests/unit/frames.cpp).
 [[nodiscard]] std::string origin_of(std::string_view href) {
     const std::string origin = href.empty() ? std::string{} : location_parts(href).origin;
     return origin.empty() ? std::string{"null"} : origin;
@@ -57,8 +63,8 @@ void dom_bindings::install_post_message(context & cx, script::object_object & wi
             transfer = arg(a, 2);
         }
         if (c.throw_pending()) { return value::undefined(); }
-        // The INCUMBENT settings: the realm of the code that called - whose
-        // window is the event's `source` and whose origin its `origin`.
+        // The incumbent settings object is the realm of the calling code: its
+        // window is the event's `source` and its origin the event's `origin`.
         const value source = c.current_realm().global_this;
         const dom_bindings * sender = source.is_heap() ? find_bindings_of(source) : nullptr;
         const std::string source_origin =
@@ -78,9 +84,9 @@ void dom_bindings::install_post_message(context & cx, script::object_object & wi
             }
             target_origin = parsed.origin;
         }
-        // Step 7: serialize NOW, so a later change to `message` is not seen
-        // and a value that cannot be cloned throws at the caller - WITH the
-        // transfer list, whose ArrayBuffers are detached here and arrive in
+        // Step 7: serialize now, so a later change to `message` is not seen
+        // and a value that cannot be cloned throws at the caller. The transfer
+        // list goes along: its ArrayBuffers are detached here and arrive in
         // the event's data.
         value data = value::undefined();
         if (const value clone = c.global("structuredClone"); clone.is_callable()) {
@@ -99,14 +105,14 @@ void dom_bindings::install_post_message(context & cx, script::object_object & wi
         auto * task = c.allocate<script::native_object>(
             "postMessage task",
             [this, data, source, source_origin, target_origin](context & t, std::span<value>) {
-                // The target's origin is checked when the task RUNS: it may
-                // have navigated in between.
+                // The target's origin is checked when the task runs, because
+                // it may have navigated in between.
                 if (target_origin != "*" && target_origin != origin_of(location_href_)) {
                     return value::undefined();
                 }
                 const value event = make_event_object(t, "message", false, false);
                 auto * object = static_cast<script::object_object *>(event.as_heap());
-                // The interfaces are the page's, whichever window receives -
+                // The interfaces are the page's, whichever window receives:
                 // a frame's bindings adopt them (second_document.cpp).
                 const value proto =
                     (primary_ == nullptr ? this : primary_)->message_event_prototype_;
@@ -123,8 +129,8 @@ void dom_bindings::install_post_message(context & cx, script::object_object & wi
                 (void)dispatch_to(event, path_step{node_id{}, listen_on::window});
                 return value::undefined();
             });
-        // THE CLONE AND THE SOURCE ARE IN A C++ CAPTURE, which the collector
-        // cannot see (native_object::retained).
+        // The clone and the source are in a C++ capture, which the collector
+        // cannot see, so the task retains them (native_object::retained).
         task->retained.push_back(data);
         task->retained.push_back(source);
         (void)top.add_timer(value::object(task), 0, false);
@@ -138,11 +144,11 @@ void dom_bindings::install_post_message(context & cx, script::object_object & wi
     install_crypto(cx, window, [this](context & c, std::string_view name, std::string message) {
         throw_dom_exception(c, name, std::move(message));
     });
-    // THE [Serializable] INTERFACES this engine has (HTML 2.7.2), each with the
-    // own properties its binding keeps an instance's state in - which is what
-    // structuredClone copies of one, and all it copies: a page's expando stays
-    // behind. Every other interface's instance is a DataCloneError there (and
-    // so here, which clones through it).
+    // The [Serializable] interfaces this engine has (HTML 2.7.2), each with the
+    // own properties its binding keeps an instance's state in. Those are what
+    // structuredClone copies, and all it copies: a page's expando stays
+    // behind. Any other interface's instance is a DataCloneError there, and so
+    // in postMessage, which clones through it.
     //
     // A File is a Blob with a name, File.prototype inheriting Blob's
     // (window.cpp): a File clones as a File and a Blob as a Blob, and the two

@@ -1,13 +1,15 @@
-// dom_bindings - `performance`, and the two Performance Timeline interfaces a
-// page feature-detects for paint timing.
+//===- performance.cpp - The performance object -----------------*- C++ -*-===//
 //
-// https://w3c.github.io/performance-timeline/ and https://w3c.github.io/paint-timing/.
-// `now` was the whole object until 2026-09-10; html/dom/render-blocking asks
-// `assert_implements(window.PerformancePaintTiming)` and then polls
-// `performance.getEntriesByType('paint')` for the first frame, which is what
-// made both interfaces exist. The entries themselves are plain data on the
-// bindings (`performance_entries_`); the browser records them from its first
-// frame and the objects a page sees are built here, on demand.
+// dom_bindings' `performance` object, and the two Performance Timeline
+// interfaces a page feature-detects for paint timing
+// (https://w3c.github.io/performance-timeline/ and
+// https://w3c.github.io/paint-timing/). WPT html/dom/render-blocking checks for
+// window.PerformancePaintTiming and polls performance.getEntriesByType('paint')
+// for the first frame, so both interfaces exist. The entries themselves are
+// plain data on the bindings (`performance_entries_`); the browser records them
+// at its first frame, and the objects a page sees are built here on demand.
+//
+//===----------------------------------------------------------------------===//
 //
 // ponytail: no PerformanceObserver. Nothing in the corpus observes 'paint'
 // through one - LoadObserver uses it only for resource timing, which this

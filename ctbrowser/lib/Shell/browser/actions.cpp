@@ -1,5 +1,10 @@
-// browser - default actions: activating a control, <details>, following a
-// link, <a download>, the fragment scroll and form submission.
+//===- actions.cpp - Default actions of clicks and forms --------*- C++ -*-===//
+//
+// The browser's default actions: activating a control, toggling <details>,
+// following a link, <a download>, the fragment scroll, and form submission
+// and reset.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -7,8 +12,8 @@ namespace ctbrowser::shell {
 
 namespace {
 
-// HTML 3.2.5.2.7 "interactive content" - what a <label> leaves alone: a click
-// aimed at one, or at anything inside one, is that element's own.
+/// True for HTML 3.2.5.2.7 "interactive content", which a <label> leaves alone:
+/// a click aimed at one, or at anything inside one, is that element's own.
 [[nodiscard]] bool is_interactive_content(const read_txn & txn, atom_table & atoms, node_id id) {
     if (txn.element_ns(id) != node_ns::html) { return false; }
     const std::string_view local = txn.local_name(id);
@@ -27,12 +32,13 @@ namespace {
 
 } // namespace
 
-// THE ACTIVATION BEHAVIOUR of one element, run by the bindings' dispatch after
-// a `click`'s listeners and only if none of them cancelled it - `target` IS the
-// activation target, the first node on the event's path that has any, so this
-// dispatches on its tag rather than walking up from wherever the click landed.
-// A checkbox or radio was already toggled before the listeners ran and has
-// already fired `input` and `change`; all it needs here is the repaint.
+/// Runs the activation behaviour of one element. The bindings' dispatch calls
+/// this after a `click`'s listeners, and only if none of them cancelled it.
+/// `target` is the activation target (the first node on the event's path that
+/// has an activation behaviour), so this dispatches on its tag rather than
+/// walking up from wherever the click landed. A checkbox or radio was already
+/// toggled before the listeners ran and has already fired `input` and
+/// `change`; all it needs here is the repaint.
 void browser::activate(node_id target) {
     std::string_view tag;
     node_id labelled;
@@ -47,7 +53,7 @@ void browser::activate(node_id target) {
             // label element, and any descendants of those, must be to do
             // nothing" (4.10.4): a <textarea> or an <audio controls> in the
             // label has no activation behaviour of its own, so the label is
-            // its click's activation target - and must not then click the
+            // its click's activation target, and must not then click the
             // control it labels.
             bool interactive = false;
             node_id at = clicked;
@@ -66,20 +72,18 @@ void browser::activate(node_id target) {
         (void)toggle_details(target);
         return;
     }
-    // A <label>'s activation behaviour is a click at the control it labels -
-    // HTML 4.10.4 - and that click has an activation behaviour of its own,
+    // A <label>'s activation behaviour is a click at the control it labels
+    // (HTML 4.10.4), and that click has an activation behaviour of its own,
     // which is how the label's text toggles the checkbox. A disabled control
     // refuses it, in dom_bindings::click, as it refuses `element.click()`.
     //
-    // ONCE: a control with no activation behaviour of its own - a <textarea> -
-    // leaves its click's activation target to the label it sits in, so the
-    // click forwarded to it came straight back here and was forwarded again,
-    // for ever; `<label>Notes <textarea>` hung the page on the first click.
-    // That second click is aimed at the label's interactive content, for
-    // which the activation behaviour is to do nothing - which is what the
-    // DOM's "click in progress" flag makes of it. ponytail: a thread-local
-    // stack for the flag, since only this one synthesized click can re-enter;
-    // a per-element flag in dom_bindings::click is the general form.
+    // Forward at most once per label. A control with no activation behaviour
+    // of its own (a <textarea>) makes the enclosing label its click's
+    // activation target, so a forwarded click would come straight back here
+    // forever; the re-entrant click targets the label's interactive content,
+    // for which HTML says to do nothing (the DOM's "click in progress" flag).
+    // ponytail: a thread-local stack, since only this synthesized click
+    // re-enters; a per-element flag in dom_bindings::click is the general form.
     if (tag == "label") {
         static thread_local std::vector<node_id> forwarding;
         if (labelled && std::ranges::find(forwarding, target) == forwarding.end()) {
@@ -89,9 +93,8 @@ void browser::activate(node_id target) {
         }
         return;
     }
-    // A DISABLED control does nothing and dispatches nothing - it does not
-    // toggle, submit, focus or fire an event. Without this the attribute
-    // was purely decorative, and it was not even that.
+    // A disabled control does nothing and dispatches nothing: it does not
+    // toggle, submit, focus or fire an event.
     if (is_disabled(target)) { return; }
     form_store::form_action action;
     {
@@ -107,10 +110,10 @@ void browser::activate(node_id target) {
             mark(dirty::paint);
             return;
         }
-        // THE PICKER TYPES' input activation behaviour (HTML 4.10.5.1): "show
-        // the picker, if applicable" - with transient activation, and on a
-        // mutable control, it CONSUMES the activation first (there is no
-        // picker here to show; showPicker() is the same steps).
+        // The picker types' input activation behaviour (HTML 4.10.5.1): "show
+        // the picker, if applicable". With transient activation, on a mutable
+        // control, it consumes the activation (there is no picker here to
+        // show; showPicker() runs the same steps).
         if (txn.local_name(target) == "input" && txn.element_ns(target) == node_ns::html) {
             const std::string type =
                 input_types::type_state_of(txn.attribute_value(target, atoms_.intern("type")));
@@ -124,13 +127,13 @@ void browser::activate(node_id target) {
                 return;
             }
         }
-        // The kind is read NOW, after the click's listeners: one that made a
-        // text field `type=submit` made a submit button, and this click is its.
-        // `<input type=image>` is one, with a picture on it (4.10.5.1.20),
-        // though control_kind_of files it with the text controls because that
-        // is how it is laid out; so is a <button> with no type, which is the
-        // default people forget and then wonder why their form reloads. Its
-        // FORM OWNER, `form=` and all; with none, a button does nothing.
+        // The kind is read now, after the click's listeners: a listener that
+        // made a text field `type=submit` made a submit button, and this click
+        // submits. `<input type=image>` is a submit button with a picture on it
+        // (4.10.5.1.20), though control_kind_of files it with the text controls
+        // because that is how it is laid out; so is a <button> with no type.
+        // The action goes to the control's form owner (honouring `form=`);
+        // with none, a button does nothing.
         action = form_store::form_action_of(txn, atoms_, target);
     }
     if (!action.form) { return; }
@@ -162,7 +165,7 @@ bool browser::toggle_details(node_id target) {
             (void)doc_->set_attribute(details, open, "");
         }
     }
-    // The toggle event is the attribute change steps', a task later.
+    // The toggle event is fired by the attribute change steps, a task later.
     bindings_->mutated();
     mark(dirty::everything);
     return true;
@@ -198,15 +201,15 @@ bool browser::follow_link(node_id target) {
     }
     if (has_download && save_download(href, download)) { return true; }
     if (href.empty()) { return false; }
-    // THE ADDRESS IS RESOLVED against the document's when it has one - a page
-    // at file:///a/b.html following `#x` is at file:///a/b.html#x, not at
+    // The address is resolved against the document's when it has one: a page
+    // at file:///a/b.html following `#x` goes to file:///a/b.html#x, not to
     // `#x`. The embedder's hook still gets the author's text.
     const std::string old_href = location_href_;
     location_href_ = location_href_.empty() ? href : resolve(location_href_, href);
     if (href.front() == '#') {
-        // A FRAGMENT is not a navigation: it scrolls this document, and the
-        // page can read where it went through location.hash - and hears
-        // `hashchange` at the window (HTML 7.4.6.2, "scroll to the fragment").
+        // A fragment is not a navigation: it scrolls this document, the page
+        // can read where it went through location.hash, and `hashchange`
+        // fires at the window (HTML 7.4.6.2, "scroll to the fragment").
         location_hash_ = href;
         scroll_to_fragment(href.substr(1));
         bindings_->observe_location(location_href_, location_hash_);
@@ -217,46 +220,46 @@ bool browser::follow_link(node_id target) {
     }
     location_hash_.clear();
     bindings_->observe_location(location_href_, location_hash_);
-    // The hook gets the RESOLVED address - what an external opener must judge
-    // by - the author's text, and whether a user gesture is behind it. Following
-    // the link CONSUMES that gesture, so one click cannot open two things.
+    // The hook gets the resolved address (what an external opener must judge
+    // by), the author's text, and whether a user gesture is behind it.
+    // Following the link consumes that gesture, so one click cannot open two
+    // things.
     const bool activated = bindings_->has_transient_activation();
     if (activated) { bindings_->consume_activation(); }
     if (navigate_hook_) { navigate_hook_(location_href_, href, activated); }
     return true;
 }
 
-// AN `<a download>` WRITES A FILE. THIS IS A DELIBERATE DEVIATION, and it is the
-// one place this engine invents a behaviour rather than copying one.
-//
-// A browser would show a save dialog. There is nobody to show one to here, and
-// the alternative - doing nothing - makes every export silently fail, which is
-// exactly the failure this codebase keeps finding and refusing to ship. p5's
-// save(), saveCanvas(), saveJSON(), saveStrings() and saveTable() all end in
-// downloadFile: a Blob, an object URL, an <a href download>, click(), revoke.
-// So the choice is between a file appearing and the whole export API being a
-// no-op with no message.
-//
-// The bytes come from the asset registry, which is where createObjectURL put
-// them - so this needs no knowledge of blobs and works for any href the registry
-// resolves. It is called BEFORE the navigation, because a download is not one.
-//
-// The directory is set by the embedder (set_download_directory), and UNSET
-// MEANS NO WRITE: the old default was the working directory, which for a
-// shipped game is the game's own folder - one injected `<a download="version.dll"
-// href="data:...">` and a click planted a DLL beside the executable. A write also
-// needs a user gesture (the click consumes it, as a navigation does), fits
-// under the size limit, gets a sanitised name and never replaces a file.
-// Every download is recorded in downloads() whether or not the write happens,
-// so a test can assert on it without reading the disk and a page's export is
-// visible even in a sandbox.
+/// Saves the target of an `<a download>` click as a file. This deliberately
+/// deviates from browsers, the one place this engine invents a behaviour
+/// rather than copying one.
+///
+/// A browser would show a save dialog. There is nobody to show one to here,
+/// and doing nothing would make every export silently fail: p5's save(),
+/// saveCanvas(), saveJSON(), saveStrings() and saveTable() all end in
+/// downloadFile (a Blob, an object URL, an <a href download>, click(),
+/// revoke).
+///
+/// The bytes come from the asset registry, which is where createObjectURL put
+/// them, so this needs no knowledge of blobs and works for any href the
+/// registry resolves. It is called before the navigation, because a download
+/// is not one.
+///
+/// The directory is set by the embedder (set_download_directory); unset means
+/// no write, because the working directory of a shipped game is its own folder
+/// and a page could plant `version.dll` beside the executable. A write also
+/// needs a user gesture (the click consumes it, as a navigation does), fits
+/// under the size limit, gets a sanitised name and never replaces a file.
+/// Every download is recorded in downloads() whether or not it was written,
+/// so tests can assert on it without reading the disk.
 bool browser::save_download(const std::string & href, const std::string & suggested) {
     if (href.empty()) { return false; }
     const bool activated = bindings_->has_transient_activation();
     if (activated) { bindings_->consume_activation(); }
     std::vector<std::byte> bytes = assets_.load(href);
-    // A name the page asked for, else the last path segment. A NAME AND NOT A
-    // PATH: `download="../../etc/passwd"` is a page choosing where to write.
+    // A name the page asked for, else the last path segment. It must be a name
+    // and not a path: `download="../../etc/passwd"` is a page choosing where
+    // to write.
     const std::string name = sanitize_download_name(suggested.empty() ? href : suggested);
 
     std::filesystem::path where;
@@ -265,10 +268,10 @@ bool browser::save_download(const std::string & href, const std::string & sugges
         bytes.size() <= max_download_bytes_) {
         std::error_code ignored;
         std::filesystem::create_directories(download_directory_, ignored);
-        // NEVER OVERWRITE: name, name-1, name-2, ... - symlink_status, so a
-        // dangling link is taken as occupied rather than written through.
+        // Never overwrite: try name, name-1, name-2, ... using symlink_status,
+        // so a dangling link counts as occupied rather than written through.
         // ponytail: check-then-open races another writer; std::ios::noreplace
-        // closes it once every standard library in the matrix has it.
+        // closes that once every supported standard library has it.
         const std::filesystem::path base{name};
         where = download_directory_ / base;
         for (int n = 1;
@@ -290,6 +293,9 @@ bool browser::save_download(const std::string & href, const std::string & sugges
     return true;
 }
 
+/// Reduces a page-chosen download name to a safe file name: the last path
+/// segment, with "download" returned instead for control or reserved
+/// characters, Windows device names, desktop.ini, or an executable extension.
 std::string sanitize_download_name(std::string_view name) {
     const std::string fallback = "download";
     if (const std::size_t slash = name.find_last_of("/\\"); slash != std::string_view::npos) {
@@ -299,10 +305,10 @@ std::string sanitize_download_name(std::string_view name) {
         const auto u = static_cast<unsigned char>(c);
         if (u < 0x20 || u == 0x7F || std::string_view{"<>:\"|?*"}.contains(c)) { return fallback; }
     }
-    // Windows drops trailing dots and spaces, so `evil.dll.` IS evil.dll.
+    // Windows drops trailing dots and spaces, so `evil.dll.` is evil.dll.
     while (!name.empty() && (name.back() == '.' || name.back() == ' ')) { name.remove_suffix(1); }
     if (name.empty()) { return fallback; }
-    // A DEVICE NAME is one whatever follows its first dot: CON.txt opens CON.
+    // A device name is one whatever follows its first dot: CON.txt opens CON.
     std::string_view device = name.substr(0, name.find('.'));
     while (!device.empty() && device.back() == ' ') { device.remove_suffix(1); }
     if (ascii_iequals_any(device, {"con", "prn", "aux", "nul"}) ||
@@ -326,23 +332,22 @@ void browser::scroll_to_fragment(std::string_view id) {
     if (id.empty()) { return; }
     const node_id target = bindings_->find_by_id(std::string{id});
     if (!target) { return; }
-    // Fragment bounds are relative to the containing block, so finding the
-    // element is not enough - the walk has to accumulate to get an absolute
-    // y, which is what a scroll offset is measured in.
+    // Fragment bounds are relative to the containing block, and a scroll
+    // offset is absolute, so absolute_rect_of accumulates the offsets.
     if (const std::optional<rect> box = absolute_rect_of(fragments_, target)) { scroll_to(box->y); }
 }
 
-// "Submit" a form FROM A SUBMITTER (HTML 4.10.21.3), a submit button's
-// activation behaviour: the bindings' algorithm - validation, the `submit`
-// SubmitEvent carrying the button, the entry list with its `formdata`, the
-// navigation - and, when it went ahead, the store's data kept for the embedder
-// to read back.
-//
-// With NO submitter it is IMPLICIT SUBMISSION (4.10.21.2), Enter in a field: a
-// click at the form's default button - the first submit button in tree order
-// that it owns - which a disabled one refuses; and when it has none, and no
-// more than one field that blocks implicit submission, the form submitted from
-// itself.
+/// Submits `form` from `submitter` (HTML 4.10.21.3), a submit button's
+/// activation behaviour. It runs the bindings' algorithm (validation, the
+/// `submit` SubmitEvent carrying the button, the entry list with its
+/// `formdata`, the navigation) and, when the submission went ahead, keeps the
+/// form data for the embedder to read back.
+///
+/// With no submitter this is implicit submission (4.10.21.2), Enter in a
+/// field: a click at the form's default button (the first submit button in
+/// tree order that it owns), which a disabled one refuses. When there is no
+/// default button, and at most one field that blocks implicit submission, the
+/// form is submitted from itself.
 void browser::submit(node_id form, node_id submitter) {
     if (!form || !bindings_->submit_from_) { return; }
     if (!submitter) {
@@ -384,11 +389,11 @@ void browser::submit(node_id form, node_id submitter) {
     mark(dirty::layout);
 }
 
-// HTML 4.10.21.5 "reset the form", the bindings' as form.reset() is: a
-// cancelable `reset` event at the form FIRST - so `onreset` runs whether or
-// not the reset is then cancelled - and each resettable control it owns reset
-// only when it was not, a <select>'s selectedness and an <output>'s text
-// included.
+/// HTML 4.10.21.5 "reset the form", delegated to the same bindings code as
+/// form.reset(): fire a cancelable `reset` event at the form first (so
+/// `onreset` runs even if the reset is cancelled), then, if not cancelled,
+/// reset each control the form owns, including <select> selectedness and
+/// <output> text.
 void browser::reset(node_id form) {
     if (!form || !bindings_->reset_form_) { return; }
     bindings_->reset_form_(form);

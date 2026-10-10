@@ -1,3 +1,11 @@
+//===- ctbrowser/lib/Shell/page/svg_cache.cpp - SVG source and raster cache -===//
+//
+// svg_store keeps each <svg> element's source text (deduplicated by content
+// hash), its natural size scanned from the root tag, and rasters keyed by
+// content and pixel size that are evicted when a frame does not use them.
+//
+//===----------------------------------------------------------------------===//
+
 #include <ctbrowser/shell/page/svg_cache.hpp>
 
 #include <algorithm>
@@ -15,21 +23,17 @@ namespace ctbrowser::shell {
 
 namespace {
 
-// `boost::hash`, not a hand-rolled FNV-1a: FNV walks the bytes ONE AT A TIME
-// and this hashes whole SVG documents. Same argument core/containers.hpp makes
-// for preferring it to std::hash, and this is the larger input of the two.
-//
-// The value is an in-memory cache token only - `set_source` compares the source
-// in FULL on a hash hit (see below), nothing persists it, and no golden depends
-// on it - so changing the function changes no observable behaviour.
+/// boost::hash rather than a byte-at-a-time FNV-1a: inputs are whole SVG
+/// documents. The value is only an in-memory cache key (set_source compares
+/// the full source on a hit), so the hash function can change freely.
 [[nodiscard]] std::uint64_t content_hash(std::string_view text) noexcept {
     return boost::hash<std::string_view>{}(text);
 }
 
-// The value of `name` in the FIRST tag of the document, which for a well-formed
-// SVG is the root <svg>. Deliberately not a parser: this reads three attributes
-// off one tag to get a box size, and a document whose root tag is malformed
-// enough to defeat this is one plutosvg will refuse anyway.
+/// Returns the quoted value of attribute `name` on the first `<svg` tag (the
+/// root of a well-formed document), or an empty view. Deliberately not a
+/// parser: it reads three attributes off one tag to get a box size, and a root
+/// tag malformed enough to defeat it is one plutosvg will refuse anyway.
 [[nodiscard]] std::string_view attribute_in_root(std::string_view source, std::string_view name) {
     const std::size_t open = source.find("<svg");
     if (open == std::string_view::npos) { return {}; }
@@ -51,7 +55,7 @@ namespace {
         while (after < tag.size() && html_whitespace.contains(tag[after])) { ++after; }
         if (after >= tag.size()) { return {}; }
         const char quote = tag[after];
-        if (quote != '"' && quote != '\'') { return {}; } // unquoted: not worth it
+        if (quote != '"' && quote != '\'') { return {}; } // Unquoted values are not supported.
         const std::size_t begin = after + 1;
         const std::size_t end = tag.find(quote, begin);
         if (end == std::string_view::npos) { return {}; }
@@ -60,10 +64,10 @@ namespace {
     return {};
 }
 
-// A CSS length that is an absolute number of pixels, or 0 for anything else.
-// PERCENTAGES DELIBERATELY GIVE 0 - see the header: `width="100%"` is not a
-// natural size, and reading the 100 as pixels turns a full-width banner into a
-// stamp.
+/// Returns a CSS length that is an absolute number of pixels, or 0 for
+/// anything else. Percentages deliberately give 0 (see the header):
+/// `width="100%"` is not a natural size, and reading the 100 as pixels turns a
+/// full-width banner into a stamp.
 [[nodiscard]] float absolute_length(std::string_view text) {
     text = trim(text, html_whitespace);
     if (text.empty()) { return 0; }
@@ -75,7 +79,7 @@ namespace {
     const std::string_view unit =
         trim(text.substr(static_cast<std::size_t>(stop - text.data())), html_whitespace);
     if (unit.empty() || unit == "px") { return value; }
-    return 0; // %, em, and everything else needs a context this does not have
+    return 0; // %, em, etc. need a context this does not have.
 }
 
 } // namespace
@@ -86,11 +90,11 @@ svg_natural scan_svg_natural(std::string_view source) {
     out.height = absolute_length(attribute_in_root(source, "height"));
     if (out.known()) { return out; }
 
-    // Fall back to the viewBox, which carries the ASPECT even when the size is
-    // a percentage or absent. Four numbers; the last two are the extent.
+    // Fall back to the viewBox, which carries the aspect ratio even when the
+    // size is a percentage or absent. Four numbers; the last two are the extent.
     //
-    // `viewBox` with its capital B: this reads the ORIGINAL source, never the
-    // DOM's lowercased copy, which is the reason the source is kept verbatim.
+    // `viewBox` with its capital B: this scans the raw source bytes, where
+    // attribute names keep the case the author wrote.
     const std::string_view box = attribute_in_root(source, "viewBox");
     float numbers[4]{};
     std::size_t found = 0;
@@ -120,9 +124,6 @@ svg_natural scan_svg_natural(std::string_view source) {
 }
 
 std::size_t svg_store::raster_key_hash::operator()(const raster_key & k) const noexcept {
-    // This was `0x9e3779b9...`, the golden-ratio mix, open-coded twice - which
-    // is `boost::hash_combine` retyped from memory. Boost is already a
-    // dependency of every target here.
     std::size_t hash = 0;
     boost::hash_combine(hash, k.content);
     boost::hash_combine(hash, k.width);
@@ -142,7 +143,7 @@ void svg_store::set_source(node_id id, std::string source) {
     if (found == sources_.end()) {
         found = sources_.emplace(content, std::move(source)).first;
     } else if (found->second != source) {
-        return; // a real collision: refuse rather than draw the wrong thing
+        return; // A real collision: refuse rather than draw the wrong thing.
     }
 
     entry e;
@@ -186,8 +187,8 @@ std::shared_ptr<const paint::bitmap> svg_store::pixels_for(node_id id, int width
     const auto source = sources_.find(e->content);
     if (source == sources_.end()) { return nullptr; }
 
-    // A BOX CAN BE ANY SIZE, A RASTER CANNOT: `width: 1e7px` asked plutosvg for
-    // a 400 TB surface. Past the decoders' own budget the graphic is rendered
+    // A box can be any size but a raster cannot: `width: 1e7px` asked plutosvg
+    // for a 400 TB surface. Past the decoders' own budget the graphic is rendered
     // at the largest size that fits with the same aspect ratio, and
     // draw_image's nearest-neighbour scale fills the box from that.
     int render_w = width;

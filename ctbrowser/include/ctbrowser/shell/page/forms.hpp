@@ -1,3 +1,18 @@
+//===- forms.hpp - Form control state and submission ------------*- C++ -*-===//
+//
+// Form control state, kept in a store keyed by node_id rather than on the
+// node: value, caret, selection and scroll offset are fields only the shell
+// cares about, and a document snapshot must not include whatever the user had
+// half-typed.
+//
+// A control's value is document state once the user edits it (the `value`
+// attribute stops being the answer), while its caret and selection are view
+// state. Both live here, but only the value is what script reads back through
+// `.value`. The file also declares the form submission encoders and the
+// request handler an embedder may install.
+//
+//===----------------------------------------------------------------------===//
+
 #pragma once
 #include <algorithm>
 #include <cstddef>
@@ -15,20 +30,9 @@
 #include <ctbrowser/shell/page/input_types.hpp>
 #include <ctbrowser/style/style.hpp>
 
-// Form control state.
-//
-// Kept in a store keyed by node_id, NOT on the node: value, caret, selection
-// and scroll offset are fields only the shell cares about, and a document
-// snapshot must not mean "including whatever the user had half-typed".
-//
-// The distinction is real: a control's VALUE is document state after the user
-// edits it (the `value` attribute stops being the answer), while its caret and
-// selection are interaction state that belongs to the view. Both live here
-// because both are the shell's business, but only the first is what a script
-// reads back through `.value`.
-
 namespace ctbrowser::shell {
 
+/// Which editing behaviour an element gets; `none` for non-controls.
 enum class control_kind : std::uint8_t {
     none,
     text, // <input type=text|search|url|email|tel|password> and friends
@@ -39,6 +43,7 @@ enum class control_kind : std::uint8_t {
     select,
 };
 
+/// Classifies an element by tag name and `type` attribute.
 [[nodiscard]] inline control_kind control_kind_of(std::string_view tag, std::string_view type) {
     if (tag == "textarea") { return control_kind::textarea; }
     if (tag == "select") { return control_kind::select; }
@@ -53,57 +58,59 @@ enum class control_kind : std::uint8_t {
     return control_kind::text;
 }
 
+/// The live state of one form control.
 struct control_state {
     std::string value;
-    std::size_t caret = 0;     // in CODE UNITS of `value`
+    std::size_t caret = 0;     // in code units of `value`
     std::size_t selection = 0; // anchor; equal to caret means no selection
     bool checked = false;
     bool indeterminate = false;  // the IDL-only flag; cloned with checkedness (4.10.5.1.18)
     bool checked_edited = false; // dirty checkedness: until set, `checked` follows the attribute
     bool value_edited = false;   // once true, the `value` attribute stops being the answer
-    // THE INPUT TYPE STATE `value` WAS LAST SANITISED FOR (HTML 4.10.5.1), so
-    // state_of notices a type change on the next read and runs the "type
-    // attribute changes" steps and the new state's sanitization. Empty until
-    // first seeded; the tag for a control that is not an <input>.
+    /// The input type state `value` was last sanitised for (HTML 4.10.5.1),
+    /// so state_of notices a type change on the next read and runs the "type
+    /// attribute changes" steps and the new state's sanitization. Empty until
+    /// first seeded; the tag name for a control that is not an <input>.
     std::string type;
-    // A `value` content attribute those steps want written (step 1: a value
-    // carried into the default modes). The store reads under a read
-    // transaction and cannot write; the bindings' `value` accessor does, and
-    // until then this IS the value the default mode reads.
+    /// A `value` content attribute those steps want written (a value carried
+    /// into the default modes). The store reads under a read transaction and
+    /// cannot write; the bindings' `value` accessor writes it, and until then
+    /// this is the value the default mode reads.
     std::optional<std::string> pending_attribute;
-    // WHERE THE FIELD IS LOOKING. A control's value can be bigger than the box
-    // it is drawn in, in either direction, and these say which part of it is on
-    // screen. View state, so it belongs here beside the caret rather than on
-    // the node - the node is document content.
-    //
-    // The first VISUAL line a textarea shows. A textarea is sized by its `rows`
-    // and does not grow, so once its value wraps past the bottom the caret
-    // would type off the end of a box that cannot show it.
+    // Scroll position: a control's value can be bigger than its box in either
+    // direction, and these say which part is on screen. View state, so it
+    // lives here beside the caret rather than on the node.
+
+    /// The first visual line a textarea shows. A textarea is sized by its
+    /// `rows` and does not grow, so once its value wraps past the bottom the
+    /// view must scroll to keep the caret visible.
     std::size_t scroll_line = 0;
-    // How far right the view has moved, in PIXELS rather than characters: the
-    // painter and the click mapping both work in pixels against measure(), and
-    // a character offset would quantise the scroll so a caret at the right edge
-    // could never sit flush against it. Applies to a textarea too - an
-    // unbreakable word longer than the line is returned whole by
-    // words_that_fit, so a wrapped field can still overflow sideways.
+    /// How far right the view has moved, in pixels rather than characters:
+    /// the painter and the click mapping both work in pixels against
+    /// measure(), and a character offset would quantise the scroll so a caret
+    /// at the right edge could never sit flush against it. Applies to a
+    /// textarea too: words_that_fit returns an unbreakable word longer than
+    /// the line whole, so a wrapped field can still overflow sideways.
     float scroll_x = 0;
 };
 
+/// Every form control's state in a document, plus the HTML form algorithms
+/// (form owner, submit buttons, disabled state) that read it.
 class form_store {
 public:
-    // The live state of a control, seeded from its attributes the first time it
-    // is asked for. Seeding lazily is what makes `<input value=hi>` show "hi"
-    // without the store having to walk the document up front.
+    /// The live state of a control, seeded from its attributes the first time
+    /// it is asked for, so the store never walks the document up front.
     [[nodiscard]] control_state & state_of(const read_txn & txn, atom_table & atoms, node_id id);
 
     [[nodiscard]] const control_state * find(node_id id) const;
 
-    // HTML 4.10.5 / 4.10.11's cloning steps: the copy takes the source's
-    // value, dirty value flag, checkedness and dirty checkedness - and NOT
-    // its selection, which is a fresh control's, collapsed at 0
-    // (select-event.html reads the clone's selectionEnd as 0 and expects a
-    // `select()` on it to be a change). A source nobody has touched has no
-    // state and the copy seeds from its attributes, which is the same answer.
+    /// HTML 4.10.5 / 4.10.11's cloning steps: the copy takes the source's
+    /// value, dirty value flag, checkedness and dirty checkedness, but not its
+    /// selection, which starts collapsed at 0 as in a fresh control
+    /// (select-event.html reads the clone's selectionEnd as 0 and expects a
+    /// `select()` on it to be a change). A source nobody has touched has no
+    /// state, and the copy seeds from its attributes, which gives the same
+    /// answer.
     void clone_state(node_id source, node_id made) {
         if (const auto it = states_.find(source.key()); it != states_.end()) {
             control_state copy = it->second;
@@ -114,10 +121,10 @@ public:
         }
     }
 
-    // After a DOM write: every seeded <input> whose type attribute moved runs
-    // its type-change steps now (state_of does), and the `value` attributes
-    // those steps left pending are handed to `write` - the store cannot write
-    // under its read transaction, so the caller does, outside one.
+    /// Called after a DOM write: every seeded <input> whose type attribute
+    /// changed runs its type-change steps now (through state_of), and the
+    /// `value` attributes those steps left pending are returned. The store
+    /// cannot write under its read transaction, so the caller writes them.
     // ponytail: O(seeded controls) per mutation; index by type write if a
     // page with thousands of controls ever mutates in a storm.
     [[nodiscard]] std::vector<std::pair<node_id, std::string>> settle_types(const read_txn & txn,
@@ -127,8 +134,8 @@ public:
 
     // --- editing ----------------------------------------------------------
 
-    // An <option>'s value: the attribute if it has one, else its text. That
-    // fallback is the HTML rule, not a convenience.
+    /// An <option>'s value: the attribute if it has one, else its text (the
+    /// HTML rule).
     [[nodiscard]] static std::string option_value(const read_txn & txn, atom_table & atoms,
                                                   node_id option) {
         const atom value_attr = atoms.intern("value");
@@ -140,9 +147,9 @@ public:
         return text;
     }
 
-    // HTML 4.10.7 "list of options": the option descendants in tree order,
-    // excluding those inside another select, an option, an hr, or an
-    // optgroup nested in an optgroup (select-selectedOptions-nesting.html).
+    /// HTML 4.10.7 "list of options": the option descendants in tree order,
+    /// excluding those inside another select, a datalist, an option, an hr,
+    /// or an optgroup nested in an optgroup (select-selectedOptions-nesting.html).
     [[nodiscard]] static std::vector<node_id> list_of_options(const read_txn & txn,
                                                               atom_table & atoms, node_id select) {
         const atom option_tag = atoms.intern_lower("option");
@@ -168,9 +175,8 @@ public:
         return out;
     }
 
-    // The value a <select> starts with: the `selected` option's, else the
-    // first one's, which is what a browser shows in a select nobody has
-    // touched.
+    /// The value a <select> starts with: the `selected` option's, else the
+    /// first one's.
     [[nodiscard]] static std::string selected_option_value(const read_txn & txn, atom_table & atoms,
                                                            node_id select) {
         const atom selected = atoms.intern("selected");
@@ -186,22 +192,22 @@ public:
         return first;
     }
 
-    // Replace the whole value - what `input.value = "x"` does. The caret goes
-    // to the end, which is where a browser puts it, and the control counts as
-    // edited so the `value` attribute stops being the answer.
-    // Answers whether the value CHANGED: HTML 4.10.5.3 moves the caret to the
-    // end (and resets the selection direction) only when the new value
-    // differs from the old (selection-after-content-change.html).
+    /// Replaces the whole value, as `input.value = "x"` does, and marks the
+    /// control edited so the `value` attribute stops being the answer.
+    /// Returns whether the value changed: HTML 4.10.5.3 moves the caret to the
+    /// end (and resets the selection direction) only when the new value
+    /// differs from the old (selection-after-content-change.html).
     static bool set_value(control_state & control, std::string text);
-    // The same through the input's type state: the value sanitization
-    // algorithm runs over `text` first (HTML 4.10.5.1 - `input.value = "a\nb"`
-    // is "ab" on a text input and "" on a number one).
+    /// The same through the input's type state: the value sanitization
+    /// algorithm runs over `text` first (HTML 4.10.5.1: `input.value = "a\nb"`
+    /// is "ab" on a text input and "" on a number one).
     bool assign_value(const read_txn & txn, atom_table & atoms, node_id id, std::string text);
 
-    // Insert typed text at the caret, replacing any selection.
+    /// Inserts typed text at the caret, replacing any selection.
     void insert_text(control_state & control, std::string_view text);
 
-    // Returns whether anything changed, so the caller can skip a repaint.
+    /// The editing commands below return whether anything changed, so the
+    /// caller can skip a repaint.
     bool backspace(control_state & control);
 
     bool delete_forward(control_state & control);
@@ -212,30 +218,31 @@ public:
 
     void select_all(control_state & control);
 
-    // What is selected, as text. Empty when the caret and the anchor are in the
-    // same place, which is what "nothing is selected" is.
+    /// What is selected, as text. Empty when the caret and the anchor are in
+    /// the same place, which means nothing is selected.
     [[nodiscard]] static std::string selected_text(const control_state & control);
 
-    // Remove it, leaving the caret where the selection started - which is where
-    // typing over a selection has to continue from.
+    /// Removes the selection, leaving the caret where it started, which is
+    /// where typing over a selection continues from.
     static bool delete_selection(control_state & control);
 
     // --- checkboxes and radios --------------------------------------------
 
-    // A radio deselects every other radio with the same name in the document -
-    // which is why this needs the document and a checkbox toggle does not.
+    /// Toggles a checkbox or checks a radio. A radio deselects every other
+    /// radio with the same name in the document, which is why this needs the
+    /// document.
     void toggle(const read_txn & txn, atom_table & atoms, node_id id, control_kind kind);
 
     // --- forms ------------------------------------------------------------
 
-    // Reset every control in the form back to its markup. `value_edited` is
-    // what makes this different from doing nothing: it is the flag that said
-    // the attribute had stopped being the answer.
+    /// Resets every control in the form back to its markup, which includes
+    /// clearing `value_edited` so the attributes become the answer again.
     void reset_form(const read_txn & txn, node_id form);
 
-    // The successful controls of a form, as name/value pairs, in document
-    // order. This is what a submission would send - there is no network yet, so
-    // producing the data and stopping there is the honest half.
+    /// The successful controls of a form as name/value pairs in document order.
+    /// A simplified record that browser::last_submission() exposes after a
+    /// submit; the real request body is built from a form_entry list by
+    /// urlencoded_form_body and friends below.
     [[nodiscard]] std::vector<std::pair<std::string, std::string>> form_data(const read_txn & txn,
                                                                              atom_table & atoms,
                                                                              node_id form) {
@@ -249,8 +256,8 @@ public:
                 const control_kind kind = control_kind_of(tag, txn.attribute_value(at, type_attr));
                 if (kind != control_kind::none && kind != control_kind::button) {
                     control_state & control = state_of(txn, atoms, at);
-                    // Unchecked boxes are NOT successful controls and are omitted
-                    // entirely - a server that sees the name knows it was ticked.
+                    // Unchecked boxes are not successful controls and are omitted
+                    // entirely: a server that sees the name knows it was ticked.
                     const bool toggleable =
                         kind == control_kind::checkbox || kind == control_kind::radio;
                     if (!toggleable || control.checked) {
@@ -266,10 +273,11 @@ public:
         return out;
     }
 
-    // A SUBMIT BUTTON (HTML 4.10.2): an <input> whose type is submit or image,
-    // or a <button> in the Submit Button state - `type=submit`, or the Auto
-    // state (no type, or one that is not a keyword) without a `command` or a
-    // `commandfor`, which make it a plain button (4.10.6).
+    /// Whether `id` is a submit button (HTML 4.10.2): an <input> whose type is
+    /// submit or image, or a <button> in the Submit Button state, meaning
+    /// `type=submit`, or the Auto state (no type, or one that is not a
+    /// keyword) without a `command` or `commandfor`, which would make it a
+    /// plain button (HTML 4.10.6).
     [[nodiscard]] static bool is_submit_button(const read_txn & txn, atom_table & atoms,
                                                node_id id) {
         if (txn.element_ns(id) != node_ns::html) { return false; }
@@ -283,23 +291,21 @@ public:
                !txn.has_attribute(id, atoms.intern("commandfor"));
     }
 
-    // A control's FORM OWNER (HTML 4.10.18.3): connected with a `form`
-    // attribute, the first element in its tree whose id is the value - when that is an HTML
-    // <form>, and none at all otherwise - else the form the parser associated
-    // it with, else its nearest ancestor HTML <form>. A button outside its
-    // form that names it submits it. THE ONE
-    // ALGORITHM: the browser's default actions and every binding that asks
-    // for a form owner (control_helpers::form_owner) come here.
+    /// A control's form owner (HTML 4.10.18.3): if connected and it has a
+    /// `form` attribute, the first element in its tree with that id when it is
+    /// an HTML <form> (none otherwise); else the form the parser associated it
+    /// with; else its nearest ancestor HTML <form>. Every caller that needs a
+    /// form owner, including control_helpers::form_owner, uses this function.
     [[nodiscard]] static node_id owning_form(const read_txn & txn, atom_table & atoms,
                                              node_id from) {
         const atom form_tag = atoms.intern_lower("form");
         const auto is_form = [&](node_id at) {
             return txn.element_ns(at) == node_ns::html && txn.tag(at).value_or(atom{}) == form_tag;
         };
-        // ONLY A CONNECTED control's `form` attribute names its owner (step 4);
-        // a disconnected one falls through to its nearest form ancestor, which
-        // is how the one inside a removed form keeps it and the one beside a
-        // removed form loses its (form_attribute.html, form_owner_and_table).
+        // Only a connected control's `form` attribute names its owner (step
+        // 4); a disconnected one falls through to its nearest form ancestor.
+        // So a control inside a removed form keeps it, and one beside a
+        // removed form loses it (form_attribute.html, form_owner_and_table).
         const node_id top = txn.root_of_tree(from, true);
         const bool connected =
             top == txn.root() || txn.kind(top).value_or(node_kind::element) == node_kind::document;
@@ -319,12 +325,12 @@ public:
             }
             return node_id{};
         }
-        // THE FORM ELEMENT POINTER'S ASSOCIATION, which outlives the parse:
-        // `<table><form><tr><td><input>` pops the form at once and the input
-        // is still its control, with the form nowhere above it. The parser
-        // inserted flag keeps that until a "reset the form owner" - a removal
-        // that parts the two trees, or a `form` attribute - and the document
-        // drops the pair at exactly those two (document::parser_form).
+        // The parser's form element pointer association outlives the parse:
+        // `<table><form><tr><td><input>` pops the form at once, yet the input
+        // is still its control with the form nowhere above it. The association
+        // lasts until "reset the form owner" runs (a removal that separates
+        // the two trees, or a `form` attribute), and the document drops the
+        // pair at exactly those two points (document::parser_form).
         if (const node_id parsed = txn.parser_form(from)) { return parsed; }
         for (node_id at = txn.parent(from); at; at = txn.parent(at)) {
             if (is_form(at)) { return at; }
@@ -332,9 +338,9 @@ public:
         return node_id{};
     }
 
-    // HTML 4.10.18.5 "actually disabled": the element's own `disabled`, or a
-    // disabled <fieldset> ancestor - unless the element is inside that
-    // fieldset's first <legend> child, which the fieldset leaves enabled.
+    /// HTML 4.10.18.5 "actually disabled": the element's own `disabled`, or a
+    /// disabled <fieldset> ancestor, unless the element is inside that
+    /// fieldset's first <legend> child, which the fieldset leaves enabled.
     [[nodiscard]] static bool is_actually_disabled(const read_txn & txn, atom_table & atoms,
                                                    node_id id) {
         const atom disabled = atoms.intern("disabled");
@@ -357,11 +363,11 @@ public:
         return false;
     }
 
-    // WHAT A BUTTON'S ACTIVATION DOES TO ITS FORM (4.10.6, 4.10.5.1.18-19): a
-    // submit button submits its form owner and a reset button resets it.
-    // `form` is empty when the element is neither, is actually disabled or
-    // has no form owner. browser::activate and a frame document's activation
-    // (bindings/frames.cpp) both ask this.
+    /// What a button's activation does to its form (HTML 4.10.6,
+    /// 4.10.5.1.18-19): a submit button submits its form owner and a reset
+    /// button resets it. `form` is empty when the element is neither, is
+    /// actually disabled or has no form owner. browser::activate and a frame
+    /// document's activation (bindings/frames.cpp) both use this.
     struct form_action {
         node_id form;
         bool submits = false;
@@ -382,9 +388,9 @@ public:
         return out;
     }
 
-    // The UTF-8 code point boundary on either side of a byte offset - a caret
-    // moves by these, never by bytes. Clamped: past the end is the end. The
-    // browser's caret and password masking step with the same two.
+    /// The UTF-8 code point boundary on either side of a byte offset; a caret
+    /// moves by these, never by bytes. Clamped: past the end is the end. The
+    /// browser's caret and password masking use the same two.
     [[nodiscard]] static std::size_t previous_code_point(std::string_view text, std::size_t at);
     [[nodiscard]] static std::size_t next_code_point(std::string_view text, std::size_t at);
 
@@ -398,16 +404,18 @@ private:
 
 // This engine opens no socket for a page loaded from disk: every byte a frame,
 // a fetch() or an XHR gets comes out of the asset registry, which answers a GET
-// for a FILE and nothing else. A form POSTed to a script, or a GET whose answer
-// depends on its query, has nobody to answer it - and a request handler
-// (browser_options::on_request) is that somebody: given the method, the
-// absolute URL, the request's Content-Type and its body, it returns a
-// response, or nullopt to leave the request to the registry as before.
+// for a file and nothing else. A form POSTed to a script, or a GET whose answer
+// depends on its query, needs something else to answer it: a request handler
+// (browser_options::on_request). Given the method, the absolute URL, the
+// request's Content-Type and its body, it returns a response, or nullopt to
+// leave the request to the registry.
 //
-// ONE CALLER FILLS IT IN THIS TREE: ctdrive, under a document root, with
-// emulations of the web-platform-tests' Python handlers
-// (tools/ctdrive/wpt_handlers.cpp) - the server half of a form submission
-// test. An application has no reason to set it.
+// The only caller in this tree that installs one is ctdrive, under a document
+// root, with emulations of the web-platform-tests' Python handlers
+// (tools/ctdrive/wpt_handlers.cpp): the server half of a form submission test.
+// An application has no reason to set it.
+
+/// A request passed to a request_handler.
 struct resource_request {
     std::string method = "GET";
     std::string url;          // absolute, fragment removed
@@ -415,19 +423,22 @@ struct resource_request {
     std::string body;         // the entity body's bytes
 };
 
+/// A request_handler's response.
 struct resource_reply {
     int status = 200;
     std::string content_type; // the response's Content-Type, parameters and all
     std::string body;         // its bytes
 };
 
+/// Answers a request, or returns nullopt to leave it to the asset registry.
 using request_handler = std::function<std::optional<resource_reply>(const resource_request &)>;
 
 // --- form submission, HTML 4.10.21.3-9 ---------------------------------------
 
-// ONE ENTRY OF A FORM'S ENTRY LIST as the three encodings read it: a name and
-// a string - or a File, whose name, type and bytes multipart/form-data sends
-// and the other two reduce to the name. Text is UTF-8 of scalar values.
+/// One entry of a form's entry list as the three encodings read it: a name
+/// and a string, or a File, whose name, type and bytes multipart/form-data
+/// sends and the other two encodings reduce to the name. Text is UTF-8 of
+/// scalar values.
 struct form_entry {
     std::string name;
     std::string value; // a string entry's text; a File's bytes
@@ -436,23 +447,23 @@ struct form_entry {
     std::string type; // a File's type; "" is application/octet-stream
 };
 
-// The three submission bodies over an entry list, each ENCODED in `encoding`
-// - the one "picking an encoding for the form" chose - with the Encoding
-// Standard's "html" error mode, so a character the encoding lacks is `&#N;`:
-// application/x-www-form-urlencoded (URL 5.2, also a GET's query),
-// text/plain (4.10.21.9) and multipart/form-data (4.10.21.8). Names and
-// string values have their line breaks normalised to CR LF first (4.10.21.6
-// and .8). A legacy multi-byte encoding has no encoder here and is sent as
-// UTF-8.
+/// The three submission bodies over an entry list, each encoded in
+/// `encoding` (the one "picking an encoding for the form" chose) with the
+/// Encoding Standard's "html" error mode, so a character the encoding lacks
+/// becomes `&#N;`: application/x-www-form-urlencoded (URL 5.2, also a GET's
+/// query), text/plain (HTML 4.10.21.9) and multipart/form-data (HTML
+/// 4.10.21.8). Names and string values have their line breaks normalised to
+/// CR LF first (HTML 4.10.21.6 and .8). A legacy multi-byte encoding has no
+/// encoder here and is sent as UTF-8.
 [[nodiscard]] std::string urlencoded_form_body(const std::vector<form_entry> & entries,
                                                std::string_view encoding);
 [[nodiscard]] std::string text_plain_form_body(const std::vector<form_entry> & entries,
                                                std::string_view encoding);
-// multipart/form-data under a boundary of its OWN: `----ctbrowser` and 24
-// random alphanumerics from std::random_device - not the page's seeded
-// Math.random, which a page can predict - drawn again should any name, value
-// or file contain it. A fixed public boundary let a value end its part early
-// and forge fields after it.
+/// A multipart/form-data body and its boundary: `----ctbrowser` and 24
+/// random alphanumerics from std::random_device (not the page's seeded
+/// Math.random, which a page can predict), drawn again if any name, value or
+/// file contains it. A fixed public boundary would let a value end its part
+/// early and forge fields after it.
 struct multipart_body {
     std::string boundary;
     std::string body;
@@ -462,19 +473,20 @@ struct multipart_body {
 
 class dom_bindings;
 
-// A SUBMISSION'S NAVIGATION, as build_submission makes it: the target it
-// names, the URL as the page wrote it - the name the asset registry is asked
-// for - and the request (method, absolute URL, Content-Type and body).
+/// A submission's navigation, as build_submission makes it: the target it
+/// names, the URL as the page wrote it (the name the asset registry is asked
+/// for) and the request (method, absolute URL, Content-Type and body).
 struct form_navigation {
     std::string target;
     std::string src;
     resource_request request;
 };
 
-// ...PLANNED, once a navigable is chosen (bindings/frames.cpp): the form's
-// document and the form - whose one planned navigation a later one replaces;
-// both empty for a script's navigation (a Location setter, window.open) - and
-// the <iframe> it navigates, by the bindings of the document it is in.
+/// A form_navigation once a navigable is chosen (bindings/frames.cpp): the
+/// form's document and the form (a later planned navigation for the same form
+/// replaces this one; both are empty for a script's navigation such as a
+/// Location setter or window.open), and the <iframe> it navigates, given by
+/// the bindings of the document it is in.
 struct planned_navigation {
     dom_bindings * form_document = nullptr;
     node_id form;

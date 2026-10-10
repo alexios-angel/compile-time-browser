@@ -1,22 +1,27 @@
+//===- pre_insert.cpp - Pre-insertion validity, node conversion -----------===//
+//
+// The DOM insertion helpers shared by the Node, ParentNode and ChildNode
+// methods: "ensure pre-insertion validity" (DOM 4.2.3), "convert nodes into a
+// node" (DOM 4.2.5) and the viable sibling search (DOM 4.2.7).
+//
+//===----------------------------------------------------------------------===//
+
 #include "internal.hpp"
 
 namespace ctbrowser::shell {
 
 using namespace detail;
 
-// DOM 4.2.3, "ensure pre-insertion validity". Every one of these checks stands
-// in front of a `assert_throws_dom` in `dom/nodes/Node-insertBefore.html`,
-// `Node-appendChild.html` and `Node-removeChild.html`, and the FIRST one is the
-// reason this is not merely conformance work: appending a node to its own
-// descendant built a cycle, and every tree walk in this file has a depth cap
-// precisely because nothing stopped one being made.
+/// DOM 4.2.3, "ensure pre-insertion validity", plus the engine's depth cap.
+/// Throws the specification's exception and returns false when inserting
+/// `child` into `parent` before `ref_arg` is not allowed. Step 2 matters most:
+/// without it, appending a node to its own descendant would build a cycle.
 bool dom_bindings::pre_insert_valid(context & cx, node_id parent, node_id child, value node_arg,
                                     value ref_arg) {
-    // THE DOCUMENT OBJECT IS A NODE WITHOUT A HANDLE - `document` is one object
-    // built by install_document, not a wrapper - so `handle_of` answers nothing
-    // for it. It IS a Node, and inserting one is step 4's HierarchyRequestError,
-    // not a TypeError: `el.insertBefore(document, a)` is a subtest by name.
-    // ANY document - a frame's or a created one is a Node just the same.
+    // The document object is a Node without a handle (`document` is one object
+    // built by install_document, not a wrapper), so `handle_of` answers nothing
+    // for it. It is a Node, so inserting one is step 4's HierarchyRequestError,
+    // not a TypeError, for any document, including a frame's or a created one.
     const bool node_is_document = !child && is_a_document(node_arg);
     if (!child && !node_is_document) {
         // Not a Node at all. WebIDL reports a failed conversion as a TypeError
@@ -39,7 +44,7 @@ bool dom_bindings::pre_insert_valid(context & cx, node_id parent, node_id child,
         return false;
     }
     // 2. "If node is a host-including inclusive ancestor of parent, throw a
-    //    HierarchyRequestError." The cycle case, and the one with teeth.
+    //    HierarchyRequestError." The cycle case.
     for (node_id at = parent; at; at = txn.parent(at)) {
         if (at != child) { continue; }
         throw_dom_exception(cx, "HierarchyRequestError",
@@ -76,10 +81,10 @@ bool dom_bindings::pre_insert_valid(context & cx, node_id parent, node_id child,
                             "a DocumentType can only be inserted into a Document");
         return false;
     }
-    // THE DEPTH CAP (max_dom_depth, dom/node.hpp) - Blink's parser limit made
-    // one for the whole tree, so no walk over it can run out of stack. The
-    // document refuses it as dom_error::too_deep; this says so the way the
-    // steps above do. A fragment's CHILDREN are what move.
+    // The depth cap (max_dom_depth, dom/node.hpp): Blink's parser limit applied
+    // to the whole tree, so no recursive walk over it can run out of stack. The
+    // document refuses it as dom_error::too_deep; this reports it the way the
+    // steps above do. For a fragment, its children are what move.
     bool deep = false;
     if (txn.kind(child).value_or(node_kind::element) == node_kind::document_fragment) {
         for (const node_id one : txn.children(child)) {
@@ -96,12 +101,12 @@ bool dom_bindings::pre_insert_valid(context & cx, node_id parent, node_id child,
     return true;
 }
 
-// "CONVERT NODES INTO A NODE", DOM 4.2.5: one argument is the node it names,
-// several become a DocumentFragment holding them all - which MOVES each out of
-// wherever it was - and a string becomes a Text node. Every ParentNode and
-// ChildNode insertion method starts here, and the conversion running BEFORE
-// the position is computed is what makes `child.after(x, child)` land where the
-// specification says.
+/// "Convert nodes into a node", DOM 4.2.5: one argument is the node it names,
+/// several become a DocumentFragment holding them all (which moves each out of
+/// wherever it was), and a string becomes a Text node. Every ParentNode and
+/// ChildNode insertion method starts here, and running the conversion before
+/// the position is computed is what makes `child.after(x, child)` land where
+/// the specification says.
 node_id dom_bindings::convert_nodes(context & cx, std::span<value> args) {
     if (args.size() == 1) { return node_from(cx, args[0]); }
     const node_id fragment = doc_->create_fragment();
@@ -109,10 +114,10 @@ node_id dom_bindings::convert_nodes(context & cx, std::span<value> args) {
     return fragment;
 }
 
-// "VIABLE NEXT/PREVIOUS SIBLING", DOM 4.2.7: the first sibling in that direction
-// that is NOT one of the arguments. `child.after(x, y)` where x and y are the
-// very siblings that follow it must put them after child, not after
-// themselves - which is what the immediate sibling would have said.
+/// "Viable next/previous sibling", DOM 4.2.7: the first sibling of `self` in
+/// that direction that is not one of the arguments. `child.after(x, y)` where x
+/// and y are the siblings that follow it must put them after child, not after
+/// themselves, which is where the immediate sibling would put them.
 node_id dom_bindings::viable_sibling(node_id self, std::span<value> args, bool forward) {
     std::vector<node_id> given;
     for (const value & one : args) {
@@ -137,11 +142,5 @@ node_id dom_bindings::viable_sibling(node_id self, std::span<value> args, bool f
     }
     return node_id{};
 }
-
-// WHICH PROTOTYPE EACH OPERATION GOES ON is WebIDL's answer, not this file's:
-// Node's on Node.prototype; the ParentNode mixin on Element, Document and
-// DocumentFragment; the ChildNode mixin on Element and CharacterData; the rest
-// on Element. A method that is not on the interface is then simply absent -
-// `"moveBefore" in textNode` is false without anything being erased.
 
 } // namespace ctbrowser::shell

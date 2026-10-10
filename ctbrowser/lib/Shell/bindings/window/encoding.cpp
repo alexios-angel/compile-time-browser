@@ -1,26 +1,27 @@
-// `TextEncoder` and `TextDecoder` - the Encoding Standard §8, as bindings over
-// plain byte loops. Nothing in the engine had them, so a page that reached for
-// either got "TextDecoder is not defined": every file of WPT's encoding/ (1,261
-// of them) timed out on the first line, and url/percent-encoding.window.js died
-// before its first assertion.
+//===- encoding.cpp - TextEncoder and TextDecoder ---------------*- C++ -*-===//
 //
-// WHAT IS HERE, WHOLE: the UTF-8 decoder of §4.2 as its state machine (so a
+// `TextEncoder` and `TextDecoder` (Encoding Standard §8), as bindings over
+// plain byte loops.
+//
+// Implemented in full: the UTF-8 decoder of §4.2 as its state machine (so a
 // truncated sequence is one U+FFFD and not one per byte), UTF-16LE and UTF-16BE
-// with their surrogate pairing, and the twenty-seven legacy SINGLE-BYTE indexes
+// with their surrogate pairing, and the twenty-seven legacy single-byte indexes
 // the Standard publishes, generated into encoding_tables.inc by
 // tools/gen/encoding_tables.py. `fatal`, `ignoreBOM`, `stream: true` and
-// `encodeInto` are each the specification's algorithm.
+// `encodeInto` each follow the specification's algorithm.
 //
-// WHAT IS NOT: the legacy MULTI-byte encodings - Big5, EUC-JP, EUC-KR, GBK,
-// gb18030, Shift_JIS. Their indexes are tens of thousands of entries and no
+// Not implemented: the legacy multi-byte encodings (Big5, EUC-JP, EUC-KR, GBK,
+// gb18030, Shift_JIS). Their indexes are tens of thousands of entries and no
 // part of this engine reads one yet; `new TextDecoder("big5")` is a RangeError
 // that names the gap rather than a decoder that quietly returns mojibake.
-// TextDecoderStream and TextEncoderStream want the Streams API and are not here
-// either.
+// TextDecoderStream and TextEncoderStream need the Streams API and are absent
+// too.
 //
-// STATE LIVES IN PRIVATE SLOTS, the device the rest of bindings/ uses: this
-// engine has no internal-slot mechanism, so a decoder's encoding, its two flags
-// and its half-finished sequence sit under names no author writes.
+// State lives in private slots, as elsewhere in bindings/: the engine has no
+// internal-slot mechanism, so a decoder's encoding, its two flags and its
+// half-finished sequence are stored under property names no author writes.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -49,7 +50,7 @@ constexpr std::string_view encoder_key = "__ctbrowser_encoder";
 
 // --- the label table, §4.1 -------------------------------------------------
 //
-// A LABEL IS NOT A NAME. `latin1`, `us-ascii` and `iso-8859-1` are all
+// A label is not a name: `latin1`, `us-ascii` and `iso-8859-1` are all
 // windows-1252, and getting that wrong is a whole class of mojibake. The
 // Standard's table is data; it is spelled out here because it is short, unlike
 // the indexes above.
@@ -65,10 +66,10 @@ enum class encoding_id : std::uint8_t {
 };
 
 struct encoding_row {
-    const char * name; // the Standard's name, which is what `encoding` answers
+    const char * name; ///< The Standard's name, which `encoding` returns.
     encoding_id id;
-    std::uint8_t index;  // into single_byte_indexes, for `single_byte`
-    const char * labels; // space-separated, lower case
+    std::uint8_t index;  ///< Index into single_byte_indexes, for `single_byte`.
+    const char * labels; ///< Space-separated, lower case.
 };
 
 constexpr encoding_row encodings[] = {
@@ -97,7 +98,7 @@ constexpr encoding_row encodings[] = {
     {"ISO-8859-8", encoding_id::single_byte, 7,
      "csiso88598e csisolatinhebrew hebrew iso-8859-8 iso-8859-8-e iso-ir-138 iso8859-8 iso88598 "
      "iso_8859-8 iso_8859-8:1988 visual"},
-    // iso-8859-8-i is a SEPARATE name sharing iso-8859-8's index: a page reads
+    // ISO-8859-8-I is a separate name sharing ISO-8859-8's index: a page reads
     // `decoder.encoding` back and the two answers differ.
     {"ISO-8859-8-I", encoding_id::single_byte, 7, "csiso88598i iso-8859-8-i logical"},
     {"ISO-8859-10", encoding_id::single_byte, 8,
@@ -128,8 +129,8 @@ constexpr encoding_row encodings[] = {
     {"x-mac-cyrillic", encoding_id::single_byte, 26, "x-mac-cyrillic x-mac-ukrainian"},
 };
 
-// §4.1 "get an encoding": strip leading and trailing ASCII whitespace, fold to
-// lower case, then match a label exactly.
+/// §4.1 "get an encoding": strip leading and trailing ASCII whitespace, fold to
+/// lower case, then match a label exactly. Returns null for an unknown label.
 [[nodiscard]] const encoding_row * encoding_for_label(std::string_view label) {
     const std::string folded = ascii_lower_copy(trim(label, html_whitespace));
     if (folded.empty()) { return nullptr; }
@@ -146,9 +147,9 @@ constexpr encoding_row encodings[] = {
     return nullptr;
 }
 
-// The labels the Standard maps to `replacement`, which a TextDecoder must
-// REFUSE rather than decode - the whole point of that encoding is that a page
-// cannot be talked into interpreting these bytes.
+/// True for the labels the Standard maps to `replacement`, which a TextDecoder
+/// must refuse rather than decode: the point of that encoding is that a page
+/// cannot be talked into interpreting these bytes.
 [[nodiscard]] bool is_replacement_label(std::string_view label) {
     static constexpr std::string_view names[] = {"csiso2022kr",     "hz-gb-2312",  "iso-2022-cn",
                                                  "iso-2022-cn-ext", "iso-2022-kr", "replacement"};
@@ -158,19 +159,20 @@ constexpr encoding_row encodings[] = {
 
 // --- UTF-8 ------------------------------------------------------------------
 
-// The decoders all answer the same two things: the text, and whether an error
-// was met (which `fatal` turns into a TypeError and everything else into
-// U+FFFD, already substituted).
+/// What every decoder returns: the UTF-8 text, and whether an error was met.
+/// Errors are already substituted with U+FFFD in `text`; `fatal` turns the
+/// flag into a TypeError instead.
 struct decoded {
     std::string text;
     bool error = false;
-    std::vector<std::uint8_t> pending; // an unfinished sequence, for `stream`
+    std::vector<std::uint8_t> pending; ///< An unfinished sequence, for `stream`.
 };
 
-// §4.2 "UTF-8 decoder", as its state machine and not as a re-scan: `bytes
-// needed`, `lower boundary` and `upper boundary` are what make an overlong
-// sequence, a surrogate and a value above U+10FFFF each ONE error, and what
-// let a code point be split across two `decode(..., {stream: true})` calls.
+/// §4.2 "UTF-8 decoder", as its state machine and not as a re-scan: `bytes
+/// needed`, `lower boundary` and `upper boundary` make an overlong sequence, a
+/// surrogate and a value above U+10FFFF each exactly one error, and let a code
+/// point be split across two `decode(..., {stream: true})` calls. With
+/// `flush` false an unfinished sequence is returned in `pending`.
 [[nodiscard]] decoded decode_utf8_stream(std::span<const std::uint8_t> bytes, bool flush) {
     decoded out;
     char32_t code_point = 0;
@@ -216,8 +218,8 @@ struct decoded {
             continue;
         }
         if (byte < lower || byte > upper) {
-            // THE OFFENDING BYTE IS RESTORED, §4.2: it is not part of this
-            // sequence, so it is decoded again from scratch - which is what
+            // The offending byte is restored (§4.2): it is not part of this
+            // sequence, so it is decoded again from scratch. That is what
             // makes "\xE0\x41" two characters and not one.
             (void)fail(0);
             --at;
@@ -248,8 +250,8 @@ struct decoded {
     return out;
 }
 
-// §4.3, UTF-16, both byte orders: pairs of bytes, with the surrogate pairing
-// the standard spells out - an unpaired surrogate on either side is an error.
+/// §4.3 UTF-16 in either byte order: pairs of bytes, with the Standard's
+/// surrogate pairing. An unpaired surrogate on either side is an error.
 [[nodiscard]] decoded decode_utf16(std::span<const std::uint8_t> bytes, bool big_endian,
                                    bool flush) {
     decoded out;
@@ -298,9 +300,9 @@ struct decoded {
     return out;
 }
 
-// §9.2 "single-byte decoder" and §14.1 x-user-defined: ASCII passes through
-// and the top half is one table lookup. Neither can be split across a call, so
-// neither has a pending state.
+/// §9.2 "single-byte decoder": ASCII passes through and the top half is one
+/// lookup in `index`, where 0 marks an unmapped byte. A byte cannot be split
+/// across calls, so there is no pending state.
 [[nodiscard]] decoded decode_single_byte(std::span<const std::uint8_t> bytes,
                                          std::u16string_view index) {
     decoded out;
@@ -320,6 +322,8 @@ struct decoded {
     return out;
 }
 
+/// §14.1 x-user-defined: ASCII passes through and byte 0x80 + n maps to
+/// U+F780 + n.
 [[nodiscard]] decoded decode_user_defined(std::span<const std::uint8_t> bytes) {
     decoded out;
     for (const std::uint8_t byte : bytes) {
@@ -334,6 +338,9 @@ struct decoded {
 
 // --- the two interfaces ------------------------------------------------------
 
+/// Returns `this` if it carries the private slot `slot` (i.e. it was made by
+/// the `interface` constructor); otherwise throws "illegal invocation" and
+/// returns null.
 [[nodiscard]] script::object_object * branded(context & c, std::string_view slot,
                                               const char * interface) {
     const value self = c.current_this();
@@ -366,8 +373,8 @@ void install_text_encoder(context & cx) {
         cx, *made.proto, "encode",
         [](context & c, std::span<value> a) {
             if (branded(c, encoder_key, "TextEncoder") == nullptr) { return value::undefined(); }
-            // USVString: the lone surrogates a JavaScript string may hold
-            // become U+FFFD before anything is encoded, §8.1.
+            // USVString (§8.1): the lone surrogates a JavaScript string may
+            // hold become U+FFFD before anything is encoded.
             const std::string text =
                 a.empty() || a[0].is_undefined() ? std::string{} : to_usv_string(c.to_string(a[0]));
             const value out = c.make_array();
@@ -395,8 +402,8 @@ void install_text_encoder(context & cx) {
                 return value::undefined();
             }
             // §8.1: whole code points only. A destination with three bytes left
-            // and a four-byte character in hand writes NOTHING and stops, so a
-            // caller can hand the same string to the next buffer.
+            // and a four-byte character in hand writes nothing and stops, so a
+            // caller can hand the rest of the string to the next buffer.
             std::size_t written = 0;
             std::size_t read = 0;
             for (std::size_t at = 0; at < text.size();) {
@@ -409,8 +416,8 @@ void install_text_encoder(context & cx) {
                         static_cast<double>(static_cast<unsigned char>(text[start + i])));
                 }
                 written += width;
-                // `read` counts UTF-16 CODE UNITS, which is two for anything
-                // above the BMP - the number the caller slices its string by.
+                // `read` counts UTF-16 code units, two for anything above the
+                // BMP, because that is what the caller slices its string by.
                 read += cp >= 0x10000 ? 2u : 1u;
             }
             auto * result = static_cast<script::object_object *>(c.make_object().as_heap());
@@ -466,7 +473,8 @@ void install_text_decoder(context & cx) {
     define_getter(cx, *made.proto, "encoding", [row_of](context & c, std::span<value>) {
         script::object_object * self = branded(c, encoding_key, "TextDecoder");
         if (self == nullptr) { return value::undefined(); }
-        // LOWER CASE, §8.2: the name is `UTF-8` in the table and `utf-8` here.
+        // §8.2 returns the name in lower case, e.g. `ISO-8859-2` becomes
+        // `iso-8859-2`.
         return c.string(ascii_lower_copy(row_of(*self).name));
     });
     for (const auto & [name, slot] :
@@ -492,8 +500,8 @@ void install_text_decoder(context & cx) {
             const bool stream = dict_flag(c, arg(a, 1), "stream");
 
             std::vector<std::uint8_t> bytes;
-            // THE CARRY COMES FIRST. A streaming call ended mid-sequence leaves
-            // its bytes in the slot, and they belong in front of this call's.
+            // The carry comes first: a streaming call that ended mid-sequence
+            // left its bytes in the slot, and they go in front of this call's.
             if (const value * held = self->find(pending_key);
                 held != nullptr && held->is_string()) {
                 for (const char ch : static_cast<script::string_object *>(held->as_heap())->text) {
@@ -572,11 +580,12 @@ void install_encoding(context & cx) {
 
 // --- the bytes behind a BufferSource ---------------------------------------
 
-// An ArrayBuffer carries its bytes in `__bytes`; a view answers `buffer`,
-// `byteOffset` and `byteLength`, and ASKING for `buffer` is what moves an
-// owning typed array's elements into a store (see
-// lib/Script/builtins/collections/typed_arrays/internal.hpp), so this one path
-// takes every shape - Uint8Array, Float32Array, DataView, ArrayBuffer.
+/// Copies the bytes of a BufferSource into `out`; false if `source` is not one.
+/// An ArrayBuffer stores its bytes in `__bytes`; a view has `buffer`,
+/// `byteOffset` and `byteLength`, and reading `buffer` is what moves an owning
+/// typed array's elements into a store (see
+/// lib/Script/builtins/collections/typed_arrays/internal.hpp), so this one path
+/// handles Uint8Array, Float32Array, DataView and ArrayBuffer alike.
 bool buffer_source_bytes(context & c, value source, std::vector<std::uint8_t> & out) {
     if (!source.is_object_like()) { return false; }
     // Script-free from here to the end of a copy: to_uint32 is static, so no
@@ -584,7 +593,7 @@ bool buffer_source_bytes(context & c, value source, std::vector<std::uint8_t> & 
     const auto copy = [&out](script::array_object * store, std::size_t from, std::size_t count) {
         out.clear();
         // Bounded by the store, never by `count`: a view's byteLength/byteOffset
-        // are read off the source OBJECT, so `{buffer, byteLength: 2**53}` must
+        // are read off the source object, so `{buffer, byteLength: 2**53}` must
         // not reserve() a huge block, and from + count must not wrap.
         const std::size_t available = from < store->items.size() ? store->items.size() - from : 0;
         const std::size_t n = std::min(count, available);
@@ -593,7 +602,8 @@ bool buffer_source_bytes(context & c, value source, std::vector<std::uint8_t> & 
             out.push_back(static_cast<std::uint8_t>(context::to_uint32(store->items[i]) & 0xFFu));
         }
     };
-    // NaN and negatives are refused by the caller; +Infinity saturates.
+    // NaN and negatives are rejected before this runs. Anything at or above
+    // 2^53 (9007199254740992), +Infinity included, saturates to 2^53.
     const auto saturate = [](double d) {
         return d >= 9007199254740992.0 ? std::size_t{1} << 53 : static_cast<std::size_t>(d);
     };
@@ -603,7 +613,7 @@ bool buffer_source_bytes(context & c, value source, std::vector<std::uint8_t> & 
         copy(store, 0, store->items.size());
         return true;
     }
-    // Everything that can run script comes BEFORE the store is looked up.
+    // Everything that can run script comes before the store is looked up.
     const double offset = context::to_number(c.lookup_property(source, "byteOffset"));
     const double length = context::to_number(c.lookup_property(source, "byteLength"));
     const value buffer = c.lookup_property(source, "buffer");

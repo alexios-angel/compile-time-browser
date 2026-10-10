@@ -1,3 +1,12 @@
+//===- views.cpp - Per-element view accessors -------------------*- C++ -*-===//
+//
+// install_element_views: the accessors defined on each node wrapper as it is
+// made, because they are views onto that one node: box metrics (CSSOM View),
+// `attributes`, innerHTML/outerHTML, textContent, a control's value and
+// checked, parentNode/parentElement, shadowRoot, isConnected and baseURI.
+// Reflected attributes live on the interface prototypes instead.
+//
+//===----------------------------------------------------------------------===//
 #include "../computed_style/internal.hpp"
 #include "control_methods/helpers.hpp"
 #include "internal.hpp"
@@ -12,36 +21,26 @@ namespace ctbrowser::shell {
 using namespace detail;
 
 void dom_bindings::install_element_views(context & cx, script::object_object & obj, node_id id) {
-    // `<style>.sheet` and `<link>.sheet` - the LinkStyle mixin. Here rather than
-    // in bindings/stylesheets.cpp for the same reason `style` is here: it is a
-    // view onto ONE element and it has to be installed as its wrapper is made.
+    // `<style>.sheet` and `<link>.sheet` (the LinkStyle mixin), defined in
+    // bindings/stylesheets/objects.cpp. Installed per wrapper because it is a
+    // view onto one element.
     install_sheet_property(cx, obj, id);
 
     // --- the box metrics: offsetParent/Left/Top/Width/Height, clientWidth/
-    // Height, clientLeft/Top, scrollWidth/Height - CSSOM View §7 and §8.
+    // Height, clientLeft/Top, scrollWidth/Height (CSSOM View §7 and §8).
     //
-    // ACCESSORS THAT FLUSH LAYOUT, not numbers copied in at refresh. Reading
-    // `offsetWidth` is how a page - Bootstrap's `reflow(el)`, every WPT file
-    // that sizes a box with a style and measures it in the same script - asks
-    // for the layout AS OF NOW; a copy taken before the first frame said 0 and
-    // a copy taken at the last refresh said whatever the previous statement
-    // left. `flush_layout` runs only what is stale (set_layout_hook).
+    // Getters that flush layout first, so a read reflects styles set earlier
+    // in the same script, as Bootstrap's `reflow(el)` relies on (flush_layout
+    // runs only stale work; see set_layout_hook).
     //
-    // THE ROOT'S CLIENT RECTANGLE IS THE VIEWPORT (§7: the root element in a
-    // no-quirks document, the body in a quirks one), and its two axes come
-    // from different places on purpose: the width is the layout viewport (15px
-    // narrower than the window when a scrollbar appears - which is what
-    // Bootstrap's `.container` centred itself in), the height the window's,
-    // because `documentElement.clientHeight` means "how tall is the window"
-    // to p5's windowHeight. An ordinary element with no box has a client width
-    // of zero: handing it the viewport told Babylon its canvas was
-    // window-sized before layout had sized it, which failed WebGL setup
-    // outright. An inline box answers zero for all four client metrics, as
-    // §7 says. scrollWidth/scrollHeight are the SCROLLING AREA - the padding
-    // box grown to everything that overflows it (layout/overflow.hpp) - and
-    // for the root the viewport's; they answered the border box before, which
-    // is 600 subtests of scrollWidthHeight-negative-margin-002 alone.
-    // The `long` metrics are rounded, because that is what a `long` is.
+    // The viewport element (root, or body in quirks mode) reports the layout
+    // viewport width, which excludes a scrollbar (Bootstrap centres
+    // `.container` in it), and the window height (p5's windowHeight reads
+    // `documentElement.clientHeight`). An element with no box reports 0, not
+    // the viewport, and an inline box reports 0 for all client metrics (§7).
+    // scrollWidth/Height are the scrolling area: the padding box grown to
+    // cover overflow (layout/overflow.hpp), and the viewport's for the root.
+    // `long` metrics are rounded.
     {
         enum class metric : std::uint8_t {
             offset_left,
@@ -103,7 +102,7 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
                             break;
                         }
                         if (at.f == nullptr || is_inline_box(*at.f)) { break; }
-                        // A TABLE'S client box is its whole border box and its
+                        // A table's client box is its whole border box and its
                         // client edges are 0: the border sits on the table
                         // wrapper's grid, not around a padding box
                         // (table-client-props, table-with-border-client-*).
@@ -224,28 +223,30 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
 
     // --- element.attributes
     //
-    // THE MAP IS BUILT ONCE and refilled by the accessor, so it keeps its
+    // The map is built once and refilled by the accessor, so it keeps its
     // identity across reads while its contents are read out of the document
     // every time. See refresh_attribute_map for why it is an array-like object
     // and not a proxy.
     auto * map = cx.allocate<script::object_object>();
-    // WHOSE MAP IT IS, for the methods on NamedNodeMap.prototype - see
-    // install_named_node_map. A symbol key, which getOwnPropertyNames does not
-    // report: attributes.html reads the map's own names and expects the
-    // indices and the exposed qualified names, nothing else.
+    // The owning wrapper, for the methods on NamedNodeMap.prototype (see
+    // install_named_node_map). It is under a symbol key, which
+    // getOwnPropertyNames does not report: WPT dom/nodes/attributes.html
+    // expects the map's own names to be the indices and the exposed qualified
+    // names, nothing else.
     map->define(named_node_map_owner_key, value::object(&obj), script::attr_none);
     {
-        // THE MAP IS ROOTED THROUGH THE GETTER. A C++ lambda's captures are
-        // invisible to a precise collector, so the raw pointer this closes over
-        // would not keep the object alive - `retained` is the channel that
-        // does, and the getter itself is reachable from the wrapper's accessor
-        // table. See native_object::retained.
-        // HANDED OUT BEHIND A TRAP-LESS PROXY. `length`, `item` and the rest
-        // are on NamedNodeMap.prototype, and the engine's array-like
-        // iteration (`for (a of el.attributes)`, p5's XML module) reads
-        // `length` as an OWN property of a plain object but through the
-        // prototype chain of a proxy - so the proxy is what makes both the
-        // WebIDL property model and the iteration true at once.
+        // The map is kept alive through the getter. A C++ lambda's captures
+        // are invisible to a precise collector, so the raw pointer this closes
+        // over would not keep the object alive; `retained` does, and the
+        // getter itself is reachable from the wrapper's accessor table. See
+        // native_object::retained.
+        //
+        // The map is handed out behind a trap-less proxy. `length`, `item` and
+        // the rest are on NamedNodeMap.prototype, and the engine's array-like
+        // iteration (`for (a of el.attributes)`) reads `length` as an own
+        // property of a plain object but through the prototype chain of a
+        // proxy, so the proxy makes both the WebIDL property model and the
+        // iteration work.
         const value map_value = value::object(map);
         const value handed =
             value::object(cx.allocate<script::proxy_object>(map_value, cx.make_object()));
@@ -261,27 +262,18 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
 
     // --- the reflected attributes
     //
-    // NOT HERE ANY MORE, and that is the point. `id`, `className`, `href`,
-    // `download`, `target`, `rel`, `alt`, `title`, `name`, `placeholder`,
-    // `type` and `htmlFor` used to be twelve accessors installed on EVERY
-    // wrapper, which was wrong in both directions: `div.href` existed and
-    // `input.maxLength` did not, and none of the twelve knew its own type - so
-    // `details.open` was a string and `td.colSpan` was nothing at all.
-    //
-    // They live on the INTERFACE PROTOTYPES now, out of one table, which is
-    // what the specification means by reflection being defined per interface.
-    // See install_dom_interfaces at the bottom of this file. What is still
-    // installed per element below it is the handful that CANNOT be a table row:
-    // a control's `value` and `checked`, which track what the user typed rather
-    // than an attribute, an <img>'s `src`, which has to start a load, and a
-    // <canvas>'s `width` and `height`, which resize a drawing buffer.
+    // The reflected attributes (`id`, `className`, `href`, ...) are not
+    // installed here: they live on the interface prototypes, built from one
+    // table by install_dom_interfaces (interfaces.cpp), because reflection is
+    // defined per interface. Only properties that cannot be a table row stay
+    // per element: a control's `value` and `checked` (below), which track user
+    // edits rather than an attribute, and <canvas> `width`/`height`, which
+    // resize a buffer (install_element_child_views in child_views.cpp).
 
-    // `innerHTML` and `textContent` are ACCESSORS over the tree, not properties
-    // on the wrapper. As properties, assigning markup stored a string, built no
-    // nodes, rendered nothing and reported nothing - and reading one back gave
-    // whatever the page last wrote rather than what the DOM actually holds.
-    // Both [LegacyNullToEmptyString]: `el.innerHTML = null` empties the
-    // element rather than writing the word (innerhtml-07.html).
+    // `innerHTML` and `outerHTML` are accessors over the tree: a write parses
+    // markup into nodes and a read serialises what the DOM holds now. Both are
+    // [LegacyNullToEmptyString]: `el.innerHTML = null` empties the element
+    // rather than writing the word (WPT innerhtml-07.html).
     const auto markup_of = [](context & c, std::span<value> a) {
         return arg(a, 0).is_null() ? std::string{} : arg_string(c, a, 0);
     };
@@ -299,15 +291,9 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
             set_outer_html(c, id, markup_of(c, a));
             return value::undefined();
         });
-    // `data` AND `nodeValue` - the text a Text or Comment node holds, which is
-    // the one thing those two nodes are FOR. `childNodes` has handed them out
-    // all along and there was no way to read what was in one: `.data` was
-    // undefined, `.nodeValue` was undefined, and the only spelling that worked
-    // was textContent, which is the same answer by accident and a different
-    // question. Both are accessors, both write through, and `nodeValue` on an
-    // element is null - which is what the DOM says and is not the same as
-    // absent. `data` is a CharacterData member and an ELEMENT does not get
-    // one: as an own accessor it shadowed the reflected `object.data`.
+    // `data` and `nodeValue`: the text of a Text or Comment node, read and
+    // written through. `nodeValue` is null on an element; `data` is not
+    // installed on one, since an own accessor would shadow `object.data`.
     const bool character_data = [&] {
         const auto kind = doc_->read().kind(id).value_or(node_kind::element);
         return kind == node_kind::text || kind == node_kind::comment;
@@ -325,14 +311,11 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
             [this, id](context & c, std::span<value> a) {
                 const auto kind = doc_->read().kind(id).value_or(node_kind::element);
                 if (kind == node_kind::text || kind == node_kind::comment) {
-                    // NULL IS THE EMPTY STRING, not "null". `data` is
+                    // Null is the empty string, not "null": `data` is
                     // [LegacyNullToEmptyString] and `nodeValue` is a nullable
-                    // DOMString whose null means "no value"; both land on "",
-                    // and ToString would have written the four letters instead.
-                    // `CharacterData-data.html` asserts `.data = null` leaves a
-                    // node of length 0 - and the very next case asserts
-                    // `.data = undefined` writes "undefined", so this is a test
-                    // for null ALONE and not for nullish.
+                    // DOMString whose null means "no value". Only null, not
+                    // undefined: WPT CharacterData-data.html expects
+                    // `.data = undefined` to write "undefined".
                     const value given = arg(a, 0);
                     (void)doc_->set_text(id, given.is_null() ? std::string{} : arg_string(c, a, 0));
                     mutated();
@@ -340,8 +323,8 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
                 return value::undefined();
             });
     }
-    // NULL ON A DOCTYPE, both ways - DOM 4.4's table, and the four subtests
-    // of `Node-textContent.html` that a doctype gets.
+    // `textContent` is null on a doctype, and writing it does nothing (DOM
+    // 4.4's table).
     const bool doctype =
         doc_->read().kind(id).value_or(node_kind::element) == node_kind::document_type;
     define_getter(
@@ -351,27 +334,25 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
         },
         [this, id, doctype](context & c, std::span<value> a) {
             if (doctype) { return value::undefined(); }
-            // Text, never markup: that is the whole point of the property, and
-            // the reason a page reaches for it instead of innerHTML. A nullish
-            // value is the empty string (DOM 4.4: `[LegacyNullToEmptyString]`
-            // on textContent's null), not the four letters.
+            // Text, never markup. textContent is a nullable DOMString, so null
+            // means ""; this also maps undefined to "", which the spec would
+            // write as "undefined".
             const value given = arg(a, 0);
             set_text(id, given.is_nullish() ? std::string{} : c.to_string(given));
             control_helpers{this}.children_replaced(this, id);
             return value::undefined();
         });
 
-    // `value` and `checked` ARE ACCESSORS, on a control, so a page that creates
-    // a control and reads it back in the same statement -
-    // `createInput('hello').value()`, which is p5's own DOM library - reads the
-    // value that exists now. A data property would shadow the accessor.
+    // `value` and `checked` are accessors on a control, so a page that creates
+    // a control and reads it back in the same statement (p5's
+    // `createInput('hello').value()`) reads the value that exists now.
     {
         const auto txn = doc_->read();
         const std::string_view tag = atoms_->text(txn.tag(id).value_or(atom{}));
         const std::string_view type = txn.attribute_value(id, atoms_->intern("type"));
-        // NOT A <button>: its `value` is a plain reflection of the attribute
+        // Not a <button>: its `value` is a plain reflection of the attribute
         // (HTMLButtonElement, a row in the table), not a control's state, and
-        // an own accessor here would shadow the row on the prototype. EVERY
+        // an own accessor here would shadow the row on the prototype. Every
         // <input> though, whatever its type today: `input.type` changes and
         // the store follows the type state (HTML 4.10.5.1's value modes), so
         // the accessor cannot be decided by the type the wrapper was made at.
@@ -383,7 +364,7 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
                     "value",
                     [this, id](context & c, std::span<value>) {
                         const auto read = doc_->read();
-                        // A <select>'s value is its FIRST SELECTED OPTION's,
+                        // A <select>'s value is its first selected option's,
                         // or "" when none is (HTML 4.10.7) - not what was last
                         // assigned: `select.value = "no such option"`
                         // deselects every option and reads back "".
@@ -408,7 +389,7 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
                     // `[LegacyNullToEmptyString]`: null is "", not the word.
                     const value given = arg(a, 0);
                     std::string text = given.is_null() ? std::string{} : c.to_string(given);
-                    // A <select> SETS SELECTEDNESS (HTML 4.10.7): every
+                    // A <select> sets selectedness (HTML 4.10.7): every
                     // option off, then the first whose value is the new
                     // one on and dirty - a multiple select too, which
                     // the lazy reconcile of the store never reaches.
@@ -454,15 +435,15 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
                         return value::undefined();
                     }
                     if (mode == "default" || mode == "default/on") {
-                        // The default modes WRITE THE CONTENT ATTRIBUTE.
+                        // The default modes write the content attribute.
                         (void)doc_->set_attribute(id, atoms_->intern("value"), text);
                         mutated();
                         return value::undefined();
                     }
                     const auto read = doc_->read();
-                    // An assignment DIRTIES the control, so the `value`
-                    // attribute stops being the answer - otherwise setting
-                    // it to "" would be undone by the next read - and the
+                    // An assignment dirties the control, so the `value`
+                    // attribute stops being the answer (otherwise setting
+                    // it to "" would be undone by the next read), and the
                     // type's sanitization runs over what was assigned.
                     if (forms_->assign_value(read, *atoms_, id, std::move(text))) {
                         // A changed value resets the selection direction
@@ -502,20 +483,18 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
         }
     }
 
-    // `parentNode` and `children` are ACCESSORS because the tree moves. A
-    // wrapper built when an element was detached and refreshed later would hand
-    // back the parent it had at wrapping time, which for an element p5 creates
-    // and then appends is null forever.
+    // `parentNode` is an accessor because the tree moves: a value captured at
+    // wrapping time would stay null for an element created detached and
+    // appended later.
     // `dom_parent`, not `parent()`: the document element's parent is the
     // Document, which `wrap` hands back as the page's own `document`.
     define_getter(cx, obj, "parentNode", [this, id](context & c, std::span<value>) {
         const auto txn = doc_->read();
         return wrap(c, dom_parent(txn, id));
     });
-    // `parentElement` IS NOT `parentNode`. It is null when the parent is not an
-    // element, which is exactly the case a tree-walking page tests to know it
-    // has reached the top: `<html>`'s parent is the DOCUMENT, and answering
-    // with it made the walk run one level past the root.
+    // `parentElement` is not `parentNode`: it is null when the parent is not an
+    // element, which is how a tree-walking page knows it has reached the top
+    // (`<html>`'s parent is the Document).
     define_getter(cx, obj, "parentElement", [this, id](context & c, std::span<value>) {
         const auto txn = doc_->read();
         const node_id parent = txn.parent(id);
@@ -524,31 +503,30 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
         }
         return wrap(c, parent);
     });
-    // `element.shadowRoot` - THE ROOT, OR NULL, AND THE MODE DECIDES WHICH.
-    // A closed root is not hidden from the engine, only from the page: it is
-    // still in `shadow_roots_`, `getRootNode()` on a node inside it still
-    // answers with it, and only this one accessor refuses to hand it over.
-    // That is the whole of what `mode: "closed"` means.
+    // `element.shadowRoot`: the root if it is open, otherwise null. A closed
+    // root is hidden only from the page, not the engine: the document still
+    // records it and `getRootNode()` on a node inside it still answers with
+    // it; only this accessor refuses to hand it over.
     define_getter(cx, obj, "shadowRoot", [this, id](context & c, std::span<value>) {
         const node_id root = shadow_root_of(id);
         const shadow_tree * tree = shadow_tree_of(root);
         if (tree == nullptr || !tree->open) { return value::null(); }
         return wrap(c, root);
     });
-    // `isConnected` - "shadow-including root is a document", DOM 4.4, and the
-    // reason it is here rather than a data property is that it is exactly the
-    // question `getRootNode({composed: true})` answers. A node inside a shadow
-    // tree whose host is in the document IS connected, which is what
-    // `Node-isConnected-shadow-dom.html` is a file about.
+    // `isConnected`: "shadow-including root is a document" (DOM 4.4), the
+    // same walk `getRootNode({composed: true})` does. A node inside a shadow
+    // tree whose host is in the document is connected (WPT
+    // Node-isConnected-shadow-dom.html).
     define_getter(cx, obj, "isConnected", [this, id](context & c, std::span<value>) {
         (void)c;
         const auto txn = doc_->read();
         const node_id top = root_of_tree(txn, id, true);
         return value::boolean(is_document_root(txn, top));
     });
-    // `baseURI` is the node document's base URL, DOM 4.4 - the document's
-    // address here, there being no <base>; the same string `document.baseURI`
-    // answers, connected or not. Node-baseURI.html compares the two.
+    // `baseURI` (DOM 4.4) should be the document base URL. This returns the
+    // document's own address and ignores any <base href>, unlike
+    // detail::document_base_url; WPT Node-baseURI.html only compares it with
+    // `document.baseURI`, which answers the same string.
     define_getter(cx, obj, "baseURI", [this](context & c, std::span<value>) {
         return c.string(secondary_ ? std::string{"about:blank"} : location_href_);
     });

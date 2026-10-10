@@ -1,6 +1,10 @@
-// dom_bindings - computed_style_entries: every property of one element as
-// (css name, value) pairs, gathered from the style map, the box tree and the
+//===- computed_style/entries.cpp - getComputedStyle values -----*- C++ -*-===//
+//
+// dom_bindings::computed_style_entries: every property of one element as
+// (CSS name, value) pairs, gathered from the style map, the box tree and the
 // fragment tree, with the property table supplying what nothing declared.
+//
+//===----------------------------------------------------------------------===//
 
 #include "geometry.hpp"
 #include "internal.hpp"
@@ -11,11 +15,11 @@ using namespace detail;
 
 namespace {
 
-// DOM 4.2.2.3 "find a slot", for one light-DOM child of a shadow host: the
-// child's `slot` attribute names the slot it wants - the empty name is the
-// default slot - and the first `<slot>` of that name in the host's shadow
-// tree takes it. Nothing here assigns the slot for rendering; this answers
-// only whether the child is in the flat tree at all.
+/// DOM 4.2.2.3 "find a slot", for one light-DOM child of a shadow host: the
+/// child's `slot` attribute names the slot it wants (the empty name is the
+/// default slot), and the first `<slot>` of that name in the host's shadow
+/// tree takes it. Nothing here assigns the slot for rendering; this answers
+/// only whether the child is in the flat tree at all.
 [[nodiscard]] bool slotted_into(const read_txn & txn, atom_table & atoms, node_id root,
                                 node_id child) {
     const std::string_view wanted = txn.attribute_value(child, atoms.intern("slot"));
@@ -35,16 +39,13 @@ namespace {
     return found;
 }
 
-// Everything about one element that answering a property needs, gathered ONCE.
 } // namespace
 
-// EVERY PROPERTY OF ONE ELEMENT, AS (css name, value) PAIRS: the longhands the
-// table knows, lexicographically, then the shorthands that can be reassembled,
-// then whatever the element declared that the table has never heard of. Empty
-// for an element that is not in the document.
-//
-// The order is the object's: the leading run is exactly the set CSSOM's indexed
-// properties enumerate, and it is already sorted.
+// Returns every property of one element as (CSS name, value) pairs: the
+// table's longhands sorted by name (exactly the set CSSOM's indexed
+// properties enumerate), then the shorthands that can be reassembled, then
+// declared properties the table does not know (custom properties). Empty for
+// an element not in the flat tree.
 std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_entries(node_id id) {
     return computed_style_entries(id, {});
 }
@@ -58,14 +59,10 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
     at.box = box_for(boxes_, id);
     at.frag = fragment_for(fragments_, id);
     at.font_size = at.box != nullptr ? at.box->font_size : 16.0f;
-    // IS THIS ELEMENT IN THE DOCUMENT AT ALL? A detached one has no computed
-    // style: CSSOM leaves getComputedStyle on an element that is not being
-    // rendered answering computed rather than resolved values, and every engine
-    // returns an EMPTY declaration - which is what css/cssom's
-    // getComputedStyle-detached-subtree asserts, `length == 0` and
-    // `color === ""`. The cascade never resolved such an element either, so
-    // publishing the table's 125 initial values for it would be inventing
-    // an answer about a box that does not exist.
+    // A detached element has no computed style: every engine returns an empty
+    // declaration (`length == 0`, `color === ""`), as WPT
+    // css/cssom/getComputedStyle-detached-subtree asserts. Collect the ancestor
+    // chain and check it reaches the document root.
     bool connected = false;
     {
         const auto txn = doc_->read();
@@ -76,13 +73,12 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             up = next;
         }
         connected = !at.chain.empty() && at.chain.back() == txn.root();
-        // ...AND IN THE FLAT TREE. A light-DOM child of a shadow host is
-        // rendered only through a `<slot>` in the host's shadow tree that
-        // takes it (DOM 4.2.2.3 "find a slot"); without one it is outside the
-        // flat tree and has no computed style, which is what CSS Scoping 3 §3.2
-        // says and getComputedStyle-detached-subtree asserts ("outside the flat
-        // tree"). The host itself is in the tree; only what is beneath it is
-        // in question.
+        // The element must also be in the flat tree. A light-DOM child of a
+        // shadow host is rendered only through a `<slot>` in the host's shadow
+        // tree that takes it (DOM 4.2.2.3 "find a slot"); without one it is
+        // outside the flat tree and has no computed style (CSS Scoping 3 §3.2;
+        // WPT getComputedStyle-detached-subtree). The host itself is in the
+        // tree; only its light-DOM descendants are in question.
         for (std::size_t up = 1; connected && up < at.chain.size(); ++up) {
             const node_id root = shadow_root_of(at.chain[up]);
             if (root && !slotted_into(txn, *atoms_, root, at.chain[up - 1])) { connected = false; }
@@ -96,15 +92,11 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             at.box = nullptr;
             at.frag = nullptr;
         }
-        // The containing-block width a percentage resolves against: the parent's
-        // CONTENT width, or the viewport at the root. That is the parent's
-        // fragment less its padding, which is what content_width_of computes
-        // (lib/Layout/algorithm.cpp) - there are no borders in this box model yet.
         // The containing block for an absolutely positioned element: the padding
-        // box of the nearest POSITIONED ancestor, or the initial containing block
-        // when there is none. Same rule the layout pass uses (layout/position.hpp),
-        // asked here rather than shared because the two have different inputs -
-        // that one walks the fragment tree once, this one answers about one node.
+        // box of the nearest positioned ancestor, or the initial containing
+        // block when there is none. This is the same rule as
+        // lib/Layout/position.hpp, asked here per node because layout walks the
+        // whole fragment tree instead.
         at.position = at.box != nullptr ? at.box->position : layout::position_kind::static_;
         const auto abs_rect = [&](node_id of) {
             return fragments_ != nullptr ? absolute_rect_of(*fragments_, of).value_or(rect{})
@@ -113,7 +105,7 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         at.box_abs = abs_rect(id);
         at.containing = rect{0, 0, static_cast<float>(viewport_width_),
                              fragments_ != nullptr ? fragments_->bounds.height : 0.0f};
-        // A FIXED box's containing block is the viewport - unless an ancestor
+        // A fixed box's containing block is the viewport, unless an ancestor
         // establishes one for fixed boxes too: a transform, a perspective, a
         // filter, paint or layout containment, or a will-change of one of them
         // (CSS Position 3 §2.1, CSS Transforms 1 §2, Filter Effects 1 §5).
@@ -136,12 +128,12 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
                    will.find("filter") != std::string::npos;
         };
         const bool fixed = at.position == layout::position_kind::fixed;
-        // Only an out-of-flow box has one; the walk is not paid for the rest.
+        // Only an out-of-flow box needs the ancestor walk.
         const bool out_of_flow = fixed || at.position == layout::position_kind::absolute;
         for (std::size_t up = 1; out_of_flow && up < at.chain.size(); ++up) {
             const layout::box_node * ancestor = box_for(boxes_, at.chain[up]);
             if (ancestor == nullptr) { continue; }
-            // ...and what holds a fixed box holds an absolute one too.
+            // An ancestor that contains fixed boxes contains absolute ones too.
             const bool holds = holds_fixed(at.chain[up]);
             if (fixed ? !holds : !(ancestor->is_positioned() || holds)) { continue; }
             const rect outer = abs_rect(at.chain[up]);
@@ -153,9 +145,12 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             break;
         }
 
+        // The basis a percentage resolves against: the parent's content box
+        // (its fragment less padding and border), or the viewport at the root.
+        // See content_width_of in lib/Layout/algorithm.cpp.
         at.basis = static_cast<float>(viewport_width_);
         at.basis_height = fragments_ != nullptr ? fragments_->bounds.height : 0.0f;
-        // The ROOT ELEMENT's font size, for a `rem` folded at used-value time:
+        // The root element's font size, for a `rem` resolved at used-value time:
         // the chain ends at the document, and the element before it is <html>.
         if (at.chain.size() >= 2) {
             const layout::box_node * root_box = box_for(boxes_, at.chain[at.chain.size() - 2]);
@@ -170,8 +165,8 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             if (const layout::fragment * up = fragment_for(fragments_, parent)) {
                 at.basis = up->bounds.width;
                 at.basis_height = up->bounds.height;
-                // A `display: contents` parent has no box, so neither padding
-                // nor border of its own (getComputedStyle-pseudo).
+                // A `display: contents` parent has no box, so no padding or
+                // border of its own (WPT getComputedStyle-pseudo).
                 bool boxless = false;
                 if (styles_ != nullptr) {
                     const auto found = styles_->find(style::engine::key_of(parent));
@@ -181,19 +176,15 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
                 }
                 if (up_box != nullptr && !boxless) {
                     const layout::side_lengths & pad = up_box->padding;
-                    // A PERCENTAGE PADDING RESOLVES AGAINST THE WIDTH on all four
-                    // sides (CSS 2.1 §8.4), so the vertical pair is subtracted
-                    // using the horizontal basis too. Taking the height as the
-                    // basis there is the classic way to get a containing block
-                    // that is a few pixels short.
+                    // A percentage padding resolves against the width on all
+                    // four sides (CSS 2.1 §8.4), so the vertical pair is also
+                    // resolved against the horizontal basis.
                     at.basis -= pad.left.resolve(at.basis, up_box->font_size) +
                                 pad.right.resolve(at.basis, up_box->font_size);
                     at.basis_height -= pad.top.resolve(at.basis, up_box->font_size) +
                                        pad.bottom.resolve(at.basis, up_box->font_size);
-                    // ...AND THE BORDERS: the fragment is the border box, and
-                    // a 2px border counted into the content height made
-                    // `top: 10%` of a 100px box 10.4px
-                    // (getComputedStyle-insets-relative).
+                    // Subtract the borders too, since the fragment is the border
+                    // box (WPT getComputedStyle-insets-relative).
                     const layout::side_lengths & border = up_box->border;
                     at.basis -= border.left.resolve(0, up_box->font_size) +
                                 border.right.resolve(0, up_box->font_size);
@@ -205,18 +196,14 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
     }
     if (!connected) { return answers; }
 
-    // The cascade's text for one property. Empty when nothing declared it, and
-    // the caller substitutes the property table's initial value - which is what
-    // a computed value IS for a property no rule reached.
-    // BY VALUE, all of it. The probe is a handful of pointers and a short vector
-    // of node ids, so a copy is nothing; the pointers are the browser's and stay
-    // valid for exactly as long as this call, which is why every answer is
-    // computed before it returns.
+    // Lambdas below capture these members and the probe `at` by value. The
+    // pointers belong to the browser and stay valid only for this call, so every
+    // answer is computed before it returns.
     const style::style_map * styles = styles_;
     atom_table * atoms = atoms_;
-    // WHAT THE CASCADE SAID ABOUT ONE NODE. Taken as a node rather than as
-    // "this element" because two of the answers below are about the PARENT:
-    // whether it is a grid container, which no box kind records.
+    // The cascade's text for one property of one node. It takes a node rather
+    // than assuming this element because some answers are about the parent,
+    // such as whether it is a grid container.
     const auto declared_on = [styles, atoms](node_id node,
                                              std::string_view property) -> std::string_view {
         if (styles == nullptr || !node) { return {}; }
@@ -224,33 +211,29 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         if (found == styles->end() || !found->second) { return {}; }
         return found->second->get(atoms->intern(property));
     };
-    // A GRID CONTAINER IS A DECLARATION, NOT A BOX KIND - `display: grid` makes a
-    // block box here, so the box tree cannot be asked the way it is asked for
-    // flex just above.
+    // A grid container is known from its declaration, not its box kind:
+    // `display: grid` makes a block box here, so the box tree cannot be asked
+    // as it is for flex above.
     if (at.chain.size() >= 2) {
         const std::string parent_display = collapse_keyword(declared_on(at.chain[1], "display"));
         at.grid_item = parent_display == "grid" || parent_display == "inline-grid";
     }
-    // ONE LOOKUP. This used to walk DOM ancestors for an inherited property, because
-    // the cascade produced only the declarations that matched and inheritance happened
-    // in four other places downstream. The cascade inherits now, so `get` on the
-    // element's own style is the whole answer - and the fifth ad-hoc inheritance
-    // mechanism this file used to be is gone.
-    // ...AND WHAT AN ANIMATION SAYS ON TOP OF IT. A running Web Animation's
-    // effect value replaces the cascade's text for the properties it animates,
-    // at the animation's current time (lib/Shell/bindings/animations.cpp), and
-    // it goes in HERE so that every rule below - a percentage against its
-    // containing block, an inset's used value - runs on the interpolated text
-    // exactly as it runs on a declared one. The underlying value it may need
-    // is the cascade's own answer for the same element.
+    // A running Web Animation's effect value replaces the cascade's text for
+    // the properties it animates, at the animation's current time
+    // (lib/Shell/bindings/animations.cpp). It is applied here so that every
+    // rule below (a percentage against its containing block, an inset's used
+    // value) runs on the interpolated text exactly as on a declared one. The
+    // underlying value an effect may need is the cascade's answer for the same
+    // element.
     std::vector<std::pair<std::string, std::string>> animated =
         animated_values(id, at.font_size, [&](std::string_view property) {
             return declared_on(at.chain.front(), property);
         });
-    // ...FILED UNDER THE PHYSICAL LONGHANDS the cascade stores, so an
-    // animation on `margin-block` or `margin-block-start` is read where the
-    // rules below look for it: a shorthand split by the declaration block, a
-    // logical name mapped on this element's writing mode and direction.
+    // Store the animated values under the physical longhands the cascade
+    // uses, so an animation on `margin-block` or `margin-block-start` is found
+    // where the rules below look: a shorthand is split by the declaration
+    // block, and a logical name is mapped by this element's writing mode and
+    // direction.
     if (!animated.empty() && !at.chain.empty()) {
         const std::string writing_mode{declared_on(at.chain.front(), "writing-mode")};
         const std::string direction{declared_on(at.chain.front(), "direction")};
@@ -269,8 +252,8 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         }
         animated = std::move(physical);
     }
-    // The one property whose INITIAL value is being asked for as though it
-    // had been declared - see the longhand loop below.
+    // The one property whose initial value is being asked for as though it
+    // had been declared; see the longhand loop below.
     const style::css::property_syntax * as_initial = nullptr;
     const auto declared = [declared_on, at, atoms, &animated,
                            &as_initial](std::string_view property) -> std::string_view {
@@ -286,19 +269,18 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         return held;
     };
 
-    // THE FONT SIZE OF AN ELEMENT WITH NO BOX. Every `em` below resolves against
-    // it, and the box is where it normally lives - but a `display: none` element
-    // has no box and still has a computed font-size, which Chrome reports and
-    // which css/cssom's getComputedStyle-insets-nobox depends on: it declares
-    // `font-size: 10px` beside `top: 1em` and expects `10px`. Only an absolute
-    // length can be honoured here; a percentage or an em needs the parent's
-    // computed size, and the cascade does not resolve one for a box that was
-    // never built.
+    // The font size of an element with no box. Every `em` below resolves
+    // against it, and it normally comes from the box, but a `display: none`
+    // element has no box and still has a computed font-size (WPT
+    // css/cssom/getComputedStyle-insets-nobox declares `font-size: 10px`
+    // beside `top: 1em` and expects `10px`). Only an absolute length can be
+    // honoured here; a percentage or an em needs the parent's computed size,
+    // which the cascade does not resolve for a box that was never built.
     //
-    // ...AND OF THE ROOT, whose box is the viewport's and carries the default
-    // size whatever `:root { font-size }` said (rem-unit-root-element). The
-    // cascade folded the root's own size to pixels, so the declared text is
-    // the answer there too.
+    // The root is handled the same way: its box carries the default size
+    // whatever `:root { font-size }` said (WPT rem-unit-root-element), but the
+    // cascade resolved the root's own size to pixels, so the declared text is
+    // the answer.
     if (at.box == nullptr || at.is_root) {
         const layout::length declared_size = layout::parse_length(declared("font-size"));
         if (!declared_size.is_auto() && declared_size.u != layout::unit::percent &&
@@ -306,10 +288,10 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             at.font_size = declared_size.resolve(0.0f, 16.0f);
         }
     }
-    // ...AND OF AN ELEMENT WHOSE FONT SIZE IS ANIMATED. The box carries the
-    // cascade's size; a running animation's is the one getComputedStyle owes,
-    // and every `em` below resolves against it. A percentage or an `em` in
-    // `font-size` is the PARENT's, as it is in the cascade.
+    // An animated font size: the box carries the cascade's size, but
+    // getComputedStyle must report the running animation's, and every `em`
+    // below resolves against it. A percentage or an `em` in `font-size` is
+    // relative to the parent's size, as in the cascade.
     for (const auto & [name, text] : animated) {
         if (name != "font-size" || at.pseudo) { continue; }
         const layout::box_node * parent =
@@ -330,12 +312,13 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         }
         if (px) { at.font_size = std::max(0.0f, *px); }
     }
-    // THE PRINCIPAL BOX, and the two ways there is not one.
+    // Whether the element has a principal box: not with `display: none` or
+    // `display: contents`.
     const std::string declared_display = collapse_keyword(declared("display"));
     at.has_box = at.box != nullptr && declared_display != "none" && declared_display != "contents";
-    // A PSEUDO-ELEMENT GENERATES A BOX when its `content` says so (CSS Pseudo 4
-    // §5.1): then a percentage width resolves against the element, as a box
-    // of its own would; without one it answers computed values.
+    // A pseudo-element generates a box when its `content` says so (CSS Pseudo 4
+    // §5.1); then a percentage width resolves against the element, as a box of
+    // its own would. Without one it answers computed values.
     if (at.pseudo) {
         const std::string content = collapse_keyword(declared("content"));
         at.has_box = !content.empty() && content != "none" && content != "normal" &&
@@ -343,11 +326,11 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
     }
     at.inline_non_replaced = at.box != nullptr && at.box->kind == layout::box_kind::inline_;
 
-    // A LENGTH AS A COMPUTED VALUE - CSS Values 3 §5.2 and CSSOM's "otherwise,
-    // the computed value". `auto` and every other keyword survive verbatim, a
-    // percentage survives as a percentage, and an absolute or font-relative
-    // length becomes px. Nothing here needs a containing block, which is the
-    // whole point: this is the answer for the cases where there is not one.
+    // A length as a computed value (CSS Values 3 §5.2; CSSOM's "otherwise, the
+    // computed value"). `auto` and every other keyword survive verbatim, a
+    // percentage stays a percentage, and an absolute or font-relative length
+    // becomes px. It needs no containing block, so it is the answer when
+    // there is none.
     const auto computed_length = [at](std::string_view text) -> std::string {
         const std::string_view given = trim(text, html_whitespace);
         if (given.empty()) { return {}; }
@@ -362,21 +345,19 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
 
     const auto value_of = [this, at, id, atoms, declared, declared_on,
                            computed_length](std::string_view property) -> std::string {
-        // 0. A CUSTOM PROPERTY IS NOT A KEYWORD. Its value is an arbitrary token
-        //    sequence whose case is significant and whose computed value is the
-        //    substituted text, so it is handed back as written rather than folded
-        //    the way `display: BLOCK` is.
+        // Custom properties: the value is an arbitrary token sequence whose case
+        // is significant and whose computed value is the substituted text, so
+        // it is returned as written rather than lowercased like a keyword.
         if (property.starts_with("--")) {
             std::string text{trim(declared(property), html_whitespace)};
             if (text == style::guaranteed_invalid) { return {}; }
-            // ...WITH ITS SUBSTITUTIONS PERFORMED. The cascade keeps a custom
-            //    property as written so a later `var()` can read it lazily, but
-            //    its COMPUTED value has every `var()` and `attr()` replaced
-            //    (CSS Variables 1 §2.2, CSS Values 5 §attr), and that is what a
-            //    page reading `--x: attr(data-foo px) 11px` back is owed:
-            //    `10px 11px`. The same lookups the cascade used, asked of this
-            //    element - its own custom properties, inherited ones included,
-            //    and its attributes.
+            // Perform substitutions. The cascade keeps a custom property as
+            // written so a later `var()` can read it lazily, but its computed
+            // value has every `var()` and `attr()` replaced (CSS Variables 1
+            // §2.2, CSS Values 5 §attr): `--x: attr(data-foo px) 11px` reads
+            // back as `10px 11px`. The lookups are the cascade's, asked of
+            // this element: its own custom properties (inherited ones
+            // included) and its attributes.
             if (style::css::may_have_var(text)) {
                 const style::css::custom_lookup custom =
                     [&](atom name) -> std::optional<std::string_view> {
@@ -391,10 +372,10 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
                     if (!txn.has_attribute(id, key)) { return std::nullopt; }
                     return std::string{txn.attribute_value(id, key)};
                 };
-                // ...AND WHAT AN `if()` IN IT MAY ASK: the parent's custom
-                //    properties, substituted in the parent's own scope, for
-                //    `style(--x: inherit)`; any other property's cascaded text;
-                //    the window for `media()`.
+                // What an `if()` in the value may query: the parent's custom
+                // properties, substituted in the parent's own scope, for
+                // `style(--x: inherit)`; any other property's cascaded text;
+                // and the window for `media()`.
                 style::css::condition_environment conditions;
                 conditions.property = std::string{property};
                 conditions.lengths.font_size = at.font_size;
@@ -403,9 +384,9 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
                 conditions.lengths.viewport_height = static_cast<float>(viewport_height_);
                 conditions.lengths.element_key = style::engine::key_of(id);
                 conditions.lengths.property = property;
-                // ...AND WHERE THE ELEMENT SITS AMONG ITS SIBLINGS, for the
-                //    tree-counting functions a custom property may hold -
-                //    `ident("vtl-" sibling-index())` (ident-function-substitution).
+                // The element's position among its siblings, for tree-counting
+                // functions such as `ident("vtl-" sibling-index())` (WPT
+                // ident-function-substitution).
                 if (at.chain.size() >= 2) {
                     const auto txn = doc_->read();
                     std::uint32_t index = 0;
@@ -455,15 +436,16 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
                 };
                 std::optional<std::string> done =
                     style::css::substitute_var(text, custom, *atoms, attributes, &conditions);
-                // INVALID AT COMPUTED-VALUE TIME: the guaranteed-invalid value,
-                //    which a custom property serialises as nothing at all.
+                // Invalid at computed-value time: the guaranteed-invalid value,
+                // which a custom property serialises as the empty string.
                 if (!done) { return {}; }
                 text = std::move(*done);
-                // A SUBSTITUTED CSS-WIDE KEYWORD IS THAT KEYWORD (CSS Values 5
-                //    §arbitrary-substitution): on an unregistered property
-                //    `inherit` and `unset` are the parent's value and `initial`
-                //    the guaranteed-invalid one (attr-css-wide-keywords). A
-                //    registered property had this settled in the cascade.
+                // A substituted CSS-wide keyword acts as that keyword (CSS Values
+                // 5 §arbitrary-substitution): on an unregistered property
+                // `inherit`, `unset` and `revert` give the parent's value and
+                // `initial` the guaranteed-invalid one (WPT
+                // attr-css-wide-keywords). For a registered property the cascade
+                // already settled this.
                 const std::string_view word = trim(text, html_whitespace);
                 const bool registered = conditions.registered && conditions.registered(property);
                 if (!registered &&
@@ -473,9 +455,9 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
                 }
                 if (!registered && ascii_iequals(word, "initial")) { return {}; }
             }
-            // A REGISTERED `<color>` SERIALISES AS A COLOUR - `rgb(0, 0, 255)`
-            //    for `blue` - which the cascade, having no colour parser, left
-            //    as the keyword (attr-security).
+            // A registered `<color>` serialises as a colour (`rgb(0, 0, 255)`
+            // for `blue`); the cascade, having no colour parser, left the
+            // keyword (WPT attr-security).
             if (const style::css::property_registration * registration =
                     selector_engine_ != nullptr
                         ? selector_engine_->registration_of(atoms->intern(property))
@@ -498,36 +480,22 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
                                   boxes_, fragments_, viewport_width_)) {
             return std::move(*geometry);
         }
-        // 3b. EVERY OTHER LENGTH-VALUED PROPERTY, ABSOLUTIZED. A computed value
-        //     is an absolute length wherever the specified value was a relative
-        //     one, and that is a rule about the property's TYPE rather than
-        //     about the eleven names above - which is why it is asked of the
-        //     table rather than of a third list. `letter-spacing: 1em` under a
-        //     20px font computes to `20px` in every engine and was reported here
-        //     as `1em`; so were `word-spacing`, `text-indent`, `vertical-align`,
-        //     `flex-basis`, `row-gap`, `column-gap` and `outline-offset`.
-        //
-        //     A PERCENTAGE STAYS A PERCENTAGE for all of them, which is the
-        //     difference from the rule above: none of these is in CSSOM's list
-        //     of properties whose resolved value is the used one, so there is no
-        //     containing block in the question at all. `text-indent: 10%`
-        //     computes to `10%`.
         const style::css::property_syntax * known = style::css::find_property(property);
-        // 3a. A `<position>`, whose keywords compute to percentages: `10% center`
-        //     is `10% 50%` and `right 20px` is `calc(100% - 20px)`, CSS Values 5
-        //     §position. `background-position` is not modelled as one - its
-        //     grammar has a three-value form and a comma list - so those forms
-        //     fall through to the background layer resolver below.
-        //     ...BUT NOT perspective-origin, whose RESOLVED value is the used
-        //     one in pixels against the box (CSS Transforms 2 §6.2, CSSOM's
-        //     resolved-value list) - the transform branch below answers it.
+        // A `<position>`, whose keywords compute to percentages: `10% center`
+        // is `10% 50%` and `right 20px` is `calc(100% - 20px)` (CSS Values 5
+        // §position). `background-position` is not modelled as a position (its
+        // grammar has a three-value form and a comma list), so those forms fall
+        // through to the background layer resolver below. perspective-origin is
+        // excluded: its resolved value is the used one in pixels against the
+        // box (CSS Transforms 2 §6.2, CSSOM's resolved-value list), which the
+        // transform branch below answers.
         if (((known != nullptr && known->kind == style::css::value_kind::position) ||
              property == "background-position") &&
             property != "perspective-origin") {
             std::string resolved = style::css::computed_position(text, declared("writing-mode"),
                                                                  declared("direction"));
-            // ...its lengths absolute, as every computed length is: `right
-            // 4em` is `100% 160px` at a 40px font (offset-anchor-computed).
+            // Make its lengths absolute, as every computed length is: `right
+            // 4em` is `100% 160px` at a 40px font (WPT offset-anchor-computed).
             if (!resolved.empty() && property != "background-position") {
                 style::css::length_context lengths;
                 lengths.font_size = at.font_size;
@@ -552,24 +520,28 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             if (!resolved.empty()) { return resolved; }
         }
         // CSS Text 4 §7.1-7.2: `word-spacing: normal` computes to zero, and a
-        // letter-spacing of zero reads back as `normal` - so an animation's
-        // `0px` end and a declared `normal` agree (letter-spacing-computed,
+        // letter-spacing of zero reads back as `normal`, so an animation's
+        // `0px` end and a declared `normal` agree (WPT letter-spacing-computed,
         // word-spacing-computed, letter-spacing-interpolation).
         if (property == "word-spacing" && ascii_iequals(trim(text, html_whitespace), "normal")) {
             return "0px";
         }
+        // Every other length-valued property is absolutized: a relative length
+        // (`letter-spacing: 1em`) computes to px. Which properties are lengths
+        // comes from the property table's value kind. A percentage stays a
+        // percentage, since none of these resolve against a containing block
+        // (`text-indent: 10%` computes to `10%`).
         if (known != nullptr && (known->kind == style::css::value_kind::length ||
                                  known->kind == style::css::value_kind::length_percentage)) {
             std::string length = computed_length(text);
             if (property == "letter-spacing" && length == "0px") { return "normal"; }
             return length;
         }
-        // 3c. THE FONT FAMILY LIST, whose case is the author's and whose quoting
-        //     is CSSOM's. Answered before the keyword fold below, which would
-        //     lowercase it.
+        // font-family: the case is the author's and the quoting CSSOM's. It is
+        // answered before the keyword lowercasing below.
         if (property == "font-family") { return style::css::serialize_font_family(text); }
-        // 3d. A TRANSFORM LIST, multiplied out to the `matrix()` CSS Transforms
-        //     says its resolved value is - see `transform_matrix_text`.
+        // transform: the list multiplied out to the `matrix()` that CSS
+        // Transforms gives as its resolved value; see `transform_matrix_text`.
         if (property == "transform" && !ascii_iequals(trim(text, html_whitespace), "none")) {
             transform_basis basis{at.font_size, at.root_font_size, -1, -1};
             if (at.frag != nullptr && at.has_box) {
@@ -578,19 +550,20 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             }
             return transform_matrix_text(trim(text, html_whitespace), basis);
         }
-        // 3e. A SHADOW LIST: colour first, resolved, and lengths in px - see
-        //     shadow_text. A colour it left as `currentcolor` is substituted
-        //     with the rest of them below.
+        // box-shadow and text-shadow: colour first, resolved, and lengths in
+        // px; see shadow_text. A colour left as `currentcolor` is substituted
+        // later, with the other currentcolor values.
         if (property == "box-shadow" || property == "text-shadow") {
             return shadow_text(text, at.font_size, property == "box-shadow");
         }
-        // 4. COLOURS, CSS Color 4 §15's computed value: a legacy colour as
-        //    `rgb()`, `lab()` and the rest as themselves, `color-mix()` and a
-        //    relative colour resolved against this element's `color` - which
-        //    is what `currentcolor` means inside one, and the parent's when
-        //    the property IS `color` (the caller substituted a bare one).
-        //    An `<image>` list is the same walk over each gradient's colours,
-        //    with its lengths in pixels (CSS Images 4).
+        // Colours, as CSS Color 4 §15's computed value: a legacy colour as
+        // `rgb()`, `lab()` and the others as themselves, `color-mix()` and a
+        // relative colour resolved against this element's `color` (what
+        // `currentcolor` means inside one), or against the parent's when the
+        // property is `color` itself. An `<image>` list gets the same treatment
+        // for each gradient's colours, with its lengths in pixels (CSS Images
+        // 4). Filter, grid, transform, background-layer and gap-rule properties
+        // share the length and colour context built here.
         const bool image_property = property == "background-image" || property == "mask-image" ||
                                     property == "border-image-source" ||
                                     property == "mask-border-source" ||
@@ -628,9 +601,9 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             bases.viewport_height = fragments_ != nullptr ? fragments_->bounds.height : 0.0f;
             style::css::color_context ctx;
             ctx.lengths = &bases;
-            // THE USED COLOUR SCHEME (CSS Color Adjust 1 §2.1): `dark` when
-            // the element's `color-scheme` lists dark and not light - this
-            // engine's user prefers light, so `light dark` is light.
+            // The used colour scheme (CSS Color Adjust 1 §2.1): dark when the
+            // element's `color-scheme` lists dark and not light. This engine's
+            // user preference is light, so `light dark` is light.
             {
                 const std::string scheme = collapse_keyword(declared("color-scheme"));
                 bool light = false, dark = false;
@@ -640,8 +613,8 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
                 }
                 ctx.dark = dark && !light;
             }
-            // `currentcolor` is this element's `color` - or, when the property
-            // IS `color`, the parent's (CSS Color 4 §7.1).
+            // `currentcolor` is this element's `color`, or the parent's when the
+            // property is `color` itself (CSS Color 4 §7.1).
             std::string own_color;
             {
                 const bool of_parent = property == "color";
@@ -736,13 +709,12 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             if (const std::optional<color> c = system_color(text)) { return color_text(*c); }
             return std::string{text};
         }
-        // 4b. AN <alpha-value> IS A NUMBER once computed: `opacity: 90%` is `0.9`
-        //     (CSS Color 4 §4.2), and so is a `calc(90%)` the cascade folded.
-        //     `calc-numbers` asks for it by name.
-        //     ...AND CLAMPED TO [0, 1], which is the property's range: a
-        //     `calc(log(0))` the cascade folded to a very negative number is
-        //     `0` here, and `opacity: 2` is `1`. exp-log-serialize asks for the
-        //     first.
+        // opacity and shape-image-threshold: an <alpha-value> computes to a
+        // number, so `opacity: 90%` is `0.9` (CSS Color 4 §4.2), as is a
+        // `calc(90%)` the cascade folded (WPT calc-numbers). It is clamped to
+        // the property's range [0, 1]: a `calc(log(0))` folded to a very
+        // negative number is `0` (WPT exp-log-serialize), and `opacity: 2` is
+        // `1`.
         if (property == "opacity" || property == "shape-image-threshold") {
             const std::string_view given = trim(text, html_whitespace);
             const bool percent = given.ends_with('%');
@@ -754,17 +726,17 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
                 return number_text(std::min(1.0f, std::max(0.0f, number)));
             }
         }
-        // 4b'''. ZOOM IS A NUMBER once computed, `normal` and the legacy `0`
-        //       being 1 (CSS Viewport 1 §5, zoom-interpolation).
+        // zoom: computes to a number; `normal` and the legacy `0` are 1 (CSS
+        // Viewport 1 §5; WPT zoom-interpolation).
         if (property == "zoom") {
             if (std::string computed = style::css::computed_zoom(text, {}); !computed.empty()) {
                 return computed;
             }
         }
-        // 4b'''''. `match-parent` IS THE PARENT'S ALIGNMENT, a `start` or
-        //         `end` there turned by the parent's direction into the side
-        //         it is (CSS Text 3 §6.1) - the root's parent being the
-        //         initial containing block, left to right.
+        // text-align: `match-parent` is the parent's alignment, with a `start`
+        // or `end` there turned into a side by the parent's direction (CSS
+        // Text 3 §6.1). The root's parent is the initial containing block,
+        // which is left to right.
         if (property == "text-align" && collapse_keyword(text) == "match-parent") {
             for (std::size_t up = at.pseudo ? 0 : 1; up < at.chain.size(); ++up) {
                 std::string above = collapse_keyword(declared_on(at.chain[up], "text-align"));
@@ -776,9 +748,9 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             }
             return "left";
         }
-        // 4b''''''. FONT FEATURE AND VARIATION SETTINGS ARE ONE PER TAG, the
-        //          last written, sorted by tag (CSS Fonts 4 §6.12, §7.2):
-        //          `"tnum", "hist"` is `"hist", "tnum"`.
+        // font-feature-settings and font-variation-settings: one entry per tag
+        // (the last written), sorted by tag (CSS Fonts 4 §6.12, §7.2):
+        // `"tnum", "hist"` is `"hist", "tnum"`.
         if ((property == "font-feature-settings" || property == "font-variation-settings") &&
             collapse_keyword(text) != "normal") {
             std::vector<std::pair<std::string, std::string>> tags;
@@ -807,10 +779,9 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
                 return out;
             }
         }
-        // 4b''''. AN EMPHASIS MARK IS A SHAPE AND A FILL once computed (CSS
-        //        Text Decoration 3 §3.1): a lone fill takes `circle`, or
-        //        `sesame` in a vertical writing mode, and `filled` - the
-        //        default - is left unwritten.
+        // text-emphasis-style: computes to a shape and a fill (CSS Text
+        // Decoration 3 §3.1). A lone fill takes `circle`, or `sesame` in a
+        // vertical writing mode, and the default `filled` is omitted.
         if (property == "text-emphasis-style") {
             const std::string words = collapse_keyword(text);
             if (!words.empty() && words != "none" && words.front() != '"' &&
@@ -832,26 +803,26 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
                 return (open ? "open " : "") + shape;
             }
         }
-        // 4b'''''''. CONTAINMENT COMPUTES TO ITS SHORT KEYWORDS (CSS Contain 2
-        //           §2): `size layout style paint` is `strict` and `layout
-        //           style paint` is `content`. The specified value keeps the
-        //           words (contain-valid), so the collapse is made here.
+        // contain: computes to its short keywords (CSS Contain 2 §2): `size
+        // layout style paint` is `strict` and `layout style paint` is
+        // `content`. The specified value keeps the words (WPT contain-valid), so
+        // the collapse happens here.
         if (property == "contain") {
             const std::string words = collapse_keyword(text);
             if (words == "size layout style paint") { return "strict"; }
             if (words == "layout style paint") { return "content"; }
         }
-        // 4b''''''''. A CURSOR'S URLS ARE WRITTEN THE ONE WAY a computed <url>
-        //            is, quoted: `url()` is `url("")` and `url(#foo)` is
-        //            `url("#foo")` (css-values/urls/empty, fragment-only). The
-        //            cascade holds the author's bytes; the declaration's own
-        //            canonical form respells exactly that.
+        // cursor: its URLs serialise as a computed <url> does, quoted: `url()`
+        // is `url("")` and `url(#foo)` is `url("#foo")` (WPT
+        // css-values/urls/empty, fragment-only). The cascade holds the
+        // author's text; the declaration's canonical serialisation respells
+        // it.
         if (property == "cursor" && ascii_lower_copy(text).find("url(") != std::string::npos) {
             const style::css::value_check checked =
                 style::css::check_declaration("cursor", trim(text, html_whitespace), false);
             if (checked.valid && !checked.substituted) { return checked.serialized; }
         }
-        // 4b'. A BASIC SHAPE (lib/Style/css/properties/shapes.cpp).
+        // A basic shape (lib/Style/css/properties/shapes.cpp).
         if (property == "clip-path" || property == "shape-outside" || property == "offset-path" ||
             property == "object-view-box") {
             style::css::length_context bases;
@@ -862,9 +833,9 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             std::string computed = style::css::computed_basic_shape(property, text, bases);
             if (!computed.empty()) { return computed; }
         }
-        // 4f. A BORDER SPACING IS ONE OR TWO ABSOLUTE LENGTHS, never
-        //     negative (CSS Tables 3 §border-spacing): `0` is `0px`, and
-        //     `calc(10px - 0.5em)` under a 40px font is `0px`.
+        // border-spacing: one or two absolute lengths, never negative (CSS
+        // Tables 3 §border-spacing): `0` is `0px`, and `calc(10px - 0.5em)`
+        // under a 40px font is `0px`.
         if (property == "border-spacing") {
             style::css::length_context bases;
             bases.font_size = at.font_size;
@@ -885,13 +856,14 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             }
             return out.empty() ? collapse_keyword(text) : out;
         }
-        // A FONT WEIGHT IS A NUMBER once computed (CSS Fonts 4 §2.2): `normal`
-        // 400, `bold` 700, a folded calc() within [1, 1000], and `bolder` or
-        // `lighter` the step §2.2.1's table takes from the parent's computed
-        // weight.
-        // ponytail: a weight whose text is the parent's is read as inherited,
-        // so a `bolder` declared under a `bolder` parent steps once; ask the
-        // cascade which half holds it if that pairing matters.
+        // font-weight: computes to a number (CSS Fonts 4 §2.2): `normal` is
+        // 400, `bold` 700, a folded calc() is clamped to [1, 1000], and
+        // `bolder` or `lighter` takes the step §2.2.1's table gives from the
+        // parent's computed weight.
+        // ponytail: a weight whose text equals the parent's is treated as
+        // inherited, so a `bolder` declared under a `bolder` parent steps only
+        // once; asking the cascade whether the value was declared or inherited
+        // would fix that.
         if (property == "font-weight" && !at.pseudo) {
             const auto weight_at = [&](auto && self, std::size_t k,
                                        std::string_view held) -> double {
@@ -949,7 +921,7 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         if (property == "text-justify" && collapse_keyword(text) == "distribute") {
             return "inter-character";
         }
-        // text-fit's default `consistent` is left unwritten (text-fit-computed).
+        // text-fit's default `consistent` is omitted (WPT text-fit-computed).
         if (property == "text-fit") {
             std::string words = collapse_keyword(text);
             if (const std::size_t at = words.find(" consistent"); at != std::string::npos) {
@@ -957,16 +929,16 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             }
             return words;
         }
-        // 4h. offset-rotate's angle in degrees, `reverse` as `auto 180deg`
-        //     (Motion Path 1 §4.4, offset-rotate-computed).
+        // offset-rotate: the angle in degrees, `reverse` as `auto 180deg`
+        // (Motion Path 1 §4.4; WPT offset-rotate-computed).
         if (property == "offset-rotate") {
             if (std::string computed = style::css::computed_offset_rotate(text, true);
                 !computed.empty()) {
                 return computed;
             }
         }
-        // 4g. A FONT STYLE'S ANGLE IS IN DEGREES, and `oblique 0deg` is
-        //     `normal` (CSS Fonts 4 §2.4, font-style-computed).
+        // font-style: the oblique angle is in degrees, and `oblique 0deg` is
+        // `normal` (CSS Fonts 4 §2.4; WPT font-style-computed).
         if (property == "font-style") {
             const std::string words = collapse_keyword(text);
             if (words.starts_with("oblique ")) {
@@ -975,8 +947,9 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
                 if (answer.outcome == style::css::math_outcome::resolved &&
                     !answer.value.is_number &&
                     answer.value.type == style::css::numeric_type::angle) {
-                    // ...and within [-90deg, 90deg], where an animation past
-                    // either end stops (font-style-interpolation).
+                    // The angle is clamped to [-90deg, 90deg], so an
+                    // animation past either end stops there (WPT
+                    // font-style-interpolation).
                     const double angle = std::clamp(answer.value.px, -90.0, 90.0);
                     if (angle == 0) { return "normal"; }
                     return "oblique " + number_text(static_cast<float>(angle)) + "deg";
@@ -984,9 +957,9 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             }
             return words;
         }
-        // 4b''. A FONT WIDTH IS A PERCENTAGE (CSS Fonts 4 §2.3): a keyword is
-        //     the one it names, and a calc() folds and stops at zero
-        //     (font-width-computed).
+        // font-width and font-stretch: compute to a percentage (CSS Fonts 4
+        // §2.3). A keyword is its named percentage, and a calc() is folded and
+        // clamped at zero (WPT font-width-computed).
         if (property == "font-width" || property == "font-stretch") {
             const std::string_view given = trim(text, html_whitespace);
             if (const auto named = style::css::font_width_percentage(given)) {
@@ -999,10 +972,10 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             }
             return collapse_keyword(text);
         }
-        // 4c. AN OVERFLOW AXIS BESIDE A SCROLLING ONE: CSS Overflow 3 §3.1 -
-        //     when either axis is neither `visible` nor `clip`, `visible`
-        //     computes to `auto`. `clip` stays `clip`: it may sit beside a
-        //     scrolling axis since csswg-drafts#7714 (overflow-computed).
+        // overflow-x and overflow-y (CSS Overflow 3 §3.1): when the other axis
+        // is neither `visible` nor `clip`, `visible` computes to `auto`. `clip`
+        // stays `clip`, since it may sit beside a scrolling axis
+        // (csswg-drafts#7714; WPT overflow-computed).
         if (property == "overflow-x" || property == "overflow-y") {
             const std::string own = collapse_keyword(text);
             std::string other =
@@ -1013,12 +986,11 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             }
             return own;
         }
-        // 5. Everything else is a keyword or a list, and its computed value IS
-        //    its specified text - lowercased, EXCEPT where the value names
-        //    something: a <custom-ident> is case-sensitive (CSS Values 4
-        //    §3.2), so `counter-reset: myCounter` and `animation-name: Both`
-        //    read back as written. The grammar lowercased every keyword of
-        //    these already.
+        // Everything else is a keyword or a list, whose computed value is its
+        // specified text lowercased, except where the value names something: a
+        // <custom-ident> is case-sensitive (CSS Values 4 §3.2), so
+        // `counter-reset: myCounter` and `animation-name: Both` read back as
+        // written. The grammar already lowercased those properties' keywords.
         static constexpr std::string_view names_something[] = {"counter-increment",
                                                                "counter-reset",
                                                                "counter-set",
@@ -1039,11 +1011,9 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         return collapse_keyword(text, ascii_iequals_any(property, names_something));
     };
 
-    // `currentcolor` IS NOT A COLOUR. It is the initial value of all six border
-    // and outline colours and it resolves to this element's own `color`, which is
-    // what Chrome reports for a border nothing coloured. Computed first so the
-    // loop below has it, and guarded against a `color` that is itself the keyword
-    // - a declaration that cannot mean anything and has no answer but the initial.
+    // This element's `currentcolor` (its own `color`), computed once so the loop
+    // below can replace the keyword in border, outline, caret and shadow
+    // colours. A `color: currentcolor` has no meaning and falls back to black.
     const std::string current_color = [&] {
         const std::string own = value_of("color");
         if (own.empty() || ascii_iequals(own, "currentcolor")) {
@@ -1052,32 +1022,14 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         return own;
     }();
 
-    // EVERY LONGHAND THIS ENGINE KNOWS ABOUT, whether or not anything declared
-    // it. That is the whole difference between an object a page can read and the
-    // handful of names this used to publish: computed-testcommon.js asks
-    // `property in getComputedStyle(target)` before every single computed-value
-    // test, and a property the cascade never reached failed there rather than on
-    // its value.
+    // Every longhand in the property table, declared or not, because pages test
+    // `property in getComputedStyle(el)`. Shorthands are skipped (the table's
+    // `shorthand` bit): CSSOM §6.7 indexes only longhands, so `'border' in style`
+    // is true but `Array.from(style)` does not contain it.
     //
-    // A SHORTHAND IS SKIPPED, AND THE TABLE IS ASKED WHICH ONE IS. CSSOM §6.7
-    // says a computed style's INDEXED properties are the supported LONGHANDS,
-    // and css/cssom's getComputedStyle-getter-v-properties asserts both halves
-    // of that at once: `'border' in style` is true and `Array.from(style)` does
-    // not contain it. serialize-all-longhands asserts the consequence - every
-    // enumerated name must serialise to something, and a shorthand here would
-    // serialise to nothing, because reconstructing one means deciding how each
-    // engine rebuilds it.
-    //
-    // THIS FILE USED TO KEEP ITS OWN LIST, on the grounds that the table was not
-    // this file's to change. The table has a `shorthand` bit now, and the two
-    // had already drifted: `border-top`, `border-right`, `border-bottom` and
-    // `border-left` are shorthands there and were missing from the list, so all
-    // four were enumerated as longhands - which is the exact assertion
-    // getComputedStyle-getter-v-properties makes about each of them by name.
-    // A LOGICAL LONGHAND IS THE PHYSICAL ONE IT MAPS TO on this element (CSS
-    // Logical 1 §4): the cascade stored `margin-block-start` as `margin-top`
-    // under horizontal-tb, so that is where its value - used or computed,
-    // by the physical property's own rule - is read from.
+    // A logical longhand reads the physical property it maps to on this element
+    // (CSS Logical 1 §4): `margin-block-start` is read from `margin-top` under
+    // horizontal-tb.
     const std::string writing_mode{declared("writing-mode")};
     const std::string direction{declared("direction")};
     const auto physical_of = [&](std::string_view property) -> std::string {
@@ -1087,8 +1039,8 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         if (p.shorthand) { continue; }
         const std::string physical = physical_of(p.name);
         std::string text = value_of(physical.empty() ? p.name : physical);
-        // AN INITIAL VALUE THAT IS NOT YET A COMPUTED ONE goes through the
-        // rules a declared one would: `normal` word spacing is `0px`, and a
+        // An initial value that is not yet a computed value goes through the
+        // same rules as a declared one: `normal` word spacing is `0px`, and a
         // box's `50% 50%` origins are the pixels they resolve to (CSS Text 4
         // §7.1, CSS Transforms 1 §6).
         if (text.empty() &&
@@ -1098,9 +1050,10 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             as_initial = nullptr;
         }
         if (text.empty()) { text = std::string{p.initial}; }
-        // `legacy` ALONE IS THE PARENT'S LEGACY VALUE, and `normal` when the
-        // parent's is not one (CSS Box Alignment 3 §6.1) - which is how a
-        // `legacy center` reaches the children of the box that says it.
+        // justify-items: a bare `legacy` takes the nearest ancestor's legacy
+        // value, or `normal` when that is not one (CSS Box Alignment 3 §6.1);
+        // this is how a `legacy center` reaches the children of the box that
+        // declares it.
         if (p.name == "justify-items" && text == "legacy") {
             text = "normal";
             for (std::size_t up = at.pseudo ? 0 : 1; up < at.chain.size(); ++up) {
@@ -1114,7 +1067,7 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         if (ascii_iequals(text, "currentcolor")) { text = current_color; }
         // caret-color's initial `auto` is currentcolor as well (CSS UI 4 §6.2.1).
         if (p.name == "caret-color" && ascii_iequals(text, "auto")) { text = current_color; }
-        // ...and inside a shadow list, where it is one shadow's colour.
+        // `currentcolor` inside a shadow list is one shadow's colour.
         if (p.name == "box-shadow" || p.name == "text-shadow") {
             for (std::size_t at = text.find("currentcolor"); at != std::string::npos;
                  at = text.find("currentcolor", at + current_color.size())) {
@@ -1123,30 +1076,29 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         }
         answers.emplace_back(std::string{p.name}, std::move(text));
     }
-    // SORTED, WHICH THE TABLE IS NOT. css/cssom's getComputedStyle-property-order
-    // requires the indexed properties to come out in lexicographic order;
-    // style/css/properties.hpp is written box-model-first because that is the
-    // order a person reads it in. Sorting here keeps both true, and there are no
-    // vendor-prefixed names in the table, so plain byte order is the whole rule.
+    // Sort the longhands: WPT css/cssom/getComputedStyle-property-order
+    // requires lexicographic order, while the property table is grouped by
+    // topic for readers. The table has no vendor-prefixed names, so plain byte
+    // order suffices.
     std::ranges::sort(answers, [](const auto & a, const auto & b) { return a.first < b.first; });
     const std::size_t longhand_count = answers.size();
 
-    // THE SHORTHANDS, PRESENT BUT NOT INDEXED. CSSOM gives a computed style an
-    // attribute for every SUPPORTED property, shorthands included, and
-    // getComputedStyle-getter-v-properties asserts exactly that pair: `'border'
-    // in style` is true while `Array.from(style)` does not contain it.
+    // The shorthands: present as attributes but not indexed. CSSOM gives a
+    // computed style an attribute for every supported property, shorthands
+    // included (WPT getComputedStyle-getter-v-properties: `'border' in style`
+    // is true while `Array.from(style)` does not contain it).
     //
-    // Assembled from the longhands wherever the serialisation is a list. §6.7's
-    // rule drops a trailing value that repeats the one two places before it, so
-    // an ordinary <div>'s `margin` is `0px` rather than `0px 0px 0px 0px`.
+    // Box-side shorthands are assembled from the longhands; CSSOM §6.7's rule
+    // drops a trailing value that repeats the one two places before it, so an
+    // ordinary <div>'s `margin` is `0px` rather than `0px 0px 0px 0px`.
     //
-    // THE REST FOLD THE WAY `el.style` DOES: the longhands' computed values
-    // into a declaration block, read back as the shorthand through
-    // shorthands.cpp's one fold - `font` in CSS Fonts 4 §3.1's canonical form
-    // (font-computed), `animation` in CSS Animations 1 §5.9's, `white-space`
-    // as CSS Text 4's keyword when its longhands spell one. A shape that
-    // table keeps whole - `background`, `transition`, `text-decoration` - is
-    // "", which CSSOM says of a shorthand that cannot be represented.
+    // The rest are serialised the way `el.style` does: the longhands' computed
+    // values go into a declaration block that is read back as the shorthand
+    // with declaration_value (lib/Style/css/properties/shorthands.cpp), giving
+    // `font` in CSS Fonts 4 §3.1's canonical form, `animation` in CSS
+    // Animations 1 §5.9's, and `white-space` as CSS Text 4's keyword when its
+    // longhands spell one. A shorthand that cannot represent the values is ""
+    // as CSSOM specifies.
     const auto longhand = [&answers, longhand_count](std::string_view name) -> std::string {
         for (std::size_t i = 0; i < longhand_count; ++i) {
             if (std::string_view{answers[i].first} == name) { return answers[i].second; }
@@ -1164,8 +1116,9 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
                                               std::string_view b, std::string_view l) {
         return collapse({longhand(t), longhand(r), longhand(b), longhand(l)});
     };
-    // Two components of DIFFERENT properties rather than two sides, so the only
-    // collapse is the whole-value one: `gap: normal` when both axes are normal.
+    // Two components of different properties rather than two sides, so the
+    // only collapse is the whole-value one: `gap: normal` when both axes are
+    // normal.
     const auto both = [&longhand](std::string_view a, std::string_view b) -> std::string {
         const std::string first = longhand(a);
         const std::string second = longhand(b);
@@ -1192,12 +1145,12 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             text = sides("border-top-color", "border-right-color", "border-bottom-color",
                          "border-left-color");
         } else if (p.name == "border-radius") {
-            // CORNERS, clockwise from the top left - not the top/right/bottom/left
-            // of the edge shorthands, though the collapsing rule is the same one.
-            // EACH CORNER IS A PAIR: a horizontal radius and a vertical one,
-            // written `h v` in the longhand and as `h h h h / v v v v` in the
-            // shorthand, the slash and its half omitted when the two lists agree
-            // (getComputedStyle-border-radius-001 and -003).
+            // Corners go clockwise from the top left, with the same collapsing
+            // rule as the edge shorthands. Each corner is a pair, a horizontal
+            // and a vertical radius, written `h v` in the longhand and as
+            // `h h h h / v v v v` in the shorthand; the slash and its half are
+            // omitted when the two lists agree (WPT
+            // getComputedStyle-border-radius-001 and -003).
             std::array<std::string, 4> h;
             std::array<std::string, 4> v;
             const std::array<std::string_view, 4> corners{
@@ -1205,8 +1158,8 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
                 "border-bottom-left-radius"};
             for (std::size_t i = 0; i < 4; ++i) {
                 const std::string both = longhand(corners[i]);
-                // The split is at the one top-level space: a `calc(25% + 10px)`
-                // has spaces of its own and keeps them.
+                // Split at the first top-level space: a `calc(25% + 10px)` has
+                // spaces of its own and keeps them.
                 int depth = 0;
                 std::size_t split = std::string::npos;
                 for (std::size_t k = 0; k < both.size(); ++k) {
@@ -1229,9 +1182,9 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         } else if (p.name == "flex-flow") {
             text = both("flex-direction", "flex-wrap");
         } else if (p.name == "flex") {
-            // THREE COMPONENTS THAT NEVER COLLAPSE: `flex: 0 1 auto` is the
-            // initial value written out, and dropping a repeat would change
-            // which component the survivors are.
+            // flex: three components that never collapse. `flex: 0 1 auto` is
+            // the initial value written out, and dropping a repeat would change
+            // which component each remaining value is.
             const std::string grow = longhand("flex-grow");
             const std::string shrink = longhand("flex-shrink");
             const std::string basis = longhand("flex-basis");
@@ -1261,11 +1214,10 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
     answers.insert(answers.end(), std::make_move_iterator(shorthands.begin()),
                    std::make_move_iterator(shorthands.end()));
 
-    // AND EVERY PROPERTY THE ELEMENT HAS that the table has never heard of -
-    // a CUSTOM property above all, which no fixed table can enumerate: its
-    // own, the ones it inherited, and the registered ones the cascade gave it
-    // an initial value for. Indexed after the longhands (object.cpp), which
-    // is where cssstyledeclaration-custom-properties and
+    // Finally, every declared property the table does not know, mainly custom
+    // properties (own, inherited and registered-with-initial). They come after
+    // the shorthands here; object.cpp indexes them after the longhands, where
+    // WPT cssstyledeclaration-custom-properties and
     // -registered-custom-properties look for them.
     if (styles_ != nullptr) {
         const auto found = styles_->find(style::engine::key_of(id));
@@ -1288,8 +1240,8 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
             if (found->second->inherited) { add(found->second->inherited->declarations); }
         }
     }
-    // ...and an ANIMATED custom property nothing declared, which the walk
-    // above cannot see because it walks declarations.
+    // Also add an animated custom property that nothing declared, which the
+    // walk above cannot see because it walks declarations.
     for (const auto & [name, text] : animated) {
         if (style::css::find_property(name) != nullptr) { continue; }
         const auto seen = std::find_if(answers.begin(), answers.end(),

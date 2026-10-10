@@ -1,3 +1,13 @@
+//===- input.hpp - Platform-neutral input events ----------------*- C++ -*-===//
+//
+// Input, described without reference to SDL.
+//
+// The engine consumes these events, and the ctbrowser-app library (lib/App)
+// translates SDL events into them. That keeps the whole browser testable
+// headlessly: a test drives clicks, scrolls and keys directly, with no
+// window, no display and no event queue.
+//
+//===----------------------------------------------------------------------===//
 #pragma once
 #include <cstdint>
 #include <string>
@@ -5,52 +15,41 @@
 
 #include <ctbrowser/core/core.hpp>
 
-// Input, described without reference to SDL.
-//
-// The engine takes THESE, and :app translates SDL events into them. That is
-// what keeps the whole browser testable headlessly: a test drives clicks,
-// scrolls and keys directly, with no window, no display and no event queue.
-
 namespace ctbrowser::shell {
 
+/// What an input_event reports.
 enum class input_kind : std::uint8_t {
     mouse_move,
     mouse_down,
     mouse_up,
     wheel,
     key_down,
-    key_up,     // a game holding a key needs to learn when it was RELEASED;
-                // without this every held key sticks down forever
-    text_input, // typed characters, not key codes - the only path that gets
-                // IME, dead keys and non-Latin layouts right
+    key_up,     // A game holding a key needs to learn when it was released.
+    text_input, // Typed characters, not key codes: the only path that gets
+                // IME, dead keys and non-Latin layouts right.
     resize,
 };
 
+/// One input event, built with the named constructors below.
 struct input_event {
     input_kind kind = input_kind::mouse_move;
-    float x = 0;       // viewport pixels; for `resize`, the new width
-    float y = 0;       // viewport pixels; for `resize`, the new height
-    float wheel_y = 0; // notches, positive = away from the user
-    // key_down/key_up: the DOM `code` of the physical key - "ArrowLeft",
-    // "Space", "KeyA", "Digit1", "Enter". text_input: the typed text.
-    //
-    // This IS the DOM vocabulary, not a private one that has to be translated
-    // at the boundary. The private one ("Left", "Return") was invisible to
-    // pages, which compare against `e.code`.
+    float x = 0;       // Viewport pixels; for `resize`, the new width.
+    float y = 0;       // Viewport pixels; for `resize`, the new height.
+    float wheel_y = 0; // Notches; positive is away from the user.
+    /// key_down and key_up: the DOM `code` of the physical key ("ArrowLeft",
+    /// "Space", "KeyA", "Digit1", "Enter"), verbatim, because pages compare
+    /// against `e.code`. text_input: the typed text.
     std::string key;
-    // 0 is the left button. The DOM numbers the right one 2, and so does this -
-    // there was no concept of it at all before, so a context menu had nothing
-    // to open on.
+    /// The mouse button, numbered as the DOM does: 0 is left, 2 is right.
     std::uint8_t button = 0;
-    bool shift = false; // extends a selection rather than moving the caret
-    bool ctrl = false;  // the clipboard and select-all shortcuts
-    // Whether `x`/`y` mean anything. Only a WHEEL needs asking: the pointer
-    // events all carry a position by construction, and a wheel did not carry
-    // one at all until a wheel over a textarea had to scroll the textarea.
-    // Trailing, with a default, so every existing aggregate initialiser above
-    // keeps compiling.
+    bool shift = false; // Extends a selection rather than moving the caret.
+    bool ctrl = false;  // The clipboard and select-all shortcuts.
+    /// Whether `x` and `y` mean anything. Only a wheel needs asking: pointer
+    /// events always carry a position, and a wheel over a scrollable control
+    /// needs one to scroll that control. Declared after the older members so
+    /// existing aggregate initialisers keep compiling.
     bool has_pointer = false;
-    float wheel_x = 0; // notches, positive = to the right (SDL's sign, DOM deltaX's)
+    float wheel_x = 0; // Notches; positive is to the right (SDL's sign and DOM deltaX's).
 
     [[nodiscard]] static input_event mouse_move_to(float x, float y) {
         return input_event{input_kind::mouse_move, x, y, 0, {}, 0};
@@ -64,14 +63,14 @@ struct input_event {
     [[nodiscard]] static input_event mouse_up_at(float x, float y, std::uint8_t button = 0) {
         return input_event{input_kind::mouse_up, x, y, 0, {}, button};
     }
-    // A wheel with no pointer position. The page scrolls, since there is no
-    // way to tell what the notch was aimed at.
+    /// A wheel with no pointer position. The page scrolls, since there is no
+    /// way to tell what the notch was aimed at.
     [[nodiscard]] static input_event wheel_by(float notches) {
         return input_event{input_kind::wheel, 0, 0, notches, {}, 0};
     }
-    // A wheel AT a point. `x`/`y` are where the pointer is, not a delta - a
-    // wheel over a scrollable control scrolls that control rather than the
-    // page, and without a position there is nothing to ask.
+    /// A wheel at a point. \p x and \p y are where the pointer is, not a
+    /// delta: a wheel over a scrollable control scrolls that control rather
+    /// than the page.
     [[nodiscard]] static input_event wheel_at(float x, float y, float notches) {
         input_event out{input_kind::wheel, x, y, notches, {}, 0};
         out.has_pointer = true;
@@ -94,9 +93,9 @@ struct input_event {
     }
 };
 
-// The DOM `key` for a `code`: what the key MEANS rather than which key it is.
-// `code` is "KeyA" whatever the layout; `key` is "a", or "A" with shift.
-// Pages read both, and a page reading `e.key` got nothing at all before.
+/// The DOM `key` for a `code`: what the key means rather than which key it
+/// is. `code` is "KeyA" whatever the layout; `key` is "a", or "A" with shift.
+/// Assumes a US layout.
 [[nodiscard]] inline std::string dom_key_value(std::string_view code, bool shift) {
     if (code.size() == 4 && code.starts_with("Key")) {
         const char letter = code[3];
@@ -109,36 +108,24 @@ struct input_event {
     if (code == "Comma") { return shift ? "<" : ","; }
     if (code == "Period") { return shift ? ">" : "."; }
     if (code == "Slash") { return shift ? "?" : "/"; }
-    // Everything else - the arrows, Enter, Escape, the function keys - has the
-    // same spelling either way.
+    // Everything else (the arrows, Enter, Escape, the function keys) has the
+    // same spelling as its code.
     return std::string{code};
 }
 
-// THE LEGACY `keyCode`, which is deprecated and which everything still uses.
-//
-// `code` and `key` are the modern pair and this engine had both; `keyCode` is
-// the one the spec marks deprecated, and leaving it out meant an event that
-// looked complete and was unusable to a large amount of real code. PHASER'S
-// ENTIRE KEYBOARD SYSTEM IS KEYED ON IT - `KeyCodes.LEFT` is 37, and a Key
-// object matches by number - so every arrow key in a Phaser game silently did
-// nothing: the listener fired, the event arrived, `code` was right, and no key
-// ever matched. A game that renders and cannot be played.
-//
-// The values are the well-known ones every browser reports, which is what makes
-// them worth having: they are not derived from anything, they are a table
-// history left behind, and a page comparing against 37 wants exactly 37.
-//
-// `which` is the same number again - an even older alias that survives for the
-// same reason - and both are set, because code that reads one reads the other.
+/// The legacy DOM `keyCode` (and `which`) for a `code`.
+///
+/// Deprecated, but many libraries depend on it; for example, Phaser matches
+/// keys by number (`KeyCodes.LEFT` is 37). The values are the fixed table that
+/// every browser reports. Returns 0 for codes without a legacy value.
 [[nodiscard]] inline int dom_key_code(std::string_view code) {
     // Letters and digits are positional: "KeyA" is 65 whatever the layout says
-    // the key produces, which is precisely what makes keyCode a POSITION rather
-    // than a character.
+    // the key produces.
     if (code.size() == 4 && code.starts_with("Key")) {
-        return static_cast<int>(code[3]); // 'A' is 65, and so is KeyA
+        return static_cast<int>(code[3]); // 'A' is 65, and so is KeyA.
     }
     if (code.size() == 6 && code.starts_with("Digit")) {
-        return static_cast<int>(code[5]); // '0' is 48, and so is Digit0
+        return static_cast<int>(code[5]); // '0' is 48, and so is Digit0.
     }
     if (code.size() == 8 && code.starts_with("Numpad") && code[6] >= '0' && code[6] <= '9') {
         return 96 + (code[6] - '0');

@@ -1,27 +1,32 @@
-// dom_bindings - the parts of the shadow DOM that are not one element's own:
-// slots and their assignments, `setHTMLUnsafe`/`getHTML`, and the declarative
-// shadow roots the first of those attaches.
+//===- ctbrowser/lib/Shell/bindings/shadow_dom.cpp - Shadow DOM bindings --===//
+//
+// dom_bindings' parts of the shadow DOM that are not one element's own: slots
+// and their assignments, `setHTMLUnsafe`/`getHTML`, the HTML partial-update
+// methods, and the declarative shadow roots those attach.
 //
 // `element.attachShadow` and the ShadowRoot's own members are in
 // element/shadow.cpp, because they are installed per element and per root.
-// What is here goes on the INTERFACE PROTOTYPES, once: `assignedNodes` is the
+// What is here goes on the interface prototypes, once: `assignedNodes` is the
 // same function for every <slot> there will ever be.
 //
-// WHAT AN ASSIGNMENT IS. DOM 4.2.2: a slottable - an element or a text node
-// that is a CHILD OF A SHADOW HOST - has a name (an element's `slot`
+// What an assignment is. DOM 4.2.2: a slottable (an element or a text node
+// that is a child of a shadow host) has a name (an element's `slot`
 // attribute, and always the empty string for text), and it is assigned to the
-// FIRST slot in the host's shadow tree whose `name` matches. Nothing is
+// first slot in the host's shadow tree whose `name` matches. Nothing is
 // stored: the assignment is a function of the two trees, so it is computed
 // when it is asked for and cannot go stale the way a cached list would.
 //
-// `slotchange` (DOM 4.2.2.4) is found by DIFFING that answer: mutated()
+// `slotchange` (DOM 4.2.2.4) is found by diffing that answer: mutated()
 // recomputes every slot's list and signals the ones that moved
 // (signal_slot_changes), and the mutation observer microtask fires the
 // events after the observers' callbacks (fire_signalled_slots).
 //
-// ponytail: nothing here reaches the FLAT TREE that layout would render: a
-// slot's assigned nodes are an answer to a question, not a rearrangement of
-// the boxes. See the report.
+// ponytail: layout does not render the flat tree. A slot's assigned nodes
+// are computed for script, focus navigation and event paths, but the box
+// tree is still built from the light DOM. Rendering slotted content needs
+// layout to walk assigned_nodes_of().
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/dom/xml.hpp>
@@ -36,20 +41,21 @@
 namespace ctbrowser::shell {
 namespace {
 
-// A MANUAL ASSIGNMENT IS BETWEEN OBJECTS, not handles: HTML's slot.assign()
-// records "manually assigned nodes" on the slot and a "manual slot
-// assignment" on each node, and both survive the nodes moving to another
-// document and back (imperative-slot-api.html) - where this engine's handles
-// do not, since adoption copies a node into the other document's slab. So the
-// two lists live on the WRAPPERS, which adoption rebinds but keeps, and
-// which the collector traces through these properties.
+/// A manual assignment is between objects, not handles: HTML's slot.assign()
+/// records "manually assigned nodes" on the slot and a "manual slot
+/// assignment" on each node, and both survive the nodes moving to another
+/// document and back (WPT shadow-dom/imperative-slot-api.html), where this
+/// engine's handles do not, since adoption copies a node into the other
+/// document's slab. So the two lists live on the wrappers, which adoption
+/// rebinds but keeps, and which the collector traces through these properties.
 constexpr std::string_view manual_nodes_key =
     CTBROWSER_SYMBOL_KEY("sym:ctbrowser:manuallyAssignedNodes");
 constexpr std::string_view manual_slot_key =
     CTBROWSER_SYMBOL_KEY("sym:ctbrowser:manualSlotAssignment");
 
-// The slot name an element asks for, and the one a slot offers. Text is always
-// the default slot's.
+/// Returns the value of `attribute` on `id` as a slot name: the name an element
+/// asks for (`slot`) or the one a slot offers (`name`). Text is always the
+/// default slot's, the empty string.
 [[nodiscard]] std::string slot_name_of(const read_txn & txn, atom_table & atoms, node_id id,
                                        std::string_view attribute) {
     if (!txn.tag(id)) { return {}; }
@@ -60,8 +66,8 @@ constexpr std::string_view manual_slot_key =
     return txn.tag(id) && txn.element_ns(id) == node_ns::html && txn.local_name(id) == "slot";
 }
 
-// The first <slot> of that name in a tree, in tree order - the only one an
-// assignment can go to.
+/// Returns the first <slot> named `name` under `root`, in tree order: the only
+/// one an assignment can go to.
 [[nodiscard]] node_id first_slot_named(const read_txn & txn, atom_table & atoms, node_id root,
                                        std::string_view name) {
     node_id found;
@@ -79,18 +85,19 @@ constexpr std::string_view manual_slot_key =
     return found;
 }
 
-// THE SANITIZER, AS FAR AS THE HTML PARTIAL-UPDATE METHODS REACH IT (Sanitizer
-// API "sanitize", run over the parsed fragment before it is inserted): the
-// "remove unsafe" pass the SAFE spellings always make - script-running
-// elements, event handler attributes and `javascript:` navigations - and a
-// configuration's removeElements, replaceWithChildrenElements and
-// removeAttributes lists, which both spellings honour.
-// ponytail: the built-in safe DEFAULT configuration - an allow-list of every
-// element and attribute a sanitised fragment may keep - is not modelled, so
-// a safe call keeps an unknown element the default would drop; model it when
-// setHTML() itself is built on this.
+/// The sanitizer, as far as the HTML partial-update methods and parseHTML reach
+/// it (Sanitizer API "sanitize", run over the parsed fragment before it is
+/// inserted): the "remove unsafe" pass the safe spellings always make
+/// (script-running elements, event handler attributes and `javascript:`
+/// navigations), and a configuration's removeElements,
+/// replaceWithChildrenElements and removeAttributes lists, which both
+/// spellings honour.
+/// ponytail: the built-in safe default configuration (an allow-list of every
+/// element and attribute a sanitised fragment may keep) is not modelled, so
+/// a safe call keeps an unknown element the default would drop; model it when
+/// setHTML() itself is built on this.
 struct sanitize_names {
-    // (namespace URI, local name); "" is the null namespace.
+    /// (namespace URI, local name) pairs; "" is the null namespace.
     std::vector<std::pair<std::string, std::string>> remove_elements;
     std::vector<std::pair<std::string, std::string>> unwrap_elements;
     std::vector<std::pair<std::string, std::string>> remove_attributes;
@@ -106,8 +113,8 @@ struct sanitize_names {
     return std::string{atoms.text(txn.element_namespace(id))};
 }
 
-// "Remove unsafe": the elements that run script or embed a browsing context,
-// in the HTML and SVG namespaces, whatever a configuration says.
+/// "Remove unsafe": the elements that run script or embed a browsing context,
+/// in the HTML and SVG namespaces, whatever a configuration says.
 [[nodiscard]] bool unsafe_element(std::string_view ns, std::string_view local) {
     if (ns == xhtml_namespace) {
         return local == "script" || local == "frame" || local == "iframe" || local == "object" ||
@@ -116,6 +123,8 @@ struct sanitize_names {
     return ns == svg_namespace && (local == "script" || local == "use");
 }
 
+/// Sanitizes the children of `at` recursively, including template contents and
+/// shadow roots. `safe` adds the "remove unsafe" pass to the configured lists.
 void sanitize(document & doc, const atom_table & atoms, node_id at, const sanitize_names & names,
               bool safe) {
     const auto listed = [](const std::vector<std::pair<std::string, std::string>> & list,
@@ -182,9 +191,9 @@ void sanitize(document & doc, const atom_table & atoms, node_id at, const saniti
     }
 }
 
-// A configuration's name lists, from the `sanitizer` member of the options:
-// a string names an element in the HTML namespace or an attribute in none, a
-// dictionary its `name` and `namespace`.
+/// Reads a configuration's name lists from the `sanitizer` member of the
+/// options: a string names an element in the HTML namespace or an attribute in
+/// none, a dictionary its `name` and `namespace`.
 [[nodiscard]] sanitize_names sanitizer_names(context & cx, value config) {
     sanitize_names out;
     if (!config.is_object()) { return out; }
@@ -214,7 +223,7 @@ void sanitize(document & doc, const atom_table & atoms, node_id at, const saniti
 } // namespace
 
 // The nodes assigned to one slot, in tree order. Empty for a slot that is not
-// in a shadow tree, for a slot a NAME has already been claimed for by an
+// in a shadow tree, for a slot whose name has already been claimed by an
 // earlier one, and for every slot of a manual-assignment tree.
 std::vector<node_id> dom_bindings::assigned_nodes_of(node_id slot) const {
     const auto txn = doc_->read();
@@ -222,7 +231,7 @@ std::vector<node_id> dom_bindings::assigned_nodes_of(node_id slot) const {
     const node_id root = root_of_tree(txn, slot, false);
     const document::shadow_tree * tree = shadow_tree_of(root);
     if (tree == nullptr) { return {}; }
-    // MANUAL: the page said which nodes, and nothing else qualifies. A node
+    // Manual assignment: the page said which nodes, and nothing else qualifies. A node
     // that has since left the host is dropped here rather than when it moved.
     if (tree->manual_slots) {
         const auto slot_wrapper = wrappers_.find(slot.key());
@@ -232,7 +241,7 @@ std::vector<node_id> dom_bindings::assigned_nodes_of(node_id slot) const {
         std::vector<node_id> out;
         for (const value & one : static_cast<script::array_object *>(held->as_heap())->items) {
             if (!one.is_object()) { continue; }
-            // A node of THIS document now: its wrapper's handle is one of ours.
+            // A node of this document now: its wrapper's handle is one of ours.
             auto * obj = static_cast<script::object_object *>(one.as_heap());
             const value * handle = obj->find(handle_property);
             if (handle == nullptr) { continue; }
@@ -249,8 +258,8 @@ std::vector<node_id> dom_bindings::assigned_nodes_of(node_id slot) const {
         return out;
     }
     const std::string name = slot_name_of(txn, *atoms_, slot, "name");
-    // FIRST SLOT OF THAT NAME WINS - a second <slot name=x> is assigned
-    // nothing at all, which is what `slots-fallback.html` reads.
+    // The first slot of that name wins: a second <slot name=x> is assigned
+    // nothing at all (WPT shadow-dom/slots-fallback.html).
     if (first_slot_named(txn, *atoms_, root, name) != slot) { return {}; }
     std::vector<node_id> out;
     for (const node_id child : txn.children(tree->host)) {
@@ -267,24 +276,25 @@ std::vector<node_id> dom_bindings::assigned_nodes_of(node_id slot) const {
 // has not changed; one that has left its tree keeps the signal it earned.
 void dom_bindings::signal_slot_changes(const std::vector<document::write_note> & writes) {
     if (doc_ == nullptr || cx_ == nullptr || !doc_->has_shadow_roots()) { return; }
-    // ONLY THE TREES THE WRITES COULD HAVE MOVED AN ASSIGNMENT IN: a host's
+    // Only the trees the writes could have moved an assignment in: a host's
     // child list (its shadow root's slots), a shadow tree's own content (a
     // slot inserted or removed, at any depth), a `slot` or `name` attribute
-    // (the child's host's root, or the slot's tree) - and, for slot.assign(),
+    // (the child's host's root, or the slot's tree), and, for slot.assign(),
     // the root it named. A page with ten thousand hosts that appends one
     // element must not recompute ten thousand trees.
     std::vector<node_id> roots;
-    // DOM 4.2.3 "insert" step 7.4 and "remove" step 11: a slot IN A SHADOW
-    // TREE WITH NOTHING ASSIGNED whose children change has changed what it
-    // shows - its fallback content - and that is a slot change too, though no
-    // assignment moved (moveBefore/slotchange-events.html). Not a slot being
-    // built outside one: a clone's children arrive before it is anywhere, and
-    // the notes are read after the fact - so a slot that was itself inserted
-    // by these writes, or inside something that was, got its children first.
+    // DOM 4.2.3 "insert" step 7.4 and "remove" step 11: a slot in a shadow
+    // tree with nothing assigned whose children change has changed what it
+    // shows (its fallback content), and that is a slot change too, though no
+    // assignment moved (WPT dom/nodes/moveBefore/slotchange-events.html). Not
+    // a slot being built outside one: a clone's children arrive before it is
+    // anywhere, and the notes are read after the fact, so a slot that was
+    // itself inserted by these writes, or inside something that was, got its
+    // children first and is skipped.
     std::vector<node_id> fallback;
-    // DOM 4.2.3 "remove" step 13: A SLOT THAT LEFT ITS SHADOW TREE - itself or
-    // inside what was removed - is assigned nothing now, and one that had
-    // nodes has changed (imperative-slot-api-slotchange.html). The trees
+    // DOM 4.2.3 "remove" step 13: a slot that left its shadow tree (itself or
+    // inside what was removed) is assigned nothing now, and one that had
+    // nodes has changed (WPT shadow-dom/imperative-slot-api-slotchange.html). The trees
     // below are the ones it is still in; this is the one it left.
     std::vector<node_id> departed;
     const auto note_root = [&](node_id root) {
@@ -408,7 +418,7 @@ void dom_bindings::fire_signalled_slots() {
 
 // The <slot> a slottable is assigned to, mode-agnostic. Its host is the node's
 // parent; the answer is the first slot in that host's shadow tree whose
-// assigned-nodes list contains the node - the same question `assignedSlot`
+// assigned-nodes list contains the node: the same question `assignedSlot`
 // asks, without the open/closed gate the getter adds on top.
 node_id dom_bindings::assigned_slot_of(node_id slottable) const {
     const auto txn = doc_->read();
@@ -436,10 +446,10 @@ node_id dom_bindings::assigned_slot_of(node_id slottable) const {
     return answer;
 }
 
-// THE SHADOW TREES A COPY DOES NOT CARRY. `copy_subtree` copies nodes and
-// attributes, and a shadow root is neither - it is a second tree the document
-// remembers beside the host. The two trees have the same SHAPE, so this walks
-// them in step and re-attaches each root on the copy.
+// Copies the shadow trees that `copy_subtree` does not carry. `copy_subtree`
+// copies nodes and attributes, and a shadow root is neither: it is a second
+// tree the document remembers beside the host. The two trees have the same
+// shape, so this walks them in step and re-attaches each root on the copy.
 void dom_bindings::copy_shadow_trees(const document & src, const read_txn & from, node_id source,
                                      node_id made) {
     if (const node_id root = src.shadow_root_of(source)) {
@@ -462,19 +472,19 @@ void dom_bindings::copy_shadow_trees(const document & src, const read_txn & from
     }
 }
 
-// `setHTMLUnsafe(markup, {runScripts})`: `innerHTML` PLUS the declarative
+// `setHTMLUnsafe(markup, {runScripts})`: `innerHTML` plus the declarative
 // shadow roots, HTML 8.6.1 "unsafely set HTML".
 //
-// The fragment is parsed into a SCRATCH document whose "allow declarative
+// The fragment is parsed into a scratch document whose "allow declarative
 // shadow roots" is on, so the tree builder attaches them there (see
 // tree_builder::declarative_shadow_root) and the copy carries the shadow trees
-// over. The context element is the element itself - or a shadow root's host -
-// and the children go where it keeps them: a <template>'s are its CONTENTS.
+// over. The context element is the element itself (or a shadow root's host),
+// and the children go where it keeps them: a <template>'s go in its contents.
 //
 // `runScripts` (whatwg/html#12495): the parsed <script>s are not marked
-// already started, so each runs when it is connected - after the whole
-// fragment is in, in shadow-including tree order, a script an earlier one
-// removed not at all (the inserted-script batch in document/entry.cpp).
+// already started, so each runs when it is connected: after the whole
+// fragment is in, in shadow-including tree order, and a script an earlier one
+// removed does not run (see run_inserted_scripts in document/entry.cpp).
 void dom_bindings::set_html_unsafe(node_id target, std::string_view markup, bool run_scripts) {
     if (!target || atoms_ == nullptr) { return; }
     node_id context = target;
@@ -500,9 +510,9 @@ void dom_bindings::set_html_unsafe(node_id target, std::string_view markup, bool
         for (const node_id child : existing) { (void)doc_->remove_child(child); }
     }
     document scratch{*atoms_};
-    // The fragment case with the ELEMENT as its context (HTML 12.4 step 5:
-    // "with context element"), not a body's - `table.setHTMLUnsafe("<tr>")`
-    // keeps its row - and the document's own scripting flag (none for a
+    // The fragment case with the element as its context (HTML 12.4 step 5:
+    // "with context element"), not a body's, so `table.setHTMLUnsafe("<tr>")`
+    // keeps its row; and the document's own scripting flag (none for a
     // template's contents, which are its inert document's).
     node_id body;
     {
@@ -518,8 +528,8 @@ void dom_bindings::set_html_unsafe(node_id target, std::string_view markup, bool
         copy_shadow_trees(scratch, from, child, copy_subtree(from, child, into));
     }
     {
-        // The registries, as set_inner_html gives them - the declarative
-        // shadow roots' included.
+        // The custom element registries, as set_inner_html gives them, the
+        // declarative shadow roots' included.
         const auto txn = doc_->read();
         custom_element_registry * inherited = registry_of_node(txn, target);
         if (is_template) { inherited = nullptr; }
@@ -552,12 +562,13 @@ void dom_bindings::set_html_unsafe(node_id target, std::string_view markup, bool
 
 void dom_bindings::install_shadow_dom(context & cx) {
     // `Document.parseHTMLUnsafe(html)` and `Document.parseHTML(html,
-    // options)`, HTML 8.6.1: a new document, parsed with scripting off and
-    // "allow declarative shadow roots" on - the static twins of setHTMLUnsafe
-    // and the safe spelling, on the Document interface object - whose URL is
-    // about:blank. parseHTML sanitises the result as the safe partial
-    // updates do (`sanitize`). (The interface object is a NATIVE, not a plain
-    // object - `is_object()` is heap_kind::object exactly.)
+    // options)`, HTML 8.6.1: a new document whose URL is about:blank, parsed
+    // with scripting off and "allow declarative shadow roots" on. These are
+    // the static twins of setHTMLUnsafe and the safe spelling, on the Document
+    // interface object. parseHTML sanitises the result as the safe partial
+    // updates do (`sanitize`). The interface object is a native, not a plain
+    // object, so it is tested with is_kind(native): `is_object()` is true for
+    // heap_kind::object only.
     if (const value ctor = cx.global("Document"); ctor.is_kind(script::heap_kind::native)) {
         for (const bool safe : {false, true}) {
             set_method(
@@ -588,15 +599,15 @@ void dom_bindings::install_shadow_dom(context & cx) {
     if (const value slot_proto = interface_prototype("HTMLSlotElement"); slot_proto.is_object()) {
         auto * on = static_cast<script::object_object *>(slot_proto.as_heap());
         // `assignedNodes({flatten})`: without the flag the assignment itself,
-        // with it what would actually be RENDERED there - the slot's own
-        // children when nothing is assigned, and a nested slot expanded.
+        // with it what would be rendered there: the slot's own children when
+        // nothing is assigned, and a nested slot expanded.
         for (const bool elements_only : {false, true}) {
             set_method(
                 cx, *on, elements_only ? "assignedElements" : "assignedNodes",
                 [this, elements_only](context & c, std::span<value> args) {
                     const value made = c.make_array();
-                    // THE SLOT'S OWN DOCUMENT answers - a frame's, or one a
-                    // page made - since the method is on the shared prototype.
+                    // The slot's own document answers (a frame's, or one a
+                    // page made), since the method is on the shared prototype.
                     dom_bindings * owner = owner_of(c.current_this());
                     if (owner == nullptr) { return made; }
                     dom_bindings & d = *owner;
@@ -604,7 +615,7 @@ void dom_bindings::install_shadow_dom(context & cx) {
                     if (!slot) { return made; }
                     auto & items = static_cast<script::array_object *>(made.as_heap())->items;
                     const bool flatten = dict_flag(c, arg(args, 0), "flatten");
-                    // "Find flattened slottables", DOM 4.2.2.3: NOTHING for a
+                    // "Find flattened slottables", DOM 4.2.2.3: nothing for a
                     // slot outside a shadow tree, whose children are not
                     // fallback content of anything; the slot's own slottable
                     // children when nothing is assigned to it.
@@ -621,10 +632,11 @@ void dom_bindings::install_shadow_dom(context & cx) {
                         }
                         for (const node_id one : assigned) {
                             const auto txn = d.doc_->read();
-                            // A SLOT AMONG THEM IS ITS OWN ASSIGNMENT, flattened
-                            // in its place - that is what makes the flat tree
-                            // flat. Only one IN a shadow tree: a light-DOM
-                            // <slot> assigned here is an ordinary slottable.
+                            // A slot among them is replaced by its own
+                            // assignment, flattened in its place; that is what
+                            // makes the flat tree flat. Only a slot in a shadow
+                            // tree: a light-DOM <slot> assigned here is an
+                            // ordinary slottable.
                             if (flatten && is_slot(txn, one) && in_shadow_tree(txn, one)) {
                                 self(self, one);
                                 continue;
@@ -641,18 +653,18 @@ void dom_bindings::install_shadow_dom(context & cx) {
                 },
                 script::attr_builtin);
         }
-        // `slot.assign(...nodes)`: VARIADIC, not a sequence, and it REPLACES
+        // `slot.assign(...nodes)`: variadic, not a sequence, and it replaces
         // whatever was assigned before. It means nothing to a tree that
-        // assigns by name - assigned_nodes_of only reads the list for a manual
-        // one - and the nodes are remembered as given, because whether one
-        // still qualifies is a question about where it is NOW. An ORDERED
-        // SET: a node given twice keeps its first place.
+        // assigns by name (assigned_nodes_of only reads the list for a manual
+        // one), and the nodes are remembered as given, because whether one
+        // still qualifies depends on where it is when asked. The list is an
+        // ordered set: a node given twice keeps its first place.
         set_method(
             cx, *on, "assign",
             [this](context & c, std::span<value> args) {
-                // THE SLOT MAY BE ANOTHER DOCUMENT'S - one a page moved away -
+                // The slot may be another document's (one a page moved away),
                 // and its own bindings answer for it. Every wrapper below is
-                // the ORDINARY object: a form's or a select's is behind the
+                // the ordinary object: a form's or a select's is behind the
                 // proxy the page holds (control_methods/legacy_objects.cpp),
                 // and the marks and the list are kept on that object.
                 const value self = unwrap_legacy_proxy(c.current_this());
@@ -662,7 +674,7 @@ void dom_bindings::install_shadow_dom(context & cx) {
                 std::vector<value> nodes;
                 for (const value & given : args) {
                     const value one = unwrap_legacy_proxy(given);
-                    // ONLY A SLOTTABLE, of any document: the argument type is
+                    // Only a slottable, of any document: the argument type is
                     // `(Element or Text)...`, so anything else is a WebIDL
                     // conversion failure before one node is assigned.
                     dom_bindings * of = owner_of(one);
@@ -681,7 +693,7 @@ void dom_bindings::install_shadow_dom(context & cx) {
                         nodes.push_back(one);
                     }
                 }
-                // Every document whose slots this changes recomputes them - and
+                // Every document whose slots this changes recomputes them, and
                 // reports a slot that lost a node as a slotchange too.
                 std::vector<dom_bindings *> touched{home};
                 const auto dirty = [&](value slot_value) {
@@ -697,7 +709,9 @@ void dom_bindings::install_shadow_dom(context & cx) {
                     return static_cast<script::object_object *>(node.as_heap())
                         ->find(manual_slot_key);
                 };
-                // Step 1: what this slot had loses its manual slot assignment.
+                // HTML slot.assign() step 1: the nodes this slot had lose their
+                // manual slot assignment. (Step 2, the ordered set of nodes,
+                // is built above.)
                 if (const value * had = slot_object->find(manual_nodes_key);
                     had != nullptr && had->is_array()) {
                     for (const value & node :
@@ -708,8 +722,9 @@ void dom_bindings::install_shadow_dom(context & cx) {
                         }
                     }
                 }
-                // Step 3: each node leaves the slot it was manually assigned
-                // to - in this tree, another, or another document - for this.
+                // slot.assign() step 3: each node leaves the slot it was
+                // manually assigned to (in this tree, another, or another
+                // document) for this one.
                 for (const value & node : nodes) {
                     value * mark = assignment_of(node);
                     if (mark != nullptr && mark->is_object() && mark->bits() != self.bits()) {
@@ -730,7 +745,8 @@ void dom_bindings::install_shadow_dom(context & cx) {
                             ->define(std::string{manual_slot_key}, self, script::attr_configurable);
                     }
                 }
-                // Step 4: this slot's manually assigned nodes, as given.
+                // slot.assign() step 4: this slot's manually assigned nodes, as
+                // given.
                 const value list = c.make_array();
                 static_cast<script::array_object *>(list.as_heap())->items = nodes;
                 if (value * had = slot_object->find(manual_nodes_key)) {
@@ -748,8 +764,8 @@ void dom_bindings::install_shadow_dom(context & cx) {
 
     // --- Slottable.assignedSlot, on an Element and on a Text -------------------
     //
-    // NULL FOR A CLOSED TREE. The assignment is the same either way - a closed
-    // slot still renders what it was given - but a page outside the tree may
+    // Null for a closed tree. The assignment is the same either way (a closed
+    // slot still renders what it was given), but a page outside the tree may
     // not learn which slot that was.
     for (const char * interface : {"Element", "Text"}) {
         const value proto = interface_prototype(interface);
@@ -760,10 +776,8 @@ void dom_bindings::install_shadow_dom(context & cx) {
                           const node_id id =
                               owner == nullptr ? node_id{} : owner->handle_of(c.current_this());
                           if (!id) { return value::null(); }
-                          // NULL FOR A CLOSED TREE, though the assignment is the
-                          // same: assigned_slot_of answers mode-agnostically
-                          // (the event path needs that), so the open gate is
-                          // here.
+                          // assigned_slot_of answers mode-agnostically (the
+                          // event path needs that), so the open gate is here.
                           const node_id host = owner->doc_->read().parent(id);
                           const node_id root = host ? owner->doc_->shadow_root_of(host) : node_id{};
                           const document::shadow_tree * tree = owner->shadow_tree_of(root);
@@ -776,7 +790,8 @@ void dom_bindings::install_shadow_dom(context & cx) {
     // --- Element.shadowRoot, on the interface -----------------------------------
     //
     // The attribute is Element's, so `'shadowRoot' in Element.prototype` and
-    // not on Node's or Text's (Element-interface-shadowRoot-attribute.html).
+    // not on Node's or Text's (WPT
+    // shadow-dom/Element-interface-shadowRoot-attribute.html).
     // Each element wrapper carries the same answer as its own property
     // (element/views.cpp); this is the one the interface declares, with
     // WebIDL's brand check.
@@ -800,11 +815,12 @@ void dom_bindings::install_shadow_dom(context & cx) {
     // --- HTMLTemplateElement's declarative shadow root attributes -------------
     //
     // HTML 4.12.3: `shadowRootMode` reflects `shadowrootmode` as an enumerated
-    // attribute LIMITED TO KNOWN VALUES (open, closed; missing and invalid are
+    // attribute limited to known values (open, closed; missing and invalid are
     // ""), `shadowRootSlotAssignment` likewise with named/manual and "named"
     // for missing and invalid, and the other three are boolean attributes.
-    // What the tree builder READS when it meets the template - these only
-    // write the markup, as a reflected attribute does.
+    // The tree builder reads the content attributes when it meets the
+    // template; these accessors only write the markup, as a reflected
+    // attribute does.
     if (const value template_proto = interface_prototype("HTMLTemplateElement");
         template_proto.is_object()) {
         auto * on = static_cast<script::object_object *>(template_proto.as_heap());
@@ -848,7 +864,7 @@ void dom_bindings::install_shadow_dom(context & cx) {
         enumerated("shadowRootMode", "shadowrootmode", {"open", "closed"}, "");
         enumerated("shadowRootSlotAssignment", "shadowrootslotassignment", {"named", "manual"},
                    "named");
-        // `shadowRootCustomElementRegistry` reflects as a plain DOMString -
+        // `shadowRootCustomElementRegistry` reflects as a plain DOMString:
         // its presence is what the parser reads, not its value.
         on->define_accessor(
             "shadowRootCustomElementRegistry",
@@ -903,8 +919,8 @@ void dom_bindings::install_shadow_dom(context & cx) {
 
     // --- ShadowRoot.activeElement, DocumentOrShadowRoot (HTML 6.6.3) -----------
     //
-    // The focused element RETARGETED AGAINST THIS ROOT - so a focus inside a
-    // tree nested in this one answers with that tree's host - and null unless
+    // The focused element retargeted against this root (so a focus inside a
+    // tree nested in this one answers with that tree's host), and null unless
     // the result is in this root's own tree: focus outside it, or on an
     // element that has left the document, is not this tree's to report.
     if (const value root_proto = interface_prototype("ShadowRoot"); root_proto.is_object()) {
@@ -928,6 +944,9 @@ void dom_bindings::install_shadow_dom(context & cx) {
                               return false;
                           };
                           node_id candidate = focused_;
+                          // Cap the walk out of nested shadow trees at 64
+                          // levels so a corrupted host chain cannot loop
+                          // forever.
                           for (int guard = 0; candidate && guard < 64; ++guard) {
                               const node_id own = root_of_tree(txn, candidate, false);
                               const shadow_tree * tree = shadow_tree_of(own);
@@ -939,7 +958,7 @@ void dom_bindings::install_shadow_dom(context & cx) {
                       });
         // --- elementFromPoint / elementsFromPoint, DocumentOrShadowRoot ------
         //
-        // The document's hit test, retargeted against THIS root rather than
+        // The document's hit test, retargeted against this root rather than
         // the document (geometry.cpp, elements_from_point): what is in this
         // tree answers as itself, a host inside it for anything deeper. The
         // coordinates are `double`s, and a non-finite one is a TypeError.
@@ -976,10 +995,9 @@ void dom_bindings::install_shadow_dom(context & cx) {
 
     // --- getHTML / setHTMLUnsafe, on an Element and on a ShadowRoot ------------
     //
-    // `setHTMLUnsafe` is `innerHTML` PLUS the declarative shadow roots: the
-    // markup is parsed the same way and then every `<template shadowrootmode>`
-    // in it becomes a real shadow root. That is the only difference, and it is
-    // why the safe spelling leaves the templates where they are.
+    // `setHTMLUnsafe` is `innerHTML` plus declarative shadow roots: the markup
+    // is parsed the same way, and every `<template shadowrootmode>` in it
+    // becomes a real shadow root.
     for (const char * interface : {"Element", "ShadowRoot"}) {
         const value proto = interface_prototype(interface);
         if (!proto.is_object()) { continue; }
@@ -987,7 +1005,7 @@ void dom_bindings::install_shadow_dom(context & cx) {
         set_method(
             cx, *on, "setHTMLUnsafe",
             [this](context & c, std::span<value> args) {
-                // THE RECEIVER'S DOCUMENT parses and owns the result - a frame's
+                // The receiver's document parses and owns the result: a frame's
                 // element, or one a page made in another document, is not a
                 // node of these bindings.
                 dom_bindings * owner = owner_of(c.current_this());
@@ -999,7 +1017,7 @@ void dom_bindings::install_shadow_dom(context & cx) {
                 return value::undefined();
             },
             script::attr_builtin);
-        // `getHTML({serializableShadowRoots, shadowRoots})` - HTML fragment
+        // `getHTML({serializableShadowRoots, shadowRoots})`: HTML fragment
         // serialisation with a "serializable shadow roots" set: a shadow root
         // is written out as its `<template shadowrootmode>` when it is in the
         // `shadowRoots` list, or when `serializableShadowRoots` is true and the
@@ -1033,13 +1051,13 @@ void dom_bindings::install_shadow_dom(context & cx) {
 
     // --- {append,prepend,before,after,replaceWith}HTML{,Unsafe} ---------------
     //
-    // THE HTML PARTIAL UPDATES (WICG declarative-partial-updates): markup
+    // The HTML partial updates (WICG declarative-partial-updates): markup
     // parsed as a fragment in the context of the element it lands in, then
-    // inserted where the method's name says - the ParentNode positions on an
+    // inserted where the method's name says: the ParentNode positions on an
     // Element or ShadowRoot (a <template>'s go into its contents), the
     // ChildNode ones on anything with a parent. The context is that parent,
     // or the host when the parent is a shadow root or a template's contents;
-    // a Document, a plain DocumentFragment and a <template> ELEMENT give no
+    // a Document, a plain DocumentFragment and a <template> element give no
     // context and are a HierarchyRequestError. Declarative shadow roots are
     // attached, the safe spellings are sanitised (see `sanitize`), and only
     // an Unsafe one with `{runScripts: true}` runs the scripts it inserts.
@@ -1090,8 +1108,8 @@ void dom_bindings::install_shadow_dom(context & cx) {
                 } else {
                     context = parent;
                 }
-                // After the node - and for replaceWith too, the node itself
-                // going before the markup comes in.
+                // Insert after the node, for replaceWith too: the node itself
+                // is removed before the markup comes in.
                 if (where == "before") {
                     before = self;
                 } else {
@@ -1194,7 +1212,7 @@ void dom_bindings::install_shadow_dom(context & cx) {
     install_positions("ShadowRoot", {"append", "prepend"});
     install_positions("CharacterData", {"before", "after", "replaceWith"});
     install_positions("DocumentType", {"before", "after", "replaceWith"});
-    // `customElementRegistry` on Element, ShadowRoot and Document - the
+    // `customElementRegistry` on Element, ShadowRoot and Document; the
     // prototypes exist from here (custom_elements.cpp).
     install_registry_accessors(cx);
 }

@@ -1,3 +1,12 @@
+//===- tables_and_form_owners.cpp - Table model bindings --------*- C++ -*-===//
+//
+// dom_bindings::install_control_tables: the HTML table model API
+// (HTMLTableElement, HTMLTableSectionElement, HTMLTableRowElement and
+// HTMLTableCellElement). Despite the file name, the form-owner helpers are
+// in tables_and_form_owners_helpers.cpp.
+//
+//===----------------------------------------------------------------------===//
+
 #include "helpers.hpp"
 
 namespace ctbrowser::shell {
@@ -6,18 +15,16 @@ using namespace input_types;
 
 void dom_bindings::install_control_tables(context & cx) {
     const control_helpers helpers{this};
-    // --- THE TABLE MODEL, HTML 4.9.1, 4.9.5, 4.9.8 and 4.9.9 ----------------
+    // --- the table model, HTML 4.9.1, 4.9.5, 4.9.8 and 4.9.9 ----------------
     //
     // `table.rows`, `tBodies`, `caption`/`tHead`/`tFoot` and the create/delete
     // pair for each, `insertRow`/`deleteRow` on the table and on a section,
     // `tr.cells`/`rowIndex`/`sectionRowIndex`/`insertCell`/`deleteCell` and
-    // `cell.cellIndex`. The collections are LIVE - `table.rows` after a
-    // `deleteRow` is the shorter list - and every index rule is the
+    // `cell.cellIndex`. The collections are live (`table.rows` after a
+    // `deleteRow` is the shorter list), and every index rule is the
     // specification's: -1 means "the end", one past the end is an
     // IndexSizeError for an insert and the end itself is one for a delete.
     // getElementsByClassName-20..25.htm reach their cells through it.
-
-    // The first child called `name`, or none.
 
     // A section's rows: its `tr` children. A table's: the `thead` children's
     // rows, then its own `tr` children and its `tbody` children's rows in
@@ -145,8 +152,8 @@ void dom_bindings::install_control_tables(context & cx) {
         });
     });
     // caption, tHead and tFoot: the first such child, or null. Setting one
-    // removes the old and puts the new where the specification says - a
-    // caption first, a thead before the body, a tfoot last - and a value of
+    // removes the old and puts the new where the specification says (a
+    // caption first, a thead before the body, a tfoot last), and a value of
     // the wrong kind is a HierarchyRequestError (a TypeError for the caption,
     // whose IDL type is not nullable-of-anything-else).
     const auto part = [&](const char * idl, const char * name, auto place) {
@@ -267,7 +274,7 @@ void dom_bindings::install_control_tables(context & cx) {
                           (void)insert_node(self, made, before);
                           return wrap(c, made);
                       });
-    // insertRow on the TABLE: with no rows and no tbody a tbody is made to
+    // insertRow on the table: with no rows and no tbody a tbody is made to
     // hold the row; with no rows the last tbody takes it; an append goes to
     // the parent of the last row; anything else goes before the index-th row.
     helpers.operation(
@@ -337,8 +344,8 @@ void dom_bindings::install_control_tables(context & cx) {
         const node_id self = receiver(c);
         return make_live_collection(c, [row_cells, self] { return row_cells(self); });
     });
-    // rowIndex: this row's place in the rows of the table it is in - as a
-    // child of the table or of a section child of it - else -1.
+    // rowIndex: this row's place in the rows of the table it is in (as a
+    // child of the table or of a section child of it), else -1.
     // sectionRowIndex: its place among its parent's rows, the parent being a
     // table or a section, else -1.
     const auto position = [](const std::vector<node_id> & among, node_id self) {
@@ -411,49 +418,9 @@ void dom_bindings::install_control_tables(context & cx) {
                        return parent ? position(row_cells(parent), self) : value::number(-1);
                    });
 
-    // =========================================================================
-    // THE FORMS, HTML 4.10: the form owner, `form.elements`, the select and
-    // option model, the labels, constraint validation, the selection API,
-    // the entry list and FormData. Everything here reads the receiver's OWN
-    // document - the prototypes are shared by every document of the realm -
-    // and the per-element state that is not a content attribute (an option's
-    // selectedness, a custom validity message, the selection direction) is a
-    // hidden slot on the element's wrapper, which is what the collector traces.
-    //
-    // WHAT STOPS SHORT, and where: `value` and `checked` on input, select
-    // and textarea are OWN accessors the wrapper installs (element/views.cpp),
-    // which shadow anything a prototype could say - so the input type states'
-    // value sanitisation and the select's value-to-selectedness rule are not
-    // here. Submission stops where the network would begin: the entry list
-    // is built, `formdata` and `submit` fire, and nothing navigates.
-    // =========================================================================
-
-    // The receiver as (owning bindings, node): a prototype's native is called
-    // for any document's element.
-
-    // A hidden slot on an element's wrapper.
-
-    // An input's type STATE, HTML 4.10.5: the attribute's keyword, else text.
-
-    // A form control's value as the store holds it.
-
-    // The tree a node is in, from its top.
-
-    // --- the form owner, HTML 4.10.17.3 ---------------------------------------
-    //
-    // The `form` attribute names a form by id in the element's tree; without
-    // one the nearest form ancestor owns the element. (The `form` IDL
-    // attribute itself is installed by install_form_owner, reflection.cpp.)
-
-    // The categories, HTML 4.10.2.
-
-    // The listed elements whose form owner is `form`, in tree order, over the
-    // form's tree (a control with `form=` may be outside the form).
-
-    // "Disabled", HTML 4.10.18.5: its own attribute, or a disabled fieldset
-    // ancestor it is not inside the first legend of.
-
-    // An event fired at a node with the flags given; whether it was cancelled.
+    // The form helpers (form owner, listed elements, disabled state, slots)
+    // live in control_helpers, tables_and_form_owners_helpers.cpp; the form
+    // bindings are installed by the other files in this directory.
 }
 
 } // namespace ctbrowser::shell

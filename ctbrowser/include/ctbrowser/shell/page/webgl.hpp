@@ -1,3 +1,21 @@
+//===- webgl.hpp - WebGL calls translated to GLES ---------------*- C++ -*-===//
+//
+// A page's WebGL calls, translated to GLES, and nothing else.
+//
+// The rule: a method here translates and returns. It does not remember
+// anything GL can be asked for. Where WebGL needs identity that GL does not
+// provide (the `WebGLBuffer` object a page holds onto), a handle table stores
+// the identity and never the behaviour; caching what a buffer contains or
+// which program is bound would make it a mirror of GL state. An earlier design
+// kept such a mirror and silently dropped calls it never forwarded (see
+// docs/history/webgl-rewrite.md).
+//
+// Every method the bindings in lib/Shell/bindings/webgl/ need is declared
+// here, so a method that is not implemented is a compile error at the binding
+// site rather than a silent no-op.
+//
+//===----------------------------------------------------------------------===//
+
 #pragma once
 #include <cstdint>
 #include <span>
@@ -8,44 +26,23 @@
 #include <ctbrowser/paint/command.hpp>
 #include <ctbrowser/raster/gl.hpp>
 
-// A PAGE'S WebGL CALLS, TRANSLATED TO GLES. Nothing else.
-//
-// The context this replaces kept a software mirror of GL state and separately,
-// by hand, forwarded some calls to ANGLE; nineteen methods never forwarded at
-// all and no test could see it. See docs/history/webgl-rewrite.md - this file
-// exists to make that shape impossible rather than to make it less likely.
-//
-// THE RULE: a method here translates and returns. It does not remember anything
-// GL can be asked for. Where WebGL needs identity that GL does not provide - the
-// `WebGLBuffer` object a page holds onto - a handle table stores the identity
-// and NEVER the behaviour. The moment it caches what a buffer contains or which
-// program is bound, it is the mirror again.
-//
-// BUILT GROUP BY GROUP against the 64 methods `webgl_bindings.cpp` calls, which
-// is the checklist in docs/history/webgl-rewrite.md. A method that is not written
-// yet is a COMPILE ERROR at the binding site - which is the whole point, and the
-// opposite of the silent no-op this replaces.
-
 namespace ctbrowser::shell {
 
-// THE GL CONSTANTS, ONCE. Each row is what a page reads as `gl.NAME`, the C++
-// name the engine uses for the same number, the number, and whether it is on
-// every context (1) or only a WebGL 2 one (2). The rows are in the order the
-// context object gets them, which is the order `Object.keys(gl)` reports.
+// The GL constants, defined once. Each row is what a page reads as `gl.NAME`,
+// the C++ name the engine uses for the same number, the number, and whether it
+// is on every context (1) or only a WebGL 2 one (2). The rows are in the order
+// the context object gets them, which is the order `Object.keys(gl)` reports.
 //
-// This is a TABLE, not an implementation - the numbers WebGL gives a page are
-// fixed by the specification and identical in every engine. The list is an
-// X-macro so the JavaScript constant and the `gl_enum::` name are the SAME
-// row: they used to be two tables, 95 names here and 152 `constant()` calls in
-// bindings/webgl/constants.cpp, some by name and some as raw hex free to drift.
+// The numbers are fixed by the specification and identical in every engine.
+// The list is an X-macro so the JavaScript constant and the `gl_enum::` name
+// come from the same row and cannot drift apart.
 //
-// A WebGL 2 constant that arrives as `undefined` makes every comparison
-// against it silently false, and a WebGL 1 page that finds `gl.RGBA8`
-// concludes it has WebGL 2 - so the column is load-bearing both ways.
-// TEXTURE_BINDING_3D in particular is the property Babylon tests to pick its
-// GLSL dialect; missing, every shader was ES 3.00 source with no `#version`
-// and the post-process quad never drew, with no GL error anywhere (Babylon
-// ratchet rung 8).
+// The version column matters both ways: a WebGL 2 constant that arrives as
+// `undefined` makes every comparison against it silently false, and a WebGL 1
+// page that finds `gl.RGBA8` concludes it has WebGL 2. TEXTURE_BINDING_3D in
+// particular is what Babylon.js tests to pick its GLSL dialect; without it
+// every shader was ES 3.00 source with no `#version` and the post-process quad
+// never drew, with no GL error anywhere.
 #define CTBROWSER_GL_CONSTANTS(X)                                                                  \
     X(DEPTH_BUFFER_BIT, depth_buffer_bit, 0x0100, 1)                                               \
     X(STENCIL_BUFFER_BIT, stencil_buffer_bit, 0x0400, 1)                                           \
@@ -230,37 +227,28 @@ namespace ctbrowser::shell {
     X(TEXTURE14, texture14, 0x84CE, 1)                                                             \
     X(TEXTURE15, texture15, 0x84CF, 1)
 
-// The C++ names, because `0x8892` in a switch is unreadable and a transposed
-// digit is invisible.
+/// The C++ names for the GL constants, because `0x8892` in a switch is
+/// unreadable and a transposed digit is invisible.
 namespace gl_enum {
 #define X(NAME, ident, v, ver) inline constexpr std::uint32_t ident = v;
 CTBROWSER_GL_CONSTANTS(X)
 #undef X
 } // namespace gl_enum
 
-// A UNIFORM'S VALUE, as the bindings collect it from JavaScript.
-//
-// This exists because the bindings used to carry `raster::glsl::value` - a type
-// from the GLSL front end the rewrite deleted - which made the JavaScript
-// surface depend on a rasteriser it should know nothing about. A uniform is a
-// shape and some numbers; that is all this is.
+/// A uniform's value as the bindings collect it from JavaScript: a shape
+/// (rows x cols) and its numbers, independent of any rasteriser type.
 struct uniform_value {
     int rows = 1; // 1 is a scalar, 3 a vec3, 3 x 3 a mat3
     int cols = 1;
     bool integer = false;
-    // FLOATS EVEN FOR INTEGERS. A uniform is at most a mat4, so widening costs
-    // nothing and one path is easier to keep right than two - `integer` says
-    // which GL entry point to call.
+    /// Floats even for integers. A uniform is at most a mat4, so widening
+    /// costs nothing and one path is easier to keep right than two; `integer`
+    /// says which GL entry point to call.
     std::vector<float> data;
 };
 
-// WHAT A LINKED PROGRAM DECLARES, asked of GL and never cached.
-//
-// Both p5 and Babylon ENUMERATE a program rather than asking for names they
-// already know. Answering from anywhere but the program itself tells them the
-// shader declares nothing, so they bind nothing and draw nothing, with no error
-// at any point.
-// ONE ATTRIBUTE, as `getVertexAttrib` reports it. Filled from GL on each ask.
+/// One vertex attribute's state, as `getVertexAttrib` reports it. Filled from
+/// GL on each request.
 struct vertex_attribute {
     bool enabled = false;
     int size = 4;
@@ -270,47 +258,50 @@ struct vertex_attribute {
     std::uint32_t divisor = 0;
 };
 
+/// One active attribute or uniform of a linked program, as GL reports it;
+/// never cached. p5 and Babylon enumerate a program instead of asking for
+/// names they know, so answering from anywhere but GL makes the shader look
+/// empty and nothing draws, with no error.
 struct active_variable {
     std::string name;
     std::uint32_t type = 0; // the GL code, e.g. GL_FLOAT_VEC3
-    int size = 1;           // the ARRAY LENGTH, 1 for a plain declaration
+    int size = 1;           // the array length, 1 for a plain declaration
 };
 
+/// A WebGL or WebGL 2 rendering context over a raster::gl::device.
 class webgl_context {
 public:
-    // THE BINDINGS SPELL THESE AS webgl_context::active_variable, and that is
-    // the right name from a caller's point of view - they are what a context
-    // reports. They live outside the class so the header's readers meet them
-    // before the methods rather than inside them.
+    // The bindings spell these webgl_context::active_variable and so on,
+    // since they are what a context reports. They are defined outside the
+    // class so readers meet them before the methods.
     using active_variable = shell::active_variable;
     using vertex_attribute = shell::vertex_attribute;
     using uniform_value = shell::uniform_value;
 
-    // THE CANVAS OWNS THE BITMAP, not this. A page's canvas already has a
-    // surface the painter composites; borrowing it means `present()` writes
-    // where the compositor already looks, with no second copy to keep in step.
+    /// The canvas owns `surface`, not this context. Borrowing the surface the
+    /// painter already composites means `present()` writes where the
+    /// compositor looks, with no second copy to keep in step.
     webgl_context(paint::bitmap * surface, int width, int height);
 
-    // A CANVAS THAT CHANGED SIZE. The device is recreated, because a GL surface
-    // has a fixed size and a context whose drawing buffer no longer matches the
-    // canvas renders into the wrong rectangle - which is invisible until
-    // something is drawn near an edge.
+    /// Called when the canvas changes size. The device is recreated, because a
+    /// GL surface has a fixed size and a drawing buffer that no longer matches
+    /// the canvas renders into the wrong rectangle.
     void resize(paint::bitmap * surface, int width, int height);
 
-    // THE DEVICE ITSELF, for every call that is a plain translation: this class
-    // keeps only the methods that validate, record an error or trace.
+    /// The device itself, for every call that is a plain translation: this
+    /// class keeps only the methods that validate, record an error or trace.
     [[nodiscard]] raster::gl::device & device() { return device_; }
 
-    // The canvas bitmap, which is what the painter composites. Reading the
-    // device into it is `present()`, and it is deliberately NOT done per draw:
-    // the old context read back after every drawArrays, which is a full surface
-    // copy per mesh.
+    /// The canvas bitmap the painter composites. present() copies the device
+    /// into it once per frame, not per draw, since each copy is a full surface
+    /// read-back.
     [[nodiscard]] paint::bitmap * surface();
     void present();
 
-    // WHICH WebGL a page asked for. Kept because it is a fact about the PAGE's
-    // request, not a mirror of driver state - `getContext('webgl')` and
-    // `getContext('webgl2')` on the same canvas must not both succeed.
+    /// Which WebGL version (1 or 2) the page asked for. Kept because it is a
+    /// fact about the page's request, not a mirror of driver state:
+    /// `getContext('webgl')` and `getContext('webgl2')` on the same canvas
+    /// must not both succeed.
     void set_version(int version);
     [[nodiscard]] int version() const;
 
@@ -329,8 +320,9 @@ public:
     [[nodiscard]] int get_uniform_block_index(std::uint32_t program, std::string_view name) const;
     void uniform_block_binding(std::uint32_t program, std::uint32_t index, std::uint32_t binding);
 
-    // BY NAME, because that is what the bindings carry: WebGL hands a page an
-    // opaque location object and this engine puts the NAME in it.
+    /// Sets a uniform by name, because that is what the bindings carry: WebGL
+    /// hands a page an opaque location object and this engine puts the name in
+    /// it.
     void set_uniform(std::string_view name, const uniform_value & value);
 
     // --- buffers, attributes and vertex arrays --------------------------------
@@ -345,18 +337,18 @@ public:
                            int offset);
     void attribute_divisor(int location, int divisor);
 
-    // ASKED OF GL EVERY TIME, into scratch the caller borrows. A page can change
-    // an attribute through a vertex array this layer never saw, so a remembered
-    // answer would be a guess wearing the shape of a fact.
+    /// Asked of GL every time, into scratch the caller borrows. A page can
+    /// change an attribute through a vertex array this layer never saw, so a
+    /// remembered answer could be wrong.
     [[nodiscard]] const vertex_attribute * attribute_at(int location) const;
 
     // --- textures and framebuffers --------------------------------------------
 
     void texture_image(std::uint32_t target, int width, int height,
                        std::span<const std::byte> rgba);
-    // A DECODED IMAGE, straight from the canvas layer. `texImage2D` with an
-    // <img> or a <canvas> is the common case and the bitmap is already ARGB, so
-    // the swap happens once here rather than in every caller.
+    /// Uploads a decoded image straight from the canvas layer. `texImage2D`
+    /// with an <img> or a <canvas> is the common case and the bitmap is ARGB,
+    /// so the swap to RGBA happens once here rather than in every caller.
     void texture_from_bitmap(std::uint32_t target, const paint::bitmap & image);
 
     // --- draws -----------------------------------------------------------------
@@ -367,12 +359,11 @@ public:
     void draw_elements_instanced(std::uint32_t mode, int count, std::uint32_t type, int offset,
                                  int instances);
 
-    // --- the error contract, which is NOT the thing being deleted ------------
+    // --- errors and refused calls -------------------------------------------
     //
-    // Refusing a call BY NAME is the documented leniency contract in
-    // docs/history/webgl2.md, and it is the opposite of a silent no-op: a page can
-    // read `getError`, and a report can list what this engine declined. Keeping
-    // it is deliberate.
+    // Refusing a call by name is the documented leniency contract in
+    // docs/history/webgl2.md, and is the opposite of a silent no-op: a page can
+    // read `getError`, and a report can list what this engine declined.
     [[nodiscard]] std::uint32_t take_error();
     void refuse(std::string_view call);
     [[nodiscard]] const std::vector<std::string> & refused() const;
@@ -380,9 +371,9 @@ public:
 
 private:
     void fail(std::uint32_t error);
-    // The `[ubo] data` half of the CTBROWSER_GL_UBO diagnostic, shared by both
-    // buffer_data overloads so `bufferData(target, size, usage)` - the one a
-    // page uses to RESERVE storage it fills later - cannot go unrecorded.
+    /// The `[ubo] data` half of the CTBROWSER_GL_UBO diagnostic, shared by
+    /// both buffer_data overloads so `bufferData(target, size, usage)`, which a
+    /// page uses to reserve storage it fills later, is recorded too.
     void note_storage(std::uint32_t target, std::size_t size);
 
     raster::gl::device device_;
@@ -391,9 +382,8 @@ private:
     std::uint32_t error_ = 0;
     std::string shader_error_;
     std::vector<std::string> refused_;
-    // SCRATCH for attribute_at, refilled from GL on every call. It is a query
-    // result the caller borrows, not state - the distinction that this whole
-    // rewrite turns on.
+    // Scratch for attribute_at, refilled from GL on every call. It is a query
+    // result the caller borrows, not cached GL state.
     mutable vertex_attribute scratch_;
 };
 

@@ -1,3 +1,11 @@
+//===- live.cpp - Live range updates ----------------------------*- C++ -*-===//
+//
+// document.createRange() and the DOM's live-range steps: after each tree or
+// data edit, every Range and NodeIterator of the realm has its boundary points
+// moved the way DOM 4.2.3 "insert"/"remove", 4.10.2 "replace data", "split a
+// Text node", "normalize" and 6.1's NodeIterator pre-removing steps require.
+//
+//===----------------------------------------------------------------------===//
 #include "helpers.hpp"
 
 namespace ctbrowser::shell {
@@ -5,7 +13,7 @@ namespace ctbrowser::shell {
 using namespace detail;
 using namespace range_detail;
 
-// `document.createRange()`: a range collapsed at (this document, 0).
+/// `document.createRange()`: a range collapsed at (this document, 0).
 value dom_bindings::create_range(context & cx) {
     const value ctor = cx.global("Range");
     auto * made = cx.allocate<script::object_object>();
@@ -22,19 +30,23 @@ value dom_bindings::create_range(context & cx) {
 }
 
 // ============================================================================
-// THE LIVE RANGE STEPS
+// The live range steps
 // ============================================================================
 
+/// Adds `range` (a Range or a NodeIterator) to the realm's live-range list,
+/// which the primary bindings hold.
 void dom_bindings::register_live_range(value range) {
     primary().live_ranges_.push_back(range);
 }
 
+/// Calls `fn` for each boundary point of every live range that lies in this
+/// document; boundaries on an Attr or another document's node are skipped.
 void dom_bindings::each_live_boundary(const std::function<void(const live_boundary &)> & fn) {
     if (cx_ == nullptr || doc_ == nullptr) { return; }
     // A copy: a callback may register a range (wrap() does not, but the
     // list is the primary's and `fn` is not audited).
     const std::vector<value> ranges = primary().live_ranges_;
-    // ROOTED: the list is weak (register_roots), and `fn` may allocate.
+    // Rooted because the list is weak (register_roots), and `fn` may allocate.
     const context::rooted_values keep{*cx_, ranges};
     for (const value & held : ranges) {
         auto * range = static_cast<script::object_object *>(held.as_heap());
@@ -43,7 +55,7 @@ void dom_bindings::each_live_boundary(const std::function<void(const live_bounda
             const value node = slot(range, node_slot);
             live_boundary at{range, node_slot, offset_slot, node_id{},
                              context::to_number(slot(range, offset_slot))};
-            // A boundary of THIS document - not an Attr, not another
+            // Only a boundary of this document: not an Attr, not another
             // document's node.
             if (is_the_document(node)) {
                 at.node = doc_->document_node();
@@ -57,24 +69,25 @@ void dom_bindings::each_live_boundary(const std::function<void(const live_bounda
     }
 }
 
+/// Moves one boundary point to (`node`, `offset`).
 void dom_bindings::move_live_boundary(const live_boundary & at, node_id node, double offset) {
     at.range->set(std::string{at.node_slot},
                   node == doc_->document_node() ? document_ : wrap(*cx_, node));
     at.range->set(std::string{at.offset_slot}, value::number(offset));
 }
 
-// The range steps of DOM 4.2.3 "insert" (step 7 - for each live range whose
-// start node is parent and start offset is greater than child's index,
-// increase its start offset by count; likewise end), "remove" (steps 5-8 -
-// a boundary inside the removed node goes to (parent, index); one on the
-// parent past it moves down by one) and 4.10.2 "replace data" (steps 8-11 -
-// a boundary inside the replaced span goes to its start; one after it moves
-// by the difference in length). `this` is the bindings whose document
-// logged the edits; the ranges are the realm's.
+/// Runs the range steps of DOM 4.2.3 "insert" (step 7: for each live range
+/// whose start node is parent and start offset is greater than child's index,
+/// increase its start offset by count; likewise end), "remove" (steps 5-8: a
+/// boundary inside the removed node goes to (parent, index); one on the parent
+/// past it moves down by one) and 4.10.2 "replace data" (steps 8-11: a
+/// boundary inside the replaced span goes to its start; one after it moves by
+/// the difference in length) over the logged `writes`. `this` is the bindings
+/// whose document logged the edits; the ranges are the realm's.
 void dom_bindings::settle_live_ranges(const std::vector<document::write_note> & writes) {
     if (cx_ == nullptr || doc_ == nullptr || primary().live_ranges_.empty()) { return; }
     using edit = document::write_note::edit;
-    // DOM 6.1, THE NodeIterator PRE-REMOVING STEPS, run after the fact. The
+    // DOM 6.1, the NodeIterator pre-removing steps, run after the fact. The
     // note says where the removed child was, which is everything the steps
     // ask of the tree before it changed: what followed the child's subtree is
     // now at its index - or after an ancestor - and what preceded it is the
@@ -83,6 +96,8 @@ void dom_bindings::settle_live_ranges(const std::vector<document::write_note> & 
         const std::vector<value> held = primary().live_ranges_;
         const context::rooted_values keep{*cx_, held};
         for (const value & one : held) {
+            // NodeIterators are registered in live_ranges_ too; the ones that
+            // carry iterator_reference_slot are the iterators.
             auto * iterator = static_cast<script::object_object *>(one.as_heap());
             if (iterator->find(iterator_reference_slot) == nullptr) { continue; }
             const auto txn = doc_->read();
@@ -97,15 +112,15 @@ void dom_bindings::settle_live_ranges(const std::vector<document::write_note> & 
                 return false;
             };
             if (!root || removed_holds(root)) { continue; }
-            // THE REFERENCE, and - while a traversal's filter runs - the
+            // The reference and, while a traversal's filter runs, the
             // position the traversal is at, which a filter that removes the
-            // candidate (or an ancestor of it) moves the same way
-            // (NodeIterator-removal-during-filtering.html).
+            // candidate (or an ancestor of it) moves the same way (WPT
+            // NodeIterator-removal-during-filtering.html).
             for (const auto & [node_slot, before_slot] :
                  {std::pair{iterator_reference_slot, iterator_before_slot},
                   std::pair{iterator_inflight_slot, iterator_inflight_before_slot}}) {
                 const node_id reference = node_of(slot(iterator, node_slot));
-                // Step 1 - and a root inside the removed subtree went with it.
+                // Step 1; a root inside the removed subtree went with it.
                 if (!reference || !removed_holds(reference)) { continue; }
                 const std::span<const node_id> kids = txn.children(note.node);
                 bool before = context::truthy(slot(iterator, before_slot));
@@ -179,9 +194,10 @@ void dom_bindings::settle_live_ranges(const std::vector<document::write_note> & 
     }
 }
 
-// "Split a Text node" step 7 - ONLY WHEN THE NODE HAS A PARENT. A detached
-// node's boundaries past the offset stay on it and are clamped by the replace
-// data of step 8 (Range-mutations-splitText.html's detached rows).
+/// DOM "split a Text node" step 7, which applies only when the node has a
+/// parent. A detached node's boundaries past the offset stay on it and are
+/// clamped by the replace data of step 8 (the detached rows of WPT
+/// Range-mutations-splitText.html).
 void dom_bindings::split_live_ranges(node_id node, node_id made, double offset, node_id parent,
                                      double made_index) {
     if (!parent) { return; }
@@ -194,6 +210,9 @@ void dom_bindings::split_live_ranges(node_id node, node_id made, double offset, 
     });
 }
 
+/// DOM "normalize" steps for live ranges: boundaries in `current` (a Text node
+/// being merged into `node`) move into `node`, shifted by `length`, and a
+/// boundary at (`parent`, `index`) moves to (`node`, `length`).
 void dom_bindings::absorb_live_ranges(node_id current, node_id parent, double index, node_id node,
                                       double length) {
     each_live_boundary([&](const live_boundary & at) {

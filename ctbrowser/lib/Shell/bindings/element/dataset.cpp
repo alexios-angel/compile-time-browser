@@ -1,4 +1,10 @@
-// dom_bindings - `element.dataset`, the DOMStringMap over `data-*` attributes.
+//===- dataset.cpp - element.dataset (DOMStringMap) -----------------------===//
+//
+// dom_bindings::install_dataset: `element.dataset`, the DOMStringMap over an
+// element's `data-*` attributes (HTML 3.2.6.3), built as a proxy whose traps
+// read and write the document's attributes.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -9,27 +15,24 @@ namespace ctbrowser::shell {
 using namespace detail;
 
 void dom_bindings::install_dataset(context & cx, script::object_object & obj, node_id id) {
-    // THE STORE IS THE PROXY'S TARGET, and it is what `for (k in el.dataset)`
-    // and `Object.keys` walk - so it holds the element's data-* names, refilled
-    // on every read of `dataset` below. `DOMStringMap.prototype` goes in front
-    // of it, which costs nothing: a prototype chain that ends in undefined
-    // falls through to the builtin Object.prototype tables anyway, so
-    // `dataset-prototype.html`'s "Properties on Object.prototype should shine
-    // through" still holds.
+    // The store is the proxy's target and is what `for (k in el.dataset)` and
+    // Object.keys walk, so it holds the element's data-* names, refilled on every
+    // read of `dataset`. DOMStringMap.prototype is put in front of it; lookups
+    // still fall through to Object.prototype (WPT dataset-prototype.html).
     auto * store = cx.allocate<script::object_object>();
     auto * handler = cx.allocate<script::object_object>();
-    // ONE ATTRIBUTE, FOUND THE WAY THE SPECIFICATION FINDS IT: by computing
+    // Finds one attribute the way the specification does: by computing
     // every supported property name from the attribute list and comparing, not
     // by mangling the key and looking that up. The two disagree exactly where
     // `dataset-delete.html` and `dataset-get.html` say they must.
     const auto value_of = [this, id](std::string_view key) -> std::optional<std::string> {
         return dataset_value(*doc_, id, key);
     };
-    // A MISS FALLS THROUGH TO THE TARGET, which is how `dataset.toString` finds
-    // Object.prototype's - but NOT past a name the refill left on the target.
+    // A miss falls through to the target, which is how `dataset.toString` finds
+    // Object.prototype's, but not past a name the refill left on the target.
     // The store holds the element's data-* names so that enumeration can walk
     // them, and a page that kept `var ds = el.dataset` across a
-    // `removeAttribute` must still read undefined out of it: the DOCUMENT is
+    // `removeAttribute` must still read undefined out of it: the document is
     // the map, and the target is a list of its keys as of the last read.
     const auto refilled_key = [store](const std::string & key) {
         return store->find(key) != nullptr;
@@ -66,23 +69,21 @@ void dom_bindings::install_dataset(context & cx, script::object_object & obj, no
             return value::boolean(false);
         case dataset_fault::none: break;
         }
-        // ALREADY LOWERCASE by construction, so this interns as written rather
-        // than folding: the only characters the mangle can emit above 'z' are
-        // the ones it copied, and folding them would be folding the author's.
+        // `name` is already lowercase by construction, so it is interned as
+        // written rather than folded: the only characters the mangle can emit
+        // above 'z' are ones it copied from the key, and folding them would
+        // change the author's text.
         //
-        // IN NO NAMESPACE, EXPLICITLY. The qualified `set_attribute` changes the
-        // FIRST attribute with that name whatever namespace it is in, so an
-        // element already carrying `data-my-custom-attr` in two namespaces of
-        // its own had one of THOSE rewritten instead of gaining a third
-        // attribute - which is `custom-attrs.html`, whole and entire. A
-        // data-* attribute is a null-namespace attribute by definition: it is
-        // the same rule `value_of` above reads by.
+        // Set in the null namespace explicitly: plain set_attribute changes the
+        // first attribute with that local name in any namespace, but a data-*
+        // attribute is a null-namespace attribute by definition (WPT
+        // custom-attrs.html checks this), the same rule `value_of` reads by.
         (void)doc_->set_attribute_ns(id, atoms_->intern(""), atoms_->intern(name),
                                      c.to_string(args[2]));
         mutated();
         return value::boolean(true);
     });
-    // `delete el.dataset.fooBar` REMOVES `data-foo-bar` - a supported property
+    // `delete el.dataset.fooBar` removes `data-foo-bar`: a supported property
     // name runs the named property deleter (HTML 3.2.6.3: uppercase becomes
     // `-` and lowercase, `data-` in front, remove the attribute); anything
     // else is an ordinary delete on the target, which is how `dataset['-foo']`
@@ -100,10 +101,10 @@ void dom_bindings::install_dataset(context & cx, script::object_object & obj, no
                    mutated();
                    return value::boolean(true);
                });
-    // A supported name is an own DATA property of the map - { value, writable,
-    // enumerable, configurable } all true (Web IDL 3.9.3 step 2.3) - read off
-    // the DOCUMENT, not the store: `dataset-binding.window.js` sets the
-    // attribute after taking `dataset` and asks at once.
+    // A supported name is an own data property of the map, with writable,
+    // enumerable and configurable all true (Web IDL 3.9.3 step 2.3). It is read
+    // off the document, not the store, because a page may set the attribute
+    // after taking `dataset` and ask at once (WPT dataset-binding.window.js).
     set_method(cx, *handler, "getOwnPropertyDescriptor",
                [value_of, refilled_key](context & c, std::span<value> args) {
                    if (args.size() < 2) { return value::undefined(); }
@@ -121,14 +122,11 @@ void dom_bindings::install_dataset(context & cx, script::object_object & obj, no
                });
     const value proxy = value::object(
         cx.allocate<script::proxy_object>(value::object(store), value::object(handler)));
-    // AN ACCESSOR, so the target can be refilled before the page sees it.
-    // `d.setAttribute('data-foo', 'v')` does not go through this object at all,
-    // so a store filled once at install would enumerate whatever the element
-    // carried when it was first wrapped - and the corpus sets the attributes
-    // AFTER reading nothing out of `dataset`. The values are refilled with the
-    // keys because `Object.keys` and JSON.stringify read them off the target;
-    // a read of one property still goes through the `get` trap, which asks the
-    // document, so nothing here can go stale between two statements.
+    // `dataset` is an accessor so the target can be refilled before the page
+    // sees it: setAttribute('data-...') bypasses this object, so a store filled
+    // once would list stale names. Values are refilled with the keys because
+    // Object.keys and JSON.stringify read them off the target; single reads go
+    // through the `get` trap, which asks the document.
     auto * reader = cx.allocate<script::native_object>(
         "dataset", [this, id, store, proxy](context & c, std::span<value>) {
             if (!store->prototype.is_object()) {
@@ -144,8 +142,8 @@ void dom_bindings::install_dataset(context & cx, script::object_object & obj, no
             }
             return proxy;
         });
-    // THE PROXY IS REACHABLE ONLY FROM THAT LAMBDA, and a lambda's captures are
-    // not a GC edge - `retained` is. Without this the map is collected out from
+    // The proxy is reachable only from that lambda, and a lambda's captures are
+    // not a GC edge, but `retained` is. Without this the map is collected out from
     // under an element nothing else refers to.
     reader->retained.push_back(proxy);
     obj.define_accessor("dataset", value::object(reader), value::undefined());

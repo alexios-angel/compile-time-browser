@@ -1,3 +1,11 @@
+//===- select_and_options.cpp - Select and option bindings ------*- C++ -*-===//
+//
+// The script-facing <select> and <option> API: the Option constructor,
+// HTMLOptionElement's selected/index/form/text, HTMLSelectElement's
+// selection and option-list members, and HTMLOptionsCollection.
+//
+//===----------------------------------------------------------------------===//
+
 #include "helpers.hpp"
 
 namespace ctbrowser::shell {
@@ -8,32 +16,25 @@ void dom_bindings::install_control_select_options(context & cx) {
     const control_helpers helpers{this};
     // --- the select and option model, HTML 4.10.7 and 4.10.10 -----------------
     //
-    // An option's SELECTEDNESS is the private selected_slot on its wrapper when
+    // An option's selectedness is the private selected_slot on its wrapper when
     // a script or the select has set it, else its `selected` attribute; its
-    // DIRTINESS is dirty_slot. The select's list of options is its
-    // option descendants (customizable select), skipping a nested select's.
+    // dirtiness is dirty_slot. The select's list of options is its option
+    // descendants (customizable select), skipping a nested select's; it is
+    // control_helpers::options_of, the same walk the form store uses, so the
+    // value the chrome paints and the options this model selects agree.
     // The engine paints and submits the select from its store value, so every
-    // change of selectedness here is written through to that value - and a
+    // change of selectedness here is written through to that value, and a
     // store value the chrome or the shadowing `value` setter changed is read
-    // back into selectedness when the two disagree (`reconcile`).
-    // HTML 4.10.7 "list of options" - the store's walk, so the value the
-    // chrome paints and the options this model selects agree.
+    // back into selectedness when the two disagree
+    // (control_helpers::selected_flags).
 
-    // An option's "nearest ancestor select" (HTML 4.10.10) -
+    // An option's "nearest ancestor select" (HTML 4.10.10):
     // control_helpers::select_of, which form_writes.cpp asks too.
     const auto select_of = [helpers](const read_txn & txn, node_id option) {
         return helpers.select_of(txn, option);
     };
 
-    // The display size: the `size` attribute, else 4 for multiple and 1
-    // otherwise.
-
-    // Every option's selectedness, with the store reconciled - see above.
-    // `__syncedValue` on the select is the store value this model last
-    // wrote; a store value that differs from it was written by the chrome or
-    // the shadowing `value` setter since, and is read back into the slots.
-
-    // The store written from the model, and "ask for a reset" -
+    // The store written from the model, and "ask for a reset":
     // control_helpers::sync_store and ask_for_reset, which the attribute change
     // steps (form_writes.cpp) run too.
     const auto sync_store = [helpers](context & c, const read_txn & txn, dom_bindings * b,
@@ -57,8 +58,8 @@ void dom_bindings::install_control_select_options(context & cx) {
         {
             const auto txn = b->doc_->read();
             if (on && !helpers.is_multiple(txn, b, select)) {
-                // Every other option off - through the slots, not the flags,
-                // so the store is not consulted against a half-made state.
+                // Turn every other option off through the slots, not the
+                // flags, so the store is not consulted against a half-made state.
                 for (const node_id other : helpers.options_of(txn, b, select)) {
                     if (other != option && helpers.option_selected(c, txn, b, other)) {
                         helpers.set_slot(c, b, other, selected_slot, value::boolean(false));
@@ -175,13 +176,12 @@ void dom_bindings::install_control_select_options(context & cx) {
                 if (default_selected) {
                     (void)doc_->set_attribute(id, atoms_->intern("selected"), "");
                 }
-                // The attribute's change steps first (form_writes.cpp: a clean
-                // option's selectedness follows it), THEN the constructor's
-                // own step: the selectedness IS `selected` - false when it is
-                // absent, even with defaultSelected - and the dirtiness is
-                // left alone.
-                // Held in the slot only where it differs from what the
-                // attribute alone would say.
+                // The attribute's change steps run first (form_writes.cpp: a
+                // clean option's selectedness follows it), then the
+                // constructor's own step: the selectedness is `selected`
+                // (false when absent, even with defaultSelected), and the
+                // dirtiness is left alone. It is held in the slot only where
+                // it differs from what the attribute alone would say.
                 mutated();
                 if (const bool selected = context::truthy(arg(a, 3));
                     selected != default_selected) {
@@ -206,14 +206,15 @@ void dom_bindings::install_control_select_options(context & cx) {
             const node_id id = where.second;
             if (!id) { return value::boolean(false); }
             const auto txn = b->doc_->read();
-            // THROUGH THE SELECT'S RECONCILIATION FIRST: `select.value = x`
-            // writes the store, and the option slots learn of it when the
-            // flags are next computed - which a read of ONE option's
-            // selectedness must do too, or `slt.value = "2"` left
-            // `slt.options[1].selected` false (reset-form.html).
-            // AND THE FLAGS ARE THE ANSWER: an untouched display-size-1
-            // select selects its first enabled option without a slot saying
-            // so (select-validity.html reads the placeholder's `selected`).
+            // Go through the select's reconciliation first: `select.value = x`
+            // writes the store, and the option slots learn of it only when
+            // the flags are next computed, so a read of one option's
+            // selectedness must compute them too (otherwise after
+            // `slt.value = "2"`, `slt.options[1].selected` reads false;
+            // reset-form.html). The flags are also the answer: an untouched
+            // display-size-1 select selects its first enabled option without
+            // a slot saying so (select-validity.html reads the placeholder's
+            // `selected`).
             if (const node_id select = select_of(txn, id)) {
                 std::vector<node_id> options;
                 const std::vector<bool> flags = helpers.selected_flags(c, txn, b, select, options);
@@ -332,10 +333,10 @@ void dom_bindings::install_control_select_options(context & cx) {
                                             : std::vector<node_id>{};
             },
             "HTMLOptionsCollection");
-        // THE INDEXED SETTER (HTML 4.10.10.1), which a plain collection does
-        // not have: `options[i] = option` replaces the i-th option, or - past
-        // the end - pads with blank options and appends; `= null` removes the
-        // i-th. Any other key is the collection's own `set` trap's.
+        // The indexed setter (HTML 4.10.10.1), which a plain collection does
+        // not have: `options[i] = option` replaces the i-th option, or, past
+        // the end, pads with blank options and appends; `= null` removes the
+        // i-th. Any other key goes to the collection's own `set` trap.
         if (list.is_kind(script::heap_kind::proxy)) {
             auto & handler = static_cast<script::proxy_object *>(list.as_heap())->handler;
             auto * traps = handler.is_object()
@@ -349,6 +350,8 @@ void dom_bindings::install_control_select_options(context & cx) {
                     [b, select, helpers, ask_for_reset, fallback,
                      handler](context & c2, std::span<value> args) -> value {
                         const std::string key = args.size() > 1 ? c2.to_string(args[1]) : "";
+                        // Only a canonical array index (decimal digits, no leading
+                        // zero, below 2^32 - 1) takes the indexed-setter path.
                         const bool index_key =
                             !key.empty() && key.size() <= 10 &&
                             std::ranges::all_of(key,
@@ -380,6 +383,8 @@ void dom_bindings::install_control_select_options(context & cx) {
                             return value::boolean(true);
                         }
                         if (index >= options.size()) {
+                            // Padding is capped at 100000 blank options, so a script
+                            // cannot exhaust memory with `options[4e9] = o`.
                             for (std::size_t i = options.size(); i < index && i < 100000; ++i) {
                                 (void)b->insert_node(
                                     select, b->doc_->create_element(b->atoms_->intern("option")),
@@ -454,6 +459,7 @@ void dom_bindings::install_control_select_options(context & cx) {
         }
         const auto count = static_cast<double>(options.size());
         if (wanted > count) {
+            // The same 100000-option cap as the indexed setter.
             if (wanted - count > 100000) { return; }
             for (double i = count; i < wanted; ++i) {
                 (void)b->insert_node(select, b->doc_->create_element(b->atoms_->intern("option")),

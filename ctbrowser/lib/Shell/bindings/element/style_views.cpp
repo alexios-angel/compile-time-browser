@@ -1,3 +1,11 @@
+//===- style_views.cpp - element.style and offsetParent ---------*- C++ -*-===//
+//
+// Element geometry helpers (offsetParent, the viewport element, size
+// attributes) and `element.style`, the CSSStyleDeclaration proxy over an
+// element's `style` attribute, with the `style` accessor installed on the
+// HTMLElement, SVGElement and MathMLElement prototypes.
+//
+//===----------------------------------------------------------------------===//
 #include "../computed_style/internal.hpp"
 #include "internal.hpp"
 
@@ -10,6 +18,8 @@ namespace ctbrowser::shell {
 
 using namespace detail;
 
+/// The cascade's value for `property` on element `id`, trimmed, or "" when
+/// there is no cascade or no value.
 std::string_view dom_bindings::cascade_value(node_id id, std::string_view property) const {
     if (styles_ == nullptr) { return {}; }
     const auto found = styles_->find(style::engine::key_of(id));
@@ -17,6 +27,9 @@ std::string_view dom_bindings::cascade_value(node_id id, std::string_view proper
     return trim(found->second->get(atoms_->intern(property)), html_whitespace);
 }
 
+/// CSSOM View's "potentially scrollable" test for the body element: it has a
+/// box, and on some axis both it and its parent have an `overflow` other than
+/// `visible` or `clip`.
 bool dom_bindings::potentially_scrollable(node_id body) const {
     if (locate(body).f == nullptr) { return false; }
     const auto scrolls = [this](node_id id, const char * property) {
@@ -31,6 +44,9 @@ bool dom_bindings::potentially_scrollable(node_id body) const {
     return false;
 }
 
+/// True for the element whose metrics are the viewport's: the root element in
+/// standards mode, the body in quirks mode. With `scrolling`, a potentially
+/// scrollable body does not count.
 bool dom_bindings::is_viewport_element(node_id id, bool scrolling) {
     const bool quirks = doc_->quirks();
     const bool root = [&] {
@@ -42,6 +58,10 @@ bool dom_bindings::is_viewport_element(node_id id, bool scrolling) {
     return !scrolling || !potentially_scrollable(id);
 }
 
+/// CSSOM View's `offsetParent`: the nearest ancestor that is a containing
+/// block for this element (positioned or transformed; only transformed for a
+/// fixed element), the body, or, for a statically positioned element, a
+/// td/th/table. Null for an element with no box, the root and the body.
 node_id dom_bindings::offset_parent_of(node_id id) {
     const located at = locate(id);
     if (at.f == nullptr || at.f->box == nullptr) { return node_id{}; }
@@ -93,6 +113,8 @@ node_id dom_bindings::offset_parent_of(node_id id) {
     return node_id{};
 }
 
+/// A non-negative integer attribute (HTML's rules for parsing integers) no
+/// larger than 2^31 - 1, or `fallback` when it is absent or out of range.
 long long dom_bindings::size_attribute(const read_txn & txn, node_id id, std::string_view name,
                                        long long fallback) const {
     long long parsed = 0;
@@ -100,33 +122,24 @@ long long dom_bindings::size_attribute(const read_txn & txn, node_id id, std::st
     return ok && parsed >= 0 && parsed <= 2147483647LL ? parsed : fallback;
 }
 
-// One element's `style` object - see the accessor on the prototype below.
+/// Builds one element's `style` object (see install_style_accessor below).
+///
+/// It is a proxy, because a style object has no fixed set of properties: a
+/// page may write any CSS property and the write has to reach the document.
+/// The proxy's target holds the declarations and the `set` trap re-serialises
+/// them into the element's `style` attribute, which the style engine already
+/// parses, so there is no second representation to keep in step.
+///
+/// Both traps canonicalise the name: `backgroundColor` and `background-color`
+/// are two spellings of one property and must map to one declaration.
 value dom_bindings::make_style_view(context & cx, node_id id) {
-    // --- element.style
-    //
-    // A PROXY, because a style object has no fixed set of properties: a page
-    // may write any CSS property and the write has to reach the document. The
-    // proxy's target holds the declarations and the `set` trap re-serialises it
-    // into the element's `style` attribute - which the style engine already
-    // parses, so there is no second representation to keep in step.
-    //
-    // BOTH traps canonicalise the name, because `backgroundColor` and
-    // `background-color` are two spellings of ONE property. Storing them as
-    // written put both in the attribute and made a read miss a write.
     auto * held = cx.allocate<script::object_object>();
-    // AND IT IS RE-SEEDED, not seeded once. The store was filled from the
-    // `style` attribute at wrapper construction and never again, so
-    // `el.setAttribute("style", "color: red")` - which writes the attribute
-    // directly and never touches this proxy - left `el.style.color` reading the
-    // empty store. `css-style-attr-decl-block.html` names the defect outright
-    // ("Changes to style attribute should reflect on CSS declaration block")
-    // and `serialize-values.html` is 697 subtests of it: it does createElement,
-    // setAttribute("style", …) and then reads the IDL attribute back.
-    //
-    // The last text SEEN rather than the document version, because a write
-    // through this proxy sets the attribute itself and must not then re-seed
-    // from what it just wrote - `seen` is updated to the serialisation instead,
-    // so a write costs nothing and only a change from OUTSIDE re-reads.
+    // Re-seeded from the `style` attribute whenever its text changes, because
+    // `setAttribute("style", ...)` writes the attribute without going through
+    // this proxy (WPT css/cssom/css-style-attr-decl-block.html). The last text
+    // seen is tracked rather than the document version: a write through this
+    // proxy sets `seen` to its own serialisation, so only an outside change
+    // triggers a re-read.
     const auto seen = std::make_shared<std::string>();
     const auto reseed = [this, id, seen](context & c, script::object_object & store) {
         std::string now;
@@ -136,7 +149,7 @@ value dom_bindings::make_style_view(context & cx, node_id id) {
         }
         if (now == *seen) { return; }
         *seen = now;
-        // The METHODS stay: `setProperty` and its four siblings live on this
+        // The methods stay: `setProperty` and its four siblings live on this
         // same object, and erasing everything would take them with it.
         std::vector<std::string> declared;
         for (const auto & [key, v] : store.props) {
@@ -154,9 +167,9 @@ value dom_bindings::make_style_view(context & cx, node_id id) {
     reseed(cx, *held);
     const value target = value::object(held);
     auto * handler = cx.allocate<script::object_object>();
-    // `length`, `cssText` and the indexed properties are COMPUTED here rather
+    // `length`, `cssText` and the indexed properties are computed here rather
     // than stored. Storing them would put `length: 5` in the element's style
-    // attribute - the store IS the declaration list, and anything in it that is
+    // attribute: the store is the declaration list, and anything in it that is
     // not a declaration has to be filtered back out by every reader.
     set_method(cx, *handler, "get", [reseed](context & c, std::span<value> args) {
         if (args.size() < 2 || !args[0].is_object()) { return value::undefined(); }
@@ -171,15 +184,15 @@ value dom_bindings::make_style_view(context & cx, node_id id) {
             return value::number(count);
         }
         if (name == "cssText") { return c.string(css_text_of(*store, c)); }
-        // AN INDEX NAMES A PROPERTY, not a value: CSSOM §6.7.1 makes the
-        // indexed properties of a CSSStyleDeclaration its property NAMES, in
-        // declaration order, which is what `[...el.style]` and every
-        // `for (const p of el.style)` in the corpus iterates.
+        // An index names a property, not a value: CSSOM §6.7.1 makes the
+        // indexed properties of a CSSStyleDeclaration its property names, in
+        // declaration order, which is what `[...el.style]` and
+        // `for (const p of el.style)` iterate.
         if (!name.empty() && name.find_first_not_of("0123456789") == std::string::npos) {
-            // COUNTED DOWN rather than converted. `std::stoull` throws on an
-            // index a page can write in one keystroke (`el.style[1e30]` arrives
-            // here as twenty digits), and an uncaught std::out_of_range out of a
-            // native is a terminate() rather than a TypeError.
+            // Parsed digit by digit with an early exit rather than with
+            // `std::stoull`, which throws on a huge index (`el.style[1e20]`
+            // arrives as twenty-one digits), and an uncaught std::out_of_range
+            // out of a native is a terminate() rather than a TypeError.
             std::size_t want = 0;
             for (const char digit : name) {
                 if (want > store->props.size()) { return value::undefined(); }
@@ -194,21 +207,20 @@ value dom_bindings::make_style_view(context & cx, node_id id) {
         // The raw name first: that is where setProperty and getPropertyValue
         // live, and canonicalising them turns them into `set-property`.
         if (const value * found = store->find(name)) {
-            // A METHOD is handed back as it is; a DECLARATION loses its
+            // A method is handed back as it is; a declaration loses its
             // priority, because `el.style.width` is a value and never
             // "100px !important".
             if (found->is_callable()) { return *found; }
             return c.string(std::string{declared_value(c.to_string(*found))});
         }
         const std::string css = css_name_of(name);
-        // A SUPPORTED PROPERTY THAT IS NOT SET IS "", NOT undefined.
-        // CSSOM 6.7.2 gives every property in the IDL a getter that
-        // returns the empty string when the declaration block has none,
-        // and `serialize-values.html` reads exactly that for the ones it
-        // could not set. `undefined` is reserved for a name that is not a
-        // property at all - `el.style.toString`, `el.style.constructor` -
-        // because answering "" there would break every ordinary lookup.
-        // A shorthand is read from its longhands (declarations.cpp).
+        // A supported property that is not set reads "", not undefined:
+        // CSSOM 6.7.2 gives every property in the IDL a getter that returns
+        // the empty string when the declaration block has none. `undefined`
+        // is reserved for a name that is not a property at all
+        // (`el.style.toString`, `el.style.constructor`), because answering ""
+        // there would break every ordinary lookup. A shorthand is read from
+        // its longhands (declarations.cpp).
         if (store->find(css) == nullptr && style::css::find_property(css) == nullptr) {
             // An ordinary property the page put there (the set trap below).
             if (const value * own = expandos_of(*store, c).find(name)) { return *own; }
@@ -222,9 +234,9 @@ value dom_bindings::make_style_view(context & cx, node_id id) {
         reseed(c, *store);
         const std::string name = c.to_string(args[1]);
         if (name == "cssText") {
-            // A WHOLE-BLOCK REPLACEMENT, not a merge: `el.style.cssText = "…"`
-            // drops every declaration the element had. Erasing in place would
-            // leave the methods behind, which is exactly what has to survive.
+            // A whole-block replacement, not a merge: `el.style.cssText = "…"`
+            // drops every declaration the element had. Only declarations are
+            // erased, so the methods stored on the same object survive.
             std::vector<std::string> declared;
             for (const auto & [key, v] : store->props) {
                 if (is_declaration(v)) { declared.push_back(key); }
@@ -233,14 +245,14 @@ value dom_bindings::make_style_view(context & cx, node_id id) {
             seed_declarations(*store, c, c.to_string(args[2]));
         } else {
             // The IDL spelling, canonicalised, and the value through the
-            // grammar. A NAME THAT IS NOT A PROPERTY has no IDL setter: the
+            // grammar. A name that is not a property has no IDL setter: the
             // write makes an ordinary property (expandos_of), never a
-            // declaration - `style.unknown` and `style.COLOR` are the two
-            // cssstyledeclaration-csstext.html reads back through cssText.
-            // A refusal of the value is silent - CSSOM says an unparseable
-            // value leaves the declaration alone, and a throw here would break
-            // every page that sets a property this engine has not implemented
-            // - and writes nothing, so no mutation record is queued for it.
+            // declaration (WPT cssstyledeclaration-csstext.html reads back
+            // `style.unknown` and `style.COLOR` through cssText).
+            // A refused value is silent, since CSSOM says an unparseable value
+            // leaves the declaration alone and a throw would break every page
+            // that sets a property this engine has not implemented. It writes
+            // nothing, so no mutation record is queued for it.
             const std::string css = css_name_of(name);
             if (!css.starts_with("--") && store->find(css) == nullptr &&
                 style::css::find_property(css) == nullptr) {
@@ -255,12 +267,12 @@ value dom_bindings::make_style_view(context & cx, node_id id) {
         mutated();
         return value::boolean(true);
     });
-    // `name in el.style`: every SUPPORTED property has an IDL attribute in
+    // `name in el.style`: every supported property has an IDL attribute in
     // both spellings (CSSOM 6.7.2), set or not, beside the methods, `length`,
-    // `cssText` and the indices - and nothing else does: a custom property
-    // has no attribute, an unknown name only the expando a page put there.
-    // CSS-supports-CSSStyleDeclaration.html holds `CSS.supports(p, "inherit")`
-    // against `p in style` for 700 names.
+    // `cssText` and the indices, and nothing else does: a custom property has
+    // no attribute, an unknown name only the expando a page put there. (WPT
+    // CSS-supports-CSSStyleDeclaration.html compares `CSS.supports(p,
+    // "inherit")` against `p in style`.)
     set_method(cx, *handler, "has", [reseed](context & c, std::span<value> args) {
         if (args.size() < 2 || !args[0].is_object()) { return value::boolean(false); }
         auto * store = static_cast<script::object_object *>(args[0].as_heap());
@@ -314,9 +326,9 @@ value dom_bindings::make_style_view(context & cx, node_id id) {
 
     // `setProperty` / `getPropertyValue` / `removeProperty` take the CSS
     // spelling rather than the IDL one, so they are the only way to reach a
-    // custom property (`--x`) - which no identifier can name.
-    // A NON-CUSTOM PROPERTY NAME IS LOWERCASED, a custom one is not: `--X` and
-    // `--x` are two different properties and `COLOR` and `color` are one.
+    // custom property (`--x`), which no identifier can name.
+    // A non-custom property name is lowercased, a custom one is not: `--X` and
+    // `--x` are two different properties, `COLOR` and `color` are one.
     const auto asked_name = [](context & c, std::span<value> args) {
         const std::string given = arg_string(c, args, 0);
         return given.starts_with("--") ? given : ascii_lower_copy(given);
@@ -324,8 +336,8 @@ value dom_bindings::make_style_view(context & cx, node_id id) {
     set_method(cx, *held, "setProperty",
                [this, held, asked_name, reseed, wrote](context & c, std::span<value> args) {
                    // "If priority is not the empty string and is not an ASCII
-                   // case-insensitive match for 'important', return." - CSSOM 6.7.2.
-                   // The VALUE may not carry one; the third argument is the only way
+                   // case-insensitive match for 'important', return." (CSSOM 6.7.2)
+                   // The value may not carry one; the third argument is the only way
                    // a page can ask for it.
                    // [LegacyNullToEmptyString], and optional: null and undefined are "".
                    const std::string priority = args.size() > 2 && !args[2].is_nullish()
@@ -345,8 +357,8 @@ value dom_bindings::make_style_view(context & cx, node_id id) {
                    }
                    return value::undefined();
                });
-    // ...and it ANSWERS with the value it removed, which is what CSSOM says and
-    // what a page toggling a property reads to put it back.
+    // removeProperty returns the value it removed, as CSSOM says; a page
+    // toggling a property reads it to put it back.
     set_method(cx, *held, "removeProperty",
                [this, held, asked_name, reseed, wrote](context & c, std::span<value> args) {
                    reseed(c, *held);
@@ -383,14 +395,13 @@ value dom_bindings::make_style_view(context & cx, node_id id) {
     return style_view;
 }
 
-// `style` ON THE PROTOTYPE (CSSOM's ElementCSSInlineStyle, mixed into
-// HTMLElement, SVGElement and MathMLElement), not an own property of every
-// wrapper: `[PutForwards=cssText] readonly attribute CSSStyleDeclaration
-// style` is an accessor a page finds on the prototype chain
-// (inline-style-001.html asserts exactly that), and building the
-// declaration proxy on first READ rather than on every wrap is what a page
-// that wraps ten thousand elements and styles none of them wants. The
-// object is [SameObject]: kept on the wrapper under a symbol key.
+/// Installs `style` on the prototypes (CSSOM's ElementCSSInlineStyle, mixed
+/// into HTMLElement, SVGElement and MathMLElement) rather than as an own
+/// property of every wrapper: `[PutForwards=cssText] readonly attribute
+/// CSSStyleDeclaration style` is an accessor found on the prototype chain
+/// (WPT inline-style-001.html checks this), and the declaration proxy is built
+/// on first read rather than on every wrap. The object is [SameObject]: it is
+/// cached on the wrapper under a symbol key.
 void dom_bindings::install_style_accessor(context & cx) {
     if (secondary_) { return; }
     const auto view_of = [this](context & c, value self) -> value {
@@ -401,9 +412,10 @@ void dom_bindings::install_style_accessor(context & cx) {
         const node_id id = owner.handle_of(self);
         if (!id) { return value::undefined(); }
         auto * wrapper = static_cast<script::object_object *>(self.as_heap());
-        // The cached view is THIS document's: a node adopted into another
-        // document keeps its wrapper, and a view built over the old document
-        // would write the old node (style-attr-update-across-documents.html).
+        // The cached view must belong to this document: a node adopted into
+        // another document keeps its wrapper, and a view built over the old
+        // document would write the old node (WPT
+        // style-attr-update-across-documents.html).
         constexpr std::string_view owner_key = CTBROWSER_SYMBOL_KEY("sym:ctbrowser:style-owner");
         const value * held = wrapper->find(key);
         const value * made_by = wrapper->find(owner_key);

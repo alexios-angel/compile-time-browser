@@ -1,13 +1,21 @@
+//===- collections_and_labels.cpp - Form collections and labels -----------===//
+//
+// RadioNodeList.value, datalist options, label/control association
+// (`control`, `form`, `labels`), the fieldset/output/textarea accessors,
+// `input.list`, and HTMLFormElement's `elements` and `length`.
+//
+//===----------------------------------------------------------------------===//
+
 #include "helpers.hpp"
 
 namespace ctbrowser::shell {
 using namespace detail;
 using namespace input_types;
 
-// The labeled control `label.control` answers, for the browser's activation
-// behaviour of a <label> (browser::activate) - so a click on a label reaches
-// a form-associated custom element or an <output>, which the browser's own
-// control kinds do not include.
+/// The labeled control `label.control` answers, for the browser's activation
+/// behaviour of a <label> (browser::activate), so a click on a label reaches
+/// a form-associated custom element or an <output>, which the browser's own
+/// control kinds do not include.
 node_id dom_bindings::labeled_control(node_id label) {
     const control_helpers helpers{this};
     const auto txn = doc_->read();
@@ -146,8 +154,8 @@ void dom_bindings::install_control_collections_labels(context & cx) {
                     const auto txn = b->doc_->read();
                     if (!helpers.is_labelable(txn, b, id)) { return value::null(); }
                 }
-                // [SameObject]: the one live NodeList, kept on the element -
-                // an input that turned hidden and back hands out the same one.
+                // [SameObject]: the one live NodeList is kept on the element,
+                // so an input that turned hidden and back hands out the same one.
                 const value held = helpers.slot_of(c, b, id, "__labels");
                 if (held.is_object_like()) { return held; }
                 const value made = b->make_live_collection(
@@ -250,8 +258,8 @@ void dom_bindings::install_control_collections_labels(context & cx) {
             return value::number(
                 static_cast<double>(script::utf16::length(helpers.value_of(txn, b, id))));
         });
-    // A textarea's `defaultValue`, HTML 4.10.11: its CHILD TEXT CONTENT (the
-    // Text children's data - a <span> inside contributes nothing, where
+    // A textarea's `defaultValue`, HTML 4.10.11: its child text content (the
+    // Text children's data; a <span> inside contributes nothing, where
     // textContent would count it), and "string replace all" to set.
     helpers.accessor(
         cx, "HTMLTextAreaElement", "defaultValue",
@@ -306,7 +314,8 @@ void dom_bindings::install_control_collections_labels(context & cx) {
         return found ? b->wrap(c, found) : value::null();
     });
 
-    // --- HTMLFormElement: elements, length, submit, requestSubmit, reset ----------------
+    // --- HTMLFormElement: elements, length ------------------------------------------------
+    // submit, requestSubmit and reset are in form_data_and_submission.cpp.
     const auto form_elements = [helpers](context & c, dom_bindings * b, node_id form) {
         const value held = helpers.slot_of(c, b, form, "__elements");
         if (held.is_object_like()) { return held; }

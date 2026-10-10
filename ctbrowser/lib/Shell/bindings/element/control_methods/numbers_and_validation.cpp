@@ -1,3 +1,12 @@
+//===- numbers_and_validation.cpp - Numeric inputs and validity -----------===//
+//
+// HTMLInputElement's valueAsNumber, valueAsDate, stepUp/stepDown and the
+// prototype-level value/checked/files/indeterminate accessors; the
+// constraint validation API (HTML 4.10.20) on every control and the form;
+// and dom_bindings::control_validity, which :valid and :invalid match on.
+//
+//===----------------------------------------------------------------------===//
+
 #include "helpers.hpp"
 
 namespace ctbrowser::shell {
@@ -10,16 +19,13 @@ void dom_bindings::install_control_numbers_validation(context & cx) {
     //
     // number and range parse a floating-point number; date, month, week, time
     // and datetime-local parse their strings to a number of milliseconds (or
-    // months, for month). `to_number` answers nullopt where the value is not
-    // one, and `to_text` writes a number back in the type's own format.
-
+    // months, for month). `helpers.to_number` answers nullopt where the value
+    // is not one, and `type_number_to_text` writes a number back in the type's
+    // own format.
     const auto text_of_number = [helpers](const read_txn & txn, dom_bindings * b, node_id id,
                                           double number) -> std::string {
         return type_number_to_text(helpers.input_type(txn, b, id), number);
     };
-    // The allowed value step in the type's units, or nullopt for `any`; the
-    // step base; and the min/max, each when parseable.
-
     // valueAsNumber / valueAsDate, HTML 4.10.5.3.
     const auto number_types = [](std::string_view type) {
         return type == "number" || type == "range" || type == "date" || type == "month" ||
@@ -123,10 +129,10 @@ void dom_bindings::install_control_numbers_validation(context & cx) {
             b->mutated();
             return value::undefined();
         });
-    // `value`, `checked` and `files` ON THE PROTOTYPE, for the inputs the
-    // wrapper installs no own accessor on - a hidden input has none, so its
-    // value read `undefined` - and `indeterminate`, which lives in the form
-    // store beside checkedness so the cloning steps carry it.
+    // `value`, `checked` and `files` on the prototype, for the inputs the
+    // wrapper installs no own accessor on (a hidden input has none, so without
+    // these its value would read `undefined`), and `indeterminate`, which lives
+    // in the form store beside checkedness so the cloning steps carry it.
     // Where the wrapper's own accessor exists it shadows these, as it must.
     helpers.accessor(
         cx, "HTMLInputElement", "value",
@@ -178,9 +184,9 @@ void dom_bindings::install_control_numbers_validation(context & cx) {
             b->mutated();
             return value::undefined();
         });
-    // `files`, 4.10.5.3: null unless the input is in the file state; there,
-    // one FileList ([SameObject] until a page assigns another). The setter
-    // takes only a FileList - an array is a TypeError - and ignores null and
+    // `files`, HTML 4.10.5.3: null unless the input is in the file state;
+    // there, one FileList ([SameObject] until a page assigns another). The
+    // setter takes only a FileList (an array is a TypeError) and ignores null and
     // an input the attribute does not apply to.
     helpers.accessor(
         cx, "HTMLInputElement", "files",
@@ -275,9 +281,9 @@ void dom_bindings::install_control_numbers_validation(context & cx) {
         }
         if (min && number < *min) { number = base + std::ceil((*min - base) / *step) * *step; }
         if (max && number > *max) { number = base + std::floor((*max - base) / *step) * *step; }
-        // Moving AGAINST the direction asked is refused - but only from a value
+        // Moving against the direction asked is refused, but only from a value
         // the control had: an empty one stepped down lands on its minimum
-        // (input-stepdown-02.html), the 0 it started from being no value.
+        // (input-stepdown-02.html), since the 0 it started from is no value.
         if (held && ((up && number < before) || (!up && number > before))) { return; }
         if (min && number < *min) { return; }
         if (max && number > *max) { return; }
@@ -298,22 +304,16 @@ void dom_bindings::install_control_numbers_validation(context & cx) {
     // --- constraint validation, HTML 4.10.20 ------------------------------------------
     //
     // `willValidate` is "candidate for constraint validation": a submittable
-    // element that is not barred - disabled, readonly (an input or textarea),
-    // an input of type hidden/reset/button, inside a datalist - and not an
+    // element that is not barred (disabled, readonly on an input or textarea,
+    // an input of type hidden/reset/button, inside a datalist) and not an
     // output, fieldset or object, which are never candidates. The validity
     // flags are computed on every read from the store's value and the
     // attributes; the custom message is a slot on the wrapper.
     //
     // ponytail: tooLong and tooShort are always false. HTML raises them only
-    // for a value the USER edited, and the store cannot tell a user's edit
+    // for a value the user edited, and the store cannot tell a user's edit
     // from a script's `value =` (both set value_edited); the manual tests
     // are the ones that would measure them.
-
-    // The pattern attribute compiled as the specification says - anchored,
-    // with the `v` flag - through a JS function so a bad pattern is caught
-    // there and means "no constraint" rather than a throw.
-
-    // Every flag of a control, as a bit set.
 
     // A ValidityState object: the flags frozen into a hidden slot, read by
     // the accessors on the prototype.
@@ -372,9 +372,7 @@ void dom_bindings::install_control_numbers_validation(context & cx) {
         if ((flags & bad_input) != 0) { return "Please enter a valid value."; }
         return "Please lengthen this text.";
     };
-    // "Check validity" / "report validity" for one element: fires `invalid`
-    // (cancelable, not bubbling) when a candidate is invalid.
-
+    // reportValidity() is checkValidity(): there is no user to report to.
     for (const char * which :
          {"HTMLButtonElement", "HTMLFieldSetElement", "HTMLInputElement", "HTMLObjectElement",
           "HTMLOutputElement", "HTMLSelectElement", "HTMLTextAreaElement"}) {
@@ -426,8 +424,7 @@ void dom_bindings::install_control_numbers_validation(context & cx) {
                           });
     }
     // The form's: "statically validate the constraints" over its submittable
-    // elements, every invalid one told.
-
+    // elements, firing `invalid` at every invalid one.
     helpers.operation(cx, "HTMLFormElement", "checkValidity", 0,
                       [this, helpers](context & c, std::span<value>) {
                           const node_id id = receiver(c);
@@ -440,19 +437,20 @@ void dom_bindings::install_control_numbers_validation(context & cx) {
                       });
 }
 
-// WHAT :valid AND :invalid MATCH (HTML 4.16.3), for the selector engine to ask:
+// What :valid and :invalid match (HTML 4.16.3), for the selector engine to ask:
 // a candidate for constraint validation answers whether it satisfies its
 // constraints; a <form>, whether none of the controls it owns is a candidate
 // that does not; a <fieldset>, the same of its descendants. Every other
-// element - a control barred from validation included - is nullopt and
-// matches neither. The same flags `validity` reports and checkValidity()
-// acts on, so a sheet and a script cannot disagree about a control.
+// element, including a control barred from validation, is nullopt and
+// matches neither. It uses the same flags `validity` reports and
+// checkValidity() acts on, so a sheet and a script cannot disagree about a
+// control.
 std::optional<bool> dom_bindings::control_validity(node_id id) {
     if (cx_ == nullptr) { return std::nullopt; }
     const control_helpers helpers{this};
     context & c = *cx_;
     // A page no script has touched has built no interfaces yet, and the
-    // `pattern` constraint compiles through ValidityState's prototype.
+    // helpers below may create wrappers (to keep slots on), which need them.
     ensure_dom_interfaces(c);
     // One element as a candidate: nullopt when it is none.
     const auto satisfies = [&](node_id one) -> std::optional<bool> {

@@ -1,20 +1,18 @@
-// dom_bindings - the `CSS` namespace object.
+//===- lib/Shell/bindings/css.cpp - The CSS namespace object ----*- C++ -*-===//
 //
-// TWO STATIC METHODS, AND ONE OF THEM GATES A WHOLE SUITE. Every test in
-// `css/css-values` that uses `test_computed_value` opens with
+// dom_bindings: the `CSS` namespace object, with CSS.supports,
+// CSS.registerProperty and CSS.escape. CSS.supports matters most: every
+// `css/css-values` WPT test that uses `test_computed_value` first asserts
 //
 //     assert_true(CSS.supports(property, specified), "'…' is a supported value")
 //
-// before it looks at a computed value at all, so an absent `CSS` is a failure on
-// line one of ~15 files and of every `@supports`-shaped assertion elsewhere. It
-// is listed in `docs/css-conformance.md` §4 as "a third, smaller one" beside the
-// two Shell-side gaps, and it is the only one of the three that is a missing
-// object rather than a missing behaviour.
+// so without it those tests fail on their first line.
 //
 // The answers come from `style/css/properties.hpp`, which owns the property
-// table and the value grammar: this file is the binding and nothing else, so
-// `CSS.supports` and `el.style` can never disagree about whether a value is
-// valid.
+// table and the value grammar; this file is only the binding, so
+// `CSS.supports` and `el.style` cannot disagree about whether a value is valid.
+//
+//===----------------------------------------------------------------------===//
 
 #include "stylesheets/internal.hpp"
 
@@ -29,29 +27,28 @@ namespace ctbrowser::shell {
 
 void dom_bindings::install_css_interface(context & cx) {
     auto * css = cx.allocate<script::object_object>();
-    // `length` is the number of REQUIRED arguments - one for both, `supports`
-    // being an overload pair whose shorter form takes one. `escape.html`
-    // asserts it beside the TypeError a call with no argument throws.
+    // `length` is the number of required arguments: 1 for every method here
+    // (`supports` is an overload pair whose shorter form takes one argument).
+    // `escape.html` asserts it.
     const auto method = [&](std::string name, double arity, script::native_fn fn) {
         auto * made = cx.allocate<script::native_object>(name, std::move(fn));
         made->define("length", value::number(arity), script::attr_configurable);
         css->define(name, value::object(made), script::attr_builtin);
     };
-    // A NAMESPACE OBJECT carries its own `@@toStringTag` - Web IDL §3.13 - so
+    // A namespace object carries its own `@@toStringTag` (Web IDL §3.13), so
     // `CSS.toString()` is `[object CSS]`. Own, non-writable, configurable: a
     // page may redefine or delete it, and `CSS-namespace-object-class-string`
     // does both.
     css->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string("CSS"), script::attr_configurable);
 
-    // BOTH ARITIES, because they are different questions. One argument is a
-    // `<supports-condition>` - `(display: flex) and (color: red)`, parentheses
-    // and all - and two are a property and a value with no parentheses. A page
-    // that passes one string containing a colon is asking the first question,
-    // and answering it as though it were the second is how `CSS.supports('(a:
-    // b)')` comes back true for the property `(a`.
+    // The two arities ask different questions. One argument is a
+    // `<supports-condition>` (`(display: flex) and (color: red)`, parentheses
+    // and all); two are a property and a value with no parentheses. Treating a
+    // one-argument call as the second form would make `CSS.supports('(a: b)')`
+    // true for a property named `(a`.
     //
     // The one-argument form has a second chance `@supports` does not: CSS
-    // Conditional 4 §6.1 step 2 tries the text again WRAPPED IN PARENTHESES,
+    // Conditional 4 §6.1 step 2 tries the text again wrapped in parentheses,
     // so `CSS.supports('color: red')` is true while `@supports color: red`
     // stays invalid. That is why the retry is here and not in the grammar.
     method("supports", 1, [](context & c, std::span<value> args) {
@@ -109,9 +106,9 @@ void dom_bindings::install_css_interface(context & cx) {
                                     "the initialValue does not parse against the syntax");
                 return value::undefined();
             }
-            // ...AND IS COMPUTATIONALLY INDEPENDENT (CSS Properties and Values
-            // 1 §1.2): a unit measuring a font or a query container needs an
-            // element, and an initial value has none.
+            // The initial value must also be computationally independent (CSS
+            // Properties and Values 1 §1.2): a unit measuring a font or a query
+            // container needs an element, and an initial value has none.
             const style::css::token_stream tokens = style::css::tokenize(made.initial);
             for (const style::css::css_token & t : tokens.tokens) {
                 if (t.type != style::css::token_type::dimension) { continue; }
@@ -137,10 +134,10 @@ void dom_bindings::install_css_interface(context & cx) {
             c.throw_error("TypeError", "CSS.escape requires an argument");
             return value::undefined();
         }
-        // CSSOM §2.1's "serialize an identifier" - style/'s one copy, the same
-        // one a serialised selector's type, id, class and attribute names go
-        // through, so a page building `'#' + CSS.escape(id)` and this engine
-        // printing that rule back agree.
+        // CSSOM §2.1's "serialize an identifier": style/'s one copy, the same
+        // one serialised selectors use for type, id, class and attribute names,
+        // so a page building `'#' + CSS.escape(id)` and this engine printing
+        // that rule back agree.
         return c.string(style::css::serialize_identifier(c.to_string(args[0])));
     });
 

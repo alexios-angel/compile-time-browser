@@ -1,22 +1,25 @@
-// dom_bindings - CanvasPath (the path verbs) and Path2D.
+//===- canvas_path2d.cpp - CanvasPath verbs and Path2D ----------*- C++ -*-===//
+//
+// The CanvasPath methods (moveTo, arc, roundRect, ...) and Path2D. Each verb
+// is parsed here once for both of its homes: WebIDL's argument conversions
+// (ToNumber, which may throw), then the spec's own steps (a non-finite argument
+// does nothing, a negative radius is an IndexSizeError, too many roundRect
+// radii are a RangeError), and then the verb goes to a sink. The context's sink
+// builds its current path through the current transform; a Path2D's sink
+// records the verb to be replayed at draw time.
+//
+//===----------------------------------------------------------------------===//
 
 #include "canvas_objects.hpp"
 
 #include <cmath>
 
-// The verbs are PARSED here once, for both of their homes: WebIDL's argument
-// conversions (ToNumber, which may throw), then the spec's own steps - a
-// non-finite argument does nothing, a negative radius is an IndexSizeError,
-// roundRect's radii are a RangeError when there are too many - and then the
-// verb goes to a sink. The context's sink builds its current path through the
-// current transform; a Path2D's records it to be replayed at draw time.
-
 namespace ctbrowser::shell::canvas_detail {
 
 namespace {
 
-// A WebIDL operation: `length` is the required count and a call with fewer
-// arguments is a TypeError.
+/// Installs a WebIDL operation: `length` is the required argument count and a
+/// call with fewer arguments is a TypeError.
 void operation(script::context & cx, script::object_object & proto, const std::string & name,
                unsigned required, script::native_fn fn) {
     set_operation(cx, proto, name, required, std::move(fn));
@@ -24,8 +27,9 @@ void operation(script::context & cx, script::object_object & proto, const std::s
                     script::attr_enumerable | script::attr_configurable | script::attr_writable);
 }
 
-// One DOMPointInit's x and y (WebIDL dictionary: members read in
-// lexicographic order, each ToNumber with its default).
+/// Reads one DOMPointInit's x and y into `out`. As a WebIDL dictionary, its
+/// members are read in lexicographic order, each converted with ToNumber and
+/// defaulting when absent. Returns false when a conversion threw.
 [[nodiscard]] bool point_init(script::context & c, script::value init, corner_radius & out) {
     out = corner_radius{};
     if (init.is_null() || init.is_undefined()) { return true; }
@@ -41,13 +45,15 @@ void operation(script::context & cx, script::object_object & proto, const std::s
     return true;
 }
 
-// roundRect's radii, the union `(unrestricted double or DOMPointInit or
-// sequence<(unrestricted double or DOMPointInit)>)`, converted. Each entry
-// is a (x, y) pair plus whether it came as one number.
+/// One converted entry of roundRect's radii: an (x, y) pair, plus whether it
+/// came as a single number.
 struct radius_entry {
     corner_radius r;
     bool from_number = false;
 };
+/// Converts roundRect's radii, the union `(unrestricted double or DOMPointInit
+/// or sequence<(unrestricted double or DOMPointInit)>)`, into `out`. Returns
+/// false when a conversion threw.
 [[nodiscard]] bool radius_union(script::context & c, script::value v,
                                 std::vector<radius_entry> & out) {
     const auto one = [&](script::value item) {
@@ -88,6 +94,9 @@ struct radius_entry {
 
 } // namespace
 
+/// Replays one recorded verb. Op codes: M moveTo, L lineTo, Z closePath,
+/// Q quadraticCurveTo, C bezierCurveTo, T arcTo, R rect, O roundRect (v[4..11]
+/// are the four corner radii), A arc, E ellipse.
 void apply_verb(const path_verb & verb, canvas_path & into, const transform & ctm) {
     path_builder b{into, verb.m.then(ctm)};
     const auto & v = verb.v;
@@ -120,8 +129,8 @@ std::optional<transform> matrix_2d(script::context & c, script::value init) {
         c.throw_error("TypeError", "The matrix is not a DOMMatrix2DInit");
         return std::nullopt;
     }
-    // WebIDL reads a dictionary's members in LEXICOGRAPHIC order, each one
-    // converted as it is read - so a getter on `m11` runs after the one on `f`.
+    // WebIDL reads a dictionary's members in lexicographic order, converting
+    // each as it is read, so a getter on `m11` runs after the one on `f`.
     static constexpr const char * names[] = {"a",   "b",   "c",   "d",   "e",   "f",
                                              "m11", "m12", "m21", "m22", "m41", "m42"};
     std::array<std::optional<double>, 12> given{};
@@ -132,10 +141,10 @@ std::optional<transform> matrix_2d(script::context & c, script::value init) {
         given[i] = c.to_number_value(held);
         if (c.throw_pending()) { return std::nullopt; }
     }
-    // VALIDATE AND FIXUP (Geometry Interfaces 1, 6.1): a member and its m-name
-    // alias that are both given have to agree under SameValueZero, whatever
-    // they are - Infinity and Infinity agree, and NaN agrees with NaN. Then
-    // each m-name takes its alias's value, or the identity's.
+    // Validate and fix up (Geometry Interfaces 1, 6.1): a member and its
+    // m-name alias that are both given must agree under SameValueZero, whatever
+    // they are; Infinity agrees with Infinity, and NaN with NaN. Then each
+    // member takes its alias's value, its own, or the identity's.
     static constexpr double identity[] = {1, 0, 0, 1, 0, 0};
     std::array<double, 6> v{};
     for (std::size_t i = 0; i < v.size(); ++i) {
@@ -150,7 +159,7 @@ std::optional<transform> matrix_2d(script::context & c, script::value init) {
     }
     // Only then the canvas's own rule: a matrix with a member that is not
     // finite is ignored by setTransform, CanvasPattern.setTransform and
-    // addPath alike (2d.pattern.transform.infinity).
+    // addPath alike (WPT 2d.pattern.transform.infinity).
     if (!all_finite(v.data(), v.size())) { return std::nullopt; }
     const auto f = [](double d) { return static_cast<float>(d); };
     return transform{f(v[0]), f(v[1]), f(v[2]), f(v[3]), f(v[4]), f(v[5])};
@@ -158,7 +167,7 @@ std::optional<transform> matrix_2d(script::context & c, script::value init) {
 
 void install_path_methods(script::context & cx, script::object_object & proto,
                           const dom_thrower & throw_dom, const verb_sink & sink) {
-    // The plain ones: N numbers, nothing done unless all are finite.
+    // The plain verbs: `count` numbers, ignored unless all are finite.
     const auto simple = [&](const char * name, char op, unsigned count) {
         operation(cx, proto, name, count,
                   [sink, op, count](script::context & c, std::span<script::value> a) {
@@ -224,7 +233,7 @@ void install_path_methods(script::context & cx, script::object_object & proto,
                   sink(c, verb);
                   return script::value::undefined();
               });
-    // roundRect(x, y, w, h, radii = 0) - 4.12.5.1.14's whole algorithm.
+    // roundRect(x, y, w, h, radii = 0): the whole algorithm of HTML 4.12.5.1.14.
     operation(cx, proto, "roundRect", 4, [sink](script::context & c, std::span<script::value> a) {
         path_verb verb;
         verb.op = 'O';
@@ -317,13 +326,12 @@ script::value context_settings(script::context & c, script::value options) {
 void install_path2d(script::context & cx, const dom_thrower & throw_dom) {
     auto * proto = cx.allocate<script::object_object>();
     const script::value proto_value = script::value::object(proto);
-    // ROOTED until the global holds it. Nothing reaches the prototype while
-    // the constructor and a dozen methods are allocated around it, and the
-    // collector took it: every Path2D then had a freed object for a
-    // prototype, and `path.moveTo` read whatever lived there next.
+    // Root the prototype until the global holds it: nothing else references it
+    // while the constructor and methods are allocated, so a collection would
+    // free it.
     const script::context::rooted keep{cx, proto_value};
-    // `new Path2D()`, `new Path2D(path)` - a copy - or `new Path2D(d)`, SVG
-    // path data. The last is not parsed here and makes an empty path.
+    // `new Path2D()`, `new Path2D(path)` (a copy) or `new Path2D(d)` (SVG path
+    // data). SVG path data is not parsed and makes an empty path.
     auto * ctor = cx.allocate<script::native_object>(
         "Path2D", [proto_value](script::context & c, std::span<script::value> args) {
             auto * path = c.allocate<script::object_object>();
@@ -336,9 +344,9 @@ void install_path2d(script::context & cx, const dom_thrower & throw_dom) {
             return script::value::object(path);
         });
     ctor->define("prototype", proto_value, script::attr_none);
-    // The lambda above holds the prototype too, and a capture is invisible to
-    // the collector: retained, so the constructor keeps it alive whatever
-    // becomes of its `prototype` property.
+    // The lambda above also holds the prototype, but the collector cannot see
+    // captures; `retained` keeps it alive whatever becomes of the
+    // constructor's `prototype` property.
     ctor->retained.push_back(proto_value);
     ctor->define("length", script::value::number(0), script::attr_configurable);
     proto->define("constructor", script::value::object(ctor),
@@ -352,8 +360,8 @@ void install_path2d(script::context & cx, const dom_thrower & throw_dom) {
             path->verbs.push_back(verb);
         }
     });
-    // `addPath(path, transform)` - the other path's verbs, each under the
-    // matrix as well as whatever it was already under.
+    // `addPath(path, transform)` appends the other path's verbs, each under
+    // `transform` composed with the matrix it was already under.
     operation(cx, *proto, "addPath", 1, [](script::context & c, std::span<script::value> a) {
         const auto into = unbox<path_recording>(c.current_this(), path_key);
         const auto from = unbox<path_recording>(arg(a, 0), path_key);

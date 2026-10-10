@@ -1,7 +1,12 @@
-// dom_bindings - click, form control value and focus, the canvas methods
-// getContext, toDataURL and toBlob, the table model (rows, cells, sections),
-// and the forms: the select and option model, form.elements, labels,
-// constraint validation, the selection API, the entry list and FormData.
+//===- control_methods.cpp - Form control and canvas methods ----*- C++ -*-===//
+//
+// dom_bindings::install_control_methods: `click()` on HTMLElement, then the
+// installers in control_methods/ for control value and focus, the canvas
+// methods (getContext, toDataURL, toBlob), the table model (rows, cells,
+// sections), the select and option model, form.elements, labels, constraint
+// validation, the selection API, the entry list and FormData.
+//
+//===----------------------------------------------------------------------===//
 
 #include "control_methods/helpers.hpp"
 
@@ -10,8 +15,8 @@
 namespace ctbrowser::shell {
 
 using namespace detail;
-// THE FORMS' NUMBERS AND TEXT, HTML 4.10.5.1 and 2.3.5, are
-// shell/page/input_types.hpp - the form store sanitises with them too.
+// The forms' number and text rules (HTML 4.10.5.1 and 2.3.5) live in
+// shell/page/input_types.hpp, because the form store sanitises with them too.
 using namespace input_types;
 
 void dom_bindings::install_control_methods(context & cx) {
@@ -21,8 +26,8 @@ void dom_bindings::install_control_methods(context & cx) {
         define_operation(cx, on, name, length, std::move(fn));
     };
 
-    // `element.click()` - the whole of it is in dom_bindings::click, beside the
-    // engine's own mouse events, because it IS one of those.
+    // `element.click()` is implemented by dom_bindings::click, next to the
+    // engine's own mouse events, because a synthetic click is one of them.
     method(html, "click", 0, [this](context & c, std::span<value>) {
         (void)click(receiver(c));
         return value::undefined();

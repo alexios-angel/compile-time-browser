@@ -1,9 +1,17 @@
+//===- helpers.hpp - Range binding helpers ----------------------*- C++ -*-===//
+//
+// Types and constants shared by range.cpp and range/live.cpp: the DOM nodeType
+// values, the hidden slot names that hold a range's boundary points, and the
+// `spot`/`point` pair a range boundary is read into.
+//
+//===----------------------------------------------------------------------===//
 #pragma once
 
 #include "../internal.hpp"
 
 namespace ctbrowser::shell::range_detail {
 
+// DOM Node.nodeType values (DOM 4.4).
 inline constexpr unsigned type_element = 1;
 inline constexpr unsigned type_attr = 2;
 inline constexpr unsigned type_text = 3;
@@ -14,13 +22,14 @@ inline constexpr unsigned type_document = 9;
 inline constexpr unsigned type_doctype = 10;
 inline constexpr unsigned type_fragment = 11;
 
+// Hidden own properties of a Range object that hold its two boundary points.
 inline constexpr std::string_view start_node_slot = "__startContainer";
 inline constexpr std::string_view start_offset_slot = "__startOffset";
 inline constexpr std::string_view end_node_slot = "__endContainer";
 inline constexpr std::string_view end_offset_slot = "__endOffset";
 
-// A NODE OF THE REALM, as a range sees it: the bindings that own it and its
-// id - or an Attr object, which has neither.
+/// A node of the realm as a range sees it: the bindings that own it and its
+/// id, or an Attr object, which has neither.
 struct spot {
     dom_bindings * owner = nullptr;
     node_id id;
@@ -36,6 +45,7 @@ struct spot {
 };
 inline const spot no_spot{};
 
+/// A boundary point: (node, offset).
 struct point {
     spot node;
     double offset = 0;

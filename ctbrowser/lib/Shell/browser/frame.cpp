@@ -1,5 +1,10 @@
-// browser - the frame: the page clock and tick(), the four stages a frame
-// re-runs according to what changed, resize, the viewport and scrolling.
+//===- ctbrowser/lib/Shell/browser/frame.cpp - Frames, ticks, scrolling ---===//
+//
+// The browser's frame loop: the page clock and tick(), the four stages a
+// frame re-runs according to what changed (styles, layout, paint recording,
+// raster), resize, the viewport and scrolling.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -7,11 +12,12 @@ namespace ctbrowser::shell {
 
 namespace {
 
-// THE VIEWPORT'S OVERFLOW, CSS Overflow 3 §3.3: the root's `overflow-y`
-// propagates to the viewport, and when the root's is `visible` the body's
-// does instead. A viewport at `hidden` or `clip` shows no scrollbar - it
-// still scrolls programmatically, which is what scrollintoview.html's
-// `body { padding: 4000px; overflow: hidden }` measures against innerWidth.
+/// Whether the viewport's overflow hides its scrollbar (CSS Overflow 3 §3.3).
+/// The root's `overflow-y` propagates to the viewport, and when the root's is
+/// `visible` the body's does instead. A viewport at `hidden` or `clip` shows
+/// no scrollbar but still scrolls programmatically, which is what WPT
+/// scrollintoview.html's `body { padding: 4000px; overflow: hidden }`
+/// measures against innerWidth.
 [[nodiscard]] bool viewport_hides_overflow(atom_table & atoms,
                                            const ctbrowser::style::style_map & resolved,
                                            const read_txn & txn) {
@@ -40,8 +46,8 @@ double browser::next_wakeup_ms() {
     double soonest = std::numeric_limits<double>::infinity();
     if (bindings_) {
         soonest = std::min(soonest, bindings_->next_callback_ms());
-        // A CSS animation or transition with an event still to fire - its
-        // start, an iteration, its end. Nothing else about one needs a frame:
+        // A CSS animation or transition with an event still to fire (its
+        // start, an iteration, its end). Nothing else about one needs a frame:
         // the overlay is sampled when read, not painted. A finished page with
         // no running animation asks for nothing, so the loop goes idle again.
         soonest = std::min(soonest, bindings_->next_animation_event_ms());
@@ -53,9 +59,9 @@ double browser::next_wakeup_ms() {
             std::min(soonest, since < options_.caret_blink_ms ? options_.caret_blink_ms - since
                                                               : period - since);
     }
-    // Only while a step is actually DUE TO HAPPEN - autoscroll_now() reports
-    // nothing once the view has hit its limit, so a pointer parked below a
-    // fully-scrolled field costs no wakeups at all.
+    // Only while a step can actually happen: autoscroll_now() reports nothing
+    // once the view has hit its limit, so a pointer parked below a fully
+    // scrolled field costs no wakeups at all.
     if (autoscroll_now().live()) {
         soonest = std::min(soonest, std::max(0.0, autoscroll_due_ms_ - caret_clock_ms_));
     }
@@ -63,7 +69,7 @@ double browser::next_wakeup_ms() {
 }
 
 bool browser::caret_visible() const noexcept {
-    if (options_.caret_blink_ms <= 0) { return true; } // blinking off: always solid
+    if (options_.caret_blink_ms <= 0) { return true; } // Blinking off: always solid.
     const double since = caret_clock_ms_ - caret_base_ms_;
     const double period = options_.caret_blink_ms * 2;
     return std::fmod(since, period) < options_.caret_blink_ms;
@@ -75,50 +81,50 @@ std::size_t browser::tick(double elapsed_ms) {
     // Auto-scroll steps that came due.
     autoscroll_state at = autoscroll_now();
     if (!at.live()) {
-        // Idle: keep the due time pinned to now. Letting it fall behind while
-        // nothing is scrolling would make the moment it ARMS fire one step for
-        // every interval it sat idle - a drag that pauses in the middle of a
-        // field and then leaves it would jump instead of creeping.
+        // Idle: keep the due time pinned to now. If it fell behind while
+        // nothing was scrolling, the moment auto-scroll starts would fire one
+        // step for every interval it sat idle, and a drag that pauses in the
+        // middle of a field and then leaves it would jump instead of creeping.
         autoscroll_due_ms_ = caret_clock_ms_;
     }
-    // A LOOP, not a single step: one tick covering half a second must perform
-    // every step that fits in it, or the scroll rate silently becomes the frame
-    // rate. It terminates because each step moves the view towards a limit and
-    // autoscroll_now() reports nothing once it is there. The interval is
-    // re-read each time, so dragging further away speeds it up mid-tick.
+    // A loop, not a single step: one tick covering half a second must perform
+    // every step that fits in it, or the scroll rate silently becomes the
+    // frame rate. It terminates because each step moves the view towards a
+    // limit and autoscroll_now() reports nothing once it is there. The
+    // interval is re-read each time, so dragging further away speeds it up
+    // mid-tick.
     while (at.live() && caret_clock_ms_ >= autoscroll_due_ms_) {
         autoscroll_step(at);
         autoscroll_due_ms_ += autoscroll_interval_ms(at.below != 0 ? at.below : at.beside);
         at = autoscroll_now();
     }
-    // Only the CARET changed, so only the paint is stale - a blink must not
+    // Only the caret changed, so only the paint is stale: a blink must not
     // re-run layout.
     if (focused_ && caret_visible() != was_visible) { mark(dirty::paint); }
-    // `DOMContentLoaded` AND THEN `load`, in that order, once per document.
-    // Both go to the window - dispatch() with an empty node is the window and
-    // the document at once, which is how their listeners are already stored -
-    // and both are dispatched BEFORE this tick's timers, so a handler that
-    // schedules `setTimeout(f, 0)` gets f on the very next tick rather than one
-    // further out. testharness.js does exactly that.
-    // THE FRAMES FIRST, and this is the ordering the corpus turns on: a page's
-    // `load` handler is where WPT reads `frame.contentDocument`, so a frame
-    // whose document is built with the timers - after that event - is a frame
-    // that was never there when it was looked for. See bindings/frames.cpp.
-    // THE NAVIGATIONS FORMS PLANNED on an earlier turn come before that: a
-    // frame a submission navigates has its new document before this tick
-    // announces anything (bindings/frames.cpp, run_planned_navigations).
+    // Order within a tick, before this tick's timers:
+    //  1. Navigations that form submissions planned on an earlier turn, so a
+    //     frame a submission navigates has its new document before this tick
+    //     announces anything (run_planned_navigations in bindings/frames.cpp).
+    //  2. Frames, built before `load`: a page's `load` handler is where WPT
+    //     reads `frame.contentDocument`, so a frame whose document were built
+    //     later would not be there when it is looked for.
+    //  3. `DOMContentLoaded` then `load`, once per document. Both go to the
+    //     window (dispatch() with an empty node is the window and the document
+    //     at once, which is how their listeners are stored). Dispatching them
+    //     before the timers means a handler that schedules `setTimeout(f, 0)`
+    //     gets f on the very next tick, as testharness.js expects.
     bindings_->run_planned_navigations();
     bindings_->reconcile_frames();
     if (load_event_pending_) {
         load_event_pending_ = false;
         bindings_->set_ready_state("interactive");
-        // THE TASKS THE PARSE QUEUED run before the two its end queues (HTML
-        // 13.2.7 "the end" queues DOMContentLoaded, then load, as tasks):
-        // the `unhandledrejection` a parser-run script's checkpoint queued
-        // comes between `interactive` and `complete`
-        // (promise-rejection-event-during-parse.html), and a script a
-        // script inserted - which delays the load event - has run. Not the
-        // page's own setTimeouts, a task source of their own.
+        // The tasks the parse queued run before the two that "the end" queues
+        // (HTML 13.2.7 queues DOMContentLoaded, then load, as tasks). So the
+        // `unhandledrejection` a parser-run script's checkpoint queued comes
+        // between `interactive` and `complete` (WPT
+        // promise-rejection-event-during-parse.html), and a script inserted
+        // by a script, which delays the load event, has run. The page's own
+        // setTimeouts are a separate task source and do not run here.
         (void)bindings_->run_timers(true);
         (void)bindings_->dispatch("DOMContentLoaded", node_id{});
         bindings_->set_ready_state("complete");
@@ -133,20 +139,17 @@ std::size_t browser::tick(double elapsed_ms) {
     // animationstart/animationend/transitionend crossings the clock's move
     // produced, after the timers and the frame callbacks of this tick.
     bindings_->tick_animations();
-    // A fault in a timer or an animation frame is a script error too. It was
-    // not reported anywhere before, so a page whose draw loop threw looked
-    // exactly like a page that had finished loading and had nothing to do.
+    // A fault in a timer or animation-frame callback is a script error too;
+    // without this, a page whose draw loop threw would look merely idle.
     if (script_error_.empty() && !bindings_->callback_error().empty()) {
         script_error_ = bindings_->callback_error();
     }
-    // Collect between callbacks, never inside one - the same reason a
-    // reload is drained here. Nothing was ever collected before: the GC had
-    // no way to see the bindings' listeners, so running it would have freed
-    // them, and so it never ran at all.
+    // Collect between callbacks, never inside one, for the same reason a
+    // reload is handled here.
     if (script_) { (void)script_->collect_if_due(); }
-    // BETWEEN callbacks, never inside one: reloading tears down the script
-    // context, and location.reload() is called from a function running in
-    // it. A page that reloads on game-over would take the VM with it.
+    // Reload between callbacks, never inside one: reloading tears down the
+    // script context, and location.reload() is called from a function running
+    // in it. A page that reloads on game-over would take the VM with it.
     if (bindings_->reload_requested()) { reload(); }
     return ran;
 }
@@ -155,25 +158,25 @@ void browser::resize(int width, int height) {
     if (width == options_.width && height == options_.height) { return; }
     options_.width = std::max(1, width);
     options_.height = std::max(1, height);
-    // RESIZE the renderer, do not replace it: the fonts and the raster
+    // Resize the renderer, do not replace it: the fonts and the raster
     // counter stay, only the tiles are thrown away.
     renderer_.resize(options_.width, options_.height);
-    // RE-EVALUATE THE MEDIA QUERIES, and mark the cascade dirty only if one of them
-    // actually FLIPPED. That distinction is the whole reason set_environment reports
-    // it: dragging a window across Bootstrap's 576px breakpoint is one `dirty::styles`
-    // frame and hundreds of `dirty::layout` ones, which is what Chrome does too - and a
-    // page with no `@media` at all never re-resolves, which is the invariant
-    // browser.hpp states about a resize.
+    // Re-evaluate the media queries, and mark the cascade dirty only if one of
+    // them actually flipped (which is why set_environment reports it).
+    // Dragging a window across Bootstrap's 576px breakpoint is then one
+    // `dirty::styles` frame and hundreds of `dirty::layout` ones, as in
+    // Chrome, and a page with no `@media` at all never re-resolves, the
+    // invariant browser.hpp states about a resize.
     const bool flipped = media_environment_changed();
-    // AND REPORT IT TO THE PAGE'S MediaQueryLists (CSSOM View §13) - whether
-    // or not a SHEET's query flipped; a list's query need not be in any
+    // Report the change to the page's MediaQueryLists (CSSOM View §13) whether
+    // or not a style sheet's query flipped: a list's query need not be in any
     // sheet. The `change` events go out on the next tick.
     if (bindings_) { bindings_->report_media_query_changes(); }
     mark(flipped ? dirty::styles : dirty::layout);
 }
 
-// Push the window's size and the user's preferences into the style engine. Returns
-// whether any media query's truth moved as a result.
+/// Pushes the window's size and the user's preferences into the style engine.
+/// Returns whether any media query's result changed as a result.
 bool browser::media_environment_changed() {
     ctbrowser::style::css::media_environment env = styles_->environment();
     env.viewport_width = static_cast<float>(options_.width);
@@ -188,20 +191,18 @@ void browser::scroll_to(float x, float y) {
     scroll_y_ = clamped;
     scroll_x_ = clamped_x;
     layers_.scroll_to(scroll_x_, scroll_y_);
-    // The page hears about it on the next tick, whoever moved the view - the
+    // The page hears about it on the next tick, whoever moved the view: the
     // wheel, a key, the scrollbar or window.scrollTo (CSSOM View §13.1).
     if (bindings_) { bindings_->queue_scroll_event(node_id{}); }
-    // The page's tiles survive - they are in CONTENT space, which is the
-    // point of the whole design - but the scrollbar's thumb is a function
-    // of where we now are, so its two rectangles are redrawn AND its tile
-    // is invalidated. Redrawing the display list is not enough: a tile is
-    // identified by (layer, column, row), so the cached one is served again
-    // and the thumb never moves. That is the "does not update" report.
+    // Page tiles are in content space and survive a scroll, but the scrollbar
+    // thumb depends on the scroll position. Redrawing its display list is not
+    // enough: tiles are keyed by (layer, column, row), so the cached tile would
+    // be served again. Discard the chrome layer's tiles as well.
     refresh_chrome();
     if (page_layers_ < layers_.layers.size()) {
         renderer_.discard_layer(static_cast<std::uint32_t>(page_layers_));
     }
-    // NOT dirty otherwise. Tiles are in content space and survive this.
+    // Nothing else is marked dirty: tiles are in content space and survive.
 }
 
 bool browser::on_scrollbar(float x) const noexcept {
@@ -221,9 +222,8 @@ rect browser::viewport() const noexcept {
 }
 
 void browser::frame(scheduler * pool) {
-    // A value the page assigned OUTSIDE an event handler - at the top of the
-    // script, say - reaches the control here. Dispatch covers the rest.
-    // Anything a script wrote into `value`/`checked` reaches the controls here.
+    // Push values a script wrote into `value`/`checked` outside an event handler
+    // (at the top of a script, say) to the controls; dispatch covers the rest.
     if (bindings_ && bindings_->refresh_wrappers()) { mark(dirty::paint); }
     // Anything drawn into a canvas since the last frame makes its tiles
     // stale. Asking here rather than being told keeps the bindings from
@@ -234,8 +234,9 @@ void browser::frame(scheduler * pool) {
     }
     if (dirty_ >= dirty::raster) { renderer_.discard(); }
     renderer_.clear_color = options_.background;
-    // The four stages the dirty level chooses between. What each costs is
-    // benchmarks/' job; that a scroll skips three of them is layout_count()'s.
+    // The four stages: style resolution, layout, paint recording and (in draw()
+    // below) rasterising. Each runs only when the dirty level reaches it, so a
+    // scroll skips the first three; layout_count() lets tests check that.
     if (dirty_ >= dirty::styles) { resolve_styles(); }
     if (dirty_ >= dirty::layout) {
         run_layout();
@@ -244,10 +245,10 @@ void browser::frame(scheduler * pool) {
     }
     if (dirty_ >= dirty::paint) { record(); }
     dirty_ = dirty::nothing;
-    // THE FOCUS FIXUP (HTML, update the rendering): a focused element a
-    // layout since the last look left no focusable area - hidden, disabled,
-    // made inert - gives focus to the viewport, `blur` and all. After the
-    // reset, so what that changes is the next frame's to draw.
+    // The focus fixup (HTML, "update the rendering"): a focused element that a
+    // layout since the last check left no longer a focusable area (hidden,
+    // disabled, made inert) gives focus to the viewport, `blur` and all. This
+    // runs after the dirty reset, so what it changes is drawn next frame.
     if (std::exchange(layouts_fixed_up_, layouts_) != layouts_ && focused_) {
         bool lost = false;
         bool typing = false;
@@ -259,8 +260,9 @@ void browser::frame(scheduler * pool) {
         if (lost) {
             (void)focus_update(node_id{});
         } else if (typing) {
-            // A focused control that BECAME a text field - its type changed
-            // under the focus - shows it from now on (focus-visible-027).
+            // A focused control that became a text field (its type changed
+            // while focused) shows its focus from now on (WPT
+            // focus-visible-027).
             (void)set_state(focused_, state_focus_visible, true);
         }
     }
@@ -276,15 +278,15 @@ void browser::frame(scheduler * pool) {
 void browser::resolve_styles() {
     refresh_author_styles();
     const auto txn = doc_->read();
-    // THE BEFORE-CHANGE STYLE (CSS Transitions 1 §3) is the previous
+    // The before-change style (CSS Transitions 1 §3) is the previous
     // resolution's map, kept for the length of this one so the bindings can
     // compare each element's two computed styles once the new map is whole.
     const ctbrowser::style::style_map before = std::move(resolved_);
     resolved_ = styles_->resolve_all(txn);
-    // A ROOT WITH `overflow: scroll` always has its scrollbars, and the
-    // viewport units exclude them (viewport_less_scroll_root); the cascade is
-    // re-run at that size when it differs from the window's, which is the
-    // one extra pass a page that asked for scrollbars pays.
+    // A root with `overflow: scroll` always has its scrollbars, and the
+    // viewport units exclude them (viewport_less_scroll_root). The cascade is
+    // re-run at that size when it differs from the window's, which is the one
+    // extra pass a page that asked for scrollbars pays.
     const auto [width, height] =
         viewport_less_scroll_root(atoms_, resolved_, txn.root(), static_cast<float>(options_.width),
                                   static_cast<float>(options_.height), options_.scrollbar_width);
@@ -295,10 +297,11 @@ void browser::resolve_styles() {
         (void)styles_->set_environment(env);
         resolved_ = styles_->resolve_all(txn);
     }
-    // THE STYLE CHANGE EVENT: every `animation-name` and every changed
+    // The style change event: every `animation-name` and every changed
     // property with a matching `transition-property` becomes an animation
-    // record now, sampled at this clock - so a read that asked for this flush
-    // sees the cascade's animations on the same call (bindings/animations/css.cpp).
+    // record now, sampled at this clock, so a read that asked for this flush
+    // sees the cascade's animations on the same call
+    // (bindings/animations/css.cpp).
     if (bindings_) { bindings_->update_css_animations(txn, before, resolved_); }
 }
 
@@ -310,7 +313,7 @@ void browser::run_layout() {
     const auto txn = doc_->read();
     ctbrowser::layout::box_builder builder{atoms_, resolved_, measure()};
     // An <img> with no width/height attribute is as big as its bitmap. Only
-    // the browser knows that - layout cannot decode images and should not
+    // the browser knows that: layout cannot decode images and should not
     // learn how.
     builder.intrinsic_image = [this](node_id id) {
         const auto pixels = image_of(id);
@@ -329,11 +332,11 @@ void browser::run_layout() {
     };
     boxes_ = builder.build(txn, txn.root());
     const ctbrowser::layout::engine eng{measure()};
-    // THE PAGE IS AS TALL AS ITS SCROLLING AREA (CSSOM View §2), not as its
+    // The page is as tall as its scrolling area (CSSOM View §2), not as its
     // root box: an absolutely positioned box below the fold is reachable by
-    // scrolling in every browser, and the scroll-behavior-main-frame-window
-    // tests lay their whole content out that way.
-    // (With no viewport floor: a short page stays shorter than the window.)
+    // scrolling in every browser, and the WPT scroll-behavior-main-frame-window
+    // tests lay their whole content out that way. There is no viewport floor:
+    // a short page stays shorter than the window.
     const auto page_height = [&](float width) {
         return std::max(fragments_.bounds.height,
                         ctbrowser::layout::viewport_scrolling_area(fragments_, width, 0).height);
@@ -342,11 +345,11 @@ void browser::run_layout() {
         eng.run(boxes_, static_cast<float>(options_.width), static_cast<float>(options_.height));
     content_height_ = page_height(static_cast<float>(options_.width));
 
-    // TWO PASSES when the page overflows: the scrollbar takes width away
-    // from the content, and content laid out at the full width would run
-    // under it. This terminates because narrowing a page can only make it
-    // TALLER, so a page that overflowed still overflows - it never
-    // oscillates between needing a bar and not.
+    // Two passes when the page overflows: the scrollbar takes width away from
+    // the content, and content laid out at the full width would run under it.
+    // A second pass is enough because narrowing a page can only make it
+    // taller, so a page that overflowed still overflows; it never oscillates
+    // between needing a bar and not.
     layout_width_ = static_cast<float>(options_.width);
     scrollbar_shown_ = !viewport_hides_overflow(atoms_, resolved_, txn);
     if (options_.scrollbar_width > 0 && content_height_ > static_cast<float>(options_.height) &&
@@ -361,7 +364,7 @@ void browser::run_layout() {
     scroll_y_ = std::clamp(scroll_y_, 0.0f, max_scroll());
     scroll_x_ = std::clamp(scroll_x_, 0.0f, max_scroll_x());
     // offsetWidth and friends read the fragment tree, so they answer with
-    // THIS layout rather than the one before it.
+    // this layout rather than the one before it.
     if (bindings_) {
         bindings_->observe_layout(&fragments_);
         // getComputedStyle needs the box tree and the cascade as well as the
@@ -370,22 +373,15 @@ void browser::run_layout() {
         // this layout's geometry beside the previous layout's styles.
         bindings_->observe_boxes(&boxes_);
         bindings_->observe_styles(&resolved_);
-        // The width LAYOUT RAN AT, not the window's. When the page overflows the
-        // scrollbar takes 15px from the initial containing block, and a
-        // `clientWidth` that answered with the window would tell a page it had
-        // room the layout did not give it - Bootstrap's `.container` centred
-        // itself in 1009px while the page was told 1024, so every script-driven
-        // measurement was 15px out. This is the layout viewport, which is what
-        // the spec means by the root element's client rectangle.
+        // The width layout ran at, not the window's: when the page overflows,
+        // the scrollbar takes `scrollbar_width` from the initial containing
+        // block, and `clientWidth` must report the room layout actually gave
+        // the page. This is the layout viewport, which is what the spec means
+        // by the root element's client rectangle.
         bindings_->observe_viewport(layout_viewport_width(), options_.height);
-        // AND PUSH THE NEW GEOMETRY INTO THE WRAPPERS. An element object holds
-        // offsetWidth and friends as data properties, refreshed on access and
-        // before an event dispatches - but `document.documentElement` and
-        // `document.body` are wrapped once at install time and a page that only
-        // reads them, never dispatching an event, saw the geometry from before
-        // the first layout: offsetWidth 0 on the root of every page, forever.
-        // Re-pointing the fragment tree without re-reading it is what left them
-        // stale, so the two go together.
+        // Refresh existing wrappers too: offsetWidth and friends are cached
+        // data properties, and `document.documentElement`/`document.body` are
+        // wrapped once and may never see an event that would refresh them.
         (void)bindings_->refresh_wrappers();
     }
     // The frames inside, at the sizes this layout just gave them.
@@ -394,11 +390,11 @@ void browser::run_layout() {
 }
 
 void browser::record() {
-    // Bracket the SVG cache around the recording, and ONLY around a recording.
+    // Bracket the SVG cache around the recording, and only around a recording.
     // Every graphic still on the page is asked for during record_layers below,
-    // so anything left unasked-for afterwards belongs to a size that no longer
-    // exists - which is what dragging a window edge produces, one full raster
-    // per pixel dragged, until something drops them.
+    // so anything not asked for belongs to a size that no longer exists and
+    // is evicted. Dragging a window edge would otherwise keep one full raster
+    // per pixel dragged.
     svg_.begin_frame();
 
     // The selection's highlight. Computed here rather than stored on the
@@ -414,7 +410,7 @@ void browser::record() {
     };
     layers_ = recorder_.record_layers(fragments_);
     layers_.scroll_to(scroll_x_, scroll_y_);
-    page_layers_ = layers_.layers.size(); // everything after this is chrome
+    page_layers_ = layers_.layers.size(); // Layers after this are chrome.
     record_chrome();
     svg_.end_frame();
 }

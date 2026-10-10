@@ -1,5 +1,10 @@
-// dom_bindings - the element collections: by tag, class and name, the HTML
-// element walks, and the live HTMLCollection they are handed back as.
+//===- collections.cpp - Element walks and live collections -----*- C++ -*-===//
+//
+// dom_bindings' element collections: the walks by tag, class and name, the
+// HTML element lookups (body, title), and the live HTMLCollection/NodeList
+// proxy they are handed back as.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -9,16 +14,13 @@ namespace ctbrowser::shell {
 
 using namespace detail;
 
-// THE LOCAL NAME AND THE NAMESPACE, which is the pair HTML's own definitions
-// are written in and the pair `find_by_tag` below cannot ask about.
-//
-// It matters twice over in this engine. The tokenizer preserves case inside
-// foreign content on purpose - see CLAUDE.md - so an SVG `<title>` and an HTML
-// `<title>` can intern to the same atom while an SVG `<clipPath>` and an HTML
-// one do not, and `<svg><title>Chart</title></svg>` really did make
-// `document.title` answer "Chart".
+// HTML defines these lookups by local name and namespace, which `find_by_tag`
+// below cannot check. An SVG `<title>` interns to the same atom as an HTML
+// `<title>`, so without the namespace test `<svg><title>Chart</title></svg>`
+// made `document.title` answer "Chart".
 namespace {
 
+/// The part of a qualified name after the first `:`, or all of it.
 [[nodiscard]] std::string_view local_name_of(std::string_view qualified) {
     const std::size_t colon = qualified.find(':');
     return colon == std::string_view::npos ? qualified : qualified.substr(colon + 1);
@@ -26,6 +28,8 @@ namespace {
 
 } // namespace
 
+/// The first HTML-namespace element in tree order whose local name is
+/// `local`, or an empty id.
 node_id dom_bindings::first_html_element(std::string_view local) {
     const auto txn = doc_->read();
     node_id found{};
@@ -43,6 +47,7 @@ node_id dom_bindings::first_html_element(std::string_view local) {
     return found;
 }
 
+/// Every HTML-namespace element whose local name is `local`, in tree order.
 std::vector<node_id> dom_bindings::all_html_elements(std::string_view local) {
     const auto txn = doc_->read();
     std::vector<node_id> found;
@@ -58,17 +63,17 @@ std::vector<node_id> dom_bindings::all_html_elements(std::string_view local) {
     return found;
 }
 
-// "The body element", HTML 4.2.3: the FIRST CHILD of the document element that
-// is a `body` or a `frameset`. Not the first `<body>` in the document - a
-// `<body>` the parser has put inside a `<div>` is not the document's body, and
-// `Document.body.html` asserts that by building one.
+/// "The body element", HTML 4.2.3: the first child of the document element
+/// that is a `body` or a `frameset`. Not the first `<body>` in the document: a
+/// `<body>` inside a `<div>` is not the document's body, and WPT
+/// Document.body.html asserts that by building one.
 node_id dom_bindings::body_element() {
     const auto txn = doc_->read();
     const node_id root = txn.root();
-    // "The body element of a document is the first child of the HTML ELEMENT
-    // that is either a body element or a frameset element" - a root that is
+    // "The body element of a document is the first child of the html element
+    // that is either a body element or a frameset element": a root that is
     // not an html element in the HTML namespace has no body, whatever its
-    // children are called (Document.body.html).
+    // children are called (WPT Document.body.html).
     if (txn.element_ns(root) != node_ns::html || txn.local_name(root) != "html") {
         return node_id{};
     }
@@ -82,12 +87,12 @@ node_id dom_bindings::body_element() {
     return node_id{};
 }
 
-// "The title element", HTML 4.2.2 - and the SVG branch is not a curiosity. A
-// document whose root is `<svg>` takes its title from that root's own first
-// SVG `<title>` CHILD, not from any HTML title anywhere; every other document
-// takes the first HTML title element in tree order, wherever it is. That
-// "wherever" is what `document.title-01.html` is about: it removes the head,
-// appends a `<title>` to the BODY, and expects the title to be that one.
+/// "The title element", HTML 4.2.2. A document whose root is `<svg>` takes its
+/// title from that root's own first SVG `<title>` child, not from any HTML
+/// title anywhere; every other document takes the first HTML title element in
+/// tree order, wherever it is. WPT document.title-01.html tests that
+/// "wherever": it removes the head, appends a `<title>` to the body, and
+/// expects the title to be that one.
 node_id dom_bindings::title_element() {
     const auto txn = doc_->read();
     const node_id root = txn.root();
@@ -106,9 +111,8 @@ node_id dom_bindings::title_element() {
         }
         return node_id{};
     }
-    // Outside the transaction would be tidier, but `first_html_element` opens
-    // one of its own and a read nested inside another read is a shape nothing
-    // else in these bindings has - so the walk is repeated here instead.
+    // Not first_html_element("title"): it opens its own read transaction, and
+    // nothing else in these bindings nests one read inside another.
     node_id found{};
     const auto walk = [&](auto && self, node_id at) -> void {
         if (found) { return; }
@@ -124,6 +128,8 @@ node_id dom_bindings::title_element() {
     return found;
 }
 
+/// The first element in tree order whose tag atom is `tag` lowercased, in any
+/// namespace.
 node_id dom_bindings::find_by_tag(std::string_view tag) {
     const auto txn = doc_->read();
     const atom want = atoms_->intern_lower(tag);
@@ -138,11 +144,11 @@ node_id dom_bindings::find_by_tag(std::string_view tag) {
 
 namespace {
 
-// A property key that is a whole non-negative integer and nothing else. "1x" is
-// not index 1, and neither is " 1", "+1" or "1.0" - a collection has to say no
-// to those or `hasOwnProperty` starts agreeing to keys nobody indexed.
-// AND BELOW 2^32 - 1, which is WebIDL's "array index": "4294967295" is a NAME,
-// and a collection answers it with the element whose id it is.
+/// The index a property key names, if it is a whole non-negative integer and
+/// nothing else. "1x" is not index 1, and neither is " 1", "+1" or "1.0"; a
+/// collection has to say no to those or `hasOwnProperty` starts agreeing to
+/// keys nobody indexed. The index must also be below 2^32 - 1, WebIDL's "array
+/// index": "4294967295" is a name, answered with the element whose id it is.
 [[nodiscard]] std::optional<std::size_t> whole_index(std::string_view key) {
     if (key.empty() || (key.size() > 1 && key.front() == '0')) { return std::nullopt; }
     std::size_t at = 0;
@@ -155,31 +161,34 @@ namespace {
 
 } // namespace
 
+/// The namespace URI of element `id`, or "" for the null namespace.
 std::string dom_bindings::namespace_of(node_id id) const {
     if (const auto it = namespaces_.find(id.key()); it != namespaces_.end()) { return it->second; }
     const auto txn = doc_->read();
     switch (txn.element_ns(id)) {
     case node_ns::svg: return std::string{svg_namespace};
     case node_ns::html: return std::string{xhtml_namespace};
-    // An `other` element the parsers made - MathML from the HTML parser, a
-    // page's own vocabulary from the XML one - has its URI on the document;
+    // An `other` element the parsers made (MathML from the HTML parser, a
+    // page's own vocabulary from the XML one) has its URI on the document;
     // one createElementNS made is in `namespaces_` above. A stale handle
-    // resolves to neither, and the null namespace is the honest answer for a
-    // node that is not there any more.
+    // resolves to neither, and gets the null namespace.
     case node_ns::other: return std::string{atoms_->text(txn.element_namespace(id))};
     }
     return {};
 }
 
+/// The elements carrying every class in `tokens`, in tree order: under
+/// element `root` (excluding it), or in the whole document when `root` is
+/// empty.
 std::vector<node_id> dom_bindings::all_by_class(node_id root,
                                                 const std::vector<std::string> & tokens) {
     if (tokens.empty()) { return {}; }
     const auto txn = doc_->read();
     const atom class_attribute = atoms_->intern("class");
     std::vector<node_id> found;
-    // CASE-SENSITIVE in standards mode, ASCII-case-insensitive in quirks mode
-    // (DOM 4.5 "list of elements with class names") - which is
-    // getElementsByClassName-14.htm, a doctype-less page with `class="a A"`.
+    // Case-sensitive in standards mode, ASCII-case-insensitive in quirks mode
+    // (DOM 4.5 "list of elements with class names"); WPT
+    // getElementsByClassName-14.htm is a doctype-less page with `class="a A"`.
     const bool quirks = doc_->quirks();
     const auto has_every = [&](node_id at) {
         const std::vector<std::string> held =
@@ -191,20 +200,21 @@ std::vector<node_id> dom_bindings::all_by_class(node_id root,
         });
     };
     const auto walk = [&](auto && self, node_id at, bool include) -> void {
-        // ELEMENTS ONLY, and never the element the search started from: a search
-        // rooted at an element looks at its DESCENDANTS.
+        // Elements only, and never the element the search started from: a
+        // search rooted at an element looks at its descendants.
         if (include && txn.tag(at).has_value() && has_every(at)) { found.push_back(at); }
         for (const node_id child : txn.children(at)) { self(self, child, true); }
     };
-    // THE DOCUMENT'S ROOT IS THE <html> ELEMENT, not a Document node - this
-    // tree builder makes `<html>` and calls set_document_element with it, and
-    // there is no node above it. So a document-wide search must INCLUDE the root, or
-    // `document.getElementsByClassName` silently cannot return the one element
-    // that is most often given a class. An element-rooted search excludes it.
+    // A document-wide search starts at txn.root(), the document element (the
+    // `<html>`), not the Document node above it. So it must include its start,
+    // or `document.getElementsByClassName` could never return the element most
+    // often given a class. An element-rooted search excludes its start.
     walk(walk, root ? root : txn.root(), !root);
     return found;
 }
 
+/// Every HTML element whose `name` attribute is `name`, in tree order
+/// (getElementsByName).
 std::vector<node_id> dom_bindings::all_by_name(std::string_view name) {
     const auto txn = doc_->read();
     const atom key = atoms_->intern("name");
@@ -220,42 +230,45 @@ std::vector<node_id> dom_bindings::all_by_name(std::string_view name) {
     return found;
 }
 
-// THE LIVE COLLECTION, and its property model - WebIDL's "legacy platform
+// The live collection and its property model: WebIDL's "legacy platform
 // object" with an indexed getter and, for an HTMLCollection, a named one.
 //
-// WHAT A PAGE CAN OBSERVE, and `Document-Element-getElementsByTagName.js`
-// observes all of it: `length`, `item` and `namedItem` are on the PROTOTYPE
+// What a page can observe (WPT Document-Element-getElementsByTagName.js
+// observes all of it): `length`, `item` and `namedItem` are on the prototype
 // (`list.item = "pass"` shadows the inherited one with an expando); every
-// index and every exposed id/name is an OWN property of the collection - so
-// `Object.getOwnPropertyNames(list)` is ["0", "1", "x"] and nothing else,
-// an index enumerable and a name not; an index cannot be assigned; and all of
-// it is LIVE, recomputed as the document changes.
+// index and every exposed id/name is an own property of the collection, so
+// `Object.getOwnPropertyNames(list)` is ["0", "1", "x"] and nothing else, an
+// index enumerable and a name not; an index cannot be assigned; and all of it
+// is live, recomputed as the document changes.
 //
-// HOW: a proxy over a target that carries the own properties. The traps
-// REFRESH the target first - but only when the document's version moved since
-// the last refresh, which is what keeps `for (i < list.length) list[i]` from
-// walking the document per iteration. A refresh re-runs `members`, adds or
-// removes the index accessors at the tail (an index reads `members[i]` so the
+// How: a proxy over a target that carries the own properties. The traps
+// refresh the target first, but only when the document's version moved since
+// the last refresh, which keeps `for (i < list.length) list[i]` from walking
+// the document per iteration. A refresh re-runs `members`, adds or removes
+// the index accessors at the tail (an index reads `members[i]`, so the
 // accessor itself never goes stale) and re-derives the named keys. The
 // prototype's three members find the collection's state through one hidden
-// symbol-keyed own property - a symbol key is what getOwnPropertyNames does
-// not report - so nothing about the walk lives on the prototype.
+// symbol-keyed own property (getOwnPropertyNames does not report symbol
+// keys), so nothing about the walk lives on the prototype.
 //
-// WHAT IS NOT MODELLED: a strict-mode `list[5] = x` should throw; this engine
-// has no strict mode (vm/objects/store.cpp), so it is silently refused instead.
+// An index write is refused by the `set` trap returning false. The VM treats
+// that as a rejected store (vm/objects/store.cpp): ignored in sloppy code, a
+// TypeError in strict code.
 namespace {
 
 constexpr std::string_view collection_state_key = CTBROWSER_SYMBOL_KEY("sym:ctbrowser:collection");
 
-// One native, three questions, closing over the C++ side of a collection.
-// Called as state("length") / state("item", i) / state("namedItem", name).
-//
-// THE BRAND CHECK, WebIDL 3.7.6 step 1: the state is an OWN property of the
-// collection - of the proxy's target, read without a trap - so an object that
-// merely inherits from a collection is not one, and `Object.create(list)
-// .length` is the TypeError (HTMLCollection-as-prototype.html). The proxy's
-// get trap passes the receiver on, which is what lets this see the object the
-// read started from.
+/// The collection's hidden state native, or undefined when `self` is not a
+/// collection. The state is one native answering three questions, closing over
+/// the C++ side of a collection: state("length"), state("item", i) and
+/// state("namedItem", name).
+///
+/// This is the brand check, WebIDL 3.7.6 step 1: the state is an own property
+/// of the collection (of the proxy's target, read without a trap), so an
+/// object that merely inherits from a collection is not one, and
+/// `Object.create(list).length` is a TypeError (WPT
+/// HTMLCollection-as-prototype.html). The proxy's get trap passes the
+/// receiver on, which lets this see the object the read started from.
 [[nodiscard]] value collection_state_of(value self) {
     value holder = self;
     if (self.is_kind(script::heap_kind::proxy)) {
@@ -267,6 +280,8 @@ constexpr std::string_view collection_state_key = CTBROWSER_SYMBOL_KEY("sym:ctbr
     return held == nullptr ? value::undefined() : *held;
 }
 
+/// Asks `self`'s collection state `what`, throwing "Illegal invocation" when
+/// `self` is not a collection.
 [[nodiscard]] value ask_collection(context & cx, value self, const char * what, value argument) {
     const value state = collection_state_of(self);
     if (!state.is_callable()) {
@@ -277,10 +292,11 @@ constexpr std::string_view collection_state_key = CTBROWSER_SYMBOL_KEY("sym:ctbr
     return cx.call(state, args, value::undefined());
 }
 
-// `length`, `item` and `namedItem` on a collection interface's prototype, once.
-// ENUMERABLE, as WebIDL 3.7.6-7 has every regular operation and attribute on an
-// interface prototype: `for (p in document.forms)` lists the indices and then
-// item, length and namedItem (document.forms.html); `@@iterator` alone is not.
+/// Installs `length`, `item` and (when `named`) `namedItem` on a collection
+/// interface's prototype, once. They are enumerable, as WebIDL 3.7.6-7 makes
+/// every regular operation and attribute on an interface prototype:
+/// `for (p in document.forms)` lists the indices and then item, length and
+/// namedItem (WPT document.forms.html); `@@iterator` alone is not enumerable.
 void install_collection_prototype(context & cx, script::object_object & proto, bool named) {
     if (proto.find("item") != nullptr) { return; }
     const auto native = [&cx](const char * name, unsigned length, script::native_fn fn) {
@@ -319,20 +335,20 @@ void install_collection_prototype(context & cx, script::object_object & proto, b
 
 } // namespace
 
-// THE ITERABLE DECLARATION (WebIDL 3.7.10): `[Symbol.iterator]`, and for a
-// value iterable that is not a named collection - NodeList, DOMTokenList -
-// forEach/keys/values/entries too. Static because DOMTokenList.prototype is
-// built in element/child_views.cpp over the same shape: an object with
-// `length` and an indexed getter.
-//
-// THE ARRAY'S OWN FUNCTIONS, the same objects: for an interface with an
-// indexed property getter, @@iterator is %Array.prototype.values% and the
-// four value-iterator members are Array.prototype's (WebIDL 3.7.10.1 and
-// 3.7.11) - Node-childNodes.html and DOMTokenList-iteration.html compare them
-// by identity. They are generic over array-likes and LIVE, reading `length`
-// and the index through the collection on every step
-// (builtins/collections/array_iteration.cpp), so `list.values()` sees what a
-// loop body appended.
+/// The iterable declaration (WebIDL 3.7.10): `[Symbol.iterator]`, and for a
+/// value iterable that is not a named collection (NodeList, DOMTokenList)
+/// forEach/keys/values/entries too. Static because DOMTokenList.prototype is
+/// built in element/child_views.cpp over the same shape: an object with
+/// `length` and an indexed getter.
+///
+/// The members are Array.prototype's own function objects: for an interface
+/// with an indexed property getter, @@iterator is %Array.prototype.values% and
+/// the four value-iterator members are Array.prototype's (WebIDL 3.7.10.1 and
+/// 3.7.11); WPT Node-childNodes.html and DOMTokenList-iteration.html compare
+/// them by identity. They are generic over array-likes and live, reading
+/// `length` and the index through the collection on every step
+/// (builtins/collections/array_iteration.cpp), so `list.values()` sees what a
+/// loop body appended.
 void dom_bindings::install_iterable_declaration(context & cx, script::object_object & proto,
                                                 bool named_only) {
     if (proto.find(CTBROWSER_SYMBOL_KEY("iterator")) != nullptr) { return; }
@@ -349,21 +365,22 @@ void dom_bindings::install_iterable_declaration(context & cx, script::object_obj
     }
 }
 
+/// A live collection of interface `interface_name` whose members are what
+/// `members` returns, re-run whenever the document's version changes. See the
+/// property model above.
 value dom_bindings::make_live_collection(context & cx,
                                          std::function<std::vector<node_id>()> members,
                                          std::string_view interface_name) {
     auto * target = cx.allocate<script::object_object>();
     auto * handler = cx.allocate<script::object_object>();
-    // The table is built lazily on the first `wrap()`, and a page can ask for a
-    // collection before it has touched a single element - `document.images`
-    // reaches here without wrapping anything. Without this the prototype was
-    // `undefined` and `instanceof HTMLCollection` was false for the first
-    // collection a page made and true for every one after it.
+    // The interface prototypes looked up below may not exist yet: a page can
+    // ask for a collection (`document.images`) before anything was wrapped.
+    // Without them `instanceof HTMLCollection` would be false.
     ensure_dom_interfaces(cx);
-    // THE THREE HTML COLLECTIONS ARE HTMLCollections with more on top -
-    // HTMLOptionsCollection and HTMLFormControlsCollection chain to it, and
-    // RadioNodeList to NodeList - so `length`, `item` and `namedItem` go on
-    // the base prototype once and the derived one carries only its own.
+    // The derived collections build on a base: HTMLOptionsCollection and
+    // HTMLFormControlsCollection chain to HTMLCollection, and RadioNodeList to
+    // NodeList. So `length`, `item` and `namedItem` go on the base prototype
+    // once and the derived one carries only its own members.
     const bool named = interface_name != "NodeList" && interface_name != "RadioNodeList";
     const bool form_controls = interface_name == "HTMLFormControlsCollection";
     if (const value base = interface_prototype(named ? "HTMLCollection" : "NodeList");
@@ -384,19 +401,17 @@ value dom_bindings::make_live_collection(context & cx,
     };
     const auto held = std::make_shared<state>();
     held->live = std::move(members);
-    // A MEMBER IS THE WRAPPER IT ALREADY HAS, without the refresh `wrap` does
-    // - that re-measures the element's box on every read, and `list[j]` in a
-    // loop is the hottest thing a page does with a collection. A wrapper
+    // A member is the wrapper it already has, without the refresh `wrap`
+    // does: that re-measures the element's box on every read, and `list[j]`
+    // in a loop is the hottest thing a page does with a collection. A wrapper
     // held in a variable is no fresher, and every wrapper is refreshed before
     // a frame and a dispatch regardless.
     const auto member = [this](context & c, node_id id) {
         const value already = value_of_wrapper(id);
         return already.is_object() ? already : wrap(c, id);
     };
-    // Allocating in the context the CALL arrives in, not the one captured at
-    // creation: `refresh` outlives this frame.
 
-    // The first member whose id - or, for an HTML element, name - is `want`.
+    // The first member whose id (or, for an HTML element, name) is `want`.
     const auto named_member = [this](const std::vector<node_id> & found, std::string_view want) {
         const auto txn = doc_->read();
         const atom id = atoms_->intern("id");
@@ -409,9 +424,8 @@ value dom_bindings::make_live_collection(context & cx,
         }
         return node_id{};
     };
-    // ...and, for HTMLFormControlsCollection (HTML 4.10.20.1), EVERY such
-    // member: one is the element, several are a RadioNodeList over them,
-    // none is null.
+    // For HTMLFormControlsCollection (HTML 4.10.20.1), every such member: one
+    // is the element, several are a RadioNodeList over them, none is null.
     const auto all_named = [this](const std::vector<node_id> & found, std::string_view want) {
         std::vector<node_id> matching;
         const auto txn = doc_->read();
@@ -438,7 +452,9 @@ value dom_bindings::make_live_collection(context & cx,
             "RadioNodeList");
     };
 
-    // BRING THE TARGET'S OWN PROPERTIES UP TO DATE, when the document moved.
+    // Brings the target's own properties up to date when the document moved.
+    // `refresh` and the accessors take the calling context as a parameter
+    // rather than capturing `cx`: they outlive this call.
     const auto refresh = [this, target, held, named, named_value, member](context & c) {
         const std::uint64_t now = doc_->version();
         if (now == held->version && held->version != 0) { return; }
@@ -496,7 +512,7 @@ value dom_bindings::make_live_collection(context & cx,
     };
 
     // The hidden state property the prototype's members reach the walk through.
-    // CONFIGURABLE, and only that: a non-configurable key is one the ownKeys
+    // Configurable, and only that: a non-configurable key is one the ownKeys
     // trap below would be obliged to report, and this one is nobody's business.
     target->define(collection_state_key,
                    native(cx, "collection",
@@ -524,14 +540,14 @@ value dom_bindings::make_live_collection(context & cx,
                           }),
                    script::attr_configurable);
 
-    // ONCE NOW: `Object.getOwnPropertyNames(list)` reads the target through no
+    // Refresh once now: `Object.getOwnPropertyNames(list)` reads the target through no
     // trap at all, and a collection nothing has touched must already own its
     // indices.
     refresh(cx);
 
-    // A SUPPORTED NAME THAT IS VISIBLE (WebIDL 3.9 "named property visibility"):
-    // one refresh() gave its accessor - an expando of the same name shadows
-    // it, and then the name is the expando's.
+    // Whether `key` is a visible supported name (WebIDL 3.9 "named property
+    // visibility"): one refresh() gave its accessor. An expando of the same
+    // name shadows it, and then the name is the expando's.
     const auto visible_name = [held, target, named](const std::string & key) {
         return named && std::ranges::find(held->names, key) != held->names.end() &&
                target->find_accessor(key) != nullptr;
@@ -542,29 +558,29 @@ value dom_bindings::make_live_collection(context & cx,
                      refresh(c);
                      const std::string key = c.to_string(args[1]);
                      if (const std::optional<std::size_t> at = whole_index(key)) {
-                         // Reading an existing member does not allocate by index.
-                         // Its supported indices are exactly 0..length-1, as for item().
+                         // Supported indices are exactly 0..length-1, as for
+                         // item().
                          return *at < held->members.size() ? member(c, held->members[*at])
                                                            : value::undefined();
                      }
                      return c.get_with_receiver(args[0], key, args.size() > 2 ? args[2] : args[0]);
                  }));
-    // AN INDEX IS READ-ONLY. `collection[0] = x` must not stick - an
-    // HTMLCollection's indexed properties have no setter, so a non-strict
-    // assignment is silently ignored. Anything else is an expando on the
-    // target, which is how `list.item = "pass"` shadows the prototype's.
+    // An index is read-only: `collection[0] = x` must not stick, because an
+    // HTMLCollection's indexed properties have no setter. Anything else is an
+    // expando on the target, which is how `list.item = "pass"` shadows the
+    // prototype's.
     handler->set(
         "set", native(cx, "set", [held, refresh, visible_name](context & c, std::span<value> args) {
             if (args.size() < 3 || !args[0].is_object()) { return value::boolean(false); }
             refresh(c);
             const std::string key = c.to_string(args[1]);
-            // A WRITE THROUGH AN OBJECT THAT INHERITS FROM THE COLLECTION -
-            // `Object.create(list).x = 1` - is WebIDL 3.9.2 [[Set]] with a
+            // A write through an object that inherits from the collection
+            // (`Object.create(list).x = 1`) is WebIDL 3.9.2 [[Set]] with a
             // receiver that is not the collection: the named properties are
             // ignored (step 2's ignoreNamedProps), a supported index is still
             // a read-only data property, and the rest is OrdinarySet, which
-            // ends in a data property ON THE RECEIVER
-            // (HTMLCollection-as-prototype.html).
+            // ends in a data property on the receiver (WPT
+            // HTMLCollection-as-prototype.html).
             const value receiver = args.size() > 3 ? args[3] : args[0];
             const bool through_proxy =
                 receiver.is_kind(script::heap_kind::proxy) &&
@@ -578,11 +594,11 @@ value dom_bindings::make_live_collection(context & cx,
                     c, visible_name(key) ? c.get_prototype(args[0]) : args[0], key, args[2],
                     receiver));
             }
-            // ...UNLESS AN INTERFACE UP THE CHAIN HAS A SETTER FOR IT:
-            // HTMLOptionsCollection's `length` is writable (HTML
-            // 4.10.10, `select.options.length = 2` truncates), and it
-            // lives on that prototype, which this trap would otherwise
-            // never consult.
+            // `length` is read-only unless an interface up the chain has a
+            // setter for it: HTMLOptionsCollection's `length` is writable
+            // (HTML 4.10.10, `select.options.length = 2` truncates), and it
+            // lives on that prototype, which this trap would otherwise never
+            // consult.
             if (key == "length") {
                 for (value at = c.get_prototype(args[0]); at.is_object();
                      at = c.get_prototype(at)) {
@@ -606,8 +622,8 @@ value dom_bindings::make_live_collection(context & cx,
     // WebIDL 3.9.3 [[DefineOwnProperty]] and 3.9.4 [[Delete]] of a legacy
     // platform object with no indexed or named setter or deleter: an array
     // index can never be defined, a supported index or visible name never
-    // deleted - `Object.defineProperty(list, 0, ...)` throws and `delete
-    // list[0]` is false - and any other key is an ordinary own property.
+    // deleted (`Object.defineProperty(list, 0, ...)` throws and `delete
+    // list[0]` is false), and any other key is an ordinary own property.
     handler->set(
         "defineProperty",
         native(cx, "defineProperty", [refresh, visible_name](context & c, std::span<value> args) {
@@ -629,9 +645,9 @@ value dom_bindings::make_live_collection(context & cx,
                             }
                             if (visible_name(key)) { return value::boolean(false); }
                             const bool deleted = c.delete_own_property(args[0], key);
-                            // AN EXPANDO THAT SHADOWED A SUPPORTED NAME IS GONE,
-                            // and the name shows again: the next refresh puts
-                            // its accessor back.
+                            // An expando that shadowed a supported name is
+                            // gone, so the name shows again: force a refresh
+                            // to put its accessor back.
                             if (deleted &&
                                 std::ranges::find(held->names, key) != held->names.end()) {
                                 held->names.clear();
@@ -640,7 +656,7 @@ value dom_bindings::make_live_collection(context & cx,
                             }
                             return value::boolean(deleted);
                         }));
-    // `in` AND hasOwnProperty both come here (builtins/objects/object.cpp): an
+    // `in` and hasOwnProperty both come here (builtins/objects/object.cpp): an
     // own key of the refreshed target, or something the prototype answers.
     handler->set("has", native(cx, "has", [refresh](context & c, std::span<value> args) {
                      if (args.size() < 2) { return value::boolean(false); }
@@ -648,8 +664,8 @@ value dom_bindings::make_live_collection(context & cx,
                      return value::boolean(c.has_property(args[0], args[1]));
                  }));
     // WebIDL 3.9.1 [[GetOwnProperty]]: a supported index, or a visible name, is
-    // a DATA property holding the member - read-only and configurable, and
-    // enumerable for an index only - whatever accessor the target keeps it in.
+    // a data property holding the member (read-only and configurable, and
+    // enumerable for an index only), whatever accessor the target keeps it in.
     handler->set("getOwnPropertyDescriptor",
                  native(cx, "getOwnPropertyDescriptor",
                         [held, refresh, member, visible_name, named_value](context & c,
@@ -672,18 +688,20 @@ value dom_bindings::make_live_collection(context & cx,
                             if (!c.own_property(args[0], key, found)) { return value::undefined(); }
                             return c.from_property_descriptor(found);
                         }));
-    // `Object.getOwnPropertyNames(list)` AFTER A MUTATION nothing else has read
-    // through: the keys are the refreshed target's, in its order - the indices
-    // first, as WebIDL's [[OwnPropertyKeys]] has them, then the names and any
-    // expando (NodeList-live-mutations.window.js). Symbol keys are the hidden
-    // state slot's, and are left to the target - see document/named_access.cpp
-    // for why a symbol is not rebuilt here.
+    // `Object.getOwnPropertyNames(list)` after a mutation nothing else has
+    // read through: the keys are the refreshed target's, in its order (the
+    // indices first, as WebIDL's [[OwnPropertyKeys]] has them, then the names
+    // and any expando; WPT NodeList-live-mutations.window.js). The only symbol
+    // key is the hidden state slot, which is not reported; see
+    // document/named_access.cpp for why a symbol is not rebuilt here.
     handler->set("ownKeys", native(cx, "ownKeys", [refresh](context & c, std::span<value> args) {
                      const value out = c.make_array();
                      if (args.empty() || !args[0].is_object()) { return out; }
                      refresh(c);
                      auto & items = static_cast<script::array_object *>(out.as_heap())->items;
                      std::size_t count = 0;
+                     // Cap on keys reported, so a corrupted or runaway key
+                     // table cannot build an unbounded array.
                      constexpr std::size_t max_keys = 1000000;
                      static_cast<script::object_object *>(args[0].as_heap())
                          ->each_own_key([&](const std::string & key) {

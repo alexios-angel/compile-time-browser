@@ -1,6 +1,12 @@
-// The input types' value model - see the header. The calendar arithmetic is
-// the proleptic Gregorian days-from-civil pair, which is what makes a week
-// number or a month index a plain integer.
+//===- ctbrowser/lib/Shell/page/input_types.cpp - <input> value model -----===//
+//
+// The value model of HTML's <input> types (see input_types.hpp): parsing and
+// serialising date, time, number and other typed values, value sanitisation,
+// validity checks, and the autocomplete IDL attribute. The calendar arithmetic
+// is the proleptic Gregorian days-from-civil pair, which makes a week number
+// or a month index a plain integer.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/shell/net/url.hpp>
@@ -21,10 +27,10 @@ namespace ctbrowser::shell::input_types {
 using ctbrowser::html_whitespace;
 using ctbrowser::trim;
 
-// A "valid floating-point number" (HTML 2.3.5.2) when `lenient` is false:
-// an optional minus, digits, an optional fraction, an optional exponent, and
-// nothing else. The "rules for parsing floating-point number values" when
-// true: leading whitespace and a plus sign allowed, trailing garbage ignored.
+/// Parses a "valid floating-point number" (HTML 2.3.5.2) when `lenient` is false:
+/// an optional minus, digits, an optional fraction, an optional exponent, and
+/// nothing else. The "rules for parsing floating-point number values" when
+/// true: leading whitespace and a plus sign allowed, trailing garbage ignored.
 [[nodiscard]] bool parse_float(std::string_view text, double & out, bool lenient) {
     std::size_t at = 0;
     if (lenient) {
@@ -80,7 +86,7 @@ using ctbrowser::trim;
     const bool leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
     return m == 2 && leap ? 29 : lengths[m - 1];
 }
-// Monday-based day of week, 0..6, of a day count (1970-01-01 was a Thursday).
+/// Monday-based day of week, 0..6, of a day count (1970-01-01 was a Thursday).
 [[nodiscard]] static unsigned weekday_of(long long days) {
     return static_cast<unsigned>(((days + 3) % 7 + 7) % 7);
 }
@@ -91,7 +97,7 @@ using ctbrowser::trim;
 }
 constexpr double ms_per_day = 86400000.0;
 
-// A run of exactly `n` digits at `at`, advanced past.
+/// Reads a run of exactly `n` digits at `at` into `out` and advances past it.
 [[nodiscard]] static bool digits(std::string_view text, std::size_t & at, std::size_t n,
                                  long long & out) {
     if (at + n > text.size()) { return false; }
@@ -104,12 +110,12 @@ constexpr double ms_per_day = 86400000.0;
     at += n;
     return true;
 }
-// At least four digits: a year.
+/// Reads a year: at least four digits, positive.
 [[nodiscard]] static bool year_digits(std::string_view text, std::size_t & at, long long & out) {
     std::size_t n = 0;
     while (at + n < text.size() && text[at + n] >= '0' && text[at + n] <= '9') { ++n; }
     // Leading zeros are a valid year's padding ("0000002020"), so the cap is on
-    // the SIGNIFICANT digits: nine cannot overflow long long, and zeros add none.
+    // the significant digits: nine cannot overflow long long, and zeros add none.
     std::size_t zeros = 0;
     while (zeros < n && text[at + zeros] == '0') { ++zeros; }
     if (n < 4 || n - zeros > 9) { return false; }
@@ -159,8 +165,8 @@ constexpr double ms_per_day = 86400000.0;
     }
     return ms;
 }
-// The value of a typed input as its number: ms for the date and time types,
-// months since 1970-01 for month, the number itself for number and range.
+/// The value of a typed input as its number: ms for the date and time types,
+/// months since 1970-01 for month, the number itself for number and range.
 [[nodiscard]] std::optional<double> type_value_to_number(std::string_view type,
                                                          std::string_view text) {
     std::size_t at = 0;
@@ -219,8 +225,8 @@ constexpr double ms_per_day = 86400000.0;
 [[nodiscard]] static std::string two(long long n) {
     return (n < 10 ? "0" : "") + std::to_string(n);
 }
-// "" when `ms` is no date a valid date string can name: beyond ECMAScript's
-// time value range (8.64e15 ms either side of the epoch) or before year 1.
+/// Returns "" when `ms` is no date a valid date string can name: beyond ECMAScript's
+/// time value range (8.64e15 ms either side of the epoch) or before year 1.
 [[nodiscard]] static std::string date_text(double ms) {
     if (std::fabs(ms) > 8.64e15) { return {}; }
     const civil_date when = civil_from_days(static_cast<long long>(std::floor(ms / ms_per_day)));
@@ -247,8 +253,8 @@ constexpr double ms_per_day = 86400000.0;
     }
     return out;
 }
-// The number of a typed input written back as its value; "" when it does
-// not fit the type.
+/// The number of a typed input written back as its value; "" when it does
+/// not fit the type.
 [[nodiscard]] std::string type_number_to_text(std::string_view type, double number) {
     if (!std::isfinite(number)) { return {}; }
     if (type == "number" || type == "range") {
@@ -310,8 +316,8 @@ constexpr double ms_per_day = 86400000.0;
     const civil_date when = civil_from_days(static_cast<long long>(std::floor(ms / ms_per_day)));
     return static_cast<double>((when.year - 1970) * 12 + (when.month - 1));
 }
-// The step scale factor and the default step, HTML 4.10.5.1, in the type's
-// unit (ms, months, or the number).
+/// The step scale factor and the default step, HTML 4.10.5.1, in the type's
+/// unit (ms, months, or the number).
 [[nodiscard]] double step_scale_of(std::string_view type) {
     if (type == "date") { return ms_per_day; }
     if (type == "week") { return 7 * ms_per_day; }
@@ -323,7 +329,7 @@ constexpr double ms_per_day = 86400000.0;
     return 1;
 }
 
-// A "valid e-mail address", HTML 4.10.5.1.5's regular expression by hand.
+/// A "valid e-mail address", HTML 4.10.5.1.5's regular expression by hand.
 [[nodiscard]] bool is_valid_email(std::string_view text) {
     const std::size_t at = text.find('@');
     if (at == std::string_view::npos || at == 0 || at + 1 >= text.size()) { return false; }
@@ -350,8 +356,8 @@ constexpr double ms_per_day = 86400000.0;
         start = dot + 1;
     }
 }
-// A "valid URL potentially surrounded by spaces" that is absolute: a scheme,
-// a colon, and no whitespace inside.
+/// A "valid URL potentially surrounded by spaces" that is absolute: a scheme,
+/// a colon, and no whitespace inside.
 [[nodiscard]] bool is_valid_url(std::string_view text) {
     const std::string_view trimmed = trim(text, html_whitespace);
     const std::size_t colon = trimmed.find(':');
@@ -425,7 +431,7 @@ std::string sanitize_value(std::string_view type, std::string value, std::string
     }
     if (type == "email") {
         strip_newlines(value);
-        // ONE ADDRESS, whitespace-trimmed; with `multiple` the value is split
+        // One address, whitespace-trimmed; with `multiple` the value is split
         // on commas and each piece trimmed, then joined with bare commas. An
         // address whose domain is not ASCII has the domain converted to
         // ASCII (the URL host parser's domain to ASCII: `exämle.com` is
@@ -474,7 +480,7 @@ std::string sanitize_value(std::string_view type, std::string value, std::string
         }
         if (number < low) { number = low; }
         if (high >= low && number > high) { number = high; }
-        // SUFFERING FROM A STEP MISMATCH (4.10.5.1.13): round to the nearest
+        // "Suffering from a step mismatch" (4.10.5.1.13): round to the nearest
         // step-aligned number inside the bounds, the larger of two. The step
         // base is the min attribute, else the value attribute, else zero
         // (4.10.5.4); `step` parses by the lenient rules, "any" is no step.
@@ -551,7 +557,8 @@ std::string autocomplete_idl_value(std::string_view attribute, bool has_attribut
         }
         return false;
     };
-    // The field's category and the maximum number of tokens it allows.
+    // A field name's category; category_of() pairs it with the maximum number of
+    // autocomplete tokens that category allows.
     enum class category : std::uint8_t {
         none,
         off,
@@ -578,7 +585,8 @@ std::string autocomplete_idl_value(std::string_view attribute, bool has_attribut
     if (kind == category::credential) {
         // `webauthn` names a credential type after a field of the other two
         // categories, which then sets the remaining shape - or stands alone
-        // (step 15.2: the first token is "done", and the value is itself).
+        // (HTML's autofill-processing algorithm, step 15.2: the first token is
+        // "done", and the value is itself).
         if (index == 0) { return out; }
         --index;
         const auto inner = category_of(tokens[index]);

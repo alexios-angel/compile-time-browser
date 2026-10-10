@@ -1,4 +1,10 @@
-// dom_bindings - named access on the Document object, HTML 3.1.5.
+//===- named_access.cpp - Named access on the Document ----------*- C++ -*-===//
+//
+// dom_bindings' implementation of HTML 3.1.5, "named access on the Document
+// object": `document.someName` answering with the element that carries that
+// name, through a Proxy wrapped around the document object.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -7,26 +13,25 @@ namespace ctbrowser::shell {
 using namespace detail;
 
 // ============================================================================
-// NAMED ACCESS ON THE DOCUMENT
+// Named access on the document
 // ============================================================================
-//
-// `document.someName` for an element that carries that name - HTML 3.1.5,
-// "named access on the Document object". Sixteen files in `html/dom` are about
-// nothing else, and the reason it needs a Proxy rather than a set of properties
-// pushed on the tick is in every one of them: they remove an attribute and read
-// the property back IN THE SAME STATEMENT, expecting `undefined`.
-//
-// THE ELEMENT LIST IS NOT "anything with a name". It is five tags by their
-// `name` and two by their `id`, and the two are not the same two:
-//
-//   name= : embed, form, iframe, img, object
-//   id=   : object always; img ONLY IF it also has a non-empty name
-//
-// That last clause is the whole of `nameditem-01.html`'s third and fourth
-// cases. `<img id=a name=b>` answers to both `a` and `b`; removing `name`
-// removes BOTH, because the id route needs a name to exist; removing `id`
-// leaves `b` alone. An implementation that indexed ids unconditionally would
-// pass the first two subtests of that file and fail the next two.
+
+/// The HTML elements, in tree order, that `document.<name>` names (HTML 3.1.5).
+///
+/// Sixteen WPT files under html/dom test this. It is a Proxy rather than
+/// properties refreshed once per event-loop tick because those tests remove
+/// an attribute and read the property back in the same statement, expecting
+/// `undefined`.
+///
+/// The element list is not "anything with a name". It is five tags by their
+/// `name` and two by their `id`, and the two are not the same two:
+///
+///   name= : embed, form, iframe, img, object
+///   id=   : object always; img only if it also has a non-empty name
+///
+/// So `<img id=a name=b>` answers to both `a` and `b`; removing `name` removes
+/// both, because the id route needs a name to exist; removing `id` leaves `b`
+/// alone (WPT nameditem-01.html's third and fourth cases).
 std::vector<node_id> dom_bindings::named_document_items(std::string_view name) {
     std::vector<node_id> found;
     if (name.empty()) { return found; }
@@ -51,10 +56,11 @@ std::vector<node_id> dom_bindings::named_document_items(std::string_view name) {
     return found;
 }
 
-// THE SUPPORTED PROPERTY NAMES - the same five-tags-and-two-ids rule read the
-// other way round, as `Object.getOwnPropertyNames(document)` lists them: every
-// name once, in tree order of the FIRST element that contributes it, and an
-// element that contributes both puts its id ahead of its name (HTML 3.1.5).
+/// The document's supported property names: the same five-tags-and-two-ids
+/// rule read the other way round, as `Object.getOwnPropertyNames(document)`
+/// lists them. Every name appears once, in tree order of the first element
+/// that contributes it, and an element that contributes both puts its id ahead
+/// of its name (HTML 3.1.5).
 std::vector<std::string> dom_bindings::document_property_names() {
     std::vector<std::string> names;
     const auto txn = doc_->read();
@@ -83,29 +89,29 @@ std::vector<std::string> dom_bindings::document_property_names() {
     return names;
 }
 
-// THE PROXY. Four traps; the two that read consult the target FIRST.
-//
-// That order is the specification's: a named property is a fallback for a name
-// the object does not otherwise have, so `document.forms` is the collection
-// accessor installed above it and not the `<form name=forms>` on the page. It
-// is also the order that keeps everything else in these bindings working -
-// `document.title`, `document.body`, `createElement` and the twenty-two Node
-// members all live on the target and are found before the walk is ever run.
-//
-// The walk is O(nodes) and runs on every `document.x` that is not an own
-// property, an inherited one, or a name the tree answers - which includes
-// `document.hasOwnProperty`. That is the same trade `window`'s proxy already
-// makes, and the same answer if it ever shows in a measurement: an id and name
-// index on the document rather than a special case here.
+/// Wraps the document object `target` in a Proxy with four traps that adds
+/// named access. The two traps that read consult the target first.
+///
+/// That order is the specification's: a named property is a fallback for a
+/// name the object does not otherwise have, so `document.forms` is the
+/// collection accessor on the target and not the `<form name=forms>` on the
+/// page. It also keeps the rest of these bindings working: `document.title`,
+/// `document.body`, `createElement` and the Node members all live on the
+/// target and are found before the walk runs.
+///
+/// ponytail: the walk is O(nodes) and runs on every `document.x` that is not
+/// found on the target's chain, which includes `document.hasOwnProperty`.
+/// `window`'s proxy makes the same trade. If it ever shows in a profile, add an
+/// id and name index on the document rather than a special case here.
 value dom_bindings::make_document_proxy(context & cx, value target) {
     auto * handler = cx.allocate<script::object_object>();
     handler->set(
         "get", native(cx, "get", [this](context & c, std::span<value> args) {
             if (args.size() < 2 || !args[0].is_object()) { return value::undefined(); }
             const std::string name = c.to_string(args[1]);
-            // THE WHOLE CHAIN FIRST, not only the own properties: a named
+            // The whole chain first, not only the own properties: a named
             // item does not shadow `constructor`, `__proto__` or a null
-            // `onreadystatechange` from Document.prototype - which is what
+            // `onreadystatechange` from Document.prototype. That is what WPT
             // nameditem-no-shadowing.tentative.html asks, and what keeps
             // `document.forms` the collection rather than a `<form
             // name=forms>`.
@@ -113,9 +119,9 @@ value dom_bindings::make_document_proxy(context & cx, value target) {
                 return held;
             }
             if (const std::vector<node_id> named = named_document_items(name); !named.empty()) {
-                // ONE ELEMENT IS THE ELEMENT - or, for an `<iframe>`, its
-                // content navigable's WindowProxy (HTML 3.1.5 step 3) -
-                // and several are a live HTMLCollection.
+                // One element answers as itself (or, for an `<iframe>`, as
+                // its content navigable's WindowProxy, HTML 3.1.5 step 3);
+                // several answer as a live HTMLCollection, cached per name.
                 if (named.size() == 1) {
                     const value element = wrap(c, named.front());
                     if (doc_->read().local_name(named.front()) == "iframe") {
@@ -144,16 +150,17 @@ value dom_bindings::make_document_proxy(context & cx, value target) {
                      return value::boolean(!c.lookup_property(args[0], name).is_undefined() ||
                                            !named_document_items(name).empty());
                  }));
-    // THE KEYS, for `Object.getOwnPropertyNames(document)`: the target's own
+    // The keys, for `Object.getOwnPropertyNames(document)`: the target's own
     // string keys, every one and in its order, then the supported property
-    // names not already among them - nameditem-names.html reads that order.
-    // Symbol-keyed own properties are not reported, which is a gap rather than
-    // a rule: rebuilding a symbol from its key is the VM's own business
-    // (key_value in builtins/objects/operations.cpp), and nothing on a
-    // document carries one. And a DESCRIPTOR for each named one, since a key
-    // an object reports must be one it can describe: a legacy platform
-    // object's named property is a read-only, enumerable, configurable data
-    // property (WebIDL 3.9.1), and the target's own answer for themselves.
+    // names not already among them; WPT nameditem-names.html reads that order.
+    // ponytail: symbol-keyed own properties are not reported. Rebuilding a
+    // symbol from its key is the VM's business (key_value in
+    // builtins/objects/operations.cpp), and nothing on a document carries one.
+    // getOwnPropertyDescriptor below describes each named key, since a key an
+    // object reports must be one it can describe: a legacy platform object's
+    // named property is a read-only, enumerable, configurable data property
+    // (WebIDL 3.9.1); the target's own properties return their own
+    // descriptors.
     handler->set("ownKeys", native(cx, "ownKeys", [this](context & c, std::span<value> args) {
                      const value out = c.make_array();
                      if (args.empty() || !args[0].is_object()) { return out; }

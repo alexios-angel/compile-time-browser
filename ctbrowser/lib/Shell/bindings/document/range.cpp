@@ -1,5 +1,10 @@
-// dom_bindings - DOM 5, Range and StaticRange: `document.createRange()`,
-// `new Range()`, `new StaticRange(init)`, and every algorithm of DOM 5.5.
+//===- range.cpp - Range and StaticRange ------------------------*- C++ -*-===//
+//
+// dom_bindings' DOM 5 Range and StaticRange: `new Range()`,
+// `new StaticRange(init)`, and every algorithm of DOM 5.5. createRange() and
+// the live-range updates are in range/live.cpp.
+//
+//===----------------------------------------------------------------------===//
 
 #include "range/helpers.hpp"
 
@@ -11,11 +16,11 @@ using range_detail::point;
 
 namespace {
 
-// DID ANYTHING THROW SINCE `before`? A throw a native raises lands on its
-// handler at once and throw_pending cannot see it (context::unwinds) - the
-// stack having moved is what says one happened. Checking throw_pending alone,
-// surroundContents went on to append into a node insertNode had just refused,
-// and that second throw escaped the page's own try block.
+/// Whether anything threw since `before`. A throw raised by a native lands on
+/// its handler at once, so throw_pending() cannot see it (context::unwinds);
+/// only the moved stack mark shows it happened. Checking throw_pending()
+/// alone let surroundContents append into a node insertNode had just refused,
+/// and that second throw escaped the page's own try block.
 [[nodiscard]] bool threw_since(const context & c, const context::stack_mark & before) {
     return c.throw_pending() || c.mark_stack() != before;
 }
@@ -23,36 +28,34 @@ namespace {
 } // namespace
 
 // ============================================================================
-// RANGE
+// Range
 // ============================================================================
 //
-// A range is two boundary points - (node, offset) twice - kept as hidden own
+// A range is two boundary points, (node, offset) twice, kept as hidden own
 // properties of an ordinary object, with the IDL attributes as accessors on
-// the prototype over them. The nodes are HANDLES: every read below opens a
-// read_txn on the document that owns the node, which is what makes
-// `compareBoundaryPoints` over the corpus's 5,000-point tables cheap enough
-// to finish. A boundary node may belong to ANY document of the realm - the
-// page's, an iframe's, one `createDocument` made - so the owner rides beside
-// the id, and an Attr (a Node with no handle, of length 0 and rooted at
-// itself) is carried as the object it is.
+// the prototype. The nodes are handles: each read below opens a short
+// read_txn on the node's document, which keeps WPT's Range tests (thousands
+// of compareBoundaryPoints calls) fast. A boundary node may belong to any
+// document of the realm (the page's, an iframe's, one `createDocument` made),
+// so the owner is stored beside the id, and an Attr (a Node with no handle,
+// length 0, its own root) is stored as its object.
 //
-// WRITES GO THROUGH THE NODES' OWN SCRIPT SURFACE - `insertBefore`,
-// `removeChild`, `cloneNode`, `replaceData`, `splitText` - because that is
+// Writes go through the nodes' own script surface (`insertBefore`,
+// `removeChild`, `cloneNode`, `replaceData`, `splitText`), because that is
 // where pre-insertion validity, adoption, fragment flattening and the
-// mutation records already live; a second copy here would be a second
-// chance to disagree with them.
+// mutation records already live; a second copy here could disagree with them.
 //
-// LIVE, AS DOM 5.5 SAYS: the document logs every child inserted or removed
-// (with its index at that moment) and every data write (as a "replace data"),
-// and `settle_live_ranges` below runs the specification's range steps over
-// that log from mutated(), before any script can read a boundary. A range's
-// own algorithms (deleteContents, extractContents, insertNode) run under
-// that liveness too, as the specification writes them - each sets its final
-// points explicitly at the end. Range-mutations-*.html is what measures it;
-// before this a range followed only its own edits.
+// Ranges are live, as DOM 5.5 requires: the document logs every child
+// inserted or removed (with its index at that moment) and every data write
+// (as a "replace data"), and `settle_live_ranges` (range/live.cpp) runs the
+// specification's range steps over that log from mutated(), before any
+// script can read a boundary. A range's own algorithms (deleteContents,
+// extractContents, insertNode) run under that liveness too and set their
+// final points explicitly. WPT's dom/ranges/Range-mutations-*.html tests this.
 
+/// Installs the Range and StaticRange interfaces into `cx`'s global object.
 void dom_bindings::install_range(context & cx) {
-    // --- the node primitives, each read_txn long -----------------------------
+    // --- The node primitives, each one read_txn long -------------------------
 
     const auto from_value = [this](context & c, value v) -> spot {
         if (v.is_object_like()) {
@@ -140,7 +143,7 @@ void dom_bindings::install_range(context & cx) {
         }
         return false;
     };
-    // TREE ORDER of two nodes of one tree: -1 when `a` precedes `b`, 1 when
+    // Tree order of two nodes of one tree: -1 when `a` precedes `b`, 1 when
     // it follows, 0 when they are the same. An ancestor precedes its
     // descendants. The two chains are walked up to the root and compared
     // from the top.
@@ -178,7 +181,7 @@ void dom_bindings::install_range(context & cx) {
     const auto before = [position](point a, point b) { return position(position, a, b) < 0; };
     const auto after = [position](point a, point b) { return position(position, a, b) > 0; };
 
-    // --- the boundary points of `this` ---------------------------------------
+    // --- The boundary points of `this` ---------------------------------------
 
     const auto start_of = [from_value](context & c, script::object_object * self) {
         return point{from_value(c, slot(self, start_node_slot)),
@@ -231,7 +234,7 @@ void dom_bindings::install_range(context & cx) {
     const value proto_value = value::object(proto);
     install_abstract(*proto);
 
-    // --- the script surface a write goes through -----------------------------
+    // --- The script surface a write goes through -----------------------------
 
     const auto call_on = [to_value](context & c, spot at, const char * name,
                                     std::vector<value> args) -> value {
@@ -259,7 +262,7 @@ void dom_bindings::install_range(context & cx) {
         (void)call_on(c, at, "replaceData",
                       {value::number(offset), value::number(count), c.string(std::move(with))});
     };
-    // A shallow clone of a character data node holding `data` - what the
+    // A shallow clone of a character data node holding `data`: what the
     // partial ends of an extract are made of.
     const auto clone_with_data = [clone_of](context & c, spot at, std::string data) {
         const value clone = clone_of(c, at, false);
@@ -417,7 +420,7 @@ void dom_bindings::install_range(context & cx) {
             while (!at.none() && !inclusive_ancestor(at, end)) { at = parent_of(at); }
             return at.none() ? value::null() : to_value(c, at);
         });
-    // A NEW LIVE RANGE, registered like createRange's: the clone follows the
+    // A new live range, registered like createRange's: the clone follows the
     // tree's edits from then on, and it is a Range the selection accepts.
     method("cloneRange", [this, proto_value, store_points](context & c, std::span<value>) {
         script::object_object * self = self_object(c);
@@ -432,7 +435,7 @@ void dom_bindings::install_range(context & cx) {
     });
     method("detach", [](context &, std::span<value>) { return value::undefined(); });
 
-    // --- THE FOUR COMPARISONS, DOM 5.5 -----------------------------------------
+    // --- The four comparisons, DOM 5.5 -----------------------------------------
     //
     // `isPointInRange` and `comparePoint` share their checks: a doctype is an
     // InvalidNodeTypeError, an offset past the node's length an IndexSizeError,
@@ -503,9 +506,9 @@ void dom_bindings::install_range(context & cx) {
                                      position](context & c, std::span<value> a) {
         script::object_object * self = self_object(c);
         if (self == nullptr) { return value::undefined(); }
-        // WebIDL `unsigned short`: ToNumber, truncate, modulo 2^16 - so 65536
-        // is START_TO_START and 1.5 is START_TO_END (Range-compareBoundaryPoints
-        // walks every such value, 1,325 subtests).
+        // WebIDL `unsigned short`: ToNumber, truncate, modulo 2^16, so 65536
+        // is START_TO_START and 1.5 is START_TO_END (WPT
+        // Range-compareBoundaryPoints.html tries such values).
         const double how = static_cast<double>(context::to_uint32(arg(a, 0)) % 65536u);
         const value other = arg(a, 1);
         if (!(how == 0 || how == 1 || how == 2 || how == 3)) {
@@ -535,7 +538,7 @@ void dom_bindings::install_range(context & cx) {
         return root_of(node) == root_of(s.node) && after({node, 0}, s) &&
                before({node, length_of(node)}, e);
     };
-    // ...and "partially contained": an inclusive ancestor of one boundary's
+    // DOM 5.5 "partially contained": an inclusive ancestor of one boundary's
     // node but not the other's.
     const auto partially = [inclusive_ancestor](spot node, point s, point e) {
         return inclusive_ancestor(node, s.node) != inclusive_ancestor(node, e.node);
@@ -616,9 +619,9 @@ void dom_bindings::install_range(context & cx) {
                                   context & c, script::object_object * self, bool take) -> value {
         const point s = start_of(c, self);
         const point e = end_of(c, self);
-        // "Set range's start and end to (new node, new offset)" - extract
-        // collapses the range, clone leaves it. The point is computed FIRST:
-        // the moves below change the indexes it is made of.
+        // "Set range's start and end to (new node, new offset)": extract
+        // collapses the range, clone leaves it. The point is computed first,
+        // because the moves below change the indexes it is made of.
         const point fresh = take ? collapse_point(s, e) : s;
         const value fragment = extract(extract, c, s, e, take);
         if (take && fragment.is_object_like()) {
@@ -636,7 +639,7 @@ void dom_bindings::install_range(context & cx) {
         return self == nullptr ? value::undefined() : extract_from(c, self, false);
     });
     // DOM 5.5 "delete the contents": the same walk with nothing kept. The
-    // nodes to remove are the contained ones without a contained ancestor -
+    // nodes to remove are the contained ones without a contained ancestor,
     // found by descending only through the partially contained.
     method("deleteContents", [start_of, end_of, set_start, set_end, is_character_data, replace_data,
                               length_of, contained, partially, inclusive_ancestor, parent_of,
@@ -677,11 +680,10 @@ void dom_bindings::install_range(context & cx) {
 
     // DOM 5.5 "insert": split the start text node when the start is inside
     // one, put `node` ahead of what follows the start, and stretch a
-    // collapsed range around it. THE EDITS MOVE THIS RANGE'S OWN POINTS the
-    // way the live-range steps of split, remove and insert would - a boundary
-    // past the split goes into the new node, one after a removed or inserted
-    // child in its parent shifts by one - so the range ends where a live one
-    // does. Other ranges do not follow; see the note at the top.
+    // collapsed range around it. This range's own points are moved here the
+    // way the live-range steps of split, remove and insert would move them,
+    // so the result is right before mutated() runs; every other live range is
+    // updated by `settle_live_ranges` (range/live.cpp).
     const auto insert = [this, from_value, type_of, is_text, parent_of, children_of, index_of,
                          length_of, to_value, call_on, remove, inclusive_ancestor, start_of, end_of,
                          set_start,
@@ -711,8 +713,8 @@ void dom_bindings::install_range(context & cx) {
             }
         }
         const spot parent = reference.none() ? s.node : parent_of(reference);
-        // STEP 7, "ensure pre-insertion validity" of node into parent before
-        // reference (DOM 4.2.3), and BEFORE step 8 splits the start text node:
+        // Step 7, "ensure pre-insertion validity" of node into parent before
+        // reference (DOM 4.2.3), runs before step 8 splits the start text node:
         // a doctype or a document handed to insertNode throws with the tree
         // untouched, not after the split has left an empty text node behind.
         // The checks are asked here rather than of insertBefore because a node
@@ -825,7 +827,7 @@ void dom_bindings::install_range(context & cx) {
                       {node_value, reference.none() ? value::null() : to_value(c, reference)});
         if (threw_since(c, before)) { return; }
         inserted(parent, at, count);
-        // Step 13 asks NOW whether start and end are the same: removing the
+        // Step 13 asks now whether start and end are the same: removing the
         // node (step 9) can have collapsed a range that selected it.
         if (s.node == e.node && s.offset == e.offset) { e = point{parent, at + count}; }
         set_start(c, self, s);
@@ -876,8 +878,8 @@ void dom_bindings::install_range(context & cx) {
         select(c, self, arg(a, 0), false);
         return value::undefined();
     });
-    // DOM 5.5 "stringification": the text between the two boundary points -
-    // the Text nodes only, a comment contributes nothing.
+    // DOM 5.5 "stringification": the text between the two boundary points,
+    // from Text nodes only; a comment contributes nothing.
     method("toString", [start_of, end_of, is_text, contained, substring, root_of, children_of,
                         text_of, length_of](context & c, std::span<value>) {
         script::object_object * self = self_object(c);
@@ -900,10 +902,10 @@ void dom_bindings::install_range(context & cx) {
         return c.string(out);
     });
     // HTML 8.5 `createContextualFragment(markup)`: the markup parsed as the
-    // children of an element like the range's start node's element - the node
-    // itself, the parent ELEMENT of a Text or Comment, and a new `body` when
-    // there is none or it is the <html> - handed back as a DocumentFragment
-    // whose scripts are NOT marked already started, so each runs once the
+    // children of an element like the range's start node's element (the node
+    // itself, the parent element of a Text or Comment, or a new `body` when
+    // there is none or it is the <html>), handed back as a DocumentFragment
+    // whose scripts are not marked already started, so each runs once the
     // fragment is inserted into the document (and not before).
     // ponytail: the parse is innerHTML's, in body context; a `<tr>` in a
     // table context loses its row the way innerHTML on a <div> would.
@@ -931,9 +933,10 @@ void dom_bindings::install_range(context & cx) {
             tag = std::string{txn.local_name(node.id)};
             if (txn.element_ns(node.id) != node_ns::html || tag == "html") { tag = "body"; }
         }
-        // THE CONTEXT ELEMENT'S CUSTOM ELEMENT REGISTRY for what is parsed (HTML
-        // 13.4: the fragment's root is created with it) - carried by the scratch
-        // element, whose children inherit it (set_inner_html).
+        // The context element's custom element registry applies to what is
+        // parsed (HTML 13.4: the fragment's root is created with it). It is
+        // carried by the scratch element, whose children inherit it
+        // (set_inner_html).
         value options = value::undefined();
         if (!node.none() && !node.is_attr() && type_of(node) == type_element) {
             const auto txn = node.owner->doc_->read();
@@ -958,12 +961,13 @@ void dom_bindings::install_range(context & cx) {
             (void)c.call(append, std::span<const value>{&first, 1}, fragment);
             if (threw_since(c, before)) { break; }
         }
-        // IN AN XML DOCUMENT the fragment is the XML parser's, and the
-        // HTML `<html>`, `<head>` and `<body>` a page wraps its markup
-        // in are unwrapped - their children stand in their place
-        // (createContextualFragment-xhtml.xhtml, what every browser does).
-        // THE HTML ONES: a selector matches `html` in any namespace, and an
-        // <html> in another vocabulary is an ordinary element that stays.
+        // In an XML document the fragment is the XML parser's, and the HTML
+        // `<html>`, `<head>` and `<body>` a page wraps its markup in are
+        // unwrapped: their children stand in their place (WPT
+        // createContextualFragment-xhtml.xhtml; every browser does this). Only
+        // the HTML-namespace ones: the selector matches `html` in any
+        // namespace, but an <html> in another vocabulary is an ordinary element
+        // that stays.
         if (start.owner->doc_->xml()) {
             const value query = c.lookup_property(fragment, "querySelectorAll");
             const value selector = c.string("html, head, body");
@@ -974,8 +978,8 @@ void dom_bindings::install_range(context & cx) {
                                      ? context::to_number(c.lookup_property(wrappers, "length"))
                                      : 0;
             for (double i = count; i-- > 0;) {
-                // Read off whatever querySelectorAll returned - a page's own
-                // list, maybe - so held here across the calls below.
+                // Read off whatever querySelectorAll returned (possibly a
+                // page's own override), so held here across the calls below.
                 const value wrapper =
                     c.lookup_property(wrappers, std::to_string(static_cast<std::size_t>(i)));
                 const context::rooted keep_wrapper{c, wrapper};
@@ -1052,7 +1056,7 @@ void dom_bindings::install_range(context & cx) {
     // --- StaticRange, DOM 5.4 --------------------------------------------------
     //
     // `new StaticRange(init)`: the four members are required, a doctype or an
-    // Attr is an InvalidNodeTypeError, and nothing else is checked - an offset
+    // Attr is an InvalidNodeTypeError, and nothing else is checked: an offset
     // past the end and an inverted pair are both allowed. It is a snapshot,
     // and stays one.
     auto * static_proto = cx.allocate<script::object_object>();
@@ -1108,10 +1112,10 @@ void dom_bindings::install_range(context & cx) {
     static_ctor->define("prototype", static_proto_value, script::attr_none);
     static_proto->define("constructor", value::object(static_ctor), script::attr_builtin);
     cx.define_builtin_global("StaticRange", value::object(static_ctor));
-    // UNDER AbstractRange, when the interface table has already been linked:
-    // install_dom_interfaces adopts `Range.prototype` off the global and
-    // chains it, but only if it runs after this - and the first wrap() of
-    // the load can have run it before install_range was reached.
+    // Chain both prototypes under AbstractRange here if the interface table is
+    // already linked. install_dom_interfaces chains `Range.prototype` itself
+    // only when it runs after this, and a wrap() during install can have run
+    // it before install_range was reached.
     if (const value abstract = interface_prototype("AbstractRange"); abstract.is_object()) {
         proto->prototype = abstract;
         static_proto->prototype = abstract;

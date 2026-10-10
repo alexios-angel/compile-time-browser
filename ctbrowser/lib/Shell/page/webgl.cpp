@@ -1,3 +1,12 @@
+//===- ctbrowser/lib/Shell/page/webgl.cpp - WebGL context over GL device --===//
+//
+// webgl_context translates WebGL calls from the bindings into calls on the GL
+// device (raster::gl::device), validating arguments the way WebGL specifies,
+// keeping WebGL's first-error-wins error flag, and copying the rendered
+// surface into the canvas bitmap once per frame.
+//
+//===----------------------------------------------------------------------===//
+
 #include <ctbrowser/shell/page/webgl.hpp>
 
 #include <algorithm>
@@ -9,9 +18,9 @@ namespace ctbrowser::shell {
 
 namespace {
 
-// THE FEW GL NUMBERS THIS FILE NEEDS BY NAME. `gl.hpp` names no GLES type, so
-// the constants a page passes stay plain integers all the way down - they came
-// from JavaScript as numbers and there is nothing to translate.
+// GL error codes reported through fail(). They duplicate gl_enum's no_error,
+// invalid_value and out_of_memory in webgl.hpp. Other constants a page passes
+// stay plain integers all the way down: they arrive from JavaScript as numbers.
 constexpr std::uint32_t gl_no_error = 0;
 constexpr std::uint32_t gl_invalid_value = 0x0501;
 constexpr std::uint32_t gl_out_of_memory = 0x0505;
@@ -24,20 +33,9 @@ webgl_context::webgl_context(paint::bitmap * surface, int width, int height)
 void webgl_context::resize(paint::bitmap * surface, int width, int height) {
     surface_ = surface;
     if (width == device_.width() && height == device_.height()) { return; }
-    // A NEW DRAWING BUFFER, NOT A NEW DEVICE.
-    //
-    // This used to assign a fresh device, on the reasoning that it is "what a
-    // real browser does on a context loss". A CANVAS RESIZE IS NOT A CONTEXT
-    // LOSS: browsers reallocate the drawing buffer and every program, buffer,
-    // texture and piece of pipeline state survives. Throwing the context away
-    // orphaned all of them silently - GL cannot report an object belonging to a
-    // context nobody holds - so the page's draws stopped working while clears
-    // on the new device kept painting.
-    //
-    // Measured: p5's `createCanvas(300, 200, WEBGL)` assigns canvas.width and
-    // lands here, AFTER p5 has run enable(DEPTH_TEST) and depthFunc(LEQUAL) on
-    // the context it was handed. The first draw then reported test=0 and
-    // func=GL_LESS, and the sphere drew over the box instead of behind it.
+    // A canvas resize reallocates the drawing buffer only. It is not a context
+    // loss: programs, buffers, textures and pipeline state must survive (p5 sets
+    // DEPTH_TEST before resizing its canvas, for example).
     device_.resize(width, height);
 }
 
@@ -46,12 +44,11 @@ paint::bitmap * webgl_context::surface() {
 }
 
 void webgl_context::present() {
-    // ONCE PER FRAME, NOT ONCE PER DRAW. The context this replaces read the
-    // whole surface back after every drawArrays and drawElements - a full copy
-    // per mesh, which for Babylon's scene meant 267 of them for one frame.
+    // Copies the surface once per frame, not once per draw: a copy per mesh
+    // would mean hundreds of full-surface readbacks for one Babylon frame.
     if (!device_.ok()) { return; }
     if (surface_ == nullptr) { return; }
-    // A BORROWED BITMAP KEEPS ITS SIZE. read_pixels re-makes a bitmap of the
+    // A borrowed bitmap keeps its size. read_pixels re-makes a bitmap of the
     // wrong size, and this one is the canvas's: a 2D clip mask or the painter
     // sized against it would then index past its end.
     if (surface_->width != device_.width() || surface_->height != device_.height()) { return; }
@@ -89,34 +86,15 @@ void webgl_context::scissor(int x, int y, int width, int height) {
 // all questions GL answers, and a cached answer is the thing that drifts.
 
 void webgl_context::shader_source(std::uint32_t shader, std::string_view source) {
-    // THE PAGE'S BYTES, UNTOUCHED. A browser prepends nothing to a shader, and
-    // neither does this.
-    //
-    // There WAS a repair here: a `#version 300 es` inserted when the source
-    // used `layout(` and carried no directive of its own. It existed because
-    // Babylon was sending ES 3.00 bodies with no version - and it was doing
-    // that because `TEXTURE_BINDING_3D` was missing from the constant table, so
-    // it had concluded it was talking to WebGL 1. One table entry fixed the
-    // cause; the repair was a workaround for a defect three layers away.
-    //
-    // DELETED ON A MEASUREMENT, not on the reasoning. With the constant in
-    // place the repair fired ZERO times across all four corpora, and the
-    // ratchets were identical with it forced off:
-    //
-    //     PREAMBLE=1  webgl2=10/10  babylon=9/12  p5=12/12
-    //     PREAMBLE=0  webgl2=10/10  babylon=9/12  p5=12/12
-    //     added=1 count: webgl2 0, babylon 0, p5 0, phaser 0
-    //
-    // Mutating a page's shader source is not a thing to keep "just in case":
-    // it is a silent divergence from every other engine, and a page that
-    // genuinely needs a directive it did not write is a page that is broken in
-    // Chrome too.
+    // The page's shader source is passed through unchanged; browsers prepend
+    // nothing. (A `#version 300 es` repair once lived here; it only masked a
+    // missing TEXTURE_BINDING_3D constant and fired zero times once that was
+    // fixed - see docs/history/webgl2.md.)
     if (std::getenv("CTBROWSER_GL_SRC") != nullptr) {
-        // WHAT ACTUALLY REACHED THE COMPILER. A body that arrives empty or
-        // truncated fails in a way that looks like a draw problem three layers
-        // away - which has happened twice on this page. The FIRST LINE comes
-        // too: that is where a `#version` has to be, and where a body that
-        // arrived as nothing but `#define`s is visible at a glance.
+        // Logs what actually reached the compiler. A body that arrives empty
+        // or truncated fails in a way that looks like a draw problem. The
+        // first line is printed too: that is where a `#version` has to be, and
+        // where a body made only of `#define`s is visible at a glance.
         const std::size_t line = std::min(source.find('\n'), source.size());
         const std::string first{source.substr(0, std::min<std::size_t>(line, 60))};
         std::fprintf(stderr, "[src] shader=%u bytes=%zu page_version=%d | %s\n", shader,
@@ -128,10 +106,9 @@ void webgl_context::shader_source(std::uint32_t shader, std::string_view source)
 
 void webgl_context::compile_shader(std::uint32_t shader) {
     device_.compile_shader(shader);
-    // THE PAGE'S OWN DIAGNOSIS, kept for a report. Babylon logs its compile
-    // failures itself, and when it does not, this is the only place the reason
-    // exists - a shader that fails to compile draws nothing and raises no GL
-    // error, which is silence in both directions.
+    // Keep the compile log for shader_error(). A shader that fails to compile
+    // draws nothing and raises no GL error, so when the page does not log the
+    // failure itself (Babylon does), this is the only record of the reason.
     if (!device_.shader_compiled(shader)) { shader_error_ = device_.shader_log(shader); }
 }
 
@@ -162,13 +139,10 @@ std::vector<active_variable> webgl_context::active_uniforms(std::uint32_t progra
 
 int webgl_context::get_uniform_block_index(std::uint32_t program, std::string_view name) const {
     const int index = device_.uniform_block_index(program, std::string{name});
-    // `CTBROWSER_GL_UBO=1` prints this, the binding and the buffer together.
-    // THE THREE MUST AGREE, and reading them side by side in one run is what
-    // refuted two hypotheses that had each looked obvious on their own.
-    //
-    // -1 IS NORMAL for a block the shader never reads: GL drops it and answers
-    // GL_INVALID_INDEX. Babylon's `Mesh` block does this and it cost a whole
-    // pass to rule out - it is not a bug, do not chase it again.
+    // `CTBROWSER_GL_UBO=1` prints the block index, binding and buffer together
+    // so they can be checked against each other. -1 is normal for a block the
+    // shader never reads (GL drops it and answers GL_INVALID_INDEX; Babylon's
+    // `Mesh` block does this).
     if (std::getenv("CTBROWSER_GL_UBO") != nullptr) {
         std::fprintf(stderr, "[ubo] index program=%u name=%s -> %d\n", program,
                      std::string{name}.c_str(), index);
@@ -186,13 +160,13 @@ void webgl_context::uniform_block_binding(std::uint32_t program, std::uint32_t i
 }
 
 void webgl_context::set_uniform(std::string_view name, const uniform_value & value) {
-    // THE LOCATION IS LOOKED UP HERE, from the program GL says is in use. A page
-    // holds an opaque location object that carries the NAME, so there is nothing
-    // to cache and nothing to invalidate when it relinks.
+    // The location is looked up here, from the program GL says is in use. A
+    // page holds an opaque location object that carries the name, so there is
+    // nothing to cache and nothing to invalidate when it relinks.
     const unsigned program = device_.program_in_use();
     if (program == 0 || value.data.empty()) { return; }
     const int location = device_.uniform_location(program, std::string{name});
-    if (location < 0) { return; } // a uniform the linker dropped is not an error
+    if (location < 0) { return; } // A uniform the linker dropped is not an error.
     const int per = value.rows * value.cols;
     const int count = per > 0 ? static_cast<int>(value.data.size()) / per : 0;
     device_.set_uniform(location, value.data.data(), count, value.rows, value.cols, value.integer);
@@ -208,8 +182,8 @@ void webgl_context::buffer_data(std::uint32_t target, std::span<const std::byte>
 }
 
 void webgl_context::note_storage(std::uint32_t target, std::size_t size) {
-    // WHICH BUFFER GOT STORAGE, AND WHEN. Printed beside the `[ubo] base` lines
-    // so the ORDER of the two is readable in one run: a binding point with a
+    // Logs which buffer got storage, and when. Printed beside the `[ubo] base`
+    // lines so the order of the two is readable in one run: a binding point with a
     // buffer bound and no storage behind it is the shape that leaves ANGLE a
     // null BufferHelper to dereference at draw time.
     if (std::getenv("CTBROWSER_GL_UBO") == nullptr) { return; }
@@ -218,13 +192,13 @@ void webgl_context::note_storage(std::uint32_t target, std::size_t size) {
 }
 
 void webgl_context::buffer_data(std::uint32_t target, int size, std::uint32_t usage) {
-    // SIZE WITHOUT DATA, which is `gl.bufferData(target, 1024, usage)` - a page
+    // Size without data, which is `gl.bufferData(target, 1024, usage)` - a page
     // reserving room it will fill with bufferSubData.
     if (size < 0) {
         fail(gl_invalid_value);
         return;
     }
-    if (size > (1 << 30)) { // a page-sized allocation request must not reach the allocator
+    if (size > (1 << 30)) { // Over 1 GiB: OUT_OF_MEMORY, never the allocator.
         fail(gl_out_of_memory);
         return;
     }
@@ -245,7 +219,7 @@ void webgl_context::buffer_sub_data(std::uint32_t target, int offset,
 
 void webgl_context::bind_buffer_base(std::uint32_t target, std::uint32_t index,
                                      std::uint32_t buffer) {
-    // Printed beside the `[ubo] data` line `buffer_data` writes, so the ORDER
+    // Printed beside the `[ubo] data` line `buffer_data` writes, so the order
     // of a binding and its storage is readable in one run.
     if (std::getenv("CTBROWSER_GL_UBO") != nullptr) {
         std::fprintf(stderr, "[ubo] base  target=%u index=%u buffer=%u\n", target, index, buffer);
@@ -290,7 +264,7 @@ void webgl_context::texture_image(std::uint32_t target, int width, int height,
         return;
     }
     const auto wanted = static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4;
-    // SHORT DATA IS AN ERROR, NOT A PARTIAL UPLOAD. Handing GL a buffer smaller
+    // Short data is an error, not a partial upload. Handing GL a buffer smaller
     // than the level it was told to make reads past the end.
     if (!rgba.empty() && rgba.size() < wanted) {
         fail(gl_invalid_value);
@@ -301,7 +275,7 @@ void webgl_context::texture_image(std::uint32_t target, int width, int height,
 }
 
 void webgl_context::texture_from_bitmap(std::uint32_t target, const paint::bitmap & image) {
-    // ARGB IN, RGBA OUT - the same swap read_pixels does in the other direction,
+    // ARGB in, RGBA out: the same swap read_pixels does in the other direction,
     // and getting it wrong gives a texture that looks right until something in
     // it is red.
     std::vector<std::uint8_t> rgba(static_cast<std::size_t>(image.width) *
@@ -321,8 +295,8 @@ void webgl_context::texture_from_bitmap(std::uint32_t target, const paint::bitma
 
 // --- draws -------------------------------------------------------------------
 //
-// NO READBACK HERE. The context this replaces read the whole surface after every
-// draw; `present()` does it once per frame.
+// No readback here: `present()` copies the surface once per frame, not once
+// per draw.
 
 void webgl_context::draw_arrays(std::uint32_t mode, int first, int count) {
     if (count < 0 || first < 0) {
@@ -360,7 +334,7 @@ void webgl_context::draw_elements_instanced(std::uint32_t mode, int count, std::
 }
 
 std::uint32_t webgl_context::take_error() {
-    // WebGL's getError REPORTS AND CLEARS, and asking the device as well means
+    // WebGL's getError reports and clears, and asking the device as well means
     // an error raised inside GL is not lost behind one raised here.
     const std::uint32_t mine = error_;
     error_ = gl_no_error;
@@ -369,24 +343,15 @@ std::uint32_t webgl_context::take_error() {
 }
 
 void webgl_context::fail(std::uint32_t error) {
-    // FIRST ERROR WINS, which is what GL specifies: a page that checks once
+    // The first error wins, as GL specifies: a page that checks once
     // after several calls should see the first thing that went wrong.
     if (error_ == gl_no_error) { error_ = error; }
 }
 
 void webgl_context::refuse(std::string_view call) {
-    // AND IT RAISES THE ERROR IT ADVERTISES.
-    //
-    // This recorded the name and stopped there, while the bindings printed
-    // "it raises INVALID_OPERATION" to the page's console - so all fifty-two
-    // refused entry points returned null with getError() still reading
-    // NO_ERROR. A page that checks for the error it was told about was told
-    // nothing was wrong.
-    //
-    // Refusing BY NAME is this engine's contract (docs/history/webgl2.md); the
-    // point of it is to be loud. A silent refusal is the same defect as a
-    // silent no-op, which is what the whole rewrite exists to eliminate. The
-    // ledger records the name for a developer, `fail` answers the page.
+    // A refused entry point raises INVALID_OPERATION, the error the bindings
+    // tell the page about, and records its name for developers (refusing by
+    // name is this engine's contract; see docs/history/webgl2.md).
     fail(gl_enum::invalid_operation);
     const std::string name{call};
     if (std::find(refused_.begin(), refused_.end(), name) == refused_.end()) {

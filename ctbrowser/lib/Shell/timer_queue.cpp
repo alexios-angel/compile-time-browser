@@ -1,3 +1,11 @@
+//===- ctbrowser/lib/Shell/timer_queue.cpp - Timer scheduling state -------===//
+//
+// timer_queue tracks setTimeout/setInterval-style deadlines by id: scheduling,
+// cancelling, rearming repeating timers, and the delay until the next one is
+// due. Callback payloads live with the caller (see timer_queue.hpp).
+//
+//===----------------------------------------------------------------------===//
+
 #include <ctbrowser/shell/timer_queue.hpp>
 
 #include <algorithm>

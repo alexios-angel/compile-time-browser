@@ -1,3 +1,10 @@
+//===- app_bundle.cpp - Application bundle reader and writer ----*- C++ -*-===//
+//
+// Reads and writes the application bundle format declared in app_bundle.hpp,
+// and appends a bundle to (or finds one at the end of) a launcher executable.
+//
+//===----------------------------------------------------------------------===//
+
 #include <ctbrowser/shell/app_bundle.hpp>
 
 #include <ctbrowser/script/program_image.hpp>
@@ -11,18 +18,21 @@
 #include <string>
 #include <system_error>
 
-// The format, in one file so the writer and the reader cannot drift - the same
-// rule program_image/internal.hpp states and for the same reason.
+// The format, in one file so the writer and the reader cannot drift (the same
+// rule program_image/internal.hpp states, for the same reason):
 //
 //   header   magic 'CTAP', format version, engine fingerprint, entry count,
 //            payload offset, payload length
 //   table    one row per entry: kind, name length, name bytes, blob offset,
 //            blob length
 //   payload  the blobs
+//   trailer  only when appended to an executable (append_bundle_to):
+//            'CTAPTAIL', bundle offset u64, bundle length u64, as the
+//            last 24 bytes of the file
 //
-// Offsets in the table are relative to the payload, so the whole thing can be
-// read from a span that starts anywhere - which is what lets a bundle live at
-// the end of an executable without any of this knowing that.
+// Offsets in the table are relative to the payload, so the bundle can be read
+// from a span that starts anywhere, which lets it live at the end of an
+// executable without the reader knowing.
 namespace ctbrowser::shell {
 
 namespace {
@@ -34,7 +44,7 @@ constexpr std::size_t trailer_size = sizeof(trailer_magic) + 8 + 8;
 
 thread_local std::string last_write_error;
 
-// Every integer in the format is little-endian, whatever the host is.
+/// Every integer in the format is little-endian, whatever the host is.
 template <typename T> [[nodiscard]] std::array<std::byte, sizeof(T)> little_bytes(T v) {
     if constexpr (std::endian::native == std::endian::big) { v = std::byteswap(v); }
     return std::bit_cast<std::array<std::byte, sizeof(T)>>(v);
@@ -47,6 +57,7 @@ template <typename T> [[nodiscard]] T from_little(std::span<const std::byte> at)
     return v;
 }
 
+/// Appends little-endian values and length-prefixed strings to a buffer.
 struct sink {
     std::vector<std::byte> bytes;
     void append(std::span<const std::byte> more) {
@@ -60,8 +71,9 @@ struct sink {
     }
 };
 
-// Every read is bounds-checked and fails once. A reader that returned garbage
-// past the end would turn a truncated file into an application.
+/// A bounds-checked reader over a byte span. The first failure sets `bad`
+/// and `why`; later reads return zero. A reader that returned garbage past
+/// the end would turn a truncated file into an application.
 struct source {
     std::span<const std::byte> bytes;
     std::size_t at = 0;
@@ -129,14 +141,9 @@ std::string_view bundle_write_error() noexcept {
 
 std::vector<std::byte> write_bundle(const app_bundle & from) {
     last_write_error = {};
-    // THE TRUNCATIONS THIS FORMAT CAN COMMIT, refused rather than committed.
-    // The header has promised since it was written that write_bundle returns
-    // nothing when an entry is too large to describe, and `bundle_write_error`
-    // was declared to say which - and neither was ever implemented, so the one
-    // branch in ctcompile that reads it printed an empty string. A count and a
-    // name length are both written as u32, and a static_cast that wraps would
-    // produce a bundle whose table disagrees with its payload: readable,
-    // internally consistent, and wrong.
+    // The entry count and each name length are stored as u32. Refuse values
+    // that do not fit, with the reason in bundle_write_error(), instead of
+    // truncating them into a bundle whose table disagrees with its payload.
     if (from.entries.size() > 0xFFFFFFFFull) {
         last_write_error = "an application bundle cannot hold more than 4294967295 entries";
         return {};
@@ -148,9 +155,8 @@ std::vector<std::byte> write_bundle(const app_bundle & from) {
             return {};
         }
     }
-    // THE TABLE IS WRITTEN BEFORE THE PAYLOAD AND HAS TO KNOW ITS OWN SIZE, so
-    // the blob offsets are laid out first and the header is filled in with the
-    // payload's position once the table's length is known.
+    // The table precedes the payload, so the header's payload offset depends
+    // on the table's size: lay out the table first, then write the header.
     sink table;
     std::uint64_t payload_length = 0;
     for (const bundle_entry & one : from.entries) {
@@ -164,18 +170,13 @@ std::vector<std::byte> write_bundle(const app_bundle & from) {
     sink out;
     out.u32(bundle_magic);
     out.u32(bundle_format_version_value);
-    // WHICH ENGINE COMPILED THE IMAGES INSIDE. A bundle is only worth anything
-    // if its images load, and an image from another build is refused one layer
-    // down with a message about opcode numbering - true, but a long way from
-    // "this application was built by a different ctbrowser".
+    // Which engine compiled the images inside. An image from another build is
+    // refused one layer down with a message about opcode numbering; checking
+    // here lets read_bundle say plainly that a different build packaged it.
     out.u64(script::image_fingerprint());
     out.u32(static_cast<std::uint32_t>(from.entries.size()));
-    // THE HEADER IS THIRTY-SIX BYTES and this said twenty-eight, so every blob
-    // was read eight bytes early - which nothing caught, because the offsets
-    // still landed inside the file and the only symptom was three program
-    // images that were "not built by this engine build". Counted rather than
-    // written down: magic 4, version 4, fingerprint 8, count 4, payload offset
-    // 8, payload length 8.
+    // Header size: magic 4 + version 4 + fingerprint 8 + entry count 4 +
+    // payload offset 8 + payload length 8 = 36 bytes.
     constexpr std::uint64_t header_bytes = 4u + 4u + 8u + 4u + 8u + 8u;
     const std::uint64_t payload_at = header_bytes + table.bytes.size();
     out.u64(payload_at);
@@ -210,13 +211,9 @@ bundle_load_result read_bundle(std::span<const std::byte> bytes) {
         out.error = in.why;
         return out;
     }
-    // A COUNT AGAINST BYTES, not against a constant. The smallest row this
-    // format can encode is a kind, an empty name, an offset and a length - and
-    // that is TWENTY-FOUR bytes, not the twenty this said: an empty name still
-    // costs the four-byte length prefix `sink::text` always writes. The old
-    // figure was safe, because every read is bounds-checked anyway, but it made
-    // the pre-check twenty percent looser than its own comment claimed and cost
-    // files in that band this message in favour of a vaguer one.
+    // Reject an entry count the remaining bytes cannot hold. The smallest row
+    // is 24 bytes: kind 4, name-length prefix 4 (empty name), offset 8, length
+    // 8.
     constexpr std::size_t least_bytes_per_entry = 4 + 4 + 8 + 8;
     if (!in.need(static_cast<std::size_t>(count) * least_bytes_per_entry)) {
         out.error = "the bundle claims more entries than its bytes could describe";
@@ -228,14 +225,11 @@ bundle_load_result read_bundle(std::span<const std::byte> bytes) {
     }
 
     out.value.entries.reserve(count);
-    // WHAT HAS BEEN HANDED OUT SO FAR. Each blob is checked against the payload
-    // it claims to sit in, which stops any one of them pointing outside the
-    // file - and says nothing about all of them pointing at the SAME bytes. A
-    // ten-megabyte file whose four hundred thousand rows each claim the whole
-    // payload asks this reader for four terabytes before any single check
-    // fails, which on a machine with 7.5 GiB is an OOM kill rather than a
-    // refusal. A bundle's blobs do not overlap, so their sizes cannot exceed
-    // the payload that holds them.
+    // Total bytes handed out so far. The per-blob check below keeps each blob
+    // inside the payload but not apart from the others; since blobs never
+    // overlap, their total cannot exceed the payload. Without this, a small
+    // file whose rows all claim the whole payload would make the reader copy
+    // terabytes.
     std::uint64_t claimed = 0;
     for (std::uint32_t i = 0; i < count && !in.bad; ++i) {
         bundle_entry one;
@@ -249,10 +243,9 @@ bundle_load_result read_bundle(std::span<const std::byte> bytes) {
         const std::uint64_t blob_at = in.u64();
         const std::uint64_t blob_length = in.u64();
         if (in.bad) { break; }
-        // EVERY BLOB IS CHECKED AGAINST THE PAYLOAD IT CLAIMS TO BE IN, and the
-        // arithmetic is written so it cannot overflow: a length added to an
-        // offset is exactly how a table out of a file gets a reader to read
-        // somewhere else entirely.
+        // Check the blob against the payload, written so the arithmetic cannot
+        // overflow: an offset plus a length that wraps would let a crafted
+        // table point the reader anywhere.
         if (blob_at > payload_length || blob_length > payload_length - blob_at) {
             in.fail("entry " + std::to_string(i) + " points outside the bundle's payload");
             break;
@@ -298,10 +291,10 @@ std::span<const std::byte> find_appended_bundle(std::span<const std::byte> whole
     const std::uint64_t at = from_little<std::uint64_t>(whole.subspan(tail + magic.size(), 8));
     const std::uint64_t length =
         from_little<std::uint64_t>(whole.subspan(tail + magic.size() + 8, 8));
-    // THE TRAILER MUST ACCOUNT FOR THE WHOLE FILE. A copy that was truncated,
-    // or a launcher that happens to contain these eight bytes in its own data,
-    // fails this and is treated as having no bundle at all rather than as
-    // having one at a made-up offset.
+    // The trailer must account for the whole file. A truncated copy, or a
+    // launcher that happens to contain these eight bytes in its own data,
+    // fails this and is treated as having no bundle rather than one at a
+    // made-up offset.
     if (at > whole.size() || length > whole.size() - at ||
         at + length + trailer_size != whole.size()) {
         return {};
@@ -311,9 +304,9 @@ std::span<const std::byte> find_appended_bundle(std::span<const std::byte> whole
 
 std::vector<std::byte> this_executable_bytes() {
     std::error_code failed;
-    // /proc/self/exe is a symlink to the running image, and reading THAT rather
-    // than argv[0] is what makes a launcher work when it was found on the PATH
-    // or invoked through a symlink of its own.
+    // /proc/self/exe is a symlink to the running image. Reading it rather than
+    // argv[0] makes a launcher work when it was found on the PATH or invoked
+    // through a symlink of its own.
     const std::filesystem::path self = std::filesystem::read_symlink("/proc/self/exe", failed);
     if (failed) { return {}; }
     std::ifstream in{self, std::ios::binary};

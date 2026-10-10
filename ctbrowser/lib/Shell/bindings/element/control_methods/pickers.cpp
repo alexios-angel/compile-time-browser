@@ -1,7 +1,11 @@
-// dom_bindings - `showPicker()` on <input> (HTML 4.10.5.4) and <select>
-// (4.10.7): the checks, then consuming the window's user activation
-// (window/activation.cpp). There is no picker to show - nothing here draws
-// one - so "show the picker, if applicable" is the one step left out.
+//===- pickers.cpp - showPicker() on input and select -----------*- C++ -*-===//
+//
+// `showPicker()` on <input> (HTML 4.10.5.4) and <select> (HTML 4.10.7): the
+// checks, then consuming the window's user activation (window/activation.cpp).
+// Nothing in the engine draws a picker, so "show the picker, if applicable"
+// is the one step left out.
+//
+//===----------------------------------------------------------------------===//
 
 #include "helpers.hpp"
 
@@ -11,7 +15,8 @@ using namespace detail;
 
 namespace {
 
-// The types `readonly` applies to (4.10.5.3.3); on the rest it is ignored.
+/// The input types `readonly` applies to (HTML 4.10.5.3.3); on the rest it is
+/// ignored.
 [[nodiscard]] bool readonly_applies(std::string_view type) {
     for (const std::string_view one : {"text", "search", "url", "tel", "email", "password", "date",
                                        "month", "week", "time", "datetime-local", "number"}) {
@@ -44,8 +49,7 @@ void dom_bindings::install_control_pickers(context & cx) {
                     }
                     unrendered = select && element_unrendered(txn, *b->atoms_, b->styles_, id);
                 }
-                // A <select> that is not being rendered has no
-                // picker to show.
+                // A <select> that is not being rendered has no picker to show.
                 if (unrendered) {
                     throw_dom_exception(c, "NotSupportedError",
                                         "showPicker: the select is not rendered");

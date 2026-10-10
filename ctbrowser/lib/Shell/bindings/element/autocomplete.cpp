@@ -1,9 +1,13 @@
+//===- autocomplete.cpp - The autocomplete IDL attribute --------*- C++ -*-===//
+//
 // dom_bindings - the `autocomplete` IDL attribute of input, select and
-// textarea, HTML 4.10.18.7.1: the getter answers the IDL-exposed autofill
-// value the "autofill detail tokens" algorithm computes from the content
+// textarea, HTML 4.10.18.7.1. The getter returns the IDL-exposed autofill
+// value that the "autofill detail tokens" algorithm computes from the content
 // attribute (input_types::autocomplete_idl_value), not the attribute's text;
 // the setter writes the attribute. A hidden input wears the autofill anchor
-// mantle. form-autocomplete.html reads all of it.
+// mantle. WPT's form-autocomplete.html exercises all of it.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 

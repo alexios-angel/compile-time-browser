@@ -1,5 +1,10 @@
-// dom_bindings - the WebGL methods from createBuffer to texSubImage2D: objects,
-// shaders and programs, attributes, uniforms, state and textures.
+//===- objects.cpp - WebGL objects and state --------------------*- C++ -*-===//
+//
+// The WebGL methods from createBuffer to texSubImage2D: object creation and
+// deletion, buffers, shaders and programs, attributes, uniforms and uniform
+// blocks, fixed-function state and textures.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -11,9 +16,10 @@ namespace {
 
 using script::to_float;
 
-// Pull bytes out of whatever a page passed: a typed array, an ArrayBuffer, or a
-// plain array of numbers. All three carry their data in `__bytes` or are arrays
-// themselves, which is the shape install_typed_arrays already uses.
+/// The raw bytes of whatever a page passed as buffer or texture data: a typed
+/// array, an ArrayBuffer, or a plain array of numbers. Each either is an array
+/// or carries one in `__bytes`, the layout install_typed_arrays uses. Returns
+/// an empty vector for anything else.
 [[nodiscard]] std::vector<std::byte> bytes_of(context & cx, value v) {
     std::vector<std::byte> out;
     value items = v;
@@ -23,11 +29,9 @@ using script::to_float;
     }
     if (!items.is_array()) { return out; }
     auto * array = static_cast<script::array_object *>(items.as_heap());
-    // A VIEW ALREADY IS BYTES, in the layout the GPU wants - that is the whole
-    // point of it - so this is a copy of a range rather than a re-encoding of
-    // element values. Going through the element accessors instead would turn
-    // the bytes back into numbers and then back into bytes, which is both
-    // slower and a chance to disagree with what the page actually wrote.
+    // A view already holds bytes in the layout the GPU wants, so copy its byte
+    // range directly. Decoding elements and re-encoding them would be slower
+    // and could disagree with what the page wrote.
     if (array->is_view()) {
         const auto * bytes = static_cast<const script::array_object *>(array->viewed.as_heap());
         const std::size_t width = script::bytes_per_element(array->elements);
@@ -41,10 +45,9 @@ using script::to_float;
         }
         return out;
     }
-    // A FLOAT ARRAY IS FOUR BYTES A NUMBER, not one. The element kind says which
-    // - getting it wrong turns a buffer of positions into a quarter of one, and
-    // the triangle that results looks like a bad transform rather than a bad
-    // upload. A plain array of numbers is floats too.
+    // A Float32Array, and a plain array of numbers, is encoded as four bytes
+    // per element, not one; encoding one byte per float would upload a quarter
+    // of the data.
     const script::element_kind kind = array->elements;
     if (kind == script::element_kind::f32 || kind == script::element_kind::none) {
         out.resize(array->items.size() * sizeof(float));
@@ -54,11 +57,11 @@ using script::to_float;
         }
         return out;
     }
-    // EVERY OTHER NUMBER KIND IS ITS OWN BYTES, little-endian, exactly what a
-    // view over the same buffer would hold: Int8Array([-1]) is 0xFF (ToInt8 is
-    // modular), Uint8ClampedArray was clamped when it was stored, and a
-    // Float64Array is eight bytes an element. element_to_raw is the store's
-    // own encoding, so the two cannot disagree.
+    // Every other number kind is encoded little-endian at its own width, exactly
+    // what a view over the same buffer would hold: Int8Array([-1]) is 0xFF
+    // (ToInt8 is modular), a Uint8ClampedArray was clamped when it was stored,
+    // and a Float64Array is eight bytes per element. element_to_raw is the
+    // buffer store's own encoding, so the two cannot disagree.
     if (!script::is_bigint_kind(kind)) {
         const std::size_t width = script::bytes_per_element(kind);
         out.reserve(array->items.size() * width);
@@ -79,7 +82,9 @@ using script::to_float;
     return out;
 }
 
-// The numbers a page passes to uniform*, as a GLSL value of the given shape.
+/// The numbers a page passes to a uniform* call, starting at argument `from`,
+/// as a uniform value of `rows` x `cols` components per element. The data is
+/// padded to one element when short and trimmed to whole elements otherwise.
 [[nodiscard]] uniform_value make_uniform(context & cx, std::span<value> args, std::size_t from,
                                          std::uint8_t rows, std::uint8_t cols, bool integer) {
     uniform_value made;
@@ -90,16 +95,8 @@ using script::to_float;
     // the `v` suffix means.
     if (args.size() > from && args[from].is_array()) {
         auto * array = static_cast<script::array_object *>(args[from].as_heap());
-        // THROUGH THE ACCESSORS, because A VIEW'S `items` IS EMPTY BY DESIGN -
-        // script/value.hpp says so at the member, and `typed_proto.set` already
-        // reads both kinds this way.
-        //
-        // Reading `items` directly gave a length-ZERO array for every
-        // view-backed Float32Array, and the resize below then padded it to a
-        // matrix of zeros. `uniformMatrix4fv` with a view over an ArrayBuffer
-        // therefore uploaded a ZERO MATRIX, which collapses every vertex to the
-        // origin - with no GL error anywhere, because a zero matrix is a
-        // perfectly legal one.
+        // Read through view_get: a typed-array view's `items` is empty by design
+        // (script/value.hpp), and reading it would upload a matrix of zeros.
         for (std::size_t i = 0; i < array->length(); ++i) {
             made.data.push_back(to_float(array->is_view() ? script::view_get(*array, i)
                                                           : context::to_number(array->items[i])));
@@ -116,19 +113,15 @@ using script::to_float;
             made.data.push_back(to_float(context::to_number(args[i])));
         }
     }
-    // PAD TO THE SHAPE, NEVER TRUNCATE TO IT.
-    //
-    // This was an unconditional `resize(rows * cols)`, which is right for a
-    // scalar and wrong for an ARRAY uniform: `uniform4fv` with eight floats
-    // kept four, a 32-float bone array kept one matrix, and
-    // webgl_context::set_uniform then computed `count = size / per` as 1 every
-    // time. Every array uniform in the engine was a one-element array uniform.
+    // Pad up to one element of the shape, never truncate: an array uniform
+    // (`uniform4fv` with eight floats) carries several elements.
     const std::size_t shape = std::max<std::size_t>(1, static_cast<std::size_t>(rows) * cols);
     if (made.data.size() < shape) {
         made.data.resize(shape, 0.0f);
     } else {
-        // A WHOLE NUMBER OF THEM. `count` is size/shape, so a partial trailing
-        // element would be one the driver reads past the end of.
+        // Keep a whole number of elements: webgl_context::set_uniform computes
+        // the count as size / shape, so a partial trailing element would make
+        // the driver read past the end.
         made.data.resize(made.data.size() - made.data.size() % shape);
     }
     return made;
@@ -138,9 +131,9 @@ using script::to_float;
 
 void dom_bindings::install_webgl_methods(context & cx, script::object_object * obj,
                                          webgl_context * gl, canvas_context * surface) {
-    // Every draw touches the canvas, and the browser learns a canvas changed by
-    // its revision moving - so a call that writes pixels has to say so or the
-    // frame shows the previous one.
+    // Wraps a method that writes pixels so it bumps the canvas revision: the
+    // browser learns that a canvas changed only from its revision, so without
+    // this the frame would show the previous picture.
     const auto touches = [surface](auto body) {
         return [surface, body](context & c, std::span<value> args) {
             const value out = body(c, args);
@@ -149,10 +142,10 @@ void dom_bindings::install_webgl_methods(context & cx, script::object_object * o
         };
     };
 
-    // --- objects
+    // --- Objects
     //
-    // A handle: a JS object carrying the integer the context knows it by. The
-    // page only passes it back, so this is the whole of what one needs.
+    // A handle is a JS object carrying the integer GL name (`__id`) and the
+    // object class (`__kind`). The page only passes it back.
     const auto handle = [](context & c, std::uint32_t made_id, const char * kind) {
         auto * out = c.allocate<script::object_object>();
         out->set("__id", value::number(made_id));
@@ -172,15 +165,10 @@ void dom_bindings::install_webgl_methods(context & cx, script::object_object * o
     set_method(cx, *obj, "createShader", [gl, handle](context & c, std::span<value> a) {
         return handle(c, gl->device().create_shader(int_enum_at(a, 0)), "shader");
     });
-    // THE ENTRY POINT NAMES THE KIND, and the kind has to travel with the
-    // handle. This loop already knew which of the six it was writing and threw
-    // that away, so the device was left probing every GL namespace for the
-    // number and deleting whatever else answered to it - which recycled live
-    // buffer names under Babylon and cost this branch its geometry.
-    //
-    // Taken from the METHOD rather than from the handle's `__kind`, because
-    // `deleteBuffer(x)` must delete a buffer whatever `x` claims to be. That is
-    // what WebGL specifies and it is the safer of the two readings.
+    // Each delete* method passes its object kind to the device, so it never has
+    // to guess the kind from the id (guessing deleted live objects of another
+    // kind with the same number). The kind comes from the method, not the
+    // handle's `__kind`, so `deleteBuffer(x)` deletes a buffer whatever x claims.
     using object_kind = raster::gl::device::object_kind;
     const std::pair<const char *, object_kind> deleters[] = {
         {"deleteBuffer", object_kind::buffer},
@@ -207,15 +195,17 @@ void dom_bindings::install_webgl_methods(context & cx, script::object_object * o
         return value::undefined();
     });
     set_method(cx, *obj, "bufferData", [gl](context & c, std::span<value> a) {
-        // `bufferData(target, size, usage)` ALLOCATES rather than uploading -
-        // a page that means to reserve space passes a number, and treating that
-        // as data would upload one float where it asked for a megabyte.
+        // `bufferData(target, size, usage)` allocates rather than uploads: a
+        // page that means to reserve space passes a number, and treating that
+        // as data would upload one float instead of `size` bytes.
         //
-        // ZERO-FILLED, as WebGL requires: the size-only overload hands the
-        // driver no data, and without EGL_ANGLE_robust_resource_initialization
-        // the new storage is whatever GPU memory held before - readable by the
-        // page. A size the context refuses (negative: INVALID_VALUE, above
-        // 1 GiB: OUT_OF_MEMORY) still goes through that overload for its error.
+        // The storage is zero-filled here, as WebGL requires: the size-only
+        // overload hands the driver no data, and without
+        // EGL_ANGLE_robust_resource_initialization the new storage would hold
+        // whatever GPU memory held before, readable by the page. A size the
+        // context refuses (negative: INVALID_VALUE; above 1 GiB, 1 << 30:
+        // OUT_OF_MEMORY) still goes through the size-only overload to raise
+        // its error.
         if (a.size() > 1 && a[1].is_number()) {
             const int size = int_at(a, 1);
             if (size < 0 || size > (1 << 30)) {
@@ -232,7 +222,7 @@ void dom_bindings::install_webgl_methods(context & cx, script::object_object * o
         return value::undefined();
     });
 
-    // --- shaders and programs
+    // --- Shaders and programs
     set_method(cx, *obj, "shaderSource", [gl](context & c, std::span<value> a) {
         gl->shader_source(id_of(c, a.empty() ? value::undefined() : a[0]),
                           a.size() > 1 ? c.to_string(a[1]) : std::string{});
@@ -267,34 +257,31 @@ void dom_bindings::install_webgl_methods(context & cx, script::object_object * o
     set_method(cx, *obj, "getProgramParameter", [gl](context & c, std::span<value> a) {
         const std::uint32_t which = enum_at(a, 1);
         const std::uint32_t program = id_of(c, a.empty() ? value::undefined() : a[0]);
+        // 0x8B83 is VALIDATE_STATUS, answered with the link status.
         if (which == gl_enum::link_status || which == 0x8B83) {
             return value::boolean(gl->device().program_linked(program));
         }
-        // ACTIVE_UNIFORMS and ACTIVE_ATTRIBUTES. These used to fall through to
-        // the zero below, which is the shape of wrong answer this engine keeps
-        // being bitten by: a library that ENUMERATES a program instead of
-        // asking for names it already knows was told the shader declared
-        // nothing, and bound nothing. See webgl.hpp.
+        // Libraries enumerate a program's uniforms and attributes instead of asking
+        // by name, so these counts must be real.
         if (which == gl_enum::active_uniforms) {
             return value::number(static_cast<double>(gl->active_uniforms(program).size()));
         }
         if (which == gl_enum::active_attributes) {
             return value::number(static_cast<double>(gl->active_attributes(program).size()));
         }
-        // Still zero for everything else, and still a guess. Anything a page
-        // actually reads should be listed above rather than left to this.
+        // Any other parameter answers 0, which is a guess. A parameter a page
+        // actually reads should get a case above.
         return value::number(0);
     });
-    // WebGLActiveInfo: `{size, type, name}`. The INDEX is positional and is the
-    // attribute's location as well, which is why active_attributes preserves
-    // link order rather than sorting.
+    // Builds a WebGLActiveInfo `{size, type, name}`. The index a page passes is
+    // positional and is also the attribute's location, which is why
+    // active_attributes preserves link order rather than sorting.
     const auto active_info = [](context & c, const webgl_context::active_variable & v) {
         value out = c.make_object();
         auto * made = static_cast<script::object_object *>(out.as_heap());
         made->set("name", c.string(v.name));
-        // `size` is the ARRAY LENGTH, not the component count - 1 for a plain
-        // uniform, and mat4 uColour[2] is size 2. Reporting components here
-        // would make a caller loop the wrong number of times.
+        // `size` is the array length, not the component count: 1 for a plain
+        // uniform, 2 for `mat4 uColour[2]`.
         made->set("size", value::number(v.size));
         made->set("type", value::number(v.type));
         return out;
@@ -311,10 +298,9 @@ void dom_bindings::install_webgl_methods(context & cx, script::object_object * o
         if (i >= all.size()) { return value::null(); }
         return active_info(c, all[i]);
     });
-    // NOT A GL CALL. There is no such entry point in WebGL, because a compiled
-    // GPU shader cannot fail per fragment - this evaluator can, and a draw that
-    // silently wrote nothing is the hardest kind of failure to diagnose. Named
-    // with the engine's prefix so nobody mistakes it for standard surface.
+    // Not a WebGL call: an engine extension returning the most recent shader
+    // compile or program link log, so a test can see why a draw produced nothing.
+    // The `ctbrowser` prefix marks it as non-standard.
     set_method(cx, *obj, "ctbrowserShaderError",
                [gl](context & c, std::span<value>) { return c.string(gl->shader_error()); });
     set_method(cx, *obj, "getProgramInfoLog", [gl](context & c, std::span<value> a) {
@@ -327,16 +313,16 @@ void dom_bindings::install_webgl_methods(context & cx, script::object_object * o
         return value::undefined();
     });
 
-    // --- attributes
+    // --- Attributes
     set_method(cx, *obj, "getAttribLocation", [gl](context & c, std::span<value> a) {
         return value::number(
             gl->device().attribute_location(id_of(c, a.empty() ? value::undefined() : a[0]),
                                             a.size() > 1 ? c.to_string(a[1]) : std::string{}));
     });
     set_method(cx, *obj, "bindAttribLocation", [](context &, std::span<value>) {
-        // Locations are assigned at link time in declaration order here, so this
-        // cannot be honoured. Silent rather than an error: a page calls it
-        // defensively, and the locations it would ask for are the ones it gets.
+        // Not forwarded: the linker assigns attribute locations, so a requested
+        // binding is not honoured. Silent rather than an error because pages
+        // call it defensively and then read locations with getAttribLocation.
         return value::undefined();
     });
     set_method(cx, *obj, "enableVertexAttribArray", [gl](context &, std::span<value> a) {
@@ -353,23 +339,14 @@ void dom_bindings::install_webgl_methods(context & cx, script::object_object * o
         return value::undefined();
     });
 
-    // --- uniforms
-    //
-    // A "location" here is the NAME. WebGL hands back an opaque object and a
-    // page only ever passes it straight back, so a name is a location that is
-    // also readable in a diagnostic.
-    // --- uniform blocks, WebGL 2's way of delivering uniforms ---------------
-    //
-    // A page using them does not call `uniform4fv` at all: it fills a buffer and
-    // binds it. Refused by name, these three left Babylon's every matrix reading
-    // zero while its shaders linked and its draws were issued - a collapsed
-    // scene on a canvas showing exactly the colour it was cleared to.
+    // --- Uniform blocks (WebGL 2): a page fills a buffer and binds it instead
+    // of calling uniform*; Babylon.js delivers all its matrices this way.
     set_method(cx, *obj, "getUniformBlockIndex", [gl](context & c, std::span<value> a) {
         const int index =
             gl->get_uniform_block_index(id_of(c, a.empty() ? value::undefined() : a[0]),
                                         a.size() > 1 ? c.to_string(a[1]) : std::string{});
-        // GL_INVALID_INDEX, which is 0xFFFFFFFF and NOT an error: asking about a
-        // block the shader does not have is a legitimate question.
+        // A missing block answers GL_INVALID_INDEX (0xFFFFFFFF), which is not
+        // an error: asking about a block the shader lacks is legitimate.
         return index < 0 ? value::number(4294967295.0) : value::number(index);
     });
     set_method(cx, *obj, "uniformBlockBinding", [gl](context & c, std::span<value> a) {
@@ -383,6 +360,11 @@ void dom_bindings::install_webgl_methods(context & cx, script::object_object * o
                              id_of(c, a.size() > 2 ? a[2] : value::undefined()));
         return value::undefined();
     });
+    // --- Uniforms
+    //
+    // A uniform location is an object carrying the uniform's name in `__name`.
+    // WebGL hands back an opaque object that a page only passes straight back,
+    // so the name serves as the location and is readable in diagnostics.
     set_method(cx, *obj, "getUniformLocation", [](context & c, std::span<value> a) {
         if (a.size() < 2) { return value::null(); }
         auto * out = c.allocate<script::object_object>();
@@ -421,16 +403,15 @@ void dom_bindings::install_webgl_methods(context & cx, script::object_object * o
                                         uniform_shape{"uniformMatrix4fv", 4, 4, false}}) {
         set_method(
             cx, *obj, shape.name, [gl, shape, uniform_name](context & c, std::span<value> a) {
-                // ARGUMENT 1 IS `transpose`, and the value is argument 2 - a
-                // signature that catches everyone once. WebGL 1 requires transpose to
-                // be false, so it is read and ignored rather than honoured.
+                // Argument 1 is `transpose` (must be false in WebGL 1, ignored here);
+                // the values start at argument 2.
                 gl->set_uniform(uniform_name(c, a),
                                 make_uniform(c, a, 2, shape.rows, shape.cols, shape.integer));
                 return value::undefined();
             });
     }
 
-    // --- state
+    // --- State
     set_method(cx, *obj, "viewport", [gl](context &, std::span<value> a) {
         gl->viewport(int_at(a, 0), int_at(a, 1), int_at(a, 2), int_at(a, 3));
         return value::undefined();
@@ -460,31 +441,19 @@ void dom_bindings::install_webgl_methods(context & cx, script::object_object * o
         return value::undefined();
     });
     set_method(cx, *obj, "blendFuncSeparate", [gl](context &, std::span<value> a) {
-        // The RGB pair only: this rasteriser blends alpha with the same factors,
-        // which is what softgl.hpp's blend state can express. A page separating
-        // them gets the colour pair applied to both.
+        // Only the RGB factors are forwarded; alpha is blended with the same
+        // pair, so a page that separates them gets the colour pair for both.
         gl->device().blend_func(int_enum_at(a, 0), int_enum_at(a, 1));
         return value::undefined();
     });
-    // ACCEPTED AND IGNORED. Two different reasons live in this list and it is
-    // worth being honest about which is which:
-    //
-    //   genuinely nothing to do here - `flush`, `finish`, `hint`,
-    //   `generateMipmap`, `pixelStorei` - a software rasteriser with no command
-    //   queue and no mip chain has no work for them.
-    //
-    //   NOT IMPLEMENTED, and a page using them gets a wrong picture rather than
-    //   an error - the whole stencil family, `colorMask`, `polygonOffset`,
-    //   `sampleCoverage`, `lineWidth`, and the blend-equation calls. There is no
-    //   stencil buffer in softgl.hpp at all, so a page masking with one simply
-    //   draws unmasked.
-    //
-    // The second group SHOULD refuse by name the way the WebGL 2 surface does.
-    // They do not yet because they are called during ordinary engine setup by
-    // libraries that then render fine without them - Babylon sets stencil state
-    // on every scene - and turning that into a torrent of refusals would bury
-    // the diagnostics that matter. Recorded here rather than left as a
-    // pleasant-looking list of no-ops; docs/raster.md carries the same note.
+    // Accepted and ignored: none of these reach the GL device. For `flush`,
+    // `finish` and `hint` that costs nothing. The rest (the stencil family,
+    // `colorMask`, `polygonOffset`, `sampleCoverage`, `lineWidth`,
+    // `pixelStorei`, `generateMipmap` and the blend-equation calls) are not
+    // implemented: a page using them gets a wrong picture, not an error. They
+    // stay silent rather than refusing by name because libraries such as
+    // Babylon.js set stencil state on every scene and render fine without it,
+    // and a refusal per call would bury the diagnostics that matter.
     for (const char * name :
          {"blendEquation", "blendEquationSeparate", "blendColor", "stencilFunc",
           "stencilFuncSeparate", "stencilOp", "stencilOpSeparate", "stencilMask",
@@ -516,7 +485,7 @@ void dom_bindings::install_webgl_methods(context & cx, script::object_object * o
                    return value::undefined();
                }));
 
-    // --- textures
+    // --- Textures
     set_method(cx, *obj, "bindTexture", [gl](context & c, std::span<value> a) {
         gl->device().bind_texture(int_enum_at(a, 0),
                                   id_of(c, a.size() > 1 ? a[1] : value::undefined()));
@@ -535,10 +504,10 @@ void dom_bindings::install_webgl_methods(context & cx, script::object_object * o
         return value::undefined();
     });
     set_method(cx, *obj, "texImage2D", [this, gl](context & c, std::span<value> a) {
-        // TWO SIGNATURES, and they are told apart by how many arguments arrived:
-        // (target, level, internalformat, width, height, border, format, type,
-        // pixels) is nine, and (target, level, internalformat, format, type,
-        // source) is six - where `source` is an image, a canvas or an ImageData.
+        // Two signatures, told apart by argument count: (target, level,
+        // internalformat, width, height, border, format, type, pixels) has nine,
+        // and (target, level, internalformat, format, type, source) has six,
+        // where `source` is an image, a canvas or an ImageData.
         if (a.size() >= 9) {
             gl->texture_image(enum_at(a, 0), int_at(a, 3), int_at(a, 4),
                               bytes_of(c, a.size() > 8 ? a[8] : value::undefined()));

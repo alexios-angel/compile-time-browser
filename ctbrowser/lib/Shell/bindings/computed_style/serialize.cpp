@@ -1,6 +1,11 @@
-// dom_bindings - how a computed value is written down: numbers as CSSOM's
+//===- computed_style/serialize.cpp - Value serialisation -------*- C++ -*-===//
+//
+// dom_bindings: how a computed value is written down. Numbers as CSSOM's
 // shortest round-tripping decimal, colours in the one form both engines
-// normalise to, and keywords folded.
+// normalise to, transforms as matrices, shadows in canonical order, and
+// keywords folded.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -12,32 +17,21 @@ namespace ctbrowser::shell {
 
 using namespace detail;
 
-namespace {
-
-// A CSS number, serialised as CSSOM §6.7.2 requires: the SHORTEST decimal that
-// reads back as the same number, with no exponent, no trailing zeros, and an
-// integer printed as an integer. `std::to_chars` in `fixed` format is exactly
-// that definition, and it is asked about a FLOAT rather than a double on
-// purpose - every value here is one, and the shortest string for the float is
-// the author's `20.7` where the shortest string for the double it widens to is
-// `20.700000762939453`.
-//
-// IT DOES NOT ROUND. It used to snap to 1/64 - Chrome's LayoutUnit quantum - so
-// that two values differing below the quantum could not print as a difference.
-// That is right for a value layout produced and wrong for one the author wrote:
-// `margin-left: 20.7px` came back as `20.703125px`, which is
-// getComputedStyle-margins-roundtrip and getComputedStyle-insets-absolute-roundtrip
-// in full, 8 subtests, and is the Chromium bug both files are named after. The
-// snap lives in `used_px_text` below, and only the values that genuinely come
-// out of layout arithmetic go through it. tools/check/css-parity.py quantises
-// BOTH sides to 1/64 itself before comparing (EPSILON_PX), so nothing in the
-// parity report depends on this rounding here.
-// (Defined in `detail` below, beside the helpers that build on it.)
-
-} // namespace
+namespace {} // namespace
 
 namespace detail {
 
+/// Serialises a CSS number as CSSOM §6.7.2 requires: the shortest decimal that
+/// reads back as the same float, with no exponent and no trailing zeros, and an
+/// integer printed as an integer. `std::to_chars` in `fixed` format is exactly
+/// that. It takes a float, not a double, so the author's `20.7` does not print
+/// as `20.700000762939453`.
+///
+/// It does not round: a value the author wrote must round-trip
+/// (getComputedStyle-margins-roundtrip). Values produced by layout arithmetic
+/// go through used_px_text, which snaps to 1/64. tools/check/css-parity.py
+/// quantises both sides to 1/64 itself (EPSILON_PX), so the parity report does
+/// not depend on this.
 [[nodiscard]] std::string number_text(float value) {
     if (!std::isfinite(value)) { return "0"; }
     std::array<char, 64> buffer{};
@@ -49,48 +43,41 @@ namespace detail {
     return out;
 }
 
-// `thin` / `medium` / `thick` are 1, 3 and 5 CSS pixels - the figures every
-// engine uses, and the reason the keyword has to become a number at all is that
-// getComputedStyle reports a border width as a length and never as its keyword.
+/// Resolves a border width to px. `thin`, `medium` and `thick` are 1, 3 and 5
+/// CSS pixels, the figures every engine uses; getComputedStyle reports a border
+/// width as a length, never as its keyword. An empty text is `medium`.
 [[nodiscard]] float border_width_px(std::string_view text, float font_size) {
     if (text.empty() || ascii_iequals(text, "medium")) { return 3.0f; }
     if (ascii_iequals(text, "thin")) { return 1.0f; }
     if (ascii_iequals(text, "thick")) { return 5.0f; }
     const layout::length len = layout::parse_length(text);
     if (len.is_auto()) { return 0.0f; }
-    // A percentage is not a valid border width; resolving one against a zero
-    // basis is the honest answer to a declaration that got through anyway.
+    // A percentage is not a valid border width; one that got through the
+    // cascade anyway resolves against a zero basis.
     return len.resolve(0.0f, font_size);
 }
 
-// A COMPUTED length: the number as it is.
+/// A computed length: the number as it is, plus `px`.
 [[nodiscard]] std::string px_text(float value) {
     return number_text(value) + "px";
 }
 
-// A USED length - one layout arrived at by adding and subtracting fragment
-// bounds - rounded to 1/64. Chrome's LayoutUnit cannot represent anything finer,
-// so a used value that differs from Chrome's below the quantum is not a
-// difference; and our own arithmetic drifts there too, so `784 - 763.3 - 0`
-// prints as `20.70001` without this and as `20.703125` with it. Both are honest
-// about a number nobody wrote down.
+/// A used length, one layout arrived at by adding and subtracting fragment
+/// bounds, rounded to 1/64 px. Chrome's LayoutUnit cannot represent anything
+/// finer, and our own float arithmetic drifts below that quantum too:
+/// `784 - 763.3 - 0` prints as `20.70001` unrounded and `20.703125` rounded.
 [[nodiscard]] std::string used_px_text(float value) {
     if (!std::isfinite(value)) { return "0px"; }
     return number_text(std::round(value * 64.0f) / 64.0f) + "px";
 }
 
-// A colour in the one form both engines normalise to. Chrome prints
-// `rgb(13, 110, 253)` and has drifted across versions, so the harness normalises
-// both sides rather than either engine imitating the other. Resolving here still
-// earns its keep: `#0d6efd` and `rgb(13,110,253)` then compare equal without the
-// tool knowing Bootstrap's palette, and a colour that does NOT parse comes back
-// as its raw text rather than silently as black.
-//
-// THE ALPHA IS QUANTISED, unlike every other number here. It is not a length and
-// it is not the author's number either: an 8-bit channel divided by 255 is
-// 0.5019608 for the `rgba(0, 0, 0, .5)` a page wrote, and rounding to 1/64
-// recovers the `0.5` every engine prints. The precision that is lost was never
-// there - the colour is stored in eight bits.
+/// A colour as `rgb(r, g, b)`, or `rgba(r, g, b, a)` when not opaque, the form
+/// both engines normalise to; `#0d6efd` and `rgb(13,110,253)` then compare
+/// equal in the parity harness.
+///
+/// The alpha is quantised to 1/64, unlike every other number here: it is stored
+/// in eight bits, so the page's `.5` comes back as 128/255 = 0.5019608, and
+/// rounding to 1/64 recovers the `0.5` every engine prints.
 [[nodiscard]] std::string color_text(color c) {
     const auto channel = [](std::uint8_t v) { return std::to_string(static_cast<int>(v)); };
     const std::string rgb = channel(c.red()) + ", " + channel(c.green()) + ", " + channel(c.blue());
@@ -99,15 +86,16 @@ namespace detail {
     return "rgba(" + rgb + ", " + number_text(std::round(alpha * 64.0f) / 64.0f) + ")";
 }
 
-// A SYSTEM COLOUR RESOLVES TO A COLOUR. CSS Color 4 §6.2 leaves the value to
-// the platform and CSSOM makes the resolved value of a colour property the
-// used one, so `background-color: Menu` reads back as an `rgb()` in every
-// browser (getComputedStyle-resolved-colors). Style's light-scheme table is
-// the answer: nothing here is themed.
+/// The colour a system colour keyword resolves to. CSS Color 4 §6.2 leaves the
+/// value to the platform, and CSSOM makes the resolved value of a colour
+/// property the used one, so `background-color: Menu` reads back as an `rgb()`
+/// in every browser (getComputedStyle-resolved-colors). Style's light-scheme
+/// table is the answer: nothing here is themed.
 [[nodiscard]] std::optional<color> system_color(std::string_view text) {
     const std::string_view word = trim(text, html_whitespace);
-    // ...and the one named colour CSS Color 4 added that paint's table
-    // predates (adoptedstylesheets-cascade-order).
+    // `rebeccapurple` (#663399) is also handled here: it is the one named
+    // colour CSS Color 4 added that paint's table predates
+    // (adoptedstylesheets-cascade-order).
     const std::optional<std::uint32_t> rgb = ascii_iequals(word, "rebeccapurple")
                                                  ? std::optional<std::uint32_t>{0x663399}
                                                  : style::css::system_color(word);
@@ -115,19 +103,17 @@ namespace detail {
     return color{0xFF000000u | *rgb};
 }
 
-// THE COMPUTED `transform` IS A MATRIX. CSS Transforms 2 §9: the resolved
-// value of a transform list is the product of its functions, serialised as
-// `matrix(a, b, c, d, e, f)` when that product is 2D - `scale(0.5)` reads back
-// as `matrix(0.5, 0, 0, 0.5, 0, 0)` - and as `matrix3d()` with its sixteen
-// values when it is not; `none` stays `none`. Six of css/css-values'
-// serialize files ask for it through `scale()`, and every 3D interpolation
-// file of css-transforms compares two of them.
-//
-// ONLY WHAT CAN BE MULTIPLIED HERE IS. A function this reader does not model
-// keeps the cascade's text, and so does a percentage with no box to be one of.
-// `em` and `rem` are the element's and the root's font sizes, and a
-// translation's percentage is of the border box - x of its width, y of its
-// height (transform-interpolation-004 compares two such lists).
+/// The resolved value of a transform list is a matrix (CSS Transforms 2 §9):
+/// the product of its functions, serialised as `matrix(a, b, c, d, e, f)` when
+/// that product is 2D (`scale(0.5)` reads back as
+/// `matrix(0.5, 0, 0, 0.5, 0, 0)`) and as `matrix3d()` with sixteen values when
+/// it is not; `none` stays `none`. This computes the product, column-major.
+///
+/// Only what can be multiplied here is: a function this reader does not model,
+/// or a percentage with no box to resolve against, returns nullopt so the
+/// caller keeps the cascade's text. `em` and `rem` are the element's and the
+/// root's font sizes, and a translation's percentage is of the border box: x
+/// of its width, y of its height (transform-interpolation-004).
 std::optional<std::array<double, 16>> transform_matrix3d(std::string_view text,
                                                          const transform_basis & basis) {
     if (text.empty() || ascii_iequals(text, "none")) { return std::nullopt; }
@@ -296,8 +282,8 @@ std::optional<std::array<double, 16>> transform_matrix3d(std::string_view text,
         } else {
             return std::nullopt;
         }
-        // A LENGTH WHERE A NUMBER BELONGS, or the reverse, is a syntax error the
-        // cascade let through; it is not this reader's to guess at. The last
+        // A length where a number belongs, or the reverse, is a syntax error the
+        // cascade let through; this reader does not guess. The last
         // argument of rotate3d() is its angle, which reads as a number here.
         for (std::size_t i = 0; i < count; ++i) {
             if (is_length[i] != lengths && !(lengths && args[i] == 0.0)) { return std::nullopt; }
@@ -309,6 +295,7 @@ std::optional<std::array<double, 16>> transform_matrix3d(std::string_view text,
     return m;
 }
 
+/// The 2D form of transform_matrix3d's product, or nullopt when it is 3D.
 std::optional<std::array<double, 6>> transform_matrix(std::string_view text,
                                                       const transform_basis & basis) {
     const auto m = transform_matrix3d(text, basis);
@@ -320,14 +307,15 @@ std::optional<std::array<double, 6>> transform_matrix(std::string_view text,
     return std::array<double, 6>{n[0], n[1], n[4], n[5], n[12], n[13]};
 }
 
+/// The resolved `transform` text; see transform_matrix3d.
 std::string transform_matrix_text(std::string_view text, const transform_basis & basis) {
     if (const auto matrix = transform_matrix(text, basis)) {
         const auto & m = *matrix;
         std::string out{"matrix("};
         for (std::size_t i = 0; i < 6; ++i) {
             if (i != 0) { out += ", "; }
-            // TO SIX DECIMALS, as Chrome prints a matrix: `cos(90deg)` is 6e-17 in
-            // a double and `0` on the page.
+            // Rounded to six decimals, as Chrome prints a matrix: `cos(90deg)` is
+            // 6e-17 in a double and `0` on the page.
             out += number_text(static_cast<float>(std::round(m[i] * 1e6) / 1e6));
         }
         out += ')';
@@ -338,8 +326,8 @@ std::string transform_matrix_text(std::string_view text, const transform_basis &
     std::string out{"matrix3d("};
     for (std::size_t i = 0; i < 16; ++i) {
         if (i != 0) { out += ", "; }
-        // TO NINE DECIMALS, not six: a perspective term is -1/depth, and six
-        // decimals of -1/450 are not the matrix (the 3D interpolation files
+        // Nine decimals, not six: a perspective term is -1/depth, and six
+        // decimals of -1/450 lose too much (the 3D interpolation tests
         // compare to a relative 1e-5).
         const double v = (*matrix)[i];
         std::array<char, 64> buffer{};
@@ -355,18 +343,19 @@ std::string transform_matrix_text(std::string_view text, const transform_basis &
     return out;
 }
 
-// A SHADOW LIST AS ITS RESOLVED VALUE. CSS Backgrounds 3 §7.2 and CSS Text
-// Decoration 3 §4: each shadow's colour computes to a colour - a system colour
-// or a named one becomes its `rgb()`, an absent one is `currentcolor`, which
-// the caller substitutes - and its lengths become px, the omitted ones zero.
-// Serialised colour first, then the lengths, then `inset`, which is the order
-// every engine prints (getComputedStyle-resolved-colors asks that
-// `box-shadow: 1px 1px Menu` begin with `rgb(`). `none` stays `none`; a shadow
-// this reader cannot take apart keeps its text.
+/// A shadow list as its resolved value (CSS Backgrounds 3 §7.2, CSS Text
+/// Decoration 3 §4). Each shadow's colour computes to a colour: a system or
+/// named colour becomes its `rgb()`, and an absent one is `currentcolor`, which
+/// the caller substitutes. Its lengths become px, the omitted ones zero. The
+/// colour is serialised first, then the lengths, then `inset`, the order every
+/// engine prints (getComputedStyle-resolved-colors asks that
+/// `box-shadow: 1px 1px Menu` begin with `rgb(`). `box` selects box-shadow's
+/// four lengths over text-shadow's three. `none` stays `none`; a shadow this
+/// reader cannot take apart keeps its text.
 [[nodiscard]] std::string shadow_text(std::string_view text, float font_size, bool box) {
     const std::string_view whole = trim(text, html_whitespace);
     if (whole.empty() || ascii_iequals(whole, "none")) { return "none"; }
-    // Split at depth zero - a comma or a space inside `rgb(1, 2, 3)` is the
+    // Split at depth zero: a comma or a space inside `rgb(1, 2, 3)` is the
     // colour's, not the list's.
     const auto split = [](std::string_view in, bool on_comma) {
         std::vector<std::string_view> out;
@@ -419,10 +408,13 @@ std::string transform_matrix_text(std::string_view text, const transform_basis &
     return out;
 }
 
+/// Lowercases a keyword value and collapses whitespace runs to one space.
+/// Quoted strings keep their case and spacing. With keep_case, only the
+/// whitespace is collapsed.
 [[nodiscard]] std::string collapse_keyword(std::string_view text, bool keep_case) {
     std::string out;
     bool gap = false;
-    char quote = 0; // inside a string, which keeps its case and its spaces
+    char quote = 0; // Inside a string, which keeps its case and its spaces.
     for (const char c : trim(text, html_whitespace)) {
         if (quote != 0) {
             out += c;

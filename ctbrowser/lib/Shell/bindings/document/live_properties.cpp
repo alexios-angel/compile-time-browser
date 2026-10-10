@@ -1,20 +1,25 @@
-// Split from install.cpp: live properties.
+//===- live_properties.cpp - createElementNS name checks --------*- C++ -*-===//
+//
+// dom_bindings::validate_and_extract_element, the name and namespace checks
+// behind createElementNS.
+//
+//===----------------------------------------------------------------------===//
 #include "internal.hpp"
 
 namespace ctbrowser::shell {
 
 using namespace detail;
 
-// VALIDATE AND EXTRACT, in the order the DOM puts the two halves: the shape
-// of the name is decided BEFORE the namespace is looked at, so
-// `createElementNS(XMLNS_NS, "1foo")` is an InvalidCharacterError and not the
-// NamespaceError its namespace would otherwise earn. Both orderings throw;
-// only one of them throws what the suite asserts.
-//
-// A prefix is checked for being writable and non-empty and NOTHING ELSE -
-// `createElementNS(ns, "0:a")` is legal and `"a:0"` is not, because it is the
-// LOCAL name that has to be a name and the prefix is only ever a label in
-// front of it.
+/// DOM "validate and extract" for an element, in the order the DOM puts the
+/// two halves: the shape of the name is decided before the namespace is looked
+/// at, so `createElementNS(XMLNS_NS, "1foo")` is an InvalidCharacterError and
+/// not the NamespaceError its namespace would otherwise earn. Both orderings
+/// throw; only one throws what WPT asserts.
+///
+/// A prefix is checked for being writable and non-empty and nothing else:
+/// `createElementNS(ns, "0:a")` is legal and `"a:0"` is not, because it is the
+/// local name that has to be a name and the prefix is only a label in front of
+/// it. Returns false after throwing the DOMException into `cx`.
 bool dom_bindings::validate_and_extract_element(context & cx, std::string_view where,
                                                 const std::string & ns,
                                                 const std::string & qualified) {

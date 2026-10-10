@@ -1,3 +1,12 @@
+//===- tables_and_form_owners_helpers.cpp - Form control helpers ----------===//
+//
+// The control_helpers members shared by the form-control and table bindings:
+// prototype accessor installation, per-wrapper slots, and the HTML form
+// categories (listed, submittable, labelable, disabled), form owners and
+// radio button groups.
+//
+//===----------------------------------------------------------------------===//
+
 #include "helpers.hpp"
 
 namespace ctbrowser::shell::detail {
@@ -12,14 +21,12 @@ void control_helpers::operation(context & cx, const char * which, const char * n
     bindings->define_operation(cx, {which}, name, length, std::move(fn));
 }
 
-// AN ACCESSOR ON A SHARED PROTOTYPE, answered by the document that owns the
-// receiver - define_operation's arrangement, for a getter/setter pair. Every
-// document's bindings run this installer and keep their own pair (closing over
-// their own tree) in their operations; only the primary defines the accessor,
-// and it routes to the owner's pair. It used to define the accessor from every
-// document that ran it, so after a frame's first operation `table.caption`
-// read the FRAME's tree with the page's node ids, and before one a frame's
-// table was read in the page's tree - either way null.
+/// Defines an accessor on a prototype shared by all documents in the realm,
+/// the getter/setter counterpart of define_operation. Every document's
+/// bindings store their own getter/setter pair in operations_, but only the
+/// primary document defines the accessor, which routes each call to the pair
+/// of the document that owns the receiver (so a frame's `table.caption` reads
+/// the frame's tree, not the page's).
 void control_helpers::getter(context & cx, const char * which, const char * name,
                              script::native_fn get, script::native_fn set) const {
     dom_bindings * b = bindings;
@@ -72,6 +79,9 @@ std::pair<dom_bindings *, node_id> control_helpers::at(context & c) const {
     return std::pair{owner, owner->receiver(c)};
 }
 
+/// Defines a plain accessor on the shared prototype, closing over the primary
+/// document's bindings. Unlike getter(), it does not route to the receiver's
+/// own document, so use it only for accessors that do not read the tree.
 void control_helpers::accessor(context & cx, const char * which, const char * name,
                                script::native_fn get, script::native_fn set) const {
     const auto helpers = *this;
@@ -82,10 +92,11 @@ void control_helpers::accessor(context & cx, const char * which, const char * na
                         set ? native(cx, name, std::move(set)) : value::undefined());
 }
 
-// A SLOT LIVES ON THE WRAPPER, so a node that has none has no slots - and
-// reading one does not make one: the insertion steps (form_writes.cpp) ask
-// about every option the parser inserts. The ordinary object, never the
-// legacy platform object's proxy over it (legacy_objects.cpp).
+/// Reads slot `key` off the node's wrapper. Slots live on the wrapper, so a
+/// node without one has no slots, and reading does not create a wrapper: the
+/// insertion steps (form_writes.cpp) ask about every option the parser
+/// inserts. The slot is read from the ordinary object, never from the legacy
+/// platform object's proxy over it (legacy_objects.cpp).
 value control_helpers::slot_of(context &, dom_bindings * b, node_id id,
                                std::string_view key) const {
     const value w = dom_bindings::unwrap_legacy_proxy(b->value_of_wrapper(id));
@@ -94,9 +105,11 @@ value control_helpers::slot_of(context &, dom_bindings * b, node_id id,
     return held == nullptr ? value::undefined() : *held;
 }
 
-// AN OPTION'S SELECTEDNESS IS A SLOT, not a node, so the document's version
-// does not see it move - and `select.selectedOptions` is one live collection
-// ([SameObject]) that refreshes on that version. A change to the slot says so.
+/// Writes slot `key` on the node's wrapper, creating the wrapper if needed.
+/// An option's selectedness is a slot, not a node, so changing it does not
+/// bump the document's version; `select.selectedOptions` is one live
+/// collection ([SameObject]) that refreshes on that version, so a change to
+/// the selected slot reports itself with note_unversioned_change().
 void control_helpers::set_slot(context & c, dom_bindings * b, node_id id, std::string_view key,
                                value v) const {
     const value w = dom_bindings::unwrap_legacy_proxy(b->wrap(c, id));
@@ -134,7 +147,7 @@ std::string control_helpers::input_type(const read_txn & txn, dom_bindings * b, 
 }
 
 std::string control_helpers::value_of(const read_txn & txn, dom_bindings * b, node_id id) const {
-    // The store holds what the control SHOWS; a number control's value is
+    // The store holds what the control shows; a number control's value is
     // what the user agent made of it (input_types::number_value_of_input).
     const control_state & held = b->forms_->state_of(txn, *b->atoms_, id);
     return held.type == "number" ? input_types::number_value_of_input(held.value) : held.value;
@@ -150,7 +163,7 @@ node_id control_helpers::form_owner(const read_txn & txn, dom_bindings * b, node
 }
 
 bool control_helpers::is_face(dom_bindings * b, node_id id) const {
-    // A FORM-ASSOCIATED CUSTOM ELEMENT (HTML 4.13.7.2): a custom element -
+    // A form-associated custom element (HTML 4.13.7.2): a custom element -
     // defined, not failed nor mid-upgrade - whose definition said
     // `formAssociated`. It is listed, labelable, submittable and resettable,
     // so every category below asks.
@@ -245,7 +258,7 @@ bool control_helpers::is_disabled(const read_txn & txn, dom_bindings * b, node_i
     node_id child = id;
     for (node_id up = txn.parent(id); up; child = up, up = txn.parent(up)) {
         if (!helpers.is(txn, up, "fieldset") || !txn.has_attribute(up, disabled)) { continue; }
-        // Inside the fieldset's FIRST legend child: not disabled by it.
+        // Inside the fieldset's first legend child: not disabled by it.
         node_id first_legend;
         for (const node_id kid : txn.children(up)) {
             if (helpers.is(txn, kid, "legend")) {
@@ -294,7 +307,7 @@ void control_helpers::uncheck_radio_group(const read_txn & txn, dom_bindings * b
 
 void control_helpers::children_replaced(dom_bindings * b, node_id id) const {
     // "String replace all" on a textarea (textContent, defaultValue) removes
-    // every child BEFORE it inserts the new one, so a clean textarea's value
+    // every child before it inserts the new one, so a clean textarea's value
     // passed through "" and its selection was clamped to 0 on the way - the
     // store, which only sees the result, is told so here.
     const auto helpers = *this;
@@ -310,7 +323,7 @@ void control_helpers::children_replaced(dom_bindings * b, node_id id) const {
 
 node_id control_helpers::labeled_control(const read_txn & txn, dom_bindings * b,
                                          node_id label) const {
-    // A label's labeled control (4.10.4): the element its `for` names when
+    // A label's labeled control (HTML 4.10.4): the element its `for` names when
     // that is labelable, else its first labelable descendant.
     const auto helpers = *this;
     const atom for_attr = b->atoms_->intern("for");

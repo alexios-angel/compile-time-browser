@@ -1,5 +1,9 @@
+//===- traversal.cpp - NodeIterator and TreeWalker --------------*- C++ -*-===//
+//
 // dom_bindings - DOM 6, traversal: `createNodeIterator`, `createTreeWalker`,
 // the NodeIterator and TreeWalker prototypes, and the NodeFilter constants.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -14,14 +18,14 @@ constexpr unsigned filter_accept = 1;
 constexpr unsigned filter_reject = 2;
 constexpr unsigned filter_skip = 3;
 
-// A PLACE A WALKER CAN STAND: a node of ONE of the realm's documents. The
-// walkers are made by `document.createTreeWalker` but a root may be any
-// document's node - common.js's `foreignDoc` and `xmlDoc` are both walked -
-// so the owner rides beside the id. A Document is its own document node
-// (`wrap` hands that back as the page's `document`), and `none` is "no such
-// node", which is what every traversal answers when it runs out. Nothing here
-// holds a read_txn across a step: each primitive opens its own, because a
-// filter is script and may edit the tree between two.
+/// A position a walker can be at: a node in one of the realm's documents.
+/// Walkers are made by `document.createTreeWalker`, but the root may belong to
+/// any document (WPT's traversal tests walk an iframe's document and an XML
+/// document), so the owning bindings travel with the node id. A Document is
+/// its own document node (`wrap` returns that as the page's `document`), and
+/// `none()` means "no such node", which every traversal returns when it runs
+/// out. Nothing here holds a read_txn across a step: each primitive opens its
+/// own, because a filter is script and may edit the tree between two steps.
 struct spot {
     dom_bindings * owner = nullptr;
     node_id id;
@@ -30,12 +34,12 @@ struct spot {
 };
 constexpr spot no_spot{};
 
-// THE STATE IS HIDDEN OWN PROPERTIES of the walker - root, whatToShow, filter
-// and the position - which is what roots them for the collector; the IDL
-// attributes are accessors on the prototype over them, read-only as the
-// interface says (TreeWalker-basic.html asserts each descriptor). The active
-// flag is one too, so a filter that calls back into its own walker is an
-// InvalidStateError rather than a recursion.
+// The walker's state is stored as hidden own properties of the walker object
+// (root, whatToShow, filter and the position), which keeps them reachable for
+// the collector. The IDL attributes are read-only accessors on the prototype
+// over them (TreeWalker-basic.html asserts each descriptor). The active flag
+// is one too, so a filter that calls back into its own walker throws an
+// InvalidStateError rather than recursing.
 constexpr std::string_view root_slot = iterator_root_slot;
 constexpr std::string_view show_slot = "__whatToShow";
 constexpr std::string_view filter_slot = "__filter";
@@ -47,10 +51,10 @@ constexpr std::string_view active_slot = "__active";
 } // namespace
 
 void dom_bindings::install_traversal(context & cx, script::object_object & doc) {
-    // --- the primitives, each one read_txn long ------------------------------
+    // --- The primitives, each holding one read_txn ---------------------------
 
-    // THE DOCUMENT'S CHILDREN ARE THE DOCUMENT NODE'S LIST - the doctype, the
-    // element and whatever sits beside them - and the document element is in
+    // The document's children are the document node's list (the doctype, the
+    // element and whatever sits beside them), and the document element is in
     // that list with no parent pointer, which is why parent_of and sibling_of
     // ask dom_parent rather than parent(). See document::document_node.
     const auto parent_of = [](spot at) -> spot {
@@ -87,8 +91,9 @@ void dom_bindings::install_traversal(context & cx, script::object_object & doc) 
         return 1;
     };
     const auto to_value = [](context & c, spot at) { return at.owner->wrap(c, at.id); };
-    // ANY DOCUMENT OF THE REALM: the page's, an iframe's, one createDocument
-    // made. A Document is the owner's document node.
+    // Accepts a node or Document of any document in the realm: the page's, an
+    // iframe's, or one createDocument made. A Document maps to its owner's
+    // document node.
     const auto from_value = [this](value v) -> spot {
         if (v.is_object_like()) {
             dom_bindings * top = primary_ == nullptr ? this : primary_;
@@ -103,13 +108,13 @@ void dom_bindings::install_traversal(context & cx, script::object_object & doc) 
         return no_spot;
     };
 
-    // DOM 6.3, "filter": whatToShow first, then the callback - and the ACTIVE
-    // flag. `nullopt` means script threw, and the caller returns without
-    // touching the walker.
+    // DOM 6.3, "filter": whatToShow first, then the callback, guarded by the
+    // active flag. `nullopt` means script threw, and the caller returns
+    // without touching the walker.
     //
     // `this` for the callback is the filter itself, whether it is a function
-    // or an object with `acceptNode` - "call a user object's operation" says
-    // so, and TreeWalker-acceptNode-filter.html reads it.
+    // or an object with `acceptNode` ("call a user object's operation" says
+    // so, and TreeWalker-acceptNode-filter.html checks it).
     const auto filter = [this, node_type, to_value](context & c, script::object_object * self,
                                                     spot at) -> std::optional<unsigned> {
         if (context::truthy(slot(self, active_slot))) {
@@ -146,11 +151,12 @@ void dom_bindings::install_traversal(context & cx, script::object_object & doc) 
         return context::to_uint32(answer) & 0xFFFFu;
     };
 
-    // --- the prototypes, installed once, on first use ------------------------
+    // --- The prototypes, installed once, on first use ------------------------
     //
-    // ON FIRST USE rather than here: install_document runs before the interface
-    // table exists, and the two prototypes are entries in it. The natives read
-    // the walker's state off `this`, so one prototype serves every document.
+    // Installed on first use rather than here: install_document runs before
+    // the interface table exists, and the two prototypes are entries in it.
+    // The natives read the walker's state off `this`, so one prototype serves
+    // every document.
     const auto readonly = [](context & c, script::object_object & proto, const char * name,
                              std::string_view which) {
         define_getter(c, proto, name, [which](context & c2, std::span<value>) {
@@ -346,8 +352,8 @@ void dom_bindings::install_traversal(context & cx, script::object_object & doc) 
                         }
                         temporary = parent_of(temporary);
                     }
-                    // A currentNode a page moved OUTSIDE the root runs up to
-                    // nothing; the specification's loop would spin here.
+                    // A currentNode the page moved outside the root walks up
+                    // to nothing; the specification's loop would spin here.
                     if (temporary.none()) { return value::null(); }
                     const auto answer = filter(c2, self, node);
                     if (!answer) { return value::undefined(); }
@@ -360,9 +366,10 @@ void dom_bindings::install_traversal(context & cx, script::object_object & doc) 
 
     // --- NodeIterator, DOM 6.1 -----------------------------------------------
     //
-    // The pre-removing steps - an iterator whose reference node is removed
-    // moves off it - run where the tree edits are settled: every iterator is
-    // registered with the live ranges, and range/live.cpp moves it.
+    // The NodeIterator pre-removing steps (an iterator whose reference node is
+    // removed moves off it) run with the live-range updates: every iterator is
+    // registered as a live range, and lib/Shell/bindings/document/range/live.cpp
+    // moves it.
 
     const auto install_iterator = [=](context & c, script::object_object & proto) {
         readonly(c, proto, "root", root_slot);
@@ -394,12 +401,12 @@ void dom_bindings::install_traversal(context & cx, script::object_object & doc) 
             spot node = from_value(slot(self, reference_slot));
             if (node.none()) { return value::null(); }
             bool before = context::truthy(slot(self, before_slot));
-            // WHERE THE TRAVERSAL IS WHILE THE FILTER RUNS is kept beside the
-            // reference - which stays the last accepted node until this one
-            // is accepted - so that the pre-removing steps can move it when
-            // the filter removes the candidate or an ancestor of it. The
+            // The traversal's current candidate is stored next to the
+            // reference (which stays the last accepted node until this one is
+            // accepted), so that the pre-removing steps can move it when the
+            // filter removes the candidate or one of its ancestors. The
             // candidate is still what is returned; the reference becomes
-            // where the position ended up.
+            // wherever the position ended up.
             const auto clear_inflight = [self] {
                 self->set(std::string{iterator_inflight_slot}, value::undefined());
                 self->set(std::string{iterator_inflight_before_slot}, value::undefined());
@@ -441,13 +448,13 @@ void dom_bindings::install_traversal(context & cx, script::object_object & doc) 
             c, proto, "previousNode",
             [=](context & c2, std::span<value>) { return traverse(c2, false); },
             script::attr_builtin);
-        // "detach()" does nothing, and the DOM says so in those words.
+        // detach() does nothing; the DOM specification defines it that way.
         set_method(
             c, proto, "detach", [](context &, std::span<value>) { return value::undefined(); },
             script::attr_builtin);
     };
 
-    // --- the two factories ---------------------------------------------------
+    // --- The two factories ---------------------------------------------------
 
     const auto factory = [this, from_value, install_walker,
                           install_iterator](context & c, std::span<value> args, bool iterator) {

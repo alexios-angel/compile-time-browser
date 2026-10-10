@@ -1,23 +1,28 @@
-#pragma once
+//===- shell.hpp - Shell aggregate header -----------------------*- C++ -*-===//
+//
 // The shell: the engine assembled into something that loads a page.
 //
 //   input    events described without SDL, so the whole browser is drivable
 //            headlessly
 //   assets   name -> bytes, consulted before the filesystem
-//   images   BMP decoding into the display list's bitmap, plus a hook the app
-//            layer fills in from SDL3_image
-//   net      HTTP over header-only Boost.Asio, which is what backs fetch()
-//   url      RFC 3986, over Boost.URL - the ONE parser, for the client and the DOM
+//   images   BMP, PNG and JPEG decoding into the display list's bitmap, plus a
+//            hook the app layer fills in from SDL3_image for other formats
+//   net      HTTP over libcurl, which backs fetch()
+//   url      the WHATWG URL parser, the one parser for the client and the DOM
 //   forms    form-control state, kept off the DOM node on purpose
-//   canvas   the 2D drawing context and where its pixels live
-//   bindings the web platform, bound to the VM - script holds HANDLES, and
+//   canvas   the 2D drawing context and where its pixels live; webgl beside it
+//   bindings the web platform, bound to the VM: script holds handles, and
 //            a mutation is a callback the browser interprets
-//   browser  the assembly - parse, style, layout, paint, raster, composite -
-//            and, more importantly, what each kind of change lets a frame SKIP
+//   browser  the assembly (parse, style, layout, paint, raster, composite),
+//            and what each kind of change lets a frame skip
 //
 // The SDL3 window and event loop are in ctbrowser.app, which is optional: the
-// browser here needs no display, which is what lets tests render whole pages
-// and compare them byte for byte.
+// browser here needs no display, so tests can render whole pages and compare
+// them byte for byte.
+//
+//===----------------------------------------------------------------------===//
+
+#pragma once
 
 #include <ctbrowser/shell/app_bundle.hpp>
 #include <ctbrowser/shell/bindings.hpp>

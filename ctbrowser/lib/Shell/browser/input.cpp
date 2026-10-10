@@ -1,44 +1,51 @@
-// browser - input: handle() and the mouse, keys, text input, the editing
-// keys inside a field, and the wheel over a textarea.
+//===- ctbrowser/lib/Shell/browser/input.cpp - Input event handling -------===//
+//
+// The browser's input handling: handle() and the mouse, touch, keys, text
+// input, the editing keys inside a field, and the wheel over a textarea,
+// plus the text-field geometry (visual lines, caret placement) they share.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
 namespace ctbrowser::shell {
 
 namespace {
-// How far an arrow key moves a page, and how many VISUAL LINES a wheel notch
-// moves a textarea - lines rather than pixels, because a field scrolls by
-// whole lines.
+/// How far an arrow key scrolls, in pixels.
 constexpr float wheel_step = 53.0f;
+/// How many visual lines one wheel notch scrolls a textarea. Lines, not
+/// pixels, because a field scrolls by whole lines.
 constexpr std::ptrdiff_t wheel_lines = 3;
-// How far one wheel notch moves a scroller: the 100 pixels its WheelEvent
-// reports as deltaY (dispatch_wheel), so the page scrolls by exactly what it
-// was told - a driver's `scroll` of N pixels moves N (scrollend-event-fired-
-// to-document asserts the distance).
+/// How far one wheel notch moves a scroller: the 100 pixels its WheelEvent
+/// reports as deltaY (dispatch_wheel), so the page scrolls by exactly what it
+/// was told. A driver's `scroll` of N pixels moves N (WPT
+/// scrollend-event-fired-to-document asserts the distance).
 constexpr float notch_pixels = 100.0f;
-// A REPLACED element - a picture, a canvas, a frame - holds no text of its
-// own, and a press on one starts no text selection (selection/canvas-drag.html).
+/// Whether `id` is a replaced element (a picture, a canvas, a frame). It holds
+/// no text of its own, so a press on one starts no text selection (WPT
+/// selection/canvas-drag.html).
 [[nodiscard]] bool replaced(const read_txn & txn, node_id id) {
     if (!id || txn.element_ns(id) != node_ns::html) { return false; }
     const std::string_view name = txn.local_name(id);
     return name == "canvas" || name == "img" || name == "video" || name == "audio" ||
            name == "iframe" || name == "embed" || name == "object";
 }
-// How long a resting wheel keeps its transaction's target. UI Events leaves it
-// to the user agent; half a second is inside what the engines use.
+/// How long a resting wheel keeps its transaction's target, in milliseconds.
+/// UI Events leaves it to the user agent; half a second is within what the
+/// engines use.
 constexpr double wheel_transaction_ms = 500;
 } // namespace
 
 bool browser::handle(const input_event & event) {
-    // A pointer that MOVED ends a wheel transaction (see the wheel below) -
-    // by a mouse move, or by a notch that arrives somewhere else.
+    // A pointer that moved ends a wheel transaction (see the wheel below),
+    // whether by a mouse move or by a notch that arrives somewhere else.
     if ((event.kind == input_kind::mouse_move ||
          (event.kind == input_kind::wheel && event.has_pointer)) &&
         (event.x != pointer_.x || event.y != pointer_.y)) {
         wheel_target_ = node_id{};
     }
     // Remembered for anything that has to keep aiming at the pointer after the
-    // events stop - the drag auto-scroll, which runs off tick() and is handed
+    // events stop: the drag auto-scroll, which runs off tick() and is handed
     // no coordinates of its own.
     if (event.kind == input_kind::mouse_move || event.kind == input_kind::mouse_down ||
         event.kind == input_kind::mouse_up ||
@@ -48,17 +55,15 @@ bool browser::handle(const input_event & event) {
     }
     switch (event.kind) {
     case input_kind::wheel: {
-        // THE PAGE GETS THE NOTCH FIRST, and may keep it. A `wheel` listener
-        // that calls preventDefault means the document must NOT also scroll -
-        // which is how a canvas zooms without the page sliding out from under
-        // it, and what every 3D library on the web relies on. Nothing was
-        // dispatched at all before this: the notch went straight to the
-        // scroller, so a scene could be orbited and not zoomed.
+        // The page gets the notch first and may keep it. A `wheel` listener
+        // that calls preventDefault stops the document scrolling, which is how
+        // a canvas zooms without the page sliding under it.
         //
-        // A WHEEL EVENT TRANSACTION (UI Events 3.6.x): the notches of one
-        // gesture all go to the element the FIRST one was aimed at, however the
-        // page moves under the pointer meanwhile - until the pointer moves, the
-        // wheel rests past the timeout, or that element stops being rendered.
+        // A wheel event transaction (UI Events 3.6.x): the notches of one
+        // gesture all go to the element the first one was aimed at, however
+        // the page moves under the pointer meanwhile, until the pointer moves,
+        // the wheel rests past the timeout, or that element stops being
+        // rendered.
         const double now = bindings_->now_ms();
         bindings_->flush_layout();
         if (wheel_target_ &&
@@ -73,8 +78,8 @@ bool browser::handle(const input_event & event) {
         const node_id target = wheel_target_;
         if (bindings_->dispatch_wheel(target, event)) { return true; }
         // The field under the pointer takes the notch next, and only what it
-        // cannot use falls through to the page - which is what makes a textarea
-        // at its last line stop swallowing the wheel.
+        // cannot use falls through to the page, so a textarea at its last line
+        // stops swallowing the wheel.
         if (event.wheel_x == 0 && scroll_field_under(event)) { return true; }
         // Then the nearest scroll container that can move that way, and the
         // viewport when none can.
@@ -95,7 +100,7 @@ bool browser::handle(const input_event & event) {
             return true;
         }
         if (field_selecting_) {
-            // Extending a selection INSIDE a control. The anchor is the
+            // Extending a selection inside a control. The anchor is the
             // control's `selection`, so dragging back over the text shrinks
             // it rather than starting again.
             const auto txn = doc_->read();
@@ -104,10 +109,11 @@ bool browser::handle(const input_event & event) {
             const std::size_t at = offset_at_point(field_selecting_, state, kind, event.x, event.y);
             if (at != state.caret) {
                 state.caret = at;
-                // Rule 1 while the pointer is still INSIDE the box: the caret
-                // leads and the view follows it. Once the pointer leaves, rule
-                // 3 takes over in tick() and the view leads instead - the two
-                // must never both run, or they oscillate.
+                // While the pointer is inside the box, the caret leads and the
+                // view scrolls to follow it. Once the pointer leaves the box,
+                // tick()'s drag auto-scroll moves the view and the caret
+                // follows. Only one of the two may run at a time, or they
+                // oscillate.
                 reveal_caret(field_selecting_, state, kind);
                 restart_caret_blink();
                 mark(dirty::paint);
@@ -115,8 +121,8 @@ bool browser::handle(const input_event & event) {
             return true;
         }
         if (selecting_) {
-            // Extending. The ANCHOR stays put, which is what makes dragging
-            // back over the text shrink the selection rather than start a
+            // Extending a page selection. The anchor stays put, so dragging
+            // back over the text shrinks the selection rather than starting a
             // new one.
             const text_position at = position_at(event.x, event.y);
             if (at && (at.node != selection_focus_.node ||
@@ -129,18 +135,18 @@ bool browser::handle(const input_event & event) {
             return true;
         }
         const node_id under = hit_test(event.x, event.y);
-        // A page tracking the pointer - MDN's breakout moves its paddle
-        // this way - needs the event whether or not the hover state moved.
+        // A page tracking the pointer (MDN's breakout moves its paddle this
+        // way) needs the event whether or not the hover state changed.
         const bool dispatched = dispatch_mouse("mousemove", under, event);
         return set_hover(under) || dispatched;
     }
     case input_kind::mouse_down:
-        // An OPEN POPUP takes the press before anything else - it is drawn
+        // An open popup takes the press before anything else: it is drawn
         // over the page, so it has to be hit-tested over the page too.
         if (select_open_ && handle_popup_press(event)) { return true; }
-        // The RIGHT button opens the context menu instead of pressing
-        // anything, and the page gets a cancelable `contextmenu` first -
-        // which is how a page that wants its own menu suppresses ours.
+        // The right button opens the context menu instead of pressing
+        // anything. The page gets a cancelable `contextmenu` first, which is
+        // how a page that wants its own menu suppresses ours.
         if (event.button == input_event::right_button) {
             const node_id target = hit_test(event.x, event.y);
             if (!bindings_->dispatch_mouse("contextmenu", target ? target : body_node(), event)) {
@@ -150,7 +156,7 @@ bool browser::handle(const input_event & event) {
             }
             return true;
         }
-        // ...and a LEFT press anywhere closes an open one.
+        // A left press anywhere closes an open context menu.
         if (menu_open_) {
             const bool consumed = handle_menu_press(event);
             if (consumed) { return true; }
@@ -161,8 +167,8 @@ bool browser::handle(const input_event & event) {
                 sb_dragging_ = true;
                 sb_grab_ = event.y - thumb.y;
             } else {
-                // A click on the TRACK pages towards the pointer, which is
-                // what every scrollbar does with one.
+                // A click on the track pages towards the pointer, as every
+                // scrollbar does.
                 scroll_by(event.y < thumb.y ? -static_cast<float>(options_.height) * 0.9f
                                             : static_cast<float>(options_.height) * 0.9f);
             }
@@ -170,22 +176,20 @@ bool browser::handle(const input_event & event) {
             return true;
         }
         pressed_ = hit_test(event.x, event.y);
-        // A press the page CANCELLED - its pointerdown or its mousedown - has
+        // A press the page cancelled (its pointerdown or its mousedown) has
         // no default action: no selection moves and no focus changes.
         press_cancelled_ = dispatch_mouse("mousedown", pressed_, event);
-        // A press begins a SELECTION. Inside an editable control that is a
-        // selection of ITS text, anchored where the click landed; outside
-        // one it is a page selection. A control had neither: clicking in a
-        // textarea put the caret wherever it already was and dragging did
-        // nothing at all.
+        // A press begins a selection. Inside an editable control it selects
+        // the control's text, anchored where the click landed; outside one it
+        // is a page selection.
         if (!press_cancelled_) {
             const auto txn = doc_->read();
             const node_id control = control_ancestor(pressed_);
             const control_kind kind = kind_of(txn, control);
             if (kind == control_kind::text || kind == control_kind::textarea) {
                 clear_selection();
-                (void)focus(control, focus_origin::pointer); // before the caret: focus clears it
-                // A click that reached the field through its LABEL focuses it
+                (void)focus(control, focus_origin::pointer); // Before the caret: focus clears it.
+                // A click that reached the field through its label focuses it
                 // and stops there. The pointer is over the label's text, not
                 // over any glyph of the value, so mapping it through
                 // offset_at_point would drop the caret at whichever end the
@@ -206,8 +210,8 @@ bool browser::handle(const input_event & event) {
                 selection_anchor_ = at;
                 selection_focus_ = at;
                 selecting_ = static_cast<bool>(at);
-                // ...and the page's Selection collapses there, as a click on
-                // text does in every browser (events/input.cpp).
+                // The page's Selection collapses there, as a click on text
+                // does in every browser (events/input.cpp).
                 if (at) {
                     bindings_->select_by_user(at.node, at.code_point, at.node, at.code_point);
                 }
@@ -228,22 +232,22 @@ bool browser::handle(const input_event & event) {
         bool changed = set_state(pressed_, state_active, false);
         (void)dispatch_mouse("mouseup", hit_test(event.x, event.y), event);
         // Focus follows the press, and moves even when the click lands on
-        // nothing - which is how clicking the page background blurs a field.
+        // nothing, which is how clicking the page background blurs a field.
         if (!press_cancelled_) {
             changed = focus(click_focus_target(pressed_), focus_origin::pointer) || changed;
         }
-        // A click fires on RELEASE, at the element the press started on -
-        // which is what makes dragging off a button cancel it, the way every
-        // real browser behaves. It is a MouseEvent down the same dispatch a
-        // page's `element.click()` takes, and the default action - toggling,
-        // submitting, following the link - runs INSIDE that dispatch, after
-        // the listeners and only if none of them cancelled.
+        // A click fires on release, at the element the press started on, so
+        // dragging off a button cancels it, as in every browser. It is a
+        // MouseEvent down the same dispatch a page's `element.click()` takes,
+        // and the default action (toggling, submitting, following the link)
+        // runs inside that dispatch, after the listeners and only if none of
+        // them cancelled.
         //
-        // A DISABLED CONTROL HEARS NO CLICK - HTML 4.10.18.5: a disabled form
-        // control prevents click events from being dispatched on it. Its
-        // label is not disabled, so a click on the label's text still reaches
-        // the label; the click the label then sends its control is refused by
-        // dom_bindings::click, the same rule one step later.
+        // A disabled control receives no click (HTML 4.10.18.5: a disabled
+        // form control prevents click events from being dispatched on it).
+        // Its label is not disabled, so a click on the label's text still
+        // reaches the label; the click the label then sends its control is
+        // refused by dom_bindings::click, the same rule one step later.
         const node_id released_on = hit_test(event.x, event.y);
         if (pressed_ && released_on == pressed_) {
             if (!is_disabled(control_ancestor(pressed_)) || via_label(pressed_)) {
@@ -255,9 +259,9 @@ bool browser::handle(const input_event & event) {
         return changed;
     }
     case input_kind::key_down:
-        // A key other than a modifier is the keyboard's turn: a script's
-        // focus() after it shows, whatever the key's own listeners cancelled
-        // (focus-visible-028).
+        // A key other than a modifier counts as keyboard interaction: a
+        // script's focus() after it shows :focus-visible, whatever the key's
+        // own listeners cancelled (WPT focus-visible-028).
         if (!event.key.starts_with("Shift") && !event.key.starts_with("Control") &&
             !event.key.starts_with("Alt") && !event.key.starts_with("Meta")) {
             last_focus_by_ = focus_origin::keyboard;
@@ -265,7 +269,7 @@ bool browser::handle(const input_event & event) {
         return handle_key(event);
     case input_kind::key_up: {
         const bool cancelled = dispatch_key("keyup", event);
-        // The release of a Space that made a control :active CLICKS it.
+        // Releasing a Space that made a control :active clicks it.
         if (event.key == "Space" && space_active_) {
             const node_id was = space_active_;
             space_active_ = node_id{};
@@ -308,7 +312,7 @@ bool browser::touch(std::string_view phase, float x, float y) {
         (void)bindings_->dispatch_touch(phase, touch_target_, x, y);
         return true;
     }
-    if (!touch_target_) { return false; } // a move or a lift with no finger down
+    if (!touch_target_) { return false; } // A move or lift with no finger down.
     const node_id target = touch_target_;
     if (phase == "end") {
         touch_target_ = node_id{};
@@ -316,11 +320,11 @@ bool browser::touch(std::string_view phase, float x, float y) {
         bindings_->hold_scrollend(false);
         return true;
     }
-    // A DRAG PANS: the content follows the finger, so it scrolls the other way
-    // - the nearest scroll container that can, then the viewport - unless a
-    // listener cancelled the touchmove. The first move that pans CANCELS the
-    // finger's pointer (Pointer Events 3: the user agent took the gesture), and
-    // its pointer events stop there.
+    // A drag pans: the content follows the finger, so it scrolls the other
+    // way (the nearest scroll container that can, then the viewport), unless
+    // a listener cancelled the touchmove. The first move that pans cancels the
+    // finger's pointer (Pointer Events 3: the user agent took the gesture),
+    // and its pointer events stop there.
     const bool cancelled = bindings_->dispatch_touch(phase, target, x, y, !touch_panning_);
     const float dx = touch_at_.x - x;
     const float dy = touch_at_.y - y;
@@ -365,19 +369,19 @@ std::string_view browser::cursor_at(float x, float y) {
 
 bool browser::text_input(std::string_view text) {
     if (text.empty()) { return false; }
-    // KEYPRESS FIRST, at what has focus - the body when nothing does, where a
-    // page listens for typing it handles itself - and a cancelled one keeps
-    // the character out of any field.
+    // `keypress` first, at what has focus, or at the body when nothing does
+    // (where a page listens for typing it handles itself). A cancelled one
+    // keeps the character out of any field.
     if (bindings_ && bindings_->dispatch_keypress(focused_ ? focused_ : body_node(), text)) {
         return true;
     }
     control_state * control = editable_focus();
     if (control == nullptr) { return false; }
-    // This path is for PRINTABLE text; a control character is a KEY, and one
-    // arriving here would be inserted literally - a Tab dropped into the very
-    // field Tab is supposed to leave. SDL never sends one, so this is a guard
-    // on the headless path, which is exactly where a test driving Tab would
-    // produce it by accident. Bytes >= 0x80 are left alone: they are UTF-8
+    // This path is for printable text. A control character is a key, and one
+    // arriving here would be inserted literally (a Tab dropped into the very
+    // field Tab is supposed to leave). SDL never sends one, so this guards
+    // the headless path, where a test driving Tab could produce one by
+    // accident. Bytes >= 0x80 are left alone: they are UTF-8 lead and
     // continuation bytes, not controls.
     std::string printable;
     printable.reserve(text.size());
@@ -391,8 +395,9 @@ bool browser::text_input(std::string_view text) {
     }
     if (printable.empty()) { return false; }
     // `beforeinput` first, and a listener that cancels it keeps the text out.
-    // ASKED AGAIN after it: a listener may have moved focus, removed the
-    // field, or grown the control map under the pointer held above.
+    // The control is fetched again after it: a listener may have moved focus,
+    // removed the field, or grown the control map under the pointer held
+    // above.
     if (before_edit("insertText", printable)) { return true; }
     control = editable_focus();
     if (control == nullptr) { return true; }
@@ -426,10 +431,10 @@ bool browser::handle_key(const input_event & event) {
     }
     if (dispatch_key("keydown", event)) { return true; }
 
-    // The CLIPBOARD SHORTCUTS come before the editing keys, and before the
-    // editable check: Ctrl+C is not a C, and copying the PAGE selection has
-    // to work when nothing is focused at all - which is the usual case for
-    // someone reading a page.
+    // The clipboard shortcuts come before the editing keys and before the
+    // editable check: Ctrl+C is not a C, and copying the page selection has
+    // to work when nothing is focused at all, the usual case for someone
+    // reading a page.
     if (event.ctrl && (event.key == "KeyC" || event.key == "KeyX" || event.key == "KeyV" ||
                        event.key == "KeyA")) {
         run_clipboard_verb(event.key == "KeyC"   ? "Copy"
@@ -439,13 +444,13 @@ bool browser::handle_key(const input_event & event) {
         return true;
     }
 
-    // TAB moves focus, and it is a DEFAULT ACTION like every other key here -
-    // the page already saw this keydown above, and a preventDefault returned
-    // before we got here.
+    // Tab moves focus, a default action like every other key here: the page
+    // already saw this keydown above, and a preventDefault returned before
+    // this point.
     //
-    // Before edit_key deliberately: edit_key has no "Tab" arm today, but one
-    // added later would silently eat the key in the very control Tab exists to
-    // LEAVE. It returns true whatever focus_next decides, so Tab can never fall
+    // It is handled before edit_key deliberately: edit_key has no "Tab" arm,
+    // but one added later would eat the key in the very control Tab exists to
+    // leave. It returns true whatever focus_next decides, so Tab never falls
     // through to the page-scrolling keys below.
     if (event.key == "Tab") {
         // Moving focus by keyboard ends whatever press was in progress: a
@@ -460,9 +465,9 @@ bool browser::handle_key(const input_event & event) {
 
     if (control_state * control = editable_focus(); control != nullptr) {
         if (edit_key(*control, event)) {
-            // One place rather than an arm-by-arm sprinkle: every editing key
-            // either moves the caret or changes the value, and both can put it
-            // outside a textarea's visible rows. Asked for again, because an
+            // Every editing key either moves the caret or changes the value,
+            // and both can put the caret outside a textarea's visible rows, so
+            // reveal it here once. The control is fetched again because an
             // edit's listeners may have moved focus or grown the control map.
             if (control_state * live = editable_focus(); live != nullptr) {
                 reveal_caret(focused_, *live, kind_of(doc_->read(), focused_));
@@ -471,15 +476,15 @@ bool browser::handle_key(const input_event & event) {
         }
     }
     if (select_key(event)) { return true; }
-    // THE KEYBOARD'S CLICK, the convention every browser keeps for HTML's
+    // The keyboard's click, the convention every browser keeps for HTML's
     // activation behaviour: Space held on a focused checkbox, radio or button
-    // makes it :active and its release clicks it (key_up above); Enter clicks a
-    // button at once.
+    // makes it :active and its release clicks it (key_up above); Enter clicks
+    // a button at once.
     if (focused_) {
         const control_kind kind = kind_of(doc_->read(), focused_);
-        // Not one a keydown listener has just disabled: it would be :active
-        // with nothing to end the press (checkable-active-space-key-being-
-        // disabled.html).
+        // Not a control a keydown listener has just disabled: it would be
+        // :active with nothing to end the press (WPT
+        // checkable-active-space-key-being-disabled.html).
         const bool live = !is_disabled(focused_);
         if (event.key == "Space" && live &&
             (kind == control_kind::checkbox || kind == control_kind::radio ||
@@ -493,10 +498,10 @@ bool browser::handle_key(const input_event & event) {
             return true;
         }
     }
-    // THE SCROLLING KEYS move the nearest scroll container of what has focus
-    // that can still go that way - a button inside a scrolled box scrolls the
-    // box - and the viewport when none can, the same chain a wheel notch
-    // takes. Home and End are a distance no box is longer than.
+    // The scrolling keys move the nearest scroll container of what has focus
+    // that can still go that way (a button inside a scrolled box scrolls the
+    // box), and the viewport when none can, the same chain a wheel notch
+    // takes. Home and End use a distance no box is longer than.
     const float page = static_cast<float>(options_.height) * 0.9f;
     constexpr float all_the_way = 1e9f;
     float dx = 0;
@@ -521,7 +526,7 @@ bool browser::handle_key(const input_event & event) {
         return false;
     }
     if (focused_ && bindings_->wheel_scroll(focused_, dx, dy)) { return true; }
-    // Sideways arrows only ever scrolled a box: the page keeps them.
+    // Sideways arrows only scroll a box; at the viewport the page keeps them.
     if (dy == 0) { return false; }
     scroll_to(scroll_x_, std::clamp(scroll_y_ + dy, 0.0f, max_scroll()));
     return true;
@@ -569,16 +574,16 @@ bool browser::scroll_field_under(const input_event & event) {
     const std::size_t most = geometry.lines.size() > geometry.visible_lines
                                  ? geometry.lines.size() - geometry.visible_lines
                                  : 0;
-    if (most == 0) { return false; } // nothing to scroll: the page takes it
+    if (most == 0) { return false; } // Nothing to scroll: the page takes it.
 
     // Negative wheel_y is towards the user, which is down the document.
     const auto delta = event.wheel_y > 0 ? -wheel_lines : wheel_lines;
     const auto want = static_cast<std::ptrdiff_t>(geometry.scroll_line) + delta;
     const auto next = static_cast<std::size_t>(
         std::clamp<std::ptrdiff_t>(want, 0, static_cast<std::ptrdiff_t>(most)));
-    // ALREADY AT THAT END: the notch is not ours, so the page gets it. Without
-    // this a textarea scrolled to its bottom swallows every further notch and
-    // the page appears stuck.
+    // Already at that end: the notch is not the field's, so the page gets it.
+    // Otherwise a textarea scrolled to its bottom swallows every further notch
+    // and the page appears stuck.
     if (next == geometry.scroll_line) { return false; }
 
     state.scroll_line = next;
@@ -590,7 +595,7 @@ bool browser::edit_key(control_state & control, const input_event & event) {
     const std::string & key = event.key;
     const control_kind kind = kind_of(doc_->read(), focused_);
     const bool multiline = kind == control_kind::textarea;
-    // A DELETION WITH NOTHING TO DELETE is no edit, and tells the page
+    // A deletion with nothing to delete is no edit and tells the page
     // nothing; one that has something asks first (before_edit).
     if (key == "Backspace" || key == "Delete") {
         const bool back = key == "Backspace";
@@ -606,9 +611,9 @@ bool browser::edit_key(control_state & control, const input_event & event) {
     }
     if (key == "ArrowLeft") { return moved(forms_.move_caret(control, -1, event.shift)); }
     if (key == "ArrowRight") { return moved(forms_.move_caret(control, 1, event.shift)); }
-    // UP and DOWN are visual LINES, and Home/End are the ends of one. In a
-    // single-line field up and down are the whole value's ends, which is
-    // what a browser does with them there.
+    // Up and Down move by visual lines, and Home/End go to the ends of one. In
+    // a single-line field Up and Down go to the whole value's ends, as
+    // browsers do.
     if (key == "ArrowUp") {
         return moved(multiline ? move_caret_by_line(focused_, control, kind, -1, event.shift)
                                : forms_.move_to_edge(control, false, event.shift));
@@ -617,9 +622,8 @@ bool browser::edit_key(control_state & control, const input_event & event) {
         return moved(multiline ? move_caret_by_line(focused_, control, kind, 1, event.shift)
                                : forms_.move_to_edge(control, true, event.shift));
     }
-    // PAGE UP AND DOWN BELONG TO THE FIELD when a multi-line one has focus.
-    // They fell through to the page-scrolling keys, so paging inside a textarea
-    // scrolled the document out from under it.
+    // Page Up/Down move the caret inside a focused textarea; otherwise they
+    // would reach the page-scrolling keys and scroll the document instead.
     if (multiline && (key == "PageUp" || key == "PageDown")) {
         const rect box = viewport_box_of(focused_);
         int lines = 1;
@@ -646,9 +650,8 @@ bool browser::edit_key(control_state & control, const input_event & event) {
         return moved(multiline ? move_to_line_edge(focused_, control, kind, true, event.shift)
                                : forms_.move_to_edge(control, true, event.shift));
     }
-    // ESCAPE drops the selection and keeps the caret, which is what every
-    // browser does with it in a field. Ctrl+A then Escape left the whole
-    // value highlighted forever.
+    // Escape drops the selection and keeps the caret, as every browser does in
+    // a field.
     if (key == "Escape") {
         if (control.selection == control.caret) { return false; }
         control.selection = control.caret;
@@ -677,8 +680,9 @@ bool browser::edited(bool changed) {
     return edited(changed, "", std::nullopt);
 }
 
-// The `input` after an edit (Input Events: an InputEvent, not cancelable,
-// naming what the edit was) - and the note that `change` is owed on blur.
+/// Dispatches the `input` after an edit (Input Events: an InputEvent, not
+/// cancelable, naming what the edit was) and records that `change` is owed on
+/// blur. Does nothing when `changed` is false.
 bool browser::edited(bool changed, std::string_view input_type,
                      std::optional<std::string_view> data) {
     if (!changed) { return false; }
@@ -692,13 +696,13 @@ bool browser::edited(bool changed, std::string_view input_type,
 bool browser::moved(bool changed) {
     restart_caret_blink();
     if (changed) { mark(dirty::paint); }
-    return true; // the key was consumed either way - it must not scroll the page
+    return true; // The key is consumed either way: it must not scroll the page.
 }
 
 browser::field_layout browser::layout_of_field(const rect & border_box, node_id id,
                                                const control_state & control, control_kind kind) {
-    // EVERY caller hands over the border box and this converts once, which is
-    // what stops the four of them drifting apart.
+    // Every caller passes the border box and this converts it once, so the
+    // callers cannot disagree about the content box.
     const rect box = content_box_of(id, border_box);
     field_layout out;
     out.size = font_size_of(id);
@@ -708,8 +712,8 @@ browser::field_layout browser::layout_of_field(const rect & border_box, node_id 
     const bool multiline = kind == control_kind::textarea;
     out.inner =
         rect{box.x, box.y + (multiline ? 0 : baseline_inset(box, out.size)), box.width, box.height};
-    // A single-line field does not wrap - it scrolls horizontally, which it
-    // has always done by clipping. Only a textarea gets visual lines.
+    // A single-line field does not wrap; it scrolls horizontally (scroll_x)
+    // and is clipped. Only a textarea is split into visual lines.
     out.lines =
         multiline
             ? value_lines(control.value, out.inner.width, out.size, out.metrics_face, measure())
@@ -722,7 +726,7 @@ browser::field_layout browser::layout_of_field(const rect & border_box, node_id 
     const std::size_t most =
         out.lines.size() > out.visible_lines ? out.lines.size() - out.visible_lines : 0;
     out.scroll_line = std::min(control.scroll_line, most);
-    // The WIDEST line, not the current one: a field scrolls its content as
+    // The widest line, not the current one: a field scrolls its content as
     // a whole, so moving between a long line and a short one must not jerk
     // the view sideways.
     for (const auto & [begin, end] : out.lines) {
@@ -730,7 +734,7 @@ browser::field_layout browser::layout_of_field(const rect & border_box, node_id 
         out.content_width = std::max(
             out.content_width, measure()(shown(line, out.masked), out.size, out.metrics_face));
     }
-    // `+ 1` because the caret is a 1px bar drawn AT the caret's x: without
+    // `+ 1` because the caret is a 1px bar drawn at the caret's x: without
     // the extra pixel a caret at the very end of the value sits exactly on
     // the clip's right edge and is invisible.
     out.scroll_x =
@@ -745,10 +749,10 @@ std::size_t browser::offset_at_point(node_id id, const control_state & control, 
     const field_layout geometry = layout_of_field(box, id, control, kind);
     if (geometry.lines.empty()) { return 0; }
 
-    // Relative to the FIRST VISIBLE line, not to the first line: a click
+    // Relative to the first visible line, not to the first line: a click
     // maps through the same scroll offset the painter drew with, or a
-    // scrolled textarea puts the caret several lines from where you
-    // pointed.
+    // scrolled textarea would put the caret several lines from where the
+    // user pointed.
     const auto line_index =
         static_cast<std::ptrdiff_t>(std::floor((y - geometry.inner.y) / geometry.line_height)) +
         static_cast<std::ptrdiff_t>(geometry.scroll_line);
@@ -757,11 +761,11 @@ std::size_t browser::offset_at_point(node_id id, const control_state & control, 
     const auto [begin, end] = geometry.lines[index];
     const std::string_view line{control.value.data() + begin, end - begin};
 
-    // Nearest BOUNDARY, not nearest character: clicking the right half of a
-    // glyph puts the caret after it, which is what makes clicking at the
-    // end of a word land where you meant.
+    // Nearest boundary, not nearest character: clicking the right half of a
+    // glyph puts the caret after it, so clicking at the end of a word lands
+    // where the user meant.
     //
-    // `+ scroll_x` puts the click back into VALUE space: `where` below is
+    // `+ scroll_x` puts the click back into value space: `where` below is
     // measured from the start of the line, `x` arrives in box space, and
     // the scroll is exactly the difference. Same sign convention as the
     // `+ scroll_line` above, and the exact inverse of the `- dx` the
@@ -788,14 +792,14 @@ bool browser::move_caret_by_line(node_id id, control_state & control, control_ki
     if (box.empty()) { return false; }
     const field_layout geometry = layout_of_field(box, id, control, kind);
     // The same rule the painter uses, so Up/Down start from the line the
-    // caret is DRAWN on. Two copies of "which line is this" is how the
-    // caret and the arrow keys start disagreeing at a wrap boundary.
+    // caret is drawn on. A second copy of "which line is this" would let the
+    // caret and the arrow keys disagree at a wrap boundary.
     const std::size_t index = caret_line(geometry, control.caret);
     const auto target = static_cast<std::ptrdiff_t>(index) + direction;
     if (target < 0 || target >= static_cast<std::ptrdiff_t>(geometry.lines.size())) {
         return false;
     }
-    // The COLUMN is a distance, not a character count: two lines of the
+    // The column is a distance, not a character count: two lines of the
     // same text in a proportional font do not share character positions.
     const auto [begin, end] = geometry.lines[index];
     const float column =
@@ -830,10 +834,10 @@ void browser::reveal_caret(node_id id, control_state & control, control_kind kin
     const std::size_t on_line = caret_line(geometry, control.caret);
     bool moved = false;
 
-    // --- vertical ---
+    // Vertical.
     const std::size_t visible = std::max<std::size_t>(1, geometry.visible_lines);
-    // From the EFFECTIVE origin, not the stored one, so this converges on
-    // the clamp in layout_of_field instead of arguing with it.
+    // From the effective origin, not the stored one, so this agrees with the
+    // clamp in layout_of_field instead of fighting it.
     std::size_t first = geometry.scroll_line;
     if (on_line < first) {
         first = on_line;
@@ -849,7 +853,7 @@ void browser::reveal_caret(node_id id, control_state & control, control_kind kin
         moved = true;
     }
 
-    // --- horizontal ---
+    // Horizontal.
     const auto [begin, end] = geometry.lines[on_line];
     const std::string_view line{control.value.data() + begin, end - begin};
     const auto advance = [&](std::size_t upto) {
@@ -865,8 +869,8 @@ void browser::reveal_caret(node_id id, control_state & control, control_kind kin
     } else if (caret_x > scroll + geometry.inner.width - 1) {
         scroll = caret_x - geometry.inner.width + 1;
     }
-    // ...and never scrolled past the end of the content, for the same
-    // reason as `most` above: a shrinking value must not leave an empty box.
+    // Never scroll past the end of the content, for the same reason as
+    // `most` above: a shrinking value must not leave an empty box.
     scroll =
         std::clamp(scroll, 0.0f, std::max(0.0f, geometry.content_width + 1 - geometry.inner.width));
     if (scroll != control.scroll_x) {
@@ -897,7 +901,7 @@ std::vector<std::pair<std::size_t, std::size_t>> browser::value_lines(
     std::size_t begin = 0;
     for (std::size_t at = 0; at <= value.size(); ++at) {
         if (at != value.size() && value[at] != '\n') { continue; }
-        // One hard segment, [begin, at). Wrapped greedily with the SAME
+        // One hard segment, [begin, at). Wrapped greedily with the same
         // rule the page's inline layout uses, so a field and the text
         // around it never disagree about where a line breaks.
         std::size_t from = begin;
@@ -906,9 +910,9 @@ std::vector<std::pair<std::size_t, std::size_t>> browser::value_lines(
             if (measure(rest, size, face) <= wrap_width) { break; }
             const std::size_t take =
                 ctbrowser::layout::words_that_fit(rest, wrap_width, size, face, measure);
-            // words_that_fit only returns 0 when there is no room at all,
-            // and it returns an over-long word whole otherwise - but guard
-            // anyway, because a 0 here would never terminate.
+            // words_that_fit returns 0 only when there is no room at all,
+            // and returns an over-long word whole otherwise; guard anyway,
+            // because a 0 here would loop forever.
             if (take == 0 || take >= rest.size()) { break; }
             out.emplace_back(from, from + take);
             from += take;

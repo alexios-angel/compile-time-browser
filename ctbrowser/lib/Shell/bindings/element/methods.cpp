@@ -1,6 +1,10 @@
-// dom_bindings - the IDL operations, on the interface prototypes: the one
+//===- methods.cpp - IDL operations on interface prototypes ---------------===//
+//
+// The IDL operations on the interface prototypes: define_operation, the one
 // mechanism every method of Node, Element, ParentNode, ChildNode and the rest
-// goes through, and the engine's own legacy helpers beside them.
+// goes through, and install_operations, which runs every operation installer.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -8,20 +12,21 @@ namespace ctbrowser::shell {
 
 using namespace detail;
 
-// ONE NATIVE PER REALM, on the prototype the interface names - not one per
-// wrapper. Before this every wrapper carried ~80 own native_objects, so
-// `Node.prototype.insertBefore` was undefined, `"append" in Text.prototype`
-// could only be answered by erasing per wrapper, and `for...in` over an
-// element listed the whole method surface.
-//
-// THE TRAMPOLINE is what a second Document costs. The prototypes are shared by
-// every dom_bindings in the realm (adopt_interfaces_of), so a native captured
-// `this` on the primary would run `createHTMLDocument().body.appendChild(x)`
-// against the primary's tree, with a node_id that means something else there.
-// `owner_of` names the instance whose wrapper `this` is, and that instance's
-// copy runs; a receiver that is no wrapper at all - `document`, a plain object
-// - falls through to the primary's, whose `receiver()` answers nothing and
-// whose method then throws or does nothing, as before.
+/// Defines operation `name` with `length` required arguments on the prototype
+/// of each of `interfaces`. There is one native per realm, on the prototype,
+/// rather than one per wrapper, so `Node.prototype.insertBefore` exists,
+/// `"append" in Text.prototype` is true, and `for...in` over an element does
+/// not list the methods.
+///
+/// The native is a trampoline because the prototypes are shared by every
+/// dom_bindings in the realm (adopt_interfaces_of): a native that captured the
+/// primary's `this` would run `createHTMLDocument().body.appendChild(x)`
+/// against the primary's tree, with a node_id that means something else there.
+/// Every instance stores its own `fn` in operations_; `owner_of` names the
+/// instance whose wrapper the receiver is, and that instance's copy runs. A
+/// receiver that is no wrapper at all (a plain object) falls through to the
+/// primary's, whose `receiver()` answers nothing and whose method then throws
+/// or does nothing.
 void dom_bindings::define_operation(context & cx, std::initializer_list<const char *> interfaces,
                                     const char * name, unsigned length, script::native_fn fn) {
     const std::size_t index = operations_.size();
@@ -33,11 +38,9 @@ void dom_bindings::define_operation(context & cx, std::initializer_list<const ch
         auto * native = cx.allocate<script::native_object>(
             name, [this, index, name](context & c, std::span<value> args) {
                 const value self = c.current_this();
-                // A DOCUMENT AS THE RECEIVER - `Node.prototype.replaceChild
-                // .call(doc, ...)` - is a Node with no handle, and its own
-                // object carries the method: the document's answer is the
-                // right one, and pre-insertion-validation-notfound.js asks
-                // for it through the prototype.
+                // A document as the receiver (`Node.prototype.replaceChild
+                // .call(doc, ...)`) is a Node with no handle, and its own
+                // object carries the method, so the document's method runs.
                 if (is_a_document(self)) {
                     if (auto * own = target_owner(self).document_object()) {
                         if (const value * held = own->find(name);
@@ -59,22 +62,25 @@ void dom_bindings::define_operation(context & cx, std::initializer_list<const ch
                 }
                 return value::undefined();
             });
-        // `length` is the number of REQUIRED arguments - WebIDL's, so
-        // `appendChild.length` is 1 and `insertBefore.length` 2 - and it is
+        // `length` is the number of required arguments in WebIDL
+        // (`appendChild.length` is 1, `insertBefore.length` 2), and it is
         // configurable and nothing else, as on every built-in function.
         native->define("length", value::number(length), script::attr_configurable);
-        // NOT ENUMERABLE: an IDL operation is a built-in, and
-        // `Body-FrameSet-Event-Handlers.html` counts what `for...in` reports.
+        // Not enumerable: an IDL operation is a built-in, so `for...in` over
+        // an element does not report it.
         proto->define(name, value::object(native), script::attr_builtin);
     }
 }
 
+/// Runs every operation installer, refilling operations_. Each dom_bindings
+/// runs the same installers in the same order, which is what lets
+/// define_operation's trampoline find an operation by index.
 void dom_bindings::install_operations(context & cx) {
     operations_.clear();
     install_node_methods(cx);
     install_attribute_methods(cx);
     install_control_methods(cx);
-    install_element_scrolling(cx); // scroll/scrollTo/scrollBy/scrollIntoView (views.cpp)
+    install_element_scrolling(cx); // scroll/scrollTo/scrollBy/scrollIntoView (geometry_views.cpp)
 }
 
 } // namespace ctbrowser::shell

@@ -1,5 +1,10 @@
-// dom_bindings' CSSOM - serialising: the canonical text of a compiled selector
-// list (Selectors 4) and of a media query list (Media Queries 4).
+//===- serialize.cpp - CSSOM serialisation ----------------------*- C++ -*-===//
+//
+// CSSOM serialisation: the canonical text of a compiled selector list
+// (Selectors 4, CSSOM §6.7) and of a media query list (Media Queries 4),
+// plus the CSS string quoting both use.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -9,15 +14,16 @@ using namespace detail;
 
 namespace detail {
 
-// --- serialising a selector ------------------------------------------------
+// --- Serialising a selector ------------------------------------------------
 //
-// Selectors 4 §serialize, over the COMPILED form. The compiled form has lost
+// Selectors 4 §serialize, over the compiled form. The compiled form has lost
 // the author's ordering within a compound (`a.b#c` and `a#c.b` compile the
 // same), so this emits the canonical order the specification asks for: type,
 // then id, then classes, then attributes, then pseudo-classes.
 
-// A CSS string, quoted and escaped. An attribute selector's value is serialised
-// as a string whatever the author wrote it as - `[a=b]` comes back `[a="b"]`.
+/// A CSS string, double-quoted, with `"` and `\` escaped. An attribute
+/// selector's value is serialised as a string however the author wrote it:
+/// `[a=b]` comes back as `[a="b"]`.
 [[nodiscard]] std::string quoted_string(std::string_view text) {
     std::string out;
     out += '"';
@@ -33,7 +39,7 @@ namespace detail {
 
 namespace {
 
-// `An+B`, the form `:nth-child()` and its three siblings take.
+/// Serialises `An+B`, the argument of `:nth-child()` and its three siblings.
 [[nodiscard]] std::string an_plus_b(std::int32_t a, std::int32_t b) {
     if (a == 0) { return std::to_string(b); }
     std::string out;
@@ -54,11 +60,12 @@ using namespaces = std::span<const style::css::namespace_declaration>;
 void append_compound(std::string & out, const style::compound & part, const atom_table & atoms,
                      namespaces scope);
 
+/// Serialises one complex selector: its compounds joined by combinators.
 [[nodiscard]] std::string serialize_selector(const style::compiled_selector & sel,
                                              const atom_table & atoms, namespaces scope) {
     std::string out;
     if (sel.parts.empty()) { return out; }
-    // Parts are stored RIGHTMOST FIRST and `links[i]` joins parts[i] to
+    // Parts are stored rightmost first and `links[i]` joins parts[i] to
     // parts[i+1], so the text runs from the last part backwards and the link
     // between parts[i] and parts[i-1] is links[i-1].
     for (std::size_t i = sel.parts.size(); i-- > 0;) {
@@ -81,11 +88,12 @@ void append_compound(std::string & out, const style::compound & part, const atom
 
 namespace detail {
 
-// `namespaces` is the sheet's `@namespace` rules, which CSSOM §6.7 needs to
-// serialise a type selector: a prefix that maps to the DEFAULT namespace is
-// omitted, `*|` is omitted when there is no default for it to differ from, and
-// any other prefix is written. With no rules to consult - `querySelector`'s
-// case - only the null namespace's `|` and a named prefix survive.
+/// Serialises a selector list, joined by ", ". `namespaces` is the sheet's
+/// `@namespace` rules, which CSSOM §6.7 needs to serialise a type selector: a
+/// prefix that maps to the default namespace is omitted, `*|` is omitted when
+/// there is no default for it to differ from, and any other prefix is written.
+/// With no rules to consult (`querySelector`'s case) only the null namespace's
+/// `|` and a named prefix survive.
 [[nodiscard]] std::string serialize_selector_list(
     std::span<const style::compiled_selector> list, const atom_table & atoms,
     std::span<const style::css::namespace_declaration> namespaces) {
@@ -102,17 +110,16 @@ namespace detail {
     return serialize_selector_list(list, atoms, {});
 }
 
-// IS THE COMPILED FORM THE WHOLE OF WHAT THE AUTHOR WROTE?
-//
-// `dropped` is how the selector compiler records a construct it can PARSE and
-// has no field for: `:has()`, `::part(x)`, a namespaced attribute. Nothing of
-// that survives into the compiled form, so `append_compound` would emit the
-// compound without it - and that does not merely look wrong. `author_style_text`
-// hands these selectors back to the cascade, so an inserted `div:has(a) { color:
-// red }` serialised as `div` would colour every div on the page. Wherever the
-// author's bytes are still to hand they are the honest answer, and this is the
-// question that decides. A compound that is merely UNMATCHABLE - `::before`,
-// `ns|e` - is still whole, and serialises canonically.
+/// Whether the compiled form holds everything the author wrote, so that it can
+/// be serialised from the compiled form rather than the author's text.
+///
+/// `dropped` is how the selector compiler records a construct it can parse but
+/// has no field for: `:has()`, `::part(x)`, a namespaced attribute. None of it
+/// survives compilation, so append_compound would emit the compound without
+/// it. That changes meaning, not just text: author_style_text hands these
+/// selectors back to the cascade, so `div:has(a) { color: red }` serialised as
+/// `div` would colour every div. A compound that is merely unmatchable
+/// (`::before`, `ns|e`) is still whole and serialises canonically.
 [[nodiscard]] bool representable(std::span<const style::compiled_selector> list) {
     const auto compound_ok = [](auto && self, const style::compound & part) -> bool {
         if (part.dropped) { return false; }
@@ -137,19 +144,20 @@ namespace detail {
 
 namespace {
 
+/// Appends one compound selector to `out` in canonical order.
 void append_compound(std::string & out, const style::compound & part, const atom_table & atoms,
                      namespaces scope) {
     const std::size_t was = out.size();
-    // EVERY NAME IS AN IDENTIFIER, and CSSOM §6.7 says each is serialised by
-    // §2.1's "serialize an identifier" - the same algorithm `CSS.escape` is.
-    // The tokenizer DECODES escapes, so `[\30 zonk]` reaches the compiled form
-    // as the name `0zonk`; printing that back unescaped produces a selector that
-    // is not a selector, because an identifier may not begin with a digit.
+    // Every name is an identifier, which CSSOM §6.7 serialises with §2.1's
+    // "serialize an identifier", the same algorithm as `CSS.escape`. The
+    // tokenizer decodes escapes, so `[\30 zonk]` reaches the compiled form as
+    // the name `0zonk`; printed back unescaped it would be invalid, because an
+    // identifier may not begin with a digit.
     const auto ident = &style::css::serialize_identifier;
-    // THE NAMESPACE PREFIX, CSSOM §6.7 "serialize a simple selector": written
+    // The namespace prefix (CSSOM §6.7 "serialize a simple selector"): written
     // when it maps to a namespace that is neither the default nor the null one,
-    // `|` alone for the null one. `*|` means any namespace, which is what an
-    // unprefixed name means too until a default namespace is declared.
+    // and `|` alone for the null one. `*|` means any namespace, which is also
+    // what an unprefixed name means until a default namespace is declared.
     const style::css::namespace_declaration * default_ns = nullptr;
     for (const style::css::namespace_declaration & each : scope) {
         if (each.prefix.empty()) { default_ns = &each; }
@@ -176,14 +184,14 @@ void append_compound(std::string & out, const style::compound & part, const atom
     }
     }
     // A universal selector is written only when a prefix stands before it, or
-    // when it is the whole compound - which the fall-through at the end handles.
+    // when it is the whole compound, which the check at the end handles.
     if (part.tag) {
         out += ident(atoms.text(part.tag));
     } else if (out.size() != was) {
         out += '*';
     }
-    // THE NESTING SELECTOR, written back as `&`: what it compiled to - an
-    // `:is()` of the parent list, or the `:scope` bit - is left out below.
+    // The nesting selector is written back as `&`; what it compiled to (an
+    // `:is()` of the parent list, or the `:scope` bit) is skipped below.
     if (part.nesting) { out += '&'; }
     if (part.id) {
         out += '#';
@@ -195,9 +203,9 @@ void append_compound(std::string & out, const style::compound & part, const atom
     }
     for (const style::attribute_match & attribute : part.attributes) {
         out += '[';
-        // The attribute's prefix, CSSOM §6.7: written when it maps to a
-        // namespace that is not the null one - so `[|lang]` is `[lang]` - and
-        // `*|` for any. A named prefix is found back from the URI it bound.
+        // The attribute's prefix (CSSOM §6.7): written when it maps to a
+        // namespace other than the null one (so `[|lang]` is `[lang]`), and
+        // `*|` for any. A named prefix is recovered from the URI it bound.
         switch (attribute.ns) {
         case style::ns_prefix::unset:
         case style::ns_prefix::none: break;
@@ -228,10 +236,9 @@ void append_compound(std::string & out, const style::compound & part, const atom
         }
         out += ']';
     }
-    // The pseudo-classes. `:checked` and `:disabled` are reachable through TWO
-    // bitfields - they were state bits before they were structural ones and both
-    // spellings are still declared - so the names are de-duplicated rather than
-    // emitted twice.
+    // The pseudo-classes. `:checked` and `:disabled` exist in both the state and
+    // the structural bitfields, so names are de-duplicated rather than emitted
+    // twice.
     struct named_bit {
         std::uint32_t bit;
         std::string_view name;
@@ -271,11 +278,11 @@ void append_compound(std::string & out, const style::compound & part, const atom
     }
     for (const named_bit & each : structural_bits) {
         if ((part.structural & ~part.structural_after_pe & each.bit) == 0) { continue; }
-        if (each.bit == style::structural_scope && part.nesting) { continue; } // the `&`
+        if (each.bit == style::structural_scope && part.nesting) { continue; } // Written as `&`.
         emit(each.name);
     }
     for (const style::pseudo_ref & pseudo : part.pseudos) {
-        if (pseudo.nesting) { continue; } // the `&`, written above
+        if (pseudo.nesting) { continue; } // Written as `&` above.
         switch (pseudo.kind) {
         case style::pseudo_kind::nth_child:
             out += ":nth-child(" + an_plus_b(pseudo.a, pseudo.b) + ")";
@@ -298,13 +305,6 @@ void append_compound(std::string & out, const style::compound & part, const atom
         case style::pseudo_kind::where_:
             out += ":where(" + serialize_selector_list(pseudo.args, atoms, scope) + ")";
             break;
-        // `:lang()` AND `:dir()` KEEP THEIR ARGUMENT, because a language RANGE
-        // is not an identifier: `*-Latn` is a legal one, and `:lang(de, fr)` is
-        // a comma-separated list of them. They used to compile to nothing at
-        // all, so a rule carrying one serialised as `*` - eight of
-        // `css/cssom/selectorSerialize.html`'s twenty-three. A range that IS an
-        // identifier is written as one, escapes and all - `:lang(j\ a)` - and
-        // one with a wildcard in it as the string it can only be.
         case style::pseudo_kind::heading: {
             out += ":heading";
             if (!pseudo.levels.empty()) {
@@ -316,6 +316,10 @@ void append_compound(std::string & out, const style::compound & part, const atom
             }
             break;
         }
+        // `:lang()` and `:dir()` keep their arguments as text, because a language
+        // range is not always an identifier: `*-Latn` is legal, and `:lang(de, fr)`
+        // is a list. A range that is an identifier is written as one, escapes
+        // included (`:lang(j\ a)`); a range containing `*` is written as a string.
         case style::pseudo_kind::lang:
         case style::pseudo_kind::dir: {
             out += pseudo.kind == style::pseudo_kind::lang ? ":lang(" : ":dir(";
@@ -332,11 +336,11 @@ void append_compound(std::string & out, const style::compound & part, const atom
     }
     // "If there is only one simple selector in the compound selector which is a
     // universal selector, append '*'." A compound that produced nothing is that
-    // selector - and a pseudo-element is a simple selector, so `*::before` is
+    // selector. A pseudo-element counts as a simple selector, so `*::before` is
     // `::before`.
     if (out.size() == was && !part.pseudo_element) { out += '*'; }
-    // THE PSEUDO-ELEMENT LAST, with two colons whichever the author wrote: CSSOM
-    // §6.7 serialises `:before` as `::before`.
+    // The pseudo-element comes last, with two colons whichever the author
+    // wrote: CSSOM §6.7 serialises `:before` as `::before`.
     if (part.pseudo_element) {
         out += "::";
         // `highlight(name)` is stored as one atom (selector.cpp): the function
@@ -350,7 +354,7 @@ void append_compound(std::string & out, const style::compound & part, const atom
         } else {
             out += ident(text);
         }
-        // ...and what was written after it, after it again.
+        // Pseudo-classes written after the pseudo-element follow it again.
         for (const named_bit & each : state_bits) {
             if ((part.states_after_pe & each.bit) != 0) { out += ":" + std::string{each.name}; }
         }
@@ -364,42 +368,27 @@ void append_compound(std::string & out, const style::compound & part, const atom
 
 namespace detail {
 
-// A `@media` PRELUDE IS THE AUTHOR'S BYTES, always.
+// --- A media query list, as CSSOM asks for it ------------------------------
 //
-// There used to be a second serialiser here, over the compiled `media_query`
-// AST, for the one caller that had no source text: a `@media` recovered from
-// `style::css::parse_stylesheet`, which keeps a rule's condition as a compiled
-// index and no span back to the bytes. It was lossy and said so - `(min-width:
-// 48em)` came back in px, `speech` came back as `all`, and a feature the
-// cascade does not model came back as nothing - so a `@media` from a `<style>`
-// and the same one from `insertRule` serialised two different ways.
+// Media Queries 4 §"serializing a media query list", over the query's text
+// rather than the compiled `media_query`, so a rule from a <style> sheet and
+// one from insertRule() serialise the same way. The compiled form is what the
+// cascade needs and is deliberately narrow (three media types, twelve
+// features, one float per value): it would answer `all` for `speech`, `768px`
+// for `48em`, and nothing for a feature this engine does not model, all of
+// which css/cssom/serialize-media-rule.html compares byte for byte.
 //
-// `parse_sheet_rules` reads the source now, so that caller is gone and with it
-// the only reason to reconstruct a prelude from an AST at all.
+// The normalisation is exactly the specification's: lowercase `not`/`only`,
+// the media type and each feature name; put one space after a feature's
+// colon; drop an `all` that has features after it but keep a negated one; and
+// preserve the order and multiplicity of the features, because
+// `(max-width: 23px) and (max-width: 45px)` may be intentional and
+// de-duplicating it is an open CSSWG issue.
 
-// --- a media query list, as CSSOM asks for it ------------------------------
-//
-// MEDIA QUERIES 4 §"serializing a media query list", over the query's TEXT
-// rather than over the compiled `media_query`. The AST is what the CASCADE needs
-// and it is deliberately narrow - three media types, twelve features, one float
-// per value - so it answers `all` for `speech`, `768px` for `48em` and nothing
-// at all for a feature this engine does not model. Every one of those is a
-// string `css/cssom/serialize-media-rule.html` compares byte for byte, so the
-// object model normalises the text instead and never consults the AST when it
-// has the author's bytes.
-//
-// The normalisation is exactly the specification's and no more: lowercase the
-// `not`/`only`, the media type and each feature NAME; put one space after a
-// feature's colon; drop an `all` that has features after it and keep a negated
-// one; and preserve the order and the multiplicity of the features, because
-// `(max-width: 23px) and (max-width: 45px)` is a query a page may have written
-// on purpose and de-duplicating it is an open CSSWG issue.
-
-// The top-level commas of a media query list. Top-level because a feature's
-// parentheses may hold one - `(width >= calc(1px, 2px))` does not exist, but a
-// `url()` in a `@supports` prelude does, and this splitter is used for both.
-// EMPTY PARTS ARE KEPT - `"screen,"` is two queries and the second serialises
-// as `not all` - which is why this is not core's split_top_level.
+/// Splits a media query list (or a `@supports` prelude) at its top-level
+/// commas, ignoring commas inside brackets or strings such as a `url()`.
+/// Empty parts are kept (`"screen,"` is two queries, the second serialising as
+/// `not all`), which is why this is not core's split_top_level.
 [[nodiscard]] std::vector<std::string_view> split_on_commas(std::string_view text) {
     std::vector<std::string_view> out;
     for (std::size_t start = 0;;) {
@@ -414,28 +403,28 @@ namespace detail {
 
 namespace {
 
-// `(name)` or `(name: value)`, with the parentheses already on it.
+/// Serialises one parenthesised media feature, `(name)` or `(name: value)`.
 [[nodiscard]] std::string serialize_media_feature_text(std::string_view part) {
     const std::string_view inside = trim(part.substr(1, part.size() - 2), html_whitespace);
-    // A NESTED CONDITION - `((a) and (b))`, `(not (a))` - is a query without a
-    // type, serialised as one (Media Queries 4 §2.2).
+    // A nested condition (`((a) and (b))`, `(not (a))`) is a query without a
+    // type and is serialised as one (Media Queries 4 §2.2).
     if (inside.starts_with('(') || ascii_istarts_with(inside, "not ") ||
         ascii_istarts_with(inside, "not(")) {
         return "(" + serialize_media_query_text(inside) + ")";
     }
     const std::size_t colon = inside.find(':');
-    // ...BUT A CUSTOM PROPERTY'S NAME IS NOT: a <dashed-ident> is
-    // case-sensitive, and `(--FOO: bar)` stays itself
-    // (mq-unknown-feature-custom-property).
+    // Feature names are lowercased, except a custom property's: a
+    // <dashed-ident> is case-sensitive, so `(--FOO: bar)` stays as written
+    // (WPT mq-unknown-feature-custom-property).
     const auto name = [](std::string_view text) {
         std::string collapsed = collapse_whitespace(text, html_whitespace);
         return collapsed.starts_with("--") ? collapsed : ascii_lower_copy(collapsed);
     };
     if (colon == std::string_view::npos) { return "(" + name(inside) + ")"; }
-    // THE NAME IS FOLDED AND THE VALUE IS NOT. A feature name is an identifier
-    // and `(Color)` and `(color)` are one feature; a value may be a string, a
-    // `url()` or a number with a unit, none of which fold. A `<ratio>` is
-    // written with its slash spaced: `1/3` is `1 / 3` (Media Queries 4 §2.4).
+    // The name is case-folded and the value is not: `(Color)` and `(color)` are
+    // one feature, but a value may be a string, a `url()` or a number with a
+    // unit, none of which fold. A `<ratio>` is written with its slash spaced:
+    // `1/3` is `1 / 3` (Media Queries 4 §2.4).
     std::string value = collapse_whitespace(inside.substr(colon + 1), html_whitespace);
     if (const std::size_t slash = value.find('/');
         slash != std::string::npos &&
@@ -452,12 +441,14 @@ namespace {
 
 namespace detail {
 
-// One query. An unparseable one is `not all`, which is what Media Queries says a
-// query a browser does not understand means - never true, and never an error.
+/// Serialises one media query. An unparseable query becomes `not all`, which
+/// Media Queries defines as the meaning of a query a browser does not
+/// understand: never true, and never an error. Empty text gives an empty
+/// string.
 [[nodiscard]] std::string serialize_media_query_text(std::string_view text) {
     static constexpr std::string_view not_all = "not all";
     // The parts: `not`/`only`, a type, and parenthesised features joined by
-    // `and`. A feature is ATOMIC - its parentheses may contain spaces - which is
+    // `and`. A feature is atomic (its parentheses may contain spaces), which is
     // why this is a scan and not a split on whitespace.
     std::vector<std::string> parts;
     std::size_t at = 0;
@@ -482,8 +473,8 @@ namespace detail {
                     }
                 }
             }
-            // EOF closes an open block (CSS Syntax 3 §5.4.9): `(color` is
-            // `(color)`, as match-media-parsing asserts.
+            // End of input closes an open block (CSS Syntax 3 §5.4.9): `(color`
+            // is `(color)` (WPT css/mediaqueries/match-media-parsing.html).
             parts.push_back(std::string{text.substr(start, at - start)} + (closed ? "" : ")"));
             continue;
         }
@@ -501,18 +492,17 @@ namespace detail {
         (ascii_iequals(parts[i], "not") || ascii_iequals(parts[i], "only"))) {
         prefix = ascii_lower_copy(parts[i]) + " ";
         ++i;
-        // ...and a prefix needs something to apply to: `@media not` is not a
-        // query, and `only` exists only in front of a type.
+        // A prefix needs something to apply to: `@media not` is not a query,
+        // and `only` is valid only in front of a type.
         if (i >= parts.size() || (prefix == "only " && parts[i].front() == '(')) {
             return std::string{not_all};
         }
     }
     std::string type;
     if (i < parts.size() && parts[i].front() != '(') {
-        // A MEDIA TYPE IS AN IDENTIFIER, so `@media 42` and `@media .x` are
-        // queries this cannot serialise rather than types it has not heard of -
-        // and the two have to be told apart, `speech` and `projection` being
-        // perfectly good types that this engine does not model.
+        // A media type must be an identifier, so `@media 42` and `@media .x`
+        // are invalid queries, while `speech` and `projection` are valid types
+        // that this engine merely does not model.
         const auto ident_char = [](unsigned char c, bool start) {
             if (c >= 0x80 || c == '_' || c == '-' || (c >= 'a' && c <= 'z') ||
                 (c >= 'A' && c <= 'Z')) {
@@ -537,10 +527,10 @@ namespace detail {
     bool first = true;
     std::string joiner;
     while (i < parts.size()) {
-        // Everything after the media type - and everything after the first
-        // feature - is joined to what precedes it by `and`, or by `or` in a
-        // typeless condition, never a mix. `not (color)` has neither, and is
-        // a query with one feature and no type.
+        // Everything after the media type, and everything after the first
+        // feature, is joined to what precedes it by `and`, or by `or` in a
+        // typeless condition, never a mix. `not (color)` has neither and is a
+        // query with one feature and no type.
         if (!first || !type.empty()) {
             const bool is_and = ascii_iequals(parts[i], "and");
             const bool is_or = ascii_iequals(parts[i], "or") && type.empty();
@@ -559,9 +549,9 @@ namespace detail {
     if (joiner.empty()) { joiner = " and "; }
 
     std::string out = prefix;
-    // "If the query is `all and <features>`, omit the `all and`" - but only for
-    // a query that is not negated: `not all and (color)` is a query that is
-    // false whenever `(color)` is true, and dropping the type inverts it.
+    // "If the query is `all and <features>`, omit the `all and`", but only for
+    // a query with no prefix: `not all and (color)` is false whenever `(color)`
+    // is true, and dropping the type would change its meaning.
     const bool omit_all = type == "all" && prefix.empty() && !features.empty();
     if (!type.empty() && !omit_all) { out += type; }
     for (const std::string & feature : features) {
@@ -571,6 +561,8 @@ namespace detail {
     return out;
 }
 
+/// Parses a comma-separated media query list into serialised queries; an
+/// empty or whitespace-only list gives no queries.
 [[nodiscard]] std::vector<std::string> parse_media_query_list(std::string_view text) {
     std::vector<std::string> out;
     if (trim(text, html_whitespace).empty()) { return out; }
@@ -582,8 +574,8 @@ namespace detail {
     return out;
 }
 
-// "To serialize a comma-separated list, concatenate all items while separating
-// them by a COMMA followed by a SPACE" - CSSOM §2.
+/// CSSOM §2: "To serialize a comma-separated list, concatenate all items while
+/// separating them by a COMMA followed by a SPACE".
 [[nodiscard]] std::string serialize_media_query_list(std::span<const std::string> list) {
     std::string out;
     for (const std::string & query : list) {

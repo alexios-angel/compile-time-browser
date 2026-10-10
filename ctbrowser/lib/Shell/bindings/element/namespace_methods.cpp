@@ -1,3 +1,11 @@
+//===- namespace_methods.cpp - Node namespace lookups, normalize ----------===//
+//
+// dom_bindings::install_node_namespaces: the Node operations
+// lookupNamespaceURI, isDefaultNamespace, lookupPrefix (DOM 4.4), normalize
+// and contains, on Node.prototype.
+//
+//===----------------------------------------------------------------------===//
+
 #include "internal.hpp"
 
 namespace ctbrowser::shell {
@@ -6,6 +14,9 @@ using namespace detail;
 
 void dom_bindings::install_node_namespaces(context & cx) {
     const std::initializer_list<const char *> node = {"Node"};
+    // The element whose namespace declarations a lookup on `self` consults
+    // (DOM 4.4 "locate a namespace"): the element itself, a character data
+    // node's parent element, a document's document element, or nothing.
     const auto namespace_element = [this](context & c, node_id self) {
         // An Attr names its ownerElement, and a detached one names nothing.
         if (!self) { return handle_of(c.lookup_property(c.current_this(), "ownerElement")); }
@@ -59,11 +70,11 @@ void dom_bindings::install_node_namespaces(context & cx) {
                 locate_namespace_prefix(namespace_element(c, receiver(c)), c.to_string(given));
             return found.empty() ? value::null() : c.string(found);
         });
-    // `normalize()`, DOM 4.4: every EMPTY Text descendant goes, and every run of
-    // contiguous Text siblings becomes its first member. The first member and
-    // not a new node - `Node-normalize.html` holds the node and reads its data
-    // afterwards - and an empty first member goes rather than absorbing the run,
-    // which is the order the specification walks in and the bug 19837 case.
+    // `normalize()`, DOM 4.4: every empty Text descendant is removed, and every
+    // run of contiguous Text siblings is merged into its first member, not a new
+    // node, so a page holding that node sees the merged data. An empty first
+    // member is removed instead of absorbing the run, which is the order the
+    // specification walks in.
     define_operation(cx, node, "normalize", 0, [this](context & c, std::span<value>) {
         const node_id self = receiver(c);
         if (!self) { return value::undefined(); }
@@ -123,18 +134,18 @@ void dom_bindings::install_node_namespaces(context & cx) {
             walk(walk, self);
         }
         if (merged.empty() && removed.empty()) { return value::undefined(); }
-        // ONE MUTATION EACH, as DOM 4.4's normalize has them: the data change
-        // is a record and every removal is its own, with the siblings the node
-        // had when it went - MutationObserver-childList.html counts them. The
-        // data is APPENDED (a replace at the old length, of nothing) and the
-        // absorbed siblings' boundaries move into the node before they go.
+        // One mutation each, as DOM 4.4's normalize has them: the data change
+        // is one record and every removal is its own, with the siblings the
+        // node had when it was removed (MutationObserver sees each). The data
+        // is appended (a replace of nothing at the old length) and the absorbed
+        // siblings' range boundaries move into the node before they go.
         for (const run & one : merged) {
             const std::size_t added =
                 script::utf16::length(std::string_view{one.data}.substr(one.units));
             (void)doc_->set_text(
                 one.node, one.data,
                 document::data_edit{one.units, 0, static_cast<std::uint32_t>(added)});
-            // The data step's range moves (7.3) settle BEFORE the absorbed
+            // The data step's range moves (7.3) settle before the absorbed
             // siblings' boundaries move into the node (7.5-7.8), or a
             // boundary just moved to (node, length + offset) would be pushed
             // along by the append it was placed after.
@@ -149,6 +160,8 @@ void dom_bindings::install_node_namespaces(context & cx) {
         }
         return value::undefined();
     });
+    // `contains(other)`: whether `other` is an inclusive descendant, so
+    // `el.contains(el)` is true.
     define_operation(cx, node, "contains", 1, [this](context & c, std::span<value> args) {
         const node_id self = receiver(c);
         const node_id other = handle_of(arg(args, 0));

@@ -1,5 +1,9 @@
+//===- character_data.cpp - CharacterData and Text methods ------*- C++ -*-===//
+//
 // dom_bindings - CharacterData: the Text and Comment method surface, with its
-// offsets in UTF-16 code units over UTF-8 bytes.
+// offsets in UTF-16 code units over the engine's WTF-8 storage.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -7,43 +11,31 @@ namespace ctbrowser::shell {
 
 using namespace detail;
 
-// --- UTF-16 CODE UNITS OVER UTF-8 BYTES -------------------------------------
+// --- UTF-16 code units over WTF-8 bytes ------------------------------------
 //
-// EVERY OFFSET IN `CharacterData` IS A UTF-16 CODE UNIT and this engine stores
-// UTF-8, so the two are the same number only for ASCII. `CharacterData-*.html`
-// tests exactly that difference and tests it twice: once on CJK, where a code
-// unit is three bytes, and once on U+1F320, where ONE character is two code
-// units and four bytes. A byte offset passes the whole English half of the
-// corpus and is wrong for every page that is not in English.
+// Offsets in CharacterData are UTF-16 code units, but the engine stores
+// WTF-8, so the two agree only for ASCII (CJK is three bytes per code unit,
+// and U+1F320 is two code units in four bytes). Each operation converts to
+// UTF-16 (wtf8_to_utf16), works on code units, and re-encodes
+// (utf16_to_wtf8). A lone surrogate is kept as its three-byte WTF-8 form, so
+// `substringData(1, 8)` on "🌠 test 🌠 TEST" can split a pair ("\uDF20 test
+// \uD83C") and replaceData can rejoin one (CharacterData-surrogates.html).
 //
-// AND AN OFFSET MAY SPLIT A SURROGATE PAIR. A JavaScript string is a sequence
-// of code units and a lone surrogate is one of them: `substringData(1, 8)` on
-// "🌠 test 🌠 TEST" is "\uDF20 test \uD83C", and `replaceData` can put the
-// two halves back together into one character. So every operation here runs
-// on the code units and re-encodes afterwards - a lone surrogate as the
-// three bytes WTF-8 spells it with, which is what the script engine's own
-// escape decoder writes for "\uDF20", and a pair as the four bytes of the
-// code point it stands for. `CharacterData-surrogates.html` is the whole of
-// this paragraph.
-// --- CharacterData, AND THE Text THAT IS ONE --------------------------------
+// --- CharacterData, and Text, which is one --------------------------------
 //
-// FOUR NODE TYPES SHARE ONE STRING, and the DOM gives them one interface to
-// edit it with: `data`, `length`, and the five methods that are all one
-// operation - "replace data", DOM 4.10.2 - with arguments filled in. Written
-// once here for that reason: five separate implementations is five chances to
-// disagree about which argument throws and which one clamps, and the corpus
-// tests that distinction on every one of them.
+// Four node types share one string, and the DOM gives them one interface to
+// edit it with: `data`, `length`, and five methods that are all one
+// operation ("replace data", DOM 4.10.2) with arguments filled in. It is
+// written once here so the five cannot disagree about which argument throws
+// and which one clamps.
 //
-// ON THE PROTOTYPE, not on every wrapper. `install_element_methods` runs per
-// node and would have made one `substringData` closure per text node in the
-// document; these are one per page, which is what the specification means by
-// the operations belonging to an interface. `data` and `nodeValue` stay
-// per-wrapper because they close over the node - see install_element_views.
+// These live on the prototype, not on every wrapper: `install_element_methods`
+// runs per node and would make one closure per text node in the document.
+// `data` and `nodeValue` stay per-wrapper because they close over the node
+// (see install_element_views).
 //
-// WHAT IS NOT HERE: `ProcessingInstruction` and `CDATASection`. Both are in the
-// interface table because a page may name them, and neither is a `node_kind`
-// this DOM can produce, so nothing can be an instance of one. When they arrive
-// they inherit these methods by being in the chain and nothing here changes.
+// ProcessingInstruction and CDATASection nodes get these methods through the
+// prototype chain; data_of below accepts them as CharacterData receivers.
 void dom_bindings::install_character_data(context & cx) {
     const value character_data = interface_prototype("CharacterData");
     const value text_interface = interface_prototype("Text");
@@ -51,21 +43,19 @@ void dom_bindings::install_character_data(context & cx) {
     auto * proto = static_cast<script::object_object *>(character_data.as_heap());
     auto * text_proto = static_cast<script::object_object *>(text_interface.as_heap());
 
-    // NOT ENUMERABLE, which is what { writable, configurable } spells: an IDL
-    // operation is a built-in, and `Body-FrameSet-Event-Handlers.html` counts
-    // what a `for...in` over a node reports against the IDL.
+    // Methods below use script::attr_builtin (writable, configurable, not
+    // enumerable), as Web IDL requires for operations; a `for...in` over a node
+    // must not list them (Body-FrameSet-Event-Handlers.html checks this).
 
-    // THE RECEIVER'S TEXT. False when `this` is not a character data node - a
-    // wrapper for a node that has since been collected, or one of these methods
-    // taken off the prototype and called on an element. Every other native in
-    // this file answers the type's default rather than throwing in that case
-    // and these do the same: the text is empty and the write is skipped, so
-    // nothing is corrupted and nothing throws a LANGUAGE error where the page
-    // was told to expect a DOMException.
-    // THE DOCUMENT THAT OWNS THE RECEIVER answers, for the reason
-    // define_operation gives: these prototypes are shared by every document in
-    // the realm, and `foreignDoc.createTextNode("x").length` read the
-    // PRIMARY's tree at the foreign node's id before this.
+    // Reads the receiver's text into `text`. Returns false when `this` is not
+    // a character data node (a wrapper for a node that has since been
+    // collected, or one of these methods taken off the prototype and called on
+    // an element). Like the other natives here, callers then answer the type's
+    // default rather than throwing: the text is empty and the write is
+    // skipped, so nothing is corrupted and no language error is thrown where
+    // the page was told to expect a DOMException.
+    // The receiver's owning document answers, not this one: these prototypes
+    // are shared by every document in the realm (see define_operation).
     const auto data_of = [this](context & c, dom_bindings *& self, node_id & id,
                                 std::u16string & text) {
         self = owner_of(c.current_this());
@@ -83,17 +73,17 @@ void dom_bindings::install_character_data(context & cx) {
         return true;
     };
 
-    // "REPLACE DATA", DOM 4.10.2. appendData, insertData, deleteData and
-    // replaceData are ALL this with arguments filled in, exactly as the
+    // "Replace data", DOM 4.10.2. appendData, insertData, deleteData and
+    // replaceData are all this with arguments filled in, exactly as the
     // specification defines them.
     //
-    // THE TWO ARGUMENTS ARE NOT TREATED ALIKE, and that asymmetry is the whole
-    // of "with invalid offset" and "with clamped count":
+    // The two arguments are not treated alike (the WPT "with invalid offset"
+    // and "with clamped count" cases):
     //
-    //   offset  ToUint32'd and then COMPARED. `-1` is 4294967295 and therefore
-    //           past the end and therefore an IndexSizeError; `-0x100000000 + 2`
-    //           is 2 and is fine; `"test"` is NaN and therefore 0 and is fine.
-    //   count   ToUint32'd and then CLAMPED to what is left. `-1` deletes to
+    //   offset  ToUint32'd and then compared. `-1` is 4294967295, so past the
+    //           end and an IndexSizeError; `-0x100000000 + 2` is 2 and is fine;
+    //           `"test"` is NaN, so 0, and is fine.
+    //   count   ToUint32'd and then clamped to what is left. `-1` deletes to
     //           the end rather than throwing, and 20 on a four-character node
     //           deletes four.
     const auto replace_data = [this](context & c, dom_bindings & self, node_id id,
@@ -115,7 +105,7 @@ void dom_bindings::install_character_data(context & cx) {
         std::u16string made = text.substr(0, static_cast<std::size_t>(offset));
         made += added;
         made += text.substr(static_cast<std::size_t>(offset + count));
-        // Said precisely, for the live ranges: which span, and how long the
+        // Pass the exact edit to the live ranges: which span, and how long the
         // replacement is (DOM 4.10.2 steps 8-11).
         (void)self.doc_->set_text(id, utf16_to_wtf8(made),
                                   document::data_edit{static_cast<std::uint32_t>(offset),
@@ -125,8 +115,8 @@ void dom_bindings::install_character_data(context & cx) {
         return true;
     };
 
-    // `length` IS IN CODE UNITS and so is every offset below it. See
-    // wtf8_to_utf16: for ASCII it is the byte count and for nothing else.
+    // `length` is in code units, and so is every offset below it. See
+    // wtf8_to_utf16: for ASCII it equals the byte count, and for nothing else.
     proto->define_accessor("length",
                            native(cx, "length",
                                   [data_of](context & c, std::span<value>) {
@@ -141,15 +131,16 @@ void dom_bindings::install_character_data(context & cx) {
     set_method(
         cx, *proto, "substringData",
         [this, data_of](context & c, std::span<value> a) {
-            // TWO REQUIRED ARGUMENTS, and the arity TypeError is a subtest by name:
-            // `substringData(0)` throws where `substringData(0, 0)` answers "".
+            // Two required arguments: `substringData(0)` throws a TypeError
+            // where `substringData(0, 0)` returns "".
             if (a.size() < 2) {
                 c.throw_error("TypeError", "substringData needs an offset and a count");
                 return value::undefined();
             }
-            // CONVERTED FIRST, THEN THE NODE IS READ. WebIDL converts a call's
-            // arguments before the operation runs, and a page can tell: a `toString`
-            // on an argument may edit the very node this is about to measure.
+            // Convert the arguments first, then read the node. WebIDL converts
+            // a call's arguments before the operation runs, and a page can
+            // tell: a `toString` on an argument may edit the very node this is
+            // about to measure.
             const auto offset =
                 static_cast<unsigned long long>(number_to_uint32(c.to_number_value(a[0])));
             auto count = static_cast<unsigned long long>(number_to_uint32(c.to_number_value(a[1])));
@@ -183,7 +174,7 @@ void dom_bindings::install_character_data(context & cx) {
             node_id id;
             std::u16string text;
             if (!data_of(c, self, id, text)) { return value::undefined(); }
-            // AT THE END, WHICH CANNOT THROW: the offset IS the length.
+            // At the end, which cannot throw: the offset is the length.
             (void)replace_data(c, *self, id, text, "appendData", static_cast<double>(text.size()),
                                0.0, with);
             return value::undefined();
@@ -197,12 +188,12 @@ void dom_bindings::install_character_data(context & cx) {
                 c.throw_error("TypeError", "insertData needs an offset and the data to insert");
                 return value::undefined();
             }
-            // IN ARGUMENT ORDER, INTO NAMED LOCALS, AND BEFORE THE NODE IS READ.
-            // WebIDL converts a call's arguments left to right and a page can SEE
-            // that order - the corpus asserts it with a `toString` that records
-            // when it ran - while the order C++ evaluates a call's own arguments in
-            // is unspecified. Reading the node afterwards matters for the same
-            // reason: a `toString` may have edited it.
+            // Convert in argument order, into named locals, before the node is
+            // read. WebIDL converts a call's arguments left to right and a page
+            // can observe that order (WPT checks it with a `toString` that
+            // records when it ran), while C++ leaves the evaluation order of a
+            // call's own arguments unspecified. The node is read afterwards
+            // because a `toString` may have edited it.
             const double offset = c.to_number_value(a[0]);
             const std::string with = c.to_string(a[1]);
             dom_bindings * self = nullptr;
@@ -251,12 +242,12 @@ void dom_bindings::install_character_data(context & cx) {
         },
         script::attr_builtin);
 
-    // --- Text, WHICH IS CharacterData PLUS TWO -----------------------------
+    // --- Text, which is CharacterData plus two ------------------------------
 
-    // `splitText(offset)`: this node keeps the head, a NEW node takes the tail
-    // and goes straight after it. The new node has NO PARENT when this one has
-    // none - "Split root" asserts exactly that - which is why the insertion is
-    // conditional rather than the obvious appendChild.
+    // `splitText(offset)`: this node keeps the head, and a new node takes the
+    // tail and goes straight after it. The new node has no parent when this
+    // one has none (WPT "Split root"), which is why the insertion is
+    // conditional rather than an unconditional appendChild.
     set_method(
         cx, *text_proto, "splitText",
         [this, data_of](context & c, std::span<value> a) {
@@ -292,11 +283,11 @@ void dom_bindings::install_character_data(context & cx) {
                     }
                 }
             }
-            // IN THE SPECIFICATION'S ORDER (DOM 4.11 "split a Text node"),
+            // In the specification's order (DOM 4.11 "split a Text node"),
             // because the live ranges watch each step: the new node is
             // inserted (the insertion steps), then the boundaries past the
-            // offset move into it, and only then is the data truncated - as
-            // a replace of (offset, length - offset) with "", which moves no
+            // offset move into it, and only then is the data truncated, as a
+            // replace of (offset, length - offset) with "", which moves no
             // boundary that step 7 did not already.
             if (parent) {
                 (void)self->insert_node(parent, made, next);
@@ -312,10 +303,10 @@ void dom_bindings::install_character_data(context & cx) {
         },
         script::attr_builtin);
 
-    // `wholeText`: the CONTIGUOUS RUN of Text siblings this node is in,
-    // concatenated. An element between two text nodes ends the run, which is
-    // the only thing `Text-wholeText.html` is really asking - it puts an <a>
-    // in the middle of three text nodes and re-reads all three.
+    // `wholeText`: the contiguous run of Text siblings this node is in,
+    // concatenated. An element between two text nodes ends the run
+    // (Text-wholeText.html puts an <a> among three text nodes and re-reads
+    // all three).
     text_proto->define_accessor(
         "wholeText",
         native(cx, "wholeText",

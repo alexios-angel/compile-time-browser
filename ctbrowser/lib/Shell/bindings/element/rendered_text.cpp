@@ -1,3 +1,11 @@
+//===- rendered_text.cpp - innerText and editing attributes -----*- C++ -*-===//
+//
+// HTMLElement's text and editing attributes: the innerText/outerText getter
+// (HTML's inner text collection steps, approximated without layout) and
+// setters, plus translate, draggable, spellcheck, contentEditable and
+// isContentEditable.
+//
+//===----------------------------------------------------------------------===//
 #include "internal.hpp"
 
 namespace ctbrowser::shell {
@@ -5,17 +13,17 @@ namespace ctbrowser::shell {
 using namespace detail;
 
 namespace {
-// THE RENDERED TEXT FRAGMENT, which is what the `innerText` and `outerText`
-// SETTERS both build. The assigned string is cut at every U+000A, U+000D or
-// CRLF pair: each run of other code points is a Text node and each break is a
-// `br` element, so `el.innerText = "a\nb"` leaves three children where
-// `textContent` would have left one.
-//
-// NOTHING IS PARSED AND NOTHING IS ESCAPED, which is the reason this builds
-// nodes rather than markup for set_inner_html to re-read: `abc<def` is seven
-// characters of TEXT, and a U+0000 in the middle survives - the HTML tokenizer
-// would have made an element of the first and U+FFFD of the second, and
-// innertext-setter-tests.js asserts both by name.
+/// Splits text into HTML's "rendered text fragment", which both the
+/// `innerText` and `outerText` setters build. The string is cut at every
+/// U+000A, U+000D or CRLF pair: each run of other code points goes to
+/// `on_text` (a Text node) and each break to `on_break` (a `br` element), so
+/// `el.innerText = "a\nb"` leaves three children where `textContent` leaves one.
+///
+/// Nothing is parsed or escaped, which is why the callers build nodes rather
+/// than markup for set_inner_html: `abc<def` stays seven characters of text
+/// and a U+0000 survives, where the HTML tokenizer would make an element of
+/// the first and U+FFFD of the second (WPT innertext-setter-tests.js checks
+/// both).
 template <typename OnText, typename OnBreak>
 void each_rendered_text_part(std::string_view text, OnText && on_text, OnBreak && on_break) {
     std::size_t at = 0;
@@ -24,8 +32,8 @@ void each_rendered_text_part(std::string_view text, OnText && on_text, OnBreak &
         while (at < text.size() && text[at] != '\n' && text[at] != '\r') { ++at; }
         if (at > start) { on_text(text.substr(start, at - start)); }
         while (at < text.size() && (text[at] == '\n' || text[at] == '\r')) {
-            // ONE break for CRLF and two for CR CR: the pair is a single line
-            // ending, which is the only place the two characters are not
+            // One break for CRLF but two for CR CR: the pair is a single line
+            // ending, the only case where the two characters are not
             // independent.
             if (text[at] == '\r' && at + 1 < text.size() && text[at + 1] == '\n') { ++at; }
             ++at;
@@ -34,23 +42,19 @@ void each_rendered_text_part(std::string_view text, OnText && on_text, OnBreak &
     }
 }
 
-// --- innerText, THE GETTER HALF: the "inner text collection steps", HTML 3.2.7
+// --- innerText getter: the "inner text collection steps", HTML 3.2.7
 //
-// The specification walks the element's descendants and reads FOUR computed
-// properties - `display`, `white-space`, `visibility` and `text-transform` -
-// to decide what a text node contributes and where a line break goes. This
-// engine lays out on a FRAME rather than on demand, so the box tree a getter
-// could ask describes the page before the script's own mutations, and
-// `container.innerHTML = x; e.innerText` - the shape of every getter test -
-// would answer about the page as it was. What is read instead is the
-// element's own `style` attribute over the UA sheet's per-tag defaults, which
-// is what a browser computes for those four properties on nearly every
-// element of nearly every page - AND, when the getter could flush the cascade
-// first (a connected element of the page's own document), the cascade's
-// answer for the element, which is where `.table { display: table }` lives.
+// The specification reads four computed properties (display, white-space,
+// visibility, text-transform) from the box tree. This engine lays out once
+// per frame, so the box tree would not reflect the script's own changes yet
+// (as in `container.innerHTML = x; e.innerText`). Instead this reads the
+// cascade when it can be flushed (a connected element of the page's own
+// document), otherwise the element's inline `style` over the UA per-tag
+// defaults.
 // ponytail: text-transform is ASCII (the engine's rule, see
 // core/algorithms.hpp), and ::first-line/::first-letter are not consulted.
 
+/// The inherited properties that decide how a text node's data contributes.
 struct text_style {
     bool preserve = false;        // white-space: pre / pre-wrap / break-spaces
     bool preserve_breaks = false; // white-space: pre-line
@@ -58,10 +62,10 @@ struct text_style {
     int transform = 0;            // +1 uppercase, -1 lowercase
 };
 
-// One property of a `style="..."` attribute, lowercased, or "" when it is not
-// declared. The split declarations.cpp seeds `el.style` with, and the same
-// ceiling: a `;` inside a string ends a declaration, which none of the four
-// keyword properties read here can contain.
+/// One property of a `style="..."` attribute, lowercased, or "" when it is not
+/// declared. Same split as declarations.cpp uses to seed `el.style`, with the
+/// same limit: a `;` inside a string ends a declaration, which none of the
+/// keyword properties read here can contain.
 [[nodiscard]] std::string inline_declaration(std::string_view style, std::string_view property) {
     std::size_t at = 0;
     while (at < style.size()) {
@@ -78,7 +82,7 @@ struct text_style {
     return {};
 }
 
-// The UA sheet's `display` for an HTML tag. Every foreign element is inline.
+/// The UA sheet's `display` for an HTML tag. Every foreign element is inline.
 [[nodiscard]] std::string_view default_display(std::string_view tag) {
     if (lists_token("script style template noscript head title meta link base area param source "
                     "track datalist rp col colgroup",
@@ -105,17 +109,20 @@ struct text_style {
     return "inline";
 }
 
-// The elements whose CONTENTS are never text: a replaced element, and the
-// widgets whose children are not what they render.
+/// The elements whose contents are never text: replaced elements, and the
+/// widgets whose children are not what they render.
 constexpr std::string_view replaced_tags =
     "img input textarea iframe audio video canvas object embed meter progress";
 
-// The SVG elements that never render their contents: the `<defs>` and
-// gradient family, and the metadata the DOM keeps but no box shows.
+/// The SVG elements that never render their contents: the `<defs>` and
+/// gradient family, and the metadata the DOM keeps but no box shows.
 constexpr std::string_view unrendered_svg_tags =
     "defs stop symbol clipPath mask marker pattern linearGradient radialGradient metadata title "
     "desc script style";
 
+/// Implements the innerText getter: walks an element's subtree, recording
+/// text, line breaks, tabs and atomic-inline boundaries as items, then joins
+/// them with CSS white-space processing in finish().
 class inner_text_collector {
 public:
     inner_text_collector(const read_txn & txn, atom_table & atoms, const style::style_map * styles)
@@ -132,9 +139,9 @@ public:
     [[nodiscard]] std::string_view own_style(node_id node) const {
         return txn_.attribute_value(node, style_);
     }
-    // One of the four properties as the cascade left it on this element -
-    // own declaration first, inherited otherwise, exactly what `get` means -
-    // or the inline declaration when there is no cascade to ask.
+    /// A property's value from the cascade for this element (lowercased and
+    /// trimmed), or, when there is no cascade or it has no value, the
+    /// element's inline `style` declaration.
     [[nodiscard]] std::string declared(node_id node, std::string_view property) const {
         if (styles_ != nullptr) {
             const auto found = styles_->find(style::engine::key_of(node));
@@ -146,10 +153,9 @@ public:
         return inline_declaration(own_style(node), property);
     }
 
-    // The element's computed `display` keyword, as far as an inline style over
-    // the UA sheet can say. A float or an out-of-flow position makes any
-    // display block-level, which is the one place `display` is not the whole
-    // answer and the corpus tests it on a <span>.
+    /// The element's computed `display` keyword: cascade or inline style over
+    /// the UA defaults. A float or an absolute/fixed position makes any
+    /// display block-level.
     [[nodiscard]] std::string display_of(node_id node) const {
         const std::string_view tag = tag_of(node);
         const bool html = is_html(node);
@@ -160,8 +166,8 @@ public:
             return "none";
         }
         // `[hidden]` and `<input type=hidden>` are `display: none` in the UA
-        // sheet - this engine's has no such rule, so they are asked here, and
-        // an inline `display` still wins over them as the cascade would have it.
+        // sheet. This engine's sheet has no such rule, so they are checked
+        // here, and an inline `display` still wins as the cascade would have it.
         if (html &&
             (txn_.has_attribute(node, hidden_) ||
              (tag == "input" && ascii_iequals(txn_.attribute_value(node, type_), "hidden"))) &&
@@ -169,10 +175,10 @@ public:
             return "none";
         }
         std::string display = declared(node, "display");
-        // THE UA SHEET SAYS `tr, td { display: block }` because that is how
-        // this engine lays a table out; the collection wants the CSS table
-        // display the tag has, so the sheet's answer yields to it unless the
-        // element's own style said block.
+        // This engine's UA sheet says `tr, td { display: block }` because that
+        // is how it lays a table out; the collection wants the tag's CSS table
+        // display, so the sheet's answer yields unless the element's own style
+        // said block.
         if (html && display == "block" && default_display(tag).starts_with("table") &&
             inline_declaration(own_style(node), "display").empty()) {
             display.clear();
@@ -190,8 +196,9 @@ public:
         return display;
     }
 
-    // Is this element (or any ancestor) `display: none`? The specification's
-    // "not being rendered", which sends the getter to textContent instead.
+    /// True when this element or any ancestor is `display: none`: the
+    /// specification's "not being rendered", which sends the getter to
+    /// textContent instead.
     [[nodiscard]] bool unrendered(node_id node) const {
         for (node_id at = node; at && txn_.kind(at).value_or(node_kind::text) == node_kind::element;
              at = txn_.parent(at)) {
@@ -200,8 +207,9 @@ public:
         return false;
     }
 
-    // The three inherited properties as this element leaves them for its
-    // children: its own inline declarations over what it inherited.
+    /// The three inherited properties (white-space, visibility,
+    /// text-transform) as this element passes them to its children: its own
+    /// declared values over what it inherited.
     [[nodiscard]] text_style style_under(node_id node, text_style inherited) const {
         const std::string white_space = declared(node, "white-space");
         if (!white_space.empty()) {
@@ -230,8 +238,9 @@ public:
         return inherited;
     }
 
-    // What the target inherits: its ancestors' styles applied root-first, then
-    // its own - the target's `white-space: pre` governs its text too.
+    /// What the target's text inherits: its ancestors' styles applied
+    /// root-first, then its own, since the target's `white-space: pre` governs
+    /// its text too.
     [[nodiscard]] text_style inherited_style(node_id target) const {
         std::vector<node_id> chain;
         for (node_id at = target;
@@ -246,9 +255,9 @@ public:
         return style;
     }
 
-    // The children of `node`, under `style`. Where the walk starts for the
-    // target, whose own display contributes nothing - "No tab on table-cell
-    // itself", "No newline on table-row itself".
+    /// Collects the children of `node` under `style`. The walk starts here for
+    /// the target, whose own display contributes nothing ("No tab on
+    /// table-cell itself", "No newline on table-row itself").
     void collect_children(node_id node, const text_style & style,
                           std::string_view display = "block") {
         const bool html = is_html(node);
@@ -264,9 +273,9 @@ public:
         // "Blockification": the in-flow children of a flex or grid container
         // are block-level whatever their display says.
         const bool blockify = lists_token("flex inline-flex grid inline-grid", display);
-        // A TABULAR CONTAINER'S WHITE SPACE has no box (CSS 2.1 17.2.1): a
-        // white-space-only text child whose neighbours - where it has any -
-        // are table-internal boxes or captions is `display: none`, whatever
+        // White space in a tabular container has no box (CSS 2.1 17.2.1): a
+        // white-space-only text child whose neighbours (where it has any) are
+        // table-internal boxes or captions is `display: none`, whatever
         // `white-space` says.
         const bool tabular = lists_token(
             "table inline-table table-row-group table-header-group table-footer-group table-row",
@@ -310,10 +319,10 @@ public:
         }
     }
 
-    // The items, joined: this is the CSS white-space processing the
-    // specification defers to, done on the flat list - a collapsible run is
-    // one space, dropped at the start of a line and before a break, and a run
-    // of required line breaks is the longest of them, never at either end.
+    /// Joins the collected items with the CSS white-space processing the
+    /// specification defers to, done on the flat list: a collapsible run is
+    /// one space, dropped at the start of a line and before a break, and a run
+    /// of required line breaks is the longest of them, never at either end.
     [[nodiscard]] std::string finish() const {
         std::string out;
         bool pending_space = false;
@@ -377,6 +386,7 @@ public:
     }
 
 private:
+    /// One entry in the flat list finish() joins.
     struct text_item {
         enum {
             collapsible,
@@ -435,9 +445,9 @@ private:
             collect_children(node, style, display);
             return;
         }
-        // "If node is a p element, append 2" - by TAG, whatever its display;
-        // the corpus asks for the blank lines around a `display: inline-block`
-        // <p> by name. Otherwise a block-level box is a line of its own.
+        // "If node is a p element, append 2", by tag whatever its display (WPT
+        // checks the blank lines around a `display: inline-block` <p>).
+        // Otherwise a block-level box is a line of its own.
         const int breaks =
             html && tag == "p"                                                                ? 2
             : lists_token("block table flex grid list-item flow-root table-caption", display) ? 1
@@ -457,9 +467,9 @@ private:
         if (breaks > 0) { items_.push_back({text_item::required, {}, breaks}); }
     }
 
-    // Is there a later sibling element of this display? The specification
-    // asks about boxes - "the last table-cell box of its enclosing table-row
-    // box" - and a sibling in the same row is that box.
+    /// True when no later sibling element has this display. The specification
+    /// asks about boxes ("the last table-cell box of its enclosing table-row
+    /// box"), and a sibling in the same row is that box.
     [[nodiscard]] bool last_of_kind(node_id node, std::string_view display) const {
         bool after = false;
         for (const node_id sibling : txn_.children(txn_.parent(node))) {
@@ -474,8 +484,8 @@ private:
         }
         return true;
     }
-    // ...and a row's table is one level further up: the rows of a later row
-    // group are still rows of this table.
+    /// The same for a table row, whose table is one level further up: the
+    /// rows of a later row group are still rows of this table.
     [[nodiscard]] bool last_row(node_id node) const {
         if (!last_of_kind(node, "table-row")) { return false; }
         const node_id group = txn_.parent(node);
@@ -512,6 +522,8 @@ private:
 } // namespace
 
 namespace detail {
+/// True when `id` or an ancestor is `display: none` (see
+/// inner_text_collector::unrendered).
 bool element_unrendered(const read_txn & txn, atom_table & atoms, const style::style_map * styles,
                         node_id id) {
     return inner_text_collector{txn, atoms, styles}.unrendered(id);
@@ -519,31 +531,29 @@ bool element_unrendered(const read_txn & txn, atom_table & atoms, const style::s
 } // namespace detail
 
 void dom_bindings::install_rendered_text(context & cx) {
-    // --- innerText AND outerText, THE SETTER HALF -----------------------------
+    // --- innerText and outerText setters -------------------------------------
     //
-    // `el.innerText = "a\nb"` is NOT `textContent = "a\nb"`: the newline becomes
-    // a <br> element and the text on either side of it becomes a Text node.
-    // That rule - "the rendered text fragment" - is the whole of both setters
-    // and it reads no layout at all, which is why the two halves of this
-    // property can be separated. innertext-setter.html is 126 subtests of it.
+    // `el.innerText = "a\nb"` is not `textContent = "a\nb"`: the newline becomes
+    // a <br> element and the text on either side of it a Text node. That rule,
+    // "the rendered text fragment", is the whole of both setters and reads no
+    // layout, which is why the two halves of this property can be separated.
     //
-    // THE GETTER is the other half and reads no layout either - see
-    // inner_text_collector above for what it reads instead, and why.
+    // The getter reads no layout either; see inner_text_collector above.
     if (const value html_interface = interface_prototype("HTMLElement");
         html_interface.is_object()) {
         auto * proto = static_cast<script::object_object *>(html_interface.as_heap());
-        // ON HTMLElement AND NOT ON Element, which is a rule with a test behind
-        // it: `svg.innerText = "abc"` must leave the <svg> empty, and
-        // innertext-setter-tests.js checks a MathML element as well.
+        // Installed on HTMLElement, not Element: `svg.innerText = "abc"` must
+        // leave the <svg> empty, and WPT innertext-setter-tests.js checks a
+        // MathML element as well.
         //
         // [LegacyNullToEmptyString], so `null` clears the element and
-        // `undefined` writes those nine letters - the same asymmetry
+        // `undefined` writes the string "undefined", the same asymmetry
         // `CharacterData.data` has.
         const auto assigned = [](context & c, std::span<value> args) {
             return arg(args, 0).is_null() ? std::string{} : arg_string(c, args, 0);
         };
         // The fragment, as a list of nodes in document order. Built before
-        // anything is removed: these calls only MAKE nodes, and a fragment that
+        // anything is removed: these calls only make nodes, and a fragment that
         // failed to build should not have emptied the element on its way out.
         const auto rendered_nodes = [this](std::string_view text) {
             std::vector<node_id> made;
@@ -560,9 +570,9 @@ void dom_bindings::install_rendered_text(context & cx) {
             return made;
         };
         // "Merge with the next text node": a Text node followed by a Text node
-        // becomes one, and NOTHING ELSE is normalised. outerText leaves
-        // `A|B|Replaced|D|E` as `A|BReplacedD|E` on purpose, which the corpus
-        // spells out in a subtest called "does not completely normalize".
+        // becomes one, and nothing else is normalised. outerText leaves
+        // `A|B|Replaced|D|E` as `A|BReplacedD|E` on purpose (the WPT subtest
+        // "does not completely normalize").
         const auto merge_forward = [this](node_id node) {
             if (!node) { return; }
             std::string joined;
@@ -622,8 +632,8 @@ void dom_bindings::install_rendered_text(context & cx) {
                 }
             }
             // "If this's parent is null, then throw a
-            // NoModificationAllowedError" - the one way either setter can fail,
-            // and the only reason outerText needs a body of its own at all.
+            // NoModificationAllowedError": the one way either setter can fail,
+            // and the reason outerText needs a body of its own.
             if (!parent) {
                 throw_dom_exception(c, "NoModificationAllowedError",
                                     "outerText: the element has no parent to replace it in");
@@ -631,7 +641,7 @@ void dom_bindings::install_rendered_text(context & cx) {
             }
             std::vector<node_id> made = rendered_nodes(assigned(c, args));
             // "If fragment has no children, append a new Text node whose data
-            // is the empty string": `el.outerText = ""` REPLACES the element
+            // is the empty string": `el.outerText = ""` replaces the element
             // with an empty text node rather than removing it, which is what
             // lets the merge below join the text on either side of it.
             if (made.empty()) {
@@ -646,10 +656,10 @@ void dom_bindings::install_rendered_text(context & cx) {
             mutated();
             return value::undefined();
         };
-        // THE GETTER, shared by both names: `outerText` reads exactly what
+        // The getter, shared by both names: `outerText` reads exactly what
         // `innerText` reads. "If this is not being rendered, return this's
-        // descendant text content" - and an element that is not connected, or
-        // is under a `display: none`, is not rendered. See inner_text_collector.
+        // descendant text content"; an element that is not connected, or is
+        // under a `display: none`, is not rendered. See inner_text_collector.
         const auto rendered_text = [this](context & c, std::span<value>) {
             const node_id id = receiver(c);
             if (!id) { return value::undefined(); }
@@ -685,14 +695,13 @@ void dom_bindings::install_rendered_text(context & cx) {
 
         // --- translate, HTML 3.2.6.3 ---------------------------------------
         //
-        // A boolean over an INHERITED enumerated attribute: `yes` and "" are
-        // translate-enabled, `no` is no-translate, and anything else - the
-        // absent attribute included - is the "inherit" state, which is the
-        // PARENT ELEMENT's mode. The walk stops at the first node that is not
-        // an element, so a child of a DocumentFragment or of a ShadowRoot is
-        // translate-enabled whatever the host says, which
-        // translate-inherit-no-parent-element.html spells out. Only an HTML
-        // element's attribute counts; a foreign element is in the inherit
+        // A boolean over an inherited enumerated attribute: `yes` and "" are
+        // translate-enabled, `no` is no-translate, and anything else (absent
+        // included) is the "inherit" state, the parent element's mode. The
+        // walk stops at the first node that is not an element, so a child of a
+        // DocumentFragment or ShadowRoot is translate-enabled whatever the
+        // host says (WPT translate-inherit-no-parent-element.html). Only an
+        // HTML element's attribute counts; a foreign element is in the inherit
         // state and passes the question up.
         proto->define_accessor(
             "translate",
@@ -729,9 +738,9 @@ void dom_bindings::install_rendered_text(context & cx) {
         // Two more booleans over enumerated attributes whose keywords are
         // `true` and `false` (ASCII case-insensitive; spellcheck's "" is
         // true too), written back as those words. They differ only in the
-        // AUTO state: draggable is true for an <img> and for an <a> with an
-        // href, false otherwise; spellcheck is inherit-by-default - the
-        // parent element's answer, true at the top.
+        // auto state: draggable is true for an <img> and for an <a> with an
+        // href, false otherwise; spellcheck inherits by default (the parent
+        // element's answer, true at the top).
         const auto keyword_state = [this](const read_txn & txn, node_id at,
                                           std::string_view name) -> int {
             if (txn.element_ns(at) != node_ns::html) { return -1; }
@@ -756,8 +765,8 @@ void dom_bindings::install_rendered_text(context & cx) {
         };
         // --- contentEditable and isContentEditable (6.8.1) -----------------
         //
-        // The enumerated attribute's state as a keyword - "true" (for "" too),
-        // "plaintext-only", "false", or "inherit" for absent and invalid -
+        // The enumerated attribute's state as a keyword ("true" for "" too,
+        // "plaintext-only", "false", or "inherit" for absent and invalid),
         // and the setter the other way: "inherit" removes the attribute,
         // the three keywords are written lowercased, anything else is a
         // SyntaxError. isContentEditable walks up to the nearest element

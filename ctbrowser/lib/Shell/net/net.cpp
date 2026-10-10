@@ -1,13 +1,16 @@
-// HTTP over libcurl - the transport behind shell/net/net.hpp. Why libcurl
+//===- ctbrowser/lib/Shell/net/net.cpp - HTTP over libcurl ----------------===//
+//
+// HTTP over libcurl, the transport behind shell/net/net.hpp. Why libcurl
 // rather than Asio or POCO is in docs/build.md.
 //
-// NOTHING libcurl REACHES net.hpp. The public header declares plain structs and
-// two functions; every CURL type lives in this file, the same rule url.cpp
-// keeps for Boost.URL.
+// Nothing from libcurl reaches net.hpp: the public header declares plain
+// structs and two functions, and every CURL type stays in this file.
 //
-// A C API IN A C++ ENGINE, so the two things C gets wrong are handled once
-// here: the handle is owned by a unique_ptr with a deleter, and the header list
-// by a small RAII holder. There is no path out of this function that leaks.
+// libcurl is a C API, so its resources are owned by RAII here: the easy
+// handle by a unique_ptr with a deleter, and the header list by a small
+// holder, so no path out of http_get leaks.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/shell/net/net.hpp>
 #include <ctbrowser/shell/net/url.hpp>
@@ -33,14 +36,13 @@ namespace ctbrowser::shell {
 
 namespace {
 
-// ONCE PER PROCESS, and before any handle exists.
-//
-// This libcurl reports the `threadsafe` feature, so curl_global_init is safe to
-// race - but "safe to race" is not "documented to be called from anywhere", and
-// older or differently-built libcurls are not. call_once costs nothing and
-// removes the question. Deliberately never cleaned up: curl_global_cleanup at
-// static-destruction time races with anything still holding a handle, and the
-// process is ending anyway.
+/// Initialises libcurl once per process, before any handle exists.
+///
+/// A libcurl built with the `threadsafe` feature makes curl_global_init safe
+/// to race, but older or differently built ones are not, and call_once costs
+/// nothing. Deliberately never cleaned up: curl_global_cleanup at
+/// static-destruction time races with anything still holding a handle, and
+/// the process is ending anyway.
 void ensure_curl() {
     static std::once_flag once;
     std::call_once(once, [] { curl_global_init(CURL_GLOBAL_DEFAULT); });
@@ -53,7 +55,8 @@ struct easy_deleter {
 };
 using easy_handle = std::unique_ptr<CURL, easy_deleter>;
 
-// curl_slist is a hand-rolled linked list the caller must free. This owns it.
+/// Owns a curl_slist, libcurl's linked list of header lines, which the caller
+/// must free.
 class header_list {
 public:
     header_list() = default;
@@ -69,14 +72,16 @@ private:
     curl_slist * list_ = nullptr;
 };
 
-// What the body callback writes into. Passed as the opaque pointer, which is
-// how a C callback reaches C++ state.
+/// What the body callback writes into, passed as the opaque pointer, which is
+/// how a C callback reaches C++ state.
 struct sink {
     std::vector<std::byte> body;
     std::size_t max_bytes = 0;
     bool limit_exceeded = false;
 };
 
+/// CURLOPT_WRITEFUNCTION callback: appends a chunk of the body to the sink.
+/// Returning less than `size * count` makes libcurl abort the transfer.
 std::size_t on_body(char * data, std::size_t size, std::size_t count, void * opaque) {
     auto & into = *static_cast<sink *>(opaque);
     // Reject before multiplying or copying: a prefix is not a completed body.
@@ -91,14 +96,17 @@ std::size_t on_body(char * data, std::size_t size, std::size_t count, void * opa
     return offered;
 }
 
-// Whether the socket being opened is to an address the policy allows. The
-// address is formatted and handed to is_private_address, so there is one
-// definition of "private" rather than a second one over sockaddr bytes.
+/// State for open_checked_socket: whether private peers are allowed, and
+/// whether a connection was refused.
 struct peer_check {
     bool allow_private = false;
     bool refused = false;
 };
 
+/// CURLOPT_OPENSOCKETFUNCTION callback: opens the socket only if its address
+/// is one the policy allows. The address is formatted and handed to
+/// is_private_address, so there is one definition of "private" rather than a
+/// second one over sockaddr bytes.
 curl_socket_t open_checked_socket(void * opaque, curlsocktype, curl_sockaddr * address) {
     auto & check = *static_cast<peer_check *>(opaque);
     if (!check.allow_private) {
@@ -121,9 +129,10 @@ curl_socket_t open_checked_socket(void * opaque, curlsocktype, curl_sockaddr * a
 
 } // namespace
 
-// ASKED OF LIBCURL, not of the build system. curl_version_info reports the
-// features the linked library actually has, so this is right whether the
-// backend is Schannel on Windows, OpenSSL on Linux, or absent entirely.
+/// Whether the linked libcurl supports TLS. Asked of libcurl, not of the build
+/// system: curl_version_info reports the features the linked library actually
+/// has, so this is right whether the backend is Schannel on Windows, OpenSSL
+/// on Linux, or absent entirely.
 bool tls_available() noexcept {
     ensure_curl();
     const curl_version_info_data * about = curl_version_info(CURLVERSION_NOW);
@@ -147,40 +156,39 @@ http_response http_get(std::string_view url_text, http_options options) {
 
     curl_easy_setopt(handle.get(), CURLOPT_USERAGENT, options.user_agent.c_str());
     curl_easy_setopt(handle.get(), CURLOPT_TIMEOUT_MS, static_cast<long>(options.timeout_ms));
-    // REDIRECTS ARE FOLLOWED HERE, not by libcurl, so every hop is parsed and
-    // checked against the policy the same way the first URL is - a public
+    // Redirects are followed here, not by libcurl, so every hop is parsed and
+    // checked against the policy the same way the first URL is; a public
     // server answering `302 Location: http://169.254.169.254/` is the attack.
     curl_easy_setopt(handle.get(), CURLOPT_FOLLOWLOCATION, 0L);
-    // ONLY http AND https, even after a redirect - a 302 to `file:///etc/passwd`
-    // is a real attack and libcurl will follow anything it supports otherwise.
+    // Only http and https, even after a redirect: a 302 to `file:///etc/passwd`
+    // is a real attack, and libcurl would otherwise follow anything it supports.
     curl_easy_setopt(handle.get(), CURLOPT_PROTOCOLS_STR, "http,https");
     curl_easy_setopt(handle.get(), CURLOPT_REDIR_PROTOCOLS_STR, "http,https");
     curl_easy_setopt(handle.get(), CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(handle.get(), CURLOPT_WRITEFUNCTION, &on_body);
     curl_easy_setopt(handle.get(), CURLOPT_WRITEDATA, &into);
     curl_easy_setopt(handle.get(), CURLOPT_HTTPGET, 1L);
-    // THE ADDRESS ACTUALLY CONNECTED TO, checked as the socket is opened: a
-    // public hostname that resolves to 127.0.0.1 - or re-resolves to it, which
-    // is DNS rebinding - is refused here, after resolution and before connect.
+    // The address actually connected to is checked as the socket is opened: a
+    // public hostname that resolves to 127.0.0.1 (or re-resolves to it, which
+    // is DNS rebinding) is refused here, after resolution and before connect.
     curl_easy_setopt(handle.get(), CURLOPT_OPENSOCKETFUNCTION, &open_checked_socket);
     curl_easy_setopt(handle.get(), CURLOPT_OPENSOCKETDATA, &peers);
 
     header_list sending;
-    // Identity, because nothing above this decompresses yet. libcurl WOULD do
-    // it - CURLOPT_ACCEPT_ENCODING with an empty string asks for everything it
-    // was built with - and turning that on is a one-line change once something
-    // wants it. Left off so this commit changes the transport and nothing else.
+    // Ask for identity encoding because nothing above this layer decompresses.
+    // Setting CURLOPT_ACCEPT_ENCODING to "" would let libcurl negotiate and
+    // decode every encoding it was built with.
     sending.add("Accept-Encoding: identity");
     sending.add("Accept: */*");
     curl_easy_setopt(handle.get(), CURLOPT_HTTPHEADER, sending.get());
 
     std::string next{url_text};
     for (int hop = 0;; ++hop) {
-        // PARSED AND REFUSED HERE rather than by libcurl, and deliberately.
+        // Parsed and refused here rather than by libcurl, deliberately.
         // libcurl speaks ftp, file, smtp and a dozen others; this client does
         // http and https, and a `file://` reaching a network transport is a bug
-        // in the caller rather than a request. shell/net/url.hpp is also what
-        // drops credentials and the fragment, which must not travel.
+        // in the caller rather than a request. shell/net/url.hpp also drops
+        // the credentials and the fragment, which must not be sent.
         const fetch_url target = parse_absolute(next);
         if (!target.valid) {
             out.error = "not an http(s) url: " + next;
@@ -204,7 +212,7 @@ http_response http_get(std::string_view url_text, http_options options) {
         into.limit_exceeded = false;
         peers.refused = false;
 
-        // NEVER THROWS, which the C API makes easy: every failure is a return code.
+        // Never throws: every failure is a return code.
         const CURLcode result = curl_easy_perform(handle.get());
 
         long status = 0;

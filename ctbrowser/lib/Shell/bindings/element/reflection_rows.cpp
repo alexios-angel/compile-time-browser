@@ -1,3 +1,10 @@
+//===- reflection_rows.cpp - Reflected attribute table ----------*- C++ -*-===//
+//
+// The table of reflected content attributes (HTML 2.6.1): one row per IDL
+// attribute per interface, giving its content attribute name and reflection
+// type. install_dom_interfaces turns these rows into prototype accessors.
+//
+//===----------------------------------------------------------------------===//
 #include "internal.hpp"
 #include <charconv>
 
@@ -12,29 +19,25 @@ constexpr reflected_attribute text_attr(std::string_view iface, std::string_view
     return {iface, idl, content.empty() ? idl : content, reflect_type::dom_string, 0, 0, 0, {},
             {},    {}};
 }
-// The same row with [LegacyNullToEmptyString] on its setter - see the field.
+/// The same row with [LegacyNullToEmptyString] on its setter; see the field.
 constexpr reflected_attribute legacy_text_attr(std::string_view iface, std::string_view idl,
                                                std::string_view content = {}) {
     return {iface, idl, content.empty() ? idl : content, reflect_type::dom_string, 0, 0, 0, {}, {},
             {},    true};
 }
-// The ARIA shape, and the only place a nullable DOMString appears: the content
-// attribute is always the IDL name in another spelling, so it is spelled out
-// rather than derived - `ariaAutoComplete` is `aria-autocomplete` and
-// `ariaBrailleRoleDescription` is `aria-brailleroledescription`, and no rule
-// relates the two.
+/// A string ARIA attribute, the only nullable DOMString row. The content
+/// attribute name is spelled out rather than derived because no rule relates
+/// the two spellings: `ariaAutoComplete` is `aria-autocomplete` but
+/// `ariaBrailleRoleDescription` is `aria-brailleroledescription`.
 constexpr reflected_attribute aria_attr(std::string_view idl, std::string_view content) {
     return {"Element", idl, content, reflect_type::nullable_dom_string, 0, 0, 0, {}, {}, {}};
 }
-// AN ENUMERATED ARIA ATTRIBUTE: nullable, with keywords and an invalid value
-// default that may be null - spelt as an empty string_view, which no keyword
-// is. Twenty of them, from w3c/aria#2484, which is what
-// `aria-attribute-reflection-enumerated.tentative.html` measures. NO MISSING
-// VALUE DEFAULT, deliberately: that file's table names one for thirteen rows
-// (`ariaBusy` absent is "false") and then expects null after `el.ariaBusy =
-// null` has removed the attribute, and the stable aria-attribute-reflection
-// .html expects the null too - so absent is null, and the thirteen "IDL get
-// with DOM attribute unset" subtests are the ones given up.
+/// An enumerated ARIA attribute (w3c/aria#2484): nullable, with keywords and
+/// an invalid value default that may be null (an empty string_view). There is
+/// deliberately no missing value default: WPT's tentative enumerated test
+/// expects one for thirteen attributes, but both it and the stable
+/// aria-attribute-reflection.html expect null once the attribute is removed,
+/// so absent reads as null and those thirteen subtests fail.
 constexpr reflected_attribute aria_enum_attr(std::string_view idl, std::string_view content,
                                              std::string_view keywords, std::string_view invalid) {
     return {"Element", idl, content, reflect_type::nullable_enumerated, 0, 0, 0,
@@ -129,9 +132,9 @@ constexpr reflected_attribute enum_attr(std::string_view iface, std::string_view
             missing,
             invalid};
 }
-// The nullable spelling of the same rule, for the CORS rows: no `missing`
-// column because the missing value default is null, and an invalid value
-// default that names a keyword. aria_enum_attr above is the general form.
+/// The nullable form of enum_attr, for the CORS rows: no `missing` column
+/// because the missing value default is null, and an invalid value default
+/// that names a keyword. aria_enum_attr above is the general form.
 constexpr reflected_attribute nullable_enum_attr(std::string_view iface, std::string_view idl,
                                                  std::string_view keywords,
                                                  std::string_view invalid,
@@ -153,56 +156,51 @@ constexpr reflected_attribute nullable_enum_attr(std::string_view iface, std::st
 constexpr std::string_view referrer_keywords =
     "no-referrer no-referrer-when-downgrade same-origin origin strict-origin "
     "origin-when-cross-origin strict-origin-when-cross-origin unsafe-url";
-// CORS, which four interfaces share and which is the one non-tentative user of
+// CORS settings, shared by four interfaces and the one non-tentative user of
 // the nullable enumerated type: absent is `null`, `anonymous` and
-// `use-credentials` are the keywords, and anything else - including the empty
-// string, which is what `<img crossorigin>` parses to - is `anonymous`.
+// `use-credentials` are the keywords, and anything else (including the empty
+// string that `<img crossorigin>` parses to) is `anonymous`.
 constexpr std::string_view cors_keywords = "anonymous use-credentials";
 constexpr std::string_view enctype_keywords =
     "application/x-www-form-urlencoded multipart/form-data text/plain";
 constexpr std::string_view default_enctype = "application/x-www-form-urlencoded";
 
-// THE TABLE. Built from what the corpus tests: `html/dom/elements-*.js` in the
-// WPT checkout enumerate, per element, every reflected attribute and its type,
-// and the eight `reflection-*.html` files run that product.
-//
-// WHAT IS DELIBERATELY NOT HERE, and why:
-//   * `width` and `height` on every element. The engine already answers those
-//     three different ways - the canvas's drawing buffer, an <img>'s decoded
-//     size, and a generic numeric accessor for any element carrying either
-//     attribute - all as OWN accessors on the wrapper, which shadow anything on
-//     a prototype. A row here would be dead code that reads as if it worked.
-//   * `value` on a control and `src` on an <img>, for the same reason: both
-//     have live own accessors, and a control's value is not its attribute.
-//   * `relList`, `sandbox`, `output.htmlFor`, `link.sizes` - the token lists.
-//     `classList` exists as its own object; the rest need a real DOMTokenList,
-//     which is an object type rather than a table row.
-//   * `document.dir`, which is on the document object rather than on an element
-//     interface.
-//   * `meter`'s six doubles and `progress.max`: `limited double` is a type
-//     nothing else uses and the elements have no behaviour behind it here.
+/// The reflection table, built from what the web-platform-tests check:
+/// `html/dom/elements-*.js` lists, per element, every reflected attribute and
+/// its type, and the eight `html/dom/reflection-*.html` files test that list.
+///
+/// Deliberately left out:
+///   * `width` and `height` on every element. The engine answers those three
+///     ways (the canvas's drawing buffer, an <img>'s decoded size, and a
+///     generic numeric accessor for any element carrying either attribute),
+///     all as own accessors on the wrapper, which shadow anything on a
+///     prototype. A row here would be dead code that reads as if it worked.
+///   * `value` on a control and `src` on an <img>, for the same reason: both
+///     have live own accessors, and a control's value is not its attribute.
+///   * `relList`, `sandbox`, `output.htmlFor`, `link.sizes`: the token lists.
+///     `classList` exists as its own object; the rest need a real DOMTokenList,
+///     which is an object type rather than a table row.
+///   * `document.dir`, which is on the document object rather than on an
+///     element interface.
+///   * `meter`'s six doubles and `progress.max`: `limited double` is a type
+///     nothing else uses and the elements have no behaviour behind it here.
 constexpr reflected_attribute reflection_table[] = {
     // --- Element: on everything, including SVG and a page-invented namespace
     text_attr("Element", "id"),
     text_attr("Element", "className", "class"),
     text_attr("Element", "slot"),
 
-    // --- ARIA, WHICH IS ALSO ON EVERYTHING and is the same six lines of rule
-    // --- applied forty-one more times.
+    // --- ARIA: `role` and the `aria-*` attributes, also on every element.
     //
-    // `role` and every `aria-*` content attribute reflect as an IDL attribute
-    // on Element (ARIA 1.3 §9, "Reflection"), and they are NULLABLE where every
-    // row above is not: an absent one reads `null` rather than "", and writing
-    // `null` or `undefined` REMOVES it. `aria-attribute-reflection.html` runs
-    // `testNullable` on every one of them, so a row that answered "" would fail
-    // its own subtest twice over.
+    // They reflect as IDL attributes on Element (ARIA 1.3 §9, "Reflection")
+    // and, unlike the rows above, are nullable: an absent one reads `null`
+    // rather than "", and writing `null` or `undefined` removes it (WPT
+    // html/dom/aria-attribute-reflection.html runs `testNullable` on each).
     //
-    // THE ELEMENT-VALUED ONES ARE NOT HERE, on purpose. `ariaLabelledByElements`
-    // and its five siblings reflect an IDREF list as an array of ELEMENTS
-    // rather than as a string, which needs an explicit-set store on the element
-    // and a live lookup per read - a different mechanism, not a different row,
-    // and `aria-element-reflection*.html` is what measures it. The strings are
-    // a table and the table is what is affordable.
+    // The element-valued ones (`ariaLabelledByElements` and its five siblings)
+    // are not here: they reflect an IDREF list as an array of elements, which
+    // needs an explicit-set store on the element and a live lookup per read,
+    // a different mechanism rather than a table row.
     aria_attr("role", "role"),
     aria_enum_attr("ariaAtomic", "aria-atomic", "true false", "false"),
     aria_enum_attr("ariaAutoComplete", "aria-autocomplete", "inline list both none", "none"),
@@ -250,8 +248,7 @@ constexpr reflected_attribute reflection_table[] = {
     aria_attr("ariaValueNow", "aria-valuenow"),
     aria_attr("ariaValueText", "aria-valuetext"),
 
-    // --- HTMLElement: the global attributes, which the corpus tests once per
-    // --- element and which are therefore worth more than any other rows here.
+    // --- HTMLElement: the global attributes, which WPT tests once per element.
     text_attr("HTMLElement", "title"),
     text_attr("HTMLElement", "lang"),
     text_attr("HTMLElement", "accessKey", "accesskey"),
@@ -263,9 +260,9 @@ constexpr reflected_attribute reflection_table[] = {
               "inputmode"),
     bool_attr("HTMLElement", "autofocus"),
     bool_attr("HTMLElement", "hidden"),
-    // The specification's default here is "0 or -1 depending on whether the
-    // element is focusable", which is a SHOULD and which the corpus explicitly
-    // declines to test. 0 is what a focusable element reports.
+    // The specification's default is "0 or -1 depending on whether the element
+    // is focusable", a SHOULD that WPT does not test; this reports 0, the
+    // focusable answer, for every element.
     long_attr("HTMLElement", "tabIndex", 0, "tabindex"),
 
     // --- text-level semantics
@@ -599,7 +596,7 @@ constexpr reflected_attribute reflection_table[] = {
     fallback_ulong_attr("HTMLTextAreaElement", "rows", 2),
     text_attr("HTMLOutputElement", "name"),
 
-    // --- obsolete, and still measured: the corpus has a whole file of them
+    // --- obsolete elements, still tested by WPT (html/dom/elements-obsolete.js)
     text_attr("HTMLFrameSetElement", "cols"),
     text_attr("HTMLFrameSetElement", "rows"),
     text_attr("HTMLFrameElement", "name"),
@@ -626,18 +623,10 @@ constexpr reflected_attribute reflection_table[] = {
     enum_attr("HTMLMarqueeElement", "direction", "up right down left", "left", "left"),
 };
 
-// THE RULES FOR PARSING INTEGERS, HTML 2.4.4.1, which the numeric reflection
-// types are all defined in terms of. Answers false when there is no integer
-// there at all, which is what makes the attribute's default apply.
-//
-// The whitespace set is HTML's five characters and NOT JavaScript's -
-// `core/algorithms.hpp` takes the set as a parameter for exactly this reason.
-// The corpus tests a vertical tab in front of a digit among twenty other
-// spacings and expects it to FAIL, because a vertical tab is not HTML
-// whitespace and `\v7` is therefore not an integer.
 } // namespace
 
 namespace detail {
+/// The whole reflection table, for install_dom_interfaces.
 std::span<const reflected_attribute> reflection_rows() {
     return reflection_table;
 }

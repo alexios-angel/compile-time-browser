@@ -1,19 +1,19 @@
-// dom_bindings - THE PARSER-DRIVEN DOCUMENT.
+//===- write.cpp - The parser-driven document -------------------*- C++ -*-===//
+//
+// dom_bindings - the parser-driven document: document.open/write/close and
+// the parser's script hooks.
 //
 // HTML 8.4 (dynamic markup insertion) and 13.2.6.4.8 ("in text", the
 // `</script>` rule) together say what a page's scripts see while it loads: the
 // parser stops at each `</script>`, runs the script against the tree built so
-// far, and `document.write` from inside it puts text into the INPUT STREAM at
-// the insertion point - just past that `</script>` - so the tokenizer reads
+// far, and `document.write` from inside it puts text into the input stream at
+// the insertion point (just past that `</script>`), so the tokenizer reads
 // the written markup before the rest of the file. A written `<script>` runs
 // before the writing script's next statement; a written `<i>` stays open
 // across the remaining markup. `document.open()` throws the document away and
 // starts a script-created parser whose stream `close()` ends.
 //
-// This engine used to parse the whole page first and run the scripts
-// afterwards, with `document.write` appending a fragment - which is exactly
-// what every test in html/webappapis/dynamic-markup-insertion is written to
-// tell apart from the real thing. What the parse looks like now:
+// How the pieces fit:
 //
 //   browser::run_scripts   builds the context and the bindings, then calls
 //   parse_document         which owns an html::tree_builder over this document
@@ -30,6 +30,8 @@
 // .contentDocument.write(...)` runs each classic script it reaches there,
 // through execute_script_element. A document with no browsing context - a
 // DOMParser's, createHTMLDocument's - has neither, and its scripts are inert.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -66,9 +68,9 @@ namespace {
 
 } // namespace
 
-// A NEW PARSER FOR THE DOCUMENT, the old one aborted ("stop document
-// loading") and kept until nothing of it is on the stack - document.open()
-// can be reached from inside the old parser's own pump.
+// A new parser for the document. The old one is aborted ("stop document
+// loading") and kept until nothing of it is on the stack, because
+// document.open() can be reached from inside the old parser's own pump.
 void dom_bindings::replace_parser() {
     std::erase_if(retired_parsers_, [](const auto & held) { return !held->busy(); });
     if (parser_ != nullptr) {
@@ -81,19 +83,17 @@ void dom_bindings::replace_parser() {
         [this](std::string_view name, const std::vector<html::token_attribute> & attributes,
                node_id parent) { return parser_create_custom_element(name, attributes, parent); },
         [this](node_id element) { parser_inserted_custom_element(element); });
-    // 13.2.6.4.8 step 8: WHAT THE PARSER BUILT IS ANNOUNCED, THEN A MICROTASK
-    // CHECKPOINT, THEN THE SCRIPT IS PREPARED - so a mutation observer's
-    // callback sees the <script> before it runs and may change its type
-    // (microtask_before_prepare_the_script_element-01.html) or document.write
-    // with no insertion point, which opens the document and aborts this
-    // parse (document-write/mutation-observer.html). The checkpoint is only
-    // performed when no script is on the stack; inside a written script it
-    // waits for that script's end.
-    // ONE MUTATION RECORD PER PARSER INSERTION, as the DOM's insert steps
-    // queue them (MutationObserver-document.html: the <p>, then the <script>,
-    // then the script's text - three records, not one) - asked only while an
-    // observer is registered, since each announcement diffs the observed
-    // subtree.
+    // HTML 13.2.6.4.8 step 8: before a parser-inserted script is prepared, the
+    // parser reports its insertions and performs a microtask checkpoint (only
+    // when no script is on the stack; inside a written script it waits for
+    // that script's end). A MutationObserver callback can therefore see the
+    // <script> and change its type (microtask_before_prepare_the_script_element-01.html),
+    // or call document.write with no insertion point, which opens the document
+    // and aborts this parse (document-write/mutation-observer.html).
+    // The insertion hook queues one mutation record per inserted node, as the
+    // DOM's insert steps do (MutationObserver-document.html: the <p>, the
+    // <script>, then the script's text are three records), and only while an
+    // observer is registered, since each report diffs the observed subtree.
     parser_->set_insertion_hook([this] {
         if (mutation_registrations_.empty()) { return; }
         doc_->note_unversioned_change();
@@ -110,15 +110,15 @@ parse_result dom_bindings::parse_document(std::string_view html) {
     deferred_scripts_.clear();
     asap_scripts_.clear();
     parser_script_created_ = false;
-    // A NAVIGATION'S DOCUMENT, so a `<template shadowrootmode>` in the page is
+    // A navigation's document, so a `<template shadowrootmode>` in the page is
     // a shadow root (HTML 7.4.6.4 "create and initialize a Document object").
     doc_->set_allow_declarative_shadow_roots(true);
     replace_parser();
-    // THE BYTES, DECODED (HTML 13.2.3.1): the loader sniffed the encoding
-    // into the document's name; a windows-1251 page reaches the tokenizer as
-    // UTF-8 here, and a UTF-8 one passes through untouched.
-    // THIS parser's results: a script it ran may have document.open()ed and
-    // put another in parser_.
+    // The bytes are decoded first (HTML 13.2.3.1): the loader sniffed the
+    // encoding into the document, so a windows-1251 page reaches the
+    // tokenizer as UTF-8 here, and a UTF-8 one passes through untouched.
+    // Keep a reference to this parser for the results: a script it ran may
+    // have called document.open() and put another one in parser_.
     html::tree_builder & parser = *parser_;
     parser.begin(decode_document_bytes(html, doc_->encoding()), false);
     parse_result out;
@@ -128,13 +128,14 @@ parse_result dom_bindings::parse_document(std::string_view html) {
     return out;
 }
 
-// "PREPARE THE SCRIPT ELEMENT", HTML 4.12.1.1, for one the parser inserted and
-// has just closed. The steps that decide WHETHER and WHEN; running is the
-// browser's runner (a classic script) or, for a module, its loader.
+// "Prepare the script element", HTML 4.12.1.1, for a script the parser
+// inserted and has just closed. These are the steps that decide whether and
+// when it runs; running is the browser's runner (a classic script) or, for a
+// module, its loader.
 void dom_bindings::prepare_parser_script(node_id script) {
     if (parser_ == nullptr || parser_->aborted()) { return; }
     // The parser whose </script> this is: the pending-script steps below
-    // belong to it. (Its checkpoint hook ran first - see replace_parser.)
+    // belong to it. (Its checkpoint hook ran first; see replace_parser.)
     html::tree_builder * const parser = parser_.get();
     const atom src_name = atoms_->intern("src");
     const bool svg = doc_->read().element_ns(script) == node_ns::svg;
@@ -146,16 +147,16 @@ void dom_bindings::prepare_parser_script(node_id script) {
     bool nomodule = false;
     {
         const auto txn = doc_->read();
-        // Step 4: the child text content. Step 5: not connected - a script in
-        // a <template>'s contents - is never prepared here; it is a script
-        // that has not started, and runs if a clone of it connects.
+        // Step 4: the child text content. Step 5: a script that is not
+        // connected (one in a <template>'s contents) is never prepared here;
+        // it stays unstarted, and runs if a clone of it connects.
         for (const node_id child : txn.children(script)) {
             if (is_text_kind(txn.kind(child).value_or(node_kind::comment))) {
                 prepared.source += txn.text(child);
             }
         }
         // An SVG <script> names its file with `href` (or the legacy
-        // `xlink:href`) rather than `src` - SVG 2 §15.3.
+        // `xlink:href`) rather than `src` (SVG 2 §15.3).
         src = std::string{txn.attribute_value(script, src_name)};
         if (svg && src.empty()) {
             src = std::string{txn.attribute_value(script, atoms_->intern("href"))};
@@ -165,8 +166,8 @@ void dom_bindings::prepare_parser_script(node_id script) {
         }
         if (src.empty() && prepared.source.empty()) {
             // "If el has no src attribute, and source text is the empty
-            // string, then return" - BEFORE the flag is set, so text a script
-            // appends later runs it (document/entry.cpp).
+            // string, then return", before the "already started" flag is set,
+            // so text a script appends later runs it (document/entry.cpp).
             note_unstarted_script(script);
             return;
         }
@@ -174,9 +175,10 @@ void dom_bindings::prepare_parser_script(node_id script) {
             note_unstarted_script(script);
             return;
         }
-        // PLUS A NEWLINE, as the walk this replaced added: a trailing `//`
-        // comment terminates, and a packager's image is keyed by the hash of
-        // exactly this text (ctcompile's AppBundle pins it).
+        // Append a newline so a trailing `//` comment ends. Precompiled script
+        // images are keyed by the hash of exactly this text (pinned by
+        // ctcompile's AppBundle test), so changing it invalidates every
+        // packaged application.
         if (!prepared.source.empty()) { prepared.source += '\n'; }
         // Step 8, the type: `type` when present and non-empty, else
         // `language` as `text/<language>`, else JavaScript.
@@ -232,15 +234,15 @@ void dom_bindings::prepare_parser_script(node_id script) {
         prepared.specifier = src;
     }
     if (prepared.module && prepared.specifier.empty()) {
-        // A DISTINCT KEY PER INLINE MODULE: the registry is keyed by it, and
-        // two inline modules under one key made the second never run.
+        // A distinct key per inline module: the module registry is keyed by
+        // it, and two inline modules under one key would run only the first.
         prepared.specifier =
             "<inline:" + std::to_string(deferred_scripts_.size() + asap_scripts_.size()) + ">";
     }
     // Step 33: where it runs. A module script and a deferred external one
     // wait for the end of the parse (in order); an async one runs "as soon as
     // possible", which for a synchronous fetch is the same moment; a classic
-    // script - inline or parser-blocking external - runs NOW, with the parser
+    // script (inline or parser-blocking external) runs now, with the parser
     // paused at its end tag.
     if (async) {
         asap_scripts_.push_back(std::move(prepared));
@@ -256,9 +258,9 @@ void dom_bindings::prepare_parser_script(node_id script) {
     // nothing at all.
     const auto execute = [this, parser, script, external, prepared = std::move(prepared)] {
         if (!run_script_) {
-            // A FRAME'S DOCUMENT HAS NO RUNNER - the browser's is the page's -
-            // but it has a realm, and its parser pauses at this `</script>`
-            // like the page's does: the script runs in the frame's realm.
+            // A frame's document has no runner (the browser's belongs to the
+            // page), but it has a realm, and its parser pauses at this
+            // `</script>` like the page's does: the script runs in the frame's realm.
             if (realm_ != nullptr && cx_ != nullptr) {
                 execute_script_element(*cx_, script, prepared.source);
                 if (external) { announce_load(script, true); }
@@ -271,11 +273,11 @@ void dom_bindings::prepare_parser_script(node_id script) {
         }
         if (external) { announce_load(script, true); }
     };
-    // An inline classic script runs NOW (step 33's last case). An external
-    // one is the PENDING PARSING-BLOCKING SCRIPT, which the parser runs once
-    // no script is on the stack - at once for the page's own parse, after the
-    // writing script for one document.write wrote (script_005.html and
-    // friends: [1, 2, 3, 4], not [1, 3, 2, 4]).
+    // An inline classic script runs now (step 33's last case). An external
+    // one becomes the pending parsing-blocking script, which the parser runs
+    // once no script is on the stack: at once for the page's own parse, and
+    // after the writing script for one that document.write wrote
+    // (script_005.html and friends: [1, 2, 3, 4], not [1, 3, 2, 4]).
     if (external) {
         parser->set_pending_blocking_script(execute);
         return;
@@ -283,7 +285,7 @@ void dom_bindings::prepare_parser_script(node_id script) {
     execute();
 }
 
-// "THE END", HTML 13.2.7, from step 2 - the readiness change - on. Step 3's
+// "The end", HTML 13.2.7, from step 2 (the readiness change) on. Step 3's
 // popping is the tree builder's. `initial` is the page's own load, whose
 // DOMContentLoaded / complete / load task the browser's tick already is; a
 // script-created parser queues that task here.
@@ -293,7 +295,7 @@ void dom_bindings::parser_finished(bool initial) {
     set_ready_state("interactive");
     // Steps 3-6: the deferred scripts in the order they were seen, still in
     // the parser's task; then the async ones, whose tasks were queued when
-    // their (synchronous) fetch finished - before the DOMContentLoaded task.
+    // their (synchronous) fetch finished, before the DOMContentLoaded task.
     std::vector<parser_script> asap;
     asap.swap(asap_scripts_);
     std::vector<parser_script> deferred;
@@ -301,7 +303,7 @@ void dom_bindings::parser_finished(bool initial) {
     for (const std::vector<parser_script> * batch : {&deferred, &asap}) {
         for (const parser_script & script : *batch) {
             if (!run_script_) {
-                // A frame's, in its realm - see prepare_parser_script.
+                // A frame's document, run in its realm (see prepare_parser_script).
                 if (realm_ != nullptr && cx_ != nullptr && !script.module) {
                     execute_script_element(*cx_, script.element, script.source);
                     if (!script.specifier.empty()) { announce_load(script.element, true); }
@@ -315,10 +317,10 @@ void dom_bindings::parser_finished(bool initial) {
     mutated();
     if (initial) { return; }
     // Steps 7 and 12, as one task: DOMContentLoaded at the document, then
-    // "complete" and `load` - at the window for the page, at the <iframe>
-    // for a frame's document. Queued on the PRIMARY's timers, because a
-    // frame's own are never run, and guarded because a frame can be removed
-    // before the task runs.
+    // "complete" and `load` (at the window for the page, at the <iframe> for
+    // a frame's document). Queued on the primary's timers, because a frame's
+    // own are never run, and guarded because a frame can be removed before
+    // the task runs.
     dom_bindings & top = primary_ == nullptr ? *this : *primary_;
     if (cx_ == nullptr) { return; }
     const value task = native(*cx_, "the end", [this, &top](context &, std::span<value>) {
@@ -341,21 +343,21 @@ void dom_bindings::parser_finished(bool initial) {
     (void)top.add_timer(task, 0, false);
 }
 
-// `document.open()`, HTML 8.4.2 - the "document open steps".
+// `document.open()`, HTML 8.4.2: the "document open steps".
 void dom_bindings::document_open(context & cx) {
     if (doc_->xml()) {
         throw_dom_exception(cx, "InvalidStateError", "document.open() on an XML document");
         return;
     }
-    // Step 2: the parser is constructing a custom element (13.2.6.1) - its
-    // constructor and reactions may not blow the document away.
+    // Step 2: the parser is constructing a custom element (13.2.6.1), and its
+    // constructor and reactions must not throw the document away.
     if (markup_insertion_counter_ > 0) {
         throw_dom_exception(cx, "InvalidStateError",
                             "document.open() while the parser constructs a custom element");
         return;
     }
-    // Step 4: a parser-inserted script is running - the parser is active with
-    // a script nesting level above zero - and open() is a no-op.
+    // Step 4: a parser-inserted script is running (the parser is active with
+    // a script nesting level above zero), so open() is a no-op.
     if (parser_ != nullptr && !parser_->finished() && parser_->script_nesting() > 0) { return; }
     // Steps 7-8: every event listener and handler on the document, its nodes
     // and its window goes. The standalone EventTargets a page made are not the
@@ -364,8 +366,8 @@ void dom_bindings::document_open(context & cx) {
         [](const listener & held) { return held.target.kind != listen_on::object; });
     // A handler lives in the wrapper's `__on<name>` slot (events/dispatch.cpp:
     // the assigned value, the compiled content attribute and its source); a
-    // present null there is "assigned null", which also deactivates the
-    // markup's handler - exactly what erasing means.
+    // present null there means "assigned null", which also deactivates the
+    // markup's handler, which is exactly what erasing means.
     const auto erase_handlers = [](script::object_object * object) {
         if (object == nullptr) { return; }
         for (auto & [name, held] : object->props) {
@@ -377,7 +379,7 @@ void dom_bindings::document_open(context & cx) {
     for (auto & [key, wrapper] : wrappers_) { erase_handlers(wrapper); }
     erase_handlers(document_object());
     erase_handlers(window_object());
-    // Step 9: "replace all with null within document" - the doctype, the
+    // Step 9: "replace all with null within document": the doctype, the
     // element, and any comment beside them.
     {
         std::vector<node_id> children;
@@ -395,15 +397,15 @@ void dom_bindings::document_open(context & cx) {
             }
         }
     }
-    // Step 12: no-quirks mode - and the parser decides again from what is
-    // written: a doctype keeps it, anything else first puts it in quirks.
+    // Step 12: no-quirks mode; the parser decides again from what is
+    // written (a doctype keeps it, anything else first puts it in quirks).
     doc_->set_quirks(false);
     if (auto * doc = document_object()) { doc->set("compatMode", cx.string("CSS1Compat")); }
-    // Step 11: a FULLY ACTIVE document takes the URL of the ENTRY document -
+    // Step 11: a fully active document takes the URL of the entry document,
     // the page whose script started this, which a frame's function called
     // from the parent does not change (url-entry-document*.window.js). Fully
-    // active here: it has a window and is still reached through the live
-    // frame tree - a removed frame's document, or one whose frame navigated
+    // active here means it has a window and is still reached through the live
+    // frame tree; a removed frame's document, or one whose frame navigated
     // on, keeps its URL (url.window.js).
     const bool fully_active = window_object() != nullptr && find_bindings_of(window_view_) == this;
     if (const dom_bindings * entry = find_bindings_of(cx.entry_realm().global_this);
@@ -422,7 +424,7 @@ void dom_bindings::document_open(context & cx) {
     mutated();
 }
 
-// `document.write()` and `writeln()`, HTML 8.4.4 - the "document write steps".
+// `document.write()` and `writeln()`, HTML 8.4.4: the "document write steps".
 void dom_bindings::document_write(context & cx, std::span<value> args, bool newline) {
     if (doc_->xml()) {
         throw_dom_exception(cx, "InvalidStateError", "document.write() on an XML document");
@@ -435,8 +437,8 @@ void dom_bindings::document_write(context & cx, std::span<value> args, bool newl
     }
     // Step 3: a parser a navigation aborted reads nothing more.
     if (parser_ != nullptr && parser_->aborted()) { return; }
-    // Step 4: no insertion point - no parser, or one that has finished, or one
-    // busy with no script running - means open() first, which empties the
+    // Step 4: no insertion point (no parser, one that has finished, or one
+    // busy with no script running) means open() first, which empties the
     // document. That is the specification's answer and every browser's: a
     // write after load replaces the page.
     if (parser_ == nullptr || !parser_->has_insertion_point()) {
@@ -469,7 +471,7 @@ void dom_bindings::document_close(context & cx) {
                             "document.close() while the parser constructs a custom element");
         return;
     }
-    // Step 3: no script-created parser, nothing to close - a page's own parser
+    // Step 3: no script-created parser, nothing to close. A page's own parser
     // is not one, and close() on it during the load is a no-op.
     if (parser_ == nullptr || !parser_script_created_ || parser_->finished()) { return; }
     parser_->close();

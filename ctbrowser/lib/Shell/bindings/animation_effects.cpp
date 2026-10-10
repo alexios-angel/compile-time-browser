@@ -1,9 +1,22 @@
+//===- animation_effects.cpp - Keyframe effects -----------------*- C++ -*-===//
+//
+// Web Animations bindings: computing a keyframe effect's animated values,
+// reading the timing and keyframes dictionaries, and creating KeyframeEffect
+// and Animation objects. Bare section numbers (§4.5.1, §5.4.3) are Web
+// Animations 1 sections unless another spec is named.
+//
+//===----------------------------------------------------------------------===//
+
 #include "animations/helpers.hpp"
 
 namespace ctbrowser::shell {
 using namespace animation_detail;
 // --- the effect value ---------------------------------------------------------
 
+/// Returns each animated property of element `id` and its current value as
+/// CSS text, after compositing every running animation in composite order.
+/// `underlying` returns the cascaded value for a property name, and
+/// `font_size` is the element's font size in px, for resolving em units.
 std::vector<std::pair<std::string, std::string>> dom_bindings::animated_values(
     node_id id, float font_size,
     const std::function<std::string_view(std::string_view)> & underlying) const {
@@ -39,10 +52,10 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::animated_values(
             parent_font_size = font_of(up).value_or(font_size);
         }
     }
-    // WHERE THE ELEMENT SITS AMONG ITS SIBLINGS, for a keyframe's
+    // Where the element sits among its siblings, for a keyframe's
     // `sibling-index()` and `sibling-count()` (CSS Values 5 §tree-counting): a
     // keyframe value is computed on the element it animates, as the element's
-    // own declaration would be, and moves when a sibling does.
+    // own declaration would be, and changes when a sibling moves.
     {
         const auto txn = doc_->read();
         if (const node_id up = txn.parent(id)) {
@@ -53,7 +66,7 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::animated_values(
             }
         }
     }
-    // THE CONTAINERS A KEYFRAME'S `cq*` UNITS MEASURE (CSS Conditional 5
+    // The containers a keyframe's `cq*` units measure (CSS Conditional 5
     // §4), as the cascade finds them: the nearest ancestor size container on
     // each axis, its content box as last laid out.
     if (styles_ != nullptr && fragments_ != nullptr) {
@@ -97,8 +110,8 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::animated_values(
                 }
             }
         }
-        // THE CUSTOM PROPERTIES FIRST: a `var()` in another property's
-        // keyframe reads what they animate to (the lookup below).
+        // Custom properties first: a `var()` in another property's keyframe
+        // reads what they animate to (the lookup below).
         std::ranges::stable_partition(properties,
                                       [](const std::string & p) { return p.starts_with("--"); });
         // What `currentcolor` means on this element, for every property but
@@ -118,8 +131,8 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::animated_values(
             std::optional<std::string> inherited;
             const auto resolved_color = [&](std::string_view value) {
                 if (property == "color" || current_color.empty()) { return std::string{value}; }
-                // A DROP-SHADOW'S OMITTED COLOUR IS currentcolor too (Filter
-                // Effects 1 §12.2), which no word in the text says: the
+                // A drop-shadow's omitted colour is currentcolor too (Filter
+                // Effects 1 §12.2), though the text does not say so: the
                 // computed filter writes it out, so `drop-shadow(0px 0px)`
                 // interpolates with a coloured one (filter-interpolation-004).
                 if ((property == "filter" || property == "backdrop-filter") &&
@@ -131,9 +144,9 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::animated_values(
                         return computed;
                     }
                 }
-                // ...AND SO IS A SHADOW'S (CSS Backgrounds 3 §7.1): `-15px
-                // -10px 25px` pairs with `black 15px 10px 5px` as the colour
-                // it draws in (box-shadow-interpolation).
+                // So is a box or text shadow's (CSS Backgrounds 3 §7.1):
+                // `-15px -10px 25px` pairs with `black 15px 10px 5px` as the
+                // colour it draws in (box-shadow-interpolation).
                 if (property == "box-shadow" || property == "text-shadow") {
                     return shadows_in_color(value, current_color);
                 }
@@ -143,12 +156,13 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::animated_values(
                 for (const auto & [name, text] : k.values) {
                     if (name != property) { continue; }
                     std::string_view value = text;
-                    // A `var()` IN A KEYFRAME is substituted on the element it
-                    // animates, from its custom properties - their animated
+                    // A `var()` in a keyframe is substituted on the element it
+                    // animates, from its custom properties (their animated
                     // values where an animation sets them, as the element's
-                    // own declaration would see them (CSS Variables 1 §2.3,
-                    // variable-animation-substitute-*) - and one invalid at
-                    // computed-value time is `unset` (§3.1), resolved below.
+                    // own declaration would see them; CSS Variables 1 §2.3,
+                    // variable-animation-substitute-*). One invalid at
+                    // computed-value time is `unset` (CSS Variables 1 §3.1),
+                    // resolved below.
                     std::string substituted;
                     if (style::css::may_have_var(value)) {
                         const style::css::custom_lookup custom =
@@ -229,7 +243,7 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::animated_values(
                     points.push_back(point{k.offset, resolved_color(value), k.easing, k.composite});
                 }
             }
-            // THE UNDERLYING VALUE (§5.4.3): what the animations before this
+            // The underlying value (§5.4.3): what the animations before this
             // one in composite order left, else the cascade's text, else the
             // property's initial value. It is the neutral keyframe at each
             // missing end, and what a keyframe that adds or accumulates
@@ -239,8 +253,8 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::animated_values(
             std::string base = seen != out.end()
                                    ? seen->second
                                    : resolved_color(trim(underlying(property), html_whitespace));
-            // ...A LOGICAL PROPERTY'S is its physical one's, which is the
-            // name the cascade stored the value under: `inline-size` is
+            // A logical property's underlying value is its physical one's,
+            // the name the cascade stored the value under: `inline-size` is
             // `width` here (interpolate-size-logical-properties).
             if (base.empty() && seen == out.end()) {
                 const std::string physical = style::css::physical_property_of(
@@ -251,7 +265,7 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::animated_values(
             }
             if (base.empty() && known != nullptr) { base = std::string{known->initial}; }
             if (points.front().offset != 0) {
-                // The neutral keyframe's easing is linear (§5.4.3) - unless
+                // The neutral keyframe's easing is linear (§5.4.3), unless
                 // the effect carries a valueless keyframe at 0, which is how
                 // a CSS animation hands over the element's timing function
                 // for the interval it synthesises (bindings/animations/css.cpp).
@@ -267,11 +281,11 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::animated_values(
             if (points.back().offset != 1) {
                 points.push_back(point{1, base, "linear", "replace"});
             }
-            // §4.5.1: a keyframe's composite operation - its own, or the
-            // effect's when `auto` - applies to its value against the
-            // underlying value BEFORE the interpolation.
+            // §4.5.1: a keyframe's composite operation (its own, or the
+            // effect's when `auto`) applies to its value against the
+            // underlying value before the interpolation.
             // A registered custom property composites as its type does: a
-            // transform list appends, and one transform function ADDED to
+            // transform list appends, and one transform function added to
             // another combines their arguments, as accumulation does.
             bool single_function = false;
             const std::string_view as =
@@ -286,13 +300,13 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::animated_values(
                                                                   : style::composite_op::replace,
                                              own);
             };
-            // ...AND THEN THE ITERATION COMPOSITE (Web Animations 2, "the
-            // effect value of a keyframe effect"): with `accumulate`, each
-            // endpoint has the final keyframe's value accumulated onto it once
-            // per completed iteration, so a 0px -> 100px effect runs 100px ->
-            // 200px in its second. `current iteration` accumulations of one
-            // value are built by doubling, not one at a time, so an infinite
-            // animation deep into its run costs a logarithm per sample.
+            // Then the iteration composite (Web Animations 2, "the effect
+            // value of a keyframe effect"): with `accumulate`, each endpoint
+            // has the final keyframe's value accumulated onto it once per
+            // completed iteration, so a 0px -> 100px effect runs 100px ->
+            // 200px in its second. The `current iteration` accumulations are
+            // built by repeated doubling, so an infinite animation deep into
+            // its run costs a logarithm per sample.
             std::string iteration_offset;
             if (e.iteration_composite == "accumulate" && sample.iteration >= 1) {
                 const auto accumulate = [&](const std::string & a, const std::string & b) {
@@ -300,6 +314,8 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::animated_values(
                                                  own);
                 };
                 std::string power = composited_once(points.back());
+                // Clamp so the double -> uint64 cast is defined for infinite
+                // iteration counts.
                 for (auto n = static_cast<std::uint64_t>(std::min(sample.iteration, 1e18)); n != 0;
                      n >>= 1) {
                     if ((n & 1) != 0) {
@@ -349,7 +365,7 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::animated_values(
                 }
                 single = stop == start;
             }
-            // AN UNREGISTERED CUSTOM PROPERTY IS A TOKEN STREAM, and animates
+            // An unregistered custom property is a token stream and animates
             // discretely (CSS Properties and Values API 1 §2.4): `blue` to
             // `green` flips at the midpoint rather than becoming a colour
             // (variable-animation-from-to).
@@ -382,6 +398,8 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::animated_values(
 
 // --- the dictionaries ---------------------------------------------------------
 
+/// Reads an EffectTiming dictionary, or a bare number as the duration, into
+/// `into`. Throws a TypeError and returns false on an invalid member.
 bool dom_bindings::read_timing(context & cx, value options, effect_timing & into) {
     const auto fail = [&cx](const std::string & what) {
         cx.throw_error("TypeError", "Failed to read the timing options: " + what);
@@ -448,8 +466,9 @@ bool dom_bindings::read_timing(context & cx, value options, effect_timing & into
     return true;
 }
 
-// "Process a keyframes argument", §5.4.5: the array form and the
-// property-indexed form, then "compute missing keyframe offsets".
+/// "Process a keyframes argument", §5.4.5: the array form and the
+/// property-indexed form, then "compute missing keyframe offsets". Throws a
+/// TypeError and returns false on invalid input.
 bool dom_bindings::read_keyframes(context & cx, value keyframes,
                                   std::vector<animation_keyframe> & into) {
     into.clear();
@@ -479,8 +498,8 @@ bool dom_bindings::read_keyframes(context & cx, value keyframes,
         return true;
     };
     // A property's value, validated against the property table the way
-    // `el.style` validates one; an invalid value is dropped and an unknown
-    // property - one CSS.supports says no to - is not animatable and is skipped.
+    // `el.style` validates one; an invalid value is dropped, and an unknown
+    // property (one CSS.supports rejects) is not animatable and is skipped.
     const auto add_value = [&cx](animation_keyframe & frame, const std::string & idl, value given) {
         const std::string property = css_property_of(idl);
         std::string text = cx.to_string(given);
@@ -490,9 +509,9 @@ bool dom_bindings::read_keyframes(context & cx, value keyframes,
         }
         const style::css::property_syntax * known = style::css::find_property(property);
         if (known == nullptr || !style::css::animatable(property)) { return; }
-        // A SHORTHAND IS ITS LONGHANDS (§5.4.5 "process a keyframe-like
-        // object"), as a `@keyframes` block already stores it: `borderWidth:
-        // '20px 40px'` animates border-top-width and the rest.
+        // A shorthand is stored as its longhands (§5.4.5 "process a
+        // keyframe-like object"), as a `@keyframes` block already stores it:
+        // `borderWidth: '20px 40px'` animates border-top-width and the rest.
         if (known->shorthand) {
             style::css::declaration_block expanded;
             (void)style::css::set_declaration(expanded, property, text, false);
@@ -647,6 +666,8 @@ bool dom_bindings::read_keyframes(context & cx, value keyframes,
 
 // --- the objects --------------------------------------------------------------
 
+/// Creates a KeyframeEffect object for `target`, or throws and returns
+/// undefined when the options or keyframes are invalid.
 value dom_bindings::make_keyframe_effect(context & cx, node_id target, value keyframes,
                                          value options) {
     keyframe_effect_record made;
@@ -673,6 +694,8 @@ value dom_bindings::make_keyframe_effect(context & cx, node_id target, value key
     return effects_[push_effect(cx, std::move(made))].self;
 }
 
+/// Stores an effect record, gives it a script object, and returns its index
+/// in effects_.
 std::size_t dom_bindings::push_effect(context & cx, keyframe_effect_record made) {
     auto * object = cx.allocate<script::object_object>();
     object->prototype = keyframe_effect_prototype_;
@@ -684,6 +707,7 @@ std::size_t dom_bindings::push_effect(context & cx, keyframe_effect_record made)
     return effects_.size() - 1;
 }
 
+/// Creates an idle Animation object for the effect at index `effect`.
 value dom_bindings::make_animation(context & cx, std::size_t effect) {
     auto * object = cx.allocate<script::object_object>();
     object->prototype = animation_prototype_;

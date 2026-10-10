@@ -1,5 +1,10 @@
-// shell/net/policy.hpp - what a page may reach. Pure: no sockets, no libcurl;
-// net.cpp calls these on the URL and on every address it connects to.
+//===- ctbrowser/lib/Shell/net/policy.cpp - Fetch policy checks -----------===//
+//
+// Implements shell/net/policy.hpp: what a page may reach. Pure functions with
+// no sockets and no libcurl; net.cpp calls them on the URL and on every
+// address it connects to.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/shell/net/policy.hpp>
@@ -12,7 +17,8 @@ namespace ctbrowser::shell {
 
 namespace {
 
-// Four decimal octets, the only spelling the URL parser and inet_ntop emit.
+/// Parses four decimal octets, the only IPv4 spelling the URL parser and
+/// inet_ntop emit.
 std::optional<std::array<std::uint8_t, 4>> parse_ipv4(std::string_view text) {
     std::array<std::uint8_t, 4> out{};
     for (std::size_t part = 0; part < 4; ++part) {
@@ -34,7 +40,8 @@ std::optional<std::array<std::uint8_t, 4>> parse_ipv4(std::string_view text) {
     return out;
 }
 
-// Eight groups, `::` for a run of zeros, and a trailing dotted IPv4 allowed.
+/// Parses an IPv6 address: eight hex groups, `::` for a run of zeros, and a
+/// trailing dotted IPv4 allowed.
 std::optional<std::array<std::uint16_t, 8>> parse_ipv6(std::string_view text) {
     std::array<std::uint16_t, 8> out{};
     std::size_t count = 0;
@@ -84,13 +91,17 @@ std::optional<std::array<std::uint16_t, 8>> parse_ipv6(std::string_view text) {
     return out;
 }
 
+/// Whether an IPv4 address is not a public peer: 0/8, 10/8, 127/8 loopback,
+/// 169.254/16 link-local, 172.16/12, 192.168/16, 100.64/10 carrier-grade NAT,
+/// and everything from 224/8 up.
 bool private_ipv4(const std::array<std::uint8_t, 4> & a) {
     return a[0] == 0 || a[0] == 10 || a[0] == 127 || (a[0] == 169 && a[1] == 254) ||
            (a[0] == 172 && (a[1] & 0xF0U) == 16) || (a[0] == 192 && a[1] == 168) ||
            (a[0] == 100 && (a[1] & 0xC0U) == 64) ||
-           a[0] >= 224; // multicast, reserved and broadcast: never a public peer
+           a[0] >= 224; // Multicast, reserved and broadcast: never a public peer.
 }
 
+/// Whether an IPv6 address (as eight groups) is not a public peer.
 bool private_ipv6(const std::array<std::uint16_t, 8> & g) {
     // ::/96 (unspecified, ::1, IPv4-compatible) and ::ffff:0:0/96 (IPv4-mapped)
     // carry an IPv4 address in the low 32 bits; judge that.
@@ -104,7 +115,7 @@ bool private_ipv6(const std::array<std::uint16_t, 8> & g) {
     return (g[0] & 0xFE00U) == 0xFC00U     // fc00::/7 unique local
            || (g[0] & 0xFFC0U) == 0xFE80U  // fe80::/10 link-local
            || (g[0] & 0xFFC0U) == 0xFEC0U  // fec0::/10 site-local (deprecated)
-           || (g[0] & 0xFF00U) == 0xFF00U; // multicast
+           || (g[0] & 0xFF00U) == 0xFF00U; // ff00::/8 multicast
 }
 
 } // namespace

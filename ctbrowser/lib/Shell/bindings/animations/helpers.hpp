@@ -1,3 +1,10 @@
+//===- animations/helpers.hpp - Animation binding helpers -------*- C++ -*-===//
+//
+// Small helpers shared by the Web Animations and CSS animation bindings:
+// private key names, the unresolved-time sentinel, property-name conversion
+// and the interpolation type of registered custom properties.
+//
+//===----------------------------------------------------------------------===//
 #pragma once
 #include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/shell/bindings.hpp>
@@ -24,20 +31,23 @@ constexpr std::string_view effect_index_key = "__ctbrowser_effect_index";
 constexpr double nan = std::numeric_limits<double>::quiet_NaN();
 constexpr double infinity = std::numeric_limits<double>::infinity();
 
+/// True for an unresolved time, which the Web Animations model stores as NaN.
 [[nodiscard]] inline bool unresolved(double t) noexcept {
     return std::isnan(t);
 }
 
-// An interface object is not callable: `new` arrives with an object receiver
-// and a plain call with none - the test every constructor in bindings/ makes.
+/// Throws the TypeError for calling an interface object without `new`. A
+/// `new` call arrives with an object receiver and a plain call with none; every
+/// constructor in bindings/ makes that test.
 [[nodiscard]] inline value illegal_new(context & c, const char * name) {
     c.throw_error("TypeError", std::string{"Failed to construct '"} + name +
                                    "': please use the 'new' operator.");
     return value::undefined();
 }
 
-// The keyframe property name as the CSS spelling: `marginLeft` -> `margin-left`,
-// `cssFloat` -> `float`, `cssOffset` -> `offset`, and a custom property as is.
+/// Converts a keyframe property name to its CSS spelling: `marginLeft` ->
+/// `margin-left`, `cssFloat` -> `float`, `cssOffset` -> `offset`, and a custom
+/// property unchanged.
 [[nodiscard]] inline std::string css_property_of(std::string_view idl) {
     if (idl.starts_with("--")) { return std::string{idl}; }
     if (idl == "cssFloat") { return "float"; }
@@ -45,12 +55,12 @@ constexpr double infinity = std::numeric_limits<double>::infinity();
     return style::css::css_name_of(idl);
 }
 
-// WHAT A REGISTERED CUSTOM PROPERTY INTERPOLATES AS (CSS Properties and
-// Values API 1 §3.3: by its syntax's computed value type). A
-// `<transform-list>` is a transform list; a lone `<transform-function>` is
-// one too, except that adding two of them combines their arguments rather
-// than appending (`single_function`). Anything else - and every other
-// property - interpolates as itself.
+/// Returns the property a registered custom property interpolates as (CSS
+/// Properties and Values API 1 §3.3: by its syntax's computed value type). A
+/// `<transform-list>` interpolates as `transform`; so does a lone
+/// `<transform-function>`, except that adding two of them combines their
+/// arguments rather than appending, which `single_function` reports. Every
+/// other property interpolates as itself.
 [[nodiscard]] inline std::string_view interpolates_as(style::engine * engine, atom_table & atoms,
                                                       std::string_view property,
                                                       bool * single_function = nullptr) {
@@ -67,11 +77,12 @@ constexpr double infinity = std::numeric_limits<double>::infinity();
     return property;
 }
 
-// A SHADOW'S OMITTED COLOUR IS currentcolor (CSS Backgrounds 3 §7.1), which
-// no word in the text says: each shadow of a list with no colour of its own
-// takes `color` - the element's computed colour text - so `-15px -10px 25px`
-// pairs with `black 15px 10px 5px` as the colour it draws in
-// (box-shadow-interpolation), and every `currentcolor` is that colour too.
+/// Makes every shadow's colour explicit. An omitted shadow colour is
+/// currentcolor (CSS Backgrounds 3 §7.1), but the text does not say so; each
+/// shadow with no colour of its own gets `color`, the element's computed
+/// colour text, so `-15px -10px 25px` can interpolate with
+/// `black 15px 10px 5px` (WPT box-shadow-interpolation). Every explicit
+/// `currentcolor` is replaced by that colour too.
 [[nodiscard]] inline std::string shadows_in_color(std::string_view value, std::string_view color) {
     if (ascii_iequals(trim(value, html_whitespace), "none")) { return std::string{value}; }
     std::string shadows;

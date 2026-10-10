@@ -1,3 +1,11 @@
+//===- rules.cpp - CSSRule interfaces ---------------------------*- C++ -*-===//
+//
+// dom_bindings::install_stylesheet_rules: CSSRule and its subclasses
+// (grouping, style, condition, media, supports, container, layer, scope,
+// nested-declarations, font-face, import, namespace and page rules).
+//
+//===----------------------------------------------------------------------===//
+
 #include "helpers.hpp"
 
 #include <ctbrowser/shell/net/url.hpp>
@@ -67,7 +75,7 @@ void dom_bindings::install_stylesheet_rules(context & cx, script::object_object 
         },
         {}, script::attr_configurable);
 
-    // A STYLE RULE IS A GROUPING RULE, CSS Nesting 1 §5: its nested rules are
+    // A style rule is a grouping rule (CSS Nesting 1 §5): its nested rules are
     // `cssRules`, with insertRule and deleteRule.
     script::object_object * grouping_proto =
         cssom_interface(cx, internals, "CSSGroupingRule", "CSSRule", nullptr);
@@ -82,21 +90,16 @@ void dom_bindings::install_stylesheet_rules(context & cx, script::object_object 
         [this](context & c, std::span<value> a) {
             css_rule_record * rule = receiver_rule(c);
             if (rule == nullptr) { return value::undefined(); }
-            // "Parse the given value; if it returns failure, do nothing" -
-            // CSSOM 6.4.2, and the whole of that test is the difference between
-            // a selector that is WRONG and one this engine merely cannot match.
-            // `parse_selector_text` is the entry point that tells them apart,
-            // and it is the same one `querySelector` uses: its out parameter is
-            // a SYNTAX error, so `::gibberish` leaves the rule alone while
-            // `::before` replaces it and simply matches nothing. It replaced a
-            // probe that appended `{--ctbrowser-probe:1}` and ran the SHEET
-            // parser, which could not tell the two apart at all and which a `{`
-            // inside an attribute value could derail.
+            // CSSOM 6.4.2: "Parse the given value; if it returns failure, do
+            // nothing." parse_selector_text (the same entry point querySelector
+            // uses) separates a syntax error from a valid selector this engine
+            // cannot match, so `::gibberish` leaves the rule alone while
+            // `::before` replaces it.
             const std::string text = arg_string(c, a, 0);
             bool bad = false;
             const std::vector<style::css::namespace_declaration> namespaces =
                 sheet_namespaces(rule->sheet);
-            // A NESTED rule's text is parsed as one - `&` and an implicit `&`.
+            // A nested rule's text is parsed as one, with `&` and an implicit `&`.
             const std::size_t self = slot_index(object_of(c.current_this()), rule_key);
             const std::vector<style::compiled_selector> placeholder(1);
             const style::css::nesting_context nesting{placeholder, false};
@@ -112,17 +115,13 @@ void dom_bindings::install_stylesheet_rules(context & cx, script::object_object 
             return value::undefined();
         },
         script::attr_configurable);
-    // `.style`, ON EVERY RULE WHOSE BLOCK IS DECLARATIONS - which is five of
-    // them and was one. CSSOM gives a CSSStyleDeclaration to CSSStyleRule,
-    // CSSFontFaceRule, CSSPageRule, CSSKeyframeRule and CSSCounterStyleRule
-    // alike; `css/cssom/property-accessors.html` reaches for
-    // `document.styleSheets[0].cssRules[0].style` where rule zero is a
-    // `@font-face`, and nine of its nine subtests died on `getPropertyValue is
-    // undefined` rather than on anything it set out to test.
+    // `.style` on every rule whose block is declarations: CSSStyleRule here, and
+    // CSSFontFaceRule, CSSPageRule, CSSKeyframeRule and CSSCounterStyleRule where
+    // they are installed (WPT css/cssom/property-accessors.html uses a
+    // @font-face rule's `.style`).
 
     declaration_accessor(cx, style_rule_proto);
 
-    // (CSSGroupingRule was made above CSSStyleRule, which inherits it.)
     define_getter(
         cx, *grouping_proto, "cssRules",
         [this](context & c, std::span<value>) {
@@ -138,11 +137,10 @@ void dom_bindings::install_stylesheet_rules(context & cx, script::object_object 
             return list;
         },
         {}, script::attr_configurable);
-    // insertRule/deleteRule ON THE GROUP, which is the same pair of methods
-    // CSSStyleSheet has and NOT the same list: a rule inserted here becomes a
-    // child of the group and never a sibling of it. `@media print {}` followed
-    // by `rule.insertRule(...)` is how `css/cssom/serialize-media-rule.html`
-    // builds every one of its fixtures.
+    // insertRule/deleteRule on the group: the same pair of methods
+    // CSSStyleSheet has, but not the same list. A rule inserted here becomes a
+    // child of the group and never a sibling of it (WPT
+    // css/cssom/serialize-media-rule.html builds its fixtures this way).
     set_method(
         cx, *grouping_proto, "insertRule",
         [this](context & c, std::span<value> args) {
@@ -153,14 +151,13 @@ void dom_bindings::install_stylesheet_rules(context & cx, script::object_object 
                 return value::undefined();
             }
             const std::string text = c.to_string(args[0]);
-            // `undefined` for an optional argument is the DEFAULT, not
-            // `ToNumber(undefined)` - see the sheet's `insertRule`.
+            // `undefined` for an optional argument is the default, not
+            // `ToNumber(undefined)`; see CSSStyleSheet's `insertRule`.
             const double asked =
                 args.size() > 1 && !args[1].is_undefined() ? context::to_number(args[1]) : 0;
-            // THE INDEX IS CHECKED BEFORE THE TEXT IS PARSED, which is the order
-            // CSSOM 6.4.3 gives and which `CSSGroupingRule-insertRule.html` asserts
-            // by passing a deliberate syntax error at an out-of-range index and
-            // demanding the IndexSizeError.
+            // The index is checked before the text is parsed, the order CSSOM
+            // 6.4.3 gives: a syntax error at an out-of-range index is an
+            // IndexSizeError (WPT css/cssom/CSSGroupingRule-insertRule.html).
             if (!(asked >= 0) || asked > static_cast<double>(rule->children.size())) {
                 throw_dom_exception(c, "IndexSizeError", "the index is past the end of the rule");
                 return value::undefined();
@@ -176,7 +173,7 @@ void dom_bindings::install_stylesheet_rules(context & cx, script::object_object 
             // "If new rule cannot be inserted at index because the rule is not
             // allowed there, throw a HierarchyRequestError." `@import` and
             // `@namespace` are top-level rules and a grouping rule is not the top
-            // level. The record is dropped rather than orphaned - it was appended a
+            // level. The record is dropped rather than orphaned: it was appended a
             // moment ago and nothing else has seen it.
             const std::uint32_t kind = css_rule_store_[made]->type;
             if (kind == import_rule || kind == namespace_rule) {
@@ -188,7 +185,7 @@ void dom_bindings::install_stylesheet_rules(context & cx, script::object_object 
             css_rule_store_[made]->parent = self;
             rule->children.insert(rule->children.begin() + static_cast<std::ptrdiff_t>(asked),
                                   made);
-            // Inside a style rule the new rule is nested - its selector is
+            // Inside a style rule the new rule is nested and its selector is
             // spelled with `&`; outside one its bare declarations are dropped.
             if (nested_in_style(css_rule_store_, made)) {
                 const std::vector<style::css::namespace_declaration> namespaces =
@@ -230,9 +227,10 @@ void dom_bindings::install_stylesheet_rules(context & cx, script::object_object 
         [this](context & c, std::span<value>) {
             const css_rule_record * rule = receiver_rule(c);
             if (rule == nullptr) { return c.string(""); }
-            // "The conditionText of a CSSMediaRule is its media's mediaText" -
-            // CSSOM 6.4.4. Only `@supports` answers from `prelude`, its condition
-            // being a `<supports-condition>` and not a media query list.
+            // "The conditionText of a CSSMediaRule is its media's mediaText"
+            // (CSSOM 6.4.4). Other condition rules answer from `prelude`, a
+            // `@supports` condition being a `<supports-condition>` and not a
+            // media query list.
             if (rule->type == media_rule) {
                 return c.string(serialize_media_query_list(rule->media_queries));
             }
@@ -255,7 +253,7 @@ void dom_bindings::install_stylesheet_rules(context & cx, script::object_object 
         },
         script::attr_configurable);
     // `matches` (CSS Conditional 3 §7.2 and §7.3): whether the condition
-    // holds now - the media list against the window, the supports condition
+    // holds now: the media list against the window, the supports condition
     // as the parser decided it.
     define_getter(
         cx, *media_rule_proto, "matches",
@@ -292,8 +290,9 @@ void dom_bindings::install_stylesheet_rules(context & cx, script::object_object 
         const style::css::container_query & first = conditions->front();
         if (want_name) { return c.string(first.name); }
         std::string query = collapse_whitespace(first.condition, html_whitespace);
-        // The one function a container condition has is spelled lowercase,
-        // as cq-testcommon.js's feature probe reads it back.
+        // The one function a container condition has is spelled lowercase, as
+        // WPT css/css-conditional/container-queries/support/cq-testcommon.js's
+        // feature probe reads it back.
         for (std::size_t k = 0; k + 6 <= query.size(); ++k) {
             if (ascii_iequals(std::string_view{query}.substr(k, 6), "style(")) {
                 query.replace(k, 6, "style(");
@@ -404,7 +403,7 @@ void dom_bindings::install_stylesheet_rules(context & cx, script::object_object 
     // --- CSSImportRule, CSSOM 6.4.7
     //
     // `styleSheet` is the sheet load_imported_sheet fetched when the rule was
-    // parsed - a CSSStyleSheet of its own with its own rules, as every engine
+    // parsed: a CSSStyleSheet of its own with its own rules, as every engine
     // answers, and null only for an import a constructed sheet was given.
     script::object_object * import_proto =
         cssom_interface(cx, internals, "CSSImportRule", "CSSRule", nullptr);
@@ -438,9 +437,9 @@ void dom_bindings::install_stylesheet_rules(context & cx, script::object_object 
             return value::undefined();
         },
         script::attr_configurable);
-    // `layerName` and `supportsText` are NULL when the import has neither,
+    // `layerName` and `supportsText` are null when the import has neither,
     // which is the difference CSSOM draws between "no layer" and "an anonymous
-    // one" - `@import url(a) layer` has a layer whose name is the empty string.
+    // one": `@import url(a) layer` has a layer whose name is the empty string.
     const auto import_part = [this](context & c, std::string_view keyword, bool bare) {
         const css_rule_record * rule = receiver_rule(c);
         if (rule == nullptr) { return value::null(); }
@@ -466,8 +465,8 @@ void dom_bindings::install_stylesheet_rules(context & cx, script::object_object 
         [import_part](context & c, std::span<value>) { return import_part(c, "supports", false); },
         {}, script::attr_configurable);
 
-    // --- CSSNamespaceRule, CSSOM 6.4.9. A DEFAULT namespace has no prefix, and
-    // the empty string is how CSSOM reports that - not `null`.
+    // --- CSSNamespaceRule, CSSOM 6.4.9. A default namespace has no prefix, and
+    // CSSOM reports that as the empty string, not `null`.
     script::object_object * namespace_proto =
         cssom_interface(cx, internals, "CSSNamespaceRule", "CSSRule", nullptr);
     define_getter(
@@ -499,7 +498,7 @@ void dom_bindings::install_stylesheet_rules(context & cx, script::object_object 
         [this](context & c, std::span<value> a) {
             css_rule_record * rule = receiver_rule(c);
             if (rule == nullptr) { return value::undefined(); }
-            // "If the parse failed, do nothing" - and `named :first` is a parse
+            // "If the parse failed, do nothing", and `named :first` is a parse
             // failure rather than two selectors, because a `<page-selector>`
             // has no whitespace in it anywhere.
             bool ok = false;

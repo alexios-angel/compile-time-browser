@@ -1,8 +1,11 @@
-// dom_bindings - Web Animations: `element.animate`, Animation, KeyframeEffect,
-// `document.timeline` and `getAnimations`.
+//===- animations.cpp - Web Animations bindings -----------------*- C++ -*-===//
 //
-// WHAT IT IS MEASURED AGAINST. css/support/interpolation-testcommon.js drives
-// every interpolation test in `css/css-values` four ways, and the "Web
+// dom_bindings' Web Animations: `element.animate`, Animation, KeyframeEffect,
+// `document.timeline` and `getAnimations`. Bare section numbers are Web
+// Animations 1 sections unless another spec is named.
+//
+// What it is tested against: WPT's css/support/interpolation-testcommon.js
+// drives every interpolation test in `css/css-values` four ways, and the "Web
 // Animations" way is exactly this:
 //
 //     var animation = target.animate(keyframes, {fill: 'forwards',
@@ -13,21 +16,22 @@
 //     ... getComputedStyle(target).getPropertyValue(property)
 //
 // where `createEasing(at)` is `steps(1, end)`, `steps(1, start)`, `linear` or a
-// `cubic-bezier(0, b, 1, b)` chosen so that the easing maps 0.5 to `at` - which
+// `cubic-bezier(0, b, 1, b)` chosen so that the easing maps 0.5 to `at`, which
 // may be outside [0, 1]. So the pieces that have to be right are the timing
 // model (a paused animation seeked to a time), the easing functions including
 // their extrapolation, and the interpolation of a length-percentage and of a
-// number. Everything else on the interfaces is the specification's shape with
-// the part that no test here reaches left out and named in bindings.hpp.
+// number. The rest of each interface follows the specification's shape; parts
+// that no test reaches are left out.
 //
-// THE EFFECT VALUE IS AN OVERLAY ON THE CASCADE'S TEXT. `animated_values` hands
-// computed_style_entries (css name, text) pairs and that file treats them as
-// if a rule had declared them - so a percentage resolves against the containing
-// block there, an inset becomes a used value there, and this file never has to
-// know what a computed value looks like. It interpolates on the engine's own
-// calc() arithmetic (`evaluate_math` / `serialize_calc`), which is what makes
-// `calc(50% - 25px)` to `calc(100% - 10px)` come out as one two-term calc that
-// layout::parse_length can read, rather than as a string nothing can.
+// Animated values are layered over the cascade's text.
+// dom_bindings::animated_values (animation_effects.cpp) returns (CSS name,
+// text) pairs that computed_style_entries treats as if a rule had declared
+// them, so percentages and insets resolve there and this file never needs to
+// know what a computed value looks like. Interpolation uses the engine's calc()
+// arithmetic, so `calc(50% - 25px)` to `calc(100% - 10px)` produces one
+// two-term calc() that layout::parse_length can read.
+//
+//===----------------------------------------------------------------------===//
 
 #include "animations/helpers.hpp"
 
@@ -35,6 +39,7 @@ namespace ctbrowser::shell {
 using namespace animation_detail;
 // --- records ------------------------------------------------------------------
 
+/// The index in animations_ of the Animation object `v`, or no_record.
 std::size_t dom_bindings::animation_index(value v) const {
     if (!v.is_object()) { return no_record; }
     const value * held =
@@ -45,6 +50,7 @@ std::size_t dom_bindings::animation_index(value v) const {
                                                                  : no_record;
 }
 
+/// The index in effects_ of the KeyframeEffect object `v`, or no_record.
 std::size_t dom_bindings::effect_index(value v) const {
     if (!v.is_object()) { return no_record; }
     const value * held =
@@ -55,6 +61,8 @@ std::size_t dom_bindings::effect_index(value v) const {
                                                               : no_record;
 }
 
+/// Rebuilds the garbage-collector roots that keep every animation object,
+/// effect object and their prototypes alive.
 void dom_bindings::sync_animation_roots() {
     if (animation_interface_ == nullptr) { return; }
     std::vector<value> & roots = animation_interface_->retained;
@@ -71,6 +79,8 @@ void dom_bindings::sync_animation_roots() {
     }
 }
 
+/// A value that changes whenever animated values may have changed; 0 means
+/// there are no animations.
 std::uint64_t dom_bindings::animation_stamp() const noexcept {
     if (animations_.empty()) { return 0; }
     // The clock is part of the answer while an animation is live: a running
@@ -78,6 +88,8 @@ std::uint64_t dom_bindings::animation_stamp() const noexcept {
     std::uint64_t clock = 0;
     static_assert(sizeof(clock) == sizeof(now_ms_));
     std::memcpy(&clock, &now_ms_, sizeof(clock));
+    // Mix the generation with the 64-bit golden-ratio constant (Fibonacci
+    // hashing) so consecutive generations spread across all bits.
     return (animation_generation_ * 0x9E3779B97F4A7C15ull) ^ clock ^ 1;
 }
 
@@ -95,7 +107,8 @@ double dom_bindings::animation_current_time(const animation_record & a) const no
     return (now_ms_ - a.start_time) * a.playback_rate;
 }
 
-// "Silently set the current time", §4.4.14.
+/// "Silently set the current time of an animation" (Web Animations 1,
+/// "Setting the current time of an animation").
 void dom_bindings::set_animation_current_time(animation_record & a, double t) {
     if (!unresolved(a.hold_time) || unresolved(a.start_time) || a.playback_rate == 0) {
         a.hold_time = t;
@@ -104,6 +117,7 @@ void dom_bindings::set_animation_current_time(animation_record & a, double t) {
     }
 }
 
+/// The animation's play state: "idle", "paused", "finished" or "running".
 std::string_view dom_bindings::play_state(const animation_record & a) const noexcept {
     const double current = animation_current_time(a);
     if (unresolved(current)) { return "idle"; }
@@ -118,8 +132,8 @@ std::string_view dom_bindings::play_state(const animation_record & a) const noex
     return "running";
 }
 
-// "Update the finished state", §4.4.16, with the seek case folded in by the
-// caller having already set the hold time. Every state change ends here.
+/// "Update the finished state", §4.4.16, with the seek case folded in by the
+/// caller having already set the hold time. Every state change ends here.
 void dom_bindings::update_finished_state(context & cx, std::size_t index) {
     ++animation_generation_;
     animation_record & a = animations_[index];
@@ -147,10 +161,10 @@ void dom_bindings::update_finished_state(context & cx, std::size_t index) {
     }
 }
 
-// Composite order, Web Animations §5.4.2 with CSS Animations 2 §5.2 and CSS
-// Transitions 2 §4.2 folded in: every transition before every animation
-// before every script-made one; within a class by the owner's tree order,
-// then by position in the list that made it; then by creation.
+/// Composite order, Web Animations §5.4.2 with CSS Animations 2 §5.2 and CSS
+/// Transitions 2 §4.2 folded in: every transition before every animation
+/// before every script-made one; within a class by the owner's tree order,
+/// then by position in the list that made it; then by creation.
 bool dom_bindings::composites_before(std::size_t a, std::size_t b) const noexcept {
     const animation_record & x = animations_[a];
     const animation_record & y = animations_[b];
@@ -162,15 +176,17 @@ bool dom_bindings::composites_before(std::size_t a, std::size_t b) const noexcep
     return a < b;
 }
 
+/// The relevant animations targeting `id` (or, with `subtree`, any of its
+/// descendants), sorted into composite order.
 std::vector<std::size_t> dom_bindings::animations_on(node_id id, bool subtree) const {
     std::vector<std::size_t> out;
     const auto txn = doc_->read();
     for (std::size_t i = 0; i < animations_.size(); ++i) {
         const animation_record & a = animations_[i];
         if (a.effect == no_record || play_state(a) == "idle") { continue; }
-        // RELEVANT ONLY (§5.4): a finished animation that fills forwards is
-        // in effect and stays; one that does not is over, and a completed
-        // transition is exactly that.
+        // Relevant animations only (§5.4): a finished animation that fills
+        // forwards is still in effect; one that does not is over, as a
+        // completed transition is.
         if (play_state(a) == "finished") {
             const std::string & fill = effects_[a.effect].timing.fill;
             if (fill != "forwards" && fill != "both") { continue; }
@@ -194,6 +210,8 @@ std::vector<std::size_t> dom_bindings::animations_on(node_id id, bool subtree) c
     return out;
 }
 
+/// Runs the timing model for `a` at the current time: phase, active time,
+/// current iteration and eased progress.
 dom_bindings::timing_sample dom_bindings::sample_timing(const animation_record & a) const noexcept {
     timing_sample out;
     if (a.effect == no_record) { return out; }
@@ -223,8 +241,8 @@ dom_bindings::timing_sample dom_bindings::sample_timing(const animation_record &
     case effect_phase::after: active_time = fill_forwards ? active_duration : nan; break;
     case effect_phase::idle: break;
     }
-    // The iteration the events count is the one the ACTIVE time is in,
-    // filled or not - so it is computed before the fill decides anything.
+    // The iteration the events count is the one the active time is in,
+    // filled or not, so it is computed before the fill decides anything.
     const double counted_time = out.phase == effect_phase::active  ? local - t.delay
                                 : out.phase == effect_phase::after ? active_duration
                                                                    : 0;
@@ -267,6 +285,8 @@ dom_bindings::timing_sample dom_bindings::sample_timing(const animation_record &
     return out;
 }
 
+/// Installs the Web Animations interfaces, Element.animate and
+/// getAnimations, and document.timeline.
 void dom_bindings::install_animations(context & cx) {
     if (animation_interface_ != nullptr) { return; }
     const auto illegal = [](context & c) {
@@ -291,7 +311,7 @@ void dom_bindings::install_animations(context & cx) {
     // Every interface prototype carries its name as `@@toStringTag` (Web IDL
     // §3.7.3): `assert_class_string(getAnimations()[0], "CSSTransition")` is
     // how css-properties-values-api asks what a transition is, and without it
-    // an Animation answered with the EventTarget's tag it inherits.
+    // an Animation would answer with the EventTarget tag it inherits.
     timeline_proto->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string("DocumentTimeline"),
                            script::attr_configurable);
     cx.define_builtin_global("DocumentTimeline", value::object(timeline_ctor));
@@ -457,7 +477,7 @@ void dom_bindings::install_animations(context & cx) {
 
     // --- Animation ------------------------------------------------------------
     auto * proto = cx.allocate<script::object_object>();
-    // An Animation IS an EventTarget - `addEventListener('finish', ...)` must
+    // An Animation is an EventTarget: `addEventListener('finish', ...)` must
     // exist even though nothing here fires it.
     proto->prototype = event_target_prototype_;
     animation_prototype_ = value::object(proto);
@@ -658,10 +678,10 @@ void dom_bindings::install_animations(context & cx) {
             return value::undefined();
         },
         script::attr_builtin);
-    // commitStyles(), Web Animations 1 §4.4.14: the effect's current values
-    // written into its target's `style` attribute, each property through the
-    // element's own CSSStyleDeclaration as `el.style.setProperty(name, value)`
-    // would write it (transform-interpolation-inline-value).
+    // commitStyles() (Web Animations 1, the Animation interface): writes the
+    // effect's current values into the target's `style` attribute, one
+    // `el.style.setProperty(name, value)` call per property
+    // (transform-interpolation-inline-value).
     // ponytail: the values are every animation on the target composited, not
     // only those up to this one in composite order; split animated_values'
     // stack when two animations and commitStyles meet in a test.
@@ -684,6 +704,8 @@ void dom_bindings::install_animations(context & cx) {
                 const auto found = styles_->find(style::engine::key_of(target));
                 if (found != styles_->end() && found->second) { own = found->second.get(); }
             }
+            // 16px: a stand-in font size for resolving em units, because
+            // commitStyles has no layout pass to ask.
             const std::vector<std::pair<std::string, std::string>> values =
                 animated_values(target, 16.0f, [&](std::string_view property) -> std::string_view {
                     return own != nullptr ? own->get(atoms_->intern(property)) : std::string_view{};
@@ -830,7 +852,8 @@ void dom_bindings::install_animations(context & cx) {
             value::object(cx.allocate<script::native_object>(
                 "timeline", [this](context &, std::span<value>) { return timeline_; })),
             value::undefined());
-        // Every animation whose target is in the document, in creation order.
+        // Every non-idle animation whose target is connected to this document,
+        // sorted into composite order (see composites_before).
         set_method(
             cx, *doc, "getAnimations",
             [this, animations_array](context & c, std::span<value>) {

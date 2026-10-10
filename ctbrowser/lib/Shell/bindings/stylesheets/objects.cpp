@@ -1,5 +1,11 @@
-// dom_bindings' CSSOM - the objects: a sheet, a rule, a rule list, a media list
-// and a declaration block, made once and refreshed in place.
+//===- objects.cpp - CSSOM sheet, rule and list objects ---------*- C++ -*-===//
+//
+// The script objects of dom_bindings' CSSOM: a sheet, a rule, a rule list, a
+// media list and a declaration block. Each is made once, holds its index into
+// the C++ record store in a private slot, and is refreshed in place on every
+// read so a page's expandos and `===` comparisons survive.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -7,9 +13,9 @@ namespace ctbrowser::shell {
 
 using namespace detail;
 
-// `shadowRoot.styleSheets` - the StyleSheetList of one shadow tree, held on
-// the root's wrapper so it is [SameObject] for as long as the wrapper is, and
-// re-derived from the tree on every read exactly as the document's is.
+/// `shadowRoot.styleSheets`: the StyleSheetList of one shadow tree, held on
+/// the root's wrapper so it is [SameObject] for as long as the wrapper is, and
+/// re-derived from the tree on every read exactly as the document's is.
 value dom_bindings::shadow_sheet_list(context & cx, node_id root) {
     if (!root || shadow_tree_of(root) == nullptr) { return value::undefined(); }
     script::object_object * wrapper = object_of(wrap(cx, root));
@@ -36,7 +42,7 @@ value dom_bindings::shadow_sheet_list(context & cx, node_id root) {
 
 value dom_bindings::sheet_object_of(context & cx, node_id owner) {
     sync_style_sheets(cx);
-    // A `<style>` IN A SHADOW TREE is that tree's sheet: the document walk
+    // A `<style>` in a shadow tree is that tree's sheet: the document walk
     // never reaches the fragment, so the tree's own list is synced instead.
     {
         node_id root{};
@@ -69,9 +75,9 @@ dom_bindings::css_rule_record * dom_bindings::receiver_rule(context & cx) {
 }
 
 std::vector<std::string> * dom_bindings::receiver_media(context & cx) {
-    // A RULE FIRST, because a media rule's own object carries both private slots
-    // - `rule_key` and the `sheet_key` that says which sheet it came from - and
-    // the sheet's list is not the rule's. A MediaList itself carries exactly one.
+    // Check for a rule first: a media rule's own object carries both private
+    // slots (`rule_key`, and the `sheet_key` naming the sheet it came from),
+    // and the sheet's list is not the rule's. A MediaList carries exactly one.
     if (css_rule_record * rule = receiver_rule(cx)) { return &rule->media_queries; }
     if (css_sheet_record * sheet = receiver_sheet(cx)) { return &sheet->media_queries; }
     return nullptr;
@@ -79,8 +85,8 @@ std::vector<std::string> * dom_bindings::receiver_media(context & cx) {
 
 value dom_bindings::media_list_object(context & cx, script::object_object & owner) {
     // [SameObject]: `sheet.media === sheet.media`, and a page's expando on one
-    // survives - so the list is cached on its owner under a private key and
-    // REFRESHED rather than rebuilt.
+    // survives, so the list is cached on its owner under a private key and
+    // refreshed rather than rebuilt.
     if (const value * held = owner.find(media_key)) {
         refresh_media_list(cx, *held);
         return *held;
@@ -93,8 +99,8 @@ value dom_bindings::media_list_object(context & cx, script::object_object & owne
             obj->prototype = *proto;
         }
     }
-    // THE OWNER'S SLOT, COPIED ONTO THE LIST. It is how every method below finds
-    // the vector it is a view of: a MediaList has no owner pointer of its own,
+    // The owner's slot is copied onto the list. It is how every method below
+    // finds the vector it is a view of: a MediaList has no owner pointer of its own,
     // and re-deriving one from the JS object graph would need a back-reference
     // the collector would then have to know about.
     if (const value * rule = owner.find(rule_key)) {
@@ -145,8 +151,8 @@ value dom_bindings::make_rule_list(context & cx, std::span<const std::size_t> ru
 void dom_bindings::refresh_rule_list(context & cx, value list, std::span<const std::size_t> rules) {
     script::object_object * obj = object_of(list);
     if (obj == nullptr) { return; }
-    // ONE OBJECT PER RECORD, for as long as the record is. insertRule must not
-    // rebuild the ones it did not touch: `css/cssom/CSSStyleSheet.html` puts an
+    // One object per record, for as long as the record lives. insertRule must
+    // not rebuild the ones it did not touch: WPT css/cssom/CSSStyleSheet.html puts an
     // expando on two rules, inserts a third between them, and asserts both
     // expandos survived.
     std::vector<value> ordered;
@@ -203,8 +209,8 @@ value dom_bindings::make_rule_object(context & cx, std::size_t rule) {
     obj->define(sheet_key, value::number(static_cast<double>(css_rule_store_[rule]->sheet)),
                 script::attr_none);
     if (css_rule_store_[rule]->type == keyframes_rule) {
-        // Indexed from the start - `keyframes[0]` is read without `cssRules`
-        // ever having been - and the list is the cached one so the two agree.
+        // Indexed from the start (`keyframes[0]` may be read before `cssRules`
+        // ever is), and the list is the cached one so the two agree.
         obj->define(rules_key, make_rule_list(cx, css_rule_store_[rule]->children),
                     script::attr_none);
         mirror_rule_list(*obj);
@@ -217,12 +223,12 @@ value dom_bindings::declaration_object(context & cx, std::size_t rule) {
     script::object_object * obj = object_of(object);
     if (obj == nullptr) { return object; }
     if (script::object_object * internals = cssom_internals(cx)) {
-        // WHICH CSSStyleDeclaration. CSSOM splits the property accessors off
-        // onto CSSStyleProperties, and a descriptor block carries its
-        // descriptors instead: `@font-face`'s `src`, `@page`'s `size`. So a
-        // page rule's block has no `cssFloat` and a style rule's has no
-        // `unicodeRange`, which page-descriptors.html and
-        // cssstyledeclaration-cssfontrule.html assert from the two sides.
+        // Choose which CSSStyleDeclaration subclass. CSSOM splits the property
+        // accessors off onto CSSStyleProperties, and a descriptor block
+        // carries its descriptors instead: `@font-face`'s `src`, `@page`'s
+        // `size`. So a page rule's block has no `cssFloat` and a style rule's
+        // has no `unicodeRange` (WPT page-descriptors.html and
+        // cssstyledeclaration-cssfontrule.html check both sides).
         std::string_view interface = "CSSStyleProperties.prototype";
         if (rule < css_rule_store_.size()) {
             if (css_rule_store_[rule]->type == font_face_rule) {
@@ -244,7 +250,7 @@ void dom_bindings::refresh_declaration_object(context & cx, value declarations) 
     if (obj == nullptr) { return; }
     const std::size_t at = slot_index(obj, rule_key);
     if (at >= css_rule_store_.size()) { return; }
-    // AN INDEX NAMES A PROPERTY, not a value - CSSOM 6.7.1 - which is what
+    // An index names a property, not a value (CSSOM 6.7.1), which is what
     // `[...style]` and every `for (const p of style)` iterates. These are data
     // properties refreshed on every write rather than accessors, because there
     // is no bound on how many a block may have and a prototype cannot carry an
@@ -271,24 +277,21 @@ value dom_bindings::make_sheet_object(context & cx, std::size_t sheet) {
 }
 
 void dom_bindings::install_sheet_property(context & cx, script::object_object & obj, node_id id) {
-    // `sheet`, the LinkStyle interface. An ACCESSOR rather than a property: a
-    // `<style>` a script has just created and appended has no sheet until the
-    // document is walked again, and `dom/events`' four animation tests do
-    // exactly that - `document.head.appendChild(style); style.sheet.insertRule(...)`.
+    // `sheet`, the LinkStyle interface. It is an accessor rather than a data
+    // property: a `<style>` a script has just created and appended has no sheet
+    // until the document is walked again, and pages do exactly that:
+    // `document.head.appendChild(style); style.sheet.insertRule(...)`.
     //
-    // ON THE PROTOTYPE, once, and not on each wrapper: it is an IDL attribute
+    // It goes on the prototype once, not on each wrapper: it is an IDL attribute
     // of HTMLStyleElement and HTMLLinkElement, and `assert_idl_attribute`
     // asks for it in the prototype chain and not as an own property. The
     // receiver names the node; a wrapper is only made after the interfaces
     // are, so the fallback below is for an embedder that built none.
     //
-    // AND ROUTED TO THE NODE'S OWN BINDINGS. The prototype is SHARED with every
-    // frame (frames.cpp: one set of interfaces), so these getters capture the
-    // page's bindings - and a frame's `<style>` looked up in the PAGE's sheets
-    // found nothing: `style.sheet` was null in every frame, which is 326
-    // subtests of attribute-case/semantics.html and 176 of syntax.html. The
-    // node's owner answers, and the page's for anything that is not a node of
-    // the page or a frame.
+    // Routed to the node's own bindings: the prototype is shared by every frame
+    // (frames.cpp), so a getter using the bindings that installed it would look
+    // up a frame's `<style>` in the top page's sheets. The page's bindings answer
+    // only for values that are not nodes of the page or a frame.
     const auto owning = [this](value node) -> dom_bindings & {
         dom_bindings * owner = bindings_owning(node);
         return owner != nullptr ? *owner : *this;
@@ -307,10 +310,9 @@ void dom_bindings::install_sheet_property(context & cx, script::object_object & 
             },
             {}, script::attr_configurable);
         if (name == "HTMLStyleElement") {
-            // `HTMLStyleElement.disabled` is the SHEET's flag, not an attribute:
+            // `HTMLStyleElement.disabled` is the sheet's flag, not an attribute:
             // false while the element has no sheet, and a write then does
-            // nothing (style-sheet-interfaces-001, "disabled attribute
-            // getter/setter").
+            // nothing (WPT css/cssom/style-sheet-interfaces-001.html).
             const auto owned = [owning](context & c) -> css_sheet_record * {
                 dom_bindings & owner = owning(c.current_this());
                 owner.sync_style_sheets(c);
@@ -346,10 +348,10 @@ void dom_bindings::install_sheet_property(context & cx, script::object_object & 
             continue;
         }
         // `HTMLLinkElement.disabled`, HTML 4.2.4: it reflects the attribute,
-        // and REMOVING the attribute is what sets the element's "explicitly
-        // enabled" flag - the one thing that makes an `alternate stylesheet`
-        // apply. Setting false on a link that has no attribute is therefore
-        // a no-op, which HTMLLinkElement-disabled-006 asserts by name.
+        // and removing the attribute is what sets the element's "explicitly
+        // enabled" flag, the one thing that makes an `alternate stylesheet`
+        // apply. Setting false on a link that has no attribute is therefore a
+        // no-op (WPT HTMLLinkElement-disabled-006.html).
         // ponytail: only this setter sets the flag; `removeAttribute('disabled')`
         // does not. Hook the attribute mutation funnel if a page needs it.
         proto->define_accessor("disabled",
@@ -387,7 +389,7 @@ void dom_bindings::install_sheet_property(context & cx, script::object_object & 
                                    })),
                                script::attr_configurable);
     }
-    // A ShadowRoot's `styleSheets` and `adoptedStyleSheets` - DocumentOrShadowRoot,
+    // A ShadowRoot's `styleSheets` and `adoptedStyleSheets` (DocumentOrShadowRoot):
     // the same two members the document has, over the shadow tree alone.
     if (script::object_object * proto = object_of(interface_prototype("ShadowRoot"));
         proto != nullptr && proto->find_accessor("styleSheets") == nullptr) {

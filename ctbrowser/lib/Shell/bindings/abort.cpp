@@ -1,20 +1,21 @@
-// dom_bindings - AbortController and AbortSignal, DOM §3.2
+//===- abort.cpp - AbortController and AbortSignal --------------*- C++ -*-===//
+//
+// dom_bindings' AbortController and AbortSignal, DOM §3.2
 // (https://dom.spec.whatwg.org/#aborting-ongoing-activities).
 //
-// A signal is an EventTarget with three pieces of state - aborted, its reason,
-// and the signals that depend on it - kept in private slots so the accessors
+// A signal is an EventTarget with three pieces of state (aborted, its reason,
+// and the signals that depend on it) kept in private slots, so the accessors
 // on the prototype are the IDL's. Aborting runs the abort algorithms (here:
-// every listener registered with the signal goes, which is what removeEvent-
-// Listener-by-signal means), fires `abort` at the signal, then does the same
-// for each dependent signal made by `AbortSignal.any`. `AbortSignal.timeout`
-// is one of the page's own timers aimed at the signal; the reason it carries
-// is the TimeoutError the spec names.
+// every listener registered with the signal is removed, which is what
+// `addEventListener(..., {signal})` promises), fires `abort` at the signal,
+// then does the same for each dependent signal made by `AbortSignal.any`.
+// `AbortSignal.timeout` is one of the page's own timers aimed at the signal;
+// the reason it carries is the TimeoutError the spec names.
 //
-// The controller exists before this file did - p5 makes one per sketch to take
-// every listener down at once - but its signal was a plain object with two
-// data properties and nothing was an event target, so `signal.addEventListener
-// ("abort", ...)`, `onabort`, `throwIfAborted`, the statics and the default
-// AbortError reason were all missing (dom/abort, six files).
+// p5.js creates one AbortController per sketch and uses its signal to remove
+// every listener at once.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/shell/bindings.hpp>
 
@@ -33,8 +34,9 @@ namespace {
 const std::string aborted_slot = std::string{script::private_key_prefix} + "abort:aborted";
 const std::string reason_slot = std::string{script::private_key_prefix} + "abort:reason";
 // The signals that follow this one (an `any` signal is appended to each of
-// its sources), and, on an `any` signal, the sources it follows - which is
-// what keeps a chain of `any` calls flat, as the spec's "source signals" does.
+// its sources), and, on an `any` signal, the sources it follows. Recording the
+// sources keeps a chain of `any` calls flat, as the spec's "source signals"
+// does.
 const std::string dependents_slot = std::string{script::private_key_prefix} + "abort:dependents";
 const std::string sources_slot = std::string{script::private_key_prefix} + "abort:sources";
 const std::string signal_slot = std::string{script::private_key_prefix} + "abort:signal";
@@ -46,6 +48,7 @@ const std::string signal_slot = std::string{script::private_key_prefix} + "abort
     return flag != nullptr && context::truthy(*flag);
 }
 
+/// The array held in `slot` on `signal`, copied; empty when there is none.
 [[nodiscard]] std::vector<value> list_of(value signal, const std::string & slot) {
     std::vector<value> out;
     auto * object = object_of(signal);
@@ -58,6 +61,7 @@ const std::string signal_slot = std::string{script::private_key_prefix} + "abort
     return out;
 }
 
+/// Appends `item` to the array in `slot` on `signal`, creating it if needed.
 void append_to(context & cx, value signal, const std::string & slot, value item) {
     auto * object = object_of(signal);
     if (object == nullptr) { return; }
@@ -74,6 +78,7 @@ void append_to(context & cx, value signal, const std::string & slot, value item)
 bool dom_bindings::is_abort_signal(value v) const {
     if (!v.is_object() || !abort_signal_prototype_.is_object()) { return false; }
     value link = static_cast<script::object_object *>(v.as_heap())->prototype;
+    // Bound the walk so a pathological prototype chain cannot hang the check.
     for (int depth = 0; depth < 64 && link.is_object(); ++depth) {
         if (link.as_heap() == abort_signal_prototype_.as_heap()) { return true; }
         link = static_cast<script::object_object *>(link.as_heap())->prototype;
@@ -89,9 +94,10 @@ value dom_bindings::make_abort_signal(context & cx) {
     return value::object(signal);
 }
 
-// DOM §3.2.1 "signal abort": the reason, the dependents that will follow, the
-// abort steps (algorithms, then the event) for this signal and then for each
-// of them. A signal that is already aborted does nothing.
+/// DOM §3.2.1 "signal abort": sets the reason on this signal and on every
+/// dependent not yet aborted, then runs the abort steps (algorithms, then the
+/// event) for this signal and then for each of them. A signal that is already
+/// aborted does nothing.
 void dom_bindings::signal_abort(context & cx, value signal, value reason) {
     auto * object = object_of(signal);
     if (object == nullptr || is_aborted(signal)) { return; }
@@ -110,7 +116,7 @@ void dom_bindings::signal_abort(context & cx, value signal, value reason) {
     }
     const auto run_abort_steps = [&](value at) {
         // The abort algorithms: every listener added with `{signal}` is
-        // removed - on this document and on any it made, since a frame's
+        // removed, on this document and on any it made, since a frame's
         // element can be listened to with the page's signal.
         const auto remove_from = [&](auto && self, dom_bindings & owner) -> void {
             owner.listeners_.erase_if([&](const listener & l) {
@@ -191,8 +197,10 @@ void dom_bindings::install_abort(context & cx) {
         },
         script::attr_builtin);
     // `AbortSignal.timeout(ms)`: aborted with a TimeoutError once the page's
-    // timers reach `ms`. `[EnforceRange] unsigned long long`, so a negative,
-    // NaN or non-finite delay is a TypeError rather than "now".
+    // timers reach `ms`. The argument is `[EnforceRange] unsigned long long`,
+    // so NaN, infinities, negatives and anything above 2^53 - 1
+    // (Number.MAX_SAFE_INTEGER, 9007199254740991) are a TypeError rather than
+    // "now".
     set_method(
         cx, *signal_ctor, "timeout",
         [this](context & c, std::span<value> a) {
@@ -208,17 +216,18 @@ void dom_bindings::install_abort(context & cx) {
                                  make_dom_exception(inner, "TimeoutError", "signal timed out"));
                     return value::undefined();
                 });
-            // THE SIGNAL IS IN A C++ CAPTURE, which the collector cannot see;
-            // the timer holds the callback, the callback holds the signal.
+            // The signal is in a C++ capture, which the collector cannot see,
+            // so the callback retains it explicitly: the timer holds the
+            // callback, and the callback holds the signal.
             fire->retained.push_back(signal);
             (void)add_timer(value::object(fire), ms, false);
             return signal;
         },
         script::attr_builtin);
-    // `AbortSignal.any(signals)`: a dependent signal, §3.2.1 "create a
+    // `AbortSignal.any(signals)`: a dependent signal, DOM §3.2.1 "create a
     // dependent abort signal". Already aborted if any source is; otherwise it
-    // follows each source - or each of THEIR sources, so the chain stays one
-    // level deep and a source aborting reaches it directly.
+    // follows each source, or each of that source's own sources, so the chain
+    // stays one level deep and a source aborting reaches it directly.
     set_method(
         cx, *signal_ctor, "any",
         [this](context & c, std::span<value> a) {

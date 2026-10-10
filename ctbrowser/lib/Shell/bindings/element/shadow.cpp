@@ -1,4 +1,10 @@
-// dom_bindings - the shadow DOM.
+//===- shadow.cpp - Shadow DOM bindings -------------------------*- C++ -*-===//
+//
+// `element.attachShadow()` and the members a ShadowRoot wrapper has beyond a
+// plain DocumentFragment. The shadow tree itself (host, mode, flags) is stored
+// by the document; these are the script-facing adapters.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -22,13 +28,13 @@ node_id dom_bindings::root_of_tree(const read_txn & txn, node_id from, bool comp
     return txn.root_of_tree(from, composed);
 }
 
-// `element.attachShadow(init)`, DOM 4.8.
-//
-// The ORDER of the three refusals is the specification's and is observable:
-// `mode` is a required member of a required dictionary, so WebIDL's argument
-// conversion runs - and throws a plain TypeError - before one thing about the
-// element is looked at. Only then may the element be the wrong element
-// (NotSupportedError), and only then can it already have a shadow root.
+/// `element.attachShadow(init)`, DOM 4.8.
+///
+/// The order of the refusals is the specification's and is observable:
+/// `mode` is a required member of a required dictionary, so WebIDL's argument
+/// conversion runs, and throws a plain TypeError, before the element is
+/// looked at. Only then may the element be the wrong kind (NotSupportedError),
+/// and only then can it already have a shadow root.
 value dom_bindings::attach_shadow(context & cx, node_id host, std::span<value> args) {
     const value init = arg(args, 0);
     std::string mode;
@@ -41,11 +47,10 @@ value dom_bindings::attach_shadow(context & cx, node_id host, std::span<value> a
                        "attachShadow: `mode` is required and must be \"open\" or \"closed\"");
         return value::undefined();
     }
-    // THE REST OF THE DICTIONARY, and still before the element is looked at:
+    // The rest of the dictionary, still before the element is looked at:
     // `slotAssignment` is a WebIDL enumeration, so a value that is neither
-    // "named" nor "manual" is a TypeError from the CONVERSION - which is the
-    // same rank of failure as a missing `mode` and comes before any
-    // NotSupportedError the element could earn.
+    // "named" nor "manual" is a TypeError from the conversion, the same rank
+    // of failure as a missing `mode`, and comes before any NotSupportedError.
     const value given_assignment = dict_member(cx, init, "slotAssignment");
     const std::string assignment =
         given_assignment.is_undefined() ? "named" : cx.to_string(given_assignment);
@@ -61,7 +66,7 @@ value dom_bindings::attach_shadow(context & cx, node_id host, std::span<value> a
     if (!shadow_registry_option(cx, host, init)) { return value::undefined(); }
     // DOM 4.8 step 3: a custom element whose definition (looked up by name
     // and `is`, upgraded or not) lists "shadow" in disabledFeatures cannot
-    // host one - checked before the existing-root rules below.
+    // host one. Checked before the existing-root rules below.
     {
         const auto txn = doc_->read();
         if (const std::size_t def = custom_definition_for(txn, host);
@@ -72,12 +77,11 @@ value dom_bindings::attach_shadow(context & cx, node_id host, std::span<value> a
             return value::undefined();
         }
     }
-    // A ROOT THE PARSER ATTACHED IS CLAIMED, NOT REFUSED. DOM 4.8 step 4: a
-    // shadow root that is still declarative and whose mode MATCHES is emptied
-    // and handed back, so a page can reach into a `<template shadowrootmode>`
-    // tree it did not build - including a closed one, which is the only way to
-    // get at it at all. It works once: the second call is the ordinary
-    // NotSupportedError, because the flag is gone.
+    // A root the parser attached is claimed, not refused (DOM 4.8 step 4): a
+    // shadow root that is still declarative and whose mode matches is emptied
+    // and handed back, so a page can reach a `<template shadowrootmode>` tree
+    // it did not build, including a closed one. It works once: clearing the
+    // declarative flag makes a second call the ordinary NotSupportedError.
     if (const node_id existing = shadow_root_of(host)) {
         const shadow_tree * tree = shadow_tree_of(existing);
         if (tree != nullptr && tree->declarative && tree->open == (mode == "open")) {
@@ -117,11 +121,11 @@ value dom_bindings::attach_shadow(context & cx, node_id host, std::span<value> a
     // Metadata precedes wrapping: prototype_for_node distinguishes the root
     // from an ordinary DocumentFragment by asking the document.
     const value made = wrap(cx, *root);
-    // "AVAILABLE TO ELEMENT INTERNALS" (DOM 4.8 step 8) only when the host's
-    // custom element state is precustomized or custom: a root attached to an
-    // element before it became custom is not one ElementInternals.shadowRoot
-    // hands out. Recorded as its absence, on the root's wrapper, so a root
-    // the parser attached (declarative, which HTML makes available) needs
+    // "Available to element internals" (DOM 4.8 step 8) holds only when the
+    // host's custom element state is precustomized or custom: a root attached
+    // before the element became custom is not one ElementInternals.shadowRoot
+    // hands out. The absence is recorded as a mark on the root's wrapper, so a
+    // root the parser attached (declarative, which HTML makes available) needs
     // no mark.
     const auto state = custom_elements_.find(host.key());
     if ((state == custom_elements_.end() ||
@@ -134,23 +138,22 @@ value dom_bindings::attach_shadow(context & cx, node_id host, std::span<value> a
     return made;
 }
 
-// THE MEMBERS A ShadowRoot HAS THAT A PLAIN DocumentFragment DOES NOT.
-//
-// Everything else it needs it already has: `wrap` gives every node
-// the interface prototypes and install_element_views, so `innerHTML`,
-// `appendChild`, `append`, `replaceChildren`, `childNodes`, `children`,
-// `firstChild` and `textContent` are the same code an element uses and work on a
-// fragment unchanged, and `getElementById` comes with being a fragment - see
-// DocumentFragment.prototype. Only `mode` and `host` are a ShadowRoot's own.
+/// Installs the members a ShadowRoot has that a plain DocumentFragment does
+/// not: `mode`, `host` and the init dictionary's flags read back.
+///
+/// Everything else comes from `wrap`, which gives every node the interface
+/// prototypes and install_element_views, so `innerHTML`, `appendChild`,
+/// `childNodes`, `textContent` and the rest are the code an element uses, and
+/// `getElementById` comes from DocumentFragment.prototype.
 void dom_bindings::install_shadow_root_members(context & cx, script::object_object & obj,
                                                node_id root) {
     const shadow_tree * tree = shadow_tree_of(root);
     if (tree == nullptr) { return; }
     const node_id host = tree->host;
     const bool open = tree->open;
-    // `mode` and `host` are READ-ONLY, and accessors rather than data properties
-    // for the reason `parentNode` is: the host may be moved or removed and the
-    // answer has to follow it.
+    // `mode` and `host` are read-only accessors rather than data properties,
+    // for the same reason `parentNode` is: the host may be moved or removed
+    // and the answer has to follow it.
     obj.define_accessor(
         "mode",
         value::object(cx.allocate<script::native_object>(
@@ -162,10 +165,10 @@ void dom_bindings::install_shadow_root_members(context & cx, script::object_obje
         value::object(cx.allocate<script::native_object>(
             "host", [this, host](context & c, std::span<value>) { return wrap(c, host); })),
         value::undefined());
-    // AND THE REST OF THE INIT DICTIONARY, read back. They are what a page
-    // feature-detects declarative shadow DOM with, what `getHTML` consults and
-    // what `cloneNode` has to carry - `gethtml.html` reads all four of them
-    // before it looks at any markup.
+    // The rest of the init dictionary, read back. Pages feature-detect
+    // declarative shadow DOM with these, `getHTML` consults them and
+    // `cloneNode` carries them (WPT shadow-dom/declarative/gethtml.html reads
+    // all four).
     const bool delegates = tree->delegates_focus;
     const bool manual = tree->manual_slots;
     const bool clonable = tree->clonable;

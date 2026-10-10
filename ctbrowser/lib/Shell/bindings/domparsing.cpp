@@ -1,17 +1,22 @@
-// dom_bindings - XMLSerializer, the other half of DOMParser.
+//===- ctbrowser/lib/Shell/bindings/domparsing.cpp - XMLSerializer --------===//
 //
-// `new XMLSerializer().serializeToString(node)` is the XML SERIALISATION
+// dom_bindings - XMLSerializer, the counterpart of DOMParser.
+//
+// `new XMLSerializer().serializeToString(node)` is the XML serialisation
 // algorithm (DOM Parsing and Serialization 2.2), which is not the HTML
 // fragment serialiser with different quoting: an element with no children is
 // `<x/>` rather than `<x></x>`, a tag keeps the case it was created with, and
-// the NAMESPACE has to come out with it - an element whose namespace is not
-// the one its parent put in scope carries an `xmlns` of its own, or nothing
+// the namespace has to come out with it (an element whose namespace is not
+// the one its parent put in scope carries an `xmlns` of its own), or nothing
 // round-trips.
 //
-// The whole of 2.2.1 is here - the prefix map, the generated `ns1`, `ns2`
-// prefixes, the local prefixes map - but for the "require well-formed"
-// refusals, which serializeToString has off. The corpus that measures this
-// is domparsing/XMLSerializer-*.
+// All of 2.2.1 is implemented (the prefix map, generated ns1/ns2 prefixes,
+// the local prefixes map) except the "require well-formed" refusals, which
+// serializeToString turns off. It is measured by the WPT domparsing/
+// XMLSerializer-* tests (tools/wpt/fetch-wpt.sh; expectations in
+// tools/wpt/expectations/domparsing/).
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/dom/treebuilder.hpp>
 #include <ctbrowser/dom/xml.hpp>
@@ -26,8 +31,8 @@
 namespace ctbrowser::shell {
 namespace {
 
-// XML escaping, which is NOT the HTML one: a tab, a newline and a carriage
-// return inside an ATTRIBUTE are written as character references, because an
+// XML escaping, which is not the HTML one: a tab, a newline and a carriage
+// return inside an attribute are written as character references, because an
 // XML parser would otherwise normalise them to spaces and the value would not
 // survive the round trip.
 [[nodiscard]] std::string escape_xml(std::string_view text, bool attribute) {
@@ -50,26 +55,28 @@ namespace {
 
 } // namespace
 
-// THE XML SERIALIZATION ALGORITHM, DOM Parsing and Serialization 2.2.1, as
+// The XML serialization algorithm, DOM Parsing and Serialization 2.2.1, as
 // written: a namespace prefix map (namespace -> the prefixes declared for
 // it, in scope), a prefix index for the `ns1`, `ns2`... it generates when
 // an attribute's namespace has no prefix in scope, the local prefixes map
-// that says which declarations THIS element carries, and the two flags the
+// that says which declarations this element carries, and the two flags the
 // element algorithm keeps ("ignore namespace definition attribute", "skip
-// end tag"). `inherited` is the context namespace - "" is null, as it is
-// everywhere in this tree - and `serializeToString` has the require-well-
-// formed flag OFF, so nothing here refuses. XMLSerializer-serializeToString
-// .html is the algorithm's own test file, one case per branch.
+// end tag"). `inherited` is the context namespace ("" is null, as it is
+// everywhere in this tree), and `serializeToString` has the
+// require-well-formed flag off, so nothing here refuses.
+// XMLSerializer-serializeToString.html is the algorithm's own test file, one
+// case per branch.
 namespace {
 
 struct prefix_map {
     // In insertion order: the algorithm's "retrieve a preferred prefix
-    // string" answers the LAST prefix recorded for a namespace unless the
+    // string" answers the last prefix recorded for a namespace unless the
     // preferred one is among them.
     std::vector<std::pair<std::string, std::vector<std::string>>> entries;
-    // THE PREFIX INDEX IS THE SERIALIZATION'S, not the scope's: every copy of
-    // the map points at the one counter, so a sibling's generated prefix is
-    // ns3 after an earlier one's ns1 and ns2 (2.2.1 step "prefix index").
+    // The prefix index belongs to the whole serialization, not to a scope:
+    // every copy of the map points at the one counter, so a sibling's
+    // generated prefix is ns3 after an earlier one's ns1 and ns2 (2.2.1,
+    // "prefix index").
     std::size_t * index = nullptr;
 
     [[nodiscard]] const std::vector<std::string> * find(std::string_view ns) const {
@@ -102,7 +109,8 @@ struct prefix_map {
         }
         return held->back();
     }
-    // 2.2.1.6 "generate a prefix": `ns` + the index, recorded for `ns`.
+    // 2.2.1.6 "generate a prefix": the literal "ns" followed by the shared
+    // prefix index (ns1, ns2, ...), recorded for namespace `ns`.
     [[nodiscard]] std::string generate(std::string_view ns) {
         std::string made = "ns" + std::to_string((*index)++);
         add(made, ns);
@@ -110,10 +118,12 @@ struct prefix_map {
     }
 };
 
+/// The part of \p qualified before its first colon, or "" if it has none.
 [[nodiscard]] std::string_view prefix_part(std::string_view qualified) {
     const std::size_t colon = qualified.find(':');
     return colon == std::string_view::npos ? std::string_view{} : qualified.substr(0, colon);
 }
+/// The part of \p qualified after its first colon, or all of it if it has none.
 [[nodiscard]] std::string_view local_part(std::string_view qualified) {
     const std::size_t colon = qualified.find(':');
     return colon == std::string_view::npos ? qualified : qualified.substr(colon + 1);
@@ -121,6 +131,7 @@ struct prefix_map {
 
 } // namespace
 
+/// Serialises \p node as XML; \p inherited is the context namespace ("" is null).
 std::string dom_bindings::serialize_xml(node_id node, std::string_view inherited) const {
     std::size_t prefix_index = 1;
     prefix_map map;
@@ -168,7 +179,7 @@ std::string dom_bindings::serialize_xml(node_id node, std::string_view inherited
         // this element carries, into the copy and the local prefixes map.
         std::vector<std::pair<std::string, std::string>> local_prefixes;
         std::optional<std::string> local_default;
-        // A NAMESPACE DECLARATION is an attribute in the XMLNS namespace - or
+        // A namespace declaration is an attribute in the XMLNS namespace, or
         // one called `xmlns` in none, which is what `setAttribute("xmlns",
         // uri)` makes and what every browser reads as the default namespace
         // (XMLSerializer-serializeToString.html, "matching on local name").
@@ -244,9 +255,9 @@ std::string dom_bindings::serialize_xml(node_id node, std::string_view inherited
             if (!attr_ns.empty() || declaration(held)) {
                 if (!attr_ns.empty()) { candidate = local_map.preferred(attr_prefix, attr_ns); }
                 if (declaration(held)) {
-                    // A declaration: dropped when it says nothing new - the
-                    // XML namespace, a default the element already wrote, a
-                    // prefix the map already has with this value.
+                    // A declaration is dropped when it says nothing new: the
+                    // XML namespace, a default the element already wrote, or
+                    // a prefix the map already has with this value.
                     bool skip = held.value == xml_namespace;
                     if (attr_prefix.empty() && ignore_namespace_definition) { skip = true; }
                     if (!attr_prefix.empty()) {
@@ -265,9 +276,10 @@ std::string dom_bindings::serialize_xml(node_id node, std::string_view inherited
                 } else {
                     // Not a declaration: the namespace needs a prefix in
                     // scope, generated and declared here when there is none.
-                    // A GENERATED one, not the attribute's own prefix: DOM
-                    // Parsing 3.2.1.2 step 3.5.3.2, and w3c/DOM-Parsing#29's
-                    // "NOT preserved" row in XMLSerializer-serializeToString.
+                    // A generated prefix, not the attribute's own: "serializing
+                    // an element's attributes" (2.2.1.2 above) as amended by
+                    // w3c/DOM-Parsing#29, and the "NOT preserved" case in WPT
+                    // XMLSerializer-serializeToString.html.
                     if (!candidate) {
                         candidate = local_map.generate(attr_ns);
                         out += " xmlns:" + *candidate + "=\"" + escape_xml(attr_ns, true) + "\"";
@@ -310,7 +322,7 @@ void dom_bindings::install_xml_serializer(context & cx) {
     set_method(
         cx, *proto, "serializeToString",
         [this](context & c, std::span<value> args) {
-            // A NODE OF ANY DOCUMENT OF THE REALM, which for `XMLSerializer`
+            // A node of any document of the realm, which for `XMLSerializer`
             // is usually one DOMParser just made: the bindings that own it
             // answer for it, and a Document object has no handle of its own.
             const value given = arg(args, 0);

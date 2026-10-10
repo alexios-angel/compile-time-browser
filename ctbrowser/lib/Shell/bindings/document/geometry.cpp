@@ -1,5 +1,11 @@
-// dom_bindings - CSSOM View §5 on the Document: `scrollingElement`,
-// `elementFromPoint`, `elementsFromPoint` and `caretPositionFromPoint`.
+//===- geometry.cpp - Document hit testing and geometry ---------*- C++ -*-===//
+//
+// dom_bindings' CSSOM View §5 members on the Document (`scrollingElement`,
+// `elementFromPoint`, `elementsFromPoint`, `caretPositionFromPoint`), the
+// convert*FromNode methods, and the Geometry Interfaces (DOMPoint, DOMRect,
+// DOMQuad and their ReadOnly bases).
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -11,28 +17,31 @@ namespace ctbrowser::shell {
 
 using namespace detail;
 
-// The hit test over the FRAGMENT tree rather than the recorded display list
-// the pointer path asks (browser::hit_test): a script asks between layout
-// and paint, and the display list is stale then. Every fragment whose border
-// box holds the point - in viewport coordinates, so scrolled containers and
-// the page scroll are taken off, and clipped to every `overflow` ancestor's
-// padding box - names its element, a text run naming its parent. Painted-
-// last first: a positioned box sits above the in-flow content around it,
-// later siblings above earlier ones and a box above its ancestors. The root
-// closes the list, as §5 says.
-//
-// ponytail: no `z-index`, `pointer-events: none` or transform here; the
-// stacking-context order the recorder computes is the upgrade when a test
-// wants it.
-//
-// AND THE HITS ARE RETARGETED AGAINST THE ASKER (the Shadow DOM extension of
-// DocumentOrShadowRoot, ending in DOM "retarget"): a hit inside a shadow tree
-// whose root is not a shadow-including inclusive ancestor of `asker` climbs to
-// that tree's host - so the document (`asker` empty) sees hosts and nothing
-// inside them, and a shadow root sees its own tree and the light tree around
-// it. A text run straight under a shadow root names the host its box is in.
-// A duplicate the climb makes goes, the first standing
-// (DocumentOrShadowRoot-prototype-elementFromPoint.html).
+/// The elements at viewport point (`x`, `y`), topmost first; only the topmost
+/// unless `all`. Empty off the viewport.
+///
+/// Hit-tests the fragment tree rather than the recorded display list the
+/// pointer path uses (browser::hit_test): a script asks between layout and
+/// paint, when the display list is stale. Every fragment whose border box
+/// holds the point names its element (a text run names its parent). Boxes are
+/// tested in viewport coordinates, so scrolled containers and the page scroll
+/// are taken off, and clipped to every `overflow` ancestor's padding box.
+/// Painted-last comes first: a positioned box sits above the in-flow content
+/// around it, later siblings above earlier ones and a box above its ancestors.
+/// The root closes the list, as §5 says.
+///
+/// ponytail: no `z-index`, `pointer-events: none` or transform here; the
+/// stacking-context order the recorder computes is the upgrade when a test
+/// wants it.
+///
+/// The hits are retargeted against `asker` (the Shadow DOM extension of
+/// DocumentOrShadowRoot, ending in DOM "retarget"): a hit inside a shadow tree
+/// whose root is not a shadow-including inclusive ancestor of `asker` climbs
+/// to that tree's host. So the document (`asker` empty) sees hosts and nothing
+/// inside them, and a shadow root sees its own tree and the light tree around
+/// it. A text run straight under a shadow root names the host its box is in.
+/// Duplicates the climb makes are dropped, keeping the first (WPT
+/// DocumentOrShadowRoot-prototype-elementFromPoint.html).
 std::vector<node_id> dom_bindings::elements_from_point(double x, double y, bool all,
                                                        node_id asker) {
     std::vector<node_id> out;
@@ -136,15 +145,16 @@ std::vector<node_id> dom_bindings::elements_from_point(double x, double y, bool 
     return out;
 }
 
-// --- the geometry interfaces (Geometry Interfaces Module Level 1) ----------
+// --- The geometry interfaces (Geometry Interfaces Module Level 1) ----------
 //
 // DOMPoint, DOMRect and DOMQuad with their ReadOnly bases: what getBoxQuads
 // and the convert*FromNode methods answer in and what a page hands them. A
 // point is four numbers and a rect four; a quad is four points and a bounds
-// rect. DOMMatrix is not here - nothing in the engine transforms beyond a
+// rect. DOMMatrix is not here: nothing in the engine transforms beyond a
 // translation, which the fragments already carry.
 namespace {
 
+/// The `prototype` of global constructor `name`, or undefined.
 [[nodiscard]] value prototype_of_global(context & cx, const char * name) {
     const value ctor = cx.global(name);
     if (!ctor.is_kind(script::heap_kind::native)) { return value::undefined(); }
@@ -157,6 +167,8 @@ namespace {
     return self.is_object() ? static_cast<script::object_object *>(self.as_heap()) : nullptr;
 }
 
+/// ToNumber of `v[name]`, or `fallback` when `v` is not an object or the
+/// property is undefined (a dictionary member with a default).
 [[nodiscard]] double number_of(context & c, value v, const char * name, double fallback = 0) {
     const value held = v.is_object_like() ? c.lookup_property(v, name) : value::undefined();
     return held.is_undefined() ? fallback : context::to_number(held);
@@ -233,7 +245,8 @@ value dom_bindings::make_dom_quad(context & cx, const rect & r, const transform 
 
 void dom_bindings::install_geometry_interfaces(context & cx) {
     // DOMPointReadOnly and DOMPoint: (x, y, z, w) with the defaults (0, 0, 0,
-    // 1), `fromPoint`, `matrixTransform` for an identity, `toJSON`.
+    // 1), `fromPoint`, `toJSON`, and `matrixTransform`, which ignores its
+    // matrix argument and returns a copy (no DOMMatrix exists).
     const auto point_ctor = [](const char * interface) {
         return [interface](context & c, std::span<value> args) {
             const auto at = [&](std::size_t i, double fallback) {
@@ -375,9 +388,9 @@ void dom_bindings::install_geometry_interfaces(context & cx) {
     });
 }
 
-// A box of `node` in viewport coordinates - §10's "the box of node" with the
-// four box keywords - or nothing when the node has no box. The Document
-// names the viewport, and a Text node its first fragment.
+/// A box of `node` in viewport coordinates (CSSOM View's GeometryUtils "box
+/// of node", with the four box keywords), or nothing when the node has no
+/// box. The Document names the viewport, and a Text node its first fragment.
 std::optional<dom_bindings::box_geometry> dom_bindings::box_geometry_of(value node,
                                                                         std::string_view box) {
     if (is_a_document(node)) {
@@ -443,7 +456,7 @@ void dom_bindings::install_document_geometry(context & cx, script::object_object
         return which ? wrap(c, which) : value::null();
     });
     // The two coordinates are WebIDL `double`s: absent, NaN or infinite is a
-    // TypeError (elementFromPoint-parameters).
+    // TypeError (WPT elementFromPoint-parameters).
     const auto coordinates = [](context & c, std::span<value> args, const char * who, double & x,
                                 double & y) {
         x = args.empty() ? std::nan("") : context::to_number(args[0]);
@@ -476,9 +489,10 @@ void dom_bindings::install_document_geometry(context & cx, script::object_object
                    return out;
                });
     // caretPositionFromPoint: the element under the point as the caret node,
-    // with offset 0 - the insertion point within a text run is what the
-    // browser's own click-to-caret path knows (browser/input.cpp) and this
-    // object model does not reach it yet. null off the viewport.
+    // with offset 0, or null off the viewport.
+    // ponytail: the insertion point within a text run is known only to the
+    // browser's click-to-caret path (browser/input.cpp); expose it here when a
+    // page needs the real offset.
     set_method(cx, doc, "caretPositionFromPoint",
                [this, coordinates](context & c, std::span<value> args) {
                    double x = 0, y = 0;
