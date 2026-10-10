@@ -206,11 +206,14 @@ void lowering::lower(ctjs::FuncOp fn) {
             if (i < 3 && !(i == 0 && carriesReceiver)) { continue; }
             mlir::Value arg = body.getArgument(i);
             if (domParameters.contains(arg)) {
+                // A Data session's inputs are only keys; a DOM entry reads its
+                // inputs' members, which a form's controls shadow.
                 callWithConstValueOperands(
                     at, made.getLoc(), mlir::TypeRange{},
                     at.getStringAttr(domDatasetParameters.contains(arg)
                                          ? "ctnative::require_dataset_element"
-                                         : "ctnative::require_element"),
+                                     : domDataEntry.empty() ? "ctnative::require_entry_element"
+                                                            : "ctnative::require_element"),
                     mlir::ValueRange{arg});
             }
             auto suppression = callWithConstValueOperands(at, made.getLoc(), mlir::TypeRange{},
