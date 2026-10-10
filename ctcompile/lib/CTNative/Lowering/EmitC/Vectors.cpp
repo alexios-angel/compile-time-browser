@@ -22,6 +22,10 @@ namespace {
 
 /// The attribute holding an operation's planned lowering.
 constexpr llvm::StringLiteral kStringArrayAction = "ctnative.string_array";
+/// On a push of a tuple literal, the array's element type: the std::pair the
+/// push builds. Recorded with the plan because the receiver is an emitc value
+/// with no lattice type by the time the push is replaced.
+constexpr llvm::StringLiteral kStringArrayRow = "ctnative.string_array_row";
 constexpr llvm::StringLiteral kArrayHeader = "ctcompile/CTNative/Runtime/Array.hpp";
 
 /// Adds `#include "Runtime/Array.hpp"` once, at the top of the module. The
@@ -83,7 +87,10 @@ llvm::DenseSet<mlir::Value> planStringArrays(lowering & lower, ctjs::FuncOp fn) 
         }
         if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) {
             if (carrierOf(lower.typeOf(read.getObject())) == carrier::tuple) {
-                mark(op, "position");
+                // The position is decided now: by replacement time the key
+                // is an emitc constant.
+                mark(op,
+                     TypeInference::constantIndex(read.getKey()) == 0 ? "position0" : "position1");
                 return;
             }
             if (!arrays.contains(read.getObject())) { return; }
@@ -96,7 +103,14 @@ llvm::DenseSet<mlir::Value> planStringArrays(lowering & lower, ctjs::FuncOp fn) 
         if (!call) { return; }
         switch (TypeInference::vectorCallOf(call)) {
         case VectorCall::push:
-            if (arrays.contains(call.getReceiver())) { mark(op, "push"); }
+            if (!arrays.contains(call.getReceiver())) { break; }
+            mark(op, "push");
+            if (TypeInference::isTupleLiteral(call.getArgs()[0])) {
+                auto vector = llvm::dyn_cast_or_null<VecType>(lower.typeOf(call.getReceiver()));
+                auto row =
+                    vector ? llvm::dyn_cast<TupleType>(vector.getElementType()) : TupleType{};
+                if (row) { op->setAttr(kStringArrayRow, mlir::TypeAttr::get(row)); }
+            }
             break;
         case VectorCall::join:
             if (arrays.contains(call.getReceiver())) { mark(op, "join"); }
@@ -158,11 +172,10 @@ bool replaceStringArray(lowering & lower, mlir::Operation * o) {
         // Built and erased by the push that copies the tuple out.
         return true;
     }
-    if (kind == "position") {
+    if (kind == "position0" || kind == "position1") {
         // `t[0]` and `t[1]` on a std::pair.
-        const int64_t position = TypeInference::constantIndex(o->getOperand(1));
         swap(callValue(b, where, o->getResult(0).getType(),
-                       position == 0 ? "std::get<0>" : "std::get<1>", o->getOperand(0)));
+                       kind == "position0" ? "std::get<0>" : "std::get<1>", o->getOperand(0)));
         return true;
     }
     if (kind == "element") {
@@ -190,8 +203,13 @@ bool replaceStringArray(lowering & lower, mlir::Operation * o) {
         if (row) {
             // Build the std::pair the array holds from the tuple's parts, each
             // widened to its position in the array's element type.
-            auto element = llvm::cast<TupleType>(
-                llvm::cast<VecType>(lower.typeOf(call.getReceiver())).getElementType());
+            auto recorded = o->getAttrOfType<mlir::TypeAttr>(kStringArrayRow);
+            auto element = recorded ? llvm::dyn_cast<TupleType>(recorded.getValue()) : TupleType{};
+            if (!element) {
+                llvm::report_fatal_error("ctnative lowering: a push of a row onto an array whose "
+                                         "planned element type is not a tuple - admission and "
+                                         "the plan disagree");
+            }
             llvm::SmallVector<mlir::Value, 2> positions;
             auto literal = llvm::cast<ctjs::CreateArrayOp>(tuple);
             llvm::append_range(positions, literal.getElements());
