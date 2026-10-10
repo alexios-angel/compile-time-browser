@@ -1,8 +1,7 @@
 //===- Number.hpp - The native JavaScript Number ----------------*- C++ -*-===//
 //
 // js_num, the C++ type generated native code uses for a JavaScript Number,
-// with JavaScript's arithmetic, bitwise and shift semantics, and the Math
-// functions native code calls by name (math_min).
+// with JavaScript's arithmetic, bitwise and shift semantics.
 //
 //===----------------------------------------------------------------------===//
 
@@ -82,14 +81,5 @@ public:
 };
 
 using js_num = js_basic_num<double>;
-
-/// Math.min (ECMA-262 21.3.2.25) of two Numbers: NaN when either is NaN, and
-/// -0 is smaller than +0, which `std::min` gets wrong on both counts.
-inline js_num math_min(js_num left, js_num right) {
-    const double a = left.value(), b = right.value();
-    if (std::isnan(a) || std::isnan(b)) { return js_num{js_nan_t{}}; }
-    if (a == 0.0 && b == 0.0) { return js_num{std::signbit(a) ? a : b}; }
-    return js_num{a < b ? a : b};
-}
 
 } // namespace ctnative
