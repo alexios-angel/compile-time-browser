@@ -2,10 +2,20 @@
 //
 // ctcss-translate --css-to-cpp <file.css> --name <identifier> -o <out.hpp>
 //
-// Parses the stylesheet with ctbrowser's own CSS parser, flattens it with
-// css::compile, and writes it as C++ constants (ctcompile/CSS/CppEmitter.hpp):
-// a header a program includes to materialize the sheet without parsing CSS at
-// run time. Needs neither MLIR nor the script engine.
+//   Parses the stylesheet with ctbrowser's own CSS parser, flattens it with
+//   css::compile, and writes it as C++ constants (ctcompile/CSS/CppEmitter.hpp):
+//   a header a program includes to materialize the sheet without parsing CSS
+//   at run time.
+//
+// ctcss-translate --manifest <inputs.json> --root <dir> -o <out.cpp>
+//
+//   Compiles every input a CSS test lists in its manifest
+//   (ctbrowser/test/support/css_inputs.hpp) and writes the translation unit
+//   that defines ctbrowser_test::compiled_css_inputs, for the test's native
+//   build. Files the manifest names are read relative to --root, the test's
+//   working directory.
+//
+// Needs neither MLIR nor the script engine.
 //
 //===----------------------------------------------------------------------===//
 
@@ -14,16 +24,22 @@
 #include <ctbrowser/core/atom.hpp>
 #include <ctbrowser/style/css/compiled.hpp>
 #include <ctbrowser/style/css/parser.hpp>
+#include <ctbrowser/style/css/token.hpp>
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/JSON.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/SHA256.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <cstdint>
 #include <fstream>
+#include <optional>
 #include <sstream>
 #include <string>
+#include <string_view>
+#include <vector>
 
 namespace {
 
@@ -34,35 +50,139 @@ namespace {
     return llvm::all_of(name, [](char c) { return llvm::isAlnum(c) || c == '_'; });
 }
 
-} // namespace
-
-int main(int argc, char ** argv) {
-    llvm::cl::OptionCategory category("ctcss-translate options");
-    llvm::cl::opt<std::string> input("css-to-cpp", llvm::cl::Required,
-                                     llvm::cl::desc("The stylesheet to compile"),
-                                     llvm::cl::value_desc("file.css"), llvm::cl::cat(category));
-    llvm::cl::opt<std::string> name("name", llvm::cl::Required,
-                                    llvm::cl::desc("The C++ name of the compiled sheet"),
-                                    llvm::cl::cat(category));
-    llvm::cl::opt<std::string> ns("namespace", llvm::cl::init("ctcss"),
-                                  llvm::cl::desc("The namespace the constants are declared in"),
-                                  llvm::cl::cat(category));
-    llvm::cl::opt<std::string> source_name(
-        "source-name",
-        llvm::cl::desc("How the generated file names its source (default: the input path)"),
-        llvm::cl::cat(category));
-    llvm::cl::opt<std::string> output("o", llvm::cl::Required, llvm::cl::desc("The C++ to write"),
-                                      llvm::cl::value_desc("file"), llvm::cl::cat(category));
-    llvm::cl::HideUnrelatedOptions(category);
-    if (!llvm::cl::ParseCommandLineOptions(argc, argv, "Compile a stylesheet to C++ constants\n",
-                                           &llvm::errs())) {
-        return 2;
+/// One manifest entry's text: a string, or the parts of a list joined.
+[[nodiscard]] std::optional<std::string> entry_text(const llvm::json::Value & entry) {
+    if (const auto text = entry.getAsString()) { return text->str(); }
+    const llvm::json::Array * parts = entry.getAsArray();
+    if (parts == nullptr) { return std::nullopt; }
+    std::string out;
+    for (const llvm::json::Value & part : *parts) {
+        if (const auto text = part.getAsString()) {
+            out += *text;
+            continue;
+        }
+        const llvm::json::Object * fields = part.getAsObject();
+        const auto repeated = fields != nullptr ? fields->getString("repeat") : std::nullopt;
+        const auto times = fields != nullptr ? fields->getInteger("times") : std::nullopt;
+        if (!repeated || !times || *times < 0) { return std::nullopt; }
+        for (std::int64_t i = 0; i < *times; ++i) { out += *repeated; }
     }
+    return out;
+}
+
+/// The C++ enumerator for a manifest key, or nothing for an unknown key.
+[[nodiscard]] std::optional<std::string_view> kind_of(llvm::StringRef key) {
+    if (key == "tokens") { return "tokens"; }
+    if (key == "stylesheets") { return "stylesheet"; }
+    if (key == "declaration_lists") { return "declaration_list"; }
+    if (key == "selectors") { return "selector"; }
+    if (key == "files") { return "file"; }
+    return std::nullopt;
+}
+
+/// Writes the translation unit for `manifest_path` to `text`; returns the
+/// exit code.
+int compile_manifest(const std::string & manifest_path, const std::string & root,
+                     std::ostream & text) {
+    namespace css = ctbrowser::style::css;
+    const auto buffer = llvm::MemoryBuffer::getFile(manifest_path, /*IsText=*/true);
+    if (!buffer) {
+        llvm::errs() << "ctcss-translate: cannot read " << manifest_path << "\n";
+        return 1;
+    }
+    auto parsed = llvm::json::parse((*buffer)->getBuffer());
+    if (!parsed) {
+        llvm::errs() << "ctcss-translate: " << manifest_path << ": "
+                     << llvm::toString(parsed.takeError()) << "\n";
+        return 1;
+    }
+    const llvm::json::Object * kinds = parsed->getAsObject();
+    if (kinds == nullptr) {
+        llvm::errs() << "ctcss-translate: " << manifest_path << " is not a JSON object\n";
+        return 1;
+    }
+    const std::string sha256 =
+        llvm::toHex(llvm::SHA256::hash(llvm::arrayRefFromStringRef((*buffer)->getBuffer())), true);
+    text << "// Generated by ctcss-translate from " << manifest_path << "\n// (sha256 " << sha256
+         << "). Do not edit: the build regenerates it.\n\n"
+         << "#include \"css_inputs.hpp\"\n\n#include <limits>\n#include <string_view>\n\n"
+         << "#include <ctbrowser/style/css/compiled.hpp>\n\n"
+         << "namespace ctcss_inputs {\n\n"
+         << "namespace css = ctbrowser::style::css;\nnamespace style = ctbrowser::style;\n\n";
+
+    // Every entry, compiled into its own tables, then one row per entry.
+    std::vector<std::string> rows;
+    ctbrowser::atom_table atoms;
+    std::size_t index = 0;
+    // Keys in a fixed order, so the output does not depend on the JSON's.
+    for (const llvm::StringRef key :
+         {"tokens", "stylesheets", "declaration_lists", "selectors", "files"}) {
+        const llvm::json::Array * entries = kinds->getArray(key);
+        if (entries == nullptr) { continue; }
+        for (const llvm::json::Value & entry : *entries) {
+            const std::optional<std::string> input = entry_text(entry);
+            if (!input) {
+                llvm::errs() << "ctcss-translate: " << manifest_path
+                             << ": a malformed entry under \"" << key << "\"\n";
+                return 1;
+            }
+            const std::string name = "input_" + std::to_string(index++);
+            const bool has_text = ctcompile::css::emit_text(text, name + "_text", *input);
+            std::string row = std::string{"    {.kind = ctbrowser_test::css_input_kind::"} +
+                              std::string{*kind_of(key)};
+            if (has_text) { row += ", .text = " + name + "_text"; }
+            if (key == "tokens") {
+                const css::token_stream stream = css::tokenize(*input);
+                const std::string_view pool = stream.pool;
+                ctcompile::css::emit_tokens(
+                    text, css::compiled_tokens{{&pool, 1}, stream.tokens, stream.source_length},
+                    name);
+                row += ", .tokens = &" + name;
+            } else if (key == "selectors") {
+                if (css::supports_selector(*input)) { row += ", .supported = true"; }
+            } else {
+                std::string source = *input;
+                if (key == "files") {
+                    const auto file = llvm::MemoryBuffer::getFile(root + "/" + *input, false);
+                    if (!file) {
+                        llvm::errs()
+                            << "ctcss-translate: cannot read " << root << "/" << *input << "\n";
+                        return 1;
+                    }
+                    source = (*file)->getBuffer().str();
+                }
+                const css::stylesheet sheet = key == "declaration_lists"
+                                                  ? css::parse_declaration_list(source, atoms)
+                                                  : css::parse_stylesheet(source, atoms);
+                auto compiled = css::compile(sheet, atoms);
+                ctcompile::css::emit_sheet(text, compiled.view(), name);
+                row += ", .sheet = &" + name;
+            }
+            rows.push_back(row + "},\n");
+        }
+    }
+    for (const auto & member : *kinds) {
+        if (member.first != "about" && !kind_of(member.first)) {
+            llvm::errs() << "ctcss-translate: " << manifest_path << ": unknown key \""
+                         << member.first << "\"\n";
+            return 1;
+        }
+    }
+    text << "inline constexpr ctbrowser_test::compiled_css_input inputs[] = {\n";
+    for (const std::string & row : rows) { text << row; }
+    text << "};\n\n} // namespace ctcss_inputs\n\n"
+         << "const std::span<const ctbrowser_test::compiled_css_input> "
+            "ctbrowser_test::compiled_css_inputs{ctcss_inputs::inputs};\n";
+    return 0;
+}
+
+/// Writes one stylesheet as a header to `text`; returns the exit code.
+int compile_sheet(const std::string & input, const std::string & name, const std::string & ns,
+                  const std::string & source_name, std::ostream & text) {
     if (!is_identifier(name) || !is_identifier(ns)) {
         llvm::errs() << "ctcss-translate: --name and --namespace must be C++ identifiers\n";
         return 2;
     }
-
     const auto buffer = llvm::MemoryBuffer::getFile(input, /*IsText=*/false);
     if (!buffer) {
         llvm::errs() << "ctcss-translate: cannot read " << input << ": "
@@ -76,14 +196,51 @@ int main(int argc, char ** argv) {
     ctbrowser::atom_table atoms;
     const auto sheet = ctbrowser::style::css::parse_stylesheet(bytes, atoms);
     auto compiled = ctbrowser::style::css::compile(sheet, atoms);
+    ctcompile::css::open_file(text, source_name.empty() ? input : source_name, sha256, ns);
+    ctcompile::css::emit_sheet(text, compiled.view(), name);
+    ctcompile::css::close_file(text, ns);
+    return 0;
+}
+
+} // namespace
+
+int main(int argc, char ** argv) {
+    llvm::cl::OptionCategory category("ctcss-translate options");
+    llvm::cl::opt<std::string> input("css-to-cpp", llvm::cl::desc("The stylesheet to compile"),
+                                     llvm::cl::value_desc("file.css"), llvm::cl::cat(category));
+    llvm::cl::opt<std::string> manifest(
+        "manifest", llvm::cl::desc("A CSS test's input manifest to compile"),
+        llvm::cl::value_desc("inputs.json"), llvm::cl::cat(category));
+    llvm::cl::opt<std::string> root("root", llvm::cl::init("."),
+                                    llvm::cl::desc("Where a manifest's files are read from"),
+                                    llvm::cl::cat(category));
+    llvm::cl::opt<std::string> name("name", llvm::cl::desc("The C++ name of the compiled sheet"),
+                                    llvm::cl::cat(category));
+    llvm::cl::opt<std::string> ns("namespace", llvm::cl::init("ctcss"),
+                                  llvm::cl::desc("The namespace the constants are declared in"),
+                                  llvm::cl::cat(category));
+    llvm::cl::opt<std::string> source_name(
+        "source-name",
+        llvm::cl::desc("How the generated file names its source (default: the input path)"),
+        llvm::cl::cat(category));
+    llvm::cl::opt<std::string> output("o", llvm::cl::Required, llvm::cl::desc("The C++ to write"),
+                                      llvm::cl::value_desc("file"), llvm::cl::cat(category));
+    llvm::cl::HideUnrelatedOptions(category);
+    if (!llvm::cl::ParseCommandLineOptions(argc, argv, "Compile CSS to C++ constants\n",
+                                           &llvm::errs())) {
+        return 2;
+    }
+    if (input.empty() == manifest.empty()) {
+        llvm::errs() << "ctcss-translate: give exactly one of --css-to-cpp and --manifest\n";
+        return 2;
+    }
 
     // Written to a string first, so a failure leaves no half-written file
     // for the build to mistake for a current one.
     std::ostringstream text;
-    ctcompile::css::open_file(text, source_name.empty() ? input : source_name, sha256, ns);
-    ctcompile::css::emit_sheet(text, compiled.view(), name);
-    ctcompile::css::close_file(text, ns);
-
+    const int code = manifest.empty() ? compile_sheet(input, name, ns, source_name, text)
+                                      : compile_manifest(manifest, root, text);
+    if (code != 0) { return code; }
     std::ofstream out{output, std::ios::binary};
     out << text.str();
     if (!out.flush()) {

@@ -36,6 +36,11 @@ void close_file(std::ostream & out, std::string_view ns);
 void emit_sheet(std::ostream & out, const ctbrowser::style::css::compiled_sheet & sheet,
                 std::string_view name);
 
+/// Writes `bytes` as `inline constexpr std::string_view <name>[]`: chunks of
+/// literals of at most 32 KiB, a ctbrowser::style::css::text_chunks. Writes
+/// nothing for empty text, and returns whether a table was written.
+bool emit_text(std::ostream & out, std::string_view name, std::string_view bytes);
+
 /// Writes `tokens` as tables named `<name>_pool` and `<name>_tokens` and the
 /// constant `<name>`, a ctbrowser::style::css::compiled_tokens.
 void emit_tokens(std::ostream & out, const ctbrowser::style::css::compiled_tokens & tokens,
