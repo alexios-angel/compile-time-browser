@@ -4,7 +4,7 @@
 // `std::vector<T>` whose element type the compiler proved
 // (`ctnative::Array.prototype.push.call(a, x)`), and the literal and index
 // helpers the emitter uses for such arrays. Only programs that build one
-// include this header. T = js_string today.
+// include this header. T is js_string or a std::pair row today.
 //
 //===----------------------------------------------------------------------===//
 
@@ -34,6 +34,13 @@ inline nullable_string vec_at(const std::vector<js_string> & values, nullable_sc
     std::size_t index = 0;
     if (!element_index(key, values.size(), index)) { return {}; }
     return values[index].value();
+}
+
+/// `a[i]` where the compiler proved `i` an integer in [0, a.length) (a loop
+/// counter checked against this array's length; element arrays never shrink),
+/// so the read is the element itself rather than an optional.
+template <class T> const T & vec_element(const std::vector<T> & values, js_num index) {
+    return values[static_cast<std::size_t>(index.value())];
 }
 
 namespace detail {

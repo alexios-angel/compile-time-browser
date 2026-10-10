@@ -174,17 +174,23 @@ void lowering::retype(ctjs::FuncOp fn) {
             v.setType(mlir::Float64Type::get(context));
             return;
         }
-        // An array of Strings is a std::vector<ctnative::js_string>, owned
+        // An element array is a std::vector of its element's spelling, owned
         // where it is made and borrowed by address through SCF, like the
         // dense arrays below.
         if (stringArrays.contains(v)) {
-            const auto owner = ec::OpaqueType::get(context, kStringArrayType);
+            const auto owner = ec::OpaqueType::get(context, elementArraySpelling(typeOf(v)));
             const bool borrowed =
                 llvm::isa<mlir::BlockArgument>(v) ||
                 (v.getDefiningOp() &&
                  llvm::isa<mlir::scf::IfOp, mlir::scf::WhileOp>(v.getDefiningOp()));
             v.setType(borrowed ? mlir::Type(ec::PointerType::get(owner))
                                : mlir::Type(ec::LValueType::get(owner)));
+            return;
+        }
+        // A tuple (a tuple literal, or an element read from an array of them)
+        // is a std::pair of its positions.
+        if (carrierOf(typeOf(v)) == carrier::tuple) {
+            v.setType(ec::OpaqueType::get(context, elementSpelling(typeOf(v))));
             return;
         }
         // A dense array takes its own vector carrier, which carrierType()

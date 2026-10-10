@@ -82,7 +82,12 @@ enum class carrier {
     json,
     structure,
     vector,
-    stringVector
+    stringVector,
+    /// A two-position array literal read only at constant indices, as a
+    /// std::pair of its positions' carriers (elementSpelling).
+    tuple,
+    /// A vector of such tuples (elementArraySpelling).
+    tupleVector
 };
 inline constexpr llvm::StringLiteral kVectorType = "std::vector<double>";
 inline constexpr llvm::StringLiteral kStringVectorType = "std::vector<std::string>";
@@ -141,8 +146,10 @@ inline constexpr carrierRow kCarriers[] = {
     {carrier::structure, ""},
     {carrier::vector, ""},
     {carrier::stringVector, ""},
+    {carrier::tuple, ""},
+    {carrier::tupleVector, ""},
 };
-static_assert(std::size(kCarriers) == static_cast<size_t>(carrier::stringVector) + 1,
+static_assert(std::size(kCarriers) == static_cast<size_t>(carrier::tupleVector) + 1,
               "a carrier without a row");
 static_assert(
     [] {
@@ -216,10 +223,17 @@ inline bool primitiveOrAbsent(mlir::Type type) {
     return isPrimitive(type) || onlyAbsent(type);
 }
 carrier carrierOf(mlir::Type type);
-/// Whether `v`, whose proved type is `type`, is an array of Strings that
-/// lowers to kStringArrayType: a vector-of-String carrier whose group the
-/// element-vector proof (TypeInference::elementVectorAliases) accepts.
-bool isStringArray(mlir::Value v, mlir::Type type);
+/// Whether `v`, whose proved type is `type`, is an element array: a vector of
+/// Strings or of tuples whose group the element-vector proof
+/// (TypeInference::elementVectorAliases) accepts. It lowers to
+/// elementArraySpelling(type).
+bool isElementArray(mlir::Value v, mlir::Type type);
+/// The C++ type of one element of an element array or one tuple position:
+/// ctnative::js_string, ctnative::js_num, ctnative::number_string, or
+/// std::pair of two of those for a tuple. Empty for anything else.
+std::string elementSpelling(mlir::Type type);
+/// `std::vector<elementSpelling(element)>` for an element array's VecType.
+std::string elementArraySpelling(mlir::Type type);
 /// Whether `o` lowers to nothing because it only names a vector call: the
 /// method read that is its callee, or the RegExp literal (its factory load,
 /// the factory call) that is `split(/\s+/)`'s separator.

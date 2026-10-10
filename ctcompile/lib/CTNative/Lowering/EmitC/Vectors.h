@@ -1,9 +1,10 @@
 //===- Vectors.h - Emission of vectors of one proved element type -*- C++ -*-===//
 //
 // Arrays the element-vector proof accepts (TypeInference::elementVectorAliases)
-// lower to `std::vector<T>` and the helpers in Runtime/Array.hpp. T = String
-// today. The plan is made while the IR is still ctjs, before any value is
-// retyped; the replacement reads it back from each operation.
+// lower to `std::vector<T>` and the helpers in Runtime/Array.hpp, for T a
+// String or a two-element row (std::pair). The plan is made while the IR is
+// still ctjs, before any value is retyped; the replacement reads it back from
+// each operation.
 //
 //===----------------------------------------------------------------------===//
 #pragma once

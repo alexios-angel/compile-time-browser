@@ -1134,6 +1134,18 @@ int main() {
         CHECK(vec_at(list, nullable_scalar{-0.0}) == to_nullable_string(js_string{"b"}));
         CHECK(vec_at(list, nullable_scalar{2.0}).tag == nullable_string::kind::undefined);
         CHECK(vec_at(list, nullable_scalar{0.5}).tag == nullable_string::kind::undefined);
+        // A proved in-bounds read is the element; rows are std::pair values
+        // pushed whole, with a Number|String second position.
+        CHECK(vec_element(list, ctnative::js_num{1.0}) == js_string{"a"});
+        std::vector<std::pair<js_string, number_string>> rows;
+        CHECK(ctnative::Array.prototype.push.call(
+                  rows, std::pair<js_string, number_string>{
+                            js_string{"@x"}, ctnative::js_num{1.5}}) == ctnative::js_num{1.0});
+        ctnative::Array.prototype.push.call(
+            rows, std::pair<js_string, number_string>{js_string{"color"}, js_string{"red"}});
+        CHECK(std::get<0>(vec_element(rows, ctnative::js_num{1.0})) == js_string{"color"});
+        CHECK(number_string_text(std::get<1>(vec_element(rows, ctnative::js_num{0.0}))) ==
+              js_string{"1.5"});
         CHECK(ctnative::Array.prototype.join.call(list, js_string{", "}) == js_string{"b, a"});
         auto mixed = strings({"\xEF\xBC\xA1", "\xF0\x9F\x98\x80", "b", "", "B", "ab", "a"});
         ctnative::Array.prototype.sort.call(mixed);
