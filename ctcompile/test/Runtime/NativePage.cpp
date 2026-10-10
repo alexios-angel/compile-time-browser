@@ -113,6 +113,9 @@ void test_geometry_and_viewport() {
     // The same rectangle ctbrowser::page answers for the VM's binding.
     const ctbrowser::rect page_rect = bound.page.bounding_client_rect(box->value().id);
     CHECK(r.width.value() == static_cast<double>(page_rect.width));
+    // The field helpers generated code calls read the same fields.
+    CHECK(ctnative::rect_left(r).value() == 10 && ctnative::rect_top(r).value() == 0);
+    CHECK(ctnative::rect_width(r).value() == 50 && ctnative::rect_height(r).value() == 20);
 
     const auto root = *ctnative::document.documentElement();
     CHECK(ctnative::clientWidth(root).value() == 200);

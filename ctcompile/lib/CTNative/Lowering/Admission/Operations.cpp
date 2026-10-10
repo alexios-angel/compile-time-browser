@@ -170,11 +170,50 @@ std::optional<bool> stringArrayOperation(admission & self, mlir::Operation * o) 
 std::optional<bool> pageReadOperation(admission & self, mlir::Operation * o) {
     using namespace ctjs;
     if (!self.pageViews()) { return std::nullopt; }
-    if (isPageGlobal(o)) { return true; }
+    if (isPageGlobal(o) || isPageMethodRead(o)) { return true; }
+    const auto rect = [&](mlir::Value v) { return carrierOf(self.typeOf(v)) == carrier::domRect; };
+    if (TypeInference::isRectCall(o)) {
+        auto call = llvm::cast<CallOp>(o);
+        if (carrierOf(self.typeOf(call.getReceiver())) != carrier::domElement) {
+            return std::nullopt;
+        }
+        return rect(call.getResult()) || self.refuse("getBoundingClientRect lost its rect type");
+    }
+    if (TypeInference::isStyleCall(o)) {
+        auto call = llvm::cast<CallOp>(o);
+        if (carrierOf(self.typeOf(call.getArgs()[0])) != carrier::domElement) {
+            return self.refuse("getComputedStyle of a value that is not a proved element");
+        }
+        return carrierOf(self.typeOf(call.getResult())) == carrier::computedStyle ||
+               self.refuse("getComputedStyle lost its style type");
+    }
+    if (TypeInference::isStylePropertyCall(o) &&
+        carrierOf(self.typeOf(llvm::cast<CallOp>(o).getReceiver())) == carrier::computedStyle) {
+        auto call = llvm::cast<CallOp>(o);
+        return (carrierOf(self.typeOf(call.getArgs()[0])) == carrier::string &&
+                carrierOf(self.typeOf(call.getResult())) == carrier::string) ||
+               self.refuse("getPropertyValue of a name that is not a String");
+    }
+    if (TypeInference::deadRectReceiver(o)) {
+        return rect(o->getResult(0)) ||
+               self.refuse("the null of a getBoundingClientRect test on a value that is not "
+                           "a proved element");
+    }
     auto read = llvm::dyn_cast<GetPropertyOp>(o);
     if (!read) { return std::nullopt; }
     const llvm::StringRef key = constantKey(read.getKey());
     const carrier result = carrierOf(self.typeOf(read.getResult()));
+    if (carrierOf(self.typeOf(read.getObject())) == carrier::computedStyle) {
+        return self.refuse(
+            ("a computed style read through `" + key + "` - only getPropertyValue is native")
+                .str());
+    }
+    if (rect(read.getObject())) {
+        return result == carrier::number ||
+               self.refuse(("a rect read through `" + key +
+                            "` - only left, top, width and height are native")
+                               .str());
+    }
     if (isPageGlobal(read.getObject().getDefiningOp())) {
         return result == (key == "documentElement" ? carrier::domElement : carrier::number) ||
                self.refuse(("`" + key + "` lost its page type").str());
@@ -191,6 +230,11 @@ std::optional<bool> pageReadOperation(admission & self, mlir::Operation * o) {
                             "root's client size is native")
                                .str());
     }
+    if (key == "getBoundingClientRect") {
+        return (TypeInference::isRectTest(read) && result == carrier::boolean) ||
+               self.refuse("an element's getBoundingClientRect read as a value - only "
+                           "testing it and calling it are native");
+    }
     if (key == "children") {
         std::string why;
         if (TypeInference::elementVectorAliases(read.getResult(), &why).empty()) {
@@ -201,7 +245,7 @@ std::optional<bool> pageReadOperation(admission & self, mlir::Operation * o) {
     }
     return self.refuse(("an element read through `" + key +
                         "` - an ordinary script reads only tagName, id, className, children, "
-                        "clientWidth and clientHeight")
+                        "clientWidth, clientHeight and getBoundingClientRect")
                            .str());
 }
 

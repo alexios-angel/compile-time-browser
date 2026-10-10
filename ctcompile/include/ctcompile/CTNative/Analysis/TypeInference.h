@@ -261,6 +261,20 @@ public:
     /// of the global object (ECMA-262 19.1.4), so such a read is the undefined
     /// value, whatever else writes the globals table.
     static bool isUndefinedGlobal(mlir::Operation * op);
+    /// Whether `op` reads `x.getBoundingClientRect` only to test it.
+    static bool isRectTest(mlir::Operation * op);
+    /// Whether `op` is `x.getBoundingClientRect()`, its callee read for that
+    /// call alone.
+    static bool isRectCall(mlir::Operation * op);
+    /// When `op` is the null of `x.getBoundingClientRect ?
+    /// x.getBoundingClientRect() : null`, `x`; null otherwise. For an element
+    /// `x` the test is always true and the null never produced.
+    static mlir::Value deadRectReceiver(mlir::Operation * op);
+    /// Whether `op` calls the realm's own `getComputedStyle` with one argument.
+    static bool isStyleCall(mlir::Operation * op);
+    /// Whether `op` is `x.getPropertyValue(name)`, its callee read for that
+    /// call alone.
+    static bool isStylePropertyCall(mlir::Operation * op);
     /// Whether `op` loads the global `name` in a program that never stores
     /// to it, so the load is the realm's own binding of that name.
     static bool isRealmGlobal(mlir::Operation * op, llvm::StringRef name);
@@ -381,10 +395,13 @@ private:
     /// vector (elementVectorAliases), or calls split on a String; null when it
     /// does none of these. Sets `pending` when the answer has to wait for a
     /// stored value's lattice.
-    /// The type of a DOM read of an ordinary script: `document.documentElement`
+    /// The type of a page read of an ordinary script: `document.documentElement`
     /// (an element), an element's tagName, id and className (Strings),
     /// children (a vector of elements), clientWidth and clientHeight, and
-    /// `window.devicePixelRatio` (Numbers). Null for anything else.
+    /// `window.devicePixelRatio` (Numbers); getBoundingClientRect (a rect, its
+    /// existence test a Boolean, the null of its guard the rect too), the
+    /// rect's left, top, width and height (Numbers), getComputedStyle(el) and
+    /// its getPropertyValue (a String). Null for anything else.
     mlir::Type domReadType(mlir::Operation * op, llvm::ArrayRef<const TypeLattice *> operands);
     mlir::Type elementVectorType(mlir::Operation * op, llvm::ArrayRef<const TypeLattice *> operands,
                                  bool & pending);

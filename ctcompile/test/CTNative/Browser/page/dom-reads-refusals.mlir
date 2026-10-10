@@ -2,14 +2,19 @@
 // documentElement inside a try (the runtime throws a C++ exception for a
 // document with no root element, which native code cannot catch), clientWidth
 // of an element other than the root, an Array method on an element's
-// children, an element member that is not native yet, and an element read at
-// an index not proved in bounds.
+// children, an element member that is not native yet, an element read at an
+// index not proved in bounds, a rect field that is not native yet,
+// getBoundingClientRect read as a value rather than tested or called, and a
+// computed style read through anything but getPropertyValue.
 //
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/try.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=TRY
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/client.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=CLIENT
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/push.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PUSH
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/member.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=MEMBER
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/field.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=FIELD
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/method.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=METHOD
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/style.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=STYLE
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/index.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=INDEX
 
 // TRY: ctjs.func private @guarded$1
@@ -26,6 +31,15 @@
 
 // INDEX: ctjs.func private @fifth$1
 // INDEX-SAME: ctnative.not_native = "an element of an element's children read at an index not proved in bounds"
+
+// FIELD: ctjs.func private @corner$1
+// FIELD-SAME: ctnative.not_native = "a rect read through `x` - only left, top, width and height are native"
+
+// METHOD: ctjs.func private @method$1
+// METHOD-SAME: ctnative.not_native = "an element's getBoundingClientRect read as a value - only testing it and calling it are native"
+
+// STYLE: ctjs.func private @display$1
+// STYLE-SAME: ctnative.not_native = "a computed style read through `display` - only getPropertyValue is native"
 
 //--- try.js
 function guarded(stop) {
@@ -73,3 +87,22 @@ function fifth() {
     return kids[5].tagName;
 }
 var fifthTag = fifth();
+
+//--- field.js
+function corner() {
+    return document.documentElement.getBoundingClientRect().x;
+}
+var cornerX = corner();
+
+//--- method.js
+function method() {
+    var read = document.documentElement.getBoundingClientRect;
+    return read === undefined;
+}
+var methodMissing = method();
+
+//--- style.js
+function display() {
+    return getComputedStyle(document.documentElement).display;
+}
+var shown = display();
