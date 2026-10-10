@@ -71,4 +71,6 @@ Use the generated build-tree lit configuration so substitutions and features
 are available. Adjust the targets, test selection, host and remote directory to
 the change; a selection that runs zero tests is not a pass. Full lit runs through
 `ctcompile_lit` or `check-ctcompile` require an explicit user request. The full
-lit CTest allows 2,400 seconds for the native ownership matrix.
+lit CTest allows an hour, and so does each lit case: `lit.cfg.py` sets the limit,
+and a case that runs past it reports TIMEOUT and fails the run. lit needs `psutil`
+in its environment to enforce that (`~/.lit-venv/bin/pip install psutil`).

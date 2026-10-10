@@ -94,8 +94,11 @@ if(CTCOMPILE_ENABLE_MLIR)
     # clean-compile and printing gates, the claims and escape corpora, the
     # launcher arms, the packaging round trip, the Browser drivers - run here
     # too. Measured 567 s alone at -j4; over 2400 s on a box carrying two
-    # other ctests and two operator loops, which is what the cap has to hold.
+    # other ctests and two operator loops.
+    #
+    # AN HOUR, like each case inside it (lit.cfg.py), and no more: the cap was
+    # 5400 s, and a hung run is a failure to report, not a wait to sit through.
     set_tests_properties(ctcompile_lit PROPERTIES
-      TIMEOUT 5400 PROCESSORS ${ctcompile_lit_processors})
+      TIMEOUT 3600 PROCESSORS ${ctcompile_lit_processors})
   endif()
 endif()

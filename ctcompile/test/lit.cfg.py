@@ -16,6 +16,13 @@ from lit.llvm.subst import ToolSubst  # noqa: E402
 
 config.name = "ctcompile"
 config.suffixes = [".mlir", ".td", ".test"]
+# AN HOUR, THEN A FAILURE. A case that hangs - a native binary waiting on input
+# that never comes, a fixed point that does not converge - otherwise holds the
+# whole run forever; this reports it as TIMEOUT, which fails the run like any
+# other failure. lit enforces it through psutil, which the lit environment must
+# carry (~/.lit-venv/bin/pip install psutil): without it lit stops at once
+# with that instruction rather than running without the limit.
+lit_config.maxIndividualTestTime = 3600
 config.excludes = ["Inputs"]
 config.test_format = lit.formats.ShTest(not llvm_config.use_lit_shell)
 
