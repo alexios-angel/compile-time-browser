@@ -640,6 +640,11 @@ struct closureLifter {
 
     bool bindLocalFunctions(liftReport & out, bool probeSiblings = false);
 
+    /// Turns calls of methods of an object literal held in a static variable
+    /// into direct calls when nothing else reads it (Singletons.cpp). Returns
+    /// whether it changed the module.
+    bool bindSingletonMethods(liftReport & out);
+
     std::string whyNotABoundFunction(ctjs::CellSetOp store);
 
     bool byValueMissesACall(ctjs::CreateCellOp cell);
