@@ -1,8 +1,15 @@
+//===- helpers.cpp - CSSOM interface helpers --------------------*- C++ -*-===//
+//
+// cssom_interface and cssom_iterable, used by every CSSOM prototype installer,
+// plus the dom_bindings members shared by the rule and collection prototypes.
+//
+//===----------------------------------------------------------------------===//
+
 #include "helpers.hpp"
 
 namespace ctbrowser::shell::detail {
 
-// One interface object plus its prototype, wired the way
+// Builds one interface object plus its prototype, wired the way
 // `bindings/exceptions.cpp` wires DOMException: the constructor carries a
 // non-writable `prototype`, the prototype carries `constructor`, and the
 // prototype is reachable from the internals object so a page deleting the
@@ -30,14 +37,14 @@ script::object_object * cssom_interface(context & cx, script::object_object * in
         }
     }
     ctor->define("prototype", value::object(proto), script::attr_none);
-    // ...and a `length`, its constructor's required arguments: none for an
+    // The constructor's `length` is its required argument count: none for an
     // interface that has no constructor, and none for CSSStyleSheet's
     // optional options (Web IDL §3.7.1, cssom/idlharness).
     ctor->define("length", value::number(0), script::attr_configurable);
     proto->define("constructor", value::object(ctor), script::attr_builtin);
-    // `@@toStringTag`, which is what `Object.prototype.toString` - and so
-    // `rule.toString()` - reads: `[object CSSFontFaceRule]`, not
-    // `[object Object]`. The same key element/interfaces.cpp stamps on the
+    // `@@toStringTag` is what `Object.prototype.toString` (and so
+    // `rule.toString()`) reads: `[object CSSFontFaceRule]`, not
+    // `[object Object]`. element/interfaces.cpp stamps the same key on the
     // element prototypes; Web IDL puts one on every interface prototype.
     proto->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string(name), script::attr_configurable);
     internals->set(std::string{name} + ".prototype", value::object(proto));
@@ -46,16 +53,16 @@ script::object_object * cssom_interface(context & cx, script::object_object * in
     return proto;
 }
 
-// `@@iterator` on every collection here. `for (const x of list)` already
-// worked - context::iterable_values reads `length` and the indices - but
-// `Symbol.iterator in CSSStyleDeclaration.prototype` is asked by name, and
-// a page driving the iterator by hand needs a real one. Web IDL gives an
-// indexed-getter interface exactly the Array iterator, so it IS that one,
+// `@@iterator` on every CSSOM collection. `for (const x of list)` works
+// without it (context::iterable_values reads `length` and the indices), but
+// `Symbol.iterator in CSSStyleDeclaration.prototype` is checked by name, and a
+// page driving the iterator by hand needs a real one. Web IDL gives an
+// indexed-getter interface exactly the Array iterator, so this is that one,
 // over a snapshot of the indices below `length`.
 //
-// `length` ASKED FOR, not found: a CSSStyleDeclaration's is an attribute on
-// its prototype (cssom/idlharness), and the array-like walk iterable_values
-// makes reads an own data property only.
+// `length` is looked up through the prototype chain, not read as an own
+// property: a CSSStyleDeclaration's is an attribute on its prototype
+// (WPT css/cssom/idlharness), and iterable_values reads own data properties only.
 void cssom_iterable(context & cx, script::object_object * on) {
     set_method(
         cx, *on, CTBROWSER_SYMBOL_KEY("iterator"),
@@ -64,7 +71,7 @@ void cssom_iterable(context & cx, script::object_object * on) {
             const value items = c.make_array();
             const script::context::rooted keep{c, items}; // an index may be a getter
             const double length = context::to_number(c.lookup_property(self, "length"));
-            // Bounded before the cast, as collection_item bounds an index.
+            // Clamped to 2^24 before the cast, as collection_item bounds an index.
             const std::size_t count =
                 length >= 1 ? static_cast<std::size_t>(std::min(length, 16777216.0)) : 0;
             auto * list = static_cast<script::array_object *>(items.as_heap());
@@ -84,7 +91,7 @@ using namespace detail;
 
 // A `cssRules` list a page holds on to is [SameObject] and must not go
 // stale: `const {cssRules} = sheet; sheet.insertRule(...)` then reads
-// `cssRules.length` (css/support/parsing-testcommon.js does exactly this)
+// `cssRules.length` (WPT css/support/parsing-testcommon.js does exactly this)
 // without going through the getter that refreshes it. So every mutation
 // refreshes the list cached on its receiver, when there is one.
 void dom_bindings::refresh_cached_rules(context & c, std::span<const std::size_t> rules) {
@@ -97,10 +104,10 @@ void dom_bindings::declaration_accessor(context & cx, script::object_object * on
     define_getter(
         cx, *on, "style",
         [this](context & c, std::span<value>) {
-            // [SameObject], and LAZY. The declaration object is where the
-            // ~290 property accessors are reachable from, and a sheet with
-            // three thousand rules in it would otherwise build three
-            // thousand of them for a page that never reads one.
+            // [SameObject] and built lazily. The declaration object is where
+            // the ~290 property accessors are reachable from, and a sheet with
+            // three thousand rules would otherwise build three thousand of
+            // them for a page that never reads one.
             script::object_object * self = object_of(c.current_this());
             if (self == nullptr) { return value::undefined(); }
             if (const value * held = self->find(style_key)) {

@@ -1,12 +1,16 @@
-// `crypto` - the Web Cryptography API's Crypto interface (W3C WebCryptoAPI
-// §10), its two synchronous methods: getRandomValues and randomUUID.
+//===- ctbrowser/lib/Shell/bindings/window/crypto.cpp - window.crypto -----===//
 //
-// FROM THE OS CSPRNG (os_random.hpp), never Math.random: that one is seeded
-// and deterministic so the goldens can byte-compare, which is exactly what a
-// game's session token, shuffle seed or nonce must not be.
+// `crypto`: the Web Cryptography API's Crypto interface (W3C WebCryptoAPI
+// §10) with its two synchronous methods, getRandomValues and randomUUID.
+//
+// Both draw from the OS CSPRNG (os_random.hpp), never from Math.random: that
+// one is seeded and deterministic so golden outputs can be byte-compared,
+// which is exactly what a session token, shuffle seed or nonce must not be.
 //
 // ponytail: no `crypto.subtle`. SubtleCrypto is async key management and
 // digests; add it when a page needs one.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 #include "os_random.hpp"
@@ -20,9 +24,11 @@ namespace ctbrowser::shell {
 
 namespace {
 
-// §10.1.1 step 2: the quota, in bytes.
+/// The getRandomValues quota in bytes (§10.1.1 step 2).
 constexpr std::size_t quota_bytes = 65536;
 
+/// Whether a typed-array kind holds integers; getRandomValues rejects float
+/// arrays.
 [[nodiscard]] bool integer_kind(script::element_kind kind) {
     using enum script::element_kind;
     return kind == i8 || kind == u8 || kind == u8_clamped || kind == i16 || kind == u16 ||
@@ -31,6 +37,7 @@ constexpr std::size_t quota_bytes = 65536;
 
 } // namespace
 
+/// Installs the Crypto interface and the `crypto` global on `window`.
 void install_crypto(context & cx, script::object_object & window, const throw_dom_fn & throw_dom) {
     const value crypto_proto = value::object(cx.allocate<script::object_object>());
     const context::rooted keep_proto{cx, crypto_proto};

@@ -1,13 +1,16 @@
-// dom_bindings - `matchMedia` and `MediaQueryList`, CSSOM View §4.2
+//===- media_queries.cpp - matchMedia and MediaQueryList --------*- C++ -*-===//
+//
+// dom_bindings' `matchMedia` and `MediaQueryList`, CSSOM View §4.2
 // (https://drafts.csswg.org/cssom-view/#the-mediaquerylist-interface).
 //
-// A list is an EventTarget with two pieces of state in private slots: the
-// media text (the list SERIALISED - the same serialiser `MediaList.mediaText`
-// uses, so `(min-width: 10px) and (min-height: 10px)` is neither sorted nor
-// deduplicated, and a query that does not parse is "not all") and the
-// document it belongs to. `matches` is evaluated LIVE against that document's
-// environment - the same evaluation the cascade gives an `@media` rule - so
-// a frame's list reads the frame's viewport, not the page's.
+// A list is an EventTarget with its state in private slots: the media text,
+// the document it belongs to, and the answer last reported to listeners. The
+// media text is the serialised list, from the same serialiser
+// `MediaList.mediaText` uses, so `(min-width: 10px) and (min-height: 10px)` is
+// neither sorted nor deduplicated, and a query that does not parse is
+// "not all". `matches` is evaluated live against the document's environment
+// (the same evaluation the cascade gives an `@media` rule), so a frame's list
+// reads the frame's viewport, not the page's.
 //
 // §13 "evaluate media queries and report changes": whoever changes an
 // environment (the browser on a resize, the frame layout when a frame's box
@@ -18,10 +21,10 @@
 // are the aliases of `addEventListener("change", ...)` the specification
 // says they are, and `onchange` is an ordinary event handler IDL attribute.
 //
-// The list used to be a plain object with two data properties, `matches` read
-// once at creation and listener methods that accepted and forgot (css/
-// cssom-view's eight MediaQueryList files; Phaser asks `(orientation:
-// portrait)` and Babylon `(pointer: fine)`).
+// Exercised by the WPT css/cssom-view MediaQueryList tests; Phaser queries
+// `(orientation: portrait)` and Babylon `(pointer: fine)`.
+//
+//===----------------------------------------------------------------------===//
 
 #include "events/internal.hpp"
 #include "stylesheets/internal.hpp"
@@ -42,6 +45,7 @@ const std::string media_slot = std::string{script::private_key_prefix} + "mql:me
 const std::string matches_slot = std::string{script::private_key_prefix} + "mql:matches";
 const std::string document_slot = std::string{script::private_key_prefix} + "mql:document";
 
+/// The string held in `list`'s private `slot`, or "" when it has none.
 [[nodiscard]] std::string slot_string(context & cx, value list, const std::string & slot) {
     auto * object = object_of(list);
     const value * held = object == nullptr ? nullptr : object->find(slot);
@@ -50,15 +54,19 @@ const std::string document_slot = std::string{script::private_key_prefix} + "mql
 
 } // namespace
 
+/// Whether the media query list `media` matches this document's environment.
 bool dom_bindings::media_query_matches(std::string_view media) {
     return style::css::evaluate(style::css::parse_media_query_list(media),
                                 selector_engine().environment());
 }
 
+/// Whether `v` inherits from this page's MediaQueryList.prototype.
 bool dom_bindings::is_media_query_list(value v) const {
     const value wanted = primary().media_query_list_prototype_;
     if (!v.is_object() || !wanted.is_object()) { return false; }
     value link = static_cast<script::object_object *>(v.as_heap())->prototype;
+    // Bounded walk: a prototype chain deeper than 64 is treated as not a
+    // MediaQueryList rather than walked forever.
     for (int depth = 0; depth < 64 && link.is_object(); ++depth) {
         if (link.as_heap() == wanted.as_heap()) { return true; }
         link = static_cast<script::object_object *>(link.as_heap())->prototype;
@@ -66,8 +74,8 @@ bool dom_bindings::is_media_query_list(value v) const {
     return false;
 }
 
-// Which bindings' document a list names: the page's, or one of the documents
-// it made (a frame's). The page's when the slot names nobody.
+/// The bindings whose document `list` belongs to: the page's, or one of the
+/// documents it made (a frame's). The page's when the slot names nobody.
 dom_bindings & dom_bindings::owner_of_media_query_list(value list) {
     auto * object = object_of(list);
     const value * held = object == nullptr ? nullptr : object->find(document_slot);
@@ -79,6 +87,7 @@ dom_bindings & dom_bindings::owner_of_media_query_list(value list) {
     return top;
 }
 
+/// Creates a MediaQueryList for `text`, owned by this bindings' document.
 value dom_bindings::match_media(context & cx, std::string_view text) {
     auto * list = cx.allocate<script::object_object>();
     list->prototype = primary().media_query_list_prototype_;
@@ -89,11 +98,14 @@ value dom_bindings::match_media(context & cx, std::string_view text) {
     return value::object(list);
 }
 
+/// CSSOM View §13 "evaluate media queries and report changes": re-evaluates
+/// every listened-to list of this document and queues one task that fires
+/// `change` at each list whose answer flipped.
 void dom_bindings::report_media_query_changes() {
     if (cx_ == nullptr) { return; }
     dom_bindings & top = primary();
-    // THE LISTS SOMEBODY IS LISTENING TO - the handler's listener counts
-    // (HTML 8.1.8.1 registers one when `onchange` is set). A list nobody
+    // Only the lists somebody listens to are checked; setting `onchange`
+    // registers a listener too (HTML 8.1.8.1). A list nobody
     // listens to has nothing to report and reads `matches` live anyway.
     // ponytail: every listener of every document is scanned per report; a
     // per-list registry if a page holds thousands of listeners.

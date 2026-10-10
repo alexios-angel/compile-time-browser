@@ -1,5 +1,10 @@
-// dom_bindings - the element wrapper itself: identity, refresh, the box it
-// occupies, equality of nodes, and the wrapper a node already has.
+//===- wrapper.cpp - Node wrapper construction ------------------*- C++ -*-===//
+//
+// The script object that stands for a DOM node: creating it (wrap), keeping
+// its data properties in step with the node (refresh_element), finding the
+// node behind it (receiver, unpack), image sources, and DOM node equality.
+//
+//===----------------------------------------------------------------------===//
 
 #include "control_methods/helpers.hpp"
 #include "internal.hpp"
@@ -8,46 +13,48 @@ namespace ctbrowser::shell {
 
 using namespace detail;
 
+/// The script object for node `id`, made on first request and the same
+/// object on every later one; null for a null id.
 value dom_bindings::wrap(context & cx, node_id id) {
     if (!id) { return value::null(); }
-    // THE DOCUMENT NODE IS `document`. A doctype, a comment or a PI beside the
-    // document element has the Document node as its parent - see
-    // document::document_node - and `parentNode` on one must be the document
+    // The Document node is `document`. A doctype, a comment or a PI beside the
+    // document element has the Document node as its parent (see
+    // document::document_node), and `parentNode` on one must be the document
     // object the page holds, not a second wrapper over the same node.
     if (id == doc_->document_node() && document_.is_object_like()) { return document_; }
-    // The interfaces, if they can be built yet - see ensure_dom_interfaces. A
-    // no-op after the first success, and the reason it is HERE is that this is
-    // the earliest thing a page can do that needs one.
+    // Build the interfaces if they can be built yet (see
+    // ensure_dom_interfaces). A no-op after the first success; it is here
+    // because wrapping is the earliest thing a page can do that needs them.
     ensure_dom_interfaces(cx);
     if (const auto it = wrappers_.find(id.key()); it != wrappers_.end()) {
         refresh_element(cx, *it->second, id);
         return exposed_wrapper(*it->second);
     }
-    // A node whose wrapper was adopted into another document IS that object
-    // still - the other document refreshes it. See adopted_away_.
+    // A node whose wrapper was adopted into another document is still that
+    // object; the other document refreshes it. See adopted_away_.
     if (const auto it = adopted_away_.find(id.key()); it != adopted_away_.end()) {
         return exposed_wrapper(*it->second);
     }
     auto * obj = cx.allocate<script::object_object>();
     value wrapper = value::object(obj);
     obj->set(std::string{handle_property}, value::number(static_cast<double>(id.key())));
-    // WHICH INTERFACE THIS NODE IS. `HTMLCanvasElement.prototype` for a canvas,
-    // `Text.prototype` for a text node, `HTMLElement.prototype` for a tag with
-    // no interface of its own - and every one of those chains down to
-    // `EventTarget.prototype`. It is what `instanceof` answers from AND where
-    // the reflected IDL attributes live, so an element with no prototype has
-    // neither `id` nor `className`.
+    // The node's interface prototype: `HTMLCanvasElement.prototype` for a
+    // canvas, `Text.prototype` for a text node, `HTMLElement.prototype` for a
+    // tag with no interface of its own, each chaining down to
+    // `EventTarget.prototype`. `instanceof` answers from it and the reflected
+    // IDL attributes live on it, so an element with no prototype has neither
+    // `id` nor `className`.
     {
         const auto txn = doc_->read();
         const value proto = prototype_for_node(txn, id);
         if (proto.is_object()) { obj->prototype = proto; }
     }
-    // The METHODS are on those prototypes - see define_operation - and only
-    // the accessors that close over the node are the wrapper's own.
+    // The methods are on those prototypes (see define_operation); only the
+    // accessors that close over the node are the wrapper's own.
     install_element_views(cx, *obj, id);
     {
         const auto txn = doc_->read();
-        // AFTER the views: a ShadowRoot's members come on top of them.
+        // After the views: a ShadowRoot's members come on top of them.
         const node_kind kind = txn.kind(id).value_or(node_kind::element);
         if (kind == node_kind::document_fragment && shadow_tree_of(id) != nullptr) {
             install_shadow_root_members(cx, *obj, id);
@@ -55,8 +62,8 @@ value dom_bindings::wrap(context & cx, node_id id) {
         // A CDATASection and a ProcessingInstruction are CharacterData: `data`
         // and `nodeValue` are their text, both ways. install_element_views
         // wires those two for Text and Comment only, so they are re-defined
-        // here for the two kinds it does not know - and `target`, which only a
-        // PI has, is read-only.
+        // here for the two kinds it does not know. `target`, which only a PI
+        // has, is read-only.
         if (kind == node_kind::cdata_section || kind == node_kind::processing_instruction) {
             for (const char * spelling : {"data", "nodeValue"}) {
                 obj->define_accessor(spelling,
@@ -87,10 +94,10 @@ value dom_bindings::wrap(context & cx, node_id id) {
                                  value::undefined());
         }
         // `template.content`, HTML 4.12.3: the DocumentFragment the parser put
-        // the element's children into - see document::template_content - and,
+        // the element's children into (see document::template_content), or,
         // for a template a script made, one created the first time it is asked
-        // for, because every template element has one. A READ-ONLY accessor,
-        // and the same fragment on every read.
+        // for, because every template element has one. A read-only accessor
+        // returning the same fragment on every read.
         if (txn.element_ns(id) == node_ns::html &&
             atoms_->text(txn.tag(id).value_or(atom{})) == "template") {
             obj->define_accessor("content",
@@ -109,9 +116,10 @@ value dom_bindings::wrap(context & cx, node_id id) {
     }
     refresh_element(cx, *obj, id);
     wrappers_.emplace(id.key(), obj);
-    // A FORM AND A SELECT ARE LEGACY PLATFORM OBJECTS (WebIDL 3.9), and what
-    // the page holds is the proxy over this object - control_methods/
-    // legacy_objects.cpp. Kept on it, so every later wrap() hands out the same.
+    // A form and a select are legacy platform objects (WebIDL 3.9): the page
+    // holds a proxy over this object (control_methods/legacy_objects.cpp).
+    // The proxy is stored on the object so every later wrap() hands out the
+    // same one.
     if (const value legacy = control_helpers{this}.legacy_object(cx, *obj, id);
         !legacy.is_undefined()) {
         obj->define(legacy_object_key, legacy, script::attr_none);
@@ -120,8 +128,9 @@ value dom_bindings::wrap(context & cx, node_id id) {
     return wrapper;
 }
 
-// THE ORDINARY WRAPPER BEHIND A LEGACY PLATFORM OBJECT'S PROXY - and only
-// behind ours: a page's `new Proxy(form, {})` is not a Node, and stays itself.
+/// The ordinary wrapper behind a legacy platform object's proxy, and only
+/// behind ours: a page's `new Proxy(form, {})` is not a Node and is returned
+/// unchanged, as is any non-proxy value.
 value dom_bindings::unwrap_legacy_proxy(value v) {
     if (!v.is_kind(script::heap_kind::proxy)) { return v; }
     const value target = static_cast<script::proxy_object *>(v.as_heap())->target;
@@ -131,6 +140,7 @@ value dom_bindings::unwrap_legacy_proxy(value v) {
     return held != nullptr && held->bits() == v.bits() ? target : v;
 }
 
+/// Decodes a node handle: slot in the high 32 bits, generation in the low 32.
 node_id dom_bindings::unpack(std::uint64_t bits) {
     node_id id;
     id.slot = static_cast<std::uint32_t>(bits >> 32);
@@ -138,6 +148,7 @@ node_id dom_bindings::unpack(std::uint64_t bits) {
     return id;
 }
 
+/// The node behind the current `this`, or a null id when it is not a wrapper.
 node_id dom_bindings::receiver(context & cx) {
     const value self = unwrap_legacy_proxy(cx.current_this());
     if (!self.is_object()) { return node_id{}; }
@@ -147,34 +158,26 @@ node_id dom_bindings::receiver(context & cx) {
     return unpack(static_cast<std::uint64_t>(context::to_number(*slot)));
 }
 
+/// Rewrites the wrapper's data properties from the node: tagName, nodeName,
+/// nodeType, ownerDocument and the qualified-name parts. Everything that can
+/// change between refreshes is an accessor instead.
 void dom_bindings::refresh_element(context & cx, script::object_object & obj, node_id id) {
     // Here as well as in wrap(), because refresh_wrappers() walks every live
-    // wrapper before a dispatch and before a frame - so a page that never asks
+    // wrapper before a dispatch and before a frame, so a page that never asks
     // for a new element still gets its interfaces built, and the wrappers
     // install_document made before EventTarget existed still get linked.
     ensure_dom_interfaces(cx);
     const auto txn = doc_->read();
-    // `tagName` is UPPERCASE for an HTML element, and lowercase was a silent
-    // wrong answer: p5.js branches on `elt.tagName === 'INPUT'` and on
-    // `child.tagName === param` in its XML module, so every such comparison was
-    // false and the code behind it never ran. An SVG element keeps its own case -
-    // tagName is the qualified name, and only HTML uppercases it.
+    // `tagName` is the qualified name, uppercased only for an HTML-namespace
+    // element in an HTML document (DOM "HTML-uppercased qualified name"). An
+    // XHTML document keeps the case, as WPT Node-nodeName-xhtml.xhtml checks.
     {
         std::string tag_name{atoms_->text(txn.tag(id).value_or(atom{}))};
-        // AND ONLY IN AN HTML DOCUMENT. `tagName` uppercases an HTML element,
-        // and an XHTML one parsed from an `.xhtml` file is in the HTML
-        // namespace too - but `Node-nodeName-xhtml.xhtml` asserts `i` and not
-        // `I`, because the rule is about the DOCUMENT's language rather than
-        // the element's vocabulary. The two agreed as long as the only way to
-        // build a document was the HTML tree builder; see dom/xml.hpp.
         if (txn.element_ns(id) == node_ns::html && !doc_->xml()) { ascii_upper_in_place(tag_name); }
         obj.set("tagName", cx.string(tag_name));
-        // `nodeName` AND `nodeType`, which every tree-walking page reads and
-        // this wrapper did not have. They are not aliases of `tagName`: a
-        // wrapper is made for text and comment nodes too - `childNodes` hands
-        // them out - and for those the tag is empty, so `tagName` is "" and
-        // `nodeName` is "#text". A page that switches on nodeType to decide
-        // whether to recurse got `undefined` and took no branch at all.
+        // `nodeName` and `nodeType` per DOM's tables. They differ from
+        // `tagName` for non-elements: a text node's tagName is "" but its
+        // nodeName is "#text".
         const node_kind kind = txn.kind(id).value_or(node_kind::element);
         switch (kind) {
         case node_kind::element:
@@ -197,8 +200,8 @@ void dom_bindings::refresh_element(context & cx, script::object_object & obj, no
             obj.set("nodeName", cx.string("#document-fragment"));
             obj.set("nodeType", value::number(11));
             break;
-        // A doctype is named for its name and a PI for its target - DOM 4.4's
-        // nodeName table - and neither is folded, whatever the document.
+        // A doctype is named for its name and a PI for its target (DOM 4.4's
+        // nodeName table), and neither is case-folded, whatever the document.
         case node_kind::document_type:
             obj.set("nodeName", cx.string(std::string{atoms_->text(txn.name(id))}));
             obj.set("nodeType", value::number(10));
@@ -217,21 +220,17 @@ void dom_bindings::refresh_element(context & cx, script::object_object & obj, no
             obj.set("nodeType", value::number(4));
             break;
         }
-        // `ownerDocument` - null on the Document itself and `document` on
-        // everything else, there being exactly one document for it to be. Six
-        // files in `dom/nodes` read it off a node the test has just created,
-        // including every valid case of `Document-createElement{,NS}` and all of
-        // the Comment and Text constructor tests.
+        // `ownerDocument`: null on the Document node itself, otherwise the
+        // document these bindings belong to.
         obj.set("ownerDocument", kind == node_kind::document ? value::null() : document_);
-        // `localName`, `prefix` and `namespaceURI` - the three halves of a
-        // qualified name, and the pair `tagName` is compared against.
+        // `localName`, `prefix` and `namespaceURI`: the parts of a qualified
+        // name.
         //
-        // localName is the tag WITHOUT the case fold and WITHOUT the prefix:
-        // `createElementNS(ns, "a:b")` has tagName "a:b" and localName "b", and
-        // reporting the whole qualified name for both makes the two
-        // indistinguishable. prefix is null when the colon is not one - see
-        // node::prefixed - which is every element the HTML parser builds and
-        // everything `createElement` makes.
+        // localName is the tag without the case fold and without the prefix:
+        // `createElementNS(ns, "a:b")` has tagName "a:b" and localName "b".
+        // prefix is null when the colon is not a prefix separator (see
+        // node::prefixed), which covers every element the HTML parser builds
+        // and everything `createElement` makes.
         if (kind == node_kind::element) {
             const std::string_view prefix = txn.prefix(id);
             obj.set("localName", cx.string(std::string{txn.local_name(id)}));
@@ -244,22 +243,19 @@ void dom_bindings::refresh_element(context & cx, script::object_object & obj, no
             obj.set("namespaceURI", value::null());
         }
     }
-    // `id`, `className`, `width` and `height` are NOT set here: they are
-    // accessors over the attributes, installed once in install_element_views.
-    // As data properties they were write-only in the wrong direction - a page
-    // assigning `el.id = 'x'` changed the wrapper and nothing else, and the
-    // next refresh put the old value back. p5.js names its canvas and sizes it
-    // that way, so both writes vanished.
-    // The box metrics - offsetWidth and its nine siblings - are accessors
-    // installed by install_element_views too: they flush layout and read the
-    // box as of now, where a number copied in here was as stale as the last
-    // frame.
+    // `id`, `className`, `width`, `height` and the box metrics (offsetWidth
+    // and friends) are not set here: they are accessors (on the interface
+    // prototypes or from install_element_views), so writes reach the
+    // attributes and reads see current layout.
 }
 
+/// The node's client rectangle in viewport coordinates.
 rect dom_bindings::box_of(node_id id) const {
     return client_rect_of(id); // viewport coordinates: the scroll offsets above the box come off
 }
 
+/// The pixels a canvas image argument names: an image index, an ImageBitmap,
+/// a <canvas> wrapper, or an element whose `src` is loaded. Null otherwise.
 std::shared_ptr<const paint::bitmap> dom_bindings::image_argument(value v) {
     if (images_ == nullptr) { return nullptr; }
     if (v.is_number()) { return images_->at(static_cast<int>(context::to_number(v))); }
@@ -272,10 +268,9 @@ std::shared_ptr<const paint::bitmap> dom_bindings::image_argument(value v) {
     if (handle == nullptr || assets_ == nullptr) { return nullptr; }
     const node_id id = unpack(static_cast<std::uint64_t>(context::to_number(*handle)));
     const auto txn = doc_->read();
-    // A CANVAS IS AN IMAGE SOURCE. `drawImage(otherCanvas, ...)` is how a page
-    // composites one surface onto another, and it is what p5's `image(g, ...)`
-    // does with a createGraphics - so an offscreen buffer drew nothing at all,
-    // silently, because a canvas has no `src` to load and this returned null.
+    // A canvas is an image source: `drawImage(otherCanvas, ...)` composites
+    // one surface onto another (p5's `image(g, ...)` with a createGraphics
+    // buffer does this). It has no `src`, so its pixels are read directly.
     if (canvases_ != nullptr && atoms_->text(txn.tag(id).value_or(atom{})) == "canvas") {
         return canvases_->pixels_of(id);
     }
@@ -283,9 +278,9 @@ std::shared_ptr<const paint::bitmap> dom_bindings::image_argument(value v) {
     return src.empty() ? nullptr : images_->load(*assets_, src);
 }
 
-// The wrapper for a node IF ONE EXISTS. Deliberately does not create one: this
-// is on the dispatch path for every event, and making a wrapper per node per
-// event would build the whole document's worth of them for a mousemove.
+/// The wrapper for a node if one exists, else undefined. Deliberately does not
+/// create one: this is on the dispatch path for every event, and making a
+/// wrapper per node per event would wrap the whole document for a mousemove.
 value dom_bindings::value_of_wrapper(node_id id) const {
     if (!id) { return value::undefined(); }
     const auto it = wrappers_.find(id.key());
@@ -293,24 +288,10 @@ value dom_bindings::value_of_wrapper(node_id id) const {
                                                           : exposed_wrapper(*it->second);
 }
 
-// `isEqualNode`: THE DOM'S STRUCTURAL COMPARISON, DOM 4.4 "equals".
-//
-// Not identity - that is `isSameNode` - and not a serialisation comparison
-// either, which is what a first attempt reaches for and which gets three things
-// wrong that this file's own corpus tests by name:
-//
-//   * ATTRIBUTES ARE AN UNORDERED SET, compared by (namespace, local name,
-//     value). Two elements carrying the same attributes in different ORDER are
-//     equal, and `innerHTML` would have said no.
-//   * A PREFIX TAKES NO PART in comparing an attribute. `setAttributeNS(ns,
-//     "prefix:local", v)` and `setAttributeNS(ns, "prefix2:local", v)` are the
-//     same attribute and the elements holding them ARE equal - which is the one
-//     subtest that a (qualified name, value) comparison fails.
-//   * ...but it DOES take part in comparing an ELEMENT, whose qualified name is
-//     compared whole. `prefix:localName` and `prefix2:localName` are different
-//     elements. The two rules are opposite on purpose and the file asserts both.
-//
-// Then the children, PAIRWISE AND IN ORDER, which is the recursion.
+/// DOM "equals" (used by `isEqualNode`): a structural comparison, not
+/// identity. Attributes are compared as an unordered set of (namespace, local
+/// name, value), ignoring the attribute prefix; an element's own qualified
+/// name, prefix included, must match. Children are compared pairwise in order.
 bool dom_bindings::nodes_are_equal(const read_txn & txn, node_id left, node_id right) const {
     if (!left || !right) { return false; }
     if (left == right) { return true; }
@@ -334,8 +315,8 @@ bool dom_bindings::nodes_are_equal(const read_txn & txn, node_id left, node_id r
     case node_kind::cdata_section:
         if (txn.text(left) != txn.text(right)) { return false; }
         break;
-    // A doctype is its name and two identifiers, a PI its target and data -
-    // the rows of DOM 4.4's "equals" table for the two.
+    // A doctype is its name and two identifiers, a PI its target and data
+    // (the rows of DOM 4.4's "equals" table for the two).
     case node_kind::document_type:
         if (txn.name(left) != txn.name(right) || txn.public_id(left) != txn.public_id(right) ||
             txn.system_id(left) != txn.system_id(right)) {

@@ -1,5 +1,11 @@
-// dom_bindings - the Node, ParentNode and ChildNode method surface: insertion
-// validity, insertAdjacent*, tree mutation, selectors and geometry.
+//===- node_methods.cpp - Node, ParentNode, ChildNode methods -------------===//
+//
+// dom_bindings::install_node_methods: the Node, ParentNode and ChildNode
+// methods: insertAdjacent*, tree mutation, selector matching, node comparison,
+// the Node constants and the [Unscopable] lists. Geometry is in
+// geometry_views.cpp; insertion validity is in pre_insert.cpp.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -18,11 +24,9 @@ void dom_bindings::install_node_methods(context & cx) {
                             unsigned length, script::native_fn fn) {
         define_operation(cx, on, name, length, std::move(fn));
     };
-    // THE NODE AN INSERTION WAS HANDED: ours by handle, or ANOTHER DOCUMENT'S
-    // adopted first (DOM 4.2.3 step 1 of insert is adopt) - dom/common.js
-    // appends an XML document's CDATA section into the page, and three
-    // whole files reported nothing until it could. Anything else stays
-    // empty and pre_insert_valid names the TypeError.
+    // Resolves the node passed to an insertion: one of ours by handle, or a node
+    // of another document, adopted first (insertion adopts, DOM 4.2.3). Anything
+    // else is an empty handle, and pre_insert_valid reports the TypeError.
     const auto insertable = [this](context & c, value v) {
         if (const node_id held = handle_of(v)) { return held; }
         if (is_a_document(v)) { return node_id{}; }
@@ -31,25 +35,22 @@ void dom_bindings::install_node_methods(context & cx) {
         return node_from(c, v);
     };
 
-    // "INSERT ADJACENT", DOM 4.9 - ONE ALGORITHM FOR THREE METHODS, which is
-    // the point of it. `insertAdjacentHTML` did this by hand and the other two
-    // did not exist, and doing it by hand got `afterend` wrong: it APPENDED to
-    // the parent rather than placing the node after this element, so a
-    // `beforebegin` and an `afterend` on the same element landed in the wrong
-    // order whenever the element had a later sibling.
+    // The "insert adjacent" algorithm (DOM 4.9), shared by insertAdjacentElement,
+    // insertAdjacentText and insertAdjacentHTML so that all three place nodes the
+    // same way.
     //
     // Answers (parent, before), or nothing. There are two kinds of nothing and
     // the caller does not have to tell them apart: an unrecognised position is a
-    // SyntaxError and `beforebegin`/`afterend` on the DOCUMENT ELEMENT is a
+    // SyntaxError and `beforebegin`/`afterend` on the document element is a
     // HierarchyRequestError, both already thrown by the time this returns; an
     // element with no parent at all is the "return null" the specification
     // gives, and throws nothing.
     //
-    // THE DOCUMENT ELEMENT'S PARENT IS THE DOCUMENT in the DOM and is EMPTY
-    // here - this tree builder has no Document node, see install_document_as_node
-    // - so the one place the two models differ has to be named rather than
-    // inferred. A second element or a text node beside `<html>` would be a
-    // second child of the Document, which is what pre-insertion refuses.
+    // In the DOM the document element's parent is the Document; here it is
+    // empty, because a parsed tree has no Document node (see
+    // install_document_as_node), so that case is checked explicitly. A second
+    // element or a text node beside `<html>` would be a second child of the
+    // Document, which is what pre-insertion refuses.
     const auto adjacent_place =
         [this](context & c, node_id self,
                const std::string & given) -> std::optional<std::pair<node_id, node_id>> {
@@ -87,7 +88,7 @@ void dom_bindings::install_node_methods(context & cx) {
         }
         return std::pair{parent, next};
     };
-    // `insertAdjacentHTML(position, markup)` - a fragment parse at one of four
+    // `insertAdjacentHTML(position, markup)`: a fragment parse at one of four
     // places relative to this element. The parser and the copy are the same
     // ones innerHTML uses; only where the nodes land differs.
     method(element, "insertAdjacentHTML", 2,
@@ -96,11 +97,10 @@ void dom_bindings::install_node_methods(context & cx) {
                if (!self || atoms_ == nullptr) { return value::undefined(); }
                const std::string where = arg_string(c, args, 0);
                const std::string markup = arg_string(c, args, 1);
-               // THE FRAGMENT'S CONTEXT IS THE PARENT for `beforebegin` and
+               // The fragment's context is the parent for `beforebegin` and
                // `afterend` (HTML, insertAdjacentHTML), and a parent that is
-               // none or the Document is a NoModificationAllowedError - not the
-               // null and the HierarchyRequestError insertAdjacentElement
-               // answers.
+               // none or the Document is a NoModificationAllowedError, not the
+               // null or HierarchyRequestError insertAdjacentElement answers.
                if (ascii_iequals(where, "beforebegin") || ascii_iequals(where, "afterend")) {
                    const node_id parent = dom_parent(doc_->read(), self);
                    if (!parent || parent == doc_->document_node()) {
@@ -120,7 +120,7 @@ void dom_bindings::install_node_methods(context & cx) {
                const node_id body = parse_html_body_fragment(scratch, markup);
                const auto from = scratch.read();
 
-               // IN ORDER, because each node goes before the SAME reference rather
+               // In order, because each node goes before the same reference rather
                // than before the one just added. copy_subtree appends to the parent it
                // is given, so the move is a no-op when the reference is empty.
                std::vector<node_id> added;
@@ -137,10 +137,9 @@ void dom_bindings::install_node_methods(context & cx) {
                mutated();
                return value::undefined();
            });
-    // ...and the two spellings that take a NODE rather than markup, both of
-    // which were missing. `insertAdjacentElement` ANSWERS with the element it
-    // inserted - or null, which is how a page learns the position was one the
-    // element has no room for.
+    // The two forms that take a node rather than markup. `insertAdjacentElement`
+    // returns the element it inserted, or null when the position has no place
+    // (an element with no parent).
     method(
         element, "insertAdjacentElement", 2,
         [this, adjacent_place, insertable](context & c, std::span<value> args) {
@@ -149,11 +148,11 @@ void dom_bindings::install_node_methods(context & cx) {
             const std::optional<std::pair<node_id, node_id>> place =
                 adjacent_place(c, self, arg_string(c, args, 0));
             if (!place) { return value::null(); }
-            // AN ELEMENT, by the IDL: a doctype or a text node is a TypeError
-            // before any hierarchy question is asked - insert-adjacent.html
-            // hands it a DocumentType by name. Asked of the document that
-            // owns it, which may be another one: an element of another
-            // document is adopted (insertable), as appendChild adopts it.
+            // The IDL type is Element: a doctype or a text node is a TypeError
+            // before any hierarchy question is asked. The kind is asked of the
+            // document that owns the argument, which may be another one: an
+            // element of another document is adopted (insertable), as
+            // appendChild adopts it.
             dom_bindings * owner = owner_of(arg(args, 1));
             if (const node_id held = owner == nullptr ? node_id{} : owner->handle_of(arg(args, 1));
                 held &&
@@ -180,20 +179,14 @@ void dom_bindings::install_node_methods(context & cx) {
                return value::undefined();
            });
 
-    // TREE NAVIGATION. appendChild and removeChild could already change the
-    // tree; nothing could WALK it, so an element could not reach its own
-    // parent. `this.elt.parentNode.removeChild(this.elt)` is the ordinary way
-    // to take an element out of the page - it is how p5.js discards the default
-    // canvas when a sketch calls createCanvas - and with parentNode undefined
-    // the removal threw inside a callback and the discarded canvas stayed in
-    // the document, laid out and painted, underneath the real one.
+    // `ChildNode.remove()`: detaches this node from its parent, if it has one.
     method(child_node, "remove", 0, [this](context & c, std::span<value>) {
         const node_id self = receiver(c);
         if (self) {
-            // THE DOCUMENT ELEMENT OF A MADE DOCUMENT may go - see the top of
-            // document/as_node.cpp; `remove_child` refuses the root, and
-            // `parent.firstChild.remove()` on a created document is how
-            // pre-insertion-validation-notfound.js empties one.
+            // The document element of a created (secondary) document may be
+            // removed (see the top of document/as_node.cpp), but
+            // `remove_child` refuses the root, so it goes through
+            // remove_document_element.
             if (self == doc_->root() && secondary_) {
                 doc_->remove_document_element();
             } else {
@@ -204,11 +197,10 @@ void dom_bindings::install_node_methods(context & cx) {
         return value::undefined();
     });
     method(node, "insertBefore", 2, [this, insertable](context & c, std::span<value> args) {
-        // TWO REQUIRED ARGUMENTS: `insertBefore(node)` is a TypeError, and
-        // `Node-insertBefore.html` asks for it by name. A null SECOND argument is
-        // a different thing - it means "at the end", which is what makes
-        // `insertBefore(node, null)` a documented spelling of appendChild;
-        // insert_node reads an empty handle the same way.
+        // Two required arguments: `insertBefore(node)` is a TypeError. A null
+        // second argument is different: it means "at the end", so
+        // `insertBefore(node, null)` appends; insert_node reads an empty handle
+        // the same way.
         if (args.size() < 2) {
             c.throw_error("TypeError", "insertBefore needs a node and a reference child");
             return value::undefined();
@@ -222,17 +214,17 @@ void dom_bindings::install_node_methods(context & cx) {
         (void)insert_node(parent, child, before);
         return arg(args, 0);
     });
-    // `moveBefore` IS `insertBefore` THAT DOES NOT REMOVE FIRST. The DOM says a
-    // move preserves state an insertion would destroy - an <iframe>'s document,
-    // a playing <video>, a focused control, a running animation - and this
-    // engine has none of those, so what is left of the operation is exactly the
-    // insertion. The DIFFERENCE that IS observable here is the validity checks,
-    // which are stricter than insertBefore's: the node must already have a
-    // parent, and both nodes must be in the same document.
+    // `moveBefore` is `insertBefore` without removing first. The DOM says a move
+    // preserves state an insertion would destroy (an <iframe>'s document, a
+    // playing <video>, a focused control, a running animation); this engine
+    // keeps none of that state, so what is left is the insertion, with
+    // `moving_` set while it runs. The observable difference here is the
+    // validity checks, which are stricter than insertBefore's: the node must
+    // already have a parent, and both nodes must be in the same tree.
     //
-    // Named rather than aliased, because `moveBefore === insertBefore` would be
-    // a lie a page can test for, and because when state preservation does
-    // arrive it arrives here.
+    // A separate function rather than an alias, because `moveBefore ===
+    // insertBefore` would be observably wrong, and state preservation would be
+    // added here.
     method(parent_node, "moveBefore", 2, [this](context & c, std::span<value> args) {
         if (args.size() < 2) {
             c.throw_error("TypeError", "moveBefore needs a node and a reference child");
@@ -240,9 +232,8 @@ void dom_bindings::install_node_methods(context & cx) {
         }
         const node_id parent = receiver(c);
         const node_id child = handle_of(arg(args, 0));
-        // ANOTHER DOCUMENT'S NODE is a Node in another tree: the root check
-        // below, not adoption - a move never adopts (moveBefore/throws-
-        // exception.html).
+        // Another document's node is a node in another tree, so it gets the
+        // root check's error; a move never adopts.
         if (!child && owner_of(arg(args, 0)) != nullptr) {
             throw_dom_exception(c, "HierarchyRequestError",
                                 "moveBefore: the node belongs to another document");
@@ -254,7 +245,7 @@ void dom_bindings::install_node_methods(context & cx) {
         {
             const auto txn = doc_->read();
             // "If parent's shadow-including root is not node's shadow-including
-            // root, throw a HierarchyRequestError" - a move stays within one
+            // root, throw a HierarchyRequestError": a move stays within one
             // tree, which is what lets it keep state a remove-and-insert would
             // drop. A connected parent and a detached node have different
             // roots, and so do two detached subtrees.
@@ -263,7 +254,7 @@ void dom_bindings::install_node_methods(context & cx) {
                                     "moveBefore: the node and the parent are in different trees");
                 return value::undefined();
             }
-            // "If node's parent is null, then throw a HierarchyRequestError" -
+            // "If node's parent is null, then throw a HierarchyRequestError":
             // a move has to move something from somewhere.
             if (!txn.parent(child)) {
                 throw_dom_exception(c, "HierarchyRequestError",
@@ -277,21 +268,10 @@ void dom_bindings::install_node_methods(context & cx) {
         // `undefined`, unlike insertBefore: the IDL return type is void.
         return value::undefined();
     });
-    // WHERE THE ELEMENT IS ON SCREEN. A page turns a pointer event's viewport
-    // coordinates into coordinates within an element by subtracting this - p5's
-    // getMouseInfo does exactly that to compute mouseX/mouseY - so without it
-    // every mouse listener throws on its first event. The listeners were
-    // installed and the events were dispatched; the conversion in between is
-    // what was missing, and it made the whole input surface look absent.
-    // `querySelector` ON AN ELEMENT, searching its own subtree. The document
-    // had both and an element had neither, so the ordinary "find something
-    // inside this" - which is what a library does with a container it owns -
-    // threw. p5.js's describe() builds an offscreen tree and queries it.
-    // Text that is not a selector at all is a SyntaxError, exactly as on the
-    // document; an UNSUPPORTED selector still answers null, a missing answer
-    // rather than a wrong one.
-    // ONE REQUIRED ARGUMENT, and the arity TypeError is a subtest by name in
-    // `ParentNode-querySelector-All.html` for an element and a fragment alike.
+    // `querySelector`/`querySelectorAll` on an element or fragment search its own
+    // subtree. Text that is not a selector is a SyntaxError, as on the document;
+    // a valid selector this engine does not support matches nothing (null).
+    // Both require one argument; needs_selector throws the arity TypeError.
     const auto needs_selector = [](context & c, std::span<value> args, const char * who) {
         if (!args.empty()) { return true; }
         c.throw_error("TypeError", std::string{who} + ": 1 argument required, but only 0 present");
@@ -321,21 +301,16 @@ void dom_bindings::install_node_methods(context & cx) {
                                        "'" + selector + "' is not a valid selector");
                    return value::undefined();
                }
-               // A STATIC NodeList - the members are fixed at the call, and
-               // `instanceof NodeList` is a subtest by name.
+               // A static NodeList: the members are fixed at the call, and
+               // `instanceof NodeList` holds.
                return make_live_collection(c, [found] { return found; }, "NodeList");
            });
-    // `element.getElementsByTagName(tag)` - the DOCUMENT had one and an element
-    // did not, so a page that scoped its search to a subtree found the method
-    // missing. p5's XML module walks a parsed document with exactly this.
-    //
-    // LIVE, as the document's is, and with the document's TWO-BRANCH rule -
-    // DOM 4.5 "list of elements with qualified name": in an HTML document an
-    // HTML-namespace element matches the name ASCII-lowercased and any other
-    // element matches it exactly, so `<linearGradient>` inside an <svg> is found
-    // by its own spelling and not by the folded one. In an XML document every
-    // element matches exactly. `Element-getElementsByTagName.html` runs the
-    // document's whole battery against an element.
+    // `element.getElementsByTagName(tag)`: a live collection of descendants that
+    // uses the document's two-branch rule (DOM 4.5 "list of elements with
+    // qualified name"): in an HTML document an HTML-namespace element matches
+    // the name ASCII-lowercased and any other element matches it exactly, so
+    // `<linearGradient>` inside an <svg> is found by its own spelling and not by
+    // the folded one. In an XML document every element matches exactly.
     method(element, "getElementsByTagName", 1, [this](context & c, std::span<value> args) {
         const node_id from = receiver(c);
         const std::string want = arg_string(c, args, 0);
@@ -354,17 +329,14 @@ void dom_bindings::install_node_methods(context & cx) {
                 }
                 for (const node_id child : txn.children(at)) { self(self, child, true); }
             };
-            // DESCENDANTS ONLY - the element itself is not one of its own results.
+            // Descendants only: the element itself is not one of its own results.
             walk(walk, from, false);
             return found;
         });
     });
-    // `element.getElementsByTagNameNS(namespace, localName)`, the same battery
-    // the document has answered all along. `Document-Element-getElementsBy...
-    // TagNameNS.js` runs its whole table against BOTH, so half of every case in
-    // it was a TypeError on a missing method rather than a comparison. "*"
-    // means any on either half, and - as with getElementsByTagName - the
-    // element is not one of its own results, which the file asserts by name.
+    // `element.getElementsByTagNameNS(namespace, localName)`, matching as the
+    // document's does: "*" means any on either half, and, as with
+    // getElementsByTagName, the element is not one of its own results.
     method(element, "getElementsByTagNameNS", 2, [this](context & c, std::span<value> args) {
         const node_id from = receiver(c);
         const std::string ns = namespace_argument(c, args, 0);
@@ -375,7 +347,7 @@ void dom_bindings::install_node_methods(context & cx) {
             const auto txn = doc_->read();
             const auto walk = [&](auto && self, node_id at, bool include) -> void {
                 if (include && txn.tag(at).has_value()) {
-                    // THE LOCAL NAME, not the qualified one: a prefix takes no
+                    // The local name, not the qualified one: a prefix takes no
                     // part in this match any more than it does in getAttributeNS.
                     const std::string_view name = atoms_->text(txn.tag(at).value_or(atom{}));
                     const std::size_t colon = name.find(':');
@@ -391,7 +363,7 @@ void dom_bindings::install_node_methods(context & cx) {
             return found;
         });
     });
-    // `element.getElementsByClassName(names)`, scoped to this subtree and LIVE
+    // `element.getElementsByClassName(names)`, scoped to this subtree and live
     // for the same reason the document's is - see make_live_collection. The
     // element is not one of its own results.
     method(element, "getElementsByClassName", 1, [this](context & c, std::span<value> args) {
@@ -401,20 +373,13 @@ void dom_bindings::install_node_methods(context & cx) {
             return from ? all_by_class(from, tokens) : std::vector<node_id>{};
         });
     });
-    // THE ParentNode AND ChildNode INSERTION METHODS, none of which existed.
-    //
-    // They are what modern code writes instead of appendChild/insertBefore, and
-    // they differ in two ways that matter: they take ANY NUMBER of arguments,
-    // and a STRING argument becomes a Text node - so `el.append("x", node)` is
-    // one call where the old spelling is three lines and a createTextNode. WPT
-    // reaches for them constantly, and so does every library written since 2016.
-    //
-    // EVERY ONE OF THEM IS "convert nodes into a node" AND THEN ONE INSERTION,
-    // which is the specification's shape and not a nicety: converting first is
-    // what moves the arguments out of the tree BEFORE the position is chosen,
-    // and one insertion is what runs the pre-insertion checks once - so
-    // `body.append(body)` is the HierarchyRequestError it must be rather than a
-    // cycle, which `ParentNode-append.html` asks for by name.
+    // The ParentNode and ChildNode insertion methods (append, prepend,
+    // replaceChildren, before, after, replaceWith). Each takes any number of
+    // arguments, turns strings into Text nodes, and follows the specification's
+    // shape: "convert nodes into a node" first, then one insertion. Converting
+    // first moves the arguments out of the tree before the position is chosen,
+    // and the single insertion runs the pre-insertion checks once, so
+    // `body.append(body)` is a HierarchyRequestError rather than a cycle.
     const auto parent_of = [this](node_id id) { return doc_->read().parent(id); };
     method(parent_node, "append", 0, [this](context & c, std::span<value> args) {
         const node_id self = receiver(c);
@@ -431,7 +396,7 @@ void dom_bindings::install_node_methods(context & cx) {
         if (!pre_insert_valid(c, self, node, value::null(), value::null())) {
             return value::undefined();
         }
-        // BEFORE THE FIRST CHILD, read AFTER the conversion: an argument that was
+        // Before the first child, read after the conversion: an argument that was
         // that first child has been moved into the fragment by now.
         node_id first;
         {
@@ -442,18 +407,16 @@ void dom_bindings::install_node_methods(context & cx) {
         (void)insert_node(self, node, first);
         return value::undefined();
     });
-    // `replaceChildren` - the third of the ParentNode mixin, and the one an
-    // element did not have. `document` has had it all along
-    // (bindings/document.cpp); an element and a ShadowRoot are where a page
-    // actually calls it, because "empty this and put those in it" is what
-    // rebuilding a list IS.
+    // `replaceChildren(...nodes)`: removes every child, then inserts the
+    // converted arguments. The Document's own copy is in
+    // bindings/document/as_node.cpp.
     method(parent_node, "replaceChildren", 0, [this](context & c, std::span<value> args) {
         const node_id self = receiver(c);
         const node_id node = convert_nodes(c, args);
         if (!pre_insert_valid(c, self, node, value::null(), value::null())) {
             return value::undefined();
         }
-        // COPIED BEFORE REMOVING: children() is a view onto the live child list
+        // Copied before removing: children() is a view onto the live child list
         // and each removal republishes it.
         std::vector<node_id> existing;
         std::vector<node_id> arriving;
@@ -466,47 +429,42 @@ void dom_bindings::install_node_methods(context & cx) {
                 arriving.push_back(node);
             }
         }
-        // ONE RECORD, naming every old child and every new one - "replace
-        // all" - which the diff after the fact could not tell from a move.
+        // One mutation record naming every old child and every new one ("replace
+        // all"), which the diff after the fact could not tell from a move.
         replace_all_ = replace_all_note{self, existing, arriving};
         for (const node_id child : existing) { (void)doc_->remove_child(child); }
         (void)insert_node(self, node, node_id{});
         return value::undefined();
     });
-    // --- shadow DOM: the two things an ELEMENT gains --------------------------
-    //
-    // `attachShadow` is on every wrapper rather than on Element.prototype for
-    // the reason every other method in this function is: this engine's methods
-    // are own properties of the wrapper. It refuses a receiver that is not an
-    // element, which is what keeps `shadowRoot.attachShadow` from building a
-    // second tree under a fragment.
+    // Shadow DOM. `attachShadow` is on Element.prototype; attach_shadow refuses
+    // a receiver that is not an element, which keeps
+    // `Element.prototype.attachShadow.call(fragment)` from building a second
+    // tree under a fragment.
     method(element, "attachShadow", 1, [this](context & c, std::span<value> args) {
         return attach_shadow(c, receiver(c), args);
     });
-    // `getRootNode(options)`, DOM 4.4. On every node, which is what
-    // `rootNode.html` asks of an element, a text node and a fragment in turn.
+    // `getRootNode(options)`, DOM 4.4, on every node.
     method(node, "getRootNode", 0, [this](context & c, std::span<value> args) {
         const node_id self = receiver(c);
         if (!self) { return value::undefined(); }
-        // `{composed: true}` KEEPS GOING through each shadow host; the default
-        // stops at the ShadowRoot, which is the whole point of the boundary.
+        // `{composed: true}` keeps going through each shadow host; the default
+        // stops at the ShadowRoot.
         bool composed = false;
         if (const value options = arg(args, 0); options.is_object()) {
             composed = context::truthy(c.lookup_property(options, "composed"));
         }
         const auto txn = doc_->read();
         const node_id top = root_of_tree(txn, self, composed);
-        // THE DOCUMENT IS NOT A WRAPPER. `document` is one object built by
-        // install_document, and `node.getRootNode() === document` is the
-        // assertion in four of `rootNode.html`'s five cases - so answering with
-        // a wrapper for the document node would fail every one of them.
+        // The document is not a wrapper: `document` is one object built by
+        // install_document, and `node.getRootNode() === document` must hold,
+        // so a connected node answers that object rather than a wrapper.
         if (is_document_root(txn, top)) { return document_; }
         return wrap(c, top);
     });
-    // THE ChildNode THREE, DOM 4.2.7 - each is: the viable sibling, THEN the
-    // conversion, THEN one insertion. `ChildNode-after.html` puts the very
-    // siblings that follow a node into its `after()` call and asserts they end
-    // up after it in argument order; the immediate sibling was one of them.
+    // ChildNode's before, after and replaceWith (DOM 4.2.7). Each finds the
+    // viable sibling (one that is not among the arguments) first, then converts,
+    // then inserts once, so `el.after(el.nextSibling, x)` still places the
+    // arguments after `el` in argument order.
     method(child_node, "before", 0, [this, parent_of](context & c, std::span<value> args) {
         const node_id self = receiver(c);
         const node_id parent = parent_of(self);
@@ -514,7 +472,7 @@ void dom_bindings::install_node_methods(context & cx) {
         const node_id previous = viable_sibling(self, args, false);
         const node_id node = convert_nodes(c, args);
         // "If viablePreviousSibling is null, set it to parent's first child;
-        // otherwise to viablePreviousSibling's next sibling" - read AFTER the
+        // otherwise to viablePreviousSibling's next sibling", read after the
         // conversion, which may have moved the old first child away.
         node_id reference;
         {
@@ -546,7 +504,7 @@ void dom_bindings::install_node_methods(context & cx) {
         if (!parent) { return value::undefined(); }
         const node_id next = viable_sibling(self, args, true);
         const node_id node = convert_nodes(c, args);
-        // "If this's parent is parent, replace this with node" - and it is NOT
+        // "If this's parent is parent, replace this with node". It is not
         // when this was among the arguments, because the conversion moved it
         // into the fragment; then node goes before the viable sibling instead.
         if (parent_of(self) == parent) {
@@ -563,16 +521,16 @@ void dom_bindings::install_node_methods(context & cx) {
         return value::undefined();
     });
     // `replaceChild(node, child)`, DOM 4.2.3 "replace": the pre-insertion
-    // checks with `child` as the reference - so a `child` that is not this
-    // node's is a NotFoundError - and then the swap. Replacing a node WITH
-    // ITSELF leaves it where it is, which `Node-replaceChild.html` asserts.
+    // checks with `child` as the reference (so a `child` that is not this
+    // node's is a NotFoundError), and then the swap. Replacing a node with
+    // itself leaves it where it is.
     method(node, "replaceChild", 2, [this, insertable](context & c, std::span<value> args) {
         const node_id parent = receiver(c);
         const value node_arg = arg(args, 0);
         const value child_arg = arg(args, 1);
         const node_id fresh = insertable(c, node_arg);
         const node_id stale = handle_of(child_arg);
-        // BOTH ARGUMENTS ARE `Node`, not `Node?`: null is a TypeError for either.
+        // Both arguments are `Node`, not `Node?`: null is a TypeError for either.
         // Another document's node is a Node; pre_insert_valid says what is
         // wrong with it, in the specification's order.
         if ((!fresh && !is_a_document(node_arg)) ||
@@ -582,10 +540,10 @@ void dom_bindings::install_node_methods(context & cx) {
         }
         if (!pre_insert_valid(c, parent, fresh, node_arg, child_arg)) { return value::undefined(); }
         // DOM 4.2.3 "replace", in the order its records come out: a node that
-        // is ALREADY a child of the parent is removed first, with a record of
-        // its own (step 8) - `replaceChild(x, x)` included, which goes out and
-        // comes back in the same place - and then the child is removed and
-        // the node inserted where it was, ONE record naming both (step 13).
+        // is already a child of the parent is removed first, with a record of
+        // its own (step 8), `replaceChild(x, x)` included, which goes out and
+        // comes back in the same place; then the child is removed and the node
+        // inserted where it was, one record naming both (step 13).
         const auto next_sibling = [this](node_id of) {
             const auto txn = doc_->read();
             const std::span<const node_id> kids = txn.children(txn.parent(of));
@@ -608,10 +566,10 @@ void dom_bindings::install_node_methods(context & cx) {
         (void)insert_node(parent, fresh, next);
         return child_arg;
     });
-    // `getElementById` ON A FRAGMENT - DOM 4.2.6 NonElementParentNode, on
+    // `getElementById` on a fragment (DOM 4.2.6 NonElementParentNode), on
     // DocumentFragment.prototype and so on a ShadowRoot and a <template>'s
     // contents. An id inside a shadow tree is scoped to that tree and
-    // `document.getElementById` must NOT find it; on a template's contents
+    // `document.getElementById` must not find it; on a template's contents
     // this is the only way to reach a node by id at all.
     method({"DocumentFragment"}, "getElementById", 1, [this](context & c, std::span<value> args) {
         const node_id root = receiver(c);
@@ -633,8 +591,8 @@ void dom_bindings::install_node_methods(context & cx) {
         walk(walk, root);
         return found ? wrap(c, found) : value::null();
     });
-    // `cloneNode(deep)` - a DETACHED copy, and without it there is no way at all
-    // to duplicate a template, which is how a page builds a list from one row.
+    // `cloneNode(deep)`: a detached copy of this node, and of its subtree when
+    // `deep` is true.
     method(node, "cloneNode", 0, [this](context & c, std::span<value> args) {
         const node_id self = receiver(c);
         if (!self) {
@@ -657,22 +615,19 @@ void dom_bindings::install_node_methods(context & cx) {
         }
         // [CEReactions]: DOM 4.4's clone runs "create an element" for every
         // element of the copy, which enqueues an upgrade for each candidate a
-        // definition covers - detached as the copy is.
+        // definition covers, even though the copy is detached.
         upgrade_created_subtree(made);
         return wrap(c, made);
     });
-    // `contains` INCLUDES THE NODE ITSELF, which is the part that is easy to get
-    // wrong: `el.contains(el)` is true in every browser.
-    // `lookupNamespaceURI`, `lookupPrefix` and `isDefaultNamespace`, DOM 4.4,
-    // on every node the wrapper is made for. The document had all three
-    // (bindings/document/as_node.cpp) and nothing else did, which left
-    // `Node-lookupPrefix.xhtml` nine TypeErrors out of eleven. Each is "run the
-    // element algorithm on THE element this node names": an element is its own,
-    // a Text or Comment names its parent element, a DocumentFragment names
-    // nothing - and the algorithms themselves are the document's, shared.
+    // `lookupNamespaceURI`, `lookupPrefix` and `isDefaultNamespace` (DOM 4.4) on
+    // every node, plus normalize and contains (namespace_methods.cpp). Each
+    // lookup runs the element algorithm on the element this node names (an
+    // element itself, a Text or Comment's parent element, nothing for a
+    // DocumentFragment). The algorithms are shared with the document's copies in
+    // bindings/document/as_node.cpp.
     install_node_namespaces(cx);
     method(node, "appendChild", 1, [this, insertable](context & c, std::span<value> args) {
-        // THROUGH insert_node, which is where a DocumentFragment is flattened:
+        // Through insert_node, which is where a DocumentFragment is flattened:
         // appending one must move its children and leave the fragment behind.
         const node_id parent = receiver(c);
         const node_id child = insertable(c, arg(args, 0));
@@ -682,19 +637,16 @@ void dom_bindings::install_node_methods(context & cx) {
         (void)insert_node(parent, child, node_id{});
         return arg(args, 0);
     });
-    // "If child's parent is not this, then throw a NotFoundError" - DOM
-    // §4.2.3. Removing a node from an element that is not its parent used to
-    // succeed and remove it from wherever it actually was, which is a silent
-    // corruption of the caller's tree rather than a refused operation.
+    // "If child's parent is not this, then throw a NotFoundError" (DOM 4.2.3).
+    // Without the check the node would be removed from wherever it actually is.
     method(node, "removeChild", 1, [this](context & c, std::span<value> args) {
         const node_id child = handle_of(arg(args, 0));
         const node_id parent = receiver(c);
         if (!child) {
-            // The document object is a Node with no handle - see
-            // pre_insert_valid - and it is nobody's child, so `s.removeChild
+            // The document object is a Node with no handle (see
+            // pre_insert_valid) and it is nobody's child, so `s.removeChild
             // (document)` is the NotFoundError below rather than a TypeError.
-            // So is a node of ANOTHER document: `Node-removeChild.html` hands
-            // this one a frame's and a synthetic document's nodes.
+            // So is a node of another document, such as a frame's.
             if (is_a_document(arg(args, 0)) || owner_of(arg(args, 0)) != nullptr) {
                 throw_dom_exception(c, "NotFoundError",
                                     "removeChild: the node is not a child of this one");
@@ -715,38 +667,29 @@ void dom_bindings::install_node_methods(context & cx) {
         mutated();
         return arg(args, 0);
     });
-    // `matches` and `closest`, THROUGH `element_matches` AND NOT THROUGH A
-    // DOCUMENT QUERY.
+    // `matches` and `closest` test one element with
+    // style::engine::element_matches, which builds that element's ancestor chain
+    // and runs the same matcher `select` uses. They do not search the document:
+    // a detached element is in no document, yet
+    // `document.createElement('div').matches('div')` must be true.
     //
-    // Both used to ask `query()` for every match in the tree and then look for
-    // this element in the answer, which is O(document) per call and - worse -
-    // is a different QUESTION. A detached element is in no document, so it was
-    // never in that list: `document.createElement('div').matches('div')` was
-    // false, and so was every `matches` a page ran on an element it had just
-    // built. `style::engine::element_matches` builds the ancestor chain of one
-    // element and runs the matcher over that, which is the same matcher
-    // `select` runs - so the three still cannot disagree about what a selector
-    // MEANS - and it was fixed for exactly the detached case in e00268b while
-    // nothing called it.
-    //
-    // The selector is PARSED PER CALL, as it is in `query`: a compiled_selector
-    // owns everything it holds, and a selector string is a handful of tokens.
+    // The selector is parsed per call, as in `query`: a compiled_selector owns
+    // everything it holds, and a selector string is a handful of tokens.
     const auto compiled = [this](context & c, std::span<value> args, bool & bad) {
         return style::css::parse_selector_text(arg_string(c, args, 0), *atoms_, bad);
     };
-    // `webkitMatchesSelector` IS `matches` under its legacy name - DOM 4.9
-    // defines it as an alias, and `Element-webkitMatchesSelector.html` runs
-    // the whole of `matches`' battery against it.
+    // `webkitMatchesSelector` is `matches` under its legacy name; DOM 4.9
+    // defines it as an alias.
     const script::native_fn matches = [this, compiled, needs_selector](context & c,
                                                                        std::span<value> args) {
         if (!needs_selector(c, args, "matches")) { return value::boolean(false); }
         const node_id self = receiver(c);
         bool bad = false;
         const style::css::stylesheet parsed = compiled(c, args, bad);
-        // "If s is not a valid selector, throw a SyntaxError" - DOM 4.9, and
-        // the same refusal shadowRoot.querySelector already makes. A selector
-        // that is valid CSS this engine cannot answer - `:has(.x)` - is not
-        // this, and matches nothing.
+        // "If s is not a valid selector, throw a SyntaxError" (DOM 4.9), the
+        // same refusal querySelector makes. A selector that is valid CSS this
+        // engine cannot answer, such as `:has(.x)`, is not invalid and matches
+        // nothing.
         if (bad) {
             throw_dom_exception(c, "SyntaxError",
                                 "matches: '" + arg_string(c, args, 0) +
@@ -776,21 +719,20 @@ void dom_bindings::install_node_methods(context & cx) {
                return wrap(c, selector_engine().closest(txn, self, parsed.selectors));
            });
 
-    // `isEqualNode` and `isSameNode` - so an element, a text node, a comment and
-    // a fragment all have them. The Document has its OWN pair as own properties
-    // (bindings/document/as_node.cpp) and those shadow these; with one document
-    // per page they can only agree.
+    // `isEqualNode` and `isSameNode` on Node.prototype. The Document has its own
+    // pair as own properties (bindings/document/as_node.cpp), which shadow
+    // these.
     method(node, "isEqualNode", 1, [this](context & c, std::span<value> args) {
         const node_id self = receiver(c);
-        // A NULL ARGUMENT IS NOT AN ERROR AND IS NOT EQUAL. The IDL is `Node?`,
+        // A null argument is not an error and is not equal. The IDL is `Node?`,
         // so `isEqualNode(null)` is a question with the answer false rather
         // than a TypeError.
         node_id other = handle_of(arg(args, 0));
         if (!self) { return value::boolean(false); }
-        // ANOTHER DOCUMENT'S NODE is compared the way the document's own
-        // isEqualNode compares two documents: cloned into this slab, deep,
-        // and left detached for collect(). `doc1.doctype.isEqualNode(doc2
-        // .doctype)` is Node-isEqualNode-xhtml.xhtml's two frames.
+        // Another document's node (e.g. `doc1.doctype.isEqualNode(
+        // doc2.doctype)`) is compared the way the document's own isEqualNode
+        // compares two documents: cloned deep into this document's slab and
+        // left detached for collect().
         if (!other) {
             dom_bindings * theirs = owner_of(arg(args, 0));
             if (theirs == nullptr || theirs == this) { return value::boolean(false); }
@@ -802,8 +744,7 @@ void dom_bindings::install_node_methods(context & cx) {
         return value::boolean(nodes_are_equal(txn, self, other));
     });
     method(node, "isSameNode", 1, [this](context & c, std::span<value> args) {
-        // IDENTITY, and nothing else: this is `===` with a name, and it is a
-        // separate method because `isEqualNode` is not.
+        // Identity and nothing else: this is `===` as a method.
         const node_id self = receiver(c);
         const node_id other = handle_of(arg(args, 0));
         // An Attr has no handle and is itself and nothing else.
@@ -817,10 +758,10 @@ void dom_bindings::install_node_methods(context & cx) {
         const node_id self = receiver(c);
         return value::boolean(self && !doc_->read().children(self).empty());
     });
-    // `compareDocumentPosition(other)`, DOM 4.4 - the bitmask, and the document
-    // has its own (as_node.cpp) because it is not a wrapper. Two nodes in
-    // different trees are DISCONNECTED and IMPLEMENTATION_SPECIFIC, with a
-    // direction that only has to be CONSISTENT: the packed handle orders them.
+    // `compareDocumentPosition(other)`, DOM 4.4: the position bitmask. The
+    // document has its own (as_node.cpp) because it is not a wrapper. Two nodes
+    // in different trees are DISCONNECTED and IMPLEMENTATION_SPECIFIC, with a
+    // direction that only has to be consistent: the packed handle orders them.
     method(node, "compareDocumentPosition", 1, [this](context & c, std::span<value> args) {
         constexpr unsigned disconnected = 0x01, preceding = 0x02, following = 0x04, contains = 0x08,
                            contained_by = 0x10, implementation_specific = 0x20;
@@ -830,7 +771,7 @@ void dom_bindings::install_node_methods(context & cx) {
         const auto txn = doc_->read();
         if (!other) {
             // The document object: it contains everything connected and is
-            // disconnected from the rest - and either way it comes first.
+            // disconnected from the rest, and either way it comes first.
             if (is_the_document(given) && self) {
                 const bool connected = is_document_root(txn, root_of_tree(txn, self, false));
                 return value::number(connected
@@ -844,7 +785,7 @@ void dom_bindings::install_node_methods(context & cx) {
             return value::undefined();
         }
         if (!self || self == other) { return value::number(0); }
-        // THE TREE AS THE DOM SEES IT: the walk goes through `dom_parent`, so
+        // The tree as the DOM sees it: the walk goes through `dom_parent`, so
         // the document element and a doctype beside it share the Document
         // node as their root rather than being two trees.
         const auto chain = [&txn](node_id from) {
@@ -880,10 +821,10 @@ void dom_bindings::install_node_methods(context & cx) {
         return value::number(disconnected | implementation_specific | following);
     });
 
-    // THE CONSTANTS, on Node.prototype AND on the Node interface object, which
-    // is where WebIDL puts a constant: `Node.ELEMENT_NODE` and
-    // `element.ELEMENT_NODE` are both 1, and `Node-constants.html` reads both.
-    // Enumerable, non-writable, non-configurable, as a constant is.
+    // The Node constants, on Node.prototype and on the Node interface object,
+    // which is where WebIDL puts a constant: `Node.ELEMENT_NODE` and
+    // `element.ELEMENT_NODE` are both 1. Enumerable, non-writable,
+    // non-configurable, as a constant is. Defined once per realm.
     if (secondary_) { return; }
     for (const auto & [name, bits] : node_constants) {
         if (auto * proto = prototype_object(interface_prototype("Node"))) {
@@ -894,14 +835,13 @@ void dom_bindings::install_node_methods(context & cx) {
                 ->define(name, value::number(bits), script::attr_enumerable);
         }
     }
-    // THE [Unscopable] MEMBERS, DOM 4.2.6 and 4.2.8: ParentNode's prepend,
+    // The [Unscopable] members, DOM 4.2.6 and 4.2.8: ParentNode's prepend,
     // append and replaceChildren, ChildNode's before, after, replaceWith and
-    // remove - each interface's prototype carries a null-prototype
-    // @@unscopables object naming the ones it has (WebIDL 3.7.9). What it is
-    // for is the event handler attribute: `onclick="remove()"` runs with the
-    // element in its scope chain (compile_handler_attribute), and `remove`
-    // there must be the page's global and not the element's method - which is
-    // remove-unscopable.html.
+    // remove. Each interface's prototype carries a null-prototype
+    // @@unscopables object naming the ones it has (WebIDL 3.7.9). It matters for
+    // event handler attributes: `onclick="remove()"` runs with the element in
+    // its scope chain (compile_handler_attribute), and `remove` there must be
+    // the page's global, not the element's method.
     const auto unscopable = [&](std::initializer_list<const char *> on,
                                 std::initializer_list<const char *> names) {
         for (const char * which : on) {
@@ -909,7 +849,7 @@ void dom_bindings::install_node_methods(context & cx) {
             if (proto == nullptr) { continue; }
             const value made = cx.make_object();
             auto * blocked = static_cast<script::object_object *>(made.as_heap());
-            blocked->prototype = value::undefined(); // an EXPLICIT null (object_object::prototype)
+            blocked->prototype = value::undefined(); // An explicit null (object_object::prototype).
             for (const char * name : names) { blocked->set(name, value::boolean(true)); }
             proto->define(CTBROWSER_SYMBOL_KEY("unscopables"), made, script::attr_configurable);
         }

@@ -1,15 +1,19 @@
-// `URL` and `URLSearchParams` - the URL Standard §6, as WebIDL-shaped bindings
-// over shell/net/url.hpp. Nothing here parses: a URL object is its serialised
-// record in a private slot and every getter re-parses it, every setter parses,
-// applies the §6.1 setter steps and serialises back. The record round-trips
-// through its serialisation by construction, URL parsing is on no profile, and
-// it is what keeps this file thin and the parser testable without a VM.
+//===- url.cpp - URL and URLSearchParams bindings ---------------*- C++ -*-===//
 //
-// A URLSearchParams is likewise a VIEW: attached to a URL it reads that URL's
+// `URL` and `URLSearchParams` (URL Standard §6) as WebIDL-shaped bindings over
+// shell/net/url.hpp. Nothing here parses: a URL object stores its serialised
+// href in a private slot, every getter re-parses it, and every setter parses,
+// applies the §6.1 setter steps and serialises back. A URL record round-trips
+// through its serialisation exactly, and re-parsing has never shown up in a
+// profile, so this keeps the file thin and the parser testable without a VM.
+//
+// A URLSearchParams is likewise a view. Attached to a URL, it reads that URL's
 // query on every call and writes it back (§6.2 "update steps"), so the two
-// cannot disagree and `url.search = ...` needs no hook to reach the params;
-// standalone it keeps its list as the serialised form, which
+// cannot disagree and `url.search = ...` needs no hook to reach the params.
+// Standalone, it keeps its list in serialised form, which
 // application/x-www-form-urlencoded round-trips exactly.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -26,9 +30,9 @@ namespace ctbrowser::shell {
 
 namespace {
 
-// The private slots - the device bindings/exceptions.cpp and the CSSOM use:
-// this engine has no internal-slot mechanism, so state lives under names no
-// author writes, non-enumerable and non-configurable.
+// Private slots, the same technique bindings/exceptions.cpp and the CSSOM
+// bindings use: the engine has no internal-slot mechanism, so state is stored
+// under property names no author writes, non-enumerable and non-configurable.
 constexpr std::string_view href_key = "__ctbrowser_url_href";
 constexpr std::string_view params_key = "__ctbrowser_url_params";
 constexpr std::string_view list_key = "__ctbrowser_params_list";
@@ -37,8 +41,9 @@ constexpr std::string_view iter_target_key = "__ctbrowser_params_iter";
 constexpr std::string_view iter_kind_key = "__ctbrowser_params_iter_kind";
 constexpr std::string_view iter_at_key = "__ctbrowser_params_iter_at";
 
-// The receiver, branded: `this` must carry the slot or the call is the
-// TypeError WebIDL gives a method invoked on the wrong kind of object.
+/// Returns `this` if it carries the private slot `slot`. Otherwise throws the
+/// TypeError WebIDL gives a method invoked on the wrong kind of object and
+/// returns null.
 [[nodiscard]] script::object_object * branded_this(context & c, std::string_view slot,
                                                    const char * interface) {
     script::object_object * self = object_of(c.current_this());
@@ -49,13 +54,14 @@ constexpr std::string_view iter_at_key = "__ctbrowser_params_iter_at";
     return self;
 }
 
-// WebIDL USVString: ToString, then lone surrogates to U+FFFD.
+/// Argument `i` as a WebIDL USVString: ToString, then lone surrogates to U+FFFD.
 [[nodiscard]] std::string usv_arg(context & c, std::span<value> a, std::size_t i) {
     return to_usv_string(c.to_string(i < a.size() ? a[i] : value::undefined()));
 }
 
 // --- URL: the record behind the slot ----------------------------------------------
 
+/// The URL record stored in a URL object's href slot (empty if none).
 [[nodiscard]] url_record url_of(script::object_object & self) {
     const value * held = self.find(href_key);
     if (held == nullptr || !held->is_string()) { return {}; }
@@ -63,12 +69,15 @@ constexpr std::string_view iter_at_key = "__ctbrowser_params_iter_at";
         .value_or(url_record{});
 }
 
+/// Serialises `url` into the URL object's href slot.
 void store_url(context & c, script::object_object & self, const url_record & url) {
     self.define(href_key, c.string(url.serialize()), script::attr_none);
 }
 
 // --- URLSearchParams: the list behind the slot ----------------------------------------
 
+/// The name-value list of a URLSearchParams: its owning URL's query if it is
+/// attached to one, else its own stored list.
 [[nodiscard]] form_pairs list_of(script::object_object & params) {
     if (const value * owner = params.find(owner_key); owner != nullptr) {
         if (script::object_object * url = object_of(*owner)) {
@@ -80,9 +89,10 @@ void store_url(context & c, script::object_object & self, const url_record & url
     return parse_form_urlencoded(static_cast<script::string_object *>(held->as_heap())->text);
 }
 
-// §6.2 "update steps": the serialised list back into the URL's query, or
-// null when it is empty - which is what makes deleting the last parameter
-// take the `?` with it.
+/// §6.2 "update steps": writes the serialised list back into the owning URL's
+/// query, or sets the query to null when the list is empty, which is what makes
+/// deleting the last parameter remove the `?` too. A standalone params object
+/// stores the list itself.
 void store_list(context & c, script::object_object & params, const form_pairs & list) {
     const std::string serialised = serialize_form_urlencoded(list);
     if (const value * owner = params.find(owner_key); owner != nullptr) {
@@ -96,7 +106,7 @@ void store_list(context & c, script::object_object & params, const form_pairs & 
     params.define(list_key, c.string(serialised), script::attr_none);
 }
 
-// One [name, value] pair as the array `entries()` yields.
+/// One [name, value] pair as the array `entries()` yields.
 [[nodiscard]] value pair_value(context & c, const std::pair<std::string, std::string> & pair) {
     const value out = c.make_array();
     auto * items = static_cast<script::array_object *>(out.as_heap());
@@ -107,12 +117,11 @@ void store_list(context & c, script::object_object & params, const form_pairs & 
 
 // --- URLSearchParams -------------------------------------------------------------
 
-// The iterator `entries()`, `keys()`, `values()` and `@@iterator` return: LIVE,
-// an index into the list re-read on every `next()`, which is what the standard's
-// value pair iterator is and what the suite's delete-during-iteration cases
-// ask. (for-of materialises through iterable_values first - docs/script.md -
-// so a mutation inside the loop body is seen by a hand-driven `next()` and not
-// by the loop; that is the VM's rule, written down there.)
+/// The iterator `entries()`, `keys()`, `values()` and `@@iterator` return. It
+/// is live: an index into the list, which is re-read on every `next()`, as the
+/// standard's value pair iterator requires. Note that for-of collects all values
+/// first through the VM's iterable_values (script/vm.hpp), so a mutation inside
+/// a for-of body is seen by a hand-driven `next()` but not by the loop.
 [[nodiscard]] value make_params_iterator(context & c, value params, const char * kind,
                                          value proto) {
     auto * made = c.allocate<script::object_object>();
@@ -123,6 +132,8 @@ void store_list(context & c, script::object_object & params, const form_pairs & 
     return value::object(made);
 }
 
+/// Builds the shared "URLSearchParams Iterator" prototype, inheriting from
+/// Iterator.prototype, whose `next()` drives the iterators above.
 [[nodiscard]] script::object_object * make_params_iterator_prototype(context & cx) {
     auto * proto = cx.allocate<script::object_object>();
     if (const value iterator = cx.global("Iterator"); iterator.is_object_like()) {
@@ -165,13 +176,14 @@ void store_list(context & c, script::object_object & params, const form_pairs & 
     return proto;
 }
 
+/// Installs the `URLSearchParams` global; its iterators use `iterator_proto`.
 void install_search_params(context & cx, const value iterator_proto) {
     const interface_pair made = make_interface(cx, "URLSearchParams");
     auto * ctor = made.ctor;
     // §6.2 "new URLSearchParams(init)": a sequence of pairs, a record, or a
-    // string with one leading `?` dropped - the WebIDL union, told apart the
-    // way WebIDL tells it: an object with @@iterator is the sequence, any
-    // other object the record, and everything else is stringified.
+    // string with one leading `?` dropped. The WebIDL union is resolved the
+    // way WebIDL does it: an object with @@iterator is the sequence, any other
+    // object the record, and everything else is stringified.
     ctor->fn = [ctor](context & c, std::span<value> a) {
         const value self_value = c.current_this();
         script::object_object * self = object_of(self_value);
@@ -187,7 +199,7 @@ void install_search_params(context & cx, const value iterator_proto) {
                 method.is_callable()) {
                 const value items = c.iterable_values(init);
                 if (c.throw_pending()) { return value::undefined(); }
-                // Rooted COPIES: iterable_values hands back the page's own
+                // Rooted copies: iterable_values hands back the page's own
                 // arrays, which a toString below can grow or shrink.
                 const std::vector<value> entries =
                     static_cast<script::array_object *>(items.as_heap())->items;
@@ -212,8 +224,8 @@ void install_search_params(context & cx, const value iterator_proto) {
                 return value::undefined();
             } else {
                 // WebIDL record<USVString, USVString>: the own enumerable string
-                // keys in order, each converted, a repeated converted key
-                // (two lone surrogates both becoming U+FFFD) updating in place.
+                // keys in order, each converted. A repeated converted key (two
+                // lone surrogates both becoming U+FFFD) updates in place.
                 const value keys = c.own_keys(init);
                 const context::rooted keep_keys{c, keys};
                 for (const value & key :
@@ -243,7 +255,7 @@ void install_search_params(context & cx, const value iterator_proto) {
         return self_value;
     };
 
-    // Each operation with its REQUIRED argument count, from §6.2's IDL.
+    // Each operation with its required argument count, from §6.2's IDL.
     const auto method = [&](const char * name, script::native_fn fn) {
         static constexpr std::pair<std::string_view, unsigned> required[] = {
             {"append", 2}, {"delete", 1}, {"get", 1},    {"getAll", 1},
@@ -331,8 +343,9 @@ void install_search_params(context & cx, const value iterator_proto) {
         script::object_object * self = branded_this(c, list_key, "URLSearchParams");
         if (self == nullptr) { return value::undefined(); }
         form_pairs list = list_of(*self);
-        // STABLE, by the names' UTF-16 code units, as §6.2 says - which is not
-        // byte order once a supplementary character meets one above U+E000.
+        // A stable sort by the names' UTF-16 code units, as §6.2 says. That
+        // is not UTF-8 byte order once a supplementary character meets one
+        // above U+E000.
         std::stable_sort(list.begin(), list.end(), [](const auto & x, const auto & y) {
             return wtf8_to_utf16(x.first) < wtf8_to_utf16(y.first);
         });
@@ -384,24 +397,22 @@ void install_search_params(context & cx, const value iterator_proto) {
     if (const value * entries = made.proto->find("entries"); entries != nullptr) {
         made.proto->define(CTBROWSER_SYMBOL_KEY("iterator"), *entries, script::attr_builtin);
     }
-    // THE ITERATOR PROTOTYPE IS A ROOT AND NOTHING ELSE POINTS AT IT. It lives
-    // in the `entries`/`keys`/`values` lambdas' C++ captures, which a precise
-    // collector cannot see (script::native_object::retained is the note), and
-    // nothing in the heap graph refers to it until the first iterator is made.
-    // So it was swept, `made->prototype` pointed at a reused cell, and every
-    // `for (x of params)` died with "iterator.next is not a function" - the
-    // whole of urlsearchparams-foreach and most of -constructor.
+    // Keep the iterator prototype alive. Only the C++ captures of the
+    // `entries`/`keys`/`values` lambdas refer to it, and the precise collector
+    // cannot see those (see the comment on script::native_object::retained).
+    // Without this root it is collected before the first iterator is made, and
+    // `for (x of params)` fails with "iterator.next is not a function".
     made.ctor->retained.push_back(iterator_proto);
 }
 
 // --- URL -----------------------------------------------------------------------------
 
-// The §6.1 getters and setters, one table: each reads the record and, for a
-// setter, runs the setter steps and stores the result.
+/// One row of the §6.1 getter/setter table: each getter reads the record, and
+/// each setter runs the setter steps and stores the result.
 struct url_attribute {
     const char * name;
     std::string (*get)(const url_record &);
-    std::optional<url_part> set; // nullopt: readonly (origin, searchParams)
+    std::optional<url_part> set; ///< nullopt: read-only (origin).
 };
 
 constexpr url_attribute url_attributes[] = {
@@ -427,13 +438,13 @@ script::native_object * install_url(context & cx) {
 
     const interface_pair made = make_interface(cx, "URL", {}, {}, 1);
     auto * ctor = made.ctor;
-    // Captured below, so retained here for the same reason: a page that deletes
-    // the `URLSearchParams` global must not take `new URL()`'s query object
-    // with it.
+    // Captured by the constructor below, so retained for the same reason as
+    // the iterator prototype: a page that deletes the `URLSearchParams` global
+    // must not take `new URL()`'s query object with it.
     ctor->retained.push_back(params_ctor);
     // §6.1 "new URL(url, base)": the base parsed first, then the URL against
     // it; either failing is a TypeError. `undefined` is the string "undefined"
-    // here - WebIDL's USVString conversion - which is why
+    // here (WebIDL's USVString conversion), which is why
     // `URL.canParse(undefined, "aaa:b")` is false and not a throw.
     ctor->fn = [ctor, params_ctor](context & c, std::span<value> a) {
         const value self_value = c.current_this();
@@ -458,15 +469,15 @@ script::native_object * install_url(context & cx) {
             return value::undefined();
         }
         store_url(c, *self, *url);
-        // The query object, made with the URL and attached to it: it reads
+        // The query object is made with the URL and attached to it: it reads
         // this URL's query and writes it back, so there is nothing to keep in
-        // step.
+        // sync.
         const value params = c.construct(params_ctor, {});
         if (c.throw_pending()) { return value::undefined(); }
         if (script::object_object * held = object_of(params)) {
             held->define(owner_key, self_value, script::attr_none);
             // The brand: every method checks for list_key, so an attached
-            // params carries it too - the value is unused.
+            // params object carries it too. The value is unused.
             held->define(list_key, value::undefined(), script::attr_none);
         }
         self->define(params_key, params, script::attr_none);
@@ -512,8 +523,8 @@ script::native_object * install_url(context & cx) {
             return c.string(url_of(*self).serialize());
         });
     }
-    // §6.1 `URL.parse` and `URL.canParse`: the constructor's answer without
-    // the throw - null, and false.
+    // §6.1 `URL.parse` and `URL.canParse`: the constructor's result without
+    // the throw; a failure is null and false respectively.
     const auto parses = [](context & c, std::span<value> a) -> std::optional<url_record> {
         std::optional<url_record> base;
         if (a.size() > 1 && !a[1].is_undefined()) {

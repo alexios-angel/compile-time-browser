@@ -1,5 +1,16 @@
-// dom_bindings - the 2D canvas context object, its gradients and patterns, and
-// the matrix getTransform hands back.
+//===- canvas.cpp - The 2D canvas context bindings --------------*- C++ -*-===//
+//
+// The CanvasRenderingContext2D object, its gradients and patterns, and the
+// DOMMatrix that getTransform returns. Following WebIDL (HTML 4.12.5.1), every
+// method and attribute lives on CanvasRenderingContext2D.prototype, and a
+// context object is an empty object linked to it that names its canvas under
+// a private key. The drawing state lives only in C++ (canvas_context::state).
+//
+// Attributes are accessors, not data properties, because an attribute must
+// reject invalid values ("ctx.lineWidth = -1" is ignored) and read back its
+// own serialisation ("#fa0" reads as "#ffaa00").
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/shell/bindings.hpp>
@@ -12,45 +23,36 @@
 #include <tuple>
 #include <unordered_map>
 
-// CanvasRenderingContext2D the WebIDL way (HTML 4.12.5.1): every method and
-// every attribute lives on CanvasRenderingContext2D.prototype, and a context
-// object is an empty object linked to it that names its canvas under a private
-// key. The STATE lives in C++ (canvas_context::state) and nowhere else.
-//
-// It used to be the other way round - each context an object with its own
-// copies of the methods, its state as plain data properties copied into C++
-// before every draw - and that could not be made right. An attribute has to
-// refuse a value ("ctx.lineWidth = -1" leaves the width alone, an unparsable
-// colour leaves the colour alone) and read back its own serialisation
-// ("#fa0" reads as "#ffaa00"), and a data property does neither: whatever was
-// assigned was what was read, and what was drawn was whatever parsed last.
-
 namespace ctbrowser::shell {
 
 using namespace canvas_detail;
 
 namespace {
 
-// On a context object: the key of its canvas's node.
+/// On a context object: the key of its canvas's node.
 constexpr std::string_view canvas_key = CTBROWSER_PRIVATE_KEY("ctbrowser:canvas2d");
-// On a canvas element's wrapper: its one 2D context - getContext('2d') twice
-// is the SAME object (4.12.5 step "return the same object").
+/// On a canvas element's wrapper: its one 2D context, since calling
+/// getContext('2d') twice returns the same object (HTML 4.12.5, step "return
+/// the same object").
 constexpr std::string_view context_cache_key = CTBROWSER_PRIVATE_KEY("ctbrowser:context2d");
-// On a context object: the CanvasGradient or CanvasPattern script objects the
-// fillStyle and strokeStyle of every level of the state stack hold, two slots
-// a level, so the getter hands back THE object that was assigned - after a
-// restore() too (4.12.5.1.10, "the respective object"). An array under a key
-// because the state that names them is C++, which the collector cannot see.
+/// On a context object: the CanvasGradient or CanvasPattern script objects
+/// held by fillStyle and strokeStyle at every level of the state stack, two
+/// slots per level, so the getter returns the very object that was assigned,
+/// even after a restore() (HTML 4.12.5.1.10, "the respective object"). They
+/// are kept in a script array because the state that names them is C++, which
+/// the collector cannot see.
 constexpr std::string_view styles_key = CTBROWSER_PRIVATE_KEY("ctbrowser:styles");
-// On CanvasRenderingContext2D.prototype: the other interfaces' prototypes,
-// which have to outlive a page deleting the globals that also hold them.
+/// On CanvasRenderingContext2D.prototype: the other interfaces' prototypes,
+/// which must outlive a page deleting the globals that also hold them.
 constexpr std::string_view gradient_proto_key = CTBROWSER_PRIVATE_KEY("ctbrowser:gradient-proto");
 constexpr std::string_view pattern_proto_key = CTBROWSER_PRIVATE_KEY("ctbrowser:pattern-proto");
 constexpr std::string_view metrics_proto_key = CTBROWSER_PRIVATE_KEY("ctbrowser:metrics-proto");
+/// On CanvasRenderingContext2D.prototype: marks that install_canvas_2d has
+/// already populated it.
 constexpr std::string_view installed_key = CTBROWSER_PRIVATE_KEY("ctbrowser:canvas2d-installed");
 
-// The style slots of the context `self`, grown to hold `levels` levels -
-// or, with `grow` false, whatever there is (nullptr for none yet).
+/// Returns the style slots of the context `self`, grown to hold `levels`
+/// levels; with `grow` false, whatever exists (nullptr when none yet).
 [[nodiscard]] std::vector<value> * style_slots(context & c, value self, std::size_t levels,
                                                bool grow) {
     if (!self.is_object()) { return nullptr; }
@@ -66,17 +68,18 @@ constexpr std::string_view installed_key = CTBROWSER_PRIVATE_KEY("ctbrowser:canv
     return &slots;
 }
 
-// arg_number as the float the canvas works in.
+/// arg_number as the float the canvas works in.
 [[nodiscard]] float number(std::span<value> args, std::size_t i) {
     return static_cast<float>(arg_number(args, i));
 }
 
+/// Maps a 0..1 channel to a byte, clamping out-of-range values.
 [[nodiscard]] std::uint8_t unit_byte(float v) {
     return static_cast<std::uint8_t>(std::lround(std::clamp(v, 0.0f, 1.0f) * 255.0f));
 }
 
-// A number as JavaScript would print it, for the attributes that read back as
-// CSS text (letterSpacing's "12px").
+/// Formats a number as JavaScript would print it, for the attributes that read
+/// back as CSS text (letterSpacing's "12px").
 [[nodiscard]] std::string number_text(double v) {
     if (v == std::trunc(v) && std::fabs(v) < 1e15) {
         return std::to_string(static_cast<long long>(v));
@@ -86,15 +89,17 @@ constexpr std::string_view installed_key = CTBROWSER_PRIVATE_KEY("ctbrowser:canv
     return ec == std::errc{} ? std::string{buffer, end} : std::string{"0"};
 }
 
-// A CSS COLOUR FOR THE CANVAS: the colour to draw with and the text its
-// attribute reads back as - HTML's "serialization of a color": a legacy sRGB
-// colour is `#rrggbb` when opaque and `rgba(r, g, b, a)` when not, and a colour
-// in any other space keeps its CSS computed form, `color(srgb 0.5 0 0.5)`.
-// `current` is what `currentcolor` means here.
+/// A CSS colour parsed for the canvas: the colour to draw with, and the text
+/// its attribute reads back as.
 struct parsed_color {
     color value;
     std::string text;
 };
+/// Parses a CSS colour for the canvas. The text follows HTML's "serialization
+/// of a color": a legacy sRGB colour is `#rrggbb` when opaque and
+/// `rgba(r, g, b, a)` when not, and a colour in any other space keeps its CSS
+/// computed form, `color(srgb 0.5 0 0.5)`. `current` is what `currentcolor`
+/// means here.
 [[nodiscard]] std::optional<parsed_color> parse_canvas_color(std::string_view text,
                                                              std::string_view current) {
     style::css::color_context ctx;
@@ -117,8 +122,8 @@ struct parsed_color {
     return out;
 }
 
-// The prototype-held interface objects: a constructor that refuses to be
-// called and a prototype that names it.
+/// Makes a canvas interface whose constructor refuses to be called, and
+/// returns its prototype.
 [[nodiscard]] script::object_object * canvas_interface(context & cx, const char * name) {
     const auto refuse = [name](context & c, std::span<value>) {
         c.throw_error("TypeError", std::string{"Illegal constructor: "} + name);
@@ -127,19 +132,21 @@ struct parsed_color {
     return make_interface(cx, name, refuse, {}, std::nullopt).proto;
 }
 
+/// Installs a WebIDL operation with `required` as its `length`.
 void canvas_operation(context & cx, script::object_object & proto, const std::string & name,
                       unsigned required, script::native_fn fn) {
     set_operation(cx, proto, name, required, std::move(fn));
 }
 
+/// Reads `holder[key]`, or undefined when `holder` is not an object.
 [[nodiscard]] value prototype_slot(value holder, std::string_view key) {
     if (!holder.is_object()) { return value::undefined(); }
     const value * slot = static_cast<script::object_object *>(holder.as_heap())->find(key);
     return slot == nullptr ? value::undefined() : *slot;
 }
 
-// A font-family list with its GENERIC keywords lowercased - `SERIF` is the
-// keyword serif, and serialises as one - and every other name as written.
+/// Lowercases the generic keywords of a font-family list (`SERIF` is the
+/// keyword serif and serialises as one) and keeps every other name as written.
 [[nodiscard]] std::string lower_generic_families(std::string_view list) {
     std::string out;
     std::size_t at = 0;
@@ -173,13 +180,14 @@ void canvas_operation(context & cx, script::object_object & proto, const std::st
     return out;
 }
 
-// THE CANVAS FONT (4.12.5.1.4): `font` parsed as the CSS shorthand - but
-// not a CSS-wide keyword or a var() - with its size converted to pixels, a
-// relative one against `base`, and the line height dropped. The answer is
-// the serialisation the attribute reads back, CSSOM's shorthand order with
-// the initial values left out: "italic small-caps 12px serif", never
-// "italic normal 400 12px/2 serif". Nullopt, and `s` untouched, for a font
-// that is refused.
+/// Applies a canvas `font` value to `s` (HTML 4.12.5.1.4). The value is parsed
+/// as the CSS shorthand, except that a CSS-wide keyword or a var() is refused;
+/// its size is converted to pixels (a relative one against `base`) and the
+/// line height is dropped. Returns the serialisation the attribute reads back,
+/// in CSSOM's shorthand order with initial values left out: "italic
+/// small-caps 12px serif", never "italic normal 400 12px/2 serif". Returns
+/// nullopt, leaving `s` untouched, for a refused font. `relative`, when given,
+/// reports whether the size depended on `base`.
 [[nodiscard]] std::optional<std::string> apply_font(canvas_context::state & s,
                                                     std::string_view font,
                                                     const std::function<float()> & base,
@@ -190,8 +198,8 @@ void canvas_operation(context & cx, script::object_object & proto, const std::st
         ascii_lower_copy(text).find("var(") != std::string::npos) {
         return std::nullopt;
     }
-    // The same reading a stylesheet's `font:` gets - set_declaration splits
-    // the shorthand into its longhands and refuses what is not one.
+    // Parse it as a stylesheet's `font:` is parsed: set_declaration splits the
+    // shorthand into its longhands and refuses an invalid value.
     style::css::declaration_block longhands;
     if (!style::css::set_declaration(longhands, "font", text, false)) { return std::nullopt; }
     std::string style = "normal";
@@ -218,8 +226,9 @@ void canvas_operation(context & cx, script::object_object & proto, const std::st
     }
     if (size_text.empty() || family.empty()) { return std::nullopt; }
 
-    // The size, in pixels. ponytail: the absolute keywords are the UA's
-    // medium-16px table and rem is 16px, not the root element's size.
+    // The size, in pixels. ponytail: the absolute keywords use a fixed table
+    // with medium = 16px, and rem is 16px rather than the root element's
+    // font size; read the root's computed size if a page needs it.
     static constexpr std::string_view keywords[] = {"xx-small", "x-small", "small",    "medium",
                                                     "large",    "x-large", "xx-large", "xxx-large"};
     static constexpr float keyword_px[] = {9, 10, 13, 16, 18, 24, 32, 48};
@@ -227,9 +236,9 @@ void canvas_operation(context & cx, script::object_object & proto, const std::st
     for (std::size_t i = 0; i < std::size(keywords); ++i) {
         if (size_text == keywords[i]) { px = keyword_px[i]; }
     }
-    // The base is ASKED FOR only by a relative size: it is the element's
-    // computed font size, and computing that flushes style - which a page
-    // setting `ctx.font = "16px Arial"` before every label must not pay for.
+    // Call `base` only for a relative size: it is the element's computed font
+    // size, and computing that flushes style, a cost a page setting
+    // `ctx.font = "16px Arial"` before every label should not pay.
     const bool is_relative = size_text == "larger" || size_text == "smaller" ||
                              size_text.ends_with('%') ||
                              (size_text.ends_with("em") && !size_text.ends_with("rem")) ||
@@ -246,8 +255,8 @@ void canvas_operation(context & cx, script::object_object & proto, const std::st
     if (!std::isfinite(px) || px < 0) { return std::nullopt; }
 
     s.font_size = px;
-    // The FIRST family, unquoted, is the face - what layout resolves a list
-    // to as well. A view of `family` itself, not of a temporary.
+    // The first family, unquoted, is the face, as layout also resolves a list.
+    // `list` views `family` itself, not a temporary.
     const std::string_view list = family;
     std::string_view first = trim(list.substr(0, list.find(',')), " \t");
     if (first.size() >= 2 && (first.front() == '"' || first.front() == '\'') &&
@@ -279,9 +288,9 @@ void canvas_operation(context & cx, script::object_object & proto, const std::st
     return out;
 }
 
-// THE FONT FIELDS of the state, which is all a parsed `font` sets - and all
-// the parse cache keeps. A whole state would hold its clip mask and its
-// patterns' bitmaps alive for as long as the cache holds the entry.
+/// The font fields of a canvas state: all that a parsed `font` sets, and all
+/// the font parse cache keeps. Caching a whole state would keep its clip mask
+/// and its patterns' bitmaps alive as long as the cache entry.
 struct canvas_font {
     float size = 10;
     std::string family;
@@ -308,12 +317,11 @@ struct canvas_font {
 
 } // namespace
 
-// A DOMMatrix: the six numbers a page reads, and the methods it composes with.
-//
-// Every method is IMMUTABLE - `inverse()`, `multiply()`, `translate()` and
-// `scale()` all return a new matrix - which is what the spec says for these
-// names, the mutating ones being `invertSelf`, `multiplySelf` and so on. Getting
-// that backwards would leave a page's base matrix quietly modified.
+/// Makes a DOMMatrix: the six numbers a page reads, and the methods it
+/// composes with. Every method returns a new matrix (`inverse()`,
+/// `multiply()`, `translate()`, `scale()`), as the spec says for these names;
+/// the mutating ones are `invertSelf`, `multiplySelf` and so on, which this
+/// does not provide.
 value dom_bindings::matrix_object(context & cx, const transform & t) {
     auto * out = cx.allocate<script::object_object>();
     out->set("a", value::number(t.a));
@@ -322,8 +330,8 @@ value dom_bindings::matrix_object(context & cx, const transform & t) {
     out->set("d", value::number(t.d));
     out->set("e", value::number(t.e));
     out->set("f", value::number(t.f));
-    // The aliases the CSS-facing half of the API uses for the same six numbers,
-    // and the rest of the 4x4 a 2D matrix leaves at the identity.
+    // The m-name aliases of the same six numbers, and the rest of the 4x4
+    // matrix, which a 2D matrix leaves at the identity.
     out->set("m11", value::number(t.a));
     out->set("m12", value::number(t.b));
     out->set("m13", value::number(0));
@@ -343,8 +351,8 @@ value dom_bindings::matrix_object(context & cx, const transform & t) {
     out->set("is2D", value::boolean(true));
     out->set("isIdentity",
              value::boolean(t.a == 1 && t.b == 0 && t.c == 0 && t.d == 1 && t.e == 0 && t.f == 0));
-    // Reads its operand back out of whatever object it was given, so a page can
-    // pass a DOMMatrix, a plain {a,b,c,d,e,f}, or the result of getTransform.
+    // Reads an operand from whatever object it was given, so a page can pass a
+    // DOMMatrix, a plain {a,b,c,d,e,f}, or the result of getTransform.
     const auto read = [](context & c, value v) {
         transform got;
         if (!v.is_object()) { return got; }
@@ -363,9 +371,11 @@ value dom_bindings::matrix_object(context & cx, const transform & t) {
     set_method(cx, *out, "inverse",
                [this, t](context & c, std::span<value>) { return matrix_object(c, t.inverse()); });
     set_method(cx, *out, "multiply", [this, t, read](context & c, std::span<value> a) {
-        // `A.multiply(B)` is B applied FIRST and then A, which is the order the
-        // spec's matrix product gives - and `then` here already composes that
-        // way round, so this is A.then(B) with the arguments as written.
+        // The spec's `A.multiply(B)` is the product A x B, which applies B first
+        // and then A, i.e. `read(B).then(t)`, since `x.then(y)` applies x
+        // first. This computes `t.then(B)`, which applies A first; the two
+        // differ when A and B do not commute (translate and scale below use
+        // the spec order).
         return matrix_object(c, t.then(read(c, arg(a, 0))));
     });
     set_method(cx, *out, "translate", [this, t](context & c, std::span<value> a) {
@@ -377,7 +387,7 @@ value dom_bindings::matrix_object(context & cx, const transform & t) {
         return matrix_object(c, transform::scaling(sx, sy).then(t));
     });
     set_method(cx, *out, "rotate", [this, t](context & c, std::span<value> a) {
-        // DEGREES, which is the one place this API does not use radians.
+        // The angle is in degrees, the one place this API does not use radians.
         const auto radians =
             static_cast<float>(static_cast<double>(number(a, 0)) * std::numbers::pi / 180.0);
         return matrix_object(c, transform::rotation(radians).then(t));
@@ -408,7 +418,7 @@ value dom_bindings::matrix_object(context & cx, const transform & t) {
 }
 
 value dom_bindings::canvas_context_object(context & cx, node_id id) {
-    // ONE context per canvas: the object is cached on the element's wrapper.
+    // One context per canvas: the object is cached on the element's wrapper.
     const value wrapper = wrap(cx, id);
     auto * holder =
         wrapper.is_object() ? static_cast<script::object_object *>(wrapper.as_heap()) : nullptr;
@@ -436,13 +446,13 @@ void dom_bindings::install_canvas_2d(context & cx) {
     };
     install_path2d(cx, throw_dom);
 
-    // `new DOMMatrix()` - and getTransform hands one back. p5's beginClip does
-    // `getTransform().inverse().multiply(other)`, so `inverse is undefined`
-    // was the whole of clip() not working.
+    // `new DOMMatrix()` and `new DOMMatrix([a, b, c, d, e, f])`. getTransform
+    // returns the same object shape; p5's beginClip relies on its inverse() and
+    // multiply().
     cx.define_native("DOMMatrix", [this](context & c, std::span<value> a) {
         transform t;
-        // `new DOMMatrix([a, b, c, d, e, f])`, which is the form a page that
-        // serialises one writes back.
+        // `new DOMMatrix([a, b, c, d, e, f])`, the form a page that serialises a
+        // matrix writes back.
         if (!a.empty() && a[0].is_array()) {
             const auto & items = static_cast<script::array_object *>(a[0].as_heap())->items;
             const auto at = [&](std::size_t i, float fallback) {
@@ -465,7 +475,7 @@ void dom_bindings::install_canvas_2d(context & cx) {
     proto.set(installed_key, value::boolean(true));
     // An interface object's `prototype` is { writable: false, enumerable:
     // false, configurable: false } (WebIDL 3.7.1): assigning or deleting it
-    // does nothing (2d.canvas.context.type.prototype).
+    // does nothing (WPT test 2d.canvas.context.type.prototype).
     if (const value ctor = cx.global("CanvasRenderingContext2D");
         ctor.is_kind(script::heap_kind::native)) {
         static_cast<script::native_object *>(ctor.as_heap())
@@ -505,11 +515,9 @@ void dom_bindings::install_canvas_2d(context & cx) {
                                : unpack(static_cast<std::uint64_t>(context::to_number(*slot)));
     };
 
-    // WHAT `currentcolor` IS for this canvas: the element's computed `color`,
-    // or black when it is not in a document (4.12.5.1.10).
-    // THE CANVAS ELEMENT'S COMPUTED `property`, or `fallback` when it is not
-    // in a document - what `currentcolor` and a relative font size resolve
-    // against (4.12.5.1.10, 4.12.5.1.4).
+    // The canvas element's computed `property`, or `fallback` when it is not
+    // in a document. `currentcolor` and a relative font size resolve against
+    // it (HTML 4.12.5.1.10, 4.12.5.1.4).
     const auto computed_of = [this](node_id id, std::string_view property,
                                     std::string fallback) -> std::string {
         bool connected = false;
@@ -533,8 +541,9 @@ void dom_bindings::install_canvas_2d(context & cx) {
     const auto current_color = [computed_of](node_id id) {
         return computed_of(id, "color", "rgb(0, 0, 0)");
     };
-    // Colours a page sets again and again - p5 assigns fillStyle before every
-    // shape - parse once. Anything that depends on the element is not cached.
+    // Parse each colour text once, since pages set the same colours repeatedly
+    // (p5 assigns fillStyle before every shape). Colours that depend on the
+    // element (currentcolor, light-dark(), contrast-color()) are not cached.
     auto cache = std::make_shared<std::unordered_map<std::string, parsed_color>>();
     const auto parse_color_for =
         [cache, current_color](node_id id,
@@ -566,8 +575,8 @@ void dom_bindings::install_canvas_2d(context & cx) {
               },
               {});
 
-    // A NUMBER ATTRIBUTE that ignores what it may not hold: `accept` says
-    // which values are stored, everything else leaves the state alone.
+    // A number attribute that ignores invalid values: `accept` says which
+    // values are stored; any other value leaves the state unchanged.
     const auto number_attribute = [&](const std::string & name,
                                       double canvas_context::state::* field,
                                       bool (*accept)(double)) {
@@ -602,8 +611,8 @@ void dom_bindings::install_canvas_2d(context & cx) {
     number_attribute("shadowBlur", &canvas_context::state::shadow_blur,
                      [](double v) { return std::isfinite(v) && v >= 0; });
 
-    // AN ENUMERATION ATTRIBUTE: a string outside the list is ignored, which
-    // is WebIDL's rule for an enum-typed attribute and the spec's for the
+    // An enumeration attribute: a string outside the list is ignored, which is
+    // WebIDL's rule for an enum-typed attribute and the spec's rule for the
     // DOMString ones with a fixed vocabulary.
     const auto keyword_attribute = [&](const std::string & name,
                                        std::string canvas_context::state::* field,
@@ -712,8 +721,9 @@ void dom_bindings::install_canvas_2d(context & cx) {
             }
             return value::undefined();
         });
-    // globalCompositeOperation: the spec's names EXACTLY - case-sensitive, no
-    // trailing NUL, no "darker" - and anything else is ignored.
+    // globalCompositeOperation accepts only the spec's exact names
+    // (case-sensitive, no trailing NUL, no legacy "darker"); anything else is
+    // ignored.
     attribute(
         "globalCompositeOperation",
         [target](context & c, std::span<value>) {
@@ -748,7 +758,7 @@ void dom_bindings::install_canvas_2d(context & cx) {
             canvas_context * canvas = target(c);
             if (canvas == nullptr || !arg(a, 0).is_string()) { return value::undefined(); }
             std::string v = c.to_string(arg(a, 0));
-            // A CSS-wide keyword is not a filter here (2d.filter.value).
+            // A CSS-wide keyword is not a filter here (WPT 2d.filter.value).
             if (ascii_iequals_any(trim(v, html_whitespace),
                                   {"inherit", "initial", "unset", "revert", "revert-layer"})) {
                 return value::undefined();
@@ -772,8 +782,8 @@ void dom_bindings::install_canvas_2d(context & cx) {
             const std::string v = c.to_string(arg(a, 0));
             if (c.throw_pending()) { return value::undefined(); }
             canvas_context::state & s = canvas->current();
-            // A page sets the same few fonts again and again - p5 before
-            // every text() - so an absolute one is parsed once.
+            // Pages set the same few fonts repeatedly (p5 before every
+            // text()), so a font with an absolute size is parsed only once.
             if (const auto hit = fonts->find(v); hit != fonts->end()) {
                 hit->second.apply(s);
                 return value::undefined();
@@ -839,7 +849,7 @@ void dom_bindings::install_canvas_2d(context & cx) {
 
     // fillStyle and strokeStyle: a colour, a CanvasGradient or a CanvasPattern.
     // Anything else is converted to a string (which may throw) and parsed as a
-    // CSS colour against the canvas; one that does not parse is IGNORED.
+    // CSS colour against the canvas; a value that does not parse is ignored.
     const auto style_attribute = [&](const std::string & name, bool fill) {
         const std::size_t which = fill ? 0 : 1;
         attribute(
@@ -865,8 +875,9 @@ void dom_bindings::install_canvas_2d(context & cx) {
                 if (paint.pattern && unbox<canvas_pattern>(held, pattern_key) == paint.pattern) {
                     return held;
                 }
-                // ...or, for a paint no script object was assigned for, one
-                // made now - and kept, so that the next read is the same.
+                // Otherwise no script object was assigned for this paint (or it
+                // was replaced): make one now and keep it, so the next read
+                // returns the same object.
                 auto * made = c.allocate<script::object_object>();
                 if (paint.gradient) {
                     made->prototype = value::object(gradient_proto);
@@ -940,9 +951,9 @@ void dom_bindings::install_canvas_2d(context & cx) {
 
     // --- the state ----------------------------------------------------------
 
-    // A method that needs the context and N numbers, and does nothing unless
-    // every one of them is finite - the spec's rule for every drawing and
-    // transform method taking `unrestricted double`s.
+    // A method that takes `count` numbers and does nothing unless all are
+    // finite: the spec's rule for every drawing and transform method taking
+    // `unrestricted double`s.
     const auto finite_op = [&](const std::string & name, unsigned count, auto body) {
         canvas_operation(
             cx, proto, name, count, [target, count, body](context & c, std::span<value> a) {
@@ -962,8 +973,9 @@ void dom_bindings::install_canvas_2d(context & cx) {
             return value::undefined();
         });
     };
-    // save(), restore() and reset() move the style slots with the state: a
-    // saved level's objects are copied up with it, and a popped level's go.
+    // save(), restore() and reset() keep the style slots in step with the
+    // state stack: save() copies the current level's objects to the new level,
+    // and restore() or reset() drops the popped levels' objects.
     canvas_operation(cx, proto, "save", 0, [target](context & c, std::span<value>) {
         canvas_context * canvas = target(c);
         if (canvas == nullptr) { return value::undefined(); }
@@ -999,10 +1011,10 @@ void dom_bindings::install_canvas_2d(context & cx) {
         if (target(c) == nullptr && c.throw_pending()) { return value::undefined(); }
         return value::boolean(false);
     });
-    // getContextAttributes(): the settings the context was made with, a new
-    // dictionary each call. ponytail: they are REPORTED, not all honoured -
-    // `alpha: false` and the wide-gamut colour spaces still draw an sRGB
-    // canvas with alpha.
+    // getContextAttributes(): the settings the context was made with, as a new
+    // dictionary each call. ponytail: the settings are reported but not all
+    // honoured; `alpha: false` and the wide-gamut colour spaces still draw an
+    // sRGB canvas with alpha. Honouring them needs support in canvas_context.
     canvas_operation(cx, proto, "getContextAttributes", 0, [target](context & c, std::span<value>) {
         if (target(c) == nullptr) { return value::undefined(); }
         const value settings = prototype_slot(c.current_this(), settings_key);
@@ -1037,8 +1049,8 @@ void dom_bindings::install_canvas_2d(context & cx) {
     finite_op("transform", 6, [f](canvas_context & canvas, const std::array<double, 9> & v) {
         canvas.multiply_transform(transform{f(v[0]), f(v[1]), f(v[2]), f(v[3]), f(v[4]), f(v[5])});
     });
-    // setTransform(a, b, c, d, e, f) REPLACES the matrix; setTransform(init)
-    // takes a DOMMatrix2DInit, and setTransform() is the identity.
+    // setTransform(a, b, c, d, e, f) replaces the matrix; setTransform(init)
+    // takes a DOMMatrix2DInit, and setTransform() sets the identity.
     canvas_operation(cx, proto, "setTransform", 0, [target, f](context & c, std::span<value> a) {
         canvas_context * canvas = target(c);
         if (canvas == nullptr) { return value::undefined(); }
@@ -1095,9 +1107,9 @@ void dom_bindings::install_canvas_2d(context & cx) {
         c.throw_error("TypeError", "'" + text + "' is not a valid CanvasFillRule");
         return std::nullopt;
     };
-    // The overloads `f(rule)` and `f(path, rule)`: the path, replayed through
-    // the current transform, or the current default path - which a Path2D
-    // does NOT replace.
+    // The overloads `f(rule)` and `f(path, rule)`: a Path2D is replayed through
+    // the current transform into a temporary path, which does not replace the
+    // context's current default path; without one, the default path is used.
     const auto with_path = [target, fill_rule_of](auto body) {
         return [target, fill_rule_of, body](context & c, std::span<value> a) {
             canvas_context * canvas = target(c);
@@ -1139,8 +1151,8 @@ void dom_bindings::install_canvas_2d(context & cx) {
         return value::undefined();
     });
     // isPointInPath(x, y, rule) / isPointInPath(path, x, y, rule): the point
-    // is in canvas pixels, untransformed; the path is the one that WOULD be
-    // filled.
+    // is in canvas pixels, untransformed; the path is the one that fill() would
+    // fill.
     canvas_operation(
         cx, proto, "isPointInPath", 2, [target, fill_rule_of](context & c, std::span<value> a) {
             canvas_context * canvas = target(c);
@@ -1180,9 +1192,9 @@ void dom_bindings::install_canvas_2d(context & cx) {
         replay(*recording, path, canvas->current_transform());
         return value::boolean(canvas->is_point_in_stroke(path, p[0], p[1]));
     });
-    // drawFocusIfNeeded(element) / (path, element): the element has to be an
-    // Element, and the ring is drawn only when it is FOCUSED and is the
-    // canvas's own fallback content - a descendant of the canvas.
+    // drawFocusIfNeeded(element) / (path, element): the argument must be an
+    // Element, and the ring is drawn only when that element is focused and is
+    // the canvas's own fallback content, i.e. a descendant of the canvas.
     canvas_operation(
         cx, proto, "drawFocusIfNeeded", 1,
         [this, target, canvas_of](context & c, std::span<value> a) {
@@ -1217,8 +1229,9 @@ void dom_bindings::install_canvas_2d(context & cx) {
             return value::undefined();
         });
 
-    // setLineDash(segments): every entry finite and not negative, or the call
-    // does nothing; an odd list is doubled. getLineDash hands back a copy.
+    // setLineDash(segments): every entry must be finite and non-negative, or
+    // the call does nothing; an odd-length list is doubled. getLineDash
+    // returns a copy.
     canvas_operation(cx, proto, "setLineDash", 1, [target](context & c, std::span<value> a) {
         canvas_context * canvas = target(c);
         if (canvas == nullptr) { return value::undefined(); }
@@ -1355,9 +1368,9 @@ void dom_bindings::install_canvas_2d(context & cx) {
         return value::undefined();
     });
 
-    // A CanvasImageSource's pixels, or why there are none: a TypeError for
-    // what is not an image source at all, an InvalidStateError for a canvas
-    // with no area or an image that is broken. nullptr with nothing thrown
+    // Returns a CanvasImageSource's pixels, or throws why there are none: a
+    // TypeError for a value that is not an image source, an InvalidStateError
+    // for a canvas with no area or a broken image. nullptr with nothing thrown
     // means "draw nothing".
     const auto image_source = [this, throw_dom](context & c,
                                                 value v) -> std::shared_ptr<const paint::bitmap> {
@@ -1390,21 +1403,22 @@ void dom_bindings::install_canvas_2d(context & cx) {
         }
         if (tag == "img" || tag == "image") {
             // An image with no source to fetch is not broken, merely not
-            // available: it draws nothing and makes no pattern
-            // (2d.pattern.image.incomplete.*). One whose fetch or decode
-            // FAILED is broken, and that is the InvalidStateError.
+            // available: it draws nothing and makes no pattern (WPT
+            // 2d.pattern.image.incomplete.*). One whose fetch or decode failed
+            // is broken, which is the InvalidStateError.
             {
                 const auto txn = doc_->read();
                 const std::string_view src =
                     trim(txn.attribute_value(id, atoms_->intern("src")), html_whitespace);
                 if (src.empty()) { return nullptr; }
             }
-            // The pixels are available the moment `src` is set - this engine
-            // decodes synchronously, which is why `img.complete` is already
-            // true - so an image that decodes draws, load event or not. One
-            // that does not is broken only once its load has been
-            // delivered: while that is still queued it is merely not yet
-            // "fully decodable", and draws nothing (2d.drawImage.incomplete.*).
+            // This engine decodes synchronously, so the pixels are available
+            // as soon as `src` is set (which is also why `img.complete` is
+            // already true), and an image that decodes draws whether or not
+            // its load event has fired. One that does not decode is broken
+            // only once its load has been delivered; while that is still
+            // queued it is merely not yet "fully decodable" and draws nothing
+            // (WPT 2d.drawImage.incomplete.*).
             const auto pixels = image_argument(v);
             if (pixels) { return pixels; }
             for (const pending_image & loading : image_loads_) {
@@ -1428,8 +1442,9 @@ void dom_bindings::install_canvas_2d(context & cx) {
             const std::string repetition =
                 repetition_value.is_null() ? std::string{} : c.to_string(repetition_value);
             if (c.throw_pending()) { return value::undefined(); }
-            // The image's usability first: one that is not ready makes no
-            // pattern, whatever the repetition says (4.12.5.1.10 steps 1-2).
+            // Check the image's usability first: one that is not ready makes no
+            // pattern, whatever the repetition says (HTML 4.12.5.1.10 steps
+            // 1-2).
             if (!pixels || pixels->empty()) { return value::null(); }
             auto pattern = std::make_shared<canvas_pattern>();
             if (repetition == "repeat-x") {
@@ -1443,8 +1458,8 @@ void dom_bindings::install_canvas_2d(context & cx) {
                           "createPattern: '" + repetition + "' is not a repetition");
                 return value::undefined();
             }
-            // A SNAPSHOT: drawing on a source canvas afterwards does not
-            // change a pattern already made from it.
+            // Copy the pixels so that drawing on a source canvas afterwards does
+            // not change a pattern already made from it.
             pattern->image = std::make_shared<const paint::bitmap>(*pixels);
             auto * made = c.allocate<script::object_object>();
             made->prototype = value::object(pattern_proto);
@@ -1453,7 +1468,7 @@ void dom_bindings::install_canvas_2d(context & cx) {
         });
 
     // drawImage(image, dx, dy), (image, dx, dy, dw, dh) or (image, sx, sy,
-    // sw, sh, dx, dy, dw, dh). Any other count is no overload at all.
+    // sw, sh, dx, dy, dw, dh). Any other argument count matches no overload.
     canvas_operation(
         cx, proto, "drawImage", 3, [target, image_source](context & c, std::span<value> a) {
             canvas_context * canvas = target(c);
@@ -1489,10 +1504,10 @@ void dom_bindings::install_canvas_2d(context & cx) {
 
     // --- text -------------------------------------------------------------------
 
-    // fillText and strokeText(text, x, y [, maxWidth]): nothing for a
-    // non-finite coordinate, or a maxWidth that is not positive. An undefined
-    // maxWidth is a MISSING one (WebIDL, an optional argument with no
-    // default) - Chart.js passes `opts.maxWidth` on every label, and it is
+    // fillText and strokeText(text, x, y [, maxWidth]) do nothing for a
+    // non-finite coordinate or a maxWidth that is not positive. An undefined
+    // maxWidth counts as missing (WebIDL: an optional argument with no
+    // default); Chart.js passes `opts.maxWidth` on every label, and it is
     // usually undefined.
     const auto text_op = [&](const std::string & name, bool stroke) {
         canvas_operation(cx, proto, name, 3, [target, stroke](context & c, std::span<value> a) {
@@ -1518,9 +1533,9 @@ void dom_bindings::install_canvas_2d(context & cx) {
     };
     text_op("fillText", false);
     text_op("strokeText", true);
-    // measureText: the advance and the box, both from the object that draws
-    // (see docs/raster.md). p5.js measures a line as actualBoundingBoxLeft +
-    // actualBoundingBoxRight, so the box is not optional.
+    // measureText: the advance width and the bounding box, both from the same
+    // code that draws text (see docs/raster.md). p5.js measures a line as
+    // actualBoundingBoxLeft + actualBoundingBoxRight, so the box is required.
     canvas_operation(
         cx, proto, "measureText", 1, [target, metrics_proto](context & c, std::span<value> a) {
             canvas_context * canvas = target(c);
@@ -1532,9 +1547,9 @@ void dom_bindings::install_canvas_2d(context & cx) {
             const canvas_context::state & s = canvas->current();
             const double width = static_cast<double>(canvas->measure_text(text));
             metrics->set("width", value::number(width));
-            // The box is measured from the ALIGNMENT POINT, so which side of it the
-            // run falls on depends on textAlign. That keeps left + right equal to
-            // the width whatever the alignment is.
+            // The box is measured from the alignment point, so which side of it
+            // the run falls on depends on textAlign; left + right always equals
+            // the width.
             const bool rtl = s.direction == "rtl";
             double left = 0;
             if (s.text_align == "center") {
@@ -1545,8 +1560,9 @@ void dom_bindings::install_canvas_2d(context & cx) {
             }
             metrics->set("actualBoundingBoxLeft", value::number(left));
             metrics->set("actualBoundingBoxRight", value::number(width - left));
-            // The font's metrics stand in for the glyphs' own extents - an
-            // over-estimate for a run with no ascenders, which is the safe side.
+            // The font's ascent and descent stand in for the glyphs' own
+            // extents: an over-estimate for a run with no ascenders, which is
+            // the safe side.
             const auto & backend = canvas->fonts();
             const auto ascent = static_cast<double>(
                 backend.ascent(s.font_size, s.font_family, s.font_bold, s.font_italic));
@@ -1567,10 +1583,10 @@ void dom_bindings::install_canvas_2d(context & cx) {
     // --- the pixels, as bytes
     //
     // getImageData/putImageData are how a page reads what it drew and writes
-    // back something it computed - every filter, every colour pick, every
-    // `pixels[]` loop in p5.js. The buffer is RGBA bytes in that order, which
-    // is NOT the engine's packed ARGB, so both directions unpack rather than
-    // memcpy: getting that wrong swaps red and blue and looks almost right.
+    // back something it computed (filters, colour picking, p5.js `pixels[]`
+    // loops). The buffer is RGBA bytes in that order, which is not the
+    // engine's packed ARGB, so both directions convert per channel rather than
+    // copying memory; getting that wrong swaps red and blue.
     canvas_operation(
         cx, proto, "createImageData", 1, [this, target](context & c, std::span<value> a) {
             if (target(c) == nullptr && c.throw_pending()) { return value::undefined(); }
@@ -1633,8 +1649,8 @@ void dom_bindings::install_canvas_2d(context & cx) {
         return out;
     });
     // putImageData(data, dx, dy [, dirtyX, dirtyY, dirtyWidth, dirtyHeight]):
-    // a direct write that ignores the transform, clip, globalAlpha and the
-    // operator, of the dirty rectangle clipped to the data (4.12.5.1.19).
+    // writes the dirty rectangle, clipped to the data, directly, ignoring the
+    // transform, clip, globalAlpha and composite operator (HTML 4.12.5.1.19).
     canvas_operation(cx, proto, "putImageData", 3, [this, target](context & c, std::span<value> a) {
         canvas_context * canvas = target(c);
         if (canvas == nullptr) { return value::undefined(); }
@@ -1642,11 +1658,11 @@ void dom_bindings::install_canvas_2d(context & cx) {
             c.throw_error("TypeError", "putImageData: 3 or 7 arguments required");
             return value::undefined();
         }
-        // AN ImageData, and not merely something shaped like one: WebIDL
-        // converts the argument to the interface, and a plain {width, height,
-        // data} is a TypeError (2d.imageData.put.wrongtype). The brand every
-        // real one carries, so a subclass instance passes and a page that
-        // reassigns `window.ImageData` changes nothing.
+        // The argument must be a real ImageData, not just an object shaped like
+        // one: WebIDL converts it to the interface, so a plain {width, height,
+        // data} is a TypeError (WPT 2d.imageData.put.wrongtype). The check uses
+        // the private brand every real ImageData carries, so a subclass
+        // instance passes and reassigning `window.ImageData` has no effect.
         if (a.empty() || !a[0].is_object() ||
             static_cast<script::object_object *>(a[0].as_heap())->find(detail::image_data_brand) ==
                 nullptr) {
@@ -1733,6 +1749,8 @@ void dom_bindings::install_canvas_2d(context & cx) {
     });
 }
 
+// Applies `font` with relative sizes resolved against the 10px default, for
+// callers that have no element to resolve against.
 bool dom_bindings::apply_canvas_font(canvas_context & canvas, std::string_view font) {
     if (const auto serialized = apply_font(canvas.current(), font, [] { return 10.0f; })) {
         canvas.current().font_spec = *serialized;

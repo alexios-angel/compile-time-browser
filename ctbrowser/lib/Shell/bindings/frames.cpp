@@ -1,58 +1,54 @@
-// dom_bindings - `<iframe>`, which is to say a NESTED BROWSING CONTEXT.
+//===- frames.cpp - <iframe> documents and windows --------------*- C++ -*-===//
 //
-// WHY THIS IS ONE FILE AND NOT A PROJECT. A second Document already exists here
-// - `document.implementation.createHTMLDocument()` returns one, and the block
-// above `adopt_interfaces_of` in bindings/document/second_document.cpp is the
-// model: a second
-// `dom_bindings` over its own tree, sharing the atom table, the script context
-// and the interface objects with the page's own. A frame is that same second
-// document with two things added, and both of them are small:
+// dom_bindings' `<iframe>` support: a nested browsing context.
 //
-//   * THE BYTES. `src` is resolved through the asset registry, which is where
-//     every other subresource on the page comes from - so a frame loads from
-//     the document root a server would have been serving and opens no socket
-//     of its own. `tools/wpt/run-wpt.py` sets that root; nothing else does.
-//   * THE EVENT. `load` fires at the `<iframe>` on a LATER turn, drained by the
-//     event loop beside the image loads, because
-//     `document.body.appendChild(frame)` is followed by `frame.onload = f`
-//     often enough that firing from the insertion would fire at nothing -
-//     EXCEPT for a frame inserted with no `src`, whose about:blank fires its
+// A second Document already exists here: createHTMLDocument() returns one,
+// and the block above `adopt_interfaces_of` in
+// bindings/document/second_document.cpp is the model, a second `dom_bindings`
+// over its own tree that shares the atom table, the script context and the
+// interface objects with the page's own. A frame is that same second document
+// with three things added:
+//
+//   * Its bytes. The embedder's request handler is asked first, then `src` is
+//     resolved through the asset registry, which is where every other
+//     subresource on the page comes from, so a frame loads from the document
+//     root a server would have been serving and opens no socket of its own.
+//     `tools/wpt/run-wpt.py` sets that root; nothing else does.
+//   * Its event. `load` fires at the `<iframe>` on a later turn, drained by
+//     the event loop beside the image loads, because
+//     `document.body.appendChild(frame)` is often followed by
+//     `frame.onload = f`, and firing from the insertion would fire at nothing.
+//     The exception is a frame inserted with no `src`: its about:blank fires
 //     `load` during the insertion, as HTML's insertion steps say, and so at
-//     nothing listening yet (connect_blank_frame).
+//     nothing listening yet (connect_blank_frame). Frames are reconciled
+//     before the window's `load` rather than with the timers after it, so a
+//     window `load` handler can read `frame.contentDocument`
+//     (Document-createElement.html).
+//   * Its scripts. The frame runs them in a realm of its own
+//     (install_frame_realm): its `var`s are its own, its functions read its
+//     `document` whoever calls them, and its window hears its `load` before
+//     the <iframe>'s own.
 //
-// WHAT IT IS MEASURED AGAINST. Thirty-two `dom/nodes` files timed out at 10 or
-// 60 seconds each waiting for an iframe's `load` that could never come, and
-// thirteen of them are `Document-contentType/contentType/*`, each one async_test
-// asserting `iframe.contentDocument.contentType`. `Document-createElement.html`
-// is 98 subtests that read `xmlIframe.contentDocument` inside a `window` `load`
-// handler, which is why the reconcile below runs BEFORE that event rather than
-// with the timers after it.
+// Deliberately not here:
 //
-// AND A THIRD, SINCE 2026-09-25: THE FRAME RUNS ITS OWN SCRIPTS, in a realm
-// of its own (install_frame_realm) - its `var`s are its own, its functions
-// read its `document` whoever calls them, and its window hears its `load`
-// before the <iframe>'s own. dom/ranges drives its Range-*Contents cases
-// through a frame's `run()`, and until the frame could define one every case
-// was "`run` is undefined".
-//
-// WHAT IS DELIBERATELY NOT HERE, named rather than left to be discovered:
-//
-//   * THE INTRINSICS ARE SHARED. A frame's realm has its own bindings but the
-//     page's constructors, so `frame.contentWindow.Element === window.Element`
-//     where a browser has two. Every test that turns on cross-realm identity
-//     of a prototype still fails.
-//   * NO HISTORY. A frame is loaded once per source - its `srcdoc`, else its
-//     `src` - and NAVIGATED by a form submission, its Location's setters or
-//     window.open() (the planned navigations below); there is no session
-//     history to go back through, and a navigation makes a new window where a
-//     browser keeps one WindowProxy per navigable.
-//   * NO PARSER-TIME SCRIPTS. The frame's document is parsed whole and its
+//   * Separate intrinsics. A frame's realm has its own bindings but the page's
+//     constructors, so `frame.contentWindow.Element === window.Element` where
+//     a browser has two. Every test that depends on cross-realm identity of a
+//     prototype still fails.
+//   * Session history. A frame is loaded once per source (its `srcdoc`, else
+//     its `src`) and navigated by a form submission, its Location's setters or
+//     window.open() (the planned navigations below); there is no history to go
+//     back through, and a navigation makes a new window where a browser keeps
+//     one WindowProxy per navigable.
+//   * Parser-time scripts. The frame's document is parsed whole and its
 //     classic scripts run afterwards in tree order, as an XHTML page's do; a
 //     `document.write` from one of them writes into a finished document.
-//   * A FRAME PAINTS AS AN EMPTY BOX. This is the DOM half of an iframe; the
-//     frame's document IS laid out, at the size its box got, by the browser
-//     (browser/nested.cpp) so that what a script measures inside it is about
-//     the frame - but nothing draws that layout into the page's.
+//   * Painting. A frame paints as an empty box. The frame's document is laid
+//     out, at the size its box got, by the browser (browser/nested.cpp), so
+//     what a script measures inside it is about the frame, but nothing draws
+//     that layout into the page's.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/script/compile.hpp>
@@ -75,9 +71,8 @@ namespace ctbrowser::shell {
 
 namespace {
 
-// The markup a document gets when the bytes are not markup. HTML 7.5 gives a
-// plain-text resource a document whose body is one `<pre>`; anything else this
-// engine cannot display gets an empty one rather than a lie about its content.
+/// `text` with `&`, `<` and `>` escaped, for wrapping a plain-text resource in
+/// the one `<pre>` HTML 7.5 gives its document.
 [[nodiscard]] std::string escaped(std::string_view text) {
     std::string out;
     out.reserve(text.size());
@@ -92,6 +87,8 @@ namespace {
     return out;
 }
 
+/// The extension of `path`'s last segment, without the dot, ignoring any query
+/// or fragment; empty when there is none.
 [[nodiscard]] std::string_view extension_of(std::string_view path) {
     // The query and the fragment are not part of the name on disk, and the
     // registry has already been asked with them on: this is only about which
@@ -105,16 +102,17 @@ namespace {
     return path.substr(dot + 1);
 }
 
-// An <iframe srcdoc>'s source, as the frame tables key it: the markup behind a
-// prefix no URL can spell, so a changed srcdoc re-navigates as a changed src
-// does (frame_source).
+/// An <iframe srcdoc>'s source, as the frame tables key it: the markup behind a
+/// prefix no URL can spell, so a changed srcdoc re-navigates as a changed src
+/// does (frame_source).
 constexpr std::string_view srcdoc_key{"\0srcdoc:", 8};
-// ...and the markup a `javascript:` URL's string result is (run_planned_navigations).
+/// The same kind of prefix for the markup a `javascript:` URL's string result
+/// becomes (run_planned_navigations).
 constexpr std::string_view markup_key{"\0markup:", 8};
 
-// A frame source that is a `javascript:` URL: the scheme, ASCII
-// case-insensitively, after the leading C0 controls and spaces the URL parser
-// strips.
+/// Whether a frame source is a `javascript:` URL: the scheme, ASCII
+/// case-insensitively, after the leading C0 controls and spaces the URL parser
+/// strips.
 [[nodiscard]] bool is_javascript_url(std::string_view source) {
     while (!source.empty() && static_cast<unsigned char>(source.front()) <= 0x20) {
         source.remove_prefix(1);
@@ -122,8 +120,8 @@ constexpr std::string_view markup_key{"\0markup:", 8};
     return ascii_istarts_with(source, "javascript:");
 }
 
-// A source that is about:blank (HTML's "matches about:blank": the about
-// scheme and the path `blank`, a query or fragment allowed) - or none at all.
+/// Whether a source is about:blank (HTML's "matches about:blank": the about
+/// scheme and the path `blank`, a query or fragment allowed) or empty.
 [[nodiscard]] bool is_blank_source(std::string_view source) {
     source = trim(source, " \t\n\f\r");
     if (source.empty()) { return true; }
@@ -131,7 +129,7 @@ constexpr std::string_view markup_key{"\0markup:", 8};
     return source.size() == 11 || source[11] == '?' || source[11] == '#';
 }
 
-// `text` as a JavaScript string literal.
+/// `text` as a double-quoted JavaScript string literal.
 [[nodiscard]] std::string js_string_literal(std::string_view text) {
     std::string out = "\"";
     for (const char c : text) {
@@ -161,9 +159,9 @@ constexpr std::string_view markup_key{"\0markup:", 8};
 
 } // namespace
 
-// WHAT A FRAME NAVIGATES TO - HTML 4.8.5, "process the iframe attributes":
-// its `srcdoc` when it has one (the attribute wins over `src`), else its
-// `src`; empty is about:blank.
+/// What the <iframe> `id` navigates to, per HTML 4.8.5 "process the iframe
+/// attributes": its `srcdoc` (behind srcdoc_key) when it has one, since the
+/// attribute wins over `src`; else its `src`. Empty means about:blank.
 std::string dom_bindings::frame_source(const read_txn & txn, node_id id) const {
     if (const atom srcdoc = atoms_->intern("srcdoc"); txn.has_attribute(id, srcdoc)) {
         return std::string{srcdoc_key} + std::string{txn.attribute_value(id, srcdoc)};
@@ -171,9 +169,9 @@ std::string dom_bindings::frame_source(const read_txn & txn, node_id id) const {
     return std::string{txn.attribute_value(id, atoms_->intern("src"))};
 }
 
-// HTML 4.2.3's FALLBACK BASE URL: an iframe srcdoc document's is the document
-// base URL of the document its <iframe> is in; anything else's is its own
-// address. What a relative reference in a srcdoc resolves against.
+/// HTML 4.2.3's fallback base URL: for an iframe srcdoc document, the document
+/// base URL of the document its <iframe> is in; for anything else, its own
+/// address. A relative reference in a srcdoc resolves against it.
 std::string dom_bindings::fallback_base_url() {
     if (frame_owner_ != nullptr && location_href_ == "about:srcdoc") {
         const std::string fallback = frame_owner_->fallback_base_url();
@@ -182,20 +180,15 @@ std::string dom_bindings::fallback_base_url() {
     return location_href_;
 }
 
-// THE CONTENT TYPE COMES FROM THE NAME, because there is no server to send one.
-//
-// That is a real difference from a browser and it is visible in the corpus:
-// `Document-contentType/contentType/contenttype_mimeheader_01.html` asks for a
-// file whose type is set by a `.headers` sidecar, and this cannot answer it.
-// The ELEVEN files beside it name the type in the extension, which this can.
-//
-// The table is the one `mime.types` and WPT's own server agree on for these
-// extensions, and it is small on purpose: a type this engine has never heard of
-// is better reported as `application/octet-stream` - which is what a browser
-// does with it - than guessed at.
+/// The MIME type for `path`, from its extension, because there is no server to
+/// send one; empty when the extension is unknown (the caller then uses
+/// `application/octet-stream`, as a browser does, rather than guess).
+///
+/// That is a real difference from a browser: a WPT file whose type is set by a
+/// `.headers` sidecar (contenttype_mimeheader_01.html) cannot be answered. The
+/// table is the one `mime.types` and WPT's own server agree on for these
+/// extensions, and it is small on purpose.
 std::string_view dom_bindings::mime_for_path(std::string_view path) {
-    // The extension of the PATH: `blank.html?n=v` is an HTML file with a
-    // query, which a form submission's URL carries.
     const std::string_view ext =
         extension_of(path.substr(0, std::min(path.find('?'), path.find('#'))));
     // ASCII-folded through the shared helper: `FOO.HTML` is an HTML file, and
@@ -222,20 +215,18 @@ std::string_view dom_bindings::mime_for_path(std::string_view path) {
     return {};
 }
 
-// ONE PASS OVER THE FRAMES THIS DOCUMENT HAS, and the three things that can
-// have happened to one since the last pass: it appeared, its `src` changed, or
-// it went away. Guarded by `frames_dirty_`, which `mutated()` sets - without
-// that this walks the whole tree on every frame of an idle page, which is
-// exactly what "a frame runs only what changed" forbids.
-//
-// A FRAME DOCUMENT RECONCILES ITS OWN FRAMES TOO: a nested `<iframe>` gets its
-// document the same way - the primary's pass, which the tick asks for, goes
-// on into every frame's document, and the accessor asks the element's owner
-// (`install_frame_accessors`). A document
-// WITHOUT a browsing context - createHTMLDocument's, DOMParser's - has no
-// nested navigables and its `<iframe>`s stay empty (`contentDocument` null),
-// and "has a window" is exactly that fact: install_document leaves
-// `defaultView` null for one and load_frame sets it for a frame's.
+/// One pass over this document's <iframe>s, handling the three things that can
+/// have happened to one since the last pass: it appeared, its source changed,
+/// or it went away. Guarded by `frames_dirty_`, which `mutated()` sets, so an
+/// idle page does not walk its whole tree on every frame.
+///
+/// A frame document reconciles its own frames too: the primary's pass, which
+/// the tick asks for, recurses into every frame's document, and the accessor
+/// asks the element's owner (`install_frame_accessors`). A document without a
+/// browsing context (createHTMLDocument's, DOMParser's) has no nested
+/// navigables, so its `<iframe>`s stay empty (`contentDocument` null). "Has a
+/// window" is that test: install_document leaves `defaultView` null for one,
+/// and load_frame sets it for a frame's.
 void dom_bindings::reconcile_frames() {
     // Not re-entered: a frame's script that dirties this document and reads
     // `window.length` while it loads would otherwise start the frames this
@@ -250,11 +241,10 @@ void dom_bindings::reconcile_frames() {
             if (window == nullptr || window->is_nullish()) { return; }
         }
         frames_dirty_ = false;
-        // A frame element with no `src` has an about:blank document in a browser.
-        // It gets one here too - `load_frame` with an empty src builds an empty
-        // HTML document - because `frame.contentDocument.body` is how a page
-        // writes into one, and answering `undefined` is the failure that reads as
-        // "iframes do not exist".
+        // A frame element with no `src` has an about:blank document in a
+        // browser. It gets one here too (`load_frame` with an empty src builds
+        // an empty HTML document), because `frame.contentDocument.body` is how
+        // a page writes into one.
         const std::vector<node_id> elements = all_html_elements("iframe");
         std::vector<frame_entry> still;
         still.reserve(elements.size());
@@ -272,18 +262,19 @@ void dom_bindings::reconcile_frames() {
             }
             still.push_back(frame_entry{id, src, may_nest(src) ? start_frame(id, src) : nullptr});
         }
-        // A FRAME THAT LEFT THE TREE IS FORGOTTEN, and its document is not: the
+        // A frame that left the tree is forgotten, but its document is not: the
         // secondary bindings stay in `secondary_documents_` because a page may
         // still be holding the `contentDocument` it took before removing the
-        // frame, and a removed frame put back gets a NEW document, which is what
-        // the DOM says happens.
+        // frame. A removed frame put back gets a new document, as the DOM
+        // says.
         frames_.swap(still);
     }();
-    // AND EACH FRAME'S DOCUMENT ITS OWN, since the tick asks only the
-    // primary: an <iframe src> a script put into a frame's document loads
+    // Then each frame's document reconciles its own, since the tick asks only
+    // the primary: an <iframe src> a script put into a frame's document loads
     // and fires its `load` without anyone reading its `contentWindow` first
     // (shadow-dom/.../html-forms/test-003.html submits a frame document's
-    // form at one). Over a copy - a load runs script, which can reconcile.
+    // form at one). Iterates a copy, because a load runs script, which can
+    // reconcile.
     reconciling_ = false;
     const std::vector<frame_entry> children = frames_;
     for (const frame_entry & entry : children) {
@@ -291,12 +282,13 @@ void dom_bindings::reconcile_frames() {
     }
 }
 
-// WHETHER AN <iframe> HERE GETS A NAVIGABLE AT ALL. HTML 4.8.5's shared
-// attribute processing steps return null - no navigation, no `load` - when an
-// inclusive ancestor navigable's document has the frame's URL, fragments
-// excluded: a page that embeds itself stops at one copy. about:blank, srcdoc
-// and javascript: sources are exempt from that; nothing is from the depth
-// cap, which bounds what script and srcdoc can chain.
+/// Whether an <iframe> here with `source` gets a navigable at all. HTML 4.8.5's
+/// shared attribute processing steps return null (no navigation, no `load`)
+/// when an inclusive ancestor navigable's document has the frame's URL,
+/// fragments excluded, so a page that embeds itself stops at one copy.
+/// about:blank, srcdoc and javascript: sources are exempt from that; nothing
+/// is exempt from the depth cap, which bounds what script and srcdoc can
+/// chain.
 // ponytail: Gecko's cap of 10 nested content frames.
 bool dom_bindings::may_nest(const std::string & source) const {
     constexpr std::size_t max_depth = 10;
@@ -317,25 +309,9 @@ bool dom_bindings::may_nest(const std::string & source) const {
     return true;
 }
 
-// AN <iframe> CONNECTED WITH NO `src`, OR ONE THAT IS about:blank - HTML
-// 4.8.5's insertion steps ("create a new child navigable", then "process the
-// iframe attributes" with initialInsertion; false for any other source): its
-// navigable exists at once, and the about:blank it starts on fires `load`
-// SYNCHRONOUSLY, during the insertion - so a listener
-// added after the insertion never hears it. The Range tests append two blank
-// frames, then set `onload` and a `src`, and waited for the navigation's
-// `load`; queued for the next tick, the about:blank one arrived instead and
-// the test ran against an empty frame (dom/ranges/Range-insertNode.html).
-//
-// A frame WITH a src keeps loading lazily (reconcile_frames): what it shows is
-// fetched, and its `load` is a later task however it arrives.
-//
-// The lazy reconcile is held off while the `load` runs, as it is while an
-// inserted script runs (execute_script_element): a later frame of the same
-// insertion has not had its insertion steps yet, and reading its
-// `contentWindow` from this one's `load` must answer null.
-// The queued `load` load_frame left for this document's <iframe> `id`, which
-// its caller announces itself - or, for a javascript: source, not at all.
+/// Removes the queued `load` that load_frame left for this document's
+/// <iframe> `id`. The caller fires that event itself, or, for a
+/// `javascript:` source, does not fire it at all.
 void dom_bindings::forget_frame_load(node_id id) {
     dom_bindings & top = primary_ == nullptr ? *this : *primary_;
     dom_bindings * const owner = &top == this ? nullptr : this;
@@ -344,13 +320,13 @@ void dom_bindings::forget_frame_load(node_id id) {
     });
 }
 
-// A frame's FIRST document, for the source it has when it is reconciled. A
-// `javascript:` URL is a navigation of the about:blank the frame starts on
-// (HTML 7.4.2.3.2): that document, announcing nothing, and the URL's script
-// evaluated a task later in its realm (run_planned_navigations) - a string
-// result becomes the frame's document, anything else leaves it as it is. A
-// form a page submits at the frame meanwhile navigates it after the script
-// ran (jsurl-navigation-then-form-submit.html).
+/// Loads a frame's first document, for the source it has when it is
+/// reconciled. A `javascript:` URL is a navigation of the about:blank the frame
+/// starts on (HTML 7.4.2.3.2): that document, announcing nothing, with the
+/// URL's script evaluated a task later in its realm (run_planned_navigations).
+/// A string result becomes the frame's document; anything else leaves it as it
+/// is. A form a page submits at the frame meanwhile navigates it after the
+/// script ran (jsurl-navigation-then-form-submit.html).
 dom_bindings * dom_bindings::start_frame(node_id id, const std::string & source) {
     if (cx_ == nullptr) { return nullptr; }
     if (!is_javascript_url(source)) { return load_frame(*cx_, id, source); }
@@ -363,6 +339,22 @@ dom_bindings * dom_bindings::start_frame(node_id id, const std::string & source)
     return made;
 }
 
+/// Handles an <iframe> connected with no `src`, or one that is about:blank,
+/// per HTML 4.8.5's insertion steps ("create a new child navigable", then
+/// "process the iframe attributes" with initialInsertion). Its navigable exists
+/// at once, and the about:blank it starts on fires `load` synchronously,
+/// during the insertion, so a listener added after the insertion never hears
+/// it. dom/ranges/Range-insertNode.html appends two blank frames, then sets
+/// `onload` and a `src`, and waits for the navigation's `load`; a queued
+/// about:blank `load` would arrive first instead.
+///
+/// Returns false for any other source: a frame with a src keeps loading lazily
+/// (reconcile_frames), and its `load` is a later task however it arrives.
+///
+/// The lazy reconcile is held off while the `load` runs, as it is while an
+/// inserted script runs (execute_script_element): a later frame of the same
+/// insertion has not had its insertion steps yet, and reading its
+/// `contentWindow` from this one's `load` must answer null.
 bool dom_bindings::connect_blank_frame(node_id id, const std::string & source) {
     if (cx_ == nullptr || !is_blank_source(source) || !may_nest(source)) { return false; }
     if (std::ranges::any_of(frames_, [id](const frame_entry & e) { return e.element == id; })) {
@@ -378,10 +370,10 @@ bool dom_bindings::connect_blank_frame(node_id id, const std::string & source) {
     return true;
 }
 
-// The insertion steps of the <iframe>s a mutation connected, in tree order:
-// each blank one gets its navigable and its synchronous `load`
-// (connect_blank_frame). Only a document with a browsing context has nested
-// navigables - createHTMLDocument's does not.
+/// Runs the insertion steps of the <iframe>s a mutation connected, in tree
+/// order: each blank one gets its navigable and its synchronous `load`
+/// (connect_blank_frame). Only a document with a browsing context has nested
+/// navigables; createHTMLDocument's does not.
 void dom_bindings::connect_inserted_frames(const std::vector<document::write_note> & writes) {
     if (cx_ == nullptr || doc_ == nullptr || (secondary_ && realm_ == nullptr)) { return; }
     std::vector<std::pair<node_id, std::string>> blank;
@@ -405,18 +397,19 @@ void dom_bindings::connect_inserted_frames(const std::vector<document::write_not
         }
     }
     for (const auto & [id, source] : blank) {
-        // Connected - and still, after a `load` an earlier frame fired, which
-        // can have moved or removed this one.
+        // Still connected: a `load` an earlier frame fired can have moved or
+        // removed this one.
         if (is_connected(id)) { (void)connect_blank_frame(id, source); }
     }
 }
 
-// A FRAME HAS ITS DOCUMENT THE MOMENT IT IS INSERTED, not at the next tick.
-// `appendChild(iframe).contentWindow` is how event-global-extra.window.js and
-// the cross-realm listener files reach another global, and a browser answers
-// it synchronously. The accessors live on the prototype and a reconciled
-// frame carries the two as OWN properties, so they run only while a frame is
-// still unbuilt - and building it is one pass over the frames that changed.
+/// Installs `contentWindow` and `contentDocument` accessors on
+/// HTMLIFrameElement.prototype, so a frame has its document the moment it is
+/// inserted, not at the next tick. `appendChild(iframe).contentWindow` is how
+/// event-global-extra.window.js and the cross-realm listener files reach
+/// another global, and a browser answers it synchronously. A reconciled frame
+/// carries the two as own properties, so the accessors run only while a frame
+/// is still unbuilt, and building it is one pass over the frames that changed.
 void dom_bindings::install_frame_accessors(context & cx) {
     const value iface = interface_prototype("HTMLIFrameElement");
     if (!iface.is_object()) { return; }
@@ -439,13 +432,15 @@ void dom_bindings::install_frame_accessors(context & cx) {
     }
 }
 
-// THE EMBEDDER'S ANSWER to a request (browser_options::on_request), asked
-// before the asset registry by a frame's load and by load_resource - nullopt
-// when there is no handler or it left the request alone. The handler is the
-// primary's: a frame document asks the one its page was given.
+/// Sets the embedder's request handler (browser_options::on_request).
 void dom_bindings::observe_requests(const request_handler * handler) {
     request_handler_ = handler;
 }
+
+/// The embedder's answer to a request, asked before the asset registry by a
+/// frame's load and by load_resource; nullopt when there is no handler or it
+/// left the request alone. The handler is the primary's: a frame document asks
+/// the one its page was given.
 
 std::optional<resource_reply> dom_bindings::ask_request_handler(resource_request request) {
     const dom_bindings & top = primary_ == nullptr ? *this : *primary_;
@@ -455,41 +450,42 @@ std::optional<resource_reply> dom_bindings::ask_request_handler(resource_request
     return (*top.request_handler_)(request);
 }
 
-// Build the frame's document. Synchronous, because the bytes are already on
-// disk or in the registry; the EVENT it queues is what makes the load
-// asynchronous in the way a page can observe.
-//
-// `request` is a NAVIGATION's (run_planned_navigations): a form submission's
-// method, absolute URL, Content-Type and body. Null is an ordinary load of
-// `src` - a GET of it, resolved against this document's address. Either is
-// offered to the embedder's request handler first, whose Content-Type is then
-// the document's type and whose charset, when it names an encoding, the
-// document's encoding: "the transport layer" of HTML 13.2.3.1, which only a
-// BOM overrules.
+/// Builds the document of the <iframe> `id` from `src` and returns its
+/// bindings. Synchronous, because the bytes are already on disk or in the
+/// registry; the event it queues is what makes the load asynchronous in the
+/// way a page can observe.
+///
+/// `request` is a navigation's (run_planned_navigations): a form submission's
+/// method, absolute URL, Content-Type and body. Null is an ordinary load of
+/// `src`, a GET of it resolved against this document's address. Either is
+/// offered to the embedder's request handler first, whose Content-Type is then
+/// the document's type and whose charset, when it names an encoding, the
+/// document's encoding: "the transport layer" of HTML 13.2.3.1, which only a
+/// BOM overrules.
 dom_bindings * dom_bindings::load_frame(context & cx, node_id id, const std::string & src,
                                         const resource_request * request) {
     std::string bytes;
-    // A FRAME ALWAYS LOADS. A navigation that fetched nothing - a 404, and
-    // here a name the registry cannot find - still ends in a document (the
-    // error page), and `load` fires at the element for it; `error` is not an
-    // iframe's event. An EMPTY file is the same as a missing one to the
+    // A frame always loads. A navigation that fetched nothing (a 404, here a
+    // name the registry cannot find) still ends in a document (the error
+    // page), and `load` fires at the element for it; `error` is not an
+    // iframe's event. An empty file is the same as a missing one to the
     // registry, and Document-createElement-namespace.html's empty.html waits
     // on exactly that load.
     bool ok = true;
     std::string type{mime_for_path(src)};
-    std::string charset; // the transport layer's, when a request handler named one
-    // THE SAME WAY createHTMLDocument MAKES ONE - in the primary's flat list,
-    // with `primary_` set (below); the primary is also where the object URL
-    // table lives.
+    std::string charset; // The transport layer's, when a request handler named one.
+    // Made the same way createHTMLDocument makes one: in the primary's flat
+    // list, with `primary_` set (below). The primary is also where the object
+    // URL table lives.
     dom_bindings & top = primary_ == nullptr ? *this : *primary_;
-    // THE DOCUMENT'S ADDRESS, fragment and all: the navigation's, else the
+    // The document's address, fragment and all: the navigation's, else the
     // src resolved against this document's.
     std::string href;
-    // AN iframe srcdoc DOCUMENT (4.8.5): the attribute's markup is the
-    // resource - text/html, UTF-8 - and about:srcdoc its address.
-    // A `javascript:` URL's string result is the same kind of resource, at
-    // the address the frame already had - about:blank, which a frame here
-    // spells as no address at all.
+    // An iframe srcdoc document (4.8.5): the attribute's markup is the
+    // resource (text/html, UTF-8) and about:srcdoc its address. A
+    // `javascript:` URL's string result is the same kind of resource, at the
+    // address the frame already had: about:blank, which a frame here spells
+    // as no address at all.
     const bool markup = src.starts_with(markup_key);
     const bool srcdoc = markup || src.starts_with(srcdoc_key);
     if (srcdoc) {
@@ -506,13 +502,13 @@ dom_bindings * dom_bindings::load_frame(context & cx, node_id id, const std::str
         // An object URL's type is the Blob's (File API §10.3), not an
         // extension's: `iframe.src = URL.createObjectURL(new Blob([html],
         // {type: "text/html"}))` is how every html5lib_url.html variant loads
-        // its fixture, and with no type it was an octet-stream shown as an
-        // empty body - 60 files of the html/syntax corpus.
+        // its fixture; without the Blob's type it would be an octet-stream
+        // shown as an empty body.
         for (const auto & [name, stated] : top.object_url_types_) {
             if (name == src) { type = stated; }
         }
     }
-    // THE EMBEDDER FIRST, for anything asked for by URL - a data: or a blob:
+    // The embedder first, for anything asked for by URL; a data: or a blob:
     // URL's bytes are already here.
     bool answered = srcdoc;
     if (!answered && !src.empty() && !src.starts_with("blob:") && !is_data_url(src)) {
@@ -521,7 +517,7 @@ dom_bindings * dom_bindings::load_frame(context & cx, node_id id, const std::str
         if (std::optional<resource_reply> reply = ask_request_handler(std::move(asked))) {
             answered = true;
             bytes = std::move(reply->body);
-            // The essence - `text/plain; charset=UTF-8` is text/plain - and the
+            // The essence (`text/plain; charset=UTF-8` is text/plain) and the
             // charset parameter, by the Encoding Standard's label table.
             const std::string_view stated = reply->content_type;
             const std::size_t semicolon = stated.find(';');
@@ -533,25 +529,25 @@ dom_bindings * dom_bindings::load_frame(context & cx, node_id id, const std::str
         }
     }
     if (!answered && !src.empty()) {
-        // A data: URL CARRIES ITS OWN TYPE, and it is the only source here that
-        // states one - RFC 2397 puts the media type in the URL, so this is the
-        // one case that does not have to guess from an extension. The bytes
-        // still come through the registry, which decodes data: URLs itself.
+        // A data: URL carries its own type (RFC 2397 puts the media type in the
+        // URL), so this is the one case that does not guess from an extension.
+        // The bytes still come through the registry, which decodes data: URLs
+        // itself.
         if (is_data_url(src)) {
             data_url stated;
             type = parse_data_url(src, stated) ? stated.mime : "text/plain";
         }
         if (assets_ != nullptr) {
-            // WITHOUT THE FRAGMENT: `page.html#target` names page.html to a
-            // server and to the registry alike - a fragment never leaves the
-            // client - and the registry matches names literally. A data: URL
-            // goes over whole, as it always did; parse_data_url owns its shape.
+            // Without the fragment: `page.html#target` names page.html to a
+            // server and to the registry alike (a fragment never leaves the
+            // client), and the registry matches names literally. A data: URL
+            // goes over whole; parse_data_url owns its shape.
             const std::size_t hash = is_data_url(src) ? std::string::npos : src.find('#');
             const std::vector<std::byte> loaded = assets_->load(src.substr(0, hash));
             bytes.assign(reinterpret_cast<const char *>(loaded.data()), loaded.size());
-            // A `file:` URL IS A PATH: what a submission's action is once it is
+            // A `file:` URL is a path: what a submission's action is once it is
             // resolved against a page opened from disk. Read as that path,
-            // percent-decoded, without its query - as load_resource reads one.
+            // percent-decoded, without its query, as load_resource reads one.
             if (bytes.empty() && href.starts_with("file://")) {
                 const std::vector<std::byte> read = assets_->load_file_url(href, location_href_);
                 bytes.assign(reinterpret_cast<const char *>(read.data()), read.size());
@@ -560,40 +556,38 @@ dom_bindings * dom_bindings::load_frame(context & cx, node_id id, const std::str
     }
     if (type.empty()) { type = src.empty() ? "text/html" : "application/octet-stream"; }
 
-    // Built by hand here before, without `primary_`, so
-    // `owner_of` run from inside a frame document could see nothing but the
-    // frame's own wrappers: `frame.contentDocument.body.appendChild(pageNode)`
-    // was "the argument is not a Node" (Node-isConnected.html's iframe case,
-    // the node-realm-* files), and a frame's own `<iframe>` never loaded.
+    // Created through the primary's owned_documents_ and adopt_second_document,
+    // so `primary_` is set: owner_of from inside a frame then finds page nodes
+    // (`frame.contentDocument.body.appendChild(pageNode)`), and a nested
+    // <iframe> in the frame can load.
     document & fresh = *top.owned_documents_.emplace_back(std::make_unique<document>(*atoms_));
     dom_bindings & made = adopt_second_document(cx, fresh);
     made.content_type_ = type;
-    // A FRAME'S CLICKS ARE MOUSE EVENTS: dispatch picks a click's activation
+    // A frame's clicks are mouse events: dispatch picks a click's activation
     // target only for an event on the MouseEvent prototype, and a frame
-    // document's `element.click()` builds its event from these two - left
-    // unset, no click in a frame ever activated anything.
+    // document's `element.click()` builds its event from these two. Left
+    // unset, no click in a frame would activate anything.
     made.mouse_event_prototype_ = top.mouse_event_prototype_;
     made.pointer_event_prototype_ = top.pointer_event_prototype_;
-    // ITS NAVIGABLE, known from the start: a form its own scripts submit to
-    // `_self` while it is still loading - before the reconcile has filed it
-    // under this document's frames - navigates the frame it is in
+    // Its navigable, known from the start: a form its own scripts submit to
+    // `_self` while it is still loading (before the reconcile has filed it
+    // under this document's frames) navigates the frame it is in
     // (getactionurl.html).
     made.frame_owner_ = this;
     made.frame_element_ = id;
 
     const bool is_xml = type == "application/xhtml+xml" || type == "text/xml" ||
                         type == "application/xml" || type == "image/svg+xml";
-    // about:blank IS A DOCUMENT WITH A BODY, and it has to be: `frame
-    // .contentDocument.body` is how a page writes into a scratch frame, and
-    // parsing the empty string leaves a tree with no body at all to write to.
+    // about:blank is a document with a body, and it has to be:
+    // `frame.contentDocument.body` is how a page writes into a scratch frame,
+    // and parsing the empty string leaves a tree with no body to write to.
     if (src.empty() || (bytes.empty() && !is_xml)) {
         (void)parse_html(fresh, "<html><head></head><body></body></html>");
     } else if (is_xml) {
-        // An EMPTY .xml is still an XML document - createElement in it makes
-        // a null-namespace element, which Document-createElement-namespace
-        // .html's empty.xml row reads.
-        // The XML front end, which is why `.xhtml` is worth having at all: the
-        // HTML tree builder lowercases `viewBox` and hands `<![CDATA[` to the
+        // An empty .xml is still an XML document: createElement in it makes a
+        // null-namespace element, which Document-createElement-namespace.html's
+        // empty.xml row reads. The XML front end is needed because the HTML
+        // tree builder lowercases `viewBox` and hands `<![CDATA[` to the
         // JavaScript engine. A frame whose XML is not well-formed keeps the
         // tree the parser had, exactly as a top-level XML document does.
         (void)parse_xml(fresh, bytes);
@@ -601,17 +595,17 @@ dom_bindings * dom_bindings::load_frame(context & cx, node_id id, const std::str
         const bool has_bom = bytes.starts_with("\xEF\xBB\xBF") || bytes.starts_with("\xFE\xFF") ||
                              bytes.starts_with("\xFF\xFE");
         if (!charset.empty() && !has_bom) {
-            fresh.set_encoding(charset); // the transport layer's (13.2.3.1): certain
+            fresh.set_encoding(charset); // The transport layer's (13.2.3.1): certain.
         } else if (const std::string declared = prescan_encoding(bytes); !declared.empty()) {
             fresh.set_encoding(declared);
         } else {
-            fresh.set_encoding(doc_->encoding()); // 13.2.3.2 step 8: the parent's, same-origin
+            fresh.set_encoding(doc_->encoding()); // 13.2.3.2 step 8: the parent's.
         }
         (void)parse_html(fresh, decode_document_bytes(bytes, fresh.encoding()));
     } else if (type.starts_with("text/") || type == "application/json" ||
                type == "text/javascript") {
         // HTML 7.5's plain-text document: the parser as if it had seen a `pre`
-        // start tag and ONE newline - which the in-body rules drop - so a text
+        // start tag and one newline (which the in-body rules drop), so a text
         // that itself starts with a newline keeps it. Decoded by the transport
         // layer's charset when there is one.
         if (!charset.empty()) { fresh.set_encoding(charset); }
@@ -622,26 +616,27 @@ dom_bindings * dom_bindings::load_frame(context & cx, node_id id, const std::str
     } else {
         // An image, or anything else this engine will not display: HTML gives
         // it a document with the resource as the body's only element, and the
-        // TYPE is the part a page can read back.
+        // type is the part a page can read back. Here the body is empty.
         (void)parse_html(fresh, "<html><head></head><body></body></html>");
     }
     made.install_document(cx);
-    // THE FRAME DOCUMENT'S ADDRESS: the src resolved against this document's,
-    // with its fragment - which is what makes `:target` match inside a frame
-    // loaded as `page.html#target` (ParentNode-querySelector-All.html's
-    // in-document cases run in one).
+    // The frame document's address: the src resolved against this document's,
+    // with its fragment, which makes `:target` match inside a frame loaded as
+    // `page.html#target` (ParentNode-querySelector-All.html's in-document
+    // cases run in one).
     if (!href.empty()) {
         const std::size_t hash = href.find('#');
         made.observe_location(href, hash == std::string::npos ? std::string{} : href.substr(hash));
     }
 
-    // THE FRAME'S OWN `location`: its document's address, which a page reads
-    // back after a form submission navigated the frame (`iframe.contentWindow
-    // .location.search` is how every form-submission test reads the entry
-    // list). Made after observe_location, which writes its parts.
+    // The frame's own `location`: its document's address, which a page reads
+    // back after a form submission navigated the frame
+    // (`iframe.contentWindow.location.search` is how every form-submission
+    // test reads the entry list). Made after observe_location, which writes
+    // its parts.
     made.location_ = made.make_location(cx);
 
-    // Hung off the WRAPPER rather than kept in a table beside it, so the frame
+    // Hung off the wrapper rather than kept in a table beside it, so the frame
     // document is reachable from the element that owns it and the collector
     // needs no new root: `wrappers_` is already marked.
     const value element = wrap(cx, id);
@@ -649,18 +644,19 @@ dom_bindings * dom_bindings::load_frame(context & cx, node_id id, const std::str
     auto * frame_object = static_cast<script::object_object *>(element.as_heap());
     frame_object->set("contentDocument", made.document_);
 
-    // `contentWindow`: THE FRAME'S OWN WINDOW, over a realm of its own (see
-    // install_frame_realm) - and then the scripts its parse left, run in it.
+    // `contentWindow`: the frame's own window, over a realm of its own (see
+    // install_frame_realm), and then the scripts its parse left, run in it.
     made.install_frame_realm(cx, *this, id);
-    // A FRAME DOCUMENT'S DEFAULT ACTIONS. The page's are the browser's -
-    // browser::activate, through set_activate_hook - and a frame's document has
-    // no browser of its own, so a submit or reset button clicked in one did
-    // nothing at all; submit-entity-body.html clicks the button inside the
-    // frame it loaded. The same decision the browser makes (form_store::
-    // form_action_of: the button, its form owner, "actually disabled"), run
-    // through the frame's own bindings. ponytail: a <label> in a frame clicks
-    // nothing and a <select> opens no popup - browser::activate's other
-    // branches are the page's alone until a frame is rendered.
+    // A frame document's default actions. The page's are the browser's
+    // (browser::activate, through set_activate_hook), and a frame's document
+    // has no browser of its own, so without this hook a submit or reset button
+    // clicked in one would do nothing (submit-entity-body.html clicks the
+    // button inside the frame it loaded). It makes the same decision the
+    // browser makes (form_store::form_action_of: the button, its form owner,
+    // "actually disabled"), through the frame's own bindings. ponytail: a
+    // <label> in a frame clicks nothing and a <select> opens no popup;
+    // browser::activate's other branches are the page's alone until a frame is
+    // rendered.
     made.set_activate_hook([&made](node_id target) {
         form_store::form_action action;
         {
@@ -668,9 +664,9 @@ dom_bindings * dom_bindings::load_frame(context & cx, node_id id, const std::str
             action = form_store::form_action_of(txn, *made.atoms_, target);
         }
         if (!action.form) { return; }
-        // The submission and reset algorithms are installed WITH the frame
+        // The submission and reset algorithms are installed with the frame
         // document's operations, which a frame builds on its first operation
-        // call - and a dispatched click calls none.
+        // call, and a dispatched click calls none.
         if (made.operations_.empty() && made.cx_ != nullptr) { made.install_operations(*made.cx_); }
         if (action.submits && made.submit_from_) { (void)made.submit_from_(action.form, target); }
         if (action.resets && made.reset_form_) { made.reset_form_(action.form); }
@@ -678,22 +674,23 @@ dom_bindings * dom_bindings::load_frame(context & cx, node_id id, const std::str
     frame_object->set("contentWindow", made.window_view_);
     made.run_frame_scripts(cx);
 
-    // ON THE PRIMARY'S QUEUE, which is the one the tick drains, naming the
-    // owner whose element it is; settle_frame hands it back.
+    // Queued on the primary's queue, which is the one the tick drains, naming
+    // the owner whose element it is; settle_frame hands it back.
     top.frame_loads_.push_back(pending_frame{id, ok, false, &top == this ? nullptr : this});
     return &made;
 }
 
-// THE RULES FOR CHOOSING A NAVIGABLE (HTML 7.3.1.7), for the navigables this
-// engine has - a frame document's own and each <iframe>'s - from this
-// document's: "" and `_self` its own; `_parent` the one its frame is in, or
-// its own when it has none; `_top` the top-level one; any other name but
-// `_blank` the navigable of that name - this document's own frame, then an
-// <iframe> in this document, then anywhere in the page. Answered as the
-// <iframe> - its document's bindings and the element - or nothing for the
-// TOP-LEVEL navigable, which is the embedder's page, and for a name nothing
-// has (a new top-level traversable, which this user agent never opens: its
-// popup blocker is always on).
+/// The rules for choosing a navigable (HTML 7.3.1.7), for the navigables this
+/// engine has (a frame document's own and each <iframe>'s), from this
+/// document's: "" and `_self` choose its own; `_parent` the one its frame is
+/// in, or its own when it has none; `_top` the top-level one; any other name
+/// but `_blank` the navigable of that name (this document's own frame, then an
+/// <iframe> in this document, then anywhere in the page).
+///
+/// Returns the <iframe> as its document's bindings and the element, or
+/// {nullptr, {}} for the top-level navigable, which is the embedder's page,
+/// and for a name nothing has (a new top-level traversable, which this user
+/// agent never opens: its popup blocker is always on).
 std::pair<dom_bindings *, node_id> dom_bindings::choose_navigable(std::string_view target) {
     dom_bindings & top = primary_ == nullptr ? *this : *primary_;
     // The <iframe> whose content document `doc` is - its document's bindings
@@ -713,8 +710,8 @@ std::pair<dom_bindings *, node_id> dom_bindings::choose_navigable(std::string_vi
         const auto txn = own.first->doc_->read();
         if (txn.attribute_value(own.second, name) == target) { return own; }
     }
-    // The first <iframe> of `doc` whose name is the target. RECONCILED first,
-    // which can build a frame and run its scripts - so the search walks copies
+    // The first <iframe> of `doc` whose name is the target. Reconciled first,
+    // which can build a frame and run its scripts, so the search walks copies
     // of each frame list, never the live one: a script there that reads an
     // ancestor's `contentWindow` reconciles that ancestor's list, and swapping
     // a vector under a range-for is a use-after-free. A dom_bindings is never
@@ -746,21 +743,20 @@ std::pair<dom_bindings *, node_id> dom_bindings::choose_navigable(std::string_vi
     return chosen;
 }
 
-// HTML 4.10.21.3 "submit", steps 20-24, and "plan to navigate": the navigable
-// a submission goes to, and the navigation PLANNED there rather than run.
-// build_submission made `navigation` - the URL, a GET's query already the
-// entry list, and the request that loads it; the rules for choosing a
-// navigable decide where it goes. A TOP-LEVEL navigable is the embedder's
-// page, which no submission replaces here: `_top`, `_blank`, `_self` in the
-// page itself and `_parent` out of a frame the page holds all answer false,
-// and the browser records the entry list instead (browser::submit's
-// last_submission).
-//
-// PLANNED, one per form: "if the form has a non-null planned navigation,
-// remove it from its task queue" - a later submission of the same form, from
-// whatever and at whatever target, replaces the earlier one before it ran
-// (form-double-submit*.html). The plan runs at the start of the next tick
-// (run_planned_navigations), a task after the one that submitted.
+/// HTML 4.10.21.3 "submit", steps 20-24, and "plan to navigate": chooses the
+/// navigable a submission goes to and plans the navigation there rather than
+/// running it. build_submission made `navigation` (the URL, a GET's query
+/// already the entry list, and the request that loads it). A top-level
+/// navigable is the embedder's page, which no submission replaces here:
+/// `_top`, `_blank`, `_self` in the page itself and `_parent` out of a frame
+/// the page holds all return false, and the browser records the entry list
+/// instead (browser::submit's last_submission).
+///
+/// One plan per form: "if the form has a non-null planned navigation, remove
+/// it from its task queue", so a later submission of the same form, from
+/// whatever and at whatever target, replaces the earlier one before it ran
+/// (form-double-submit*.html). The plan runs at the start of the next tick
+/// (run_planned_navigations), a task after the one that submitted.
 bool dom_bindings::navigate_form_target(node_id form, form_navigation navigation) {
     if (cx_ == nullptr || !form) { return false; }
     const auto [navigable, element] = choose_navigable(navigation.target);
@@ -774,12 +770,13 @@ bool dom_bindings::navigate_form_target(node_id form, form_navigation navigation
     return true;
 }
 
-// "Navigate" an <iframe> from script - a Location's setters and window.open():
-// the navigation joins the planned ones and runs at the start of the next tick,
-// and it CANCELS whatever was still waiting there for the same navigable - the
-// navigate algorithm's "cancel any existing but not yet mature navigation", a
-// planned form submission included (form-submit-iframe-then-location-navigate
-// .html, whose behaviour browsers agree on and HTML leaves implicit).
+/// "Navigate" an <iframe> from script (a Location's setters and window.open()).
+/// The navigation joins the planned ones and runs at the start of the next
+/// tick, and it cancels whatever was still waiting there for the same
+/// navigable: the navigate algorithm's "cancel any existing but not yet mature
+/// navigation", a planned form submission included
+/// (form-submit-iframe-then-location-navigate.html, whose behaviour browsers
+/// agree on and HTML leaves implicit).
 void dom_bindings::navigate_frame(dom_bindings & navigable, node_id element,
                                   form_navigation navigation) {
     dom_bindings & top = primary_ == nullptr ? *this : *primary_;
@@ -790,11 +787,12 @@ void dom_bindings::navigate_frame(dom_bindings & navigable, node_id element,
         planned_navigation{nullptr, node_id{}, &navigable, element, std::move(navigation)});
 }
 
-// The planned navigations, run: each <iframe> loads what its plan asked for -
-// a new document under the same element - unless the plan's form's document
-// is no longer active in the page, or the navigable's: a planned navigation
-// is an element task, and a navigated frame's document runs no more tasks.
-// A script's navigation (navigate_frame) has no form document to ask about.
+/// Runs the planned navigations: each <iframe> loads what its plan asked for
+/// (a new document under the same element) unless the plan's form's document
+/// or the navigable's document is no longer active in the page. A planned
+/// navigation is an element task, and a navigated frame's document runs no
+/// more tasks. A script's navigation (navigate_frame) has no form document to
+/// ask about.
 void dom_bindings::run_planned_navigations() {
     if (cx_ == nullptr || planned_navigations_.empty()) { return; }
     std::vector<planned_navigation> due;
@@ -824,9 +822,9 @@ void dom_bindings::run_planned_navigations() {
         std::string source = plan.navigation.src;
         if (is_javascript_url(source)) {
             // "Evaluate a javascript: URL" (7.4.2.3.2) in the frame's current
-            // document: the percent-decoded body as a script, and its
-            // completion value - a string is the new document's markup, and
-            // anything else navigates nowhere.
+            // document: the percent-decoded body as a script. A string
+            // completion value is the new document's markup; anything else
+            // navigates nowhere.
             const auto current = std::ranges::find_if(
                 owner.frames_, [&](const frame_entry & e) { return e.element == plan.element; });
             if (current == owner.frames_.end() || current->bindings == nullptr) { continue; }
@@ -847,7 +845,7 @@ void dom_bindings::run_planned_navigations() {
         }
         dom_bindings * made =
             owner.load_frame(*cx_, plan.element, source, &plan.navigation.request);
-        // THE ELEMENT'S `src` IS UNCHANGED, so the entry keeps what it read -
+        // The element's `src` is unchanged, so the entry keeps what it read;
         // the next reconcile must not load it over the navigated document.
         const auto entry = std::ranges::find_if(
             owner.frames_, [&](const frame_entry & e) { return e.element == plan.element; });
@@ -866,8 +864,8 @@ void dom_bindings::run_planned_navigations() {
 
 namespace {
 
-// "Tokenize the features argument" (HTML 7.2.2.1): name/value pairs split on
-// the feature separators - ASCII whitespace, `=` and `,` - both lowercased.
+/// "Tokenize the features argument" (HTML 7.2.2.1): name/value pairs split on
+/// the feature separators (ASCII whitespace, `=` and `,`), both lowercased.
 [[nodiscard]] std::vector<std::pair<std::string, std::string>> tokenize_features(
     std::string_view features) {
     const auto separator = [](char c) {
@@ -900,8 +898,8 @@ namespace {
     return out;
 }
 
-// "Check if a window feature is set" as a boolean: "" `yes` and `true` are
-// true, and otherwise the value's integer is - 0 when it does not parse.
+/// "Check if a window feature is set" as a boolean: "", `yes` and `true` are
+/// true; otherwise the value's integer decides, 0 when it does not parse.
 [[nodiscard]] bool boolean_feature(const std::vector<std::pair<std::string, std::string>> & list,
                                    std::string_view name) {
     for (const auto & [key, value] : list) {
@@ -915,13 +913,14 @@ namespace {
 
 } // namespace
 
-// `window.open()`, HTML 7.2.2.1 "the window open steps", on the window of
-// THIS document: the URL encoding-parsed against the entry document's base
-// URL, a failure a SyntaxError; the target chosen by the rules for choosing a
-// navigable; an existing <iframe> navigated (navigate_frame) and its
-// WindowProxy returned unless `noopener`. A NEW top-level traversable - the
-// `_blank` default, or a name no navigable has - is a popup, and this user
-// agent's popup blocker is always on: null, as a blocked popup is.
+/// Installs `window.open()`, HTML 7.2.2.1 "the window open steps", on the
+/// window of this document. The URL is encoding-parsed against the entry
+/// document's base URL (a failure is a SyntaxError), the target is chosen by
+/// the rules for choosing a navigable, and an existing <iframe> is navigated
+/// (navigate_frame) and its WindowProxy returned unless `noopener`. A new
+/// top-level traversable (the `_blank` default, or a name no navigable has) is
+/// a popup, and this user agent's popup blocker is always on, so it returns
+/// null, as a blocked popup does.
 // ponytail: `_self`, `_parent` or `_top` reaching the embedder's page answers
 // its WindowProxy without navigating it - top-level navigation is the
 // embedder's (browser::set_navigate_hook) and a script cannot ask for it yet.
@@ -934,7 +933,7 @@ void dom_bindings::install_window_open(context & cx, script::object_object & win
         const std::string features =
             a.size() < 3 || a[2].is_undefined() ? std::string{} : c.to_string(a[2]);
         if (c.throw_pending()) { return value::undefined(); }
-        // The ENTRY document: the realm the calling script runs in.
+        // The entry document: the realm the calling script runs in.
         dom_bindings & entry = bindings_of(c.global("window"));
         form_navigation navigation;
         if (!url.empty()) {
@@ -981,20 +980,21 @@ void dom_bindings::install_window_open(context & cx, script::object_object & win
     cx.define_global("open", open);
 }
 
-// `load` at the frame, or `error` when the src resolved to no bytes. It does
-// not bubble - an iframe's load event is fired at the element and stops there -
-// which is why this is `fire_at` with `capturing` false and not `dispatch`.
-// A REAL Event rather than a bare object, since a `<link>`, `<style>` and
-// `<script>` announce through here too (announce_load): `timeStamp` is what a
-// page compares a paint entry against.
+/// Fires `load` (or `error` when `waiting.ok` is false, which only happens for
+/// a <link>, <style> or <script>) at the element. It does not bubble (an
+/// iframe's load event is fired at the element and stops there), which is why
+/// this is `fire_at` with `capturing` false and not `dispatch`. It is a real
+/// Event rather than a bare object, since those elements announce through here
+/// too (announce_load), and `timeStamp` is what a page compares a paint entry
+/// against.
 void dom_bindings::settle_frame(context & cx, const pending_frame & waiting) {
     if (waiting.owner != nullptr && waiting.owner != this) {
         waiting.owner->settle_frame(cx, pending_frame{waiting.id, waiting.ok, waiting.resource});
         return;
     }
-    // THE FRAME'S OWN LOAD COMES FIRST: its document's DOMContentLoaded and
-    // its window's `load` run before the element's `load` in this document -
-    // a page's `iframe.onload` finds the frame's `onload` work already done.
+    // The frame's own load comes first: its document's DOMContentLoaded and
+    // its window's `load` run before the element's `load` in this document,
+    // so a page's `iframe.onload` finds the frame's `onload` work done.
     for (const frame_entry & entry : frames_) {
         if (entry.element == waiting.id && entry.bindings != nullptr) {
             entry.bindings->finish_frame_load(cx);
@@ -1005,32 +1005,30 @@ void dom_bindings::settle_frame(context & cx, const pending_frame & waiting) {
     const value event = make_event_object(cx, type, false, false);
     auto * object = static_cast<script::object_object *>(event.as_heap());
     object->set("target", wrap(cx, waiting.id));
-    // The engine dispatched it, so `isTrusted` is true - as make_event says.
+    // The engine dispatched it, so `isTrusted` is true, as make_event says.
     object->set(std::string{detail::trusted_property}, value::boolean(true));
     object->set(std::string{detail::initialised_property}, value::boolean(true));
     fire_at(path_step{waiting.id, listen_on::node}, type, event, false);
 }
 
-// A FRAME'S BROWSING CONTEXT: its window, and the realm its scripts run in.
-// `this` is the frame document's bindings, `owner` the document whose
-// <iframe> - `element` - it is.
-//
-// ITS OWN REALM, which is what lets a frame run its scripts at all. They were
-// not run before because the realm was shared: a frame's `var run` would have
-// been the page's `run`. Now the frame's declarations land in the frame's
-// binding table, a function the frame declared resolves its free names there
-// whoever calls it (script::realm_record), and `frame.contentWindow.run` read
-// by the page is the frame's. The table starts as the page's template - the
-// builtins and the interface objects, not the page's own vars - so
-// `frame.contentWindow.DOMException` is still the constructor an exception
-// the frame's DOM threw is an instance of. ponytail: ONE set of intrinsics, so
-// `contentWindow.Array === Array` where a browser has two; distinct prototypes
-// are the upgrade when a cross-realm identity test is the next clearest one.
-//
-// NOT THE PAGE'S BROWSING-CONTEXT STATE: `location`, `history` and their kin
-// are per-context. Handing back the page's would let `frame.contentWindow
-// .location.href = x` rewrite the top document's address, so the frame's own
-// replace them and the rest are removed from its table.
+/// Creates a frame's browsing context: its window, and the realm its scripts
+/// run in. `this` is the frame document's bindings, and `owner` the document
+/// whose <iframe> (`element`) it is.
+///
+/// Its own realm: the frame's declarations land in the frame's binding table,
+/// a function the frame declared resolves its free names there whoever calls
+/// it (script::realm_record), and `frame.contentWindow.run` read by the page
+/// is the frame's. The table starts as the page's template (the builtins and
+/// the interface objects, not the page's own vars), so
+/// `frame.contentWindow.DOMException` is still the constructor an exception
+/// the frame's DOM threw is an instance of. ponytail: one set of intrinsics,
+/// so `contentWindow.Array === Array` where a browser has two; distinct
+/// prototypes are the upgrade when a cross-realm identity test needs them.
+///
+/// Not the page's browsing-context state: `location`, `history` and their kin
+/// are per-context. Handing back the page's would let
+/// `frame.contentWindow.location.href = x` rewrite the top document's address,
+/// so the frame's own replace them and the rest are removed from its table.
 void dom_bindings::install_frame_realm(context & cx, dom_bindings & owner, node_id element) {
     script::realm_record & realm = cx.create_realm();
     realm_ = &realm;
@@ -1039,7 +1037,7 @@ void dom_bindings::install_frame_realm(context & cx, dom_bindings & owner, node_
     }
     auto * frame_window = cx.allocate<script::object_object>();
     window_ = value::object(frame_window);
-    // AN INSTANCE OF Window, as the page's window is (element/interfaces.cpp),
+    // An instance of Window, as the page's window is (element/interfaces.cpp),
     // and of the shared intrinsics' interfaces: its location a Location, its
     // six BarProps its own.
     frame_window->prototype = cx.lookup_property(cx.global("Window"), "prototype");
@@ -1050,10 +1048,10 @@ void dom_bindings::install_frame_realm(context & cx, dom_bindings & owner, node_
     install_bar_props(cx, *frame_window, cx.lookup_property(cx.global("BarProp"), "prototype"));
     const value frame_view = make_window_view(cx, window_, realm);
     window_view_ = frame_view;
-    // `parent` is the window of the document the <iframe> is in - the page's,
-    // or a frame's for a frame inside one - and `top` is that window's top.
-    // The PROXY, never the object behind it: scripts compare `w != w.parent`
-    // by identity (see install_window).
+    // `parent` is the window of the document the <iframe> is in (the page's,
+    // or a frame's for a frame inside one), and `top` is that window's top.
+    // Both are the proxy, never the object behind it: scripts compare
+    // `w != w.parent` by identity (see install_window).
     const value parent_view =
         owner.window_view_.is_heap() ? owner.window_view_ : cx.global("window");
     value top_view = parent_view;
@@ -1067,7 +1065,7 @@ void dom_bindings::install_frame_realm(context & cx, dom_bindings & owner, node_
     frame_window->set("document", document_);
     define_location_property(cx, *frame_window); // [PutForwards=href], entry.cpp
     frame_window->set("customElements", custom_elements_registry(cx)); // custom_elements.cpp
-    install_window_scrolling(cx, *frame_window); // scrollX/scrollY, scrollTo on a frame's window
+    install_window_scrolling(cx, *frame_window); // scrollX/scrollY, scrollTo on the frame's window.
     // The frame's own `matchMedia`: a list that reads the frame's viewport.
     const value match = native(cx, "matchMedia", [this](context & c, std::span<value> a) {
         return match_media(c, a.empty() ? std::string{} : c.to_string(a[0]));
@@ -1081,8 +1079,8 @@ void dom_bindings::install_frame_realm(context & cx, dom_bindings & owner, node_
     frame_window->set("top", top_view);
     frame_window->set("opener", value::null());
     frame_window->set("event", value::undefined());
-    // `self.origin`: this document's, serialized - "null" for a file: one,
-    // as its location.origin says.
+    // `self.origin`: this document's, serialized; "null" for a file: one, as
+    // its location.origin says.
     frame_window->define_accessor("origin",
                                   value::object(cx.allocate<script::native_object>(
                                       "origin",
@@ -1092,7 +1090,7 @@ void dom_bindings::install_frame_realm(context & cx, dom_bindings & owner, node_
                                           return c.string(origin.empty() ? "null" : origin);
                                       })),
                                   value::undefined());
-    // `length` counts THIS document's child frames, as the page's does.
+    // `length` counts this document's child frames, as the page's does.
     frame_window->define_accessor("length",
                                   value::object(cx.allocate<script::native_object>(
                                       "length",
@@ -1103,29 +1101,29 @@ void dom_bindings::install_frame_realm(context & cx, dom_bindings & owner, node_
                                   value::undefined());
     if (auto * doc = document_object()) {
         define_location_property(cx, *doc);
-        // AND THE DOCUMENT KNOWS ITS WINDOW. install_document set
-        // `defaultView` null for a secondary, which is right for
-        // createHTMLDocument and wrong for a frame: `root.ownerDocument
-        // .defaultView` is how a test reaches the global an exception must
-        // have come from.
+        // The document knows its window. install_document set `defaultView`
+        // null for a secondary, which is right for createHTMLDocument and wrong
+        // for a frame: `root.ownerDocument.defaultView` is how a test reaches
+        // the global an exception must have come from.
         doc->set("defaultView", frame_view);
     }
 
-    // THE REALM'S OWN BINDINGS, defined with it current.
+    // The realm's own globals, defined with it current.
     const context::realm_scope in_frame{cx, realm};
     cx.set_global_this(frame_view);
     cx.define_global("window", frame_view);
     cx.define_global("self", frame_view);
     cx.define_global("document", document_);
     cx.define_global("location", location_);
-    install_history(cx, *frame_window); // the frame's own session history
-    install_dom_parser(cx);             // a DOMParser whose documents are the frame's
+    install_history(cx, *frame_window); // The frame's own session history.
+    install_dom_parser(cx);             // A DOMParser whose documents are the frame's.
     cx.define_global("matchMedia", match);
-    // THE NODE CONSTRUCTORS THAT NAME A DOCUMENT: `new frame.contentWindow
-    // .Text()` - and a bare `new Text()` in the frame's own script - is a node
-    // OF THE FRAME'S document (Text-constructor.html's cross-global case), so
-    // those three are the frame's own natives over the shared prototypes:
-    // `instanceof Text` still holds, `ownerDocument` is the frame's.
+    // The node constructors that name a document: `new
+    // frame.contentWindow.Text()`, and a bare `new Text()` in the frame's own
+    // script, make a node of the frame's document (Text-constructor.html's
+    // cross-global case), so those three are the frame's own natives over the
+    // shared prototypes: `instanceof Text` still holds, and `ownerDocument` is
+    // the frame's.
     for (const char * name : {"Text", "Comment", "DocumentFragment"}) {
         auto * ctor = cx.allocate<script::native_object>(
             name, [this, name](context & c, std::span<value> args) {
@@ -1135,16 +1133,14 @@ void dom_bindings::install_frame_realm(context & cx, dom_bindings & owner, node_
         frame_window->set(name, value::object(ctor));
         cx.define_builtin_global(name, value::object(ctor));
     }
-    // Listening at THIS window: a frame script's `addEventListener("load", f)`
+    // Listening at this window: a frame script's `addEventListener("load", f)`
     // hears the frame's load, not the page's.
     install_window_listeners(cx, *frame_window);
     install_post_message(cx, *frame_window);
     install_window_open(cx, *frame_window);
     install_window_handlers(cx, *frame_window);
-    // scrollX/scrollY and scroll()/scrollTo()/scrollBy() over THIS document's
-    // viewport: a frame script reading `scrollY` threw a ReferenceError, and a
-    // test waiting on the frame's reply to a message timed out on it
-    // (cssom-view/scrollIntoView-iframes.html).
+    // Repeats the install_window_scrolling call above; it redefines the same
+    // properties on frame_window, so it is redundant.
     install_window_scrolling(cx, *frame_window);
     const value frame_dispatch =
         native(cx, "dispatchEvent", [this](context & c, std::span<value> a) {
@@ -1160,11 +1156,11 @@ void dom_bindings::install_frame_realm(context & cx, dom_bindings & owner, node_
         });
     frame_window->set("dispatchEvent", frame_dispatch);
     cx.define_global("dispatchEvent", frame_dispatch);
-    // `Function` AND `eval` OF THIS REALM. CreateDynamicFunction and
-    // PerformEval take the CALLEE's realm (20.2.1.1.1, 19.2.1.1), so
-    // `new frames[0].Function(src)` is a function of frame 0 - its free names
+    // `Function` and `eval` of this realm. CreateDynamicFunction and
+    // PerformEval take the callee's realm (20.2.1.1.1, 19.2.1.1), so
+    // `new frames[0].Function(src)` is a function of frame 0 (its free names
     // are the frame's globals and its throws are reported at the frame's
-    // window - and `contentWindow.eval(src)` runs in the frame. Each wraps the
+    // window), and `contentWindow.eval(src)` runs in the frame. Each wraps the
     // one intrinsic inside a realm_scope; `prototype` stays %Function.prototype%
     // (the shared-intrinsics ceiling noted above).
     for (const char * name : {"Function", "eval"}) {
@@ -1189,17 +1185,18 @@ void dom_bindings::install_frame_realm(context & cx, dom_bindings & owner, node_
     }
 }
 
+/// The bindings whose window is `window`, or the primary when none is.
 dom_bindings & dom_bindings::bindings_of(value window) {
     dom_bindings * found = find_bindings_of(window);
     return found != nullptr ? *found : primary();
 }
 
-// THE DOCUMENT-TREE CHILD NAVIGABLES in tree order (HTML 7.3.1.1) - what
-// `window.length` counts and `window[i]` indexes: each connected <iframe>
-// whose navigable exists. Reconciled first, so an <iframe src> inserted this
-// turn has one; a later <iframe> of the same insertion, whose insertion steps
-// have not run while an earlier one's `load` does, has none yet
-// (insertion-removing-steps-iframe.window.js).
+/// The document-tree child navigables in tree order (HTML 7.3.1.1), which
+/// `window.length` counts and `window[i]` indexes: each connected <iframe>
+/// whose navigable exists. Reconciled first, so an <iframe src> inserted this turn has one; a later
+/// <iframe> of the same insertion, whose insertion steps have not run while an
+/// earlier one's `load` does, has none yet
+/// (insertion-removing-steps-iframe.window.js).
 std::vector<node_id> dom_bindings::child_navigables() {
     reconcile_frames();
     std::vector<node_id> out;
@@ -1213,6 +1210,8 @@ std::vector<node_id> dom_bindings::child_navigables() {
     return out;
 }
 
+/// The bindings, among the page and its frames at any depth, whose window
+/// proxy is `window`; null when none is.
 dom_bindings * dom_bindings::find_bindings_of(value window) {
     const auto find = [window](const auto & self, dom_bindings & at) -> dom_bindings * {
         if (at.window_view_.is_heap() && at.window_view_.as_heap() == window.as_heap()) {
@@ -1227,6 +1226,8 @@ dom_bindings * dom_bindings::find_bindings_of(value window) {
     return window.is_heap() ? find(find, primary()) : nullptr;
 }
 
+/// The bindings, among the page and its frames at any depth, that own the
+/// node wrapper `wrapper`; null when none does.
 dom_bindings * dom_bindings::bindings_owning(value wrapper) {
     const auto find = [wrapper](const auto & self, dom_bindings & at) -> dom_bindings * {
         if (at.handle_of(wrapper)) { return &at; }
@@ -1239,18 +1240,20 @@ dom_bindings * dom_bindings::bindings_owning(value wrapper) {
     return wrapper.is_object() ? find(find, primary()) : nullptr;
 }
 
+/// Makes this frame's realm current until the returned scope ends; nullopt
+/// (no change) for a document with no realm of its own.
 std::optional<context::realm_scope> dom_bindings::enter_realm(context & cx) {
     if (realm_ == nullptr) { return std::nullopt; }
     return std::optional<context::realm_scope>{std::in_place, cx, *realm_};
 }
 
-// A SUBRESOURCE OF THIS DOCUMENT, as the asset registry names it. The page's
-// relative names already mean what the registry resolves them against - the
-// page's own directory - so they pass through; a frame's are relative to the
-// FRAME's address, which is often another directory (`resources/frame.html`
-// loading `helper.js`), so they are resolved against it and a file: URL is
-// handed over as its path. A data: or blob: URL, and a document with no
-// address, keep what the page wrote.
+/// The asset-registry name of this document's subresource `src`. The page's
+/// relative names already mean what the registry resolves them against (the
+/// page's own directory), so they pass through. A frame's are relative to the
+/// frame's address, which is often another directory (`resources/frame.html`
+/// loading `helper.js`), so they are resolved against it, and a file: URL is
+/// handed over as its path. A data: or blob: URL, and a document with no
+/// address, keep what the page wrote.
 std::string dom_bindings::subresource_name(std::string_view src) const {
     if (frame_owner_ != nullptr && location_href_ == "about:srcdoc") {
         return frame_owner_->subresource_name(src);
@@ -1264,12 +1267,12 @@ std::string dom_bindings::subresource_name(std::string_view src) const {
     return url;
 }
 
-// THE SCRIPTS A FRAME'S PARSE LEFT, in tree order, in the frame's realm.
-// HTML's parser runs each as it reaches it; a frame's document is parsed
-// whole first (load_frame), so its classic scripts run afterwards in document
-// order - which is also how an XHTML page's run (browser/scripts.cpp). A data
-// block (`type="text/plain"`) and a module are not classic scripts; the
-// module loader is the browser's.
+/// Runs the classic scripts a frame's parse left, in tree order, in the
+/// frame's realm. HTML's parser runs each as it reaches it; a frame's document
+/// is parsed whole first (load_frame), so its scripts run afterwards, which is
+/// also how an XHTML page's run (browser/scripts.cpp). A data block
+/// (`type="text/plain"`) and a module are not classic scripts; the module
+/// loader is the browser's.
 void dom_bindings::run_frame_scripts(context & cx) {
     if (realm_ == nullptr || doc_ == nullptr) { return; }
     struct found {
@@ -1315,9 +1318,9 @@ void dom_bindings::run_frame_scripts(context & cx) {
     }
 }
 
-// The end of a frame document's load: DOMContentLoaded and then the window's
-// `load`, in its realm, ONCE - settle_frame asks, before the <iframe>'s own
-// `load` in the document around it.
+/// Ends a frame document's load: fires DOMContentLoaded and then the window's
+/// `load`, in its realm, once. settle_frame calls it before the <iframe>'s own
+/// `load` in the document around it.
 void dom_bindings::finish_frame_load(context & cx) {
     if (realm_ == nullptr || frame_load_finished_) { return; }
     frame_load_finished_ = true;

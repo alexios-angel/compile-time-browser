@@ -1,3 +1,12 @@
+//===- declarations.cpp - CSSStyleDeclaration -------------------*- C++ -*-===//
+//
+// dom_bindings::install_stylesheet_declarations: CSSKeyframesRule,
+// CSSKeyframeRule, CSSCounterStyleRule, CSSFontFeatureValuesRule and its maps,
+// and CSSStyleDeclaration with its three subclasses (CSSStyleProperties,
+// CSSFontFaceDescriptors, CSSPageDescriptors).
+//
+//===----------------------------------------------------------------------===//
+
 #include "helpers.hpp"
 
 #include <ctbrowser/shell/net/url.hpp>
@@ -8,11 +17,12 @@ using namespace detail;
 
 namespace {
 
-// A COMPUTED STYLE'S OWN ANSWER to one of CSSStyleDeclaration's members. The
-// read-only declaration getComputedStyle returns keeps them under private keys
-// (computed_style/object.cpp spells the same ones), and the members below -
-// which WebIDL puts on the prototype, for every declaration - hand its calls
-// over. Null for any other receiver.
+/// Returns a computed style's own implementation of one of
+/// CSSStyleDeclaration's members, or null for any other receiver. The
+/// read-only declaration getComputedStyle returns keeps them under private keys
+/// (computed_style/object.cpp spells the same ones), and the members below,
+/// which Web IDL puts on the prototype for every declaration, hand its calls
+/// over.
 [[nodiscard]] const value * computed_member(context & c, std::string_view name) {
     script::object_object * self = object_of(c.current_this());
     if (self == nullptr) { return nullptr; }
@@ -20,8 +30,8 @@ namespace {
                       "computed-member:" + std::string{name});
 }
 
-// WebIDL's receiver check: a member called on no CSSStyleDeclaration at all -
-// `null`, a plain object - is a TypeError (cssom/idlharness).
+/// Web IDL's receiver check: a member called on no CSSStyleDeclaration at all
+/// (`null`, a plain object) throws a TypeError (WPT css/cssom/idlharness).
 [[nodiscard]] value illegal_invocation(context & c) {
     c.throw_error("TypeError", "Illegal invocation: the receiver is not a CSSStyleDeclaration");
     return value::undefined();
@@ -49,8 +59,8 @@ void dom_bindings::install_stylesheet_declarations(context & cx,
         },
         script::attr_configurable);
     // The list is made with the rule object (make_rule_object), because the
-    // rule is itself indexed - `keyframes[0]` - and MIRRORS it after each read
-    // and each write.
+    // rule is itself indexed (`keyframes[0]`) and mirrors the list after each
+    // read and each write.
     const auto keyframes_list = [this](context & c) {
         script::object_object * self = object_of(c.current_this());
         const css_rule_record * rule = receiver_rule(c);
@@ -75,7 +85,7 @@ void dom_bindings::install_stylesheet_declarations(context & cx,
         },
         {}, script::attr_configurable);
     // `appendRule` takes a whole keyframe and `deleteRule`/`findRule` take a
-    // keyText - NOT an index, which is what makes this trio different from
+    // keyText, not an index, which is what makes this trio different from
     // every other insert/delete pair in the CSSOM.
     set_method(
         cx, *keyframes_proto, "appendRule",
@@ -112,7 +122,7 @@ void dom_bindings::install_stylesheet_declarations(context & cx,
         cx, *keyframes_proto, "findRule",
         [this, keyframe_at](context & c, std::span<value> a) {
             css_rule_record * rule = receiver_rule(c);
-            // "Return the LAST rule that matches", which is why the search above
+            // "Return the last rule that matches", which is why the search above
             // walks backwards: a keyframes rule may name the same key twice.
             const std::size_t found =
                 keyframe_at(c, collapse_whitespace(arg_string(c, a, 0), html_whitespace));
@@ -302,20 +312,19 @@ void dom_bindings::install_stylesheet_declarations(context & cx,
 
     // --- CSSStyleDeclaration, and the three blocks that inherit it
     //
-    // ONE PROTOTYPE PER KIND OF BLOCK FOR THE WHOLE PAGE, carrying an accessor
-    // per property under both spellings. `el.style` is a PROXY over a store,
-    // which is the other way to answer an unbounded property set - it costs two
-    // natives per element and makes `el.style instanceof CSSStyleDeclaration`
-    // false, a proxy not being an object as far as the prototype walk is
-    // concerned. Here the set is bounded (the property table IS the set of IDL
-    // attributes a CSSStyleProperties has), so ~290 accessors on one shared
-    // prototype answer every rule in the document and `instanceof` works.
+    // One prototype per kind of declaration block for the whole page, with an
+    // accessor per property under both spellings (~290 accessors). This serves
+    // rule declarations (`rule.style`); `el.style` is instead a proxy
+    // (element/style_views.cpp), which costs two natives per element and makes
+    // `instanceof CSSStyleDeclaration` false. Here the set is bounded (the
+    // property table is the set of IDL attributes a CSSStyleProperties has),
+    // so one shared prototype answers every rule and `instanceof` works.
     //
-    // CSSStyleDeclaration itself carries the generic API - cssText, item,
-    // getPropertyValue and the rest - and the property accessors sit on
-    // CSSStyleProperties beneath it, exactly as CSSOM draws the split; the
-    // descriptor blocks of `@font-face` and `@page` are its other two
-    // subclasses and carry their descriptors instead. objects.cpp picks.
+    // CSSStyleDeclaration carries the generic API (cssText, item,
+    // getPropertyValue, ...); the property accessors sit on
+    // CSSStyleProperties, and the `@font-face` and `@page` descriptor blocks
+    // are its other two subclasses. dom_bindings::declaration_object in
+    // objects.cpp chooses which prototype a declaration object gets.
     script::object_object * declaration_proto =
         cssom_interface(cx, internals, "CSSStyleDeclaration", nullptr, nullptr);
     cssom_iterable(cx, declaration_proto);
@@ -355,9 +364,8 @@ void dom_bindings::install_stylesheet_declarations(context & cx,
         both_spellings(properties_proto, property.name);
     }
     // CSS Fonts 4 §11.1 and CSS Paged Media 3 §7.1: the descriptor sets, by
-    // name - the property table knows none of them, so a value is kept as the
-    // author wrote it, which is what a descriptor's grammar this engine does
-    // not model amounts to.
+    // name. The property table knows none of them, so a value is kept as the
+    // author wrote it: this engine does not model the descriptors' grammars.
     script::object_object * font_face_proto =
         cssom_interface(cx, internals, "CSSFontFaceDescriptors", "CSSStyleDeclaration", nullptr);
     for (const std::string_view name :
@@ -374,8 +382,9 @@ void dom_bindings::install_stylesheet_declarations(context & cx,
           "page-orientation", "marks", "bleed"}) {
         both_spellings(page_descriptors_proto, name);
     }
-    // A COMPUTED receiver hands the call to its own answer; one that is no
-    // declaration at all is refused, as WebIDL refuses a wrong `this`.
+    // A computed-style receiver hands the call to its own implementation; one
+    // that is no declaration at all is refused, as Web IDL refuses a wrong
+    // `this`.
     const auto computed_call = [](context & c, std::string_view name,
                                   std::span<value> a) -> std::optional<value> {
         const value * fn = computed_member(c, name);
@@ -417,8 +426,8 @@ void dom_bindings::install_stylesheet_declarations(context & cx,
             if (computed_call(c, "cssText=", a)) { return value::undefined(); }
             css_rule_record * rule = receiver_rule(c);
             if (rule == nullptr) { return illegal_invocation(c); }
-            // A WHOLE-BLOCK REPLACEMENT, not a merge, and through the same
-            // declaration-list parser a `style` attribute goes through - so a
+            // A whole-block replacement, not a merge, through the same
+            // declaration-list parser a `style` attribute goes through, so a
             // `;` inside a string cannot end a declaration here either.
             rule->declarations.clear();
             parse_declarations_into(*rule, arg_string(c, a, 0));
@@ -433,7 +442,7 @@ void dom_bindings::install_stylesheet_declarations(context & cx,
             if (const auto out = computed_call(c, "item", a)) { return *out; }
             if (receiver_rule(c) == nullptr) { return illegal_invocation(c); }
             const value held = collection_item(c, a);
-            // CSSOM's `item` answers the EMPTY STRING past the end here, unlike the
+            // CSSOM's `item` answers the empty string past the end here, unlike the
             // collections above whose `item` answers null.
             return held.is_null() ? c.string("") : held;
         },
@@ -464,16 +473,16 @@ void dom_bindings::install_stylesheet_declarations(context & cx,
             if (rule == nullptr) { return illegal_invocation(c); }
             // [LegacyNullToEmptyString] on both `value` and `priority`, and
             // `priority` is optional: null is "", and an undefined priority is the
-            // default "" rather than the string "undefined" - which was refusing
-            // the whole call. An undefined VALUE is the string "undefined", which
-            // no grammar accepts, so it is a no-op by a different route.
+            // default "" rather than the string "undefined", which would refuse
+            // the whole call. An undefined value is the string "undefined",
+            // which no grammar accepts, so it is a no-op by a different route.
             const auto text = [&](std::size_t i) {
                 return i < a.size() && !a[i].is_null() ? c.to_string(a[i]) : std::string{};
             };
             const std::string priority =
                 a.size() > 2 && a[2].is_undefined() ? std::string{} : text(2);
             // "If priority is not the empty string and is not an ASCII
-            // case-insensitive match for 'important', return" - CSSOM 6.7.2.
+            // case-insensitive match for 'important', return" (CSSOM 6.7.2).
             if (!priority.empty() && !ascii_iequals(priority, "important")) {
                 return value::undefined();
             }

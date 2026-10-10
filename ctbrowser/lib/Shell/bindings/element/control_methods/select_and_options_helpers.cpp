@@ -1,3 +1,11 @@
+//===- select_and_options_helpers.cpp - The select and option model -------===//
+//
+// The control_helpers members behind <select> and <option> (HTML 4.10.7 and
+// 4.10.10): the list of options, an option's selectedness, and keeping the
+// model and the form store's value in agreement.
+//
+//===----------------------------------------------------------------------===//
+
 #include "helpers.hpp"
 
 namespace ctbrowser::shell::detail {
@@ -10,7 +18,7 @@ std::vector<node_id> control_helpers::options_of(const read_txn & txn, dom_bindi
 
 // An option's "nearest ancestor select" (HTML 4.10.10): up from its parent,
 // and none through a datalist, an hr or another option, nor through a second
-// optgroup - the nestings the list of options leaves out, so an option outside
+// optgroup: the nestings the list of options leaves out, so an option outside
 // the list has no select to be indexed in or to take a form from.
 node_id control_helpers::select_of(const read_txn & txn, node_id option) const {
     bool in_optgroup = false;
@@ -53,14 +61,18 @@ long long control_helpers::display_size(const read_txn & txn, dom_bindings * b,
     return helpers.is_multiple(txn, b, select) ? 4LL : 1LL;
 }
 
+// Every option's selectedness, with the store reconciled. `__syncedValue` on
+// the select is the store value this model last wrote; a store value that
+// differs from it was written since by the chrome or the shadowing `value`
+// setter, and is read back into the options' slots.
 std::vector<bool> control_helpers::selected_flags(context & c, const read_txn & txn,
                                                   dom_bindings * b, node_id select,
                                                   std::vector<node_id> & options) const {
     const auto helpers = *this;
     options = helpers.options_of(txn, b, select);
-    // THE LIST OF OPTIONS AS IT WAS the last time it was asked about: an
+    // The list of options as it was the last time it was asked about: an
     // option inserted or removed since is a change to the list, and HTML
-    // 4.10.7 runs the selectedness setting algorithm on one - which a model
+    // 4.10.7 runs the selectedness setting algorithm on one, which a model
     // read lazily can only see here, by comparing.
     std::string signature = ",";
     for (const node_id option : options) { signature += std::to_string(option.key()) + ","; }
@@ -77,12 +89,12 @@ std::vector<bool> control_helpers::selected_flags(context & c, const read_txn & 
         if (helpers.slot_of(c, b, option, selected_slot).is_boolean()) { any_slot = true; }
     }
     if (helpers.is_multiple(txn, b, select)) { return flags; }
-    // "Ask for a reset": the last of several selected wins - a single select
-    // never has two, however it got them (a `multiple` removed afterwards
-    // included) - and a select nothing has touched, whose insertions the
+    // "Ask for a reset": the last of several selected wins (a single select
+    // never has two, however it got them, including a `multiple` removed
+    // afterwards), and a select nothing has touched, whose insertions the
     // parser made, selects its first enabled option at display size 1. So
-    // does one whose list CHANGED with nothing selected - the selectedness
-    // setting algorithm runs on every insertion and removal - so removing
+    // does one whose list changed with nothing selected (the selectedness
+    // setting algorithm runs on every insertion and removal), so removing
     // the selected option selects the first that is left. The options'
     // own selectedness and dirtiness are left as they are: an option put
     // back selected is selected again by its insertion (form_writes.cpp).
@@ -94,7 +106,7 @@ std::vector<bool> control_helpers::selected_flags(context & c, const read_txn & 
             last = i;
         }
     }
-    // WHAT THE ALGORITHM CHOSE IS THE OPTIONS' SELECTEDNESS NOW, written to
+    // What the algorithm chose is the options' selectedness now, written to
     // their slots rather than only answered: it is state the options keep, so
     // one moved out of the select afterwards is still selected
     // (moveBefore/select-option-optgroup.html) and an option inserted
@@ -119,7 +131,7 @@ std::vector<bool> control_helpers::selected_flags(context & c, const read_txn & 
     if (held == nullptr) { return flags; }
     const value synced = helpers.slot_of(c, b, select, "__syncedValue");
     if (changed && (!synced.is_string() || held->value == c.to_string(synced))) {
-        // The store FOLLOWS the model when the list moved and nothing wrote
+        // The store follows the model when the list moved and nothing wrote
         // the store since it was last synced: its value is stale then, not a
         // choice the chrome or the `value` setter made.
         std::string first;
@@ -158,8 +170,6 @@ std::vector<bool> control_helpers::selected_flags(context & c, const read_txn & 
     return flags;
 }
 
-// Write the selected option's value to the store, so the paint and the
-// submission agree with the model.
 void control_helpers::sync_store(context & c, const read_txn & txn, dom_bindings * b,
                                  node_id select, const std::vector<node_id> & options,
                                  const std::vector<bool> & flags) const {
@@ -179,7 +189,7 @@ void control_helpers::sync_store(context & c, const read_txn & txn, dom_bindings
 
 // "Ask for a reset", HTML 4.10.7: a single select with several selected
 // keeps the last; a display-size-1 single select with none selects the
-// first option that is not disabled.
+// first option that is not disabled. A multiple select only syncs the store.
 void control_helpers::ask_for_reset(context & c, dom_bindings * b, node_id select) const {
     const auto helpers = *this;
     const auto txn = b->doc_->read();

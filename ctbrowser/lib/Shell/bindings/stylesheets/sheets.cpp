@@ -1,7 +1,12 @@
-// dom_bindings' CSSOM - the sheet list: the document's own sheets collected
-// lazily, synced to document.styleSheets, and installed on the document; a
-// shadow root's the same way onto its own list; and the one rule for which
-// `<link>`s are stylesheets that the cascade shares.
+//===- sheets.cpp - CSSStyleSheet objects -----------------------*- C++ -*-===//
+//
+// The CSSOM's sheet lists: the document's own sheets, collected lazily from
+// the DOM and synced to `document.styleSheets`; a shadow root's sheets synced
+// the same way onto its own list; `adoptedStyleSheets`; the author style text
+// handed to the cascade; and the test, shared with the cascade, for which
+// `<link>`s are stylesheets.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -11,11 +16,10 @@ namespace ctbrowser::shell {
 
 using namespace detail;
 
-// ONE TEST FOR BOTH HALVES. browser::collect_author_styles had a copy of the
-// `rel` scan in its own anonymous namespace, and the CSSOM answering a
-// different question from the cascade about which links are stylesheets is
-// exactly the disagreement this file exists to avoid - so the cascade calls
-// this. `rel` is a space-separated token list matched ASCII case-insensitively.
+/// Classifies a <link> as an active, alternate or non-stylesheet. Shared with
+/// browser::collect_author_styles so the cascade and the CSSOM agree on which
+/// links are stylesheets. `rel` is a space-separated token list compared ASCII
+/// case-insensitively.
 dom_bindings::link_sheet dom_bindings::link_sheet_state(std::string_view rel,
                                                         bool disabled_attribute,
                                                         bool explicitly_enabled) {
@@ -60,31 +64,27 @@ std::string dom_bindings::resolve_sheet_href(std::string_view base, std::string_
 }
 
 std::string dom_bindings::author_style_text() {
-    // THE DOCUMENT'S OWN SHEETS ARE COLLECTED LAZILY, on a read of
-    // `document.styleSheets` - so a page that adopted a constructed sheet
-    // without ever touching `document.styleSheets` had `css_document_sheets_`
-    // empty here, and its `<style>` element vanished from the serialisation
-    // while the adopted sheets survived. Syncing first is what makes this the
-    // FINAL list of style sheets CSSOM defines rather than whatever the page
-    // happened to have asked for.
+    // Document sheets are collected lazily (on a read of `document.styleSheets`),
+    // so sync first; otherwise a page that never read that list would serialise
+    // its adopted sheets but not its <style> elements.
     if (cx_ != nullptr) { sync_style_sheets(*cx_); }
     std::string out;
-    // AN `@import` IS ITS SHEET'S RULES, wrapped in the import's media query
-    // when it has one - which is what the cascade would have got from the
-    // author's bytes, and the `@import` line itself is what the sheet parser
-    // drops. Depth-capped for the cycle load_imported_sheet already refuses.
+    // An `@import` is emitted as its imported sheet's rules, wrapped in the
+    // import's media query when it has one, because the cascade's sheet parser
+    // drops the `@import` line itself. The depth cap of 16 guards against the
+    // import cycles load_imported_sheet already refuses.
     const auto emit = [&](auto && self, std::size_t at, std::size_t depth) -> void {
         if (at >= css_sheets_.size() || depth > 16) { return; }
         const std::unique_ptr<css_sheet_record> & sheet = css_sheets_[at];
         if (sheet->disabled) { return; }
-        // An alternative style sheet set - titled, and not the preferred one -
+        // An alternative style sheet set (titled, and not the preferred one)
         // does not apply unless its link was explicitly enabled.
         if (depth == 0 && !sheet->title.empty() && sheet->title != css_preferred_title_ &&
             !link_explicitly_enabled(sheet->owner)) {
             return;
         }
-        // The sheet's own media list - the `media` attribute, as the CSSOM
-        // holds it - gates every rule in it (CSSOM §5.1), as
+        // The sheet's own media list (the `media` attribute, as the CSSOM
+        // holds it) gates every rule in it (CSSOM §5.1), just as
         // browser::collect_author_styles wraps the attribute.
         const std::string sheet_media = serialize_media_query_list(sheet->media_queries);
         if (!sheet_media.empty()) { out += "@media " + sheet_media + " {\n"; }
@@ -92,8 +92,9 @@ std::string dom_bindings::author_style_text() {
             if (rule >= css_rule_store_.size()) { continue; }
             const css_rule_record & record = *css_rule_store_[rule];
             if (record.type == import_rule && record.imported_sheet != no_index) {
-                // ...and in the import's `layer(x)` and `supports()` blocks
-                // (CSS Cascade 5 §5.1), which `prelude` keeps as written.
+                // The import's `layer(x)`, `supports()` and `scope()` conditions
+                // also wrap its rules (CSS Cascade 5 §5.1); `prelude` keeps them
+                // as written.
                 const std::string media = serialize_media_query_list(record.media_queries);
                 std::string closers;
                 if (!media.empty()) {
@@ -132,11 +133,11 @@ std::string dom_bindings::author_style_text() {
         }
         if (!sheet_media.empty()) { out += "}\n"; }
     };
-    // ...EACH SHEET WITH THE ROOT OF AN IMPLICIT `@scope` IN IT - its owner
-    // node's parent - written ahead as browser::collect_author_styles writes
-    // it (css::scope_block), and only ahead of a sheet that has one. A sheet
-    // with no owner, an adopted one, names none (0): the root the sheet
-    // before it named is not its root.
+    // Emits one sheet, preceded by the root of any implicit `@scope` in it (its
+    // owner node's parent), written as browser::collect_author_styles writes it
+    // (css::scope_block) and only ahead of a sheet that contains `@scope`. A
+    // sheet with no owner, such as an adopted one, names root 0 so it does not
+    // inherit the root the previous sheet named.
     const auto emit_rooted = [&](std::size_t at) {
         const std::size_t from = out.size();
         emit(emit, at, 0);
@@ -150,21 +151,10 @@ std::string dom_bindings::author_style_text() {
                              std::to_string(root) + ";\n");
     };
     for (const std::size_t at : css_document_sheets_) { emit_rooted(at); }
-    // AND THE ADOPTED SHEETS, AFTER THEM AND IN THEIR OWN ORDER.
-    //
-    // They were in the object model and in nothing else: `adoptedStyleSheets`
-    // held an array, `document.styleSheets` correctly did not include it (a
-    // constructed sheet is not a document sheet), and so a sheet a page adopted
-    // reached the cascade through no route at all. CSSOM puts them LAST in the
-    // final list of style sheets, which is what makes
-    // `adoptedStyleSheets = [red, green]` green and `[green, red]` red -
-    // `adoptedstylesheets-cascade-order.html` asserts exactly that pair, and
-    // then asserts it again for a rotation, which only an ordered walk of the
-    // array can answer.
-    //
-    // Read from the ARRAY rather than from a mirror kept beside it, because the
-    // page owns that array and a mirror updated only on assignment would be a
-    // second answer to what has been adopted.
+    // Adopted sheets come last, in array order, as CSSOM's final list of style
+    // sheets requires (WPT adoptedstylesheets-cascade-order.html checks the
+    // order). They are read from the page-owned array itself rather than a
+    // mirror, so in-place mutations are seen.
     if (script::object_object * internals = object_of(cssom_internals_)) {
         if (const value * held = internals->find("adopted"); held != nullptr && held->is_array()) {
             for (const value each : static_cast<script::array_object *>(held->as_heap())->items) {
@@ -178,14 +168,14 @@ std::string dom_bindings::author_style_text() {
 void dom_bindings::style_sheets_changed() {
     ++style_generation_;
     if (on_author_styles_) { on_author_styles_(author_style_text()); }
-    // MARKED DIRTY EITHER WAY. With no hook the cascade does not observe the
-    // change and the frame is identical, which costs one recomposite on an
-    // operation a page performs a handful of times; with a hook the browser has
-    // already replaced the author sheet and this is what schedules the restyle.
+    // Marked dirty either way. With a hook, the browser has already replaced
+    // the author sheet and this schedules the restyle. Without one, the frame
+    // is unchanged and this costs one recomposite, which is cheap for an
+    // operation a page performs a handful of times.
     mutated();
 }
 
-// --- the document's sheets, re-derived --------------------------------------
+// --- The document's sheets, re-derived --------------------------------------
 
 script::object_object * dom_bindings::cssom_internals(context & cx) {
     if (script::object_object * held = object_of(cssom_internals_)) { return held; }
@@ -196,23 +186,23 @@ script::object_object * dom_bindings::cssom_internals(context & cx) {
         return object_of(cssom_internals_);
     }
     cssom_internals_ = cx.make_object();
-    // ON THE DOCUMENT, non-configurable, and that is what roots it. Everything
-    // the CSSOM holds hangs off this object, `register_roots` already marks
-    // `document_`, and the collector traces an object's properties - so this
-    // needs no line in a file this rung does not own. A page cannot delete it
-    // either, the property being non-configurable.
+    // Stored on the document as a non-configurable property: the collector
+    // already marks the document (register_roots) and traces its properties, so
+    // everything the CSSOM holds is rooted without registering a separate GC
+    // root, and a page cannot delete it.
     doc->define(internals_key, cssom_internals_, script::attr_none);
-    // A FRAME'S CSSOM IS ITS OWN, made the first time anything asks for it -
-    // its `<style>`'s sheet, most often. A frame is built with install_document
+    // A frame's CSSOM is its own, made the first time anything asks for it
+    // (most often its `<style>`'s sheet). A frame is built with install_document
     // alone (frames.cpp), and every CSSOM method captures the bindings that
-    // installed it: a frame's sheet under the PAGE's CSSStyleSheet.prototype
-    // would read the page's record store at the frame's index. So the frame
-    // installs the interfaces over its own records, in its own realm - which
-    // also makes `sheet.rules[0].constructor` the frame's CSSStyleRule, as
-    // insertRule-across-context asserts. ponytail: lazily, because nothing of
-    // this directory runs when a frame is made; until a frame's CSSOM is first
-    // touched its `CSSStyleSheet` is still the page's, and `document.styleSheets`
-    // is absent. An install_style_sheets call in install_frame_realm is the fix.
+    // installed it, so a frame's sheet under the page's CSSStyleSheet.prototype
+    // would read the page's record store at the frame's index. The frame
+    // therefore installs the interfaces over its own records, in its own realm,
+    // which also makes `sheet.rules[0].constructor` the frame's CSSStyleRule
+    // (WPT insertRule-across-context).
+    // ponytail: installed lazily, because nothing in this directory runs when a
+    // frame is made; until a frame's CSSOM is first touched, its `CSSStyleSheet`
+    // is still the page's and `document.styleSheets` is absent. Calling
+    // install_style_sheets from install_frame_realm would fix that.
     if (realm_ != nullptr && primary_ != nullptr) {
         const auto in_frame = enter_realm(cx);
         install_style_sheets(cx);
@@ -220,16 +210,15 @@ script::object_object * dom_bindings::cssom_internals(context & cx) {
     return object_of(cssom_internals_);
 }
 
-// `document.styleSheets`: LIVE, THROUGH A PROXY. The target under
-// `internals.list` holds the prototype, `length` and the indices that
-// sync_style_sheets writes; what the page holds is a proxy over it whose every
-// read re-derives the document's sheets first, so `length` on a list held in
-// a variable across a DOM change is the count NOW
-// (ttwf-cssom-doc-ext-load-count removes a <link> and reads the list it took
-// before). `length` itself stays a data property on the target, because the
-// VM's iteration reads it as one - and a proxy is array-like through its traps
-// (context::iterable_values), which is how every other live DOM collection
-// already iterates. [SameObject]: one proxy, kept beside the target.
+/// `document.styleSheets`, kept live through a proxy. The target under
+/// `internals.list` holds the prototype, `length` and the indices that
+/// sync_style_sheets writes; the page holds a proxy over it whose every read
+/// re-derives the document's sheets first, so `length` on a list held across a
+/// DOM change is the current count (WPT ttwf-cssom-doc-ext-load-count).
+/// `length` stays a data property on the target because the VM's iteration
+/// reads it as one, and a proxy is array-like through its traps
+/// (context::iterable_values), as every other live DOM collection is.
+/// [SameObject]: one proxy, cached beside the target as `list_view`.
 value dom_bindings::style_sheet_list(context & cx) {
     script::object_object * internals = cssom_internals(cx);
     if (internals == nullptr) { return value::undefined(); }
@@ -280,8 +269,8 @@ value dom_bindings::style_sheet_list(context & cx) {
     return view;
 }
 
-// `item()` re-derives the list from the tree first - the document's, or the
-// shadow root's the list carries in `tree_key`.
+/// Re-derives a sheet list from its tree before `item()` reads it: the
+/// document's, or the shadow root's that the list carries in `tree_key`.
 void dom_bindings::resync_sheet_list(context & cx, script::object_object & list) {
     if (const value * tree = list.find(tree_key)) {
         if (const node_id root = handle_of(*tree)) { sync_sheet_list(cx, root, list, nullptr); }
@@ -292,9 +281,10 @@ void dom_bindings::resync_sheet_list(context & cx, script::object_object & list)
 
 namespace {
 
-// The per-record object caches on the internals object: one plain object each
-// for sheets and rules, keyed by record index. Reachable from the document,
-// so nothing here needs a root of its own.
+/// Returns the cached JS object for record `index` in cache `table` on the
+/// internals object (one plain object each for sheets and rules, keyed by
+/// record index), creating it with `make` on first use. The caches are
+/// reachable from the document, so they need no GC root of their own.
 [[nodiscard]] value cached_object(context & cx, script::object_object & internals,
                                   std::string_view table, std::size_t index,
                                   const std::function<value()> & make) {
@@ -340,8 +330,8 @@ void dom_bindings::sync_style_sheets(context & cx) {
 
 void dom_bindings::sync_sheet_list(context & cx, node_id from, script::object_object & list_obj,
                                    std::vector<std::size_t> * order) {
-    // WHAT THE DOM SAYS NOW - the same walk browser::collect_author_styles
-    // makes, through the same link test.
+    // Collect the sheets the DOM holds now, with the same walk and link test
+    // browser::collect_author_styles uses.
     struct found_sheet {
         node_id owner;
         bool linked = false;
@@ -349,9 +339,10 @@ void dom_bindings::sync_sheet_list(context & cx, node_id from, script::object_ob
         std::string title;
         std::string media;
         std::string text;
-        // The <style>'s child nodes, as ids: HTML §4.2.6 re-creates the sheet
-        // on ANY child change, and css-style-reparse asks that an appended
-        // empty text node drop the rules insertRule added, text or no text.
+        // The <style>'s child node ids: HTML §4.2.6 re-creates the sheet on any
+        // child change, so an appended empty text node drops the rules
+        // insertRule added even though the text is unchanged (WPT
+        // css-style-reparse).
         std::string children;
     };
     std::vector<found_sheet> found;
@@ -365,9 +356,9 @@ void dom_bindings::sync_sheet_list(context & cx, node_id from, script::object_ob
         const atom media_attribute = atoms_->intern_lower("media");
         const atom disabled_attribute = atoms_->intern_lower("disabled");
         const auto walk = [&](auto && self, node_id at) -> void {
-            // HTML ONLY, for both, and for the reason load_author_styles gives:
-            // an SVG carries its own <style>, it interns to the same atom, and
-            // it is not a document stylesheet.
+            // HTML elements only, for the reason load_author_styles gives: an
+            // SVG <style> interns to the same atom but is not a document
+            // stylesheet.
             if (txn.element_ns(at) == ctbrowser::node_ns::html) {
                 const atom tag = txn.tag(at).value_or(atom{});
                 const bool is_style = tag == style_tag;
@@ -397,9 +388,9 @@ void dom_bindings::sync_sheet_list(context & cx, node_id from, script::object_ob
         walk(walk, from);
     }
 
-    // A record this tree held that the walk no longer finds keeps its identity
-    // - a rule object the page still holds must keep answering - and answers
-    // null for `ownerNode` until the owner is found again.
+    // A record this tree held that the walk no longer finds keeps its identity,
+    // because a rule object the page still holds must keep answering; it
+    // answers null for `ownerNode` until the owner is found again.
     for (const std::unique_ptr<css_sheet_record> & record : css_sheets_) {
         if (record->tree == from) { record->attached = false; }
     }
@@ -436,30 +427,27 @@ void dom_bindings::sync_sheet_list(context & cx, node_id from, script::object_ob
         record.tree = from;
         record.attached = true;
         record.title = each.title;
-        // THE ATTRIBUTE IS RE-READ, THE LIST IS NOT. This walk runs on every
-        // read of `document.styleSheets`, and a MediaList is mutable - a page
-        // that has called `appendMedium` must not have it undone by the next
-        // property access. So the query list is re-derived only when the
-        // element's `media` attribute has actually changed under it.
+        // Re-derive the media query list only when the `media` attribute has
+        // changed. This walk runs on every read of `document.styleSheets`, and a
+        // MediaList is mutable: a page's `appendMedium` must not be undone by the
+        // next property access.
         if (fresh || record.media != each.media) {
             record.media = each.media;
             record.media_queries = parse_media_query_list(record.media);
         }
         if (each.linked) {
-            // A `<link>`'s bytes come from the asset registry, exactly as
-            // load_author_styles resolves them, and only when the href changes -
-            // this walk runs on every read of `document.styleSheets` and
-            // re-reading a file each time would be a load per property access.
+            // A `<link>`'s bytes come from the asset registry, as
+            // load_author_styles resolves them, and are reloaded only when the
+            // href changes, since this walk runs on every read of
+            // `document.styleSheets`.
             if (fresh || record.href != each.href) {
                 record.href = each.href;
-                // ORIGIN-CLEAN, CSSOM 6.3: a sheet fetched from another origin
-                // keeps its rules to itself. Only an absolute http(s) href can
-                // be cross-origin - a relative one, a data: URL and a
-                // constructed sheet are the document's own - and the origin
-                // is the URL's tuple, compared the way `location.origin`
-                // reports it.
-                // An http(s) href that does not even parse is not this
-                // document's origin either.
+                // Origin-clean flag (CSSOM 6.3): a sheet fetched from another
+                // origin hides its rules. Only an absolute http(s) href can be
+                // cross-origin (a relative one, a data: URL and a constructed
+                // sheet are the document's own); the origin is the URL's tuple,
+                // compared the way `location.origin` reports it. An http(s)
+                // href that does not parse is treated as cross-origin.
                 const bool remote = ascii_istarts_with(record.href, "http://") ||
                                     ascii_istarts_with(record.href, "https://");
                 record.origin_clean = !remote || (parse_absolute(record.href).valid &&
@@ -476,9 +464,9 @@ void dom_bindings::sync_sheet_list(context & cx, node_id from, script::object_ob
                 parse_sheet_rules(at, record.source);
             }
         } else if (fresh || record.source != each.text || record.children != each.children) {
-            // EDITING A `<style>` REPLACES ITS SHEET, which is what the source
-            // and child-list comparisons are for. An insertRule does NOT change
-            // the element's children, so the CSSOM's own mutations survive this.
+            // Editing a `<style>` replaces its sheet, which is what the source
+            // and child-list comparisons detect. insertRule does not change the
+            // element's children, so the CSSOM's own mutations survive this.
             record.source = each.text;
             record.children = each.children;
             parse_sheet_rules(at, record.source);
@@ -493,10 +481,10 @@ void dom_bindings::install_style_sheets(context & cx) {
     install_stylesheet_prototypes(cx);
     script::object_object * doc = document_object();
     if (doc == nullptr) { return; }
-    // `document.styleSheets` - [SameObject], and LIVE ENOUGH: the list object
-    // keeps its identity forever and its contents are re-derived from the DOM on
-    // every read, which is what makes a `<style>` a script appended a moment ago
-    // show up without an invalidation hook.
+    // `document.styleSheets` is [SameObject] and effectively live: the list
+    // object keeps its identity and its contents are re-derived from the DOM on
+    // every read, so a `<style>` a script just appended shows up without an
+    // invalidation hook.
     doc->define_accessor(
         "styleSheets",
         value::object(cx.allocate<script::native_object>("get styleSheets",
@@ -505,12 +493,11 @@ void dom_bindings::install_style_sheets(context & cx) {
                                                              return style_sheet_list(c);
                                                          })),
         value::undefined(), script::attr_configurable);
-    // AN OBSERVABLE ARRAY, CSSOM §6.2 through Web IDL's ObservableArray: the
-    // page sees a proxy over the array `author_style_text` walks, so an
-    // in-place `push`, `pop`, `splice` or `reverse` is checked the way the
-    // setter checks - only a constructed sheet may be adopted - and restyles.
-    // The array keeps its identity across `= [...]`, which REPLACES its
-    // contents rather than the object.
+    // An observable array (CSSOM §6.2, Web IDL ObservableArray): the page sees
+    // a proxy over the array author_style_text walks, so an in-place `push`,
+    // `pop`, `splice` or `reverse` is checked as the setter checks (only a
+    // constructed sheet may be adopted) and triggers a restyle. Assigning
+    // `= [...]` replaces the array's contents, not the array object.
     doc->define_accessor(
         "adoptedStyleSheets",
         value::object(cx.allocate<script::native_object>(
@@ -575,9 +562,9 @@ void dom_bindings::install_style_sheets(context & cx) {
         script::attr_configurable);
 }
 
-// The array `adoptedStyleSheets = [...]` stores, on the document or on a
-// shadow root: a fresh array of the given sheets, or undefined after throwing
-// for one that was not constructed.
+/// Builds the array an `adoptedStyleSheets = [...]` assignment stores, on the
+/// document or on a shadow root: a fresh array of the given sheets, or
+/// undefined after throwing for one that was not constructed.
 value dom_bindings::adopted_sheets_array(context & cx, std::span<value> args) {
     const value made = cx.make_array();
     auto * items = static_cast<script::array_object *>(made.as_heap());
@@ -590,9 +577,9 @@ value dom_bindings::adopted_sheets_array(context & cx, std::span<value> args) {
         auto * given = static_cast<script::array_object *>(from.as_heap());
         for (const value each : given->items) {
             const std::size_t at = slot_index(object_of(each), sheet_key);
-            // "Only sheets constructed in this document may be adopted", which
-            // is the one check this can make and the one `adoptedstylesheets-*`
-            // asserts.
+            // Only constructed sheets may be adopted (checked by WPT
+            // adoptedstylesheets-*). Which document constructed the sheet is
+            // not checked.
             if (at >= css_sheets_.size() || !css_sheets_[at]->constructed) {
                 throw_dom_exception(cx, "NotAllowedError",
                                     "only a constructed CSSStyleSheet may be adopted");

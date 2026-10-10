@@ -1,24 +1,23 @@
-// dom_bindings - HTMLHyperlinkElementUtils (HTML 4.6.3), the mixin `<a>` and
-// `<area>` share: `href`, `origin`, `protocol`, `username`, `password`, `host`,
-// `hostname`, `port`, `pathname`, `search` and `hash`, each a getter AND a
-// setter over shell/net/url.hpp's `url_record`.
+//===- hyperlink.cpp - HTMLHyperlinkElementUtils --------------------------===//
 //
-// ONE PARSER, ONE SET OF SETTER STEPS. Every getter here re-derives the
-// element's url ("reinitialize url": parse the `href` content attribute against
-// the document base URL, or null when there is no attribute or it does not
+// HTMLHyperlinkElementUtils (HTML 4.6.3), the mixin `<a>` and `<area>` share:
+// `href`, `origin`, `protocol`, `username`, `password`, `host`, `hostname`,
+// `port`, `pathname`, `search` and `hash`, each a getter and a setter over
+// shell/net/url.hpp's `url_record`.
+//
+// One parser, one set of setter steps. Every getter re-derives the element's
+// url ("reinitialize url": parse the `href` content attribute against the
+// document base URL, or null when there is no attribute or it does not
 // parse), and every setter runs the URL Standard's §6.1 setter steps through
-// `set_url_part` - the same function `URL.prototype` uses - and writes the
-// serialisation back to the content attribute. What preceded this was a second,
-// hand-cut implementation over `location_url` with no username, no password, no
-// opaque-path rules and a `protocol` setter that took any word at all; it
-// disagreed with `new URL()` about ~1,900 of url/a-element.html's subtests.
+// `set_url_part` (the same function `URL.prototype` uses) and writes the
+// serialisation back to the content attribute, so links and `new URL()` agree.
 //
-// THE DOCUMENT BASE URL IS `<base href>`, HTML 4.2.3 - not the document's own
-// address. url/resources/a-element.js sets `document.getElementById("base").href
-// = base` before EVERY one of its cases, so without this the whole file resolves
-// against the test's own file: URL. The frozen base URL is the first `<base>`
-// element in tree order that has an href, parsed against the fallback base URL
-// (the document's address); no such element means the fallback itself.
+// The document base URL is `<base href>` (HTML 4.2.3), not the document's own
+// address: the first `<base>` element in tree order that has an href, parsed
+// against the fallback base URL (the document's address); with no such
+// element it is the fallback itself.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -28,20 +27,21 @@ using namespace detail;
 
 namespace {
 
-// HTML 4.6.3's getters, in terms of the record. Each is "url is null" -> the
-// null answer, and otherwise the URL Standard's §6.1 getter.
+/// One HTML 4.6.3 getter/setter pair, in terms of the record: when the url is
+/// null the getter answers `when_null`, otherwise the URL Standard's §6.1
+/// getter.
 struct hyperlink_attribute {
     const char * name;
     std::string (*get)(const url_record &);
-    const char * when_null;      // what the getter answers with no url
-    std::optional<url_part> set; // nullopt: readonly (`origin`)
+    const char * when_null;      // What the getter answers with no url.
+    std::optional<url_part> set; // nullopt: readonly (`origin`).
 };
 
 constexpr hyperlink_attribute hyperlink_attributes[] = {
     // `origin` is the one readonly member of the mixin.
     {"origin", [](const url_record & u) { return u.origin(); }, "", std::nullopt},
-    // ":" and not "" - `a-element.js` reads exactly this to decide that an
-    // input FAILED to parse.
+    // ":" and not "": pages (and WPT url/a-element.html) read this to decide
+    // that an input failed to parse.
     {"protocol", [](const url_record & u) { return u.protocol(); }, ":", url_part::protocol},
     {"username", [](const url_record & u) { return u.username; }, "", url_part::username},
     {"password", [](const url_record & u) { return u.password; }, "", url_part::password},
@@ -53,9 +53,9 @@ constexpr hyperlink_attribute hyperlink_attributes[] = {
     {"hash", [](const url_record & u) { return u.hash(); }, "", url_part::hash},
 };
 
-// The first HTML <base> in tree order that carries `attribute`. THE NAMESPACE
-// DECIDES: an SVG <base> is not HTML's, and the two intern to the same atom
-// (the CLAUDE.md invariant).
+/// The first HTML <base> in tree order that carries `attribute`. The namespace
+/// is checked because an SVG <base> interns to the same atom as HTML's but is
+/// not a document base element.
 [[nodiscard]] node_id first_base_with(const read_txn & txn, atom attribute) {
     const auto walk = [&](const auto & self, node_id id) -> node_id {
         if (txn.element_ns(id) == node_ns::html && txn.local_name(id) == "base" &&
@@ -72,11 +72,10 @@ constexpr hyperlink_attribute hyperlink_attributes[] = {
 
 } // namespace
 
-// HTML 4.2.3 "document base URL". A WALK PER ACCESS, and deliberately: a <base>
-// can be inserted, removed or have its href rewritten at any moment
-// (a-element.js rewrites it between every subtest), so a cached answer is a
-// stale one. Pages carry a handful of elements before <body>, and the walk
-// stops at the first <base href>.
+/// HTML 4.2.3 "document base URL". It walks the tree on every access on
+/// purpose: a <base> can be inserted, removed or have its href rewritten at any
+/// moment, so a cached answer would go stale. Pages carry a handful of
+/// elements before <body>, and the walk stops at the first <base href>.
 // ponytail: linear scan of the tree; cache on the document's version counter
 // if a page with a large <head> ever measures.
 std::string detail::document_base_url(const read_txn & txn, atom_table & atoms,
@@ -86,12 +85,13 @@ std::string detail::document_base_url(const read_txn & txn, atom_table & atoms,
     if (!found) { return address; }
     const std::string raw{txn.attribute_value(found, href)};
     if (address.empty()) { return raw; }
-    // The frozen base URL, 4.2.3: the attribute parsed against the FALLBACK
+    // The frozen base URL, HTML 4.2.3: the attribute parsed against the fallback
     // base URL, which is the document's own address.
     const std::string resolved = resolve(address, raw);
     return resolved.empty() ? raw : resolved;
 }
 
+/// The `target` of the first HTML <base> that has one, or "" when none does.
 std::string detail::document_base_target(const read_txn & txn, atom_table & atoms) {
     const atom target = atoms.intern("target");
     const node_id found = first_base_with(txn, target);
@@ -101,9 +101,10 @@ std::string detail::document_base_target(const read_txn & txn, atom_table & atom
 void dom_bindings::install_hyperlink_utils(context & cx) {
     const atom href_name = atoms_->intern("href");
 
-    // THE ELEMENT'S OWN DOCUMENT. These accessors live on the prototypes every
-    // document shares, and an <a> in a frame's document is read through the
-    // frame's bindings - its tree, its address, its <base> - not the page's.
+    // The receiver's own document's bindings. These accessors live on the
+    // prototypes every document shares, and an <a> in a frame's document is
+    // read through the frame's bindings (its tree, its address, its <base>),
+    // not the page's.
     const auto owner = [this](context & c) -> dom_bindings & {
         dom_bindings * found = owner_of(c.current_this());
         return found == nullptr ? *this : *found;
@@ -137,7 +138,7 @@ void dom_bindings::install_hyperlink_utils(context & cx) {
         if (!iface.is_object()) { continue; }
         auto * proto = static_cast<script::object_object *>(iface.as_heap());
 
-        // `href`, which is NOT one of the rows: its getter falls back to the
+        // `href`, which is not one of the rows: its getter falls back to the
         // content attribute when the url is null, and its setter writes the
         // attribute unparsed. (It replaces the reflected `url` row installed
         // earlier, whose base URL is the document's address rather than

@@ -1,20 +1,25 @@
+//===- ctbrowser/lib/Shell/image/png.cpp - PNG decoding and encoding ------===//
+//
+// PNG decoding and encoding through libpng. This is the only translation unit
+// that includes png.h; images.hpp declares looks_like_png, decode_png and
+// encode_png without any third-party include, the same rule net.cpp follows
+// for curl.h.
+//
+// libpng is the reference implementation, shipped by every distribution and
+// linked by every browser. A PNG decoder is a deflate stream, five filter
+// types, seven colour-type-and-depth combinations, palettes, tRNS, gamma and
+// an interlace pass order, and the parts that go wrong are the ones no test
+// corpus here would cover.
+//
+// It uses the simplified API (libpng 1.6+), not the traditional callback one:
+// it is far shorter, does the format conversion in the library, and needs no
+// setjmp in the caller. `png_image` is a stack struct per call, so nothing
+// here is shared between threads.
+//
+//===----------------------------------------------------------------------===//
+
 #include <ctbrowser/shell/image/images.hpp>
 
-// THE ONLY TRANSLATION UNIT THAT KNOWS LIBPNG EXISTS. images.hpp declares
-// three functions and includes nothing third-party, which is the rule url.cpp follows
-// for Boost.URL and net_curl.cpp for curl.h.
-//
-// LIBPNG, the reference implementation - the one the format's own maintainers
-// write, shipped by every distribution and linked by every browser. A PNG
-// decoder is a deflate stream, five filter types, seven colour-type-and-depth
-// combinations, palettes, tRNS, gamma and an interlace pass order, and the parts
-// that go wrong are the ones no test corpus here would cover.
-//
-// THE SIMPLIFIED API (libpng 1.6+), not the traditional callback one: it is
-// twelve lines instead of eighty, it does the format conversion this engine
-// wants in the library rather than in a loop here, and it has no setjmp in the
-// caller. `png_image` is a stack struct per call, so nothing here is shared
-// between threads.
 #include <png.h>
 
 #include <algorithm>
@@ -42,11 +47,10 @@ paint::bitmap decode_png(std::span<const std::byte> data) {
         return {};
     }
 
-    // RGBA8 OUT, WHATEVER WENT IN. libpng converts from the file's own colour
-    // type and bit depth - palette, greyscale, 16-bit, interlaced - so the
-    // engine never sees any of them. Phaser's `__DEFAULT` texture is 1-bit
-    // palette with a tRNS chunk, which is exactly what a hand-written decoder
-    // gets wrong and then calls a corrupt file.
+    // RGBA8 out, whatever went in. libpng converts from the file's own colour
+    // type and bit depth (palette, greyscale, 16-bit, interlaced), so the
+    // engine never sees any of them. Phaser's `__DEFAULT` texture, for
+    // example, is a 1-bit palette with a tRNS chunk.
     image.format = PNG_FORMAT_RGBA;
 
     // A guard on the arithmetic below rather than on the image: a PNG large
@@ -68,7 +72,7 @@ paint::bitmap decode_png(std::span<const std::byte> data) {
     paint::bitmap out{static_cast<std::int32_t>(image.width),
                       static_cast<std::int32_t>(image.height)};
     // libpng hands back RGBA bytes in reading order; the display list carries
-    // packed ARGB. NOT premultiplied - `paint` composites with straight alpha,
+    // packed ARGB. Not premultiplied: `paint` composites with straight alpha,
     // which is what decode_bmp produces too.
     std::size_t at = 0;
     for (std::int32_t y = 0; y < static_cast<std::int32_t>(image.height); ++y) {
@@ -84,7 +88,7 @@ paint::bitmap decode_png(std::span<const std::byte> data) {
 }
 
 std::vector<std::byte> encode_png(const paint::bitmap & image) {
-    // Empty in, empty out - not a header with no pixels, which a decoder would
+    // Empty in, empty out: not a header with no pixels, which a decoder would
     // reject and which would look like a corrupt file rather than no file.
     if (image.empty()) { return {}; }
 

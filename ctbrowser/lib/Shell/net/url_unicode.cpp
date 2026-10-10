@@ -1,18 +1,31 @@
+//===- ctbrowser/lib/Shell/net/url_unicode.cpp - URL host parsing ---------===//
+//
+// Host parsing for the URL parser: the WHATWG URL Standard host parser (§
+// numbers in this file refer to the URL Standard), IPv4 and IPv6 parsing and
+// serialisation, and "domain to ASCII" (UTS #46 mapping, NFC per Unicode
+// Annex #15, Punycode per RFC 3492, CheckBidi per RFC 5893).
+//
+//===----------------------------------------------------------------------===//
+
 #include "url_internal.hpp"
 
 namespace ctbrowser::shell::url_detail {
-// --- §3.5 hosts --------------------------------------------------------------------
+// --- URL Standard §3.5: hosts --------------------------------------------------------------------
 
+/// URL Standard "forbidden host code point".
 [[nodiscard]] constexpr bool forbidden_host(char32_t c) noexcept {
     return c == 0 || c == '\t' || c == '\n' || c == '\r' || c == ' ' || c == '#' || c == '/' ||
            c == ':' || c == '<' || c == '>' || c == '?' || c == '@' || c == '[' || c == '\\' ||
            c == ']' || c == '^' || c == '|';
 }
+/// URL Standard "forbidden domain code point": the forbidden host code points,
+/// C0 controls, `%` and U+007F.
 [[nodiscard]] constexpr bool forbidden_domain(char32_t c) noexcept {
     return forbidden_host(c) || c < 0x20 || c == '%' || c == 0x7F;
 }
 
-// §3.5 IPv4 number parser: (value, ok). `input` is one dotted part.
+/// §3.5 "IPv4 number parser" for one dotted part (`0x` hex, leading-`0` octal,
+/// else decimal). Returns nullopt when the part is not a number.
 [[nodiscard]] std::optional<std::uint64_t> ipv4_number(std::u32string_view input) {
     if (input.empty()) { return std::nullopt; }
     unsigned radix = 10;
@@ -37,6 +50,7 @@ namespace ctbrowser::shell::url_detail {
     return value;
 }
 
+/// Splits on every `.`, keeping empty parts (`a..b` gives three).
 [[nodiscard]] std::vector<std::u32string_view> split_dots(std::u32string_view input) {
     std::vector<std::u32string_view> parts;
     std::size_t start = 0;
@@ -49,7 +63,8 @@ namespace ctbrowser::shell::url_detail {
     return parts;
 }
 
-// §3.5 "ends in a number checker".
+/// §3.5 "ends in a number checker": true when the host should be parsed as
+/// IPv4 because its last (non-empty) label is a number.
 [[nodiscard]] bool ends_in_a_number(std::u32string_view input) {
     std::vector<std::u32string_view> parts = split_dots(input);
     if (parts.back().empty()) {
@@ -61,7 +76,7 @@ namespace ctbrowser::shell::url_detail {
     return ipv4_number(last).has_value();
 }
 
-// §3.5 IPv4 parser, to its serialisation.
+/// §3.5 "IPv4 parser": returns the dotted-decimal serialisation, or nullopt.
 [[nodiscard]] std::optional<std::string> parse_ipv4(std::u32string_view input) {
     std::vector<std::u32string_view> parts = split_dots(input);
     if (parts.back().empty() && parts.size() > 1) { parts.pop_back(); }
@@ -87,7 +102,8 @@ namespace ctbrowser::shell::url_detail {
     return out;
 }
 
-// §3.5 IPv6 parser, to its serialisation with the brackets.
+/// §3.5 "IPv6 parser" for the text between the brackets: returns the
+/// serialisation with its brackets, or nullopt.
 [[nodiscard]] std::optional<std::string> parse_ipv6(std::u32string_view input) {
     std::uint16_t address[8] = {};
     std::size_t piece = 0;
@@ -210,7 +226,9 @@ namespace ctbrowser::shell::url_detail {
     return out + "]";
 }
 
-// RFC 3492 punycode, the encoder only: what `xn--` labels are made of.
+/// RFC 3492 Punycode encoder: turns a Unicode label into the ASCII text that
+/// follows `xn--`. The decoder is punycode_decode() below. Returns nullopt on
+/// overflow.
 [[nodiscard]] std::optional<std::string> punycode(std::u32string_view input) {
     constexpr std::uint32_t base = 36, tmin = 1, tmax = 26, skew = 38, damp = 700;
     const auto adapt = [](std::uint32_t delta, std::uint32_t points, bool first) {
@@ -265,24 +283,24 @@ namespace ctbrowser::shell::url_detail {
 
 // --- NFC, Unicode Annex #15 -------------------------------------------------
 //
-// UTS #46 step 2 normalises the mapped string, and 4.1's first validity
-// criterion is that a label already be NFC. Both want the canonical
-// decomposition, the combining classes and the composition table, and nothing
-// else in the engine has ever needed them - text is compared byte for byte
-// everywhere else, deliberately (core/algorithms.hpp is ASCII-only so a render
-// cannot depend on a locale). This is Unicode's data, not a locale's, so it is
-// the same answer on every host.
+// NFC normalisation, used only by domain to ASCII (UTS #46 step 2 and the
+// first validity criterion of UTS #46 §4.1). The tables come from Unicode data
+// (tools/gen/nfc_table.py), not from the host locale, so results are the same
+// on every host. Elsewhere the engine compares text byte for byte.
 
+/// One canonical decomposition: \p cp expands to nfd_data[at, at + len).
 struct nfd_entry {
     char32_t cp;
     std::uint16_t at;
     std::uint8_t len;
 };
+/// Code points [first, last] share Canonical_Combining_Class \p ccc.
 struct ccc_range {
     char32_t first;
     char32_t last;
     std::uint8_t ccc;
 };
+/// \p a followed by \p b composes canonically to \p cp.
 struct compose_pair {
     char32_t a;
     char32_t b;
@@ -291,8 +309,8 @@ struct compose_pair {
 
 #include "nfc_table.inc"
 
-// Hangul is ALGORITHMIC (3.12): 11,172 syllables that would be 11,172 table
-// rows and are three multiplications instead.
+// Hangul syllables are composed and decomposed arithmetically (Unicode
+// Standard §3.12) instead of through 11,172 table rows.
 constexpr char32_t hangul_sbase = 0xAC00;
 constexpr char32_t hangul_lbase = 0x1100;
 constexpr char32_t hangul_vbase = 0x1161;
@@ -303,6 +321,7 @@ constexpr std::uint32_t hangul_tcount = 28;
 constexpr std::uint32_t hangul_ncount = hangul_vcount * hangul_tcount;
 constexpr std::uint32_t hangul_scount = hangul_lcount * hangul_ncount;
 
+/// Canonical_Combining_Class of \p c; 0 (a starter) when the table omits it.
 [[nodiscard]] std::uint8_t combining_class(char32_t c) {
     std::size_t lo = 0;
     std::size_t hi = std::size(ccc_ranges);
@@ -319,6 +338,7 @@ constexpr std::uint32_t hangul_scount = hangul_lcount * hangul_ncount;
     return 0;
 }
 
+/// Appends the full canonical decomposition of \p c, or \p c itself.
 void decompose_into(std::u32string & out, char32_t c) {
     if (c >= hangul_sbase && c < hangul_sbase + hangul_scount) {
         const std::uint32_t index = c - hangul_sbase;
@@ -345,7 +365,8 @@ void decompose_into(std::u32string & out, char32_t c) {
     out.push_back(c);
 }
 
-// "Compose a starter with what follows it", or 0 for a pair that does not.
+/// The primary composite of starter \p a and \p b, or 0 when they do not
+/// compose.
 [[nodiscard]] char32_t compose(char32_t a, char32_t b) {
     if (a >= hangul_lbase && a < hangul_lbase + hangul_lcount && b >= hangul_vbase &&
         b < hangul_vbase + hangul_vcount) {
@@ -373,19 +394,20 @@ void decompose_into(std::u32string & out, char32_t c) {
     return 0;
 }
 
+/// \p text in Normalization Form C (Unicode Annex #15).
 [[nodiscard]] std::u32string to_nfc(std::u32string_view text) {
-    // ASCII IS ALREADY NFC: no ASCII code point has a canonical decomposition
-    // and no pair of them composes. Worth the scan because `domain to ASCII`
-    // runs on EVERY host the engine parses, and almost all of them are ASCII.
+    // ASCII text is already NFC: no ASCII code point decomposes and no ASCII
+    // pair composes. The check pays off because domain to ASCII runs on every
+    // host parsed, and almost all hosts are ASCII.
     if (std::all_of(text.begin(), text.end(), [](char32_t c) { return c < 0x80; })) {
         return std::u32string{text};
     }
     std::u32string parts;
     parts.reserve(text.size());
     for (const char32_t c : text) { decompose_into(parts, c); }
-    // Canonical ordering (3.11): an insertion sort, which IS the stable sort
-    // the algorithm asks for and is cheaper than one on a sequence that is
-    // almost always already ordered.
+    // Canonical ordering (Unicode Standard §3.11): a stable insertion sort by
+    // combining class, which is cheap on input that is almost always already
+    // ordered.
     for (std::size_t i = 1; i < parts.size(); ++i) {
         const std::uint8_t klass = combining_class(parts[i]);
         if (klass == 0) { continue; }
@@ -396,9 +418,10 @@ void decompose_into(std::u32string & out, char32_t c) {
         }
     }
     if (parts.empty()) { return parts; }
-    // Canonical composition (3.11), the annex's own loop: each character is
-    // either folded into the last STARTER or appended, and a character is
-    // blocked from its starter by one of equal or higher class before it.
+    // Canonical composition (Unicode Standard §3.11), the annex's own loop:
+    // each character is either folded into the last starter or appended, and a
+    // character is blocked from its starter by one of equal or higher class
+    // before it.
     std::u32string out;
     out.push_back(parts[0]);
     std::size_t starter = 0;
@@ -421,11 +444,8 @@ void decompose_into(std::u32string & out, char32_t c) {
 
 // --- UTS #46, "domain to ASCII" ---------------------------------------------
 //
-// THE WHOLE PROCESSING, not a hand-picked subset. What was here before mapped
-// the handful of code points the corpus happened to reach - the ideographic
-// full stops, full-width ASCII, the Latin-1 capitals - and passed an `xn--`
-// label through unverified. url/IdnaTestV2.any.js drives 2,671 domains through
-// this and 1,276 of them disagreed.
+// This is the full UTS #46 processing, not a hand-picked subset of mappings;
+// the WPT test url/IdnaTestV2.any.js (2,671 domains) checks it.
 //
 // The tables are Unicode's, generated by tools/gen/idna_table.py: the mapping
 // table collapsed to the four statuses the URL Standard's parameters leave
@@ -433,18 +453,18 @@ void decompose_into(std::u32string & out, char32_t c) {
 // valid and a disallowed_STD3_* is its permissive self), General_Category=M,
 // Canonical_Combining_Class=Virama and Joining_Type.
 //
-// Step 2's NFC is above, over Annex #15's data (tools/gen/nfc_table.py).
+// Step 2's NFC is to_nfc() above.
 //
-// CheckBidi (5.4) IS done - a Bidi_Class table (tools/gen/idna_table.py) and
-// `valid_bidi_label` below - but ONLY for a domain that carries a non-ASCII
-// code point. An all-ASCII domain is never a Bidi domain, and browsers do not
-// run IDNA on one at all: `xn--a` is left verbatim rather than decoded to a
-// disallowed U+0080 and refused. That ASCII short-circuit is also what carries
-// `IgnoreInvalidPunycode`: an invalid `xn--` label survives when the whole
-// domain is ASCII, but in a domain that already holds non-ASCII an `xn--` that
-// does not decode to a valid label fails it (url/toascii `xn--a.ß` -> failure).
-// CheckHyphens is false and VerifyDnsLength is false: the URL Standard says so.
+// CheckBidi (UTS #46 §5.4, valid_bidi_label() below) runs only for domains
+// with a non-ASCII code point. All-ASCII domains are left as written, as
+// browsers do: `xn--a` is kept instead of being decoded to a disallowed U+0080
+// and refused. The same short-circuit implements IgnoreInvalidPunycode: an
+// invalid `xn--` label survives in an all-ASCII domain but fails a domain that
+// has non-ASCII elsewhere (`xn--a.ß` fails). CheckHyphens and VerifyDnsLength
+// are false, as the URL Standard requires.
 
+/// Code points [first, last] share one IDNA mapping status; a mapped range
+/// maps to idna_mappings[map_at, map_at + map_len).
 struct idna_range {
     char32_t first;
     char32_t last;
@@ -452,11 +472,13 @@ struct idna_range {
     std::uint16_t map_at;
     std::uint8_t map_len;
 };
+/// Code points [first, last] share Joining_Type \p kind (`T`, `L`, `R`, `D`).
 struct joining_range {
     char32_t first;
     char32_t last;
     char kind;
 };
+/// Code points [first, last] share a Bidi_Class, encoded as one letter.
 struct bidi_range {
     char32_t first;
     char32_t last;
@@ -470,6 +492,7 @@ constexpr std::uint8_t idna_mapped = 1;
 constexpr std::uint8_t idna_ignored = 2;
 constexpr std::uint8_t idna_disallowed = 3;
 
+/// The IDNA mapping row for \p c, or nullptr (disallowed).
 [[nodiscard]] const idna_range * idna_lookup(char32_t c) {
     std::size_t lo = 0;
     std::size_t hi = std::size(idna_ranges);
@@ -486,6 +509,7 @@ constexpr std::uint8_t idna_disallowed = 3;
     return nullptr; // outside every range: disallowed
 }
 
+/// True when \p c lies in one of the sorted [first, last] ranges of \p table.
 template <std::size_t N> [[nodiscard]] bool in_pairs(const char32_t (&table)[N][2], char32_t c) {
     std::size_t lo = 0;
     std::size_t hi = N;
@@ -502,7 +526,7 @@ template <std::size_t N> [[nodiscard]] bool in_pairs(const char32_t (&table)[N][
     return false;
 }
 
-// Joining_Type; 'U' for everything the table does not name.
+/// Joining_Type of \p c; 'U' for everything the table does not name.
 [[nodiscard]] char joining_type(char32_t c) {
     std::size_t lo = 0;
     std::size_t hi = std::size(joining_ranges);
@@ -519,7 +543,7 @@ template <std::size_t N> [[nodiscard]] bool in_pairs(const char32_t (&table)[N][
     return 'U';
 }
 
-// Bidi_Class as CheckBidi reads it; 'L' for everything the table does not name.
+/// Bidi_Class as CheckBidi reads it; 'L' for everything the table omits.
 [[nodiscard]] char bidi_class(char32_t c) {
     std::size_t lo = 0;
     std::size_t hi = std::size(bidi_ranges);
@@ -536,8 +560,9 @@ template <std::size_t N> [[nodiscard]] bool in_pairs(const char32_t (&table)[N][
     return 'L';
 }
 
-// CheckBidi (RFC 5893 / UTS #46 5.4), one label. Only reached for a label of a
-// Bidi domain - one where SOME label carries an R, AL ('A') or AN ('N') point.
+/// CheckBidi (RFC 5893, UTS #46 §5.4) for one label. Only called for labels of
+/// a Bidi domain: one where some label carries an R, AL ('A') or AN ('N')
+/// code point.
 [[nodiscard]] bool valid_bidi_label(std::u32string_view label) {
     if (label.empty()) { return true; }
     const char first = bidi_class(label.front());
@@ -581,8 +606,9 @@ template <std::size_t N> [[nodiscard]] bool in_pairs(const char32_t (&table)[N][
     return false;
 }
 
-// RFC 3492's decoder - the half `xn--` needs and the half this file did not
-// have, which is why every `xn--` label used to be taken on trust.
+/// RFC 3492 Punycode decoder: turns the text after `xn--` back into code
+/// points so the label can be validated. Returns nullopt on malformed input or
+/// overflow.
 [[nodiscard]] std::optional<std::u32string> punycode_decode(std::string_view input) {
     constexpr std::uint32_t base = 36, tmin = 1, tmax = 26, skew = 38, damp = 700;
     const auto adapt = [](std::uint32_t delta, std::uint32_t points, bool first) {
@@ -603,7 +629,7 @@ template <std::size_t N> [[nodiscard]] bool in_pairs(const char32_t (&table)[N][
     };
     std::u32string out;
     std::size_t at = 0;
-    // The basic code points, up to the LAST delimiter; everything before it
+    // The basic code points, up to the last delimiter; everything before it
     // must be ASCII and is copied out as it stands.
     if (const std::size_t last = input.rfind('-'); last != std::string_view::npos) {
         for (std::size_t i = 0; i < last; ++i) {
@@ -640,13 +666,14 @@ template <std::size_t N> [[nodiscard]] bool in_pairs(const char32_t (&table)[N][
     return out;
 }
 
-// 4.1 "Validity Criteria", the parts this engine can answer: no U+002E, no
-// leading combining mark, every code point valid, and the two ContextJ rules.
+/// UTS #46 §4.1 "Validity Criteria" for one Unicode label: NFC, no U+002E, no
+/// leading combining mark, every code point valid, and the two ContextJ rules.
+/// CheckHyphens and CheckBidi are not done here.
 [[nodiscard]] bool valid_label(std::u32string_view label) {
     if (label.empty()) { return true; }
-    // Criterion 1: the label must ALREADY be in NFC. It is, for a label that
-    // came through the step above; it need not be for one punycode just
-    // decoded, which is the case this catches.
+    // Criterion 1: the label must already be in NFC. A label from the mapped
+    // input is, because domain_to_ascii() normalised it in step 2; a label just
+    // decoded from Punycode need not be, and that is the case this catches.
     if (std::any_of(label.begin(), label.end(), [](char32_t c) { return c >= 0x80; }) &&
         to_nfc(label) != label) {
         return false;
@@ -657,9 +684,9 @@ template <std::size_t N> [[nodiscard]] bool in_pairs(const char32_t (&table)[N][
         const idna_range * row = idna_lookup(c);
         if (row == nullptr || row->status != idna_valid) { return false; }
     }
-    // ContextJ (RFC 5892 appendix A.1 and A.2). Both joiners are `deviation`
-    // and so VALID above with Transitional_Processing false, which is exactly
-    // why they need a rule of their own.
+    // ContextJ (RFC 5892 appendix A.1 and A.2). Both joiners are `deviation`,
+    // so they pass the validity check above with Transitional_Processing false,
+    // which is why they need a rule of their own.
     for (std::size_t at = 0; at < label.size(); ++at) {
         const char32_t c = label[at];
         if (c != 0x200C && c != 0x200D) { continue; }
@@ -680,8 +707,9 @@ template <std::size_t N> [[nodiscard]] bool in_pairs(const char32_t (&table)[N][
     return true;
 }
 
-// §3.3 "domain to ASCII", beStrict false - UTS #46 ToASCII with the URL
-// Standard's parameters.
+/// URL Standard §3.3 "domain to ASCII" with beStrict false: UTS #46 ToASCII
+/// with the URL Standard's parameters. Returns the ASCII domain, or nullopt if
+/// the domain is invalid.
 [[nodiscard]] std::optional<std::string> domain_to_ascii(std::u32string_view domain) {
     // A domain with no non-ASCII code point is never a Bidi domain and never
     // needs Punycode decoded: browsers leave it verbatim. That is what keeps an
@@ -701,8 +729,8 @@ template <std::size_t N> [[nodiscard]] bool in_pairs(const char32_t (&table)[N][
             mapped.push_back(c);
         }
     }
-    // Step 2, "Normalize": NFC over the whole mapped string, BEFORE it is cut
-    // into labels - a combining mark can only compose with what precedes it,
+    // Step 2, "Normalize": NFC over the whole mapped string, before it is cut
+    // into labels, because a combining mark can only compose with what precedes it,
     // and the label boundary is a U+002E that composes with nothing.
     mapped = to_nfc(mapped);
     // Steps 3-4: break on U+002E, convert and validate each label into its
@@ -746,7 +774,7 @@ template <std::size_t N> [[nodiscard]] bool in_pairs(const char32_t (&table)[N][
         }
     }
     // Step 4.2, CheckBidi (RFC 5893): a non-ASCII domain that carries an R, AL
-    // or AN point in any label is a Bidi domain, and then EVERY label must obey
+    // or AN point in any label is a Bidi domain, and then every label must obey
     // the RTL/LTR rules. All-ASCII domains are handled above and never reach it.
     if (!all_ascii) {
         const bool bidi_domain =
@@ -782,7 +810,9 @@ template <std::size_t N> [[nodiscard]] bool in_pairs(const char32_t (&table)[N][
     return out;
 }
 
-// §3.5 "host parser", to the serialised host.
+/// URL Standard §3.5 "host parser". Returns the serialised host (a bracketed
+/// IPv6, dotted IPv4, opaque host or ASCII domain), or nullopt on failure.
+/// \p is_opaque is true for non-special schemes.
 [[nodiscard]] std::optional<std::string> parse_host(std::u32string_view input, bool is_opaque) {
     if (!input.empty() && input.front() == '[') {
         if (input.back() != ']') { return std::nullopt; }

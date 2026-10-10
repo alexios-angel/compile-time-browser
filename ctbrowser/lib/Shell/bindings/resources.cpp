@@ -1,4 +1,10 @@
-// dom_bindings - fetch, images and the asset registry.
+//===- resources.cpp - fetch, images and resources --------------*- C++ -*-===//
+//
+// dom_bindings' fetch (Headers, Request, Response), <img>/Image loading,
+// FileReader delivery, and resource lookup (embedder, asset registry, file,
+// network).
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/shell/bindings.hpp>
@@ -9,17 +15,13 @@
 #include <numbers>
 #include <optional>
 
-// dom_bindings' method bodies - the API a page's script actually calls.
-//
-// The header lists what a page can reach; this is how each one works.
-
 namespace ctbrowser::shell {
 
 namespace detail {
-// A body's bytes decoded, BOM and all - defined in xhr.cpp beside the
-// response decoding that needed it first.
+/// A body's bytes decoded as encoding `name`, a BOM overriding it. Defined in
+/// xhr.cpp beside the response decoding.
 [[nodiscard]] std::string decode_body(std::string_view bytes, std::string_view name);
-// "UTF-8 decode": a UTF-8 BOM dropped and none other sniffed - xhr.cpp.
+/// "UTF-8 decode": a UTF-8 BOM dropped and no other sniffed. Defined in xhr.cpp.
 [[nodiscard]] std::string utf8_decode(std::string_view bytes);
 } // namespace detail
 
@@ -30,7 +32,7 @@ namespace {
 // State in private slots, the way XMLHttpRequest keeps its own: a Headers
 // object's list as a script array of [name, value] pairs (the case kept,
 // compared without it) and its guard; a Request's or a Response's Headers, its
-// body as a string cell of the raw bytes - absent for a null body - and
+// body as a string cell of the raw bytes (absent for a null body), and
 // whether that has been read.
 const std::string header_list_slot = std::string{script::private_key_prefix} + "fetch:headers";
 const std::string header_guard_slot = std::string{script::private_key_prefix} + "fetch:guard";
@@ -44,7 +46,7 @@ const std::string response_proto_global = std::string{script::private_key_prefix
 
 using header_list = std::vector<std::pair<std::string, std::string>>;
 
-// A header NAME is a token (RFC 9110 5.6.2).
+/// Whether `name` is a valid header name: a token (RFC 9110 5.6.2).
 [[nodiscard]] bool is_header_name(std::string_view name) {
     constexpr std::string_view marks = "!#$%&'*+-.^_`|~";
     return !name.empty() && std::ranges::all_of(name, [&](char ch) {
@@ -53,8 +55,8 @@ using header_list = std::vector<std::pair<std::string, std::string>>;
     });
 }
 
-// A header value NORMALIZED - leading and trailing HTTP whitespace off - and
-// then refused when it still holds a NUL, CR or LF (Fetch 2.2.2).
+/// A header value normalized (leading and trailing HTTP whitespace removed),
+/// or nullopt when it still holds a NUL, CR or LF (Fetch 2.2.2).
 [[nodiscard]] std::optional<std::string> header_value(std::string_view text) {
     text = trim(text, "\t\n\r ");
     if (text.find_first_of(std::string_view{"\0\r\n", 3}) != std::string_view::npos) {
@@ -63,6 +65,7 @@ using header_list = std::vector<std::pair<std::string, std::string>>;
     return std::string{text};
 }
 
+/// The header list held by the Headers object `headers`; empty when it has none.
 [[nodiscard]] header_list headers_of(context & c, value headers) {
     header_list out;
     script::object_object * self = object_of(headers);
@@ -75,6 +78,7 @@ using header_list = std::vector<std::pair<std::string, std::string>>;
     return out;
 }
 
+/// Replaces the header list `self` holds with `list`.
 void store_headers(context & c, script::object_object & self, const header_list & list) {
     const value array = c.make_array();
     auto & items = static_cast<script::array_object *>(array.as_heap())->items;
@@ -88,7 +92,7 @@ void store_headers(context & c, script::object_object & self, const header_list 
     self.define(header_list_slot, array, script::attr_none);
 }
 
-// "Get" a header: every value under the name, joined by ", "; nullopt for none.
+/// "Get" a header: every value under the name, joined by ", "; nullopt for none.
 [[nodiscard]] std::optional<std::string> get_header(const header_list & list,
                                                     std::string_view name) {
     std::optional<std::string> out;
@@ -99,8 +103,8 @@ void store_headers(context & c, script::object_object & self, const header_list 
     return out;
 }
 
-// "Sort and combine": lowercased names in byte order, one entry per name with
-// its values combined - except `set-cookie`, one entry per value.
+/// "Sort and combine": lowercased names in byte order, one entry per name with
+/// its values combined, except `set-cookie`, which keeps one entry per value.
 [[nodiscard]] header_list sort_and_combine(const header_list & list) {
     std::vector<std::string> names;
     for (const auto & [name, text] : list) {
@@ -121,10 +125,10 @@ void store_headers(context & c, script::object_object & self, const header_list 
     return out;
 }
 
-// A Headers object over `list`, under `guard`: "immutable" for a fetched
-// response's, "none" for the rest. ponytail: the request and response
-// guards' forbidden-name lists are not applied - nothing here sends a request
-// or keeps a cookie for them to protect.
+/// A Headers object over `list`, under `guard`: "immutable" for a fetched
+/// response's, "none" for the rest. ponytail: the request and response
+/// guards' forbidden-name lists are not applied, since nothing here sends a
+/// request or keeps a cookie for them to protect.
 [[nodiscard]] value make_headers(context & c, const header_list & list, std::string_view guard) {
     auto * made = c.allocate<script::object_object>();
     if (const value proto = c.global(headers_proto_global); proto.is_object()) {
@@ -135,9 +139,9 @@ void store_headers(context & c, script::object_object & self, const header_list 
     return value::object(made);
 }
 
-// "Fill" a header list from a HeadersInit: a sequence of pairs - a Headers is
-// one, being iterable - or a record. False, with the TypeError thrown, when a
-// pair is not a pair or a name or value is not one.
+/// "Fill" a header list from a HeadersInit: a sequence of pairs (a Headers is
+/// one, being iterable) or a record. Returns false, with the TypeError thrown,
+/// when a pair is not a pair or a name or value is invalid.
 bool fill_headers(context & c, header_list & list, value init, const char * where) {
     if (init.is_undefined()) { return true; }
     if (!init.is_object_like()) {
@@ -158,9 +162,9 @@ bool fill_headers(context & c, header_list & list, value init, const char * wher
         method.is_callable()) {
         const value items = c.iterable_values(init);
         if (c.throw_pending()) { return false; }
-        // COPIED AND ROOTED, both levels: iterable_values hands an Array
-        // argument back ITSELF, so these vectors can be the page's own - and
-        // a name's toString that pushes onto one reallocates it under a
+        // Copied and rooted, at both levels: iterable_values hands an Array
+        // argument back itself, so these vectors can be the page's own, and a
+        // name's toString that pushes onto one would reallocate it under a
         // range-for (or a reference) still walking it.
         std::vector<value> entries = static_cast<script::array_object *>(items.as_heap())->items;
         const context::rooted_values keep_entries{c, entries};
@@ -194,24 +198,25 @@ bool fill_headers(context & c, header_list & list, value init, const char * wher
     return true;
 }
 
-// The bytes of a u8 array, or of anything carrying one in `__bytes` - a Blob,
-// an ArrayBuffer, a File.
+/// The bytes of a u8 array, or of anything carrying one in `__bytes` (a Blob,
+/// an ArrayBuffer, a File).
 [[nodiscard]] std::string bytes_of(context & c, value source) {
     // A Blob's or an ArrayBuffer's `__bytes`, or a view's window onto its
-    // buffer - a view's own `items` are empty (typed_arrays/internal.hpp).
+    // buffer; a view's own `items` are empty (typed_arrays/internal.hpp).
     std::vector<std::uint8_t> bytes;
     if (!buffer_source_bytes(c, source, bytes)) { return {}; }
     return std::string{bytes.begin(), bytes.end()};
 }
 
+/// A new Uint8Array holding `bytes`.
 [[nodiscard]] value u8_of(context & c, std::string_view bytes) {
     return make_u8_array(c, std::as_bytes(std::span{bytes.data(), bytes.size()}));
 }
 
-// "Extract a body" (Fetch 5.1) from a BodyInit: its bytes, and the Content-Type
-// it implies - empty for none. A string is UTF-8 text/plain, URLSearchParams
-// urlencoded, a Blob its own type, a BufferSource none, and FormData
-// multipart/form-data under a boundary of its own.
+/// "Extract a body" (Fetch 5.1) from a BodyInit: its bytes, and the
+/// Content-Type it implies (empty for none). A string is UTF-8 text/plain,
+/// URLSearchParams urlencoded, a Blob its own type, a BufferSource none, and
+/// FormData multipart/form-data under a boundary of its own.
 struct extracted_body {
     std::string bytes;
     std::string type;
@@ -229,7 +234,7 @@ struct extracted_body {
     }
     if (body.is_object() && is("FormData")) {
         // "The multipart/form-data encoding algorithm" (HTML 4.10.21.8) over
-        // the entry list and UTF-8 - page/forms.cpp's, the one a form
+        // the entry list and UTF-8, page/forms.cpp's, the one a form
         // submission runs: the line breaks of names and string values
         // normalised, a name's `"`, CR and LF escaped, a File with its
         // filename and type.
@@ -256,7 +261,7 @@ struct extracted_body {
         return {std::move(made.body), "multipart/form-data; boundary=" + made.boundary};
     }
     // An ArrayBuffer or a view onto one: its bytes, the view's offset and
-    // length applied, and no type. A plain array is no BufferSource - it is
+    // length applied, and no type. A plain array is no BufferSource; it is
     // stringified, below, as WebIDL's union says.
     if (body.is_array()) {
         if (static_cast<script::array_object *>(body.as_heap())->elements !=
@@ -269,9 +274,9 @@ struct extracted_body {
     return {c.to_string(body), "text/plain;charset=UTF-8"};
 }
 
-// A Body method's receiver: a Request or a Response - whatever carries its
-// Headers in the private slot - else the TypeError WebIDL gives a method
-// called on the wrong kind of object.
+/// A Body method's receiver: a Request or a Response (whatever carries its
+/// Headers in the private slot); otherwise null, with the TypeError WebIDL
+/// gives a method called on the wrong kind of object thrown.
 [[nodiscard]] script::object_object * body_this(context & c, const char * what) {
     script::object_object * self = object_of(c.current_this());
     if (self == nullptr || self->find(headers_object_slot) == nullptr) {
@@ -281,7 +286,7 @@ struct extracted_body {
     return self;
 }
 
-// The Content-Type in a Request's or a Response's header list, "" for none.
+/// The Content-Type in a Request's or a Response's header list, "" for none.
 [[nodiscard]] std::string content_type_of(context & c, script::object_object & self) {
     const value * headers = self.find(headers_object_slot);
     return headers == nullptr
@@ -289,15 +294,16 @@ struct extracted_body {
                : get_header(headers_of(c, *headers), "content-type").value_or(std::string{});
 }
 
-// A body's bytes: a string cell holding them verbatim - made directly, not by
-// context::string, whose surrogate joining would rewrite binary data.
+/// The bytes in a body's string cell, or "" when `held` is not one. The cell
+/// holds them verbatim because attach_body makes it directly, not through
+/// context::string, whose surrogate joining would rewrite binary data.
 [[nodiscard]] std::string body_text(value held) {
     return held.is_string() ? static_cast<script::string_object *>(held.as_heap())->text
                             : std::string{};
 }
 
-// The Body mixin's "consume body": the bytes, or nullopt when they have been
-// read already. A null body reads as empty and is never "used".
+/// The Body mixin's "consume body": the bytes, or nullopt when they have been
+/// read already. A null body reads as empty and is never "used".
 [[nodiscard]] std::optional<std::string> consume_body(script::object_object & self) {
     const value * used = self.find(body_used_slot);
     if (used != nullptr && context::truthy(*used)) { return std::nullopt; }
@@ -307,8 +313,8 @@ struct extracted_body {
     return body_text(*held);
 }
 
-// A Request or a Response gets its Headers and its body: the extracted type
-// goes into the list when the list has no Content-Type of its own.
+/// Gives a Request or a Response its Headers and its body. The extracted type
+/// goes into the list when the list has no Content-Type of its own.
 void attach_body(context & c, script::object_object & self, value headers,
                  const std::optional<extracted_body> & body) {
     self.define(headers_object_slot, headers, script::attr_none);
@@ -327,28 +333,29 @@ void attach_body(context & c, script::object_object & self, value headers,
 
 } // namespace
 
+/// Sets the asset registry and image cache this document loads through.
 void dom_bindings::observe_resources(asset_registry & assets, image_store & images) {
     assets_ = &assets;
     images_ = &images;
 }
 
-// An `<img>`, which `new Image()` also is.
-//
-// THE DECISION THAT MADE THE REST FALL OUT: `new Image()` builds a real detached
-// <img> element rather than a parallel Image type. So `src` is already a
-// reflected attribute, `image_argument` already resolves it, drawImage already
-// accepts it, appendChild already displays it, and the CSS box already sizes it.
-// A separate object would have needed every one of those taught about it.
-//
-// What an <img> needs beyond a plain element is the LOADING surface: a src whose
-// assignment starts work, a size that falls back to the decoded pixels, and the
-// two ways a page learns the load finished.
+/// Installs the loading surface on the wrapper `obj` of the <img> `id`, which
+/// `new Image()` also is.
+///
+/// `new Image()` builds a real detached <img> element rather than a parallel
+/// Image type, so `src` is already a reflected attribute, `image_argument`
+/// already resolves it, drawImage already accepts it, appendChild already
+/// displays it, and the CSS box already sizes it.
+///
+/// What an <img> needs beyond a plain element is the loading surface: a src
+/// whose assignment starts work, a size that falls back to the decoded pixels,
+/// and the two ways a page learns the load finished.
 void dom_bindings::install_image_views(context & cx, script::object_object & obj, node_id id) {
     auto * wrapper = &obj;
-    // `naturalWidth` is the DECODED size and `width` is the attribute when there
-    // is one, the decoded size otherwise. p5's loadImage reads `img.width`
-    // straight after the load to size its own canvas, so answering 0 there gave
-    // a zero-by-zero p5.Image that drew nothing.
+    // `naturalWidth` is the decoded size, and `width` is the attribute when
+    // there is one, the decoded size otherwise. p5's loadImage reads
+    // `img.width` straight after the load to size its own canvas, so answering
+    // 0 there would give a zero-by-zero p5.Image that draws nothing.
     const auto decoded = [this, id]() -> std::shared_ptr<const paint::bitmap> {
         if (images_ == nullptr || assets_ == nullptr) { return nullptr; }
         const auto txn = doc_->read();
@@ -373,8 +380,8 @@ void dom_bindings::install_image_views(context & cx, script::object_object & obj
                 })),
             value::object(cx.allocate<script::native_object>(
                 property, [this, id, property](context &, std::span<value> a) {
-                    // A reflected `unsigned long`: ToUint32, and
-                    // anything past 2^31-1 writes the default 0.
+                    // A reflected `unsigned long`: ToUint32, and anything
+                    // past 2^31-1 (2147483647) writes the default 0.
                     long long given = number_to_uint32(arg_number(a, 0));
                     if (given > 2147483647LL) { given = 0; }
                     (void)doc_->set_attribute(id, atoms_->intern(property), std::to_string(given));
@@ -387,9 +394,9 @@ void dom_bindings::install_image_views(context & cx, script::object_object & obj
     size_view("naturalWidth", true, true);
     size_view("naturalHeight", true, false);
 
-    // `src` REFLECTS, and assigning it STARTS A LOAD. The generic reflection two
-    // screens up would have given the first half only: the attribute changed and
-    // nothing ever told the page the pixels had arrived.
+    // `src` reflects the attribute, and assigning it also starts a load. Generic
+    // attribute reflection (element/reflection.cpp) would only change the
+    // attribute and never fire load/error.
     obj.define_accessor("src",
                         value::object(cx.allocate<script::native_object>(
                             "src",
@@ -417,7 +424,7 @@ void dom_bindings::install_image_views(context & cx, script::object_object & obj
 
     // `complete` is what a page checks before waiting: p5 and many others do
     // `if (img.complete) use(img); else img.onload = ...`, and a `complete` that
-    // is always false makes the second branch the only one, forever.
+    // is always false would make the page wait forever.
     obj.define_accessor("complete",
                         value::object(cx.allocate<script::native_object>(
                             "complete",
@@ -426,10 +433,9 @@ void dom_bindings::install_image_views(context & cx, script::object_object & obj
                             })),
                         value::undefined());
 
-    // `decode()` - the promise-shaped way to wait, and the one that does not
-    // need a handler property. Already decoded resolves on the next turn rather
-    // than immediately, because a promise that settles inside the call it was
-    // created by is not one.
+    // `decode()`: the promise-shaped way to wait, which needs no handler
+    // property. An image already decoded still resolves on a later turn,
+    // because the load is queued like any other (begin_image_load).
     obj.set("decode",
             value::object(cx.allocate<script::native_object>(
                 "decode", [this, id, wrapper](context & c, std::span<value>) {
@@ -442,12 +448,14 @@ void dom_bindings::install_image_views(context & cx, script::object_object & obj
                 })));
 }
 
+/// Queues a load of `url` for the <img> `id`; settle_image runs it on a later
+/// turn, firing at `target` and settling `promise` when it is one.
 void dom_bindings::begin_image_load(value target, node_id id, std::string url, value promise) {
     image_loads_.push_back(pending_image{target, id, std::move(url), promise});
 }
 
-// One FileReader read, delivered. `result` is set BEFORE the handlers run,
-// because every one of them reads it.
+/// Delivers one FileReader read. `result` is set before the handlers run,
+/// because every one of them reads it.
 void dom_bindings::settle_read(context & cx, const pending_read & waiting) {
     if (!waiting.reader.is_object()) { return; }
     auto * reader = static_cast<script::object_object *>(waiting.reader.as_heap());
@@ -467,16 +475,15 @@ void dom_bindings::settle_read(context & cx, const pending_read & waiting) {
         }
     }
 
-    reader->set("readyState", value::number(2)); // DONE, either way
+    reader->set("readyState", value::number(2)); // DONE (2), on success or failure.
     auto * event = cx.allocate<script::object_object>();
-    // ROOTED ACROSS THE DISPATCH: the first listener dispatch compiles the
-    // fence through run_nested, which can collect, and this event was in a
-    // C++ local alone - freed before the handler read `e.target`. It never
-    // showed until the live-object count at that moment shifted.
+    // Rooted across the dispatch: running a listener can trigger garbage
+    // collection, and an event held only in a C++ local would be freed before
+    // the handler reads `e.target`.
     const context::rooted keep_event{cx, value::object(event)};
     event->set("target", waiting.reader);
     if (!readable) {
-        // NOT a silent empty string. A page that reads something that is not a
+        // Not a silent empty string: a page that reads something that is not a
         // blob gets the error branch, which is what it is written for.
         auto * failure = cx.allocate<script::object_object>();
         const context::rooted keep_failure{cx, value::object(failure)};
@@ -493,10 +500,10 @@ void dom_bindings::settle_read(context & cx, const pending_read & waiting) {
     switch (waiting.kind) {
     case read_kind::text:
     case read_kind::binary_string:
-        // readAsText DECODES (FileAPI "decode": a BOM decides, else UTF-8,
+        // readAsText decodes (FileAPI "decode": a BOM decides, else UTF-8,
         // each ill-formed subsequence one U+FFFD); a "binary string" is each
-        // byte as the code unit of the same value - Infra's isomorphic
-        // decode - which is what btoa takes back.
+        // byte as the code unit of the same value (Infra's isomorphic
+        // decode), which is what btoa takes back.
         reader->set("result", cx.string(waiting.kind == read_kind::binary_string
                                             ? isomorphic_decode(bytes)
                                             : detail::decode_body(bytes, "UTF-8")));
@@ -516,18 +523,19 @@ void dom_bindings::settle_read(context & cx, const pending_read & waiting) {
     }
     event->set("type", cx.string("load"));
     const value as_event = value::object(event);
-    // `onload` then `onloadend`, which is the order a page relies on when it uses
-    // both - loadend is the "whatever happened, I am done" hook.
+    // `onload` then `onloadend`, which is the order a page relies on when it
+    // uses both; loadend is the "whatever happened, I am done" hook.
     fire_handler_property(waiting.reader, "load", as_event);
     fire_handler_property(waiting.reader, "loadend", as_event);
 }
 
+/// Runs one queued image load: decodes the image, settles a decode() promise,
+/// and fires `load` or `error` at the <img>.
 void dom_bindings::settle_image(context & cx, const pending_image & waiting) {
-    // The decode happens HERE, on the turn that announces it, and is cached by
-    // name in image_store - which is what makes p5's loadImage work at all: it
-    // revokes the object URL inside onload, BEFORE drawing the image. The bytes
-    // are gone from the registry by then, and the cached bitmap is the browser's
-    // "already decoded" state made real.
+    // The decode happens here, on the turn that announces it, and is cached by
+    // name in image_store. p5's loadImage depends on that: it revokes the
+    // object URL inside onload, before drawing the image, so the bytes are
+    // gone from the registry by then and only the cached bitmap remains.
     const std::shared_ptr<const paint::bitmap> image =
         waiting.url.empty() || images_ == nullptr || assets_ == nullptr
             ? nullptr
@@ -535,7 +543,7 @@ void dom_bindings::settle_image(context & cx, const pending_image & waiting) {
     const bool ok = image != nullptr;
 
     auto * event = cx.allocate<script::object_object>();
-    const context::rooted keep_event{cx, value::object(event)}; // as settle_read's
+    const context::rooted keep_event{cx, value::object(event)}; // As in settle_read.
     event->set("type", cx.string(ok ? "load" : "error"));
     event->set("target", waiting.target);
     if (!ok) { event->set("message", cx.string("could not load " + waiting.url)); }
@@ -546,9 +554,9 @@ void dom_bindings::settle_image(context & cx, const pending_image & waiting) {
         // caller catches.
         value outcome = waiting.target;
         if (!ok) {
-            // The ERROR OBJECT, not make_rejection's rejected promise: settling
-            // one promise with another gave `undefined` to the catch branch,
-            // which is a message about nothing.
+            // The error object itself, not make_rejection's rejected promise:
+            // settling one promise with another would hand `undefined` to the
+            // catch branch.
             auto * failure = cx.allocate<script::object_object>();
             failure->set("name", cx.string("EncodingError"));
             failure->set("message", cx.string("could not decode " + waiting.url));
@@ -556,16 +564,18 @@ void dom_bindings::settle_image(context & cx, const pending_image & waiting) {
         }
         cx.settle_promise(waiting.promise, outcome, !ok);
     }
-    // At the <img> ITSELF and nowhere else: an image's load event does not
+    // At the <img> itself and nowhere else: an image's load event does not
     // bubble, so this fires the element's own listeners rather than dispatching
     // along a path.
     fire_at(path_step{waiting.id, listen_on::node}, ok ? "load" : "error", as_event, false);
-    // A LOADED IMAGE CHANGES WHAT IS DRAWN. Without this an <img> appended
-    // before its bytes arrived kept its empty box until something else happened
-    // to invalidate the page.
+    // A loaded image changes what is drawn: without this, an <img> appended
+    // before its bytes arrived would keep its empty box until something else
+    // invalidated the page.
     if (ok) { mutated(); }
 }
 
+/// Installs the image natives (loadImage, imageWidth, imageHeight), Headers,
+/// Request, Response and fetch() on the global.
 void dom_bindings::install_resources(context & cx) {
     cx.define_native("loadImage", [this](context & c, std::span<value> args) {
         if (assets_ == nullptr || images_ == nullptr) { return value::number(-1); }
@@ -586,11 +596,12 @@ void dom_bindings::install_resources(context & cx) {
     //
     // WebIDL-shaped over the private slots above. Headers is the whole
     // interface; a Request and a Response carry their attributes as data
-    // properties, as fetch()'s responses always have, with the Body mixin -
-    // text, json, arrayBuffer, bytes, blob, formData, bodyUsed - on both
-    // prototypes. Babylon.js builds `new Response(xhr.response, {status,
-    // statusText, headers: new Headers()})` whenever the two exist, so these
+    // properties, as fetch()'s responses do, with the Body mixin (text, json,
+    // arrayBuffer, bytes, blob, formData, bodyUsed) on both prototypes.
+    // Babylon.js builds `new Response(xhr.response, {status, statusText,
+    // headers: new Headers()})` whenever the two exist, so these
     // are the objects its loader reads back.
+    //
     // `this` for a constructor: the object `new` made, else a TypeError.
     const auto constructed = [](context & c, script::native_object * ctor, value proto,
                                 const char * name) -> script::object_object * {
@@ -618,8 +629,9 @@ void dom_bindings::install_resources(context & cx) {
         self->define(header_guard_slot, c.string("none"), script::attr_none);
         return c.current_this();
     };
-    // Each operation: the receiver branded, the name a token, and - for the
-    // three that write - a TypeError under the immutable guard.
+    // Each operation checks that the receiver is branded and the name is a
+    // token, and the three that write throw a TypeError under the immutable
+    // guard.
     const auto headers_this = [](context & c, const char * what,
                                  bool writes) -> script::object_object * {
         script::object_object * self = object_of(c.current_this());
@@ -745,7 +757,7 @@ void dom_bindings::install_resources(context & cx) {
     });
     // The pair iterator over the sorted and combined list, as of the call.
     // ponytail: an Array Iterator over a snapshot, not a live "Headers
-    // Iterator" - a header set mid-iteration is not seen.
+    // Iterator", so a header set mid-iteration is not seen.
     for (const char * kind : {"entries", "keys", "values"}) {
         set_method(cx, *headers_proto, kind, [headers_this, kind](context & c, std::span<value>) {
             if (headers_this(c, kind, false) == nullptr) { return value::undefined(); }
@@ -772,8 +784,8 @@ void dom_bindings::install_resources(context & cx) {
         headers_proto->define(CTBROWSER_SYMBOL_KEY("iterator"), *entries, script::attr_builtin);
     }
 
-    // The Body mixin, on both prototypes. blob() is the one that needs the
-    // bindings - make_blob - so the mixin is built here.
+    // The Body mixin, on both prototypes. blob() needs the bindings
+    // (make_blob), so the mixin is built here.
     const auto body_mixin = [this, &cx](script::object_object & proto) {
         const auto read = [&cx, &proto](const char * name, auto finish) {
             set_method(cx, proto, name, [name, finish](context & c, std::span<value>) {
@@ -810,8 +822,8 @@ void dom_bindings::install_resources(context & cx) {
                 make_blob(c, u8_of(c, bytes), ascii_lower_copy(content_type_of(c, self))), false);
         });
         // formData(): the urlencoded parser over the bytes for an
-        // application/x-www-form-urlencoded body - its charset ignored, as
-        // Fetch says - and a TypeError for any other type. ponytail: a
+        // application/x-www-form-urlencoded body (its charset ignored, as
+        // Fetch says), and a TypeError for any other type. ponytail: a
         // multipart/form-data body is not parsed; it rejects as another type.
         read("formData", [](context & c, script::object_object & self, const std::string & bytes) {
             const std::string type = content_type_of(c, self);
@@ -839,7 +851,7 @@ void dom_bindings::install_resources(context & cx) {
             return value::boolean(used != nullptr && context::truthy(*used));
         });
     };
-    // clone(): a copy with its own Headers and the same bytes - a TypeError
+    // clone(): a copy with its own Headers and the same bytes; a TypeError
     // once the body has been read (Fetch 5.4/5.5).
     const auto clone_of = [](context & c, const char * what) -> value {
         script::object_object * self = body_this(c, what);
@@ -867,7 +879,7 @@ void dom_bindings::install_resources(context & cx) {
         return value::object(copy);
     };
 
-    // `new Request(input, init)` (Fetch 5.4). THE URL IS KEPT AS GIVEN, not
+    // `new Request(input, init)` (Fetch 5.4). The URL is kept as given, not
     // serialised: fetch() takes a relative path to the asset registry by that
     // name, and p5 hands every loader's path through a Request first. It is
     // refused when it cannot parse against the document's address, or carries
@@ -975,7 +987,7 @@ void dom_bindings::install_resources(context & cx) {
                [clone_of](context & c, std::span<value>) { return clone_of(c, "Request.clone"); });
 
     // `new Response(body, init)` (Fetch 5.5): the status 200-599 else a
-    // RangeError, a statusText with no CR or LF, the headers, and a body -
+    // RangeError, a statusText with no CR or LF, the headers, and a body,
     // refused under a null body status.
     const auto [response_ctor, response_proto] =
         make_interface(cx, "Response", {}, {}, std::nullopt);
@@ -1102,30 +1114,29 @@ void dom_bindings::install_resources(context & cx) {
             return value::object(made);
         });
 
-    // fetch(url) -> a settled Response. The registry is consulted FIRST, so
-    // a page that ships its resources never opens a socket and a test run
-    // is reproducible; a miss goes to the network when the application
-    // allows it.
+    // fetch(input, init): returns a pending promise that the event loop settles
+    // with a Response (see settle_fetch). The URL is looked up by load_resource:
+    // the embedder's request handler first, then the asset registry, then a file
+    // next to the page, then the network if the application allows it. Only
+    // `init.signal` is read.
     cx.define_native("fetch", [this](context & c, std::span<value> args) {
-        // A REQUEST OR A STRING. `fetch(request)` is the form every p5 loader
-        // uses, and to_string on an object would have produced "[object Object]"
-        // and looked for an asset by that name - a 404 that says nothing about
-        // why.
+        // A Request or a string. `fetch(request)` is the form every p5 loader
+        // uses, and to_string on an object would produce "[object Object]" and
+        // look for an asset by that name.
         value target = arg(args, 0);
         if (target.is_object()) {
             const value from_request = c.lookup_property(target, "url");
             if (!from_request.is_undefined()) { target = from_request; }
         }
         const std::string url = c.to_string(target);
-        // QUEUED, not done. The promise is pending and the event loop settles
-        // it, so a page's other work happens while the request is outstanding -
-        // which is the whole point of the API and was not observable before.
+        // Queued, not done: the promise stays pending until the event loop
+        // settles it, so other page work runs while the request is outstanding.
         value signal = value::undefined();
         if (arg(args, 1).is_object()) { signal = c.lookup_property(arg(args, 1), "signal"); }
         const value promise = c.make_pending_promise();
         if (promise.is_undefined()) {
-            // No promise machinery installed - a bare VM with no standard
-            // library. Do it the old way rather than returning nothing.
+            // No promise machinery installed (a bare VM with no standard
+            // library): fetch synchronously with fetch_now instead.
             return fetch_now(c, url);
         }
         fetches_.push_back(pending_fetch{promise, url, signal});
@@ -1133,13 +1144,12 @@ void dom_bindings::install_resources(context & cx) {
     });
 }
 
-// One queued fetch, resolved. The body work is fetch_now's, which still does
-// the deciding - asset registry, then a file next to the page, then the network -
-// so there is one answer to "where does a url come from" rather than two.
+/// Settles one queued fetch. fetch_now (through load_resource) decides where
+/// the URL comes from, so fetch and XHR share one lookup order.
 void dom_bindings::settle_fetch(context & cx, const pending_fetch & waiting) {
-    // ABORTED BEFORE IT RAN. The signal is the only reason a queued fetch does
-    // not happen, and it is now possible to observe: the request is outstanding
-    // for at least one turn, so a page has somewhere to call abort() from.
+    // Aborted before it ran: an AbortSignal is the only thing that cancels a
+    // queued fetch, and the page could have called abort() during the turn the
+    // request was outstanding.
     if (waiting.signal.is_object() &&
         context::truthy(cx.lookup_property(waiting.signal, "aborted"))) {
         auto * error = cx.allocate<script::object_object>();
@@ -1148,7 +1158,7 @@ void dom_bindings::settle_fetch(context & cx, const pending_fetch & waiting) {
         cx.settle_promise(waiting.promise, value::object(error), true);
         return;
     }
-    // fetch_now hands back a SETTLED promise, so its outcome is adopted rather
+    // fetch_now hands back a settled promise, so its outcome is adopted rather
     // than wrapped again.
     const value done = fetch_now(cx, waiting.url);
     bool rejected = false;
@@ -1165,10 +1175,14 @@ void dom_bindings::settle_fetch(context & cx, const pending_fetch & waiting) {
     cx.settle_promise(waiting.promise, with, rejected);
 }
 
+/// Loads `url` for fetch and XHR: the embedder's request handler, then the
+/// asset registry, then a file next to the page (or a file: URL's path), then
+/// the network when allowed. `failure` is set for a network error; a missing
+/// file is a 404 with a failure message.
 dom_bindings::loaded_resource dom_bindings::load_resource(const std::string & url) {
     loaded_resource out;
-    // THE EMBEDDER FIRST (browser_options::on_request): a GET of the URL,
-    // resolved against this document's address. ponytail: a GET only - an
+    // The embedder first (browser_options::on_request): a GET of the URL,
+    // resolved against this document's address. ponytail: a GET only; an
     // XHR's or a fetch's method and body do not reach the handler yet.
     if (!is_data_url(url) && !url.starts_with("blob:")) {
         resource_request asked;
@@ -1194,8 +1208,8 @@ dom_bindings::loaded_resource dom_bindings::load_resource(const std::string & ur
             out.failure = "no such resource: " + url;
         }
     } else if (url.starts_with("file:") && assets_ != nullptr) {
-        // A file: URL IS A PATH, and it is what a relative reference becomes
-        // once it is resolved against a page loaded from disk - an XHR for
+        // A file: URL is a path, and it is what a relative reference becomes
+        // once it is resolved against a page loaded from disk: an XHR for
         // `resources/x.html` from file:///a/b.html asks for
         // file:///a/resources/x.html. It is read the way the relative branch
         // reads, not sent to the network (which would refuse the scheme); the
@@ -1216,9 +1230,9 @@ dom_bindings::loaded_resource dom_bindings::load_resource(const std::string & ur
     } else {
         out.failure = "network access is off and " + url + " was not baked in";
     }
-    // A data: URL's type is its OWN (Fetch's data: URL processor): the text
+    // A data: URL's type is its own (Fetch's data: URL processor): the text
     // before the comma, less a trailing `;base64`, with `text/plain` in front
-    // of a bare parameter list - and text/plain;charset=US-ASCII when there
+    // of a bare parameter list, and text/plain;charset=US-ASCII when there
     // is nothing there. A path's extension says nothing about one.
     if (out.type.empty() && ascii_istarts_with(url, "data:") &&
         url.find(',') != std::string::npos) {
@@ -1239,16 +1253,20 @@ dom_bindings::loaded_resource dom_bindings::load_resource(const std::string & ur
     return out;
 }
 
+/// fetch() done synchronously: a promise already resolved with the Response
+/// for `url`, or rejected for a load failure.
 value dom_bindings::fetch_now(context & cx, const std::string & url) {
     loaded_resource loaded = load_resource(url);
     if (!loaded.failure.empty()) {
-        // A network failure REJECTS, which is what a page's catch branch is
-        // written for. A 404 does not - it is a Response with ok false.
+        // A failure rejects, which is what a page's catch branch is written
+        // for. A network 404 does not: it is a Response with ok false. A
+        // missing local file does set `failure` (load_resource), so it rejects.
         return make_rejection(cx, loaded.failure);
     }
     return make_response(cx, url, loaded.status, loaded.type, std::move(loaded.body));
 }
 
+/// A promise rejected with a TypeError-named error carrying `message`.
 value dom_bindings::make_rejection(context & cx, const std::string & message) {
     auto * error = cx.allocate<script::object_object>();
     error->set("message", cx.string(message));
@@ -1258,9 +1276,9 @@ value dom_bindings::make_rejection(context & cx, const std::string & message) {
 
 value dom_bindings::make_response(context & cx, const std::string & url, int status,
                                   const std::string & content_type, std::vector<std::byte> body) {
-    // A REAL Response, on the prototype `new Response()` makes - so the Body
-    // mixin, clone() and bodyUsed are the same functions - with IMMUTABLE
-    // headers, as a fetched response's are, carrying the one header this
+    // A real Response, on the prototype `new Response()` makes, so the Body
+    // mixin, clone() and bodyUsed are the same functions. Its headers are
+    // immutable, as a fetched response's are, and carry the one header this
     // engine knows: the content type.
     auto * response = cx.allocate<script::object_object>();
     if (const value proto = cx.global(response_proto_global); proto.is_object()) {

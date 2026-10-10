@@ -1,6 +1,10 @@
-// browser - the page's scripts: every classic <script> as its own program,
-// ES modules in two passes over the graph, script images, and the natives and
-// module loader the embedder side installs on the context.
+//===- ctbrowser/lib/Shell/browser/scripts.cpp - Page scripts -------------===//
+//
+// The page's scripts: every classic <script> as its own program, ES modules
+// in two passes over the import graph, precompiled script images, and the
+// natives and module loader the browser installs on the script context.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -11,61 +15,49 @@ void browser::run_scripts() {
     // program it was executing.
     script_.reset();
     classic_programs_.clear();
-    // AND THE PREVIOUS PAGE'S MODULES, which nothing cleared. Every
-    // <script type="module"> is kept as its own program because its functions
-    // close over its top-level frame, and the vector holding them was appended
-    // to on every load and emptied on none - so a page that reloads ten times
-    // held ten pages' worth of dead programs, each up to megabytes, reachable
-    // only by this vector. The module registry itself lives in the context and
-    // therefore DID go, which is what kept this a leak rather than a
-    // correctness bug: nothing could still reach these to run them.
+    // Drop the previous page's module programs too; module functions close
+    // over their program, so these are kept alive only by this vector and would
+    // otherwise pile up across reloads.
     module_programs_.clear();
     script_ = std::make_unique<script::context>();
-    // The standard library goes in FIRST, so a page's own globals can
+    // The standard library goes in first, so a page's own globals can
     // shadow it rather than the other way round.
     script::install_builtins(*script_);
-    // WHAT TIME THE PAGE THINKS IT IS: a fixed base plus how long this page has
-    // been running, so `Date.now()` advances, reads as a plausible instant, and
-    // is still identical on every run - `tick()` moves the page clock by exactly
-    // what it was given. An embedder that wants real time calls set_clock; the
-    // SDL app does. See context::set_clock for why the frozen epoch had to go.
+    // The page's wall clock: a fixed base plus how long this page has been
+    // running, so `Date.now()` advances, reads as a plausible instant, and is
+    // still identical on every run (`tick()` moves the page clock by exactly
+    // what it was given). An embedder that wants real time calls set_clock,
+    // as the SDL app does. See context::set_clock.
     script_->set_clock([this] {
         return clock_ ? clock_() : script::context::fixed_epoch_base + bindings_->now_ms();
     });
     canvases_.clear();
     forms_.clear();
     focused_ = node_id{};
-    // The in-flight drag goes with the document. These are HANDLES into a slab
-    // that has just been rebuilt, and forms_.state_of would happily seed fresh
-    // state for a stale one - a page that reloads mid-drag would otherwise keep
+    // The in-flight drag goes with the document. These are handles into a slab
+    // that has just been rebuilt, and forms_.state_of would seed fresh state
+    // for a stale one, so a page that reloads mid-drag would otherwise keep
     // auto-scrolling a field that no longer exists.
     field_selecting_ = node_id{};
     pressed_ = node_id{};
     selecting_ = false;
-    // A SCRIPT MUTATION INVALIDATES THE CASCADE, and this said `paint` - so a
-    // page that set an attribute, added a class or appended an element got its
-    // display list re-recorded from the styles resolved at load. It was not
-    // visible on the corpora because nothing there changes a style from script
-    // and then looks: p5 and Phaser draw into a canvas, which invalidates
-    // through canvases_.total_revision() instead.
-    //
-    // getComputedStyle is what made it visible. `dirty_` is the record of what a
-    // frame has to re-run, and the flush below reads it to decide what to run
-    // NOW - so a level that undersells the damage does not merely defer the
-    // repaint, it makes the flush a no-op and the read answers from before the
-    // write. `styles` is the honest level: the only callers are script mutating
-    // the document, and every one of them can change which rules match.
     // The frames' layouts point into the bindings being replaced; a stale
     // pointer there would be followed on the next layout_frames.
     frame_layouts_.clear();
     bindings_ = std::make_unique<dom_bindings>(
         *doc_, atoms_, canvases_, forms_,
         [this] {
+            // A script mutation marks `dirty::styles`, not `paint`: any DOM
+            // write can change which rules match, and flush_for_read
+            // (getComputedStyle, layout reads) re-runs only what the dirty
+            // level says, so a lower level would answer from the styles before
+            // the write.
             mark(dirty::styles);
             // HTML's focus fixup rule: a focused element that left the
             // document is focused no more, and the next `focus()` on it is a
-            // real one - moveBefore/fire-focusin-focusout.html re-focuses a
-            // button its cleanup re-appended. Silently, as the rule says.
+            // real one (WPT moveBefore/fire-focusin-focusout.html re-focuses a
+            // button its cleanup re-appended). No events fire, as the rule
+            // says.
             if (focused_ && (!bindings_->is_connected(focused_) || focus_was_moved())) {
                 (void)set_state(focused_, state_focus, false);
                 focused_ = node_id{};
@@ -73,10 +65,10 @@ void browser::run_scripts() {
             }
         },
         [this](node_id id) { (void)focus(id); });
-    // THE CASCADE'S ENGINE, so `querySelector` runs the matcher a stylesheet runs.
-    // reset_document() replaces it on every load and this object is rebuilt after
-    // that, so handing it over here is enough - the second call in reset_document
-    // covers a reload that keeps these bindings.
+    // The cascade's engine, so `querySelector` runs the matcher a stylesheet
+    // runs. reset_document() replaces it on every load and this object is
+    // rebuilt after that, so handing it over here is enough; the second call
+    // in reset_document covers a reload that keeps these bindings.
     bindings_->observe_style_engine(*styles_);
     bindings_->observe_viewport(layout_viewport_width(), options_.height);
     bindings_->observe_resources(assets_, images_);
@@ -88,20 +80,20 @@ void browser::run_scripts() {
         alerts_.push_back(message);
         if (alert_hook_) { alert_hook_(message); }
     });
-    // THE CSSOM REACHES THE CASCADE. `insertRule`, `selectorText =`, `replaceSync`
-    // and `adoptedStyleSheets` all funnel through `style_sheets_changed`, which is
-    // called from nowhere else - reading `document.styleSheets` does not fire it -
-    // so a page that never uses the object model never calls this and keeps
-    // `refresh_author_styles`' DOM-text path exactly as it was. The text handed
-    // back is the sheets re-serialised from their compiled form; `representable`
-    // in bindings/stylesheets keeps the author's bytes for any selector this
-    // front end cannot reproduce, which is what makes handing it back safe.
+    // CSSOM edits reach the cascade through this hook. `insertRule`,
+    // `selectorText =`, `replaceSync` and `adoptedStyleSheets` all funnel
+    // through `style_sheets_changed`, which is called from nowhere else
+    // (reading `document.styleSheets` does not fire it), so a page that never
+    // uses the object model keeps `refresh_author_styles`' DOM-text path. The
+    // text handed back is the sheets re-serialised from their compiled form;
+    // `representable` in bindings/stylesheets keeps the author's bytes for any
+    // selector this front end cannot reproduce, which makes that safe.
     //
-    // `author_css_` IS LEFT ALONE: it is the key `refresh_author_styles` compares
-    // the DOM's text against, and the DOM's text has not changed - so leaving it
-    // stops the next restyle from collecting the `<style>` elements again and
-    // undoing this. The cost is one narrow case: a page that mutates the CSSOM
-    // and then rewrites a DIFFERENT `<style>`'s text falls back to the DOM's
+    // `author_css_` is left alone: it is the key `refresh_author_styles`
+    // compares the DOM's text against, and the DOM's text has not changed, so
+    // the next restyle does not re-collect the `<style>` elements and undo
+    // this. The cost is one narrow case: a page that mutates the CSSOM and
+    // then rewrites a different `<style>`'s text falls back to the DOM's
     // until its next CSSOM write.
     bindings_->set_author_styles_hook([this](std::string css) {
         if (!author_sheet_loaded_) { return; }
@@ -112,82 +104,66 @@ void browser::run_scripts() {
     });
     bindings_->observe_location(location_href_, location_hash_);
     bindings_->install(*script_);
-    // getComputedStyle ANSWERS ABOUT THE PAGE AS THE SCRIPT JUST LEFT IT.
+    // getComputedStyle must see the page as the script just left it, but the
+    // computed style comes from `resolved_`, `boxes_` and `fragments_`, which
+    // run_layout hands over: they do not exist yet while load-time scripts
+    // run, and are stale after any style write. So the global is wrapped here
+    // to call flush_for_read() first, which re-runs only the pipeline stages
+    // that are dirty (a second call with no write in between costs nothing)
+    // and leaves the level at `paint`, since the display list must still be
+    // re-recorded before anything is drawn.
     //
-    // The object dom_bindings builds is made out of `resolved_`, `boxes_` and
-    // `fragments_`, and all three are handed over by run_layout - which has not
-    // run when a page's own <script> executes, because load_one_page marks the
-    // document dirty and runs the scripts BEFORE the first frame. So every
-    // getComputedStyle at load time read three null pointers, and every one
-    // after a write to `el.style` read the cascade from before that write.
-    // docs/css-conformance.md §5 measured what that costs: a throwaway patch
-    // that published the camelCase spellings moved not one WPT subtest, because
-    // the property was not on the object under any spelling.
-    //
-    // WRAPPED HERE RATHER THAN FLUSHED INSIDE THE BINDING. The pipeline is the
-    // browser's and the bindings deliberately do not know that layout exists -
-    // "a native that changes the document calls on_mutation, and the browser
-    // decides what that invalidates", at the top of shell/bindings.hpp. This is
-    // the same shadowing install_embedder_natives does two lines down, so an
+    // It is wrapped here, not flushed inside the binding, because the bindings
+    // do not know layout exists ("a native that changes the document calls
+    // on_mutation, and the browser decides what that invalidates", at the top
+    // of shell/bindings.hpp). install_embedder_natives runs after this, so an
     // embedder that defines its own `getComputedStyle` still wins.
-    //
-    // ONLY WHAT IS ACTUALLY STALE RUNS: a second call with nothing written in
-    // between does no work at all, which is what keeps a page that reads one
-    // property per element off a hundred relayouts. The level is left at `paint`
-    // afterwards because the display list still has to be re-recorded before
-    // anything is drawn - the flush answers a question, it does not make a frame.
     if (const script::value inner = script_->global("getComputedStyle"); inner.is_callable()) {
         auto * flushing = script_->allocate<script::native_object>(
             "getComputedStyle", [this, inner](script::context & c, std::span<script::value> args) {
                 flush_for_read();
                 return c.call(inner, args);
             });
-        // `inner` LIVES IN A C++ CAPTURE, which the precise collector cannot
-        // see, and the global that held it has just been overwritten - so this
+        // `inner` lives in a C++ capture, which the precise collector cannot
+        // see, and the global that held it has just been overwritten, so this
         // is the only reference left to it. See script::native_object::retained,
         // which exists for exactly this and says why a property would be worse.
         flushing->retained.push_back(inner);
         script_->define_global("getComputedStyle", script::value::object(flushing));
     }
-    // AND THE SAME FLUSH FOR EVERY BOX A SCRIPT READS - see set_layout_hook.
+    // The same flush for every box geometry a script reads; see set_layout_hook.
     bindings_->set_layout_hook([this] { flush_for_read(); });
     bindings_->set_viewport_scroll_hooks([this] { return scroll_position(); },
                                          [this](point p) { scroll_to(p.x, p.y); });
     install_embedder_natives();
-    // WHAT A FRAME'S REALM STARTS AS: every global the page has before its
-    // first script - the builtins, the platform's interfaces, the embedder's
-    // natives - and none of the page's own `var`s (bindings/frames.cpp).
+    // What a frame's realm starts as: every global the page has before its
+    // first script (the builtins, the platform's interfaces, the embedder's
+    // natives) and none of the page's own `var`s (bindings/frames.cpp).
     script_->set_realm_template(script_->globals());
     script_error_.clear();
 
-    // THE PAGE IS PARSED FROM HERE, WITH ITS SCRIPTS RUN AS THE PARSER REACHES
-    // THEM - HTML 13.2.6.4.8 and 8.4, in bindings/document/write.cpp. Each
-    // classic <script> is its own program (one Script Record each, per the
-    // specification: a parse error or an uncaught throw in one does not stop
-    // the next), compiled here so the image cache, the packager's prepared
-    // hook and `script_sources()` stay the browser's. What the split costs is
-    // the one thing concatenation bought: a call in an EARLIER script to a
-    // function declared in a LATER one. Chrome makes that a ReferenceError;
-    // this engine used to make it work.
+    // The document is parsed below, and each script runs as the parser reaches
+    // it (HTML 13.2.6.4.8 and 8.4; see bindings/document/write.cpp). Each
+    // classic <script> is its own program (one Script Record each), so a parse
+    // error or uncaught throw in one does not stop the next, and an earlier
+    // script cannot call a function declared in a later one (a ReferenceError,
+    // as in Chrome). Scripts are compiled here, in the browser, so the image
+    // cache, the packager's prepared hook and `script_sources()` see them.
     //
-    // MODULES go through load_module, each as its own program in its own
+    // Modules go through load_module, each as its own program in its own
     // scope, deferred to the end of the parse as the specification says.
     script_sources_.clear();
     module_sources_.clear();
-    // PER LOAD, because that is the question it answers and what its
-    // documentation promises: "zero after a load whose every script was
-    // cached". Left to accumulate it could not be read against
-    // classic_programs_held(), which is per load, and a second load of a fully
-    // cached page would still report the first load's misses.
+    // Reset per load, as its documentation promises ("zero after a load whose
+    // every script was cached"), so it can be read against
+    // classic_programs_held(), which is also per load.
     scripts_compiled_from_source_ = 0;
     bindings_->set_current_script(node_id{});
-    // THE PARSER'S SCRIPTS SEE "loading"; the end of the parse moves it on.
+    // The parser's scripts see "loading"; the end of the parse moves it on.
     bindings_->set_ready_state("loading");
-    // A SCRIPT'S OWN FAILURE OUTRANKS A MISSING <script src>: the first
+    // A script's own failure outranks a missing <script src>: the first
     // failure is the one `script_error_` reports, and a missing src is
-    // recorded only while nothing has failed yet - without this a page with
-    // one unresolvable src reported that and nothing else for the rest of
-    // its life.
+    // recorded only while no script has failed yet.
     const auto runner = [this, a_script_failed = false, running = std::vector<node_id>{}](
                             const dom_bindings::parser_script & script) mutable {
         if (script.missing) {
@@ -203,34 +179,32 @@ void browser::run_scripts() {
         }
         const std::string & text = script.source;
         if (text.find_first_not_of(" \t\r\n\f\v") == std::string::npos) {
-            // WHITESPACE IS NOT A SCRIPT, and it is dropped here so that
-            // `script_sources()` lists exactly what gets compiled: a packager
-            // that built an image for it would be building one nothing will
-            // ever look up.
+            // Whitespace is not a script. It is dropped here so that
+            // `script_sources()` lists exactly what gets compiled; a packager
+            // would otherwise build an image nothing ever looks up.
             return true;
         }
         script_sources_.push_back(text);
-        // THE SHEETS BEFORE IT, APPLIED. A <style> or <link> the parser has
-        // already inserted is in effect when this script runs (HTML "update a
-        // style block" at the end tag), so its getComputedStyle and its
-        // offsetWidth read the styled page - and the sheets that follow it
-        // are not, which is what a browser answers too. The first script
-        // latches `author_sheet_loaded_`; each later one re-collects what the
-        // parse added since. And their `load`s are handed over NOW, ahead of
-        // this script's own, so the events keep document order.
+        // Apply the sheets before this script. A <style> or <link> the parser
+        // has already inserted is in effect when this script runs (HTML
+        // "update a style block" at the end tag), so its getComputedStyle and
+        // offsetWidth read the styled page; the sheets that follow it are not,
+        // as in a browser. The first script latches `author_sheet_loaded_`;
+        // each later one re-collects what the parse added since. Their `load`
+        // events are handed over now, ahead of this script's own, so the
+        // events keep document order.
         if (!author_sheet_loaded_) {
             load_author_styles();
         } else {
             refresh_author_styles();
         }
         announce_resource_loads();
-        // THE IMAGE FIRST, WHEN IT IS THIS SCRIPT'S. Compiling is about forty
-        // percent of a page load; loading the same program from bytes is four
-        // times faster on every corpus measured. Two things make it safe, and
-        // both are refusals rather than fallbacks: the image's recorded source
-        // hash must equal this text's, and it must have been compiled as a
-        // classic script - the same text compiled as a module hashes
-        // identically and publishes nothing to the page.
+        // Use a precompiled image of this script when one was added (see
+        // add_script_image): loading a program from bytes is several times
+        // faster than compiling it. An image is used only when its recorded
+        // source hash equals this text's and it was compiled as a classic
+        // script; the same text compiled as a module hashes identically but
+        // publishes nothing to the page.
         std::unique_ptr<script::program> compiled;
         const std::uint64_t key = script::image_source_hash(text);
         for (const held_image & held : script_images_) {
@@ -245,31 +219,29 @@ void browser::run_scripts() {
             ++scripts_compiled_from_source_;
             compiled = std::make_unique<script::program>(script::compiler::compile(text));
         }
-        // KEPT BEFORE IT RUNS, because running it is what creates the closures
-        // that point into it - a function declared at a script's top level holds
-        // a `const function_proto *` into this program, and a timer or a
-        // listener dereferences it long after run_scripts returned. The vector
-        // holds unique_ptrs, so a reallocation moves POINTERS; the program
-        // itself never moves.
-        // THE EMBEDDER'S TURN, BEFORE THE SCRIPT RUNS. A packaged application
+        // The embedder's turn, before the script runs: a packaged application
         // stamps its compiled bodies onto this program here; nothing else can
         // reach it. See browser::set_script_prepared_hook.
+        //
+        // The program is kept (in classic_programs_) before it runs, because
+        // running it creates closures that point into it: a function declared
+        // at a script's top level holds a `const function_proto *` into this
+        // program, and a timer or a listener dereferences it long after
+        // run_scripts returns. The vector holds unique_ptrs, so a reallocation
+        // moves pointers; the program itself never moves.
         if (script_prepared_hook_) { script_prepared_hook_(*compiled, text); }
         const script::program & running_program = *compiled;
         classic_programs_.push_back(std::move(compiled));
-        // `document.currentScript` is this element while it runs - and while
-        // its error is reported - and the outer script's again afterwards,
-        // when a written <script> ran inside the one that wrote it.
-        // NESTED WHEN SCRIPT IS ALREADY ON THE STACK - a written <script>
-        // runs inside the `document.write` that wrote it - and `run()` is the
-        // top-level entry that clears the frames of whoever is running. The
-        // nested path is run_inserted_scripts' (document/entry.cpp): the
-        // entry function as a closure behind a fence, its throw reported
-        // here rather than unwound into the writer.
-        // NOT `current_stack().empty()`: a first script that hit the call-stack
-        // ceiling leaves its frames behind, and the second script would have
-        // been run as if nested - through call_fenced, which does not clear
-        // the handler stack `run` clears (shell_basics' dead-script case).
+        // A <script> written by document.write runs nested inside the script
+        // that wrote it, so it goes through call_fenced (as
+        // run_inserted_scripts in bindings/document/entry.cpp does) and its
+        // throw is reported here instead of unwinding into the writer; a
+        // top-level script goes through run(), which clears the frame and
+        // handler stacks. Nesting is tracked with `running`, not
+        // current_stack().empty(): a script that overflowed the call stack
+        // leaves frames behind. document.currentScript follows `running`: it
+        // is this element while it runs and while its error is reported, and
+        // the outer script's again afterwards.
         const bool nested = !running.empty() || script_->in_native();
         running.push_back(script.element);
         bindings_->set_current_script(script.element);
@@ -298,47 +270,37 @@ void browser::run_scripts() {
                                    : script_->to_string(thrown));
             }
         }
-        // A SCRIPT THAT NAVIGATED TOOK THE PAGE WITH IT. Every later script
-        // belongs to a document that is being replaced, so the parser stops -
-        // and the replacement happens in load_html, after this returns, rather
-        // than under our feet.
+        // A script that navigated took the page with it. Every later script
+        // belongs to a document that is being replaced, so the parser stops,
+        // and the replacement happens in load_document after this returns.
         if (pending_load_) {
             running.clear();
             bindings_->set_current_script(node_id{});
             return false;
         }
-        // THE FIRST FAILURE IS THE ONE REPORTED, and the rest of the page still
-        // runs. That is what the specification says: a script that throws or
-        // does not parse is that script's problem.
+        // The first failure is the one reported, and the rest of the page still
+        // runs, as the specification says: a script that throws or does not
+        // parse affects only itself.
         if (!result.ok && !a_script_failed) {
             script_error_ = result.error;
             a_script_failed = true;
         }
-        // AND THE PAGE IS TOLD, every time rather than only the first: a page
-        // that listens for `error` is entitled to hear about each script that
-        // threw, and `script_error_` above is the embedder's channel, not the
-        // page's. Fired here, between scripts, which is where the specification
-        // fires it - a later <script> can therefore see that an earlier one
-        // died, which is exactly what testharness.js is doing.
+        // The page is told about every failure, not only the first: a page
+        // that listens for `error` hears about each script that threw, while
+        // `script_error_` above is the embedder's channel. It fires here,
+        // between scripts, where the specification fires it, so a later
+        // <script> can see that an earlier one died (testharness.js relies on
+        // this).
         if (!result.ok) {
-            // THE FAULT IS CLEARED FIRST, AND THAT IS THE WHOLE TRICK. `run`
-            // leaves `failed_` set when a script throws, and every C++ entry
-            // into JavaScript refuses to run while it is - so dispatching the
-            // event without this called no listener at all, reported the
-            // ORIGINAL error a second time as a "callback fault", and left the
-            // page believing nothing had gone wrong. The harness then finished
-            // normally and a page that threw during load was reported as a
-            // PASS, which is the single worst answer this instrument can give.
-            //
-            // Clearing is not discarding: `result.error` already holds the
-            // text and `script_error_` above has recorded it. Handing it to the
-            // page is a HANDOFF, and the page cannot be handed anything while
-            // the VM is still refusing to run its code.
+            // Clear the VM's failure flag before dispatching `error`: every
+            // entry into JavaScript refuses to run while it is set, so no
+            // listener would run. The error text is already in `result.error`
+            // and `script_error_`.
             (void)script_->take_error();
-            // STILL THE CURRENT SCRIPT while its error is reported: a
+            // Still the current script while its error is reported: a
             // window.onerror reading document.currentScript sees the script
-            // that failed - to parse, too - which Document.currentScript.html
-            // asserts by id.
+            // that failed, even one that failed to parse (WPT
+            // Document.currentScript.html asserts this by id).
             (void)bindings_->dispatch_error(result.error, script.specifier);
         }
         running.pop_back();
@@ -356,11 +318,11 @@ void browser::run_scripts() {
         return;
     }
 
-    // AN XHTML DOCUMENT'S SCRIPTS. XML has no parser-driven insertion point
-    // and no document.write (both throw InvalidStateError there), so the
-    // whole tree was built first (lifecycle.cpp) and every <script> in it
-    // runs afterwards, in document order - classic scripts as they come,
-    // modules after them, through the same runner.
+    // An XHTML document's scripts. XML has no parser-driven insertion point
+    // and no document.write (it throws InvalidStateError there), so the whole
+    // tree was built first (lifecycle.cpp) and every <script> in it runs
+    // afterwards, in document order: classic scripts as they come, modules
+    // after them, through the same runner.
     std::vector<dom_bindings::parser_script> classic;
     std::vector<dom_bindings::parser_script> modules;
     {
@@ -416,46 +378,23 @@ void browser::run_scripts() {
     bindings_->set_ready_state("interactive");
 }
 
-// LOAD A MODULE AND EVERYTHING IT NEEDS: instantiate the whole graph, then
-// evaluate it. TWO PASSES, and they are two because a cycle cannot be done in
-// one.
-//
-// The single pass this replaced compiled a module, loaded its dependencies and
-// ran it, all on the way down. That is right for a tree and wrong for a cycle:
-// A imports B imports A, so B ran while A had not reached its first statement,
-// and B asked A for an export whose cell did not exist yet. Registering A early
-// stopped the descent - but stopping is not binding, and B was told `undefined`.
-//
-// The specification's answer is to create every binding in the graph BEFORE
-// evaluating any of it, so a cycle sees an UNINITIALISED binding rather than a
-// missing one. instantiate_module makes the cells; evaluation fills them.
-// ADMITTED AT THE DOOR OR NOT AT ALL. Anything that is not an image this build
-// would load - wrong magic, another format version, another engine's opcode
-// numbering - is refused here and returns false, so a packager learns when it
-// hands the bytes over. The alternative is a bag full of images that can never
-// match, which presents as "the cache does nothing" months later.
-//
-// The key comes from the image's OWN header rather than from anything the
-// caller says, so a caller cannot file an image under the wrong name.
+/// Adds a precompiled script image for run_scripts to use instead of
+/// compiling. Anything that is not an image this build would load (wrong
+/// magic, another format version, another engine's opcode numbering) is
+/// refused here with false, so a packager learns of it when it hands the bytes
+/// over rather than finding later that the cache never matches.
+///
+/// The key comes from the image's own header rather than from anything the
+/// caller says, so a caller cannot file an image under the wrong name.
 bool browser::add_script_image(std::vector<std::byte> image) {
     const auto head = script::read_image_header(image);
     if (!head) { return false; }
     for (held_image & held : script_images_) {
         if (held.source_hash != head->source_hash || held.kind != head->kind) { continue; }
-        // TWO IMAGES OF ONE SCRIPT, AND ADDING THEM IS ORDER-INDEPENDENT.
-        //
-        // They can differ in one way and still both be this script's: one keeps
-        // `program::source` and one drops it. That is not a detail - it is
-        // whether `f.toString()` returns the function's text or
-        // "[native code]", and p5's own error system reads its source. Both are
-        // valid images and they are NOT interchangeable.
-        //
-        // Last-writer-wins made the answer depend on the order a packager
-        // happened to hand them over: measured, keep-then-drop degraded
-        // toString and drop-then-keep did not. THE ONE THAT KEEPS THE SOURCE
-        // WINS, whichever arrives first, because the other is an optimisation
-        // that removes behaviour and silently taking it when the better image
-        // was also offered is the wrong default.
+        // Two images of the same script can differ only in whether they keep
+        // `program::source`, which decides whether `f.toString()` returns the
+        // source text or "[native code]" (p5 reads its own source). The one
+        // that keeps the source wins whichever arrives first.
         if (held.option == script::image_option::keep_source &&
             head->option == script::image_option::drop_source) {
             return true;
@@ -469,25 +408,24 @@ bool browser::add_script_image(std::vector<std::byte> image) {
     return true;
 }
 
+/// Loads a module and its whole import graph in two passes: first every
+/// module is compiled and its export bindings created (instantiate_module),
+/// then the graph is evaluated (evaluate_module). Creating every binding
+/// before running any code means that in an import cycle (A imports B imports
+/// A) B sees A's export as an uninitialised binding rather than a missing one.
 void browser::load_module(const std::string & source, const std::string & specifier) {
     if (script_ == nullptr) { return; }
     instantiate_module(source, specifier);
     evaluate_module(specifier);
 }
 
-// A RELATIVE SPECIFIER MEANS A DIFFERENT FILE IN EVERY MODULE THAT WRITES IT.
-// `./dep.js` inside `sub/a.js` is `sub/dep.js`; the same three words inside the
-// page's own module are `dep.js`. Using the specifier as written happens to
-// work while everything sits in one directory, which is exactly what makes it
-// worth measuring - it passes every earlier rung and fails on the first library
-// laid out in folders.
-//
-// PATHS, NOT URLS, DELIBERATELY. These are asset-registry keys: nothing here
-// fetches, so there is no base URL to resolve against yet. When the loader does
-// fetch, this becomes real URL resolution - and `docs/history/ada-url.md` is about
-// which standard that should be by. Bare and absolute specifiers pass through
-// untouched: a bare one is an import map's business, which is not built.
 namespace {
+/// Resolves a module specifier against the module that wrote it: `./dep.js`
+/// inside `sub/a.js` is `sub/dep.js`, but inside the page's own module it is
+/// `dep.js`. These are asset-registry paths, not URLs: nothing here fetches,
+/// so there is no base URL yet (see docs/history/ada-url.md for the URL
+/// standard to use once it does). Bare and absolute specifiers pass through
+/// unchanged because import maps are not implemented.
 [[nodiscard]] std::string resolve_specifier(std::string_view base, const std::string & spec) {
     if (!spec.starts_with("./") && !spec.starts_with("../")) { return spec; }
     const std::size_t slash = base.rfind('/');
@@ -501,9 +439,9 @@ namespace {
         const std::string_view part{joined.data() + at,
                                     (end == std::string::npos ? joined.size() : end) - at};
         if (part == "..") {
-            // ABOVE THE ROOT IT STAYS: `../` out of the top is not something
-            // this can answer, and silently dropping it would resolve two
-            // different specifiers to the same file.
+            // A `..` above the root is kept: this cannot resolve it, and
+            // silently dropping it would resolve two different specifiers to
+            // the same file.
             if (!parts.empty() && parts.back() != "..") {
                 parts.pop_back();
             } else {
@@ -521,18 +459,19 @@ namespace {
         if (!out.empty()) { out += '/'; }
         out += part;
     }
-    // KEYED THE WAY THE PAGE WRITES THEM. `./dep.js` and `dep.js` are the same
-    // file and must not become two registry entries.
+    // Keyed the way the page writes them, with a leading `./`: `./dep.js` and
+    // `dep.js` are the same file and must not become two registry entries.
     return out.starts_with("..") ? out : "./" + out;
 }
 } // namespace
 
-// PASS ONE: compile, register, create the export cells, recurse. Nothing runs.
+/// First module pass: compile, register, create the export cells, and recurse
+/// into the imports. Nothing runs.
 void browser::instantiate_module(const std::string & source, const std::string & specifier) {
     auto & registry = script_->modules();
     if (registry.find(specifier) != registry.end()) { return; }
-    // Registered BEFORE its dependencies, so a cycle finds it and stops rather
-    // than descending for ever.
+    // Registered before its dependencies, so a cycle finds it and stops rather
+    // than descending forever.
     script::module_record & record = registry[specifier];
     record.specifier = specifier;
 
@@ -543,17 +482,17 @@ void browser::instantiate_module(const std::string & source, const std::string &
         module_programs_.push_back(std::move(compiled));
         return;
     }
-    // EVERY PROTO STAMPED WITH THE SPECIFIER, because a running frame holds a
-    // function_proto and nothing else - and `import('./x.js')` called from a
+    // Stamp every function_proto with the specifier: a running frame holds a
+    // function_proto and nothing else, and `import('./x.js')` called from a
     // callback still has to resolve against the module that wrote it. The
-    // compiler cannot do this: a specifier is the loader's name for a file.
+    // compiler cannot do this; a specifier is the loader's name for a file.
     for (script::function_proto & fn : compiled->functions) { fn.module = specifier; }
-    // THE CELLS, before a single dependency is even fetched. This is the line
-    // the whole two-pass split exists for.
+    // Create the export cells before any dependency is fetched; this is what
+    // the two-pass split exists for.
     script_->instantiate_module(*compiled, record);
 
-    // RESOLVED HERE, AND RECORDED, before anything recurses: the bytecode can
-    // only carry the specifier as written, so the translation has to live
+    // Resolve and record each import before recursing: the bytecode can only
+    // carry the specifier as written, so the translation has to live
     // somewhere the VM can read it.
     std::vector<std::string> needed;
     for (const std::string & written : compiled->imports) {
@@ -577,26 +516,25 @@ void browser::instantiate_module(const std::string & source, const std::string &
     wire_reexports(specifier);
 }
 
-// `export { a } from './m.js'` AND `export * from './m.js'`, which is what every
-// ES library's index file is made of and what makes one importable at all.
-//
-// A RE-EXPORT IS AN ALIAS, NOT A COPY: this module's export slot holds the OTHER
-// module's cell, so a write there is a read here, through however many index
-// files the name travels. Copying the value would break for the same reason
-// copying an import does, only further from where anyone would look.
-//
-// AFTER THE DEPENDENCIES, AND BEFORE ANY EVALUATION. After, because the cell
-// being aliased has to exist - and a chain of index files re-exporting each
-// other wires deepest-first because the recursion above has already returned.
-// Before, because a module that imports the name must find it bound whichever
-// order the graph is evaluated in; this is the specification's ResolveExport,
-// done where the graph is known rather than in the interpreter.
+/// Wires `export { a } from './m.js'` and `export * from './m.js'`, which is
+/// what every ES library's index file is made of.
+///
+/// A re-export is an alias, not a copy: this module's export slot holds the
+/// other module's cell, so a write there is visible here, through however many
+/// index files the name travels.
+///
+/// Runs after the dependencies are instantiated, because the aliased cell has
+/// to exist (a chain of index files wires deepest-first, since the recursion
+/// has already returned), and before any evaluation, because a module that
+/// imports the name must find it bound whatever order the graph is evaluated
+/// in. This is the specification's ResolveExport, done where the graph is
+/// known rather than in the interpreter.
 void browser::wire_reexports(const std::string & specifier) {
     auto & registry = script_->modules();
     const auto self = registry.find(specifier);
     if (self == registry.end() || self->second.compiled == nullptr) { return; }
 
-    // GATHERED FIRST, ASSIGNED AFTER: a module can re-export from itself, and
+    // Gathered first, assigned after: a module can re-export from itself, and
     // adding to its exports (a flat_map) while walking them invalidates the walk.
     std::vector<std::pair<std::string, script::value>> wire;
     for (const auto & edge : self->second.compiled->reexports) {
@@ -612,9 +550,8 @@ void browser::wire_reexports(const std::string & specifier) {
             continue;
         }
         if (edge.source.empty()) {
-            // `export *`, and it does NOT re-export `default` - the
-            // specification is explicit about that, and a page relying on it
-            // would silently get the wrong module's default.
+            // `export *` does not re-export `default`; the specification is
+            // explicit about that.
             for (const auto & [name, cell] : source->second.exports) {
                 if (name != "default") { wire.emplace_back(name, cell); }
             }
@@ -633,8 +570,8 @@ void browser::wire_reexports(const std::string & specifier) {
     const auto into = registry.find(specifier);
     if (into == registry.end()) { return; }
     for (auto & [name, cell] : wire) {
-        // A NAME THIS MODULE DECLARES ITSELF WINS. `export *` is the weakest
-        // claim on a name - an explicit export shadows it, and so does an
+        // A name this module declares itself wins. `export *` is the weakest
+        // claim on a name: an explicit export shadows it, and so does an
         // earlier explicit re-export.
         if (into->second.exports.find(name) == into->second.exports.end()) {
             into->second.exports[name] = cell;
@@ -642,19 +579,21 @@ void browser::wire_reexports(const std::string & specifier) {
     }
 }
 
-// PASS TWO: depth-first POST-ORDER, each module once. A dependency has finished
-// running before the module that imports it reaches its own first statement -
-// except around a cycle, where by definition one of them cannot, and where the
-// cells from pass one are what keeps that from being a missing export.
+/// Second module pass: evaluates the graph depth-first in post-order, each
+/// module once. A dependency has finished running before the module that
+/// imports it reaches its first statement, except around a cycle, where one of
+/// them cannot; there the cells from the first pass keep that from being a
+/// missing export.
 void browser::evaluate_module(const std::string & specifier) {
     auto & registry = script_->modules();
     const auto found = registry.find(specifier);
     if (found == registry.end() || found->second.evaluated || found->second.compiled == nullptr) {
         return;
     }
-    // MARKED BEFORE THE DEPENDENCIES, not after: around a cycle the recursion
-    // arrives back here, and a flag set afterwards would let it descend for
-    // ever. This is the specification's `evaluating` status under another name.
+    // Marked before the dependencies, not after: around a cycle the recursion
+    // arrives back here, and a flag set afterwards would let it descend
+    // forever. This is the specification's `evaluating` status under another
+    // name.
     found->second.evaluated = true;
     const script::program * const compiled = found->second.compiled;
     std::vector<std::string> needed;
@@ -664,8 +603,9 @@ void browser::evaluate_module(const std::string & specifier) {
     }
     for (const std::string & target : needed) { evaluate_module(target); }
 
-    // RE-FOUND, because the registry is an unordered_map and the recursion above
-    // can insert into it - a rehash invalidates an iterator taken before it.
+    // Looked up again, because the registry is an unordered_map and the
+    // recursion above can insert into it; a rehash invalidates an iterator
+    // taken before it.
     const auto self = registry.find(specifier);
     if (self == registry.end()) { return; }
     const script::run_result result = script_->run_module(*compiled, self->second);
@@ -675,15 +615,13 @@ void browser::evaluate_module(const std::string & specifier) {
 void browser::install_embedder_natives() {
     for (const auto & [name, fn] : embedder_natives_) { script_->define_native(name, fn); }
 
-    // WHAT `import(specifier)` CALLS. The VM hands over the specifier and the
+    // What `import(specifier)` calls. The VM hands over the specifier and the
     // module that wrote it; resolving, finding the bytes and walking the graph
-    // are all this side's job, which is why the hook exists at all.
+    // are the browser's job.
     //
-    // IT SETTLES IMMEDIATELY, and that is a limitation rather than a design:
-    // the asset registry is synchronous, so there is nothing to wait for. A
-    // real fetch makes this a pending promise settled later, and the promise is
-    // already the right shape for that - which is why the return type is a
-    // promise now rather than the namespace itself.
+    // The promise settles immediately because the asset registry is
+    // synchronous. A real fetch would make it a pending promise settled later,
+    // which is why this returns a promise rather than the namespace itself.
     script_->set_module_loader([this](script::context & cx, const std::string & specifier,
                                       const std::string & referrer) {
         const std::string target = resolve_specifier(referrer, specifier);
@@ -697,8 +635,8 @@ void browser::install_embedder_natives() {
             load_module(std::string{reinterpret_cast<const char *>(bytes.data()), bytes.size()},
                         target);
         } else {
-            // ALREADY IN THE REGISTRY is not already EVALUATED - a module can
-            // be instantiated and waiting, and importing it dynamically has to
+            // Being in the registry does not mean evaluated: a module can be
+            // instantiated and waiting, and importing it dynamically has to
             // run it rather than hand back empty bindings.
             evaluate_module(target);
         }

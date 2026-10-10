@@ -1,5 +1,9 @@
-// dom_bindings - the live, read-only CSSStyleDeclaration getComputedStyle hands
-// back, and the global itself.
+//===- computed_style/object.cpp - getComputedStyle object ------*- C++ -*-===//
+//
+// dom_bindings: the live, read-only CSSStyleDeclaration getComputedStyle hands
+// back, and the `getComputedStyle` global itself.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -11,84 +15,66 @@ using namespace detail;
 
 namespace {
 
-// ONE ELEMENT'S ANSWERS, CACHED FOR AS LONG AS THE DOCUMENT DOES NOT MOVE.
-//
-// The object below is live, so every property read has to be able to re-derive -
-// and re-deriving means the probe's three tree walks plus 148 values, which a
-// page reading one property per element after another would pay 148 times over.
-// `stamp` is the document version the answers were computed at: a script cannot
-// change what the cascade says without changing the document, and
-// `document::version()` counts exactly that. A read at the same version is the
-// same answer.
-//
-// WHAT THE STAMP DOES NOT SEE: a stylesheet edited through the CSSOM
-// (insertRule, replaceSync) changes which rules match without touching the DOM.
-// The browser is told about those through `set_author_styles_hook` and nothing
-// reaches this file, so a page that edits a sheet and then reads a computed
-// style it is already holding reads the previous answer. Naming it here because
-// the fix is the same shared flush hook `refresh` below wants.
+/// One element's computed entries, cached while nothing that could change them
+/// has moved. The object computed_style_object returns is live, so every
+/// property read must be able to re-derive, and re-deriving costs the probe's
+/// tree walks plus every property's value; a page reading one property per
+/// element would pay that per read. The stamps below record the state the
+/// entries were computed at; while all four match, a read gives the same
+/// answer.
 struct computed_cache {
     std::vector<std::pair<std::string, std::string>> entries;
+    /// document::version() at computation: DOM changes, including style
+    /// attributes.
     std::uint64_t stamp = 0;
-    std::uint64_t styles = 0; // dom_bindings::style_stamp(): a CSSOM edit
-    // ...AND THE ANIMATIONS, which change what an element computes to without
-    // touching the document: a seek, a pause, or the clock moving under a
-    // running one. Zero for a page that has none, so the stamp above is the
-    // whole test there.
+    /// dom_bindings::style_stamp(): a stylesheet edited through the CSSOM
+    /// (insertRule, replaceSync), which changes which rules match without
+    /// touching the DOM.
+    std::uint64_t styles = 0;
+    /// dom_bindings::animation_stamp(): animations change what an element
+    /// computes to without touching the document (a seek, a pause, or the
+    /// clock moving under a running one). Zero for a page that has none.
     std::uint64_t animations = 0;
-    std::uint64_t restyles = 0; // dom_bindings::restyle_stamp()
+    std::uint64_t restyles = 0; ///< dom_bindings::restyle_stamp().
 };
 
-// Where the read-only declaration keeps its answer to one of
-// CSSStyleDeclaration's members - see the end of computed_style_object. The
-// prototype's members read the same keys (stylesheets/prototypes/declarations.cpp).
+/// The private key under which the read-only declaration keeps its answer to
+/// one of CSSStyleDeclaration's members (see the end of computed_style_object).
+/// The prototype's members read the same keys
+/// (stylesheets/prototypes/declarations.cpp).
 [[nodiscard]] std::string computed_member_key(std::string_view member) {
     return std::string{script::private_key_prefix} + "computed-member:" + std::string{member};
 }
 
-// DOES `getComputedStyle`'s SECOND ARGUMENT NAME A PSEUDO-ELEMENT?
-//
-// CSSOM §5.1 asks the question in exactly this order, and the order is the
-// whole rule: an argument that is null, absent, empty, or does NOT begin with a
-// colon is IGNORED - `getComputedStyle(div, "before")` and
-// `getComputedStyle(div, "totallynotapseudo")` both answer about the element
-// itself, which is why the first assertion of getComputedStyle-pseudo,
-// -pseudo-checkmark and -pseudo-picker-icon is "the argument is ignored (due to
-// no colon)". Anything that DOES begin with a colon is a pseudo-element
-// request, and it gets one of two answers: the pseudo-element's style, or - when
-// it does not parse, or names a pseudo-element the engine has no styles for - an
-// EMPTY CSSStyleDeclaration.
-//
-// `::before` AND `::after` HAVE A CASCADE - engine::resolve_pseudo runs it on
-// demand, and `resolvable_pseudo` below says which arguments name one. Every
-// OTHER colon-prefixed argument gets the empty declaration: `::marker`,
-// `::picker(select)` and the rest generate no box and have no style here, and
-// CSSOM is explicit that a pseudo-element that does not exist reports an empty
-// declaration - `length === 0`, every property the empty string - which is what
-// getComputedStyle-pseudo's "Unknown pseudo-elements", -pseudo-with-argument's
-// seventeen "should not parse" cases and -pseudo-picker's six "invalid
-// pseudo-element" cases all assert. Ignoring the argument instead reported the
-// ORIGINATING ELEMENT's style as the pseudo-element's.
+/// Whether `getComputedStyle`'s second argument requests a pseudo-element
+/// (CSSOM §5.1). An argument that is null, absent, empty, or does not begin
+/// with a colon is ignored: `getComputedStyle(div, "before")` answers about
+/// the element itself ("the argument is ignored (due to no colon)" in
+/// getComputedStyle-pseudo). Anything that begins with a colon is a
+/// pseudo-element request and gets either the pseudo-element's style or, when
+/// it does not parse or names one the engine has no style for, an empty
+/// CSSStyleDeclaration (`length === 0`, every property ""), as CSSOM requires
+/// for a pseudo-element that does not exist. resolvable_pseudo decides which.
 [[nodiscard]] bool names_a_pseudo_element(context & c, value given) {
     if (given.is_nullish()) { return false; }
     const std::string text = c.to_string(given);
     return !text.empty() && text.front() == ':';
 }
 
-// THE PSEUDO-ELEMENT A SECOND ARGUMENT NAMES, when it parses as a
-// <pseudo-element-selector> the selector parser knows: one or two colons -
-// one only for the four legacy names - then exactly one identifier, escapes
-// decoded, case folded, and nothing after it. `::before ` and `::before,` are
-// not selectors (getComputedStyle-pseudo); anything else colon-prefixed is the
-// empty declaration.
+/// The pseudo-element a second argument names, when it parses as a
+/// <pseudo-element-selector> the selector parser knows: one or two colons (one
+/// only for the four legacy names), then exactly one identifier, escapes
+/// decoded, case folded, and nothing after it. Returns "" otherwise, which the
+/// caller answers with the empty declaration; `::before ` and `::before,` are
+/// not selectors (getComputedStyle-pseudo).
 [[nodiscard]] std::string resolvable_pseudo(std::string_view text) {
     if (text.size() < 2 || text.front() != ':') { return {}; }
     const bool doubled = text[1] == ':';
     text.remove_prefix(doubled ? 2 : 1);
     using style::css::token_type;
     const style::css::token_stream ts = style::css::tokenize(text);
-    // A FUNCTIONAL PSEUDO-ELEMENT - `::highlight(name)`, `::picker(select)`,
-    // `::view-transition-group(name)` - takes exactly one identifier, with
+    // A functional pseudo-element (`::highlight(name)`, `::picker(select)`,
+    // `::view-transition-group(name)`) takes exactly one identifier, with
     // whitespace around it and the `)` optional, since EOF closes a block
     // (getComputedStyle-pseudo-with-argument). It names the pseudo-element
     // the cascade knows as `name(argument)`, the argument case-folded the
@@ -137,13 +123,13 @@ value dom_bindings::computed_style_object(context & cx, node_id id) {
 }
 
 value dom_bindings::computed_style_object(context & cx, node_id id, atom pseudo) {
-    // ONE OBJECT PER ELEMENT AND PSEUDO, held on the wrapper under a private
-    // key so it lives and dies with it. `getComputedStyle(el) ===
-    // getComputedStyle(el)` in every browser - and building one costs an
-    // accessor per property, both spellings, which the interpolation harness
-    // pays per subtest per sample. The one thing fixed at creation is `length`
-    // (see below): an object made for an unrendered element is remade once
-    // the element has a style.
+    // One object per element and pseudo-element, held on the wrapper under a
+    // private key so it lives and dies with it. `getComputedStyle(el) ===
+    // getComputedStyle(el)` in every browser, and building one costs an
+    // accessor per property in both spellings, which the interpolation harness
+    // would pay per subtest per sample. The one thing fixed at creation is
+    // `length` (see below): an object made for an unrendered element is remade
+    // once the element has a style.
     script::object_object * wrapper = nullptr;
     std::string slot;
     if (id) {
@@ -167,7 +153,7 @@ value dom_bindings::computed_style_object(context & cx, node_id id, atom pseudo)
     auto * held = cx.allocate<script::object_object>();
     if (wrapper != nullptr) { wrapper->set(slot, value::object(held)); }
 
-    // THE ENTRIES, NOW: the element's, or its pseudo-element's - resolved on
+    // The current entries: the element's, or its pseudo-element's, resolved on
     // demand through the engine against the element's own resolved style, so a
     // `::before` reads the sheet as it stands and inherits what the element has.
     const auto entries_now = [this, id, pseudo]() {
@@ -184,7 +170,7 @@ value dom_bindings::computed_style_object(context & cx, node_id id, atom pseudo)
             selector_engine_->resolve_pseudo(txn, id, pseudo, own, styles_);
         if (!made) { return none; }
         std::vector<std::pair<std::string, std::string>> entries = computed_style_entries(id, made);
-        // `content: normal` on ::before and ::after COMPUTES TO `none` (CSS
+        // `content: normal` on ::before and ::after computes to `none` (CSS
         // Generated Content 3 §1.1): they have no content of their own.
         const std::string_view name = atoms_->text(pseudo);
         if (ascii_iequals_any(name, {"before", "after", "::before", "::after"})) {
@@ -201,31 +187,26 @@ value dom_bindings::computed_style_object(context & cx, node_id id, atom pseudo)
     cached->animations = animation_stamp();
     cached->restyles = restyle_stamp();
 
-    // THE LIVE READ, and the flush it needs.
-    //
-    // Every property below re-derives, so a page holding the object across a
-    // write sees the write - which is the whole of CSSOM's "live" and of
-    // getComputedStyle-display-none-001/-002. Re-deriving is only correct if the
-    // pipeline has caught up first, though: `el.style.color = 'green'` marks the
+    // The live read, and the flush it needs. Every property re-derives, so a
+    // page holding the object across a write sees the write (CSSOM's "live";
+    // getComputedStyle-display-none-001/-002). Re-deriving is only correct
+    // once the pipeline has caught up: `el.style.color = 'green'` marks the
     // cascade stale and nothing resolves it until the next frame, so a read
-    // that skipped the flush would answer from before the page's own write -
-    // exactly the defect docs/css-conformance.md §6 measured for the call
-    // itself.
+    // that skipped the flush would answer from before the page's own write.
     //
-    // REACHED THROUGH THE GLOBAL, which is the only channel a binding has.
-    // browser::run_scripts wraps `getComputedStyle` with a native that runs
-    // precisely the stages `dirty_` says are stale; the bindings deliberately do
-    // not know that layout exists ("a native that changes the document calls
-    // on_mutation, and the browser decides what that invalidates", at the top of
-    // shell/bindings.hpp), so calling that wrapper with no arguments is how a
-    // property read asks for the same flush. With no argument the inner native
-    // makes one empty object and returns, so the call costs the flush and
-    // nothing else. A page that has REPLACED the global gets no flush rather
-    // than a call into its own function: the kind check is what makes that safe.
+    // The flush is reached through the global, the only channel a binding has.
+    // browser::run_scripts wraps `getComputedStyle` with a native that runs the
+    // stages `dirty_` says are stale; the bindings deliberately do not know
+    // layout exists (see the top of shell/bindings.hpp), so calling that
+    // wrapper with no arguments is how a property read asks for the flush.
+    // With no argument the inner native makes one empty object and returns, so
+    // the call costs only the flush. A page that has replaced the global gets
+    // no flush rather than a call into its own function: the kind check makes
+    // that safe.
     //
-    // It is a stand-in for the shared flush hook on dom_bindings that
-    // getBoundingClientRect, offsetWidth and clientHeight all want too, and it
-    // is written to be deleted the moment that exists.
+    // This stands in for a shared flush hook on dom_bindings, which
+    // getBoundingClientRect, offsetWidth and clientHeight also want; replace it
+    // once that exists.
     const auto refresh = [this, cached, entries_now](context & c) {
         const std::uint64_t now = doc_->version();
         if (now == cached->stamp && style_stamp() == cached->styles &&
@@ -249,18 +230,12 @@ value dom_bindings::computed_style_object(context & cx, node_id id, atom pseudo)
         return {};
     };
 
-    // A COMPUTED STYLE IS READ-ONLY, and CSSOM §6.7.2 says how: every mutating
-    // member throws NoModificationAllowedError. Doing nothing instead let a page
-    // write to it and believe the write had landed.
-    //
-    // ONE SETTER OBJECT FOR ALL OF THEM. The property-assignment half of this
-    // rule used to be left out on the grounds that it would cost "a setter
-    // accessor on each of the 125 published names, per call" - which was true
-    // while the names were data properties. They are accessors now, for
-    // liveness, so each already has a descriptor to hang this on and the whole
-    // rule costs one extra allocation. computed-style-001 and
-    // computed-style-set-property assert it three ways: `style.color = 'blue'`,
-    // `style.cssText = '...'` and `style.setProperty(...)`.
+    // A computed style is read-only: every mutating member throws
+    // NoModificationAllowedError (CSSOM §6.7.2), so a page cannot believe a
+    // write landed. One throwing setter object is shared by every property
+    // accessor, so the rule costs a single allocation. computed-style-001 and
+    // computed-style-set-property check `style.color =`, `style.cssText =` and
+    // `style.setProperty()`.
     const value refuse = value::object(
         cx.allocate<script::native_object>("set", [this](context & c, std::span<value>) {
             throw_dom_exception(c, "NoModificationAllowedError",
@@ -275,15 +250,14 @@ value dom_bindings::computed_style_object(context & cx, node_id id, atom pseudo)
             }));
     };
 
-    // EVERY NAME THE OBJECT ANSWERS TO: the whole table - longhands and
-    // shorthands alike, because CSSOM gives a computed style an attribute for
-    // every SUPPORTED property - and then whatever this element declared that
-    // the table has never heard of.
+    // Every name the object answers to: the whole property table, longhands
+    // and shorthands alike, because CSSOM gives a computed style an attribute
+    // for every supported property; then whatever this element declared that
+    // the table does not know.
     //
-    // BOTH SPELLINGS SHARE ONE GETTER. `background-color` and `backgroundColor`
-    // are one property read two ways, and a second native per name would double
-    // the allocations a getComputedStyle call costs on a page that asks for one
-    // per element.
+    // Both spellings share one getter: `background-color` and
+    // `backgroundColor` are one property read two ways, and a second native per
+    // name would double the allocations per getComputedStyle call.
     const auto publish = [&](const std::string & css_name) {
         const value get = reader(css_name);
         held->define_accessor(css_name, get, refuse);
@@ -296,9 +270,9 @@ value dom_bindings::computed_style_object(context & cx, node_id id, atom pseudo)
     for (const auto & [name, text] : cached->entries) {
         if (style::css::find_property(name) == nullptr) { publish(name); }
     }
-    // THE LEGACY `-webkit-` ALIASES of the properties this table has, as CSSOM
-    // §6.7.2's "webkit-cased attribute" - `webkitTransition` is an attribute
-    // of a computed style, and writing it throws like any other
+    // The legacy `-webkit-` aliases of properties the table has, CSSOM
+    // §6.7.2's "webkit-cased attribute": `webkitTransition` is an attribute of
+    // a computed style, and writing it throws like any other
     // (computed-style-set-property). They answer as the unprefixed one.
     for (const std::string_view aliased :
          {"transition", "transform", "animation", "filter", "box-sizing", "user-select"}) {
@@ -309,33 +283,31 @@ value dom_bindings::computed_style_object(context & cx, node_id id, atom pseudo)
         held->define_accessor(style::css::idl_name_of(css), get, refuse);
     }
 
-    // THE INDEXED PROPERTIES, CSSOM §6.7 - as DATA properties, below the
+    // The indexed properties (CSSOM §6.7), as data properties below the
     // `length` the prototype answers from this object's private count; the
     // interface's @@iterator walks the two (stylesheets/prototypes/helpers.cpp).
-    // serialize-all-longhands and getComputedStyle-property-order both spread one.
     //
-    // THE SUPPORTED LONGHANDS, in the lexicographic order computed_style_entries
-    // put them in - and none of the shorthands or custom properties that follow
-    // them there. Empty for an element that is not being rendered, which is
-    // `length === 0` in getComputedStyle-detached-subtree.
+    // They are the supported longhands, in the lexicographic order
+    // computed_style_entries put them in, without the shorthands that follow
+    // them there. Empty for an element that is not being rendered (`length ===
+    // 0` in getComputedStyle-detached-subtree).
     //
-    // FIXED WHEN THE OBJECT IS MADE, unlike every value on it. The set of
-    // supported longhands cannot change under a page; what can is whether the
-    // element is in the document at all, so a declaration taken for a detached
-    // element keeps `length === 0` after the element is appended. Making the
-    // index list live too would mean an accessor per index.
+    // Unlike every value on the object, the list is fixed when the object is
+    // made: a declaration taken for a detached element keeps `length === 0`
+    // after the element is appended. Making it live would need an accessor per
+    // index.
     std::vector<std::string> indexed;
     for (const auto & [name, text] : cached->entries) {
         const style::css::property_syntax * known = style::css::find_property(name);
         if (known != nullptr && !known->shorthand) { indexed.push_back(name); }
     }
-    // ...THE VENDOR-PREFIXED ONES LAST, each run still in order: CSSOM's
+    // Vendor-prefixed names go last, each run still in order: CSSOM's
     // "lexicographical order" sorts `-webkit-` after the standard names
     // (getComputedStyle-property-order), where a plain sort puts `-` first.
     std::ranges::stable_partition(indexed,
                                   [](const std::string & name) { return !name.starts_with('-'); });
-    // ...AND THE CUSTOM PROPERTIES AFTER THEM, every one the element has a
-    // value for (cssstyledeclaration-custom-properties, -registered-...).
+    // Then the custom properties, every one the element has a value for
+    // (cssstyledeclaration-custom-properties, -registered-...).
     for (const auto & [name, text] : cached->entries) {
         if (name.starts_with("--")) { indexed.push_back(name); }
     }
@@ -343,9 +315,9 @@ value dom_bindings::computed_style_object(context & cx, node_id id, atom pseudo)
         held->set(std::to_string(i), cx.string(indexed[i]));
     }
 
-    // CSSStyleDeclaration's OWN MEMBERS - `length`, `cssText`, `item()`,
-    // `getPropertyValue()` and the rest - are WebIDL attributes and operations,
-    // so they live on its prototype and a computed style INHERITS them
+    // CSSStyleDeclaration's own members (`length`, `cssText`, `item()`,
+    // `getPropertyValue()` and the rest) are WebIDL attributes and operations,
+    // so they live on its prototype and a computed style inherits them
     // (cssom/idlharness: "must inherit property"). What is here is only this
     // declaration's answer to each, under private keys the prototype's members
     // hand a computed receiver's call to
@@ -358,11 +330,10 @@ value dom_bindings::computed_style_object(context & cx, node_id id, atom pseudo)
         return value::object(cx.allocate<script::native_object>(std::string{name}, std::move(fn)));
     };
     member("length", value::number(static_cast<double>(indexed.size())));
-    // THE SPELLING THE DUMP USES, and the only one both engines agree on. It
-    // takes a CSS name and accepts the IDL one too, because a page holding
-    // `backgroundColor` should not have to hyphenate it itself. Live, like the
-    // accessors: css-style-declaration-modifications edits a stylesheet rule and
-    // reads the computed value back through this.
+    // getPropertyValue takes the CSS name (the spelling the parity dump uses)
+    // and accepts the IDL one too, so a page holding `backgroundColor` need not
+    // hyphenate it. Live, like the accessors: css-style-declaration-
+    // modifications edits a stylesheet rule and reads the value back this way.
     member("getPropertyValue",
            native("getPropertyValue", [refresh, answer](context & c, std::span<value> args) {
                if (args.empty()) { return c.string(std::string{}); }
@@ -370,9 +341,9 @@ value dom_bindings::computed_style_object(context & cx, node_id id, atom pseudo)
                refresh(c);
                return c.string(answer(asked));
            }));
-    // Always empty. Importance is a cascade INPUT, and by the time a value is
-    // computed the question has been settled; this engine does not keep which
-    // declaration won past resolve().
+    // Always empty. Importance is a cascade input, settled by the time a value
+    // is computed; this engine does not keep which declaration won past
+    // resolve().
     member("getPropertyPriority", native("getPropertyPriority", [](context & c, std::span<value>) {
                return c.string("");
            }));
@@ -391,18 +362,15 @@ value dom_bindings::computed_style_object(context & cx, node_id id, atom pseudo)
     };
     member("setProperty", native("setProperty", refuse_method));
     member("removeProperty", native("removeProperty", refuse_method));
-    // Empty rather than reconstructed - which is also what the specification
-    // says: a computed style's cssText getter returns the empty string, because
-    // serialising one means deciding how to rebuild every shorthand and engines,
-    // including Chrome across its own versions, disagree there. Which is exactly
-    // why the compared property set is longhands only. The SETTER refuses:
-    // `cs.cssText = "color: blue"` is the first of computed-style-001's three
-    // read-only assertions.
+    // A computed style's cssText getter returns the empty string, as the
+    // specification says; engines disagree on how to rebuild shorthands, which
+    // is also why the parity harness compares longhands only. The setter
+    // throws (computed-style-001: `cs.cssText = "color: blue"`).
     member("cssText", native("cssText", [](context & c, std::span<value>) {
                return c.string(std::string{});
            }));
     member("cssText=", refuse);
-    // ...AND THE PROTOTYPE THAT CARRIES THEM, CSSStyleProperties.prototype, so
+    // The prototype that carries them is CSSStyleProperties.prototype, so
     // `getComputedStyle(el) instanceof CSSStyleDeclaration` and `[...style]`
     // runs the interface's own iterator.
     if (script::object_object * internals = cssom_internals(cx)) {
@@ -414,35 +382,28 @@ value dom_bindings::computed_style_object(context & cx, node_id id, atom pseudo)
 }
 
 void dom_bindings::install_computed_style(context & cx) {
-    // A BARE GLOBAL IS ENOUGH for `window.getComputedStyle` as well: `window` is
-    // a proxy whose handler falls back to the globals (install_window), so it
-    // does not need its own copy. p5.js reads the bare form
-    // (`getComputedStyle(el)` in vendor/p5/p5.js) and pages write both.
+    // A bare global also serves `window.getComputedStyle`: `window` is a proxy
+    // whose handler falls back to the globals (install_window). p5.js reads the
+    // bare form and pages write both.
     //
-    // browser::run_scripts WRAPS THIS GLOBAL to flush a pending restyle before
-    // it runs - the bindings deliberately do not know that layout exists, and
-    // without the flush every answer below is the one from before the script's
-    // own write. See the note there, and the one on `refresh` above: a LIVE read
-    // needs the same flush and reaches it back through this same global.
+    // browser::run_scripts wraps this global to flush a pending restyle before
+    // it runs, since the bindings deliberately do not know layout exists;
+    // without the flush every answer would predate the script's own write. A
+    // live read reaches the same flush through this global (see `refresh` in
+    // computed_style_object).
     cx.define_native("getComputedStyle", [this](context & c, std::span<value> args) {
         const node_id id = args.empty() ? node_id{} : handle_of(args[0]);
         if (!id) {
-            // A NODE OF ANOTHER DOCUMENT - a frame's, which `handle_of` refuses
-            // because its handle names a different slab - is answered by THAT
+            // A node of another document (a frame's, which `handle_of` refuses
+            // because its handle names a different slab) is answered by that
             // document's bindings, whose styles and boxes the browser's
-            // layout_frames observed at the frame's size (`frame.contentWindow
-            // .getComputedStyle(div)` reaches the page's global: the window
-            // proxy falls back to it). A document with no frame - a
-            // `display: none` frame's, createHTMLDocument's - has no layout
-            // observed and answers the empty declaration an unrendered element
-            // gets, which getComputedStyle-detached-subtree asks for through
-            // both windows.
+            // layout_frames observed at the frame's size.
             if (!args.empty()) {
                 if (dom_bindings * owner = owner_of(args[0]); owner != nullptr && owner != this) {
-                    // Only a document the browser has laid out has styles to
-                    // observe; one it has not - a `display: none` frame's, a
-                    // createHTMLDocument's - is unrendered and answers empty
-                    // (getComputedStyle-detached-subtree, through both windows).
+                    // Only a document the browser has laid out has styles; one
+                    // it has not (a `display: none` frame's, or one from
+                    // createHTMLDocument) is unrendered and answers the empty
+                    // declaration (getComputedStyle-detached-subtree).
                     if (owner->styles_ == nullptr) { return computed_style_object(c, node_id{}); }
                     return owner->computed_style_object(c, owner->handle_of(args[0]));
                 }
@@ -454,14 +415,12 @@ void dom_bindings::install_computed_style(context & cx) {
             }
             return c.make_object();
         }
-        // A SECOND ARGUMENT NAMING A PSEUDO-ELEMENT gets an EMPTY declaration,
-        // for the reason `names_a_pseudo_element` sets out - and it is spelled
-        // as an empty node handle rather than as a flag, because
-        // `computed_style_entries` ALREADY answers nothing for an element that
-        // is not in the document. A pseudo-element this engine does not style is
-        // the same case, gets the same answer, and gets it through the same
-        // object: every property reads back the empty string, `length` is zero,
-        // and every write still throws NoModificationAllowedError.
+        // A second argument naming a pseudo-element: `::before`, `::after` and
+        // the others resolvable_pseudo accepts resolve through the engine; any
+        // other gets an empty declaration, spelled as an empty node handle
+        // because `computed_style_entries` already answers nothing for it
+        // (every property reads "", `length` is 0, writes still throw
+        // NoModificationAllowedError).
         if (args.size() > 1 && names_a_pseudo_element(c, args[1])) {
             const std::string pseudo = resolvable_pseudo(c.to_string(args[1]));
             if (pseudo.empty()) { return computed_style_object(c, node_id{}); }

@@ -1,3 +1,4 @@
+# Element bindings of the shell's DOM: attributes, views, methods and wrappers.
 target_sources(ctbrowser-shell PRIVATE
   attributes.cpp
   autocomplete.cpp

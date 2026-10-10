@@ -1,4 +1,9 @@
-// dom_bindings - `window.history`, the History interface (HTML 7.4.2).
+//===- history.cpp - The History interface ----------------------*- C++ -*-===//
+//
+// `window.history`, the History interface (HTML 7.4.2), installed by
+// dom_bindings::install_history.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/shell/bindings.hpp>
 #include <ctbrowser/shell/net/url.hpp>
@@ -11,30 +16,32 @@
 
 namespace ctbrowser::shell {
 
-// THE SESSION HISTORY A HISTORY OBJECT SEES, kept on the object itself in
-// private slots, so the collector finds every state a page pushed where it
-// finds the object: the window it belongs to, its entries - each an array of
-// [URL, serialized state, scroll restoration mode] - the index of the active
-// one, and `state`, the active entry's state deserialized.
+// The session history a History object sees is kept on the object itself in
+// private slots, so the collector finds every state a page pushed wherever it
+// finds the object. The slots hold the window it belongs to; its entries, each
+// an array of [URL, serialized state, scroll restoration mode]; the index of
+// the active entry; and `state`, the active entry's state deserialized.
 //
-// A DOCUMENT IS FULLY ACTIVE while its window is still one of this page's
+// A document is fully active while its window is still one of this page's
 // (find_bindings_of): a removed frame's History answers every member with the
 // SecurityError the specification gives a document that is not.
 //
-// ponytail: the entries are THIS document's - what pushState made and the
-// entry it started on - where a browser counts the top-level traversable's
-// joint session history, and a fragment navigation (entry.cpp's Location
-// setters) moves the active entry's URL rather than pushing a new one.
-// Cross-document traversal is the upgrade when a navigation keeps its history.
+// ponytail: the entries are this document's only (what pushState made and the
+// entry it started on), where a browser counts the top-level traversable's
+// joint session history, and a fragment navigation (the Location setters in
+// bindings/document/entry.cpp) moves the active entry's URL rather than
+// pushing a new one. Cross-document traversal is the upgrade path once a
+// navigation keeps its history.
 namespace {
 
 const std::string window_slot = std::string{script::private_key_prefix} + "history:window";
 const std::string entries_slot = std::string{script::private_key_prefix} + "history:entries";
 const std::string index_slot = std::string{script::private_key_prefix} + "history:index";
 const std::string state_slot = std::string{script::private_key_prefix} + "history:state";
-// The realm's structuredClone as it was before any page script could replace it.
+// The realm's structuredClone, captured before any page script could replace it.
 const std::string clone_slot = std::string{script::private_key_prefix} + "history:clone";
-// History.prototype, on the page's window, for the frames' History objects.
+// History.prototype, stored on the page's window so frames' History objects
+// share it.
 const std::string prototype_slot = std::string{script::private_key_prefix} + "History";
 
 enum entry_field : std::size_t {
@@ -43,13 +50,14 @@ enum entry_field : std::size_t {
     entry_mode = 2
 };
 
+/// The array `v` holds, or null if it is not an array.
 [[nodiscard]] script::array_object * array_of(value v) {
     return v.is_array() ? static_cast<script::array_object *>(v.as_heap()) : nullptr;
 }
 
-// StructuredSerializeForStorage and StructuredDeserialize in one: the
-// realm's structured clone, which throws the DataCloneError itself - the one
-// `history` was made with, not whatever the page's global now names.
+/// StructuredSerializeForStorage and StructuredDeserialize in one call to the
+/// realm's structuredClone, which throws the DataCloneError itself. It uses
+/// the clone `history` was made with, not whatever the page's global now names.
 [[nodiscard]] value structured_clone(context & c, script::object_object & history, value data) {
     const value * clone = history.find(clone_slot);
     if (clone == nullptr || !clone->is_callable()) {
@@ -60,8 +68,8 @@ enum entry_field : std::size_t {
     return c.call(*clone, one);
 }
 
-// HTML 7.4.1.3 "can have its URL rewritten": the same origin parts, and for a
-// non-HTTP(S) URL the same path - and query, unless it is a file: one.
+/// HTML 7.4.1.3 "can have its URL rewritten": the same origin parts, and for a
+/// non-HTTP(S) URL the same path, plus the same query unless it is a file: URL.
 [[nodiscard]] bool can_rewrite(const url_record & from, const url_record & to) {
     if (from.scheme != to.scheme || from.username != to.username || from.password != to.password ||
         from.host != to.host || from.port != to.port) {
@@ -92,7 +100,7 @@ void dom_bindings::install_history(context & cx, script::object_object & window)
         history->prototype = proto_value;
         return;
     }
-    // THE INTERFACE, once per page: a frame's History objects share it.
+    // The interface is made once per page; a frame's History objects share it.
     const interface_pair made = make_interface(cx, "History", [](context & c, std::span<value>) {
         c.throw_error("TypeError", "Illegal constructor: History");
         return value::undefined();
@@ -103,9 +111,10 @@ void dom_bindings::install_history(context & cx, script::object_object & window)
     }
     script::object_object & proto = *made.proto;
     dom_bindings * const top = &primary();
-    // THE HISTORY `this` NAMES and the document it is for, or the TypeError
-    // (not a History at all) or the SecurityError (a document no longer
-    // fully active) - nullptr either way, with the throw pending.
+    // `own` resolves `this` to its History object and the document it is for.
+    // On failure it throws a TypeError (not a History at all) or a
+    // SecurityError (the document is no longer fully active) and returns
+    // nulls, with the throw pending.
     struct owned {
         script::object_object * history = nullptr;
         dom_bindings * owner = nullptr;
@@ -126,7 +135,7 @@ void dom_bindings::install_history(context & cx, script::object_object & window)
                                          "' from 'History': the document is not fully active.");
             return {};
         }
-        // THE ENTRY THE DOCUMENT STARTED ON, made the first time it is
+        // The entry the document started on is made the first time it is
         // asked for: before then the document's address may still move.
         if (history->find(entries_slot) == nullptr) {
             const value entries = c.make_array();
@@ -149,7 +158,7 @@ void dom_bindings::install_history(context & cx, script::object_object & window)
         return static_cast<std::size_t>(context::to_number(*history.find(index_slot)));
     };
     // The document's address moves: `document.URL` and the Location object
-    // read the new one. The indicated element does NOT - :target follows a
+    // read the new one. The indicated element does not: :target follows a
     // fragment navigation, and this is none (7.4.4 "URL and history update
     // steps" never scroll to a fragment).
     const auto set_address = [](context & c, dom_bindings & owner, const std::string & url) {
@@ -176,7 +185,7 @@ void dom_bindings::install_history(context & cx, script::object_object & window)
             if (at.history == nullptr) { return value::undefined(); }
             return array_of(entries_of(*at.history)[index_of(*at.history)])->items[entry_mode];
         },
-        // AN ENUMERATION: a value that is not one of its two is ignored,
+        // An enumeration: a value other than "auto" or "manual" is ignored,
         // not thrown at (WebIDL 3.2.18).
         [own, entries_of, index_of](context & c, std::span<value> a) {
             const std::string mode = c.to_string(arg(a, 0));
@@ -218,7 +227,7 @@ void dom_bindings::install_history(context & cx, script::object_object & window)
                 if (to < 0 || to >= static_cast<long long>(entries.size())) {
                     return value::undefined();
                 }
-                // THE ENTRY BEING LEFT keeps the address the document has now,
+                // The entry being left keeps the address the document has now,
                 // which a fragment navigation may have moved.
                 const std::string old_url = owner->location_href_;
                 array_of(entries[static_cast<std::size_t>(from)])->items[entry_url] =
@@ -244,8 +253,9 @@ void dom_bindings::install_history(context & cx, script::object_object & window)
                         object->prototype = p;
                     }
                 }
-                // AT THE WINDOW STEP, as a PromiseRejectionEvent is: it does
-                // not bubble, so a dispatch from the document never reaches it.
+                // Dispatched at the window step, as a PromiseRejectionEvent is:
+                // it does not bubble, so a dispatch from the document would
+                // never reach the window.
                 object->set("target", *self->find(window_slot));
                 object->set("srcElement", *self->find(window_slot));
                 (void)owner->dispatch_to(event, path_step{node_id{}, listen_on::window});
@@ -266,7 +276,8 @@ void dom_bindings::install_history(context & cx, script::object_object & window)
                 }
                 return value::undefined();
             });
-        // THE HISTORY OBJECT IS IN A C++ CAPTURE, which the collector cannot see.
+        // The History object is in a C++ capture, which the collector cannot
+        // see, so the task retains it.
         task->retained.push_back(history);
         (void)top->add_timer(value::object(task), 0, false);
     };

@@ -1,4 +1,6 @@
-// FileList and DataTransfer - the two objects that carry files INTO a page's
+//===- data_transfer.cpp - DataTransfer, File and FileList ------*- C++ -*-===//
+//
+// FileList and DataTransfer, the two objects that carry files into a page's
 // forms. There is no user here to pick a file or drag one in, so nothing in
 // the engine fills them; what matters is that a page can: `new DataTransfer()`,
 // `dt.items.add(file)`, then `input.files = dt.files`, which is how every
@@ -9,6 +11,8 @@
 // `files.item(0)`, `files.length` and `for (const f of files)`. window.cpp
 // defines the FileList global (p5 insists it exists); its `prototype` is
 // completed here, so `input.files instanceof FileList` holds.
+//
+//===----------------------------------------------------------------------===//
 
 #include "helpers.hpp"
 
@@ -29,7 +33,7 @@ constexpr std::string_view dt_files_key = CTBROWSER_PRIVATE_KEY("ctbrowser:data-
     return v.is_array() ? static_cast<script::array_object *>(v.as_heap()) : nullptr;
 }
 
-// The hidden array a FileList or a DataTransfer keeps its entries in.
+/// The hidden array a FileList or a DataTransfer keeps its entries in.
 [[nodiscard]] script::array_object * entries_of(value holder, std::string_view key) {
     script::object_object * object = object_of(holder);
     if (object == nullptr) { return nullptr; }
@@ -37,8 +41,8 @@ constexpr std::string_view dt_files_key = CTBROWSER_PRIVATE_KEY("ctbrowser:data-
     return held == nullptr ? nullptr : as_array(*held);
 }
 
-// FileList.prototype, completed once: item(), a length getter and the array
-// iterator over the hidden list.
+/// FileList.prototype, completed once: item(), a length getter and the array
+/// iterator over the hidden list.
 [[nodiscard]] value file_list_prototype(context & c) {
     const value ctor = c.global("FileList");
     value proto = ctor.is_object_like() ? c.lookup_property(ctor, "prototype") : value::undefined();
@@ -78,8 +82,8 @@ constexpr std::string_view dt_files_key = CTBROWSER_PRIVATE_KEY("ctbrowser:data-
     return proto;
 }
 
-// Is `v` one of the Files a list or a transfer can hold - a File, which is a
-// Blob with a name?
+/// Whether \p v is a File (a Blob with a name), the only thing a FileList or
+/// a file item of a transfer can hold.
 [[nodiscard]] bool is_file(context & c, value v) {
     if (!v.is_object()) { return false; }
     const value file_ctor = c.global("File");
@@ -95,7 +99,7 @@ constexpr std::string_view dt_files_key = CTBROWSER_PRIVATE_KEY("ctbrowser:data-
 
 namespace {
 
-// A FileList's indices and hidden array, (re)written to hold `files`.
+/// Rewrites a FileList's indices and hidden array to hold \p files.
 void fill_file_list(context & c, script::object_object & list, const std::vector<value> & files) {
     for (std::size_t i = 0;; ++i) {
         if (list.find(std::to_string(i)) == nullptr) { break; }
@@ -109,7 +113,7 @@ void fill_file_list(context & c, script::object_object & list, const std::vector
     list.define(std::string{files_key}, held, script::attr_none);
 }
 
-// The Files among a transfer's items, in order.
+/// The Files among a transfer's items, in order.
 [[nodiscard]] std::vector<value> transfer_files(context & c, value transfer) {
     std::vector<value> files;
     if (script::array_object * records = entries_of(transfer, dt_items_key)) {
@@ -171,8 +175,8 @@ void control_helpers::install_data_transfer(context & cx) const {
             (void)on->erase(std::to_string(i));
         }
         if (records == nullptr) { return; }
-        // ...and the transfer's FileList, which is LIVE: the one `files`
-        // handed out follows the items (an <input> it was given included).
+        // The transfer's FileList is live too: the one `files` handed out
+        // follows the items, including when it was assigned to an <input>.
         if (script::object_object * transfer = object_of(*owner)) {
             if (const value * files = transfer->find(std::string{dt_files_key});
                 files != nullptr && object_of(*files) != nullptr) {
@@ -376,11 +380,10 @@ void control_helpers::install_data_transfer(context & cx) const {
             made->set("effectAllowed", c.string("none"));
             return self;
         });
-    // THE TWO PROTOTYPES NOTHING ELSE REACHES: they are held by the lambdas
-    // above, and a C++ capture is not a root (native_object::retained). Until
-    // the first transfer made a list, the collector freed them - and reused
-    // the memory under their first properties, so `items.add` and
-    // `items.length` came back as garbage names.
+    // The item-list and item prototypes are reachable only through the lambdas
+    // above, and a C++ capture is not a GC root, so the constructor retains
+    // them explicitly (native_object::retained); otherwise the collector frees
+    // them before the first DataTransfer is made.
     ctor->retained.push_back(list_proto_value);
     ctor->retained.push_back(item_proto_value);
     ctor->define("prototype", dt_proto_value, script::attr_none);

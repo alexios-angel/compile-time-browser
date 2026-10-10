@@ -1,3 +1,12 @@
+//===- helpers.hpp - Helpers shared by form control bindings ----*- C++ -*-===//
+//
+// control_helpers: the shared machinery of the form, select, validation and
+// DataTransfer bindings in this directory (receiver lookup, hidden slots,
+// form owners, the select model and constraint validation), plus the
+// hidden-slot keys and validity flags they share.
+//
+//===----------------------------------------------------------------------===//
+
 #pragma once
 
 #include "../internal.hpp"
@@ -8,13 +17,15 @@ namespace ctbrowser::shell::detail {
 
 // The hidden slots on a wrapper the forms keep their non-attribute state in:
 // an option's selectedness and its dirtiness, a control's custom validity
-// message, a FormData's entries.
-// PRIVATE keys (script/value/base.hpp): a page can neither read nor forge them.
+// message, a FormData's entries. They are private keys
+// (script/value/base.hpp), so a page can neither read nor forge them.
 inline constexpr std::string_view selected_slot = CTBROWSER_PRIVATE_KEY("OptionSelectedness");
 inline constexpr std::string_view dirty_slot = CTBROWSER_PRIVATE_KEY("OptionDirtiness");
 inline constexpr std::string_view custom_slot = CTBROWSER_PRIVATE_KEY("CustomValidity");
 inline constexpr std::string_view entries_slot = CTBROWSER_PRIVATE_KEY("FormDataEntries");
 
+/// The ValidityState flags as a bit set; validity_flags()
+/// returns a combination of them.
 enum flag : unsigned {
     value_missing = 1u << 0,
     type_mismatch = 1u << 1,
@@ -28,14 +39,16 @@ enum flag : unsigned {
     custom_error = 1u << 9,
 };
 
-// FileList objects (data_transfer.cpp): a list over the Files given, whether a
-// value is one, and the Files it holds.
+/// Makes a FileList over \p files (defined in data_transfer.cpp).
 [[nodiscard]] value make_file_list(context & c, const std::vector<value> & files);
+/// Whether \p v is a FileList made by make_file_list.
 [[nodiscard]] bool is_file_list(value v);
+/// The Files a FileList holds, in order; empty for anything else.
 [[nodiscard]] std::vector<value> files_in(value list);
 
-// Shared callback state is only the original installation's bindings pointer.
-// Capturing this value never retains an installer stack frame or helper reference.
+/// The helpers the form control bindings share. Its only state is the
+/// installing bindings' pointer, so a callback can capture it by value without
+/// keeping an installer stack frame or a helper reference alive.
 struct control_helpers {
     dom_bindings * bindings;
 
@@ -67,47 +80,60 @@ struct control_helpers {
     bool is_labelable(const read_txn & txn, dom_bindings * b, node_id id) const;
     node_id labeled_control(const read_txn & txn, dom_bindings * b, node_id label) const;
     std::vector<node_id> elements_of_form(dom_bindings * b, node_id form) const;
-    // The SUBMITTABLE elements the form owns, in tree order - an image button
-    // included, which elements_of_form (the listed ones) leaves out.
+    /// The submittable elements \p form owns, in tree order. Unlike
+    /// elements_of_form (the listed elements), this includes image buttons.
     std::vector<node_id> submittable_of_form(dom_bindings * b, node_id form) const;
     bool is_disabled(const read_txn & txn, dom_bindings * b, node_id id) const;
     bool in_radio_group(const read_txn & txn, dom_bindings * b, node_id a, node_id other) const;
     void uncheck_radio_group(const read_txn & txn, dom_bindings * b, node_id id) const;
     void children_replaced(dom_bindings * b, node_id id) const;
     static void plain(script::object_object &);
+    /// The select's "list of options" (HTML 4.10.7), the same walk the form
+    /// store uses, so the value the chrome paints and the model agree.
     std::vector<node_id> options_of(const read_txn & txn, dom_bindings * b, node_id select) const;
-    // An option's "nearest ancestor select" (HTML 4.10.10), or none.
+    /// An option's "nearest ancestor select" (HTML 4.10.10), or none.
     node_id select_of(const read_txn & txn, node_id option) const;
     std::string option_value(const read_txn & txn, dom_bindings * b, node_id option) const;
     bool option_selected(context & c, const read_txn & txn, dom_bindings * b, node_id option) const;
     bool is_multiple(const read_txn & txn, dom_bindings * b, node_id select) const;
+    /// The display size: the `size` attribute, else 4 for multiple and 1
+    /// otherwise.
     long long display_size(const read_txn & txn, dom_bindings * b, node_id select) const;
+    /// Every option's selectedness, in list order, with \p options filled in
+    /// and the store reconciled (see the definition for `__syncedValue`).
     std::vector<bool> selected_flags(context & c, const read_txn & txn, dom_bindings * b,
                                      node_id select, std::vector<node_id> & options) const;
-    // The selected option's value written to the store, so the paint and the
-    // submission agree with the model.
+    /// Writes the selected option's value to the form store, so the paint and
+    /// the submission agree with the model.
     void sync_store(context & c, const read_txn & txn, dom_bindings * b, node_id select,
                     const std::vector<node_id> & options, const std::vector<bool> & flags) const;
-    // "Ask for a reset" (HTML 4.10.7): the selectedness setting algorithm on
-    // `select`, then the store.
+    /// "Ask for a reset" (HTML 4.10.7): runs the selectedness setting
+    /// algorithm on \p select, then updates the store.
     void ask_for_reset(context & c, dom_bindings * b, node_id select) const;
     std::optional<double> to_number(const read_txn & txn, dom_bindings * b, node_id id,
                                     std::string_view text) const;
+    /// The allowed value step in the type's units, or nullopt for `step=any`.
     std::optional<double> step_of(const read_txn & txn, dom_bindings * b, node_id id) const;
+    /// The step base: `min`, else `value`, else the type's default step base
+    /// (non-zero only for week).
     double step_base_of(const read_txn & txn, dom_bindings * b, node_id id) const;
+    /// The `min` or `max` attribute (\p which) as a number, when it parses.
     std::optional<double> bound_of(const read_txn & txn, dom_bindings * b, node_id id,
                                    const char * which) const;
     bool is_step_aligned(double number, double base, double step) const;
     bool will_validate(const read_txn & txn, dom_bindings * b, node_id id) const;
     bool matches_pattern(const std::string & pattern, const std::string & text) const;
     unsigned validity_flags(context & c, dom_bindings * b, node_id id) const;
+    /// "Check validity" for one element: when it is a candidate for validation
+    /// and invalid, fires a cancelable, non-bubbling `invalid` event and
+    /// returns false.
     bool check_one(context & c, dom_bindings * b, node_id id) const;
     bool validate_form(context & c, dom_bindings * b, node_id form) const;
-    // HTMLFormElement and HTMLSelectElement as LEGACY PLATFORM OBJECTS
-    // (legacy_objects.cpp): the proxy wrap() hands out over `target`, or
-    // undefined for an element that is neither.
+    /// HTMLFormElement and HTMLSelectElement as legacy platform objects
+    /// (legacy_objects.cpp): the proxy wrap() hands out over \p target, or
+    /// undefined for an element that is neither.
     value legacy_object(context & c, script::object_object & target, node_id id) const;
-    // An img's form owner - the named getter's second kind of candidate.
+    /// An img's form owner: the form's named getter also finds images.
     node_id image_form_owner(const read_txn & txn, node_id img) const;
     void install_data_transfer(context & cx) const;
 

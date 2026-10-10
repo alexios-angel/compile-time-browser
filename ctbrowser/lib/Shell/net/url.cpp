@@ -1,8 +1,14 @@
-#include <ctbrowser/shell/net/url.hpp>
+//===- ctbrowser/lib/Shell/net/url.cpp - WHATWG URL records ---------------===//
+//
+// The public URL API: url_record accessors and serialisation, parse_url,
+// set_url_part, application/x-www-form-urlencoded, the fetch and location views
+// of a URL, and data: URLs. Follows the WHATWG URL Standard
+// (https://url.spec.whatwg.org/); section numbers in comments are as of 2025.
+// It is not RFC 3986, which is not what browsers implement (see url.hpp).
+//
+//===----------------------------------------------------------------------===//
 
-// The WHATWG URL Standard (https://url.spec.whatwg.org/), section numbers as
-// of 2025 in the comments. Boost.URL, which used to be here, is gone: it parses
-// RFC 3986, which is not the specification a browser implements - see url.hpp.
+#include <ctbrowser/shell/net/url.hpp>
 
 #include <ctbrowser/core/algorithms.hpp>
 
@@ -15,6 +21,8 @@
 
 namespace ctbrowser::shell {
 using namespace url_detail;
+/// Decodes every `%XX` with two hex digits to its byte; a `%` not followed by
+/// two hex digits is kept as written.
 std::string percent_decode(std::string_view text) {
     std::string out;
     out.reserve(text.size());
@@ -91,7 +99,7 @@ std::string url_record::serialize(bool exclude_fragment) const {
 
 std::string url_record::origin() const {
     if (scheme == "blob") {
-        // §4.7: the origin of the URL the path names, for http(s) only.
+        // URL Standard §4.7: the origin of the URL the path names, for http(s) only.
         const std::optional<url_record> inner = parse_url(pathname());
         if (inner && (inner->scheme == "http" || inner->scheme == "https")) {
             return inner->origin();
@@ -121,8 +129,8 @@ std::optional<url_record> parse_url(std::string_view input, std::string_view bas
 
 bool set_url_part(url_record & url, url_part part, std::string_view value) {
     const auto with_override = [&](std::string_view text, state override) {
-        // IN PLACE, as the standard has it: `host = "example.com:65536"` sets
-        // the host and THEN fails on the port, and the host stays set.
+        // Parses in place, as the standard has it: `host = "example.com:65536"`
+        // sets the host, then fails on the port, and the host stays set.
         (void)basic_parse(text, nullptr, url, override);
     };
     switch (part) {
@@ -212,7 +220,7 @@ form_pairs parse_form_urlencoded(std::string_view query) {
 }
 
 std::string serialize_form_urlencoded(const form_pairs & pairs) {
-    // §5.2, the byte serializer: space is `+`, the form set is escaped.
+    // URL Standard §5.2, the urlencoded serializer: space is `+`, the form set is escaped.
     const auto append = [](std::string & out, std::string_view text) {
         for (const char32_t c : code_points(text)) {
             if (c == ' ') {
@@ -237,7 +245,7 @@ std::string serialize_form_urlencoded(const form_pairs & pairs) {
 fetch_url parse_absolute(std::string_view text) {
     fetch_url out;
     const std::optional<url_record> url = parse_url(text);
-    // ONLY http AND https ARE FETCHABLE. A `file:` or `blob:` URL arriving on
+    // Only http and https are fetchable. A `file:` or `blob:` URL arriving on
     // the socket path is a bug in the caller, and answering with a
     // plausible-looking struct would let it stay one.
     if (!url || (url->scheme != "http" && url->scheme != "https") || !url->host ||
@@ -245,7 +253,7 @@ fetch_url parse_absolute(std::string_view text) {
         return out;
     }
     out.scheme = url->scheme;
-    // WITHOUT the brackets: this is the address a resolver and a socket want.
+    // The host without IPv6 brackets: the address a resolver and a socket want.
     // location_parts keeps them, because that is what the DOM reports - see
     // the note in url.hpp about why the two types differ here.
     out.host = *url->host;
@@ -255,7 +263,7 @@ fetch_url parse_absolute(std::string_view text) {
     out.port = url->port ? std::to_string(*url->port) : (out.scheme == "https" ? "443" : "80");
     out.target = url->pathname();
     if (url->query) { out.target += "?" + *url->query; }
-    // THE FRAGMENT IS NEVER APPENDED. It is client-side state; sending it leaks
+    // The fragment is never appended. It is client-side state; sending it leaks
     // it to the server and is a specification violation besides.
     //
     // The Host header's form: bracketed for IPv6, and carrying the port only
@@ -268,7 +276,7 @@ fetch_url parse_absolute(std::string_view text) {
 
 location_url location_parts(std::string_view href) {
     location_url out;
-    // NEVER FAILS. `location.*` has no channel for "unparseable", and a page
+    // This never fails. `location.*` has no channel for "unparseable", and a page
     // reading location.pathname mid-navigation wants an empty string rather than
     // an exception. Everything below is simply left empty.
     const std::optional<url_record> url = parse_url(href);
@@ -289,16 +297,13 @@ location_url location_parts(std::string_view href) {
 
 std::string resolve(std::string_view base, std::string_view reference) {
     const std::optional<url_record> resolved = parse_url(reference, base);
-    // LENIENT ON THE WAY OUT. An unparseable base or reference gives back the
+    // Lenient on failure: an unparseable base or reference gives back the
     // reference as it arrived, which is the answer that loses the least - an
     // empty string would discard information the caller still has a use for.
     return resolved ? resolved->serialize() : std::string{reference};
 }
 
-// NOT THROUGH THE URL PARSER, and that is deliberate rather than an oversight:
-// everything interesting lives in the opaque path, which the parser hands back
-// as one string - and it would percent-encode a raw byte in the payload where
-// RFC 2397 wants it decoded as written.
+/// True when \p url starts with `data:`, compared ASCII case-insensitively.
 bool is_data_url(std::string_view url) {
     constexpr std::string_view scheme = "data:";
     if (url.size() < scheme.size()) { return false; }
@@ -308,6 +313,11 @@ bool is_data_url(std::string_view url) {
     return true;
 }
 
+/// Parses an RFC 2397 data: URL into \p out; false when it is not one.
+///
+/// data: URLs are handled here, not by parse_url: their payload lives in the
+/// opaque path, which the parser returns as one string and would
+/// percent-encode, while RFC 2397 wants the raw bytes decoded as written.
 bool parse_data_url(std::string_view url, data_url & out) {
     if (!is_data_url(url)) { return false; }
     url.remove_prefix(std::string_view{"data:"}.size());
@@ -318,7 +328,7 @@ bool parse_data_url(std::string_view url, data_url & out) {
     std::string_view meta = url.substr(0, comma);
     const std::string_view payload = url.substr(comma + 1);
 
-    // `;base64` is the LAST parameter or it is not the encoding marker: a
+    // `;base64` must be the last parameter to be the encoding marker: a
     // media type parameter that merely contains the word is not one.
     constexpr std::string_view marker = ";base64";
     bool is_base64 = false;
@@ -341,9 +351,8 @@ bool parse_data_url(std::string_view url, data_url & out) {
 
     const std::string decoded = is_base64 ? base64_decode(payload) : percent_decode(payload);
     out.bytes.resize(decoded.size());
-    // `data:,` IS A VALID DATA URL and decodes to no bytes at all - and memcpy
-    // is declared never-null in both arguments, so the empty case is UB rather
-    // than a harmless no-op. UBSan caught this; a release build would not have.
+    // `data:,` decodes to no bytes, and memcpy with a null pointer is UB even
+    // for size 0.
     if (!decoded.empty()) { std::memcpy(out.bytes.data(), decoded.data(), decoded.size()); }
     return true;
 }

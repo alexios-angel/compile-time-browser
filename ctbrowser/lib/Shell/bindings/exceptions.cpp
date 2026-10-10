@@ -1,28 +1,31 @@
-// dom_bindings - DOMException, the platform's own error type.
+//===- exceptions.cpp - DOMException and WebIDL errors ----------*- C++ -*-===//
 //
-// WHY THIS IS NOT `context::throw_error`. That function builds an ECMAScript
-// Error by construction: the right `name`, `Error` in the prototype chain, and
-// no `code`. Everything the LANGUAGE throws is one of those, and nothing the
-// PLATFORM throws is: WebIDL §3.14 says a DOM method reports a failure by
-// throwing a DOMException, whose `name` comes from a fixed list and whose
-// legacy `code` is derived from that name.
+// dom_bindings' DOMException, the platform's own error type.
 //
-// It is measurable rather than pedantic. `assert_throws_dom` - which is how
-// every throwing assertion in web-platform-tests is written - checks three
-// things about the thrown object, in this order:
+// This is separate from `context::throw_error`, which builds an ECMAScript
+// Error: the right `name`, `Error` in the prototype chain, and no `code`.
+// Everything the language throws is one of those, and nothing the platform
+// throws is: WebIDL §3.14 says a DOM method reports a failure by throwing a
+// DOMException, whose `name` comes from a fixed list and whose legacy `code`
+// is derived from that name.
+//
+// Tests observe the difference. `assert_throws_dom`, which every throwing
+// assertion in web-platform-tests uses, checks three things about the thrown
+// object, in this order:
 //
 //     e.code === <the legacy code for the expected name>
 //     e.name === <the expected name>
 //     e.constructor === self.DOMException
 //
-// An Error passes none of them, so before this file existed every one of those
-// assertions failed on the SHAPE of the object rather than on whether the
-// method threw at all - 110 of them in `createElementNS` alone.
+// An ECMAScript Error passes none of them, so throwing one makes every such
+// assertion fail on the object's shape rather than on whether the method threw.
 //
 // The instances are ordinary objects on one shared prototype rather than a new
 // heap kind: nothing in the VM needs to recognise a DOMException, only script
 // does, and `instanceof` already resolves a native constructor's `prototype`
 // property.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/shell/bindings.hpp>
 
@@ -34,9 +37,9 @@
 namespace ctbrowser::shell {
 namespace {
 
-// THE TWO PRIVATE SLOTS. `name` and `message` are prototype accessors in the
-// IDL, so neither may be an own property of an instance - but the accessor has
-// to read the value from SOMEWHERE, and this engine has no internal-slot
+// The two private slots. `name` and `message` are prototype accessors in the
+// IDL, so neither may be an own property of an instance, but the accessor has
+// to read the value from somewhere, and this engine has no internal-slot
 // mechanism. A non-enumerable, non-writable, non-configurable own property
 // under a name no author would write is the closest thing available: invisible
 // to `Object.keys`, to `JSON.stringify` and to a `for...in`, and reachable
@@ -44,15 +47,15 @@ namespace {
 constexpr std::string_view private_key = "__ctbrowser_domexception_name";
 constexpr std::string_view message_key = "__ctbrowser_domexception_message";
 
-// WebIDL §3.14.1, "the DOMException legacy code names": every name that has a
-// non-zero legacy code, and only those. A name absent from this table is a
-// modern one - `EncodingError`, `NotAllowedError`, `OperationError` - whose
-// `code` is 0, which is exactly what the specification says and what
-// testharness's own `name_code_map` expects.
-//
-// The four legacy names with no modern spelling (`DOMSTRING_SIZE_ERR`,
-// `NO_DATA_ALLOWED_ERR`, `VALIDATION_ERR`, `URL_MISMATCH_ERR`) are in the
-// constant list further down but not here: nothing can be thrown with them.
+/// WebIDL §3.14.1, "the DOMException legacy code names": every name that has a
+/// non-zero legacy code, and only those. A name absent from this table is a
+/// modern one (`EncodingError`, `NotAllowedError`, `OperationError`) whose
+/// `code` is 0, as the specification says and testharness's own
+/// `name_code_map` expects.
+///
+/// The legacy constants with no modern name (`DOMSTRING_SIZE_ERR`,
+/// `NO_DATA_ALLOWED_ERR`, `VALIDATION_ERR`) are in the constant list further
+/// down but not here: nothing can be thrown with them.
 struct legacy_code {
     std::string_view name;
     int code;
@@ -83,6 +86,7 @@ constexpr std::array<legacy_code, 22> legacy_codes{{
     {"DataCloneError", 25},
 }};
 
+/// Returns the legacy `code` for a DOMException name, or 0 for a modern name.
 [[nodiscard]] int code_for(std::string_view name) {
     for (const legacy_code & entry : legacy_codes) {
         if (entry.name == name) { return entry.code; }
@@ -90,11 +94,11 @@ constexpr std::array<legacy_code, 22> legacy_codes{{
     return 0;
 }
 
-// The `DOMException.CONSTANT` set, which is on BOTH the constructor and the
-// prototype - `DOMException.SYNTAX_ERR` and `e.SYNTAX_ERR` are both 12, and
-// `parsing-testcommon.js` reads the first form. Every one is
-// { writable: false, enumerable: true, configurable: false }, per the
-// [Exposed] const declarations in the IDL.
+/// The `DOMException.CONSTANT` set, which is on both the constructor and the
+/// prototype: `DOMException.SYNTAX_ERR` and `e.SYNTAX_ERR` are both 12, and
+/// `parsing-testcommon.js` reads the first form. Every one is
+/// { writable: false, enumerable: true, configurable: false }, per the
+/// [Exposed] const declarations in the IDL.
 constexpr std::array<legacy_code, 25> constants{{
     {"INDEX_SIZE_ERR", 1},
     {"DOMSTRING_SIZE_ERR", 2},
@@ -125,12 +129,13 @@ constexpr std::array<legacy_code, 25> constants{{
 
 } // namespace
 
+/// Creates a DOMException with the given name and message, without throwing it.
 value dom_bindings::make_dom_exception(context & cx, std::string_view name, std::string message) {
     auto * made = cx.allocate<script::object_object>();
-    // The prototype FIRST, so a collection triggered by the writes below finds
+    // Set the prototype first, so a collection triggered by the writes below finds
     // an object that is already a DOMException.
     made->prototype = dom_exception_prototype_;
-    // `name` and `message` are prototype ACCESSORS in the IDL, so an instance
+    // `name` and `message` are prototype accessors in the IDL, so an instance
     // carries neither as an own property and `Object.keys(e)` is empty. Storing
     // them under a private key and reading them through the accessors is what
     // makes `JSON.stringify(e)` be `{}` the way it is in every browser.
@@ -139,25 +144,25 @@ value dom_bindings::make_dom_exception(context & cx, std::string_view name, std:
     return value::object(made);
 }
 
+/// Throws a new DOMException with the given name and message.
 void dom_bindings::throw_dom_exception(context & cx, std::string_view name, std::string message) {
     cx.throw_value(make_dom_exception(cx, name, std::move(message)));
 }
 
+/// Installs the DOMException constructor, prototype and legacy constants.
 void dom_bindings::install_dom_exception(context & cx) {
     auto * proto = cx.allocate<script::object_object>();
     dom_exception_prototype_ = value::object(proto);
-    // DOMException.prototype INHERITS FROM Error.prototype (WebIDL §3.14), so
-    // `e instanceof Error` is true and `e.toString()` is Error.prototype's -
-    // "NotFoundError: the message". Without the link the object has no
-    // toString at all and every failure message about one reads "[object
-    // Object]".
+    // DOMException.prototype inherits from Error.prototype (WebIDL §3.14), so
+    // `e instanceof Error` is true and `e.toString()` is Error.prototype's,
+    // giving "NotFoundError: the message" rather than "[object Object]".
     if (script::object_object * error_proto = cx.error_prototype("Error")) {
         proto->prototype = value::object(error_proto);
     }
 
-    // The three accessors. Reading one off the PROTOTYPE itself - which
+    // The three accessors. Reading one off the prototype itself (as
     // `Object.getOwnPropertyDescriptor(DOMException.prototype, 'name').get`
-    // does, and which a page can do by accident - must not fault, so an absent
+    // does, and a page can do by accident) must not fault, so an absent
     // private slot answers the initial value rather than throwing.
     const auto reader = [](std::string slot, value fallback) {
         return [slot = std::move(slot), fallback](context & c, std::span<value>) {
@@ -171,9 +176,8 @@ void dom_bindings::install_dom_exception(context & cx) {
                   script::attr_configurable);
     define_getter(cx, *proto, "message", reader(std::string{message_key}, cx.string("")), {},
                   script::attr_configurable);
-    // `code` is DERIVED, never stored: the specification defines it as a
-    // function of the name, and two fields that must agree are two fields that
-    // eventually will not.
+    // `code` is derived from the name, never stored, so the two cannot
+    // disagree.
     define_getter(
         cx, *proto, "code",
         [](context & c, std::span<value>) {
@@ -186,8 +190,8 @@ void dom_bindings::install_dom_exception(context & cx) {
         },
         {}, script::attr_configurable);
 
-    // `new DOMException(message, name)`, in that order - message first, which
-    // is the opposite of every internal helper here and is what the IDL says.
+    // `new DOMException(message, name)`: message first, as the IDL says, which
+    // is the opposite order to every internal helper here.
     // Both arguments default: `new DOMException()` is an "Error" with an empty
     // message.
     auto * ctor = cx.allocate<script::native_object>("DOMException", [this](context & c,
@@ -207,10 +211,10 @@ void dom_bindings::install_dom_exception(context & cx) {
         ctor->define(entry.name, held, script::attr_enumerable);
         proto->define(entry.name, held, script::attr_enumerable);
     }
-    // THE NATIVE HOLDS ITS OWN PROTOTYPE AS A ROOT. The constructor is reachable
-    // from the globals, but `dom_exception_prototype_` is a `value` in a C++
-    // member and the collector is told about it in register_roots - both, for
-    // the reason blob_prototype_ has both: a page can delete the global.
+    // The prototype is kept alive two ways: through the constructor, reachable
+    // from the globals, and because register_roots marks the C++ member
+    // `dom_exception_prototype_`. The second is needed because a page can
+    // delete the global (blob_prototype_ is rooted the same way).
     cx.define_builtin_global("DOMException", value::object(ctor));
 }
 

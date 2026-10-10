@@ -1,6 +1,10 @@
-// browser - focus: the editable field, labels, HTML's focusable areas and
-// focusing steps, sequential navigation, and the drag auto-scroll that runs
-// off tick().
+//===- ctbrowser/lib/Shell/browser/focus.cpp - Focus and navigation -------===//
+//
+// The browser's focus handling: the editable field, labels, HTML's focusable
+// areas and focusing steps, sequential (Tab) navigation, and the drag
+// auto-scroll that tick() runs while a selection drag leaves a field.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -46,8 +50,8 @@ node_id browser::labelled_control(const read_txn & txn, node_id from) {
     }
     if (!label) { return node_id{}; }
 
-    // `for` wins when it is there, even if it names nothing - an explicit
-    // reference that does not resolve labels NOTHING, rather than quietly
+    // `for` wins when it is present, even if it names nothing: an explicit
+    // reference that does not resolve labels nothing, rather than quietly
     // falling back to whatever the label happens to contain.
     const std::string_view target = txn.attribute_value(label, atoms_.intern("for"));
     if (!target.empty()) {
@@ -55,9 +59,9 @@ node_id browser::labelled_control(const read_txn & txn, node_id from) {
         return kind_of(txn, named) != control_kind::none ? named : node_id{};
     }
 
-    // Otherwise the first labelable DESCENDANT, in document order. The label
-    // itself cannot be the answer - a <label> is not a control - so the walk
-    // starts at its children.
+    // Otherwise the first labelable descendant, in document order. The label
+    // itself cannot be the answer (a <label> is not a control), so the walk
+    // skips it.
     node_id found{};
     const auto walk = [&](auto && self, node_id at) -> void {
         if (found) { return; }
@@ -77,10 +81,10 @@ node_id browser::control_ancestor(node_id from) {
     for (node_id at = from; at; at = txn.parent(at)) {
         if (kind_of(txn, at) != control_kind::none) { return at; }
     }
-    // Nothing up the tree IS a control, so the click may still be on a label
-    // FOR one. Second, not first: a press on the control inside a label finds
-    // it on the walk above and never reaches here, so a click can never resolve
-    // twice and toggle a checkbox back off again.
+    // Nothing up the tree is a control, so the click may still be on a label
+    // for one. The label check comes second: a press on the control inside a
+    // label finds it on the walk above and never reaches here, so a click
+    // cannot resolve twice and toggle a checkbox back off.
     return labelled_control(txn, from);
 }
 
@@ -93,8 +97,9 @@ bool browser::via_label(node_id from) {
     return static_cast<bool>(labelled_control(txn, from));
 }
 
-// Did the mutation being announced move the focused element, or an ancestor
-// of it, out of the tree and back? See dom_bindings::moved_by_mutation.
+/// Whether the mutation being announced moved the focused element, or an
+/// ancestor of it, out of the tree and back. See
+/// dom_bindings::moved_by_mutation.
 bool browser::focus_was_moved() const {
     const std::span<const node_id> moved = bindings_->moved_by_mutation();
     if (moved.empty()) { return false; }
@@ -105,16 +110,16 @@ bool browser::focus_was_moved() const {
     return false;
 }
 
-// ============================================================================
-// FOCUS, HTML 6.6
-// ============================================================================
+//===----------------------------------------------------------------------===//
+// Focus, HTML 6.6
+//===----------------------------------------------------------------------===//
 //
-// A FOCUSABLE AREA (6.6.2) is an element with a tabindex value, or one the
-// user agent makes focusable - a form control, a link, its details' summary,
-// an editing host, media showing controls - that is not a shadow host
-// delegating its focus, not actually disabled, not inert and being rendered.
-// Nothing else holds focus. `focus()` on anything else runs "get the
-// focusable area", and when that finds none it does nothing at all - which is
+// A focusable area (HTML 6.6.2) is an element with a tabindex value, or one
+// the user agent makes focusable (a form control, a link, its details'
+// summary, an editing host, media showing controls), that is not a shadow
+// host delegating its focus, not actually disabled, not inert, and is being
+// rendered. Nothing else holds focus. `focus()` on anything else runs "get the
+// focusable area", and when that finds none it does nothing at all. That is
 // how `body.focus()`, the first thing testdriver's send_keys does, leaves
 // focus where it was instead of taking it.
 
@@ -137,11 +142,11 @@ bool browser::focusable_by_default(const read_txn & txn, node_id id) {
     if (txn.element_ns(id) != node_ns::html) { return false; }
     if (local == "a" || local == "area") { return has("href"); }
     if (local == "audio" || local == "video") { return has("controls"); }
-    // A navigable container: its focus is its document's (frames are not
-    // entered by Tab here, so the frame itself is the stop).
+    // A navigable container: its focus is its document's. Tab does not enter
+    // frames here, so the frame itself is the stop.
     if (local == "iframe" || local == "frame") { return true; }
     if (local == "summary") {
-        // The summary for its parent details: that details' FIRST summary.
+        // The summary for its parent details: that details' first summary.
         const node_id details = txn.parent(id);
         if (!details || txn.element_ns(details) != node_ns::html ||
             txn.local_name(details) != "details") {
@@ -157,8 +162,8 @@ bool browser::focusable_by_default(const read_txn & txn, node_id id) {
     return is_editing_host(txn, id);
 }
 
-// AN EDITING HOST: contenteditable true or plaintext-only on an element whose
-// parent is not editable itself - the host, not what it holds.
+/// An editing host: contenteditable true or plaintext-only on an element
+/// whose parent is not itself editable (the host, not what it holds).
 bool browser::is_editing_host(const read_txn & txn, node_id id) {
     const atom editable = atoms_.intern("contenteditable");
     const auto state = [&](node_id at) {
@@ -177,16 +182,17 @@ bool browser::is_editing_host(const read_txn & txn, node_id id) {
     return true;
 }
 
-// An element that takes TEXT from the keyboard - a text field, a textarea,
-// an editing host - shows focus however it got it (:focus-visible).
+/// Whether `id` takes text from the keyboard (a text field, a textarea, an
+/// editing host). Such an element matches :focus-visible however it got focus.
 bool browser::supports_keyboard_input(const read_txn & txn, node_id id) {
     const control_kind kind = kind_of(txn, id);
     return kind == control_kind::text || kind == control_kind::textarea || is_editing_host(txn, id);
 }
 
-// A SCROLLABLE REGION is a focusable area of its own (6.6.2): a scroll
-// container whose content overflows it, so the keyboard can page it -
-// `scroller.focus()` and then the arrow keys (scrollend-event-for-user-scroll).
+/// Whether `id` is a scrollable region, a focusable area of its own (HTML
+/// 6.6.2): a scroll container whose content overflows it, so the keyboard can
+/// scroll it with `scroller.focus()` and then the arrow keys (WPT
+/// scrollend-event-for-user-scroll).
 bool browser::is_scroller(node_id id) const {
     const ctbrowser::layout::fragment * f = fragments_.find(id);
     if (f == nullptr || f->box == nullptr || !f->box->scroll_container) { return false; }
@@ -195,17 +201,17 @@ bool browser::is_scroller(node_id id) const {
     return area.width > padding.width || area.height > padding.height;
 }
 
-// The shadow host whose tree `id` is in; null in the document's own tree.
+/// The shadow host whose tree `id` is in; null in the document's own tree.
 node_id browser::host_of(const read_txn & txn, node_id id) const {
     const document::shadow_tree * tree = doc_->shadow_tree_of(txn.root_of_tree(id));
     return tree != nullptr ? tree->host : node_id{};
 }
 
-// Being rendered: the element has a box.
-//
-// ponytail: shadow trees are not laid out - style and layout do not walk the
-// flat tree yet - so an element of one counts as rendered when its host is.
-// Once shadow trees get boxes of their own this is the box test alone.
+/// Being rendered: the element has a box.
+///
+/// ponytail: shadow trees are not laid out (style and layout do not walk the
+/// flat tree yet), so an element of one counts as rendered when its host is.
+/// Once shadow trees get boxes of their own this is the box test alone.
 bool browser::being_rendered(const read_txn & txn, node_id id) const {
     for (int guard = 0; id && guard < 64; ++guard) {
         const node_id host = host_of(txn, id);
@@ -226,8 +232,8 @@ bool browser::is_focusable_area(const read_txn & txn, node_id id) {
         tree != nullptr && tree->delegates_focus) {
         return false;
     }
-    // "Actually disabled" is a form control's state - a form-associated
-    // custom element's too: a <div tabindex> in a disabled fieldset is as
+    // "Actually disabled" is a state of form controls and form-associated
+    // custom elements only: a <div tabindex> in a disabled fieldset is as
     // focusable as one anywhere else.
     if ((kind_of(txn, id) != control_kind::none || bindings_->form_associated(id)) &&
         form_store::is_actually_disabled(txn, atoms_, id)) {
@@ -240,10 +246,10 @@ bool browser::is_focusable_area(const read_txn & txn, node_id id) {
     return being_rendered(txn, id);
 }
 
-// "Get the focusable area" for a focus target that is not one itself: the
-// document element's is the viewport (`viewport` says so), a shadow host
-// that delegates focus keeps a focus already inside it or hands it to its
-// focus delegate, and nothing else has one.
+/// "Get the focusable area" for a focus target that is not one itself: the
+/// document element's is the viewport (null, with `viewport` set), a shadow
+/// host that delegates focus keeps a focus already inside it or hands it to
+/// its focus delegate, and nothing else has one.
 node_id browser::focusable_area_for(const read_txn & txn, node_id target, bool click,
                                     bool & viewport) {
     viewport = target == txn.root();
@@ -256,9 +262,9 @@ node_id browser::focusable_area_for(const read_txn & txn, node_id target, bool c
     return focus_delegate(txn, target, click);
 }
 
-// A shadow host's FOCUS DELEGATE: its shadow root's autofocus delegate when
-// there is one, else the first descendant of the root, in tree order, that
-// is a focusable area or has one to give.
+/// A shadow host's focus delegate: its shadow root's autofocus delegate when
+/// there is one, else the first descendant of the root, in tree order, that
+/// is a focusable area or has one to give.
 node_id browser::focus_delegate(const read_txn & txn, node_id target, bool click) {
     const node_id root = doc_->shadow_root_of(target);
     const document::shadow_tree * tree = doc_->shadow_tree_of(root);
@@ -284,14 +290,14 @@ node_id browser::focus_delegate(const read_txn & txn, node_id target, bool click
     return found;
 }
 
-// THE FOCUSING STEPS (6.6.4), for script's focus(), a click and the keyboard
-// alike: a target that is not a focusable area gives way to the one "get the
-// focusable area" finds, and without one nothing happens. Null is the
-// viewport, which is what blur() and a click on nothing come to.
+/// The focusing steps (HTML 6.6.4), for script's focus(), a click and the
+/// keyboard alike: a target that is not a focusable area gives way to the one
+/// "get the focusable area" finds, and without one nothing happens. Null is
+/// the viewport, which is what blur() and a click on nothing come to.
 bool browser::focus(node_id id, focus_origin origin) {
     const bool click = origin == focus_origin::pointer;
     if (id) {
-        flush_for_read(); // whether it is rendered is a question about now
+        flush_for_read(); // "being rendered" must reflect the current DOM
         const auto txn = doc_->read();
         if (!txn.contains(id)) { return false; }
         if (!is_focusable_area(txn, id)) {
@@ -303,24 +309,25 @@ bool browser::focus(node_id id, focus_origin origin) {
     return focus_update(id, origin);
 }
 
-// THE FOCUS UPDATE STEPS: `change` owed by the field losing focus, `blur` and
-// `focusout` there, then `focus` and `focusin` at what gains it.
-//
-// And whether the focus is shown - :focus-visible (Selectors 4 leaves the
-// heuristic to the user agent; this is every engine's): always after the
-// keyboard moved it and on a field that takes typing; never after a pointer
-// moved it anywhere else; and for a script's focus() after whatever the user
-// did last - a key shows it, a pointer that moved focus does not, and a click
-// that focused nothing or no interaction at all leaves it shown.
+/// The focus update steps: `change` owed by the field losing focus, `blur`
+/// and `focusout` there, then `focus` and `focusin` at what gains it.
+///
+/// Also decides whether the focus is shown (:focus-visible; Selectors 4 leaves
+/// the heuristic to the user agent and this is every engine's): always after
+/// the keyboard moved it and on a field that takes typing; never after a
+/// pointer moved it anywhere else; and for a script's focus(), according to
+/// what the user did last. A key shows it, a pointer that moved focus does not,
+/// and a click that focused nothing or no interaction at all leaves it shown.
 bool browser::focus_update(node_id id, focus_origin origin) {
     if (id == focused_) { return false; }
     if (focused_) {
-        // `change` fires on BLUR, not on every keystroke - that is the
-        // difference between it and `input`, and pages rely on it. And only
-        // for a text field the USER edited to a different value since it took
-        // focus (HTML 4.10.5.5, "the user commits the change"): a button, a
-        // checkbox (whose change fires on activation) or an untouched field
-        // has nothing to commit. Bubbling, and neither cancelable nor composed.
+        // `change` fires on blur, not on every keystroke; that is the
+        // difference between it and `input`, and pages rely on it. It fires
+        // only for a text field the user edited to a different value since
+        // it took focus (HTML 4.10.5.5, "the user commits the change"): a
+        // button, a checkbox (whose change fires on activation) or an
+        // untouched field has nothing to commit. It bubbles and is neither
+        // cancelable nor composed.
         if (edited_since_focus_) {
             const control_state * state = control_state_of(focused_);
             if (state != nullptr && state->value != value_at_focus_) {
@@ -329,12 +336,11 @@ bool browser::focus_update(node_id id, focus_origin origin) {
         }
         (void)set_state(focused_, state_focus, false);
         // HTML's focus update steps: `blur` then `focusout` at what loses
-        // focus, each naming what gains it. `blur` never fired at all before.
+        // focus, each naming what gains it.
         (void)bindings_->dispatch_focus("blur", focused_, id);
         (void)bindings_->dispatch_focus("focusout", focused_, id);
-        // And the outgoing field DROPS ITS SELECTION. A highlight left
-        // behind in a field nobody is typing in reads as still selected,
-        // and Ctrl+A followed by a click somewhere else did exactly that.
+        // The field losing focus collapses its selection to the caret, so a
+        // highlight does not linger in a field nobody is typing in.
         const auto txn = doc_->read();
         if (txn.contains(focused_)) {
             const control_kind kind = kind_of(txn, focused_);
@@ -351,9 +357,9 @@ bool browser::focus_update(node_id id, focus_origin origin) {
         const control_state * state = control_state_of(focused_);
         value_at_focus_ = state != nullptr ? state->value : std::string{};
     }
-    // Told to the bindings BEFORE the event fires, so a `focus` listener asking
-    // document.activeElement gets the element it was just handed rather than
-    // the one that had focus a moment ago.
+    // Tell the bindings before the event fires, so a `focus` listener asking
+    // for document.activeElement gets the element it was just handed rather
+    // than the one that had focus a moment ago.
     bindings_->observe_focus(focused_);
     restart_caret_blink(); // a field you just clicked into shows its caret at once
     if (focused_) {
@@ -371,9 +377,9 @@ bool browser::focus_update(node_id id, focus_origin origin) {
     return true;
 }
 
-// The parent in the FLAT tree: a shadow root's child's is the host, a host's
-// child's is the slot it is assigned to - none when it is assigned nowhere,
-// since then it is not in the flat tree at all.
+/// The parent of `at` in the flat tree. For a shadow root's child it is the
+/// host; for a host's child it is the slot the child is assigned to, or null
+/// when it is assigned nowhere, since then it is not in the flat tree at all.
 node_id browser::flat_parent(const read_txn & txn, node_id at) {
     const node_id up = txn.parent(at);
     if (!up) { return host_of(txn, at); }
@@ -382,10 +388,10 @@ node_id browser::flat_parent(const read_txn & txn, node_id at) {
     return up;
 }
 
-// WHAT A CLICK FOCUSES: the nearest inclusive flat-tree ancestor that is a
-// focusable area or a host delegating its focus, or the control of a <label>
-// on the way; with none of those the viewport, which is how a click on the
-// page's background blurs a field.
+/// What a click focuses: the nearest inclusive flat-tree ancestor that is a
+/// focusable area or a host delegating its focus, or the control of a <label>
+/// on the way. With none of those it is the viewport (null), which is how a
+/// click on the page's background blurs a field.
 node_id browser::click_focus_target(node_id from) {
     if (!from) { return node_id{}; }
     flush_for_read();
@@ -404,7 +410,7 @@ node_id browser::click_focus_target(node_id from) {
     return node_id{};
 }
 
-// Whether anything under `at`, in its own tree, is a focusable area.
+/// Whether anything under `at`, in its own tree, is a focusable area.
 bool browser::holds_focusable(const read_txn & txn, node_id at) {
     for (const node_id child : txn.children(at)) {
         if (is_focusable_area(txn, child) || holds_focusable(txn, child)) { return true; }
@@ -412,26 +418,26 @@ bool browser::holds_focusable(const read_txn & txn, node_id at) {
     return false;
 }
 
-// SEQUENTIAL FOCUS NAVIGATION (6.6.5) follows the document's FLATTENED
-// TABINDEX-ORDERED FOCUS NAVIGATION SCOPE. Every focus navigation scope owner
-// - the document, a shadow host, a slot - orders the focusable areas and the
-// owners in its own scope by tabindex: positive values first, ascending,
-// then everything at zero or with no value, each run in tree order; a
-// negative tabindex takes its element out, and with an owner the whole scope
-// it owns. Flattening puts each owner's list after it, or in its place when
-// the owner cannot take focus itself - a host that delegates focus, a slot.
-//
-// `also`, where a search starts, is placed by TREE order when it is not in
-// the order itself - a focused tabindex -1 element - and so is every owner
-// around it whose scope is out of the order: before the next element of its
-// scope that is in the order, or going `backwards` after the one before it.
-// Every engine does this and the order the spec gives cannot say where such
-// a start is (focus-with-negative-index: "after focusing negative
-// tabindex-ed elements, focus moves in tree order").
+/// Sequential focus navigation (HTML 6.6.5) follows the document's flattened
+/// tabindex-ordered focus navigation scope. Every focus navigation scope owner
+/// (the document, a shadow host, a slot) orders the focusable areas and the
+/// owners in its own scope by tabindex: positive values first, ascending,
+/// then everything at zero or with no value, each run in tree order. A
+/// negative tabindex takes its element out, and for an owner the whole scope
+/// it owns. Flattening puts each owner's list after it, or in its place when
+/// the owner cannot take focus itself (a host that delegates focus, a slot).
+///
+/// `also`, where a search starts, is placed by tree order when it is not in
+/// the order itself (a focused tabindex -1 element), and so is every owner
+/// around it whose scope is out of the order: before the next element of its
+/// scope that is in the order, or, going `backwards`, after the one before it.
+/// Every engine does this, and the order the spec gives cannot say where such
+/// a start is (WPT focus-with-negative-index: "after focusing negative
+/// tabindex-ed elements, focus moves in tree order").
 std::vector<node_id> browser::sequential_order(const read_txn & txn, node_id also, bool backwards) {
     struct item {
         node_id id;
-        long long rank; // a positive tabindex, or the largest there is for zero
+        long long rank; // A positive tabindex, or LLONG_MAX for zero/none.
         bool owner;
         bool focusable;
     };
@@ -444,23 +450,23 @@ std::vector<node_id> browser::sequential_order(const read_txn & txn, node_id als
         }
         return false;
     };
-    // The elements a scope owner owns, found down from `roots`: never into a
-    // host's own children, which its slots own, nor into a slot, which owns
-    // what is assigned to it or else its fallback content.
+    // The elements a scope owner owns, found down from `roots`. The walk never
+    // enters a host's own children, which its slots own, nor a slot, which
+    // owns what is assigned to it or else its fallback content.
     const auto scope = [&](std::span<const node_id> roots) {
         std::vector<item> out;
         std::optional<item> start;
-        std::size_t start_at = 0; // how many of `out` precede it in tree order
+        std::size_t start_at = 0; // How many of `out` precede it in tree order.
         const auto walk = [&](auto && self, node_id at) -> void {
             if (txn.kind(at).value_or(node_kind::text) != node_kind::element) { return; }
             const bool host = static_cast<bool>(doc_->shadow_root_of(at));
             const bool slot = is_slot(at);
             const std::optional<long long> own = tabindex_value(txn, at);
             const long long tabindex = own.value_or(0);
-            // A scroller that is focusable only for being one is a Tab stop
-            // only when nothing inside it takes focus: the keyboard reaches
-            // its content instead (every engine; focus-navigation-scroller-
-            // interactive-child).
+            // A scroller that is focusable only because it scrolls is a Tab
+            // stop only when nothing inside it takes focus; otherwise the
+            // keyboard reaches its content instead (every engine; WPT
+            // focus-navigation-scroller-interactive-child).
             const bool focusable =
                 is_focusable_area(txn, at) &&
                 (own || focusable_by_default(txn, at) || !holds_focusable(txn, at));
@@ -472,11 +478,11 @@ std::vector<node_id> browser::sequential_order(const read_txn & txn, node_id als
             } else if ((host || slot) && also && inside(also, at)) {
                 // A scope out of the order is still walked when the search
                 // starts inside it, so Tab goes on to the rest of that scope
-                // (focus-tabindex-order-shadow-varying-tabindex-2, -3).
+                // (WPT focus-tabindex-order-shadow-varying-tabindex-2, -3).
                 start = item{at, 0, true, false};
                 start_at = out.size();
             } else if (at == also) {
-                start = item{at, 0, false, true}; // a start, not a stop of its own
+                start = item{at, 0, false, true}; // A start, not a stop of its own.
                 start_at = out.size();
             }
             if (host || slot) { return; }
@@ -518,10 +524,11 @@ std::vector<node_id> browser::sequential_order(const read_txn & txn, node_id als
     return order;
 }
 
-// RADIO GROUPS keep one stop in the order (HTML 4.10.5.1.18, and every
-// browser): the checked radio, or with none checked whichever is reached
-// first - and from a radio of the group only its checked one, so Tab never
-// walks from one radio to the next of the same group.
+/// Whether Tab may stop at `candidate` when moving from `from`. A radio group
+/// keeps one stop in the order (HTML 4.10.5.1.18, and every browser): the
+/// checked radio, or with none checked whichever is reached first. From a
+/// radio of the group no other member is reachable, so Tab never walks from
+/// one radio to the next of the same group.
 bool browser::sequentially_reachable(const read_txn & txn, node_id candidate, node_id from) {
     if (kind_of(txn, candidate) != control_kind::radio) { return true; }
     const atom name_attr = atoms_.intern("name");
@@ -576,11 +583,14 @@ bool browser::focus_next(bool backwards) {
             }
         }
     }
-    // Handled even when nothing else is reachable - the key is still Tab's.
+    // Handled even when nothing else is reachable: the key is still Tab's.
     if (target) { (void)focus_update(target, focus_origin::keyboard); }
     return true;
 }
 
+/// The drag auto-scroll due now: how far the pointer is outside the field
+/// being drag-selected on each axis, counted only on axes the view can still
+/// scroll. `field` is null when no step is due.
 browser::autoscroll_state browser::autoscroll_now() {
     autoscroll_state out;
     if (!field_selecting_ || !have_pointer_) { return out; }
@@ -601,9 +611,9 @@ browser::autoscroll_state browser::autoscroll_now() {
                          : pointer_.x < box.x     ? pointer_.x - box.x
                                                   : 0;
 
-    // ...and only where the view can still MOVE that way. Without this the
-    // wakeup below is scheduled forever and an idle loop with the pointer
-    // parked below a fully-scrolled field spins at the step interval.
+    // Move only where the view can still scroll that way. Otherwise
+    // next_wakeup_ms() keeps scheduling a step forever, and an idle loop with the pointer
+    // parked below a fully scrolled field spins at the step interval.
     const std::size_t most = geometry.lines.size() > geometry.visible_lines
                                  ? geometry.lines.size() - geometry.visible_lines
                                  : 0;
@@ -626,6 +636,8 @@ double browser::autoscroll_interval_ms(float distance) const {
     return std::max(16.0, 100.0 / ramp);
 }
 
+/// Runs one auto-scroll step: scrolls the field one line or character toward
+/// the pointer, then moves the caret to the point under the pointer.
 void browser::autoscroll_step(const autoscroll_state & at) {
     const rect box = viewport_box_of(at.field);
     if (box.empty()) { return; }
@@ -634,8 +646,8 @@ void browser::autoscroll_step(const autoscroll_state & at) {
     control_state & state = forms_.state_of(txn, atoms_, at.field);
     {
         const field_layout geometry = layout_of_field(box, at.field, state, kind);
-        // THE VIEW MOVES FIRST. One line, one character - the smallest step
-        // there is, so the rate alone decides how fast it goes.
+        // The view moves first, by one line or one character: the smallest
+        // step there is, so the rate alone decides how fast it goes.
         if (at.below > 0) {
             state.scroll_line = geometry.scroll_line + 1;
         } else if (at.below < 0 && geometry.scroll_line > 0) {
@@ -648,9 +660,9 @@ void browser::autoscroll_step(const autoscroll_state & at) {
             state.scroll_x = geometry.scroll_x + (at.beside > 0 ? step : -step);
         }
     }
-    // ...and THEN the caret follows it, derived from where the pointer actually
-    // is against the view we just moved. Not reveal_caret, which is the inverse
-    // and would drag the view back to the caret it is trying to lead.
+    // Then the caret follows, derived from where the pointer is against the
+    // view just moved. Not reveal_caret, which is the inverse and would drag
+    // the view back to the caret it is trying to lead.
     const std::size_t caret = offset_at_point(at.field, state, kind, pointer_.x, pointer_.y);
     if (caret != state.caret) { state.caret = caret; }
     restart_caret_blink();

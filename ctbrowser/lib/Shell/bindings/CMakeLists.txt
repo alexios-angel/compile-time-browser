@@ -1,3 +1,5 @@
+# The web platform bound to the VM. Each subdirectory adds its own sources to
+# the same ctbrowser-shell target.
 target_sources(ctbrowser-shell PRIVATE
   abort.cpp
   animation_effects.cpp

@@ -1,5 +1,15 @@
-// dom_bindings - reflection: the table of reflected IDL attributes, HTML 2.6,
-// and the one getter and one setter every row is answered by.
+//===- reflection.cpp - Reflected IDL attributes --------------------------===//
+//
+// Reflection (HTML 2.6, "Reflecting content attributes in IDL attributes"):
+// one rule per type and a table per element. reflection_rows.cpp is that
+// table; this file holds the one getter and one setter every row is answered
+// by, plus the reflections that are not table rows: element references (ARIA),
+// doubles (<progress>, <meter>), `control.form`, `option.label`/`value`,
+// `text` and `accessKeyLabel`. The accessors are installed on interface
+// prototypes such as `HTMLInputElement.prototype`, not on each wrapper, as the
+// specification requires and so that ~270 accessors cost one install each.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -9,27 +19,11 @@ namespace ctbrowser::shell {
 
 using namespace detail;
 
-// --- REFLECTION, AND THE INTERFACE OBJECTS THE ACCESSORS LIVE ON ------------
-//
-// "Reflecting content attributes in IDL attributes" is HTML section 2.6, and it
-// is one paragraph per TYPE and a table per element - which is exactly the shape
-// it has here. Before this there were twelve names (`id`, `className`, `href`,
-// `download`, `target`, `rel`, `alt`, `title`, `name`, `placeholder`, `type`,
-// `htmlFor`) installed as string accessors on EVERY wrapper, so `div.href`
-// existed, `input.maxLength` did not, `details.open` was a string rather than a
-// boolean, and `td.colSpan` was undefined. `html/dom` counted the cost:
-// 2,411 subtests reading `undefined` where a string belongs, 665 where a
-// boolean does and 576 where a number does.
-//
-// TWO THINGS CHANGED TOGETHER, and they are one change. The rules are a table,
-// and the table's first column is an INTERFACE - so the accessors go on
-// `HTMLInputElement.prototype` rather than on each input, which is both what the
-// specification says and the only way ~270 of them are affordable. Building
-// those prototypes is the other half of the work, and it is what
-// `el instanceof HTMLBodyElement` and `eventTarget.constructor.name` ask for.
-
 namespace detail {
 
+/// HTML's rules for parsing integers (2.4.4.1): skip leading whitespace, take
+/// an optional sign and at least one digit. Returns false on no digits or a
+/// magnitude above 2^32.
 [[nodiscard]] bool parse_html_integer(std::string_view text, long long & out) {
     std::size_t at = 0;
     while (at < text.size() && html_whitespace.find(text[at]) != std::string_view::npos) { ++at; }
@@ -42,9 +36,9 @@ namespace detail {
     long long digits = 0;
     bool too_big = false;
     while (at < text.size() && text[at] >= '0' && text[at] <= '9') {
-        // CAPPED RATHER THAN WRAPPED. A page can write a hundred digits in an
-        // attribute, and signed overflow is undefined behaviour rather than a
-        // large number. Anything past 2^32 is out of range for every type here.
+        // Capped rather than wrapped: a page can write a hundred digits in an
+        // attribute, and signed overflow is undefined behaviour. Anything past
+        // 2^32 (4294967296) is out of range for every type here.
         if (digits > 4294967296LL) {
             too_big = true;
         } else {
@@ -61,14 +55,15 @@ namespace detail {
 
 namespace {
 
-constexpr long long max_int32 = 2147483647;
+constexpr long long max_int32 = 2147483647; // 2^31 - 1, INT32_MAX.
 
 } // namespace
 
-// One reflected attribute's getter: read the content attribute, apply the rule
-// its type names. A receiver that does not resolve to an element - a wrapper for
-// something removed from the document - answers the type's default rather than
-// throwing, which is what every other native in this file does.
+/// One reflected attribute's getter: read the content attribute and apply the
+/// rule its type names. `row_ptr` points at a reflected_attribute. A receiver
+/// that does not resolve to an element (a wrapper for something removed from
+/// the document) answers the type's default rather than throwing, as every
+/// other native in this file does.
 value dom_bindings::reflected_get(context & cx, const void * row_ptr) {
     const auto & row = *static_cast<const reflected_attribute *>(row_ptr);
     const node_id id = receiver(cx);
@@ -79,11 +74,11 @@ value dom_bindings::reflected_get(context & cx, const void * row_ptr) {
     switch (row.type) {
     case reflect_type::dom_string: return cx.string(std::string{raw});
     case reflect_type::cryptographic_nonce: {
-        // THE SLOT, WHILE THE ATTRIBUTE IS AS IT WAS. "Set the element's
-        // [[CryptographicNonce]] to value" runs on every content attribute
-        // change, and nothing here is told about one - so the slot remembers
-        // the attribute text it was set beside, and an attribute that reads
-        // differently now has been changed since and reloads it.
+        // The slot answers while the attribute reads as it did. "Set the
+        // element's [[CryptographicNonce]] to value" runs on every content
+        // attribute change, and nothing here is told about one, so the slot
+        // remembers the attribute text it was set beside; an attribute that
+        // reads differently now has been changed since and reloads it.
         // ponytail: a setAttribute("nonce", <the same text>) after an IDL set
         // is not seen; an attribute-change hook in attributes.cpp would be.
         const auto slot = nonce_slots_.find(id.key());
@@ -93,10 +88,9 @@ value dom_bindings::reflected_get(context & cx, const void * row_ptr) {
         if (slot != nonce_slots_.end()) { nonce_slots_.erase(slot); }
         return cx.string(std::string{raw});
     }
-    // NULL, NOT "", and the difference is the whole of `testNullable`: an
-    // absent `aria-label` has no value rather than an empty one, and a page
-    // that branches on `el.ariaLabel === null` is asking whether the author
-    // wrote one.
+    // Null, not "": an absent `aria-label` has no value rather than an empty
+    // one, and a page that branches on `el.ariaLabel === null` is asking
+    // whether the author wrote one.
     case reflect_type::nullable_dom_string:
         return present ? cx.string(std::string{raw}) : value::null();
     case reflect_type::boolean: return value::boolean(present);
@@ -106,15 +100,14 @@ value dom_bindings::reflected_get(context & cx, const void * row_ptr) {
         // the resulting URL string. If parsing fails, the value of the content
         // attribute must be returned instead."
         //
-        // WHAT THIS ENGINE RESOLVES AGAINST is `location_href_` - the address
-        // the browser pushed in through observe_location, which is what
-        // `document.URL` and `document.baseURI` already report. It is NOT the
-        // `<base href>` element: nothing here reads one, so a page carrying a
-        // <base> resolves against the document's own address instead. That is a
-        // real difference from a browser and it is the honest one to have -
-        // inventing a base URL would be worse than using the document's.
-        // `action` and `formAction` are the two rows HTML sends to the
-        // document's URL when the attribute is absent (4.10.18.6, 4.10.19.6).
+        // This resolves against `location_href_`, the address the browser
+        // pushed in through observe_location (what `document.URL` reports),
+        // not against `<base href>`: a page carrying a <base> resolves
+        // url-typed rows against the document's own address, which differs
+        // from a browser. (<a> and <area> `href` use the document base URL;
+        // see hyperlink.cpp.) `action` and `formAction` are the two rows HTML
+        // sends to the document's URL when the attribute is absent
+        // (4.10.18.6, 4.10.19.6).
         if (!present) {
             const bool document_url = row.content == "action" || row.content == "formaction";
             return cx.string(document_url ? location_href_ : std::string{});
@@ -127,28 +120,22 @@ value dom_bindings::reflected_get(context & cx, const void * row_ptr) {
     case reflect_type::nullable_enumerated: {
         const bool nullable = row.type == reflect_type::nullable_enumerated;
         // A nullable row's invalid value default is null when the table leaves
-        // it empty - `ariaChecked` set to "maybe" - and a keyword when it names
-        // one - `crossOrigin` set to "maybe" is "anonymous". No keyword is the
+        // it empty (`ariaChecked` set to "maybe") and a keyword when it names
+        // one (`crossOrigin` set to "maybe" is "anonymous"). No keyword is the
         // empty string. Absent is null for every nullable row; see
-        // aria_enum_attr for the file that wanted otherwise and then did not.
+        // aria_enum_attr in reflection_rows.cpp for why.
         const auto keyword_or_null = [&](std::string_view fallback) {
             return nullable && fallback.empty() ? value::null() : cx.string(std::string{fallback});
         };
         if (!present) { return nullable ? value::null() : cx.string(std::string{row.missing}); }
-        // ASCII-INSENSITIVE AND NOTHING WIDER, which is the whole of the
-        // corpus's interest in this line: `TRUE` is the keyword `true` and
-        // U+212A KELVIN SIGN is not the letter `k`. Every keyword in the table
-        // is lower case already, so the folded value IS the canonical spelling.
+        // ASCII case-insensitive and nothing wider: `TRUE` is the keyword
+        // `true`, but U+212A KELVIN SIGN is not the letter `k`. Every keyword in
+        // the table is lower case already, so the folded value is the canonical
+        // spelling.
         const std::string folded = ascii_lower_copy(raw);
         if (lists_token(row.keywords, folded)) { return cx.string(folded); }
-        // AN EMPTY VALUE IS AN INVALID ONE. It reads as if it were a state of
-        // its own - `<input type="">` - and it is not: the rule is "if the
-        // value matches none of the keywords, the invalid value default", and
-        // an attribute that is present but empty matches none. Answering ""
-        // here made `<input type="">` report "" where "text" belongs, and
-        // `<track kind="">` "" where "metadata" does. The rows whose invalid
-        // value default is "" - `dir`, `referrerPolicy`, `scope` - are
-        // unaffected, which is why this looked right for so long.
+        // An empty value matches no keyword, so it gets the invalid value
+        // default: `<input type="">` is "text", `<track kind="">` is "metadata".
         return keyword_or_null(row.invalid);
     }
     default: break;
@@ -171,11 +158,11 @@ value dom_bindings::reflected_get(context & cx, const void * row_ptr) {
             break;
         case reflect_type::clamped_unsigned_long:
             // "If it succeeds but the value is less than min, min must be
-            // returned; if greater than max, max." Only a FAILED parse falls
+            // returned; if greater than max, max." Only a failed parse falls
             // back to the default, so `<td colspan=0>` is 1 and
-            // `<td colspan=x>` is 1 for two different reasons - and the parse
-            // is the NON-NEGATIVE one, so `<td rowspan=-36>` fails it and is
-            // the default 1 rather than the clamp's floor of 0.
+            // `<td colspan=x>` is 1 for two different reasons. The parse is
+            // the non-negative one, so `<td rowspan=-36>` fails it and is the
+            // default 1 rather than the clamp's floor of 0.
             if (parsed < 0) { break; }
             answer = parsed < row.low ? row.low : (parsed > row.high ? row.high : parsed);
             break;
@@ -185,9 +172,9 @@ value dom_bindings::reflected_get(context & cx, const void * row_ptr) {
     return value::number(static_cast<double>(answer));
 }
 
-// ...and its setter, which is where the two types that THROW live. Answers
-// undefined always: an IDL setter has no return value, and the exception is the
-// only channel it has.
+/// One reflected attribute's setter, which is where the two types that throw
+/// (limited_long, limited_unsigned_long) live. Always returns undefined: an
+/// IDL setter has no return value, and the exception is its only channel.
 value dom_bindings::reflected_set(context & cx, const void * row_ptr, std::span<value> args) {
     const auto & row = *static_cast<const reflected_attribute *>(row_ptr);
     const node_id id = receiver(cx);
@@ -210,14 +197,13 @@ value dom_bindings::reflected_set(context & cx, const void * row_ptr, std::span<
         return value::undefined();
     case reflect_type::nullable_dom_string:
     case reflect_type::nullable_enumerated:
-        // "If the given value is null, remove the content attribute" - so
-        // `el.ariaLabel = null` is a removal and not the four characters
-        // "null", which is what the ToString below would have written.
-        // `undefined` is the same state, which `testNullable` checks by name.
+        // "If the given value is null, remove the content attribute", so
+        // `el.ariaLabel = null` is a removal and not the string "null", which
+        // is what ToString would have written. `undefined` is treated the same.
         //
-        // A nullable ENUMERATED attribute writes what it is given, exactly as
+        // A nullable enumerated attribute writes what it is given, exactly as
         // the non-nullable one does: `img.crossOrigin = "ANONYMOUS"` stores
-        // those nine capitals and the GETTER is what folds them.
+        // the capitals and the getter folds them.
         if (args.empty() || args[0].is_nullish()) {
             (void)doc_->remove_attribute(id, name);
             mutated();
@@ -226,7 +212,7 @@ value dom_bindings::reflected_set(context & cx, const void * row_ptr, std::span<
         write(arg_string(cx, args, 0));
         return value::undefined();
     case reflect_type::cryptographic_nonce: {
-        // The slot and NOT the attribute - see the getter. Remembered beside
+        // The slot and not the attribute; see the getter. Remembered beside
         // the attribute's current text so the getter can tell a later change.
         std::string current;
         {
@@ -240,10 +226,10 @@ value dom_bindings::reflected_set(context & cx, const void * row_ptr, std::span<
     case reflect_type::url:
     case reflect_type::enumerated:
         // All three write the ToString of the value verbatim. An enumerated
-        // attribute does NOT canonicalise on the way in - the getter is where
-        // the keyword table applies - and a URL is stored as given and resolved
-        // on the way out. [LegacyNullToEmptyString] is the one exception, and
-        // it is for `null` ALONE: `undefined` still writes nine letters.
+        // attribute does not canonicalise on the way in (the getter applies the
+        // keyword table), and a URL is stored as given and resolved on the way
+        // out. [LegacyNullToEmptyString] is the one exception, and it is for
+        // `null` alone: `undefined` still writes "undefined".
         write(row.null_to_empty && arg(args, 0).is_null() ? std::string{}
                                                           : arg_string(cx, args, 0));
         return value::undefined();
@@ -281,7 +267,7 @@ value dom_bindings::reflected_set(context & cx, const void * row_ptr, std::span<
     case reflect_type::unsigned_long:
     case reflect_type::clamped_unsigned_long:
         // A clamped attribute "behaves the same as a regular reflected unsigned
-        // integer" on setting: the clamp is a GETTING rule only.
+        // integer" on setting: the clamp is a getting rule only.
         if (number > max_int32) { number = row.fallback; }
         break;
     default: break;
@@ -290,20 +276,20 @@ value dom_bindings::reflected_set(context & cx, const void * row_ptr, std::span<
     return value::undefined();
 }
 
-// --- ELEMENT REFERENCES: `ariaActiveDescendantElement` AND THE SEVEN LISTS ---
+// Element references: `ariaActiveDescendantElement` and the seven lists.
 //
 // HTML 2.6.1's two remaining shapes, "Element" and "FrozenArray<Element>",
-// which are not a table row: they carry an EXPLICITLY SET attr-element beside
+// which are not table rows: they carry an explicitly set attr-element beside
 // the content attribute (ARIA 1.3 §9.4). On getting, the explicit element wins
-// while it is still in scope - a descendant of one of this element's
-// shadow-including ancestors - else the content attribute's ID is looked up in
+// while it is still in scope (a descendant of one of this element's
+// shadow-including ancestors), else the content attribute's ID is looked up in
 // this element's tree; on setting, the content attribute becomes "" and the
-// element is remembered. `aria-element-reflection*.html` measures all of it.
+// element is remembered.
 //
-// THE STATE IS ON THE WRAPPER, as the event handler slots are, because the
+// The state is on the wrapper, as the event handler slots are, because the
 // wrapper is what the collector traces: the explicit reference, the content
 // attribute's text as it was when it was set (a content attribute changed
-// since then has superseded the reference - there is no attribute-change
+// since then has superseded the reference; there is no attribute-change
 // hook, so this is checked on every read), and for a list the array last
 // answered, so a page comparing two reads by identity gets the same object
 // while nothing changed.
@@ -326,6 +312,8 @@ constexpr element_reference_row element_reference_rows[] = {
     {"ariaOwnsElements", "aria-owns", true},
 };
 
+/// Wrapper slot names for one row: the explicit reference, the content
+/// attribute text it was set beside, and the cached list array.
 [[nodiscard]] std::string explicit_slot(std::string_view idl) {
     return "__explicit_" + std::string{idl};
 }
@@ -338,6 +326,7 @@ constexpr element_reference_row element_reference_rows[] = {
 
 } // namespace
 
+/// Installs the element-reference accessors on Element.prototype.
 void dom_bindings::install_element_reflection(context & cx) {
     const value iface = interface_prototype("Element");
     if (!iface.is_object()) { return; }
@@ -359,8 +348,8 @@ void dom_bindings::install_element_reflection(context & cx) {
     }
 }
 
-// "Descendant of any of `element`'s shadow-including ancestors": the candidate's
-// tree is this element's tree, or the tree of a host above it.
+/// "Descendant of any of `element`'s shadow-including ancestors": the
+/// candidate's tree is this element's tree, or the tree of a host above it.
 bool dom_bindings::element_reference_in_scope(const read_txn & txn, node_id element,
                                               node_id candidate) const {
     const node_id wanted = root_of_tree(txn, candidate, false);
@@ -372,9 +361,9 @@ bool dom_bindings::element_reference_in_scope(const read_txn & txn, node_id elem
     return false;
 }
 
-// The first element in `element`'s tree whose ID is `id` - DOM's "get an
-// element by ID" scoped to the root, which for a disconnected subtree is the
-// subtree and for a shadow tree is that tree alone.
+/// The first element in `element`'s tree whose ID is `id`: DOM's "get an
+/// element by ID" scoped to the root, which for a disconnected subtree is the
+/// subtree and for a shadow tree is that tree alone.
 node_id dom_bindings::element_reference_by_id(const read_txn & txn, node_id element,
                                               std::string_view id) const {
     if (id.empty()) { return {}; }
@@ -393,15 +382,17 @@ node_id dom_bindings::element_reference_by_id(const read_txn & txn, node_id elem
     return found;
 }
 
+/// The getter for one element-reference row; returns null, an element, or
+/// (for a list) an array that keeps its identity while its contents do not
+/// change.
 value dom_bindings::element_reference_get(context & cx, std::string_view idl,
                                           std::string_view content, bool list) {
-    // The ordinary wrapper, where the reference slots live - a form's or a
+    // The ordinary wrapper, where the reference slots live: a form's or a
     // select's is behind the proxy a page may pass as `this`.
     const value self = unwrap_legacy_proxy(cx.current_this());
-    // THE DOCUMENT THAT OWNS THE RECEIVER answers, as every prototype method
+    // The document that owns the receiver answers, as every prototype method
     // shared across the realm's documents does: a createHTMLDocument's element
-    // reads its own tree (aria-element-reflection.html, "Adopting element
-    // keeps references").
+    // reads its own tree.
     if (dom_bindings * owner = owner_of(self); owner != nullptr && owner != this) {
         return owner->element_reference_get(cx, idl, content, list);
     }
@@ -425,8 +416,8 @@ value dom_bindings::element_reference_get(context & cx, std::string_view idl,
             (void)object->erase(explicit_source_slot(idl));
         } else {
             answered = true;
-            // A node of ANOTHER document is never in scope, and its id means
-            // nothing in this tree - so the owner is asked first.
+            // A node of another document is never in scope, and its id means
+            // nothing in this tree, so the owner is asked first.
             const auto keep = [&](value candidate) {
                 if (owner_of(candidate) != this) { return; }
                 const node_id node = handle_of(candidate);
@@ -445,7 +436,7 @@ value dom_bindings::element_reference_get(context & cx, std::string_view idl,
     if (!answered) {
         if (!present) { return value::null(); }
         if (list) {
-            // "Split on ASCII whitespace" - all five, not just the space.
+            // "Split on ASCII whitespace": all five, not just the space.
             // ponytail: split_top_level also honours quotes and parentheses,
             // which an id could in theory contain; a plain whitespace split
             // is the fix if one ever does.
@@ -459,7 +450,7 @@ value dom_bindings::element_reference_get(context & cx, std::string_view idl,
         }
     }
     if (!list) { return found.empty() ? value::null() : wrap(cx, found.front()); }
-    // THE SAME ARRAY while it would hold the same elements.
+    // The same array while it would hold the same elements.
     if (const value * cached = object->find(cached_slot(idl));
         cached != nullptr && cached->is_array()) {
         const auto & items = static_cast<script::array_object *>(cached->as_heap())->items;
@@ -476,6 +467,10 @@ value dom_bindings::element_reference_get(context & cx, std::string_view idl,
     return made;
 }
 
+/// The setter for one element-reference row: null removes the attribute and
+/// the reference; an element (or, for a list, an array of elements) sets the
+/// content attribute to "" and remembers the reference. Anything else is a
+/// TypeError.
 void dom_bindings::element_reference_set(context & cx, std::string_view idl,
                                          std::string_view content, bool list, value given) {
     const value self = unwrap_legacy_proxy(cx.current_this());
@@ -512,7 +507,7 @@ void dom_bindings::element_reference_set(context & cx, std::string_view idl,
                                             "': the value is not a sequence of Elements.");
             return;
         }
-        // A COPY, so a page mutating the array it passed does not edit the slot.
+        // A copy, so a page mutating the array it passed does not edit the slot.
         kept = cx.make_array();
         auto * items = static_cast<script::array_object *>(kept.as_heap());
         for (const value & each : static_cast<script::array_object *>(given.as_heap())->items) {
@@ -536,17 +531,18 @@ void dom_bindings::element_reference_set(context & cx, std::string_view idl,
     object->define(explicit_source_slot(idl), cx.string(""), script::attr_none);
 }
 
-// --- DOUBLES: `progress.max` AND `<meter>`'s SIX ---------------------------
+// Doubles: `progress.max` and <meter>'s six.
 //
 // HTML 2.6.12/2.6.13, "double" and "double limited to only positive numbers",
 // over the rules for parsing floating-point number values (2.4.4.3). The
-// getter answers the default when the attribute is absent or does not parse
-// - or, limited, is not positive; the setter writes the number's JavaScript
+// getter answers the default when the attribute is absent, does not parse,
+// or (limited) is not positive; the setter writes the number's JavaScript
 // string, and a limited row leaves the attribute alone for a value that is
-// not positive. NOT in the table: its types are integers and strings, and the
-// six meter rows have a custom getter in the specification (each is clamped
-// against the others) that this does not attempt - reflection-forms.html
-// tests only their setters, which is what "customGetter" there means.
+// not positive. Not in the reflection table, whose types are integers and
+// strings. The six <meter> rows and progress.value have custom getters in the
+// specification (each meter value is clamped against the others);
+// install_double_reflection replaces the plain getters installed from this
+// table with those further down.
 namespace {
 
 struct double_row {
@@ -563,8 +559,8 @@ constexpr double_row double_rows[] = {
     {"HTMLMeterElement", "optimum", 0.0, false},
 };
 
-// THE RULES FOR PARSING FLOATING-POINT NUMBER VALUES, HTML 2.4.4.3: the lenient
-// parse the number controls use, with -0 read as 0.
+/// The rules for parsing floating-point number values, HTML 2.4.4.3: the
+/// lenient parse the number controls use, with -0 read as 0.
 [[nodiscard]] bool parse_html_float(std::string_view text, double & out) {
     if (!input_types::parse_float(text, out, true)) { return false; }
     if (out == 0) { out = 0; } // -0 is 0, as the specification's algorithm yields
@@ -573,6 +569,8 @@ constexpr double_row double_rows[] = {
 
 } // namespace
 
+/// Installs the double-valued reflections and the <meter>/<progress> custom
+/// getters.
 void dom_bindings::install_double_reflection(context & cx) {
     for (const double_row & row : double_rows) {
         const value iface = interface_prototype(row.interface);
@@ -617,13 +615,13 @@ void dom_bindings::install_double_reflection(context & cx) {
                 })));
     }
 
-    // THE CUSTOM GETTERS, HTML 4.10.13 and 4.10.14: a progress's `value` is
-    // its current value - the attribute clamped to [0, max], 0 without one -
+    // The custom getters, HTML 4.10.13 and 4.10.14: a progress's `value` is
+    // its current value (the attribute clamped to [0, max], 0 without one)
     // and `position` that over max, or -1 while indeterminate; a meter's six
     // are clamped against each other in the order the specification lists:
     // min (0), max (1, at least min), value, low and high (each in [min,
     // max], high at least low), optimum (in [min, max]). The setters above
-    // stay: they write the attribute and are what reflection-forms.html reads.
+    // stay: they write the attribute.
     const auto number_attribute = [this](const read_txn & txn, node_id id, std::string_view name,
                                          double & out) {
         const atom attribute = atoms_->intern(name);
@@ -745,14 +743,12 @@ void dom_bindings::install_double_reflection(context & cx) {
     }
 }
 
-// --- `control.form`: THE FORM OWNER, HTML 4.10.17.3 ---------------------------
-//
-// The `form` attribute names a form by id in the element's tree; otherwise the
-// form the parser's form element pointer gave it, or the nearest form
-// ancestor; otherwise null. Read at each get rather than kept as
-// state - "reset the form owner" runs on every insertion in the specification,
-// and a walk up is what it amounts to. Node-appendChild-script-and-button-
-// from-div.html reads it from a script that ran the moment its div connected.
+/// `control.form`: the form owner, HTML 4.10.17.3. The `form` attribute names
+/// a form by id in the element's tree; otherwise the form the parser's form
+/// element pointer gave it, or the nearest form ancestor; otherwise null. It is
+/// computed on each get rather than kept as state: "reset the form owner" runs
+/// on every insertion in the specification, and a walk up is what it amounts
+/// to, so a script that runs the moment its element connects reads it right.
 void dom_bindings::install_form_owner(context & cx) {
     for (const char * which :
          {"HTMLButtonElement", "HTMLFieldSetElement", "HTMLInputElement", "HTMLObjectElement",
@@ -768,8 +764,8 @@ void dom_bindings::install_form_owner(context & cx) {
             node_id owner;
             {
                 const auto txn = self.doc_->read();
-                // HTML 4.10.16: a <legend> is not listed - its `form` is its
-                // PARENT fieldset's, and null under anything else.
+                // HTML 4.10.16: a <legend> is not listed; its `form` is its
+                // parent fieldset's, and null under anything else.
                 if (legend) {
                     id = txn.parent(id);
                     if (!id || txn.kind(id).value_or(node_kind::text) != node_kind::element ||
@@ -777,9 +773,9 @@ void dom_bindings::install_form_owner(context & cx) {
                         return value::null();
                     }
                 }
-                // HTML 4.10.17.3 "reset the form owner" - the `form`
+                // HTML 4.10.17.3 "reset the form owner" (the `form`
                 // attribute's first element with that ID in the control's
-                // tree, the parser's association, the nearest form ancestor -
+                // tree, the parser's association, the nearest form ancestor)
                 // is form_store's, the one algorithm submission and reset ask.
                 owner = form_store::owning_form(txn, *self.atoms_, id);
             }
@@ -791,11 +787,14 @@ void dom_bindings::install_form_owner(context & cx) {
     }
 }
 
-// --- `option.label` AND `option.value`: THE ATTRIBUTE, ELSE THE TEXT ---------
-//
-// HTML 4.10.10: both read the content attribute when it is present and the
-// option's text otherwise - its descendant text, stripped and collapsed -
-// and both write the attribute. Not a table row because of that fallback.
+/// `option.label` and `option.value`: the attribute, else the text. HTML
+/// 4.10.10: both read the content attribute when it is present and the
+/// option's text otherwise (its descendant text, stripped and collapsed), and
+/// both write the attribute. Not a table row because of that fallback.
+///
+/// Also installs `text` on <a>, <title> and <script> and
+/// `HTMLElement.accessKeyLabel`: getters that, like option's, are not table
+/// rows.
 void dom_bindings::install_option_reflection(context & cx) {
     const value iface = interface_prototype("HTMLOptionElement");
     if (!iface.is_object()) { return; }
@@ -810,7 +809,7 @@ void dom_bindings::install_option_reflection(context & cx) {
                     const node_id id = self.receiver(c);
                     if (!id) { return c.string(""); }
                     {
-                        // The content attribute IN NO NAMESPACE: one a page
+                        // The content attribute in no namespace: one a page
                         // set with setAttributeNS is not the option's.
                         const auto txn = self.doc_->read();
                         if (const attribute * held = txn.find_attribute_ns(id, "", name)) {
@@ -839,14 +838,13 @@ void dom_bindings::install_option_reflection(context & cx) {
                 })));
     }
 
-    // --- `text` on <a>, <title> and <script> ---------------------------------
-    //
-    // Not reflections either, but the same shape of rule: an anchor's is its
-    // descendant text (textContent, 4.5.1), a title's and a script's the
-    // CHILD text content (4.2.2, 4.12.1.1) - Text children only - and every
-    // one is set by "string replace all", the textContent setter's removal
-    // and one new Text. The document that owns the receiver answers: the
-    // prototype is shared with every document in the realm.
+    // `text` on <a>, <title> and <script>. Not reflections either, but the same
+    // shape of rule: an anchor's is its descendant text (textContent, 4.5.1),
+    // a title's and a script's the child text content (4.2.2, 4.12.1.1), Text
+    // children only, and every one is set by "string replace all", the
+    // textContent setter's removal and one new Text. The document that owns
+    // the receiver answers: the prototype is shared with every document in the
+    // realm.
     for (const auto & [which, descendants] :
          {std::pair{"HTMLAnchorElement", true}, std::pair{"HTMLTitleElement", false},
           std::pair{"HTMLScriptElement", false}}) {
@@ -883,7 +881,7 @@ void dom_bindings::install_option_reflection(context & cx) {
                     })));
     }
 
-    // `accessKeyLabel`, HTML 6.7.3: the ASSIGNED access key, described - ""
+    // `accessKeyLabel`, HTML 6.7.3: the assigned access key, described, or ""
     // when none was assigned. The engine assigns one only for an `accesskey`
     // that is a single code point (as the shipping engines do: "s 0" is
     // refused, not read as "s"), and labels it with the Alt modifier.

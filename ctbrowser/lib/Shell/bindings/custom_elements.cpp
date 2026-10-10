@@ -1,42 +1,47 @@
-// dom_bindings - customElements: the CustomElementRegistry, the HTMLElement
-// constructor a class extends, and the reactions.
+//===- Shell/bindings/custom_elements.cpp - Custom elements -----*- C++ -*-===//
 //
-// WHY THIS IS A SCAN, like the mutation observer beside it. The specification
-// enqueues a reaction from inside every mutating step of the DOM; this engine
-// has `mutated()`, which says THAT the document changed and not what. So a
-// definition is applied by walking the tree: an element a definition covers
-// and nothing has tracked yet is upgraded, and a tracked one is diffed against
-// what it was - connected or not, under which parent, with which observed
-// attributes. The reactions run before the native that mutated returns, which
-// is what [CEReactions] promises a page.
+// dom_bindings' customElements: the CustomElementRegistry, the HTMLElement
+// constructor a class extends, element creation through a definition, and
+// which registry each node has. The reactions themselves are in
+// custom_element_reactions.cpp.
 //
-// WHAT `super()` MEANS HERE. The VM does not rebind `this` to what a NATIVE
-// base constructor returns (context::rebind_receiver), so the specification's
-// "the HTMLElement constructor returns the element being upgraded" cannot be
-// spelled that way. Instead the RECEIVER becomes the element: `new X()`
-// arrives with a fresh object whose prototype is X.prototype, and the
-// constructor turns that object into the wrapper of a new node. An UPGRADE
-// calls the class body with the existing wrapper as `this`, so the identity
-// every reference to the element already holds is kept, and `super()` then
-// finds a receiver that is on the definition's construction stack: it takes
-// the prototype and marks the entry constructed, exactly as HTML 4.13.4 step
-// 7 does, and a second `super()` meets the marker and throws.
+// Definitions are applied by a scan, like the mutation observer beside it.
+// The specification enqueues a reaction from inside every mutating step of
+// the DOM; this engine has `mutated()`, which says that the document changed
+// and not what. So the tree is walked: an element a definition covers that
+// nothing tracks yet is upgraded, and a tracked one is diffed against what it
+// was (connected or not, under which parent, with which observed attributes).
+// The reactions run before the native that mutated returns, which is what
+// [CEReactions] promises a page.
 //
-// WHAT A NATIVE CANNOT SEE: new.target. The VM carries it only into a JS
-// frame, so `Reflect.construct(HTMLElement, [], NewTarget)` - the receiver
-// made from HTMLElement.prototype, NewTarget invisible - is refused where a
-// browser would build NewTarget's element. `new C()` and `super()` are what
-// pages write, and both carry the class on the receiver's prototype.
+// How `super()` works here. Rather than having the HTMLElement constructor
+// return a different object, the receiver itself becomes the element: `new
+// X()` arrives with a fresh object whose prototype is X.prototype, and the
+// constructor turns that object into the wrapper of a new node. An upgrade
+// calls the class body with the existing wrapper as `this`, so every reference
+// to the element keeps its identity, and `super()` then finds a receiver on
+// the definition's construction stack: it sets the prototype and marks the
+// entry constructed (HTML 4.13.4 step 7); a second `super()` sees the marker
+// and throws.
 //
-// ponytail: the scan is O(tree) per DOM write once anything is defined, and
-// a candidate parsed into a DETACHED subtree is upgraded when it connects or
-// when the native that made it says so (upgrade_created_subtree). Both hold
-// until a page shows the cost.
+// A native cannot see new.target: the VM carries it only into a JavaScript
+// frame, so `Reflect.construct(HTMLElement, [], NewTarget)` (a receiver made
+// from HTMLElement.prototype) is refused where a browser would build
+// NewTarget's element. `new C()` and `super()`, which is what pages write,
+// both carry the class on the receiver's prototype.
+//
+// ponytail: once anything is defined, every DOM write scans the whole tree,
+// and a candidate parsed into a detached subtree is upgraded only when it
+// connects or when the native that made it calls upgrade_created_subtree.
+// Replace both with per-mutation reactions if a page shows the cost.
 // ponytail: a customized built-in's "is value" is kept (`is_values_`) for what
 // createElement, the HTML element constructor, the parser's construction and
 // a clone make; a candidate the parser made before its definition existed
-// still answers from its `is` ATTRIBUTE, and the serialiser and
-// `:defined` read the attribute for every element.
+// still answers from its `is` attribute, and the serialiser and `:defined`
+// read the attribute for every element. Record it at parse time if that
+// diverges.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/shell/bindings.hpp>
 
@@ -57,26 +62,20 @@ namespace {
 
 constexpr std::size_t npos = std::numeric_limits<std::size_t>::max();
 
-// HTML 4.13.1, "valid custom element name" AS IT IS TODAY - not
-// PotentialCustomElementName, which whatwg/html#7991 replaced.
-//
-// The old production was a fixed list of XML name characters; a name is now
-// any VALID ELEMENT LOCAL NAME that has no ASCII upper alpha in it, has a
-// hyphen, and is not one of the eight SVG/MathML names. That is much wider:
-// `a!-element`, `a\x01-element` and `_-element` are all names a page may
-// define, and PotentialCustomElementName refused every one of them.
-//
-// A valid element local name is detail::is_valid_element_local_name, the
-// DOM's own check (document/internal.hpp).
+/// HTML 4.13.1's "valid custom element name" in its current form (after
+/// whatwg/html#7991 replaced PotentialCustomElementName): a valid element local
+/// name (detail::is_valid_element_local_name, document/internal.hpp) that
+/// starts with an ASCII lowercase letter, has no ASCII uppercase letter, has a
+/// hyphen, and is not one of the eight reserved SVG/MathML names. That admits
+/// names such as `a!-element` and `a\x01-element`.
 [[nodiscard]] bool is_valid_custom_element_name(std::string_view name) {
     // Byte-wise, which is exact: every character tested here is ASCII (see
     // element_name_breaks).
     //
-    // THE FIRST CHARACTER IS AN ASCII LOWER ALPHA. It is a requirement of its
-    // own, beside the local-name production: `_-element`, `:-element` and
-    // `\u{10000}-element` are all valid element local names and none of them
-    // is a valid CUSTOM element name. MEASURED - five subtests of
-    // valid-custom-element-names.html say so by code point.
+    // The first character must be an ASCII lowercase letter. This is separate
+    // from the local-name check: `_-element`, `:-element` and
+    // `\u{10000}-element` are valid local names but not custom element names
+    // (WPT custom-elements/valid-custom-element-names.html).
     if (name.empty() || name.front() < 'a' || name.front() > 'z') { return false; }
     bool hyphen = false;
     for (const char c : name) {
@@ -92,16 +91,17 @@ constexpr std::size_t npos = std::numeric_limits<std::size_t>::max();
     return true;
 }
 
-// WebIDL `sequence<DOMString>` from an iterable: every conversion step can
-// throw - Symbol.iterator not callable, `next` throwing - and each of those
-// leaves the VM's throw pending for the native to rethrow. False when it did.
+/// Converts an iterable to WebIDL `sequence<DOMString>`, appending to `out`.
+/// Every conversion step can throw (Symbol.iterator not callable, `next`
+/// throwing), and each leaves the VM's throw pending for the native to
+/// rethrow. Returns false when one did.
 [[nodiscard]] bool string_sequence(context & cx, value from, std::vector<std::string> & out) {
     if (!from.is_object_like()) {
         cx.throw_error("TypeError", "The provided value cannot be converted to a sequence.");
         return false;
     }
-    // GetMethod(V, @@iterator): a method that is present and not callable -
-    // `{[Symbol.iterator]: 1}` - is a TypeError, not an empty list.
+    // GetMethod(V, @@iterator): a method that is present and not callable
+    // (`{[Symbol.iterator]: 1}`) is a TypeError, not an empty list.
     const value method = cx.lookup_property(from, CTBROWSER_SYMBOL_KEY("iterator"));
     if (cx.throw_pending()) { return false; }
     if (!method.is_callable()) {
@@ -114,7 +114,7 @@ constexpr std::size_t npos = std::numeric_limits<std::size_t>::max();
         cx.throw_error("TypeError", "The provided value cannot be converted to a sequence.");
         return false;
     }
-    // A rooted COPY: iterable_values may hand back the page's own array, and
+    // A rooted copy: iterable_values may hand back the page's own array, and
     // each toString can grow or shrink it, or collect the only reference.
     const std::vector<value> entries = static_cast<script::array_object *>(items.as_heap())->items;
     const context::rooted_values keep{cx, entries};
@@ -127,14 +127,14 @@ constexpr std::size_t npos = std::numeric_limits<std::size_t>::max();
 
 } // namespace
 
-// --- lookups ------------------------------------------------------------------
+// Definition lookups.
 
 std::size_t dom_bindings::custom_definition_for(const read_txn & txn, node_id id,
                                                 bool connected) const {
-    // HTML 4.13.3 "look up a custom element definition" in THE ELEMENT'S OWN
-    // registry (DOM 4.9 "create an element" and "try to upgrade"): null -
-    // a document with no browsing context, a null-registry subtree - finds
-    // nothing, and only the HTML namespace has custom elements.
+    // HTML 4.13.3 "look up a custom element definition" in the element's own
+    // registry (DOM 4.9 "create an element" and "try to upgrade"). A null
+    // registry (a document with no browsing context, a null-registry subtree)
+    // finds nothing, and only the HTML namespace has custom elements.
     const custom_element_registry * registry = registry_of_node(txn, id, connected);
     if (registry == nullptr || txn.element_ns(id) != node_ns::html) { return npos; }
     const std::string_view tag = atoms_->text(txn.tag(id).value_or(atom{}));
@@ -143,8 +143,8 @@ std::size_t dom_bindings::custom_definition_for(const read_txn & txn, node_id id
         const custom_element_definition & def = defs[i];
         if (def.registry != registry || def.local_name != tag) { continue; }
         if (def.name == def.local_name) { return i; }
-        // A customized built-in is named by its IS VALUE - kept from its
-        // creation - or, for one nothing recorded (the parser's), its `is`
+        // A customized built-in is named by its "is value", kept from its
+        // creation, or, for one nothing recorded (the parser's), its `is`
         // attribute.
         const auto held = is_values_.find(id.key());
         const std::string_view is = held != is_values_.end()
@@ -159,7 +159,7 @@ std::size_t dom_bindings::custom_definition_of(context & cx, value receiver) {
     const std::vector<custom_element_definition> & defs = primary().custom_definitions_;
     dom_bindings * owner = owner_of(receiver);
     if (const node_id held = owner == nullptr ? node_id{} : owner->handle_of(receiver)) {
-        // AN UPGRADE IN PROGRESS: the receiver is the element on top of some
+        // An upgrade in progress: the receiver is the element on top of some
         // definition's construction stack.
         for (std::size_t i = 0; i < defs.size(); ++i) {
             const auto & stack = defs[i].construction_stack;
@@ -171,15 +171,15 @@ std::size_t dom_bindings::custom_definition_of(context & cx, value receiver) {
         return npos;
     }
     // `new C()`: the receiver was made from C.prototype, and C is the class
-    // the definition holds - EXACTLY that prototype, not one on its chain,
-    // because a subclass nobody defined is not a defined element (HTML
+    // the definition holds. It must be exactly that prototype, not one on its
+    // chain, because a subclass nobody defined is not a defined element (HTML
     // 4.13.4 step 3 looks the definition up by the constructor itself).
     //
-    // IN WHICH REGISTRY is HTML 3.2.3's step 2: the one the "active custom
-    // element constructor map" names for C - createElement put it there for
-    // the length of the construction - and otherwise the current global's
-    // document's, a GLOBAL registry. A class defined only in a scoped
-    // registry is not constructible with `new` (registries/Construct.html).
+    // The registry is chosen by HTML 3.2.3 step 2: the one the "active custom
+    // element constructor map" names for C (createElement puts it there for
+    // the length of the construction), and otherwise the current global's
+    // document's global registry. A class defined only in a scoped registry
+    // is not constructible with `new` (registries/Construct.html).
     const value proto = cx.get_prototype(receiver);
     const custom_element_registry * wanted = nullptr;
     for (const auto & [key, registry, document] : primary().active_constructors_) {
@@ -195,33 +195,34 @@ std::size_t dom_bindings::custom_definition_of(context & cx, value receiver) {
     return npos;
 }
 
-// --- which registry a node has ------------------------------------------------
+// Which registry a node has.
 //
-// DOM 4.9 gives every element, shadow root and document a CUSTOM ELEMENT
-// REGISTRY - null, the document's global one, or a scoped one a page made
-// with `new CustomElementRegistry()` - fixed when the node is created and
-// changed afterwards only by initialize() and an adoption. Kept here as the
-// EXCEPTIONS to a default, because almost every node has the default and a
-// table entry per element would be the whole page twice over:
+// DOM 4.9 gives every element, shadow root and document a custom element
+// registry: null, the document's global one, or a scoped one a page made with
+// `new CustomElementRegistry()`. It is fixed when the node is created and
+// changed afterwards only by initialize() and an adoption. It is stored as
+// exceptions to a default, because almost every node has the default and an
+// entry per element would cost a table the size of the page. In order:
 //
 //   * an explicit entry (`node_registries_`, and `shadow_registries_` for a
 //     shadow root, keyed by its host) for whatever creation, cloning,
-//     initialize() or an adoption said that the default does not;
-//   * the PARSER'S null registries, which the document records
+//     initialize() or an adoption set that differs from the default;
+//   * the parser's null registries, which the document records
 //     (document::null_custom_element_registry);
-//   * TEMPLATE CONTENTS: their node document is the template's "inert"
+//   * template contents: their node document is the template's "inert"
 //     document, which has no registry, so everything under a contents
-//     fragment - and a clone taken out of one, until it is inserted
-//     somewhere (`inert_roots_`) - has none. This engine keeps template
-//     contents in the page's own document, so that document is emulated
-//     by where the node is rather than by which slab holds it;
-//   * and otherwise the node document's registry: the global one of a
-//     document with a browsing context, null for one a page made - unless
+//     fragment, and a clone taken out of one until it is inserted somewhere
+//     (`inert_roots_`), has none. This engine keeps template contents in the
+//     page's own document, so the inert document is emulated by where the node
+//     is rather than by which slab holds it;
+//   * otherwise the node document's registry: the global one of a document
+//     with a browsing context, or null for one a page made, unless
 //     initialize() gave that document a scoped one.
 //
 // ponytail: a clone of template contents marks its root in `inert_roots_`
 // and nothing sweeps the entry once the clone is inserted; a page that
-// clones a template a million times keeps a million small entries.
+// clones a template a million times keeps a million small entries. Sweep on
+// insertion if that shows up.
 
 dom_bindings::custom_element_registry * dom_bindings::document_registry() const noexcept {
     return registry_ != nullptr ? registry_ : scoped_document_registry_;
@@ -261,13 +262,14 @@ dom_bindings::custom_element_registry * dom_bindings::registry_of_node(const rea
 
 void dom_bindings::set_node_registry(const read_txn & txn, node_id id,
                                      custom_element_registry * registry) {
-    // A SCOPED registry learns the document now holding a node of it: its
+    // A scoped registry learns the document now holding a node of it: its
     // "scoped document set", which define() upgrades in this order.
     if (registry != nullptr && registry->document == nullptr &&
         std::ranges::find(registry->documents, this) == registry->documents.end()) {
         registry->documents.push_back(this);
     }
-    // An entry only where the default would say something else - see above.
+    // An entry only where the default would say something else (see "Which
+    // registry a node has" above).
     const node_kind kind = txn.kind(id).value_or(node_kind::text);
     if (kind == node_kind::document) {
         if (registry_ == nullptr) { scoped_document_registry_ = registry; }
@@ -314,7 +316,7 @@ bool dom_bindings::registry_option(context & cx, value dictionary, custom_elemen
 
 bool dom_bindings::shadow_registry_option(context & cx, node_id host, value init) {
     // DOM 4.8 attachShadow() steps 1-3, ahead of the host checks: the node
-    // document's registry unless `init` names one, and a GLOBAL registry
+    // document's registry unless `init` names one, and a global registry
     // that is not the node document's is a NotSupportedError.
     custom_element_registry * registry = document_registry();
     bool given = false;
@@ -345,11 +347,11 @@ bool dom_bindings::shadow_registry_option(context & cx, node_id host, value init
     return true;
 }
 
-// THE REGISTRIES A PARSED FRAGMENT'S ELEMENTS GET, once it is copied in: each
-// element's is its intended parent's (HTML 13.2.6.1) - the fragment's
-// `inherited` for the top level, which is the context's - except where the
-// parser recorded a null one (a `customelementregistry` start tag, and what
-// is under it); a declarative shadow root's is the document's, or null with
+// Assigns the registries a parsed fragment's elements get once it is copied
+// in. Each element's is its intended parent's (HTML 13.2.6.1), with
+// `inherited` (the context's) for the top level, except where the parser
+// recorded a null one (a `customelementregistry` start tag, and what is under
+// it). A declarative shadow root's is the document's, or null with
 // `shadowrootcustomelementregistry`, and its children inherit that.
 void dom_bindings::assign_parsed_registries(const read_txn & txn, node_id at,
                                             custom_element_registry * inherited) {
@@ -370,7 +372,7 @@ void dom_bindings::assign_parsed_registries(const read_txn & txn, node_id at,
 // DOM 4.5 "adopt", the registry half, for `at` and what is under it once it
 // is this document's: a shadow root that is null (and not kept null) or
 // global takes this document's effective global registry, and so does an
-// element that is null or global - from its PARENT'S registry when it has a
+// element that is null or global: from its parent's registry when it has a
 // parent that is not a plain fragment and it was null, from the document's
 // otherwise. A scoped registry travels unchanged.
 void dom_bindings::adopt_registries(const read_txn & txn, node_id at,
@@ -379,7 +381,7 @@ void dom_bindings::adopt_registries(const read_txn & txn, node_id at,
         return registry != nullptr && registry->document != nullptr ? registry : nullptr;
     };
     // `parent` is the registry of the parent, and `counted` whether that
-    // parent counts - an element or a shadow root does; no parent, or a plain
+    // parent counts (an element or a shadow root does); no parent, or a plain
     // fragment, sends the element to the document's registry instead.
     const node_kind kind = txn.kind(at).value_or(node_kind::text);
     custom_element_registry * mine = registry_of_node(txn, at);
@@ -406,6 +408,10 @@ void dom_bindings::adopt_registries(const read_txn & txn, node_id at,
     }
 }
 
+// Rebuilds the GC root list on the CustomElementRegistry interface from every
+// definition's constructor, prototype and callbacks, every registry object and
+// pending whenDefined promise, and the construct fence. Call it after any of
+// them changes.
 void dom_bindings::sync_custom_element_roots() {
     dom_bindings & top = primary();
     if (top.custom_elements_interface_ == nullptr) { return; }
@@ -427,6 +433,8 @@ void dom_bindings::sync_custom_element_roots() {
     roots.push_back(top.custom_elements_registry_prototype_);
 }
 
+// The registry `receiver` is; anything that is not a registry object falls
+// back to the primary document's global registry.
 dom_bindings::custom_element_registry & dom_bindings::registry_of(value receiver) {
     dom_bindings & top = primary();
     const auto found = top.registry_objects_.find(receiver.bits());
@@ -451,8 +459,10 @@ value dom_bindings::custom_elements_registry(context & cx) {
     // Only the page and a frame ask for one: a document a page made has no
     // window to hang it on. Having a registry is having a browsing context.
     registry_ = &make_registry(this, value::object(registry));
-    // `:defined` asks the document what the tree cannot say (dom/document.hpp).
-    // A weak token for the reason watch_shadow_disabled gives.
+    // The document asks this hook whether an element is defined, for the
+    // `:defined` selector (dom/document.hpp). The document can outlive these
+    // bindings, so the hook holds a weak_ptr to lifetime_ and answers nullopt
+    // once they are destroyed.
     if (doc_ != nullptr) {
         doc_->set_custom_state_hook(
             [this, alive = std::weak_ptr<int>{lifetime_}](node_id element) -> std::optional<bool> {
@@ -465,11 +475,11 @@ value dom_bindings::custom_elements_registry(context & cx) {
     return registry_->object;
 }
 
-// --- the HTML element constructor ---------------------------------------------
+// The HTML element constructor.
 
 value dom_bindings::construct_html_element(context & c, value self,
                                            std::string_view interface_name) {
-    // An ORDINARY object only: `HTMLElement.call(array)` or a Proxy whose
+    // An ordinary object only: `HTMLElement.call(array)` or a Proxy whose
     // prototype is a defined class's must not be written through as one.
     if (!self.is_object()) {
         c.throw_error("TypeError", "Failed to construct '" + std::string{interface_name} +
@@ -477,8 +487,8 @@ value dom_bindings::construct_html_element(context & c, value self,
         return value::undefined();
     }
     const bool is_element = owner_of(self) != nullptr;
-    // HTML 4.13.4 step 2: NewTarget equal to the active function object - the
-    // receiver made from THIS interface's own prototype - is a TypeError
+    // HTML 4.13.4 step 2: NewTarget equal to the active function object (the
+    // receiver made from this interface's own prototype) is a TypeError
     // whether or not somebody defined the interface itself as an element.
     if (!is_element) {
         const value own = c.lookup_property(c.global(std::string{interface_name}), "prototype");
@@ -489,7 +499,7 @@ value dom_bindings::construct_html_element(context & c, value self,
     custom_element_definition & def = primary().custom_definitions_[index];
     // Steps 5-6: an autonomous definition constructs through HTMLElement and
     // nothing else; a customized built-in through the interface its `extends`
-    // tag has - `class extends HTMLButtonElement` with `{extends: "p"}` is a
+    // tag has: `class extends HTMLButtonElement` with `{extends: "p"}` is a
     // TypeError at `super()`.
     const std::string_view wanted =
         def.name == def.local_name ? "HTMLElement" : interface_name_for_tag(def.local_name);
@@ -499,18 +509,16 @@ value dom_bindings::construct_html_element(context & c, value self,
                                        std::string{interface_name});
         return value::undefined();
     }
-    // Step 7: AN UPGRADE. The element is on the construction stack; `super()`
+    // Step 7: an upgrade. The element is on the construction stack; `super()`
     // gives it the class's prototype and marks it constructed. A second
-    // `super()` on the same element is the "already constructed marker".
+    // `super()` on the same element meets the "already constructed marker".
     //
-    // AND WHILE ONE IS RUNNING, `new C()` from inside the constructor is the
-    // same step: the stack is not empty, so the element on top is what the
-    // constructor gets - or the marker, which is the TypeError. (The nested
-    // constructor's `this` stays the object `new` made, since a native's
-    // return cannot rebind it; what the outer `super()` then meets is the
-    // marker, and that is the TypeError the page sees reported.)
-    // An existing element with nothing on the stack is `HTMLElement.call(el)`
-    // outside any upgrade: there is no top to take.
+    // While an upgrade is running, `new C()` from inside the constructor takes
+    // this same path: the stack is not empty, so it gets the element on top,
+    // or the already-constructed marker, which is a TypeError. The outer
+    // `super()` then meets the marker, and that TypeError is what the page
+    // sees. An existing element with nothing on the stack is
+    // `HTMLElement.call(el)` outside any upgrade: there is no top to take.
     if (is_element && def.construction_stack.empty()) { return illegal_constructor(c, {}); }
     if (!def.construction_stack.empty()) {
         custom_element_definition::construction & top = def.construction_stack.back();
@@ -529,10 +537,10 @@ value dom_bindings::construct_html_element(context & c, value self,
         }
         return element;
     }
-    // Steps 8-13: a NEW element, custom from the start, IN THE DOCUMENT WHOSE
-    // REGISTRY HOLDS THE DEFINITION - a frame's, when the class was defined
-    // through `frame.contentWindow.customElements` - and for a scoped one the
-    // document whose createElement is running it, else the page's.
+    // Steps 8-13: a new element, custom from the start, in the document whose
+    // registry holds the definition (a frame's, when the class was defined
+    // through `frame.contentWindow.customElements`); for a scoped registry,
+    // the document whose createElement is running it, else the page's.
     dom_bindings * creating = nullptr;
     custom_element_registry * registry = def.registry;
     for (const auto & [key, active, document] : primary().active_constructors_) {
@@ -547,7 +555,7 @@ value dom_bindings::construct_html_element(context & c, value self,
         owner.is_values_.insert_or_assign(made.key(), def.name);
     }
     owner.set_node_registry(owner.doc_->read(), made, registry);
-    // THE RECEIVER BECOMES THE WRAPPER - what wrap() does to a fresh object,
+    // The receiver becomes the wrapper: what wrap() does to a fresh object,
     // done to the instance `new` made, whose prototype is the author's class.
     auto * obj = static_cast<script::object_object *>(self.as_heap());
     obj->set(std::string{handle_property}, value::number(static_cast<double>(made.key())));
@@ -566,8 +574,12 @@ value dom_bindings::construct_html_element(context & c, value self,
     return self;
 }
 
-// --- creation -------------------------------------------------------------------
+// Creation.
 
+// Runs `new constructor()` and reports a throw through `threw`/`thrown`
+// instead of letting it propagate. The construct goes through a cached
+// JavaScript try/catch wrapper (`construct_fence_`), because a throw from a
+// C++ construct() would unwind to the page's own `try` above this native.
 value dom_bindings::construct_fenced(context & cx, value constructor, bool & threw,
                                      value & thrown) {
     threw = false;
@@ -604,9 +616,9 @@ value dom_bindings::construct_fenced(context & cx, value constructor, bool & thr
 }
 
 // "Report the exception" for a constructor or a lifecycle callback, at the
-// global of THAT callback's realm (HTML 4.13.5 step 8, 4.13.6 "invoke custom
+// global of that callback's realm (HTML 4.13.5 step 8, 4.13.6 "invoke custom
 // element reactions": "report exception for callback's ... associated
-// realm's global object") - a class made in a frame reports to the frame,
+// realm's global object"): a class made in a frame reports to the frame,
 // whichever window's registry defined it.
 void dom_bindings::report_custom_element_exception(context & cx, value thrown,
                                                    std::string_view where, value callback) {
@@ -618,6 +630,8 @@ void dom_bindings::report_custom_element_exception(context & cx, value thrown,
     if (!handled && callback_error_.empty()) { callback_error_ = fault; }
 }
 
+// The bindings of `callback`'s realm (its global), or `otherwise` when
+// `callback` is not a closure with a realm.
 dom_bindings & dom_bindings::global_of(value callback, dom_bindings & otherwise) {
     if (callback.is_kind(script::heap_kind::function)) {
         const auto * fn = static_cast<const script::closure_object *>(callback.as_heap());
@@ -631,8 +645,8 @@ dom_bindings & dom_bindings::global_of(value callback, dom_bindings & otherwise)
 // `exact` is createElementNS's (and an XML document's createElement): the
 // qualified name kept as written, `prefixed` saying whether its colon is a
 // prefix, the local name after it what a definition is looked up by, and `ns`
-// the element's namespace - only an HTML element is ever a custom one, but the
-// registry option is every element's.
+// the element's namespace. Only an HTML element is ever a custom one, but the
+// registry option applies to every element.
 value dom_bindings::create_html_element(context & cx, const std::string & name, value options,
                                         bool exact, bool prefixed, node_ns ns) {
     const atom tag = exact ? atoms_->intern(name) : atoms_->intern_lower(name);
@@ -641,8 +655,8 @@ value dom_bindings::create_html_element(context & cx, const std::string & name, 
     // DOM 4.9.2 "flatten element creation options", its members in the
     // dictionary's (lexicographic) order: `customElementRegistry`, then `is`,
     // and the two together are a NotSupportedError. The registry is the
-    // document's unless one is given, and a GLOBAL one that is not this
-    // document's cannot be.
+    // document's unless one is given, and a global one that is not this
+    // document's is refused.
     std::string is;
     bool has_is = false;
     custom_element_registry * registry = document_registry();
@@ -668,8 +682,8 @@ value dom_bindings::create_html_element(context & cx, const std::string & name, 
                             "global registry");
         return value::undefined();
     }
-    // "Look up a custom element definition" in THAT registry (HTML 4.13.3):
-    // a null one - a document with no browsing context - finds nothing.
+    // "Look up a custom element definition" in that registry (HTML 4.13.3):
+    // a null one (a document with no browsing context) finds nothing.
     dom_bindings & reg = primary();
     std::size_t index = npos;
     if (registry != nullptr && ns == node_ns::html) {
@@ -695,10 +709,11 @@ value dom_bindings::create_html_element(context & cx, const std::string & name, 
         if (exact && ns == node_ns::html && lowered == "script") { note_unstarted_script(made); }
         return wrap(cx, made);
     }
-    // A PREFIXED custom element (`createElementNS(html, "p:x-a")`) is
+    // A prefixed custom element (`createElementNS(html, "p:x-a")`) is
     // constructed under its local name and takes the prefix only once the
-    // constructor has returned - step 6.1.3.9, and the element made instead
-    // of one that failed has it too (Document-createElementNS-prefix-timing).
+    // constructor has returned (DOM 4.9 "create an element" step 6.1.3.9);
+    // the element made instead of one that failed has it too
+    // (Document-createElementNS-prefix-timing).
     const value made = construct_custom_element(cx, index, registry, atoms_->intern(lowered));
     if (const node_id id = prefixed ? handle_of(made) : node_id{}; id && made.is_object()) {
         doc_->set_element_prefix(id, tag);
@@ -711,9 +726,9 @@ value dom_bindings::create_html_element(context & cx, const std::string & name, 
 // for a definition found in `registry`: createElement's, and the HTML
 // parser's (parser_create_custom_element).
 //
-// SYNCHRONOUSLY, through the author's class: `super()` makes the receiver the
-// wrapper of the node, so the instance IS the element - and everything the
-// constructor did to it is checked, steps 6.1.3 to 6.1.9.
+// Construction is synchronous, through the author's class: `super()` makes the
+// receiver the wrapper of the node, so the instance is the element, and
+// everything the constructor did to it is checked (steps 6.1.3 to 6.1.9).
 value dom_bindings::construct_custom_element(context & cx, std::size_t index,
                                              custom_element_registry * registry, atom tag) {
     dom_bindings & reg = primary();
@@ -723,15 +738,15 @@ value dom_bindings::construct_custom_element(context & cx, std::size_t index,
     value thrown = value::undefined();
     // The "active custom element constructor map" entry for the length of
     // the construction (DOM 4.9 "create an element" 6.1.2-6.1.4): `super()`
-    // reads which registry - and which document - it is constructing for.
+    // reads which registry, and which document, it is constructing for.
     reg.active_constructors_.emplace_back(reg.custom_definitions_[index].prototype.bits(), registry,
                                           this);
     const value made = construct_fenced(cx, constructor, threw, thrown);
     reg.active_constructors_.pop_back();
     const context::rooted keep_made{cx, made};
-    // "Clean up after running script": constructed from the PARSER, no script
-    // is left on the stack, so the microtasks the constructor queued run now -
-    // before the checks below, which they may fail (microtasks-and-
+    // "Clean up after running script": when constructed from the parser, no
+    // script is left on the stack, so the microtasks the constructor queued
+    // run now, before the checks below, which they may fail (microtasks-and-
     // constructors.html). From createElement the calling script is still there.
     if (cx.current_stack().empty()) { cx.drain_microtasks(); }
     std::string failure;
@@ -767,7 +782,7 @@ value dom_bindings::construct_custom_element(context & cx, std::size_t index,
         }
     }
     if (threw || !failure.empty()) {
-        // "Report the exception, and set result to a new HTMLUnknownElement" -
+        // "Report the exception, and set result to a new HTMLUnknownElement":
         // a constructor that threw, or never reached HTMLElement, does not
         // make createElement throw. Custom element state "failed".
         report_custom_element_exception(cx, thrown, "custom element constructor", constructor);
@@ -777,7 +792,7 @@ value dom_bindings::construct_custom_element(context & cx, std::size_t index,
         state.definition = index;
         state.state = custom_element_state::status::failed;
         custom_elements_.emplace(made_instead.key(), std::move(state));
-        // "...a new element that implements the HTMLUnknownElement interface":
+        // "A new element that implements the HTMLUnknownElement interface":
         // a customized built-in keeps its own interface, an autonomous one
         // whose name would otherwise be a plain HTMLElement is the unknown one.
         const value instead = wrap(cx, made_instead);
@@ -800,10 +815,11 @@ value dom_bindings::construct_custom_element(context & cx, std::size_t index,
 // HTML 13.2.6.1 "create an element for a token", steps 5-11, when a
 // definition exists: the throw-on-dynamic-markup-insertion counter up, a
 // microtask checkpoint when no script is running, the element constructed
-// synchronously in the INTENDED PARENT'S registry, the token's attributes
-// appended - after the constructor, so it does not see them - and their
-// attributeChangedCallbacks run, then the counter down. Nothing, for the tree
-// builder to create an ordinary element, when no definition covers it.
+// synchronously in the intended parent's registry, the token's attributes
+// appended (after the constructor, so it does not see them) and their
+// attributeChangedCallbacks run, then the counter down. Returns a null node_id
+// when no definition covers the element, so the tree builder creates an
+// ordinary one.
 node_id dom_bindings::parser_create_custom_element(
     std::string_view local_name, const std::vector<html::token_attribute> & attributes,
     node_id intended_parent) {
@@ -820,7 +836,7 @@ node_id dom_bindings::parser_create_custom_element(
     if (std::ranges::none_of(defs, covers)) { return {}; }
     custom_element_registry * registry = nullptr;
     {
-        // A <template> on the stack means its contents - a declarative
+        // A <template> on the stack means its contents: a declarative
         // shadow root's registry, or a plain fragment's none.
         const auto txn = doc_->read();
         node_id at = intended_parent;
@@ -840,7 +856,7 @@ node_id dom_bindings::parser_create_custom_element(
     const std::size_t from = custom_reactions_.size();
     node_id made;
     if (defs[index].name != defs[index].local_name) {
-        // A CUSTOMIZED BUILT-IN is created as the built-in and then UPGRADED,
+        // A customized built-in is created as the built-in and then upgraded,
         // synchronously (DOM 4.9 "create an element" step 5): a constructor
         // that throws leaves the element it already is, prototype and all,
         // and one that appends children appends them.
@@ -857,8 +873,8 @@ node_id dom_bindings::parser_create_custom_element(
             construct_custom_element(cx, index, registry, atoms_->intern_lower(local_name)));
     }
     if (made) {
-        // The parser's own append, which a MutationObserver does not see -
-        // all but an `is` a customized built-in already carries.
+        // The parser's own append, which a MutationObserver does not see, of
+        // every attribute except an `is` a customized built-in already carries.
         document::builder append{*doc_};
         const bool has_is = doc_->read().has_attribute(made, atoms_->intern("is"));
         for (const html::token_attribute & held : attributes) {
@@ -874,9 +890,9 @@ node_id dom_bindings::parser_create_custom_element(
     return made;
 }
 
-// ...and its insertion (13.2.6.1 "insert an element at the adjusted insertion
-// location"): the element queue that runs its connectedCallback before the
-// parser reads its children.
+// The parser's insertion of a custom element (HTML 13.2.6.1 "insert an element
+// at the adjusted insertion location"): the element queue that runs its
+// connectedCallback before the parser reads its children.
 void dom_bindings::parser_inserted_custom_element(node_id element) {
     if (cx_ == nullptr) { return; }
     const std::size_t from = custom_reactions_.size();
@@ -892,12 +908,13 @@ void dom_bindings::parser_inserted_custom_element(node_id element) {
     flush_custom_element_reactions(from);
 }
 
-// --- the interfaces ---------------------------------------------------------------
+// The interfaces.
 
 void dom_bindings::install_custom_elements(context & cx) {
-    // --- HTMLElement, CONSTRUCTIBLE. Defined here, before install_dom_interfaces
-    // --- builds the table, which adopts a global that already exists rather
-    // --- than replacing it with the throwing stub every other interface gets.
+    // HTMLElement is constructible. It is defined here, before
+    // install_dom_interfaces builds the interface table, which adopts an
+    // existing global instead of replacing it with the throwing stub other
+    // interfaces get.
     auto * html_element_proto = cx.allocate<script::object_object>();
     auto * html_element_ctor = cx.allocate<script::native_object>(
         "HTMLElement", [this](context & c, std::span<value>) -> value {
@@ -909,7 +926,7 @@ void dom_bindings::install_custom_elements(context & cx) {
     cx.define_builtin_global("HTMLElement", value::object(html_element_ctor));
     install_element_internals(cx, *html_element_proto);
 
-    // --- CustomElementRegistry.prototype -----------------------------------
+    // CustomElementRegistry.prototype.
     auto * registry_proto = cx.allocate<script::object_object>();
     custom_elements_registry_prototype_ = value::object(registry_proto);
     // (registry, name) -> the definition's index in the primary's vector.
@@ -922,7 +939,7 @@ void dom_bindings::install_custom_elements(context & cx) {
         return npos;
     };
 
-    // A `Node` argument - any document's node, or a document itself.
+    // A `Node` argument: any document's node, or a document itself.
     const auto node_argument = [this](context & c, value given, std::string_view method,
                                       dom_bindings *& owner, node_id & root) {
         owner = owner_of(given);
@@ -942,7 +959,7 @@ void dom_bindings::install_custom_elements(context & cx) {
         }
         return true;
     };
-    // "Try to upgrade" what is under `root` and has `reg` - connected or not -
+    // "Try to upgrade" what is under `root` and has `reg`, connected or not,
     // in shadow-including tree order, and run the reactions it queued.
     const auto try_upgrade = [](dom_bindings & owner, node_id root,
                                 const custom_element_registry & reg) {
@@ -1113,14 +1130,14 @@ void dom_bindings::install_custom_elements(context & cx) {
             custom_definitions_.push_back(std::move(def));
             sync_custom_element_roots();
             // The candidates in the registry's document are upgraded, then
-            // whenDefined settles. A SCOPED registry's are in every document of
+            // whenDefined settles. A scoped registry's are in every document of
             // its "scoped document set", in the order they joined it (see
             // set_node_registry); each scan upgrades only the elements whose
             // registry it is.
             if (reg.document != nullptr) {
                 reg.document->react_custom_elements();
             } else {
-                // COPIED: an upgrade may bring another document into the set.
+                // Copied: an upgrade may bring another document into the set.
                 const std::vector<dom_bindings *> documents = reg.documents;
                 for (dom_bindings * each : documents) { each->react_custom_elements(); }
             }
@@ -1178,7 +1195,7 @@ void dom_bindings::install_custom_elements(context & cx) {
             if (const std::size_t index = defined(reg, name); index != npos) {
                 return c.make_promise(custom_definitions_[index].constructor, false);
             }
-            // ONE promise per name, however often it is asked for.
+            // One promise per name, however often it is asked for.
             if (const auto held = reg.when_defined.find(name); held != reg.when_defined.end()) {
                 return held->second;
             }
@@ -1193,7 +1210,7 @@ void dom_bindings::install_custom_elements(context & cx) {
         cx, *registry_proto, "upgrade",
         [this, node_argument, try_upgrade](context & c, std::span<value> args) {
             // "Try to upgrade" every shadow-including inclusive descendant
-            // whose registry is THIS one (HTML 4.13.3 upgrade()).
+            // whose registry is this one (HTML 4.13.3 upgrade()).
             dom_bindings * owner = nullptr;
             node_id root;
             if (!node_argument(c, arg(args, 0), "upgrade", owner, root)) {
@@ -1210,9 +1227,9 @@ void dom_bindings::install_custom_elements(context & cx) {
         cx, *registry_proto, "initialize",
         [this, node_argument, try_upgrade](context & c, std::span<value> args) {
             // HTML 4.13.3 initialize(root): every inclusive descendant with
-            // a null registry gets this one - the root too, when it is a
-            // document or a shadow root with none - and what then has this
-            // one is tried for an upgrade. A GLOBAL registry may only
+            // a null registry gets this one (the root too, when it is a
+            // document or a shadow root with none), and what then has this
+            // one is tried for an upgrade. A global registry may only
             // initialize nodes of its own document, never a document.
             custom_element_registry & reg = registry_of(c.current_this());
             dom_bindings * owner = nullptr;
@@ -1230,7 +1247,7 @@ void dom_bindings::install_custom_elements(context & cx) {
                 return value::undefined();
             }
             if (is_document && owner->document_registry() == nullptr) {
-                // The elements a page holds that are NOT in the tree keep the
+                // The elements a page holds that are not in the tree keep the
                 // null registry they had: pinned before the default changes.
                 for (const auto & [key, wrapper] : owner->wrappers_) {
                     const node_id held = unpack(key);
@@ -1263,11 +1280,11 @@ void dom_bindings::install_custom_elements(context & cx) {
         },
         script::attr_builtin);
 
-    // `new CustomElementRegistry()` - a SCOPED registry (HTML 4.13.3): its
+    // `new CustomElementRegistry()` makes a scoped registry (HTML 4.13.3): its
     // definitions belong to no document. What looks them up is an element,
-    // shadow root or document whose OWN registry it is - given by
-    // createElement's and attachShadow's options, by initialize(), and
-    // inherited by what the parser and a clone make under them (see "which
+    // shadow root or document whose own registry it is, given by
+    // createElement's and attachShadow's options or by initialize(), and
+    // inherited by what the parser and a clone make under them (see "Which
     // registry a node has" above).
     auto * registry_ctor = cx.allocate<script::native_object>(
         "CustomElementRegistry", [this](context & c, std::span<value>) {
@@ -1285,15 +1302,15 @@ void dom_bindings::install_custom_elements(context & cx) {
     cx.define_builtin_global("CustomElementRegistry", value::object(registry_ctor));
     custom_elements_interface_ = registry_ctor;
 
-    // `window.customElements` - a bare global, which the window proxy answers
-    // for `window.customElements` and `self.customElements` too.
+    // `customElements` is a bare global, which the window proxy also answers
+    // for `window.customElements` and `self.customElements`.
     cx.define_global("customElements", custom_elements_registry(cx));
 }
 
-// `customElementRegistry` on Element, ShadowRoot and Document (DOM 4.9,
-// 4.2.? DocumentOrShadowRoot): the node's registry, or null. Installed once
-// the interface table exists (install_shadow_dom), on the shared prototypes,
-// so the node's OWN document answers - a frame's element reads the frame's.
+// `customElementRegistry` on Element, ShadowRoot and Document (DOM 4.9 and the
+// DocumentOrShadowRoot mixin): the node's registry, or null. Installed on the
+// shared prototypes once the interface table exists (install_shadow_dom), so
+// the node's own document answers; a frame's element reads the frame's.
 void dom_bindings::install_registry_accessors(context & cx) {
     const auto getter = [this](context & c, std::span<value>) -> value {
         const value self = c.current_this();
@@ -1302,7 +1319,7 @@ void dom_bindings::install_registry_accessors(context & cx) {
             registry = owner->registry_of_node(owner->doc_->read(), owner->handle_of(self));
             return registry == nullptr ? value::null() : registry->object;
         }
-        // A DOCUMENT: the proxy a page holds, or - read through it - the object
+        // A document: the proxy a page holds, or (read through it) the object
         // behind it (make_document_proxy), of any document in the realm.
         const auto is = [&self](dom_bindings & d) {
             return d.is_the_document(self) ||
@@ -1326,9 +1343,9 @@ void dom_bindings::install_registry_accessors(context & cx) {
     }
 }
 
-// A FORM-ASSOCIATED CUSTOM ELEMENT (HTML 4.13.2): a custom element whose
-// definition says `formAssociated` - a form control, so one the browser's
-// focus has to ask whether it is disabled.
+// Whether `element` is a form-associated custom element (HTML 4.13.2): a
+// custom element whose definition says `formAssociated`. It is a form control,
+// so the browser's focus code asks whether it is disabled.
 bool dom_bindings::form_associated(node_id element) const {
     const auto found = custom_elements_.find(element.key());
     if (found == custom_elements_.end() ||

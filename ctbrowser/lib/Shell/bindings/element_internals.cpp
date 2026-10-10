@@ -1,27 +1,30 @@
-// dom_bindings - ElementInternals, HTML 4.13.7 and 4.13.8: what
+//===- element_internals.cpp - ElementInternals bindings --------*- C++ -*-===//
+//
+// ElementInternals and CustomStateSet (HTML 4.13.7, 4.13.8): the object
 // `attachInternals()` hands a custom element's constructor.
 //
-// ONE OBJECT PER ELEMENT, hung off the element's wrapper under a symbol key
-// (so it is a root for as long as the element is, and `for-in` does not see
-// it) with the element under a symbol key of its own on the internals. Every
-// member reads the element through that back-reference, so the natives live
-// on ElementInternals.prototype and the object itself carries only state:
-// the validity flags and message, the submission value, the ARIA defaults.
+// One object per element, stored on the element's wrapper under a private key
+// (so it lives as long as the element and `for-in` does not see it), with the
+// element under a private key of its own on the internals. Every member reads
+// the element through that back-reference, so the natives live on
+// ElementInternals.prototype and the object itself carries only state: the
+// validity flags and message, the submission value, the ARIA defaults.
 //
-// WHAT IS FORM-ASSOCIATED HERE. `form`, `setFormValue`, `setValidity`,
-// `willValidate`, `validity`, `validationMessage`, `checkValidity`,
-// `reportValidity` and `labels` refuse (NotSupportedError) unless the
-// definition said `static formAssociated = true` - and the rest of the
-// form-association story is measured elsewhere: the submission value is
-// stored and never submitted (the form's submission path is
-// shell/page/forms, which does not know custom elements), `reportValidity`
-// reports nothing, and formResetCallback never fires because form.reset()
-// is not this file's. formAssociatedCallback and formDisabledCallback DO
-// fire, from the scan in custom_elements.cpp, which diffs the form owner
-// and the disabledness of a form-associated element like any other state.
+// `form`, `setFormValue`, `setValidity`, `willValidate`, `validity`,
+// `validationMessage`, `checkValidity`, `reportValidity` and `labels` throw
+// NotSupportedError unless the definition said `static formAssociated =
+// true`. The rest of form association lives elsewhere: the submission value
+// joins the entry list through face_submission_value_
+// (element/control_methods/form_data_and_submission.cpp), which also queues
+// formResetCallback on a form reset; formAssociatedCallback and
+// formDisabledCallback fire from the scan in custom_elements.cpp, which diffs
+// the form owner and disabledness of a form-associated element. reportValidity
+// shows no UI.
 //
 // ponytail: `:enabled`/`:disabled`/`:valid`/`:invalid` on a form-associated
 // custom element are the style engine's and are not answered.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/shell/bindings.hpp>
@@ -54,14 +57,14 @@ constexpr std::string_view behaviors_key = CTBROWSER_PRIVATE_KEY("ctbrowser:inte
 constexpr std::string_view aria_prefix = CTBROWSER_PRIVATE_KEY("ctbrowser:internals-aria:");
 constexpr std::string_view flag_prefix = detail::internals_flag_prefix;
 
-// ValidityState's ten flags, HTML 4.10.20.3, in interface order.
+/// ValidityState's ten flags, HTML 4.10.20.3, in interface order.
 constexpr std::string_view validity_flags[] = {
     "valueMissing",   "typeMismatch",  "patternMismatch", "tooLong",  "tooShort",
     "rangeUnderflow", "rangeOverflow", "stepMismatch",    "badInput", "customError"};
 
-// The ARIA mixin (ARIA 1.3 "ARIAMixin"), as ElementInternals carries it.
-// Three shapes: a nullable string, a nullable Element, a nullable
-// FrozenArray<Element>; the setter keeps what it was given for the last two.
+/// The ARIA mixin (ARIA 1.3 "ARIAMixin"), as ElementInternals carries it.
+/// Three shapes: a nullable string, a nullable Element, a nullable
+/// FrozenArray<Element>; the setter keeps what it was given for the last two.
 constexpr std::string_view aria_strings[] = {"role",
                                              "ariaAtomic",
                                              "ariaAutoComplete",
@@ -120,12 +123,14 @@ constexpr std::string_view aria_elements[] = {"ariaActiveDescendantElement", "ar
 
 // --- the form-association facts ------------------------------------------------
 
-// A form-associated custom element's owner is any listed element's: the one
-// algorithm (form_store::owning_form).
+/// A form-associated custom element's form owner, found by the same algorithm
+/// as any listed element's (form_store::owning_form).
 node_id dom_bindings::form_owner_of(const read_txn & txn, node_id id) const {
     return form_store::owning_form(txn, *atoms_, id);
 }
 
+/// True when the control has a `disabled` attribute or sits in a disabled
+/// <fieldset> outside that fieldset's first <legend>.
 bool dom_bindings::form_control_disabled(const read_txn & txn, node_id id) const {
     const atom disabled = atoms_->intern("disabled");
     if (txn.has_attribute(id, disabled)) { return true; }
@@ -153,13 +158,15 @@ bool dom_bindings::form_control_disabled(const read_txn & txn, node_id id) const
 
 // --- the interface ----------------------------------------------------------------
 
+/// Installs ElementInternals.prototype, CustomStateSet and
+/// HTMLElement.prototype.attachInternals.
 void dom_bindings::install_element_internals(context & cx,
                                              script::object_object & html_element_proto) {
     auto * proto = cx.allocate<script::object_object>();
     element_internals_prototype_ = value::object(proto);
 
-    // THE ELEMENT BEHIND A RECEIVER, with the bindings that own it - or a
-    // TypeError, which is what a call on the wrong receiver is.
+    // The element behind a receiver, with the bindings that own it, or a
+    // TypeError (a null id) for a call on the wrong receiver.
     struct target {
         dom_bindings * owner = nullptr;
         node_id id;
@@ -272,9 +279,9 @@ void dom_bindings::install_element_internals(context & cx,
         return form ? at.owner->wrap(c, form) : value::null();
     });
 
-    // For the entry list (control_methods.cpp): is `id` a form-associated
-    // custom element, and what did setFormValue leave - null, a string, a
-    // File, a FormData? Undefined when it is not one.
+    // For the entry list (control_methods/form_data_and_submission.cpp): what
+    // setFormValue left on a form-associated custom element (null, a string, a
+    // File or a FormData), or undefined when `id` is not one.
     face_submission_value_ = [this](node_id id) -> value {
         const auto state = custom_elements_.find(id.key());
         if (state == custom_elements_.end() ||
@@ -311,7 +318,7 @@ void dom_bindings::install_element_internals(context & cx,
         [this, form_associated_target, flag_key](context & c, std::span<value> args) {
             const target at = form_associated_target(c, "setValidity");
             if (!at.id) { return value::undefined(); }
-            // 1-2: the flags dictionary, every member defaulting to
+            // Steps 1-2: the flags dictionary, every member defaulting to
             // false; a message is required when any of them is true.
             const value flags = arg(args, 0);
             bool any = false;
@@ -328,7 +335,7 @@ void dom_bindings::install_element_internals(context & cx,
                                            "flags in the first argument are true.");
                 return value::undefined();
             }
-            // 3-4: the anchor is an HTMLElement that is a
+            // Steps 3-4: the anchor is an HTMLElement that is a
             // shadow-including inclusive descendant of the target.
             const value anchor = arg(args, 2);
             if (!anchor.is_undefined()) {
@@ -392,7 +399,7 @@ void dom_bindings::install_element_internals(context & cx,
         [this, form_associated_target, flag_key, is_invalid](context & c, std::span<value>) {
             const target at = form_associated_target(c, "validity");
             if (!at.id) { return value::undefined(); }
-            // ONE ValidityState PER INTERNALS, live: a page holds it across
+            // One live ValidityState per internals: a page holds it across
             // setValidity() calls and reads the flags off it afterwards.
             value held = slot(*at.internals, validity_key);
             if (held.is_object()) { return held; }
@@ -499,9 +506,9 @@ void dom_bindings::install_element_internals(context & cx,
     });
 
     // --- CustomStateSet, HTML 4.13.8: a Set of strings, live to its iterators.
-    // A REAL Set under a prototype of its own: the entry list, the iteration
-    // order and the liveness are the builtin's, and `CustomStateSet.prototype`
-    // chains to Set.prototype for add/has/delete/clear/size/@@iterator.
+    // A real Set with a prototype of its own: the entries, iteration order and
+    // liveness are the builtin's, and `CustomStateSet.prototype` chains to
+    // Set.prototype for add/has/delete/clear/size/@@iterator.
     auto * states_proto = cx.allocate<script::object_object>();
     states_proto->prototype = cx.lookup_property(cx.global("Set"), "prototype");
     states_proto->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string("CustomStateSet"),
@@ -602,15 +609,16 @@ void dom_bindings::install_element_internals(context & cx,
                 return value::undefined();
             };
             auto * wrapper = object_of(self);
-            // 1: a customized built-in (an `is` value) has no internals.
+            // Step 1: a customized built-in (an `is` value) has no internals.
             {
                 const auto txn = owner->doc_->read();
                 if (txn.has_attribute(id, atoms_->intern("is"))) {
                     return refuse("the element is a customized built-in element");
                 }
             }
-            // 2-4: a definition for the element's local name, in its document's
-            // registry, that did not disable internals.
+            // Steps 2-4: a definition for the element's local name, in its
+            // document's registry, that did not disable internals. The status
+            // check also covers step 6 (state is precustomized or custom).
             const auto state = owner->custom_elements_.find(id.key());
             if (state == owner->custom_elements_.end() ||
                 state->second.state == custom_element_state::status::failed) {
@@ -622,7 +630,7 @@ void dom_bindings::install_element_internals(context & cx,
                 return refuse("the element is a customized built-in element");
             }
             if (def.disable_internals) { return refuse("the definition disabled internals"); }
-            // 5: once.
+            // Step 5: once.
             if (wrapper == nullptr || slot(*wrapper, internals_key).is_object()) {
                 return refuse("ElementInternals for the element was already attached");
             }
@@ -642,7 +650,7 @@ void dom_bindings::install_element_internals(context & cx,
                     return value::undefined();
                 }
             }
-            // 6: only while or after the constructor runs.
+            // Steps 7-8: record the internals on the element and return them.
             auto * internals = c.allocate<script::object_object>();
             internals->prototype = element_internals_prototype_;
             internals->set(std::string{target_key}, self);

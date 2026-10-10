@@ -1,3 +1,22 @@
+//===- helpers.hpp - Binding helpers ----------------------------*- C++ -*-===//
+//
+// Small inline helpers every binding file uses: argument coercion, installing
+// natives and WebIDL interfaces, reading dictionary members, and byte arrays.
+//
+// The web platform is bound to the engine VM under two invariants:
+//
+//   * Script holds handles, not pointers. An element wrapper carries a
+//     node_id, and every native resolves it against the live document. A stale
+//     reference is a failed lookup that returns undefined, not a use-after-free.
+//   * Mutation is a callback. A native that changes the document calls
+//     on_mutation, and the browser decides what that invalidates. Bindings do
+//     not know about layout, and layout does not know script exists.
+//
+// Gaps are left absent rather than stubbed: a `getContext` that returns an
+// object with no drawing on it is worse than one that is absent, because a
+// page checking for canvas support gets the wrong answer.
+//
+//===----------------------------------------------------------------------===//
 #pragma once
 #include <algorithm>
 #include <cmath>
@@ -31,40 +50,29 @@
 #include <ctbrowser/shell/page/forms.hpp>
 #include <ctbrowser/shell/page/webgl.hpp>
 
-// The web platform, bound to the engine VM. Two invariants:
-//
-//   * SCRIPT HOLDS HANDLES, NOT POINTERS. An element wrapper carries a
-//     node_id, and every native resolves it against the live document. A stale
-//     reference is a failed lookup that returns undefined, not a use-after-free.
-//   * MUTATION IS A CALLBACK. A native that changes the document calls
-//     on_mutation, and the browser decides what that invalidates. Bindings do
-//     not know about layout, and layout does not know script exists.
-//
-// Gaps are named rather than stubbed: a `getContext` that returns an object
-// with no drawing on it is worse than one that is absent, because a page
-// checking for canvas support gets the wrong answer.
-
 namespace ctbrowser::shell {
 
 using ctbrowser::script::context;
 using ctbrowser::script::value;
 
-// Argument coercion.
+/// Argument \p i converted with ToString, or empty when it was not passed.
 [[nodiscard]] inline std::string arg_string(context & cx, std::span<value> args, std::size_t i) {
     return i < args.size() ? cx.to_string(args[i]) : std::string{};
 }
+/// Argument \p i converted with ToNumber, or 0 when it was not passed.
 [[nodiscard]] inline double arg_number(std::span<value> args, std::size_t i) {
     return i < args.size() ? context::to_number(args[i]) : 0.0;
 }
+/// Argument \p i, or undefined when it was not passed.
 [[nodiscard]] inline value arg(std::span<value> args, std::size_t i) {
     return i < args.size() ? args[i] : value::undefined();
 }
 
-// A value's object, or null when it is not one.
+/// A value's object, or null when it is not one.
 [[nodiscard]] inline script::object_object * object_of(value v) {
     return v.is_object() ? static_cast<script::object_object *>(v.as_heap()) : nullptr;
 }
-// `this` as an object, or a TypeError "Illegal invocation" and null.
+/// `this` as an object, or null after throwing TypeError "Illegal invocation".
 [[nodiscard]] inline script::object_object * self_object(context & c) {
     const value self = c.current_this();
     if (!self.is_object()) {
@@ -74,20 +82,24 @@ using ctbrowser::script::value;
     return static_cast<script::object_object *>(self.as_heap());
 }
 
-// Installing natives. One function object, and the two ways the bindings hang
-// one on an object: as a data property (`attrs` is what `define` takes, and
-// `attr_default` means a plain `set`, which keeps an existing property's
-// attributes) or as an accessor. An accessor's natives are named the way
-// WebIDL names them - `get x` and `set x`.
+// Installing natives: one function object, and the two ways the bindings hang
+// one on an object, as a data property or as an accessor.
+
+/// A native function object named \p name.
 [[nodiscard]] inline value native(context & cx, std::string name, script::native_fn fn) {
     return value::object(cx.allocate<script::native_object>(std::move(name), std::move(fn)));
 }
+/// Installs \p fn as data property \p name. \p attrs is what `define` takes;
+/// `attr_default` means a plain `set`, which keeps an existing property's
+/// attributes.
 template <class Obj>
 void set_method(context & cx, Obj & obj, const std::string & name, script::native_fn fn,
                 std::uint8_t attrs = script::attr_default) {
     obj.set(name, native(cx, name, std::move(fn)));
     if (attrs != script::attr_default) { obj.set_attrs(name, attrs); }
 }
+/// Installs an accessor property \p name with getter \p get and optional
+/// setter \p set, named the WebIDL way (`get x` and `set x`).
 template <class Obj>
 void define_getter(context & cx, Obj & obj, const std::string & name, script::native_fn get,
                    script::native_fn set = {},
@@ -101,9 +113,9 @@ void define_getter(context & cx, Obj & obj, const std::string & name, script::na
     }
     obj.define_accessor(name, native(cx, "get " + name, std::move(get)), setter, attrs);
 }
-// A WebIDL OPERATION (3.7.6): an enumerable data property whose function's
-// `length` is the number of REQUIRED arguments, and a call with fewer is a
-// TypeError before the body runs (overload resolution, 3.6.8 step 4).
+/// Installs a WebIDL operation (3.7.6): an enumerable data property whose
+/// function's `length` is the number of required arguments; a call with fewer
+/// throws a TypeError before the body runs (overload resolution, 3.6.8 step 4).
 template <class Obj>
 void set_operation(context & cx, Obj & obj, const std::string & name, unsigned required,
                    script::native_fn fn) {
@@ -121,23 +133,24 @@ void set_operation(context & cx, Obj & obj, const std::string & name, unsigned r
     obj.set(name, value::object(made));
 }
 
-// The constructor of an interface a page cannot construct.
+/// The constructor of an interface a page cannot construct: always throws.
 inline value illegal_constructor(context & c, std::span<value>) {
     c.throw_error("TypeError", "Illegal constructor");
     return value::undefined();
 }
 
-// An interface's constructor and prototype, wired the WebIDL way: `prototype`
-// on the constructor, `constructor` and `@@toStringTag` on the prototype, and
-// the constructor a global. `construct` may be empty and set afterwards, when
-// it needs the constructor itself (TextEncoder's `new` check). `base` is the
-// prototype's own prototype. `length` is the constructor's number of required
-// arguments (WebIDL 3.7.1); nullopt defines none, as the geometry, canvas and
-// fetch interfaces never have.
+/// An interface's constructor and prototype, as make_interface returns them.
 struct interface_pair {
     script::native_object * ctor;
     script::object_object * proto;
 };
+/// Creates interface \p name wired the WebIDL way: `prototype` on the
+/// constructor, `constructor` and `@@toStringTag` on the prototype, and the
+/// constructor a global. \p construct may be empty and set afterwards, when it
+/// needs the constructor itself (TextEncoder's `new` check). \p base is the
+/// prototype's own prototype. \p length is the constructor's number of
+/// required arguments (WebIDL 3.7.1); nullopt defines no `length`, as the
+/// geometry, canvas and fetch interfaces never have.
 [[nodiscard]] inline interface_pair make_interface(context & cx, const char * name,
                                                    script::native_fn construct = {},
                                                    value base = {},
@@ -155,50 +168,46 @@ struct interface_pair {
     return {ctor, proto};
 }
 
-// WebIDL DICTIONARY MEMBERS - an event's init, observe()'s options, an
-// effect's timing. One member, undefined when it is not there.
-//
-// A MISSING DICTIONARY, `undefined` AND `null` ARE THE SAME ANSWER. WebIDL
-// converts all three to the dictionary with every member defaulted, and
-// Event-subclasses-constructors.html tests each of the three separately for
-// every interface - `new MouseEvent("type", null)` beside `new
-// MouseEvent("type")` - which is 18 of its assertions. PRESENT is "not
-// undefined", not a real [[HasProperty]] - the same answer for every
-// dictionary a page or a test writes, and what the specification's "if
-// options["x"] exists" steps read.
+/// One member of a WebIDL dictionary (an event's init, observe()'s options,
+/// an effect's timing), or undefined when it is not there.
+///
+/// A missing dictionary, `undefined` and `null` all mean every member takes
+/// its default (WebIDL); WPT Event-subclasses-constructors.html checks all
+/// three. A member is present when it is not undefined, which is what the
+/// specification's 'if options["x"] exists' steps test.
 [[nodiscard]] inline value dict_member(context & cx, value init, const std::string & name) {
     if (!init.is_object_like()) { return value::undefined(); }
     return cx.lookup_property(init, name);
 }
+/// A `boolean` member: absent is false.
 [[nodiscard]] inline bool dict_flag(context & cx, value init, const std::string & name) {
     return context::truthy(dict_member(cx, init, name));
 }
-// A `long`/`double` member. NaN is 0 rather than NaN: WebIDL's integer
-// conversions send it there and the suite's default-value cases compare against
-// 0 with assert_equals, which NaN fails against itself.
+/// A `long` or `double` member: absent is 0, and so is NaN. WebIDL's integer
+/// conversions turn NaN into 0, and the WPT default-value cases compare
+/// against 0 with assert_equals, which NaN would fail.
 [[nodiscard]] inline double dict_number(context & cx, value init, const std::string & name) {
     const value held = dict_member(cx, init, name);
     if (held.is_undefined()) { return 0.0; }
     const double number = context::to_number(held);
     return std::isnan(number) ? 0.0 : number;
 }
+/// A `DOMString` member: absent is the empty string.
 [[nodiscard]] inline std::string dict_string(context & cx, value init, const std::string & name) {
     const value held = dict_member(cx, init, name);
     return held.is_undefined() ? std::string{} : cx.to_string(held);
 }
-// A nullable interface member - `relatedTarget`, `view`. Absent is `null` and
-// not `undefined`, which the suite compares for with assert_equals.
+/// A nullable interface member (`relatedTarget`, `view`). Absent is `null`,
+/// not `undefined`, which WPT checks with assert_equals.
 [[nodiscard]] inline value dict_object(context & cx, value init, const std::string & name) {
     const value held = dict_member(cx, init, name);
     return held.is_undefined() ? value::null() : held;
 }
 
-// The first fragment for `id` in tree order, with its bounds made ABSOLUTE:
-// a fragment's bounds are relative to its containing block, so "where is this
-// element on the page" is a different question from `fragment::find`'s "which
-// fragment is it". Nothing when the node has no fragment. This is
-// fragment::find with the offsets accumulated and belongs beside it in
-// layout/fragment.hpp; it sits here because that header is Layout's.
+/// The absolute bounds of the first fragment for \p id in tree order, or
+/// nothing when the node has no fragment. A fragment's bounds are relative to
+/// its containing block, so this is fragment::find with the offsets
+/// accumulated. \p dx and \p dy are the offset of \p at's containing block.
 [[nodiscard]] inline std::optional<rect> absolute_rect_of(const layout::fragment & at, node_id id,
                                                           float dx = 0, float dy = 0) noexcept {
     const rect box = at.absolute_bounds(dx, dy);
@@ -211,9 +220,7 @@ struct interface_pair {
     return std::nullopt;
 }
 
-// Bytes as the u8 array the typed-array builtins recognise, and the
-// ArrayBuffer shape install_typed_arrays reads: an object carrying `__bytes`,
-// so `new Uint8Array(buffer)` is a view over THIS storage rather than a copy.
+/// \p bytes as the u8 array the typed-array builtins recognise.
 [[nodiscard]] inline value make_u8_array(context & cx, std::span<const std::byte> bytes) {
     const value out = cx.make_array();
     auto * items = static_cast<script::array_object *>(out.as_heap());
@@ -224,6 +231,9 @@ struct interface_pair {
     }
     return out;
 }
+/// \p bytes as the ArrayBuffer shape install_typed_arrays reads: an object
+/// carrying `__bytes`, so `new Uint8Array(buffer)` is a view over this storage
+/// rather than a copy.
 [[nodiscard]] inline value make_array_buffer(context & cx, std::span<const std::byte> bytes) {
     auto * buffer = cx.allocate<script::object_object>();
     buffer->set("byteLength", value::number(static_cast<double>(bytes.size())));
@@ -232,24 +242,25 @@ struct interface_pair {
     return value::object(buffer);
 }
 
-// Where an element wrapper keeps its handle. A property rather than a side
-// table, so a wrapper is self-describing and two wrappers for the same element
-// resolve to the same node.
+/// The property where an element wrapper keeps its node handle. A property
+/// rather than a side table, so a wrapper is self-describing and two wrappers
+/// for the same element resolve to the same node.
 inline constexpr std::string_view handle_property = "__node";
 
-// Where a Path2D keeps the verbs it recorded. A Path2D is a RECORDING, not a
-// drawing: it is built once and replayed into a canvas by fill(path) or
-// stroke(path), possibly under a different transform than the one in force
-// when it was built. Keeping the verbs in an ordinary script array means the
-// GC traces them with no new heap kind, and a page can be shown what it built.
+/// The property where a Path2D keeps the verbs it recorded. A Path2D is a
+/// recording, not a drawing: it is replayed into a canvas by fill(path) or
+/// stroke(path), possibly under a different transform than the one in force
+/// when it was built. Keeping the verbs in an ordinary script array means the
+/// GC traces them with no new heap kind.
 inline constexpr std::string_view path_commands_property = "__cmds";
 
-// An ImageBitmap's handle into the image store (window/image_bitmap.cpp), which
-// image_argument answers drawImage from.
+/// The property holding an ImageBitmap's handle into the image store
+/// (window/image_bitmap.cpp), which image_argument answers drawImage from.
 inline constexpr std::string_view image_bitmap_property = CTBROWSER_PRIVATE_KEY("ImageBitmap");
 
-// THE BYTES BEHIND A BufferSource - an ArrayBuffer, or any view onto one with
-// its offset and length applied (window/encoding.cpp). False for anything else.
+/// Copies into \p out the bytes behind a BufferSource: an ArrayBuffer, or any
+/// view onto one with its offset and length applied (window/encoding.cpp).
+/// Returns false for anything else.
 [[nodiscard]] bool buffer_source_bytes(context & c, value source, std::vector<std::uint8_t> & out);
 
 } // namespace ctbrowser::shell

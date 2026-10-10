@@ -1,26 +1,30 @@
-// dom_bindings - HTMLFormElement and HTMLSelectElement as LEGACY PLATFORM
-// OBJECTS, WebIDL 3.9: `form[0]`, `form.someName`, `select[2]` and
+//===- legacy_objects.cpp - Forms and selects as legacy platform objects --===//
+//
+// HTMLFormElement and HTMLSelectElement as legacy platform objects
+// (WebIDL 3.9): `form[0]`, `form.someName`, `select[2]` and
 // `select[2] = option`.
 //
 // An interface with an indexed or a named getter makes its instances exotic:
 // their own properties are whatever the getter answers at the moment of the
 // read, so `form.x` after `input.name = "x"` in the same statement is the
-// input. The wrapper wrap() hands out for these two is therefore a PROXY over
+// input. The wrapper wrap() hands out for these two is therefore a proxy over
 // the ordinary one, with 3.9's internal methods as its traps. The ordinary
 // object behind it is still the wrapper every binding keeps its slots on
 // (`wrappers_`): handle_of and receiver() see through the proxy to it, and an
-// accessor read or written through the proxy runs on it - so the reflected
+// accessor read or written through the proxy runs on it, so the reflected
 // attributes, `elements`, `options` and the event handler attributes are the
-// same code for a form as for a div. A METHOD is called on the proxy, which
+// same code for a form as for a div. A method is called on the proxy, which
 // is `this` at the call site, and finds its node through receiver().
 //
-// HTMLFormElement is [LegacyOverrideBuiltIns]: a named control SHADOWS the
-// interface - `<input name=submit>` makes `form.submit` the input - so "O has
+// HTMLFormElement is [LegacyOverrideBuiltIns]: a named control shadows the
+// interface (`<input name=submit>` makes `form.submit` the input), so "O has
 // an own property named P" in the named property visibility algorithm can only
-// mean a property the PAGE gave the form. The target's own properties are the
+// mean a property the page gave the form. The target's own properties are the
 // bindings' (tagName, nodeType, the slots), standing in for what lives on the
 // prototype in a browser; the page's are the expandos, the keys it created
 // through the proxy.
+//
+//===----------------------------------------------------------------------===//
 
 #include "helpers.hpp"
 
@@ -31,7 +35,8 @@ namespace ctbrowser::shell::detail {
 
 namespace {
 
-// WebIDL's "array index": ToString(ToUint32(P)) is P, and it is not 2^32 - 1.
+/// WebIDL's "array index": ToString(ToUint32(P)) is P, and it is not
+/// 2^32 - 1 (4294967295). Rejects leading zeros and more than 10 digits.
 [[nodiscard]] std::optional<std::uint32_t> array_index(std::string_view key) {
     if (key.empty() || key.size() > 10 || (key.size() > 1 && key.front() == '0')) {
         return std::nullopt;
@@ -45,22 +50,22 @@ namespace {
     return static_cast<std::uint32_t>(n);
 }
 
-// What one legacy platform object keeps between reads: the keys the page
-// created on it, a form's PAST NAMES MAP (HTML 4.10.3) - each name the named
-// getter answered with one element, oldest first - and the document as it was
-// when last read.
+/// What one legacy platform object keeps between reads: the keys the page
+/// created on it, a form's past names map (HTML 4.10.3: each name the named
+/// getter answered with one element, oldest first), and the document as it was
+/// when last read.
 struct legacy_state {
     bool form = false;
     std::vector<std::string> expandos;
     std::vector<std::pair<std::string, node_id>> past_names;
-    // THE DOCUMENT AS OF ONE VERSION, as a live collection keeps it
-    // (make_live_collection): the items the indices answer - the select's list
-    // of options, the form's listed elements - and a form's candidates for a
-    // named property in tree order, with the listed ones and the img ones that
-    // answer to each id and name. [LegacyOverrideBuiltIns] asks about every
-    // string key before the prototype, `form.submit` included, so this is one
-    // walk per version rather than one per read. Keyed by the bindings and the
-    // node too, which adopting the element changes.
+    /// The document as of one version, cached the way a live collection is
+    /// (make_live_collection): the items the indices answer (the select's list
+    /// of options, the form's listed elements) and a form's candidates for a
+    /// named property in tree order, with the listed ones and the img ones that
+    /// answer to each id and name. [LegacyOverrideBuiltIns] asks about every
+    /// string key before the prototype, `form.submit` included, so this is one
+    /// walk per version rather than one per read. Also keyed by the bindings and
+    /// the node, which adopting the element changes.
     const dom_bindings * seen_by = nullptr;
     node_id seen_at;
     std::uint64_t seen_version = 0;
@@ -76,8 +81,8 @@ struct legacy_state {
 
 } // namespace
 
-// An img's form owner: it is form-associated but not listed, and has no
-// `form` attribute to reassociate it - the parser's association, else its
+// An img is form-associated but not listed, and has no `form` attribute to
+// reassociate it, so its form owner is the parser's association, else its
 // nearest form ancestor.
 node_id control_helpers::image_form_owner(const read_txn & txn, node_id img) const {
     if (const node_id parsed = txn.parser_form(img)) { return parsed; }
@@ -95,8 +100,8 @@ value control_helpers::legacy_object(context & cx, script::object_object & targe
         const auto txn = made_by->doc_->read();
         is_form = is(txn, id, "form");
         if (!is_form && !is(txn, id, "select")) { return value::undefined(); }
-        // A CUSTOMIZED BUILT-IN - or a candidate for one, which the parser
-        // leaves with only its `is` attribute - keeps an ordinary wrapper:
+        // A customized built-in (or a candidate for one, which the parser
+        // leaves with only its `is` attribute) keeps an ordinary wrapper:
         // `new` made that object, and the upgrade and the reactions run on it.
         if (made_by->is_values_.contains(id.key()) ||
             txn.has_attribute(id, made_by->atoms_->intern("is"))) {
@@ -107,7 +112,7 @@ value control_helpers::legacy_object(context & cx, script::object_object & targe
     const auto state = std::make_shared<legacy_state>();
     state->form = is_form;
 
-    // WHICH DOCUMENT AND NODE THE TARGET IS NOW - asked on every trap, because
+    // Which document and node the target is now. Asked on every trap, because
     // an adopted form moves to another document's bindings with its wrapper.
     const auto node_of = [made_by](value on) -> std::pair<dom_bindings *, node_id> {
         dom_bindings * owner = made_by->owner_of(on);
@@ -176,7 +181,7 @@ value control_helpers::legacy_object(context & cx, script::object_object & targe
         });
     };
     // HTML 4.10.3 "determine the value of a named property", or undefined for
-    // a name that is not a supported property name. Several elements are ONE
+    // a name that is not a supported property name. Several elements are one
     // RadioNodeList per name, kept on the target: the descriptor and a read of
     // the same name are the same object (form-nameditem.html compares them).
     const auto named = [state, prune, candidates](context & c, dom_bindings * owner, node_id form,
@@ -203,7 +208,7 @@ value control_helpers::legacy_object(context & cx, script::object_object & targe
         state->past_names.emplace_back(name, found.front());
         return owner->wrap(c, found.front());
     };
-    // The supported property names, in 4.10.3's order: by element in tree
+    // The supported property names, in HTML 4.10.3's order: by element in tree
     // order, and for one element its id, its name, then its past names.
     const auto names = [state, prune, view](dom_bindings * owner, node_id form) {
         prune(owner, form);
@@ -226,8 +231,8 @@ value control_helpers::legacy_object(context & cx, script::object_object & targe
         }
         return out;
     };
-    // A named property is VISIBLE (WebIDL 3.9 "named property visibility")
-    // unless an own property of that name shadows it: the page's - and a slot
+    // A named property is visible (WebIDL 3.9 "named property visibility")
+    // unless an own property of that name shadows it: the page's, or a slot
     // of the bindings' that cannot be reconfigured, whose value the proxy's
     // invariants pin (ECMA-262 10.5.5, 10.5.8).
     const auto visible = [state](context & c, value on, const std::string & key) {
@@ -238,7 +243,7 @@ value control_helpers::legacy_object(context & cx, script::object_object & targe
         context::property_descriptor own;
         return !c.own_property(on, key, own) || own.configurable;
     };
-    // A SUPPORTED property name at all, visible or not: a control or an img
+    // Whether a name is a supported property name at all, visible or not: a control or an img
     // answering to it, or a past name.
     const auto supported = [state, prune, view](dom_bindings * owner, node_id form,
                                                 const std::string & name) {
@@ -259,7 +264,7 @@ value control_helpers::legacy_object(context & cx, script::object_object & targe
     const auto trap = [&cx, handler](const char * name, script::native_fn fn) {
         handler->set(name, native(cx, name, std::move(fn)));
     };
-    // [[Get]]: OrdinaryGet over [[GetOwnProperty]] below - an index or a
+    // [[Get]]: OrdinaryGet over [[GetOwnProperty]] below; an index or a
     // visible name answers, anything else is the target's, up its chain.
     trap("get", [node_of, item, named, visible](context & c, std::span<value> a) -> value {
         if (a.size() < 2 || !a[0].is_object()) { return value::undefined(); }
@@ -322,9 +327,9 @@ value control_helpers::legacy_object(context & cx, script::object_object & targe
          });
     // [[Set]] (WebIDL 3.9.4): the select's indexed setter is the options
     // collection's (HTML 4.10.7); a form has none, so an index is a rejected
-    // write. [[Set]] IGNORES NAMED PROPERTIES: a setter along the chain still
-    // runs for a name a control answers to - `form.action = url` beside an
-    // `<input name=action>` sets the attribute - and any other write of that
+    // write. [[Set]] ignores named properties: a setter along the chain still
+    // runs for a name a control answers to (`form.action = url` beside an
+    // `<input name=action>` sets the attribute), and any other write of that
     // name ends in [[DefineOwnProperty]], which refuses it below. Anything
     // else is an ordinary set on the target, and a property it creates is the
     // page's.
@@ -407,7 +412,7 @@ value control_helpers::legacy_object(context & cx, script::object_object & targe
              return value::boolean(true);
          });
     // [[OwnPropertyKeys]]: the indices, the visible names, then the target's
-    // own - strings in creation order, then symbols.
+    // own: strings in creation order, then symbols.
     trap("ownKeys", [node_of, view, names, visible](context & c, std::span<value> a) -> value {
         const value out = c.make_array();
         if (a.empty() || !a[0].is_object()) { return out; }

@@ -1,7 +1,11 @@
-// dom_bindings - the viewport's half of CSSOM View: `scrollX`/`scrollY` and
+//===- scrolling.cpp - Viewport scrolling bindings --------------*- C++ -*-===//
+//
+// The viewport's half of CSSOM View on dom_bindings: `scrollX`/`scrollY` and
 // their `page*Offset` aliases, `scroll()`/`scrollTo()`/`scrollBy()` on the
-// window (§4), the `scroll` event the scroll steps queue (§13), and where the
-// viewport's position actually lives - see set_viewport_scroll_hooks.
+// window (§4), and the `scroll` event the scroll steps queue (§13). Where the
+// viewport's position actually lives is decided by set_viewport_scroll_hooks.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/layout/overflow.hpp>
 #include <ctbrowser/shell/bindings.hpp>
@@ -40,11 +44,12 @@ void dom_bindings::scroll_viewport_to(double x, double y) {
     queue_scroll_event(node_id{});
 }
 
-// "Run the scroll steps" (§13.1), one tick later: the pending targets are
-// drained in the order they were queued, each once, the document's event
-// bubbling to the window and an element's not bubbling at all. On the
-// PRIMARY's timer queue, which is the one the tick drains - a frame document's
-// own timers never run.
+/// Queues "run the scroll steps" (§13.1) for `target` (a null node_id means
+/// the document). One tick later the pending targets are drained in the order
+/// they were queued, each once; the document's event bubbles to the window and
+/// an element's does not bubble. The timer goes on the primary document's
+/// queue, because that is the one the tick drains: a frame document's own
+/// timers never run.
 void dom_bindings::queue_scroll_event(node_id target) {
     if (std::ranges::find(pending_scroll_targets_, target) == pending_scroll_targets_.end()) {
         pending_scroll_targets_.push_back(target);

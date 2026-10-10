@@ -1,9 +1,15 @@
+//===- ctbrowser/lib/Shell/page/canvas_path.cpp - Canvas 2D geometry ------===//
+//
+// The geometry half of the canvas 2D context: the path verbs (flattened to
+// device-space polylines), gradients, the stroker that turns a path into a
+// fillable outline (joins, caps, dashes), and hit testing. canvas.cpp holds
+// the pixel half.
+//
+//===----------------------------------------------------------------------===//
+
 #include <ctbrowser/shell/page/canvas.hpp>
 
 #include <numbers>
-
-// canvas: the path verbs, the stroker, hit testing and the gradients - the
-// geometry half. canvas.cpp is the pixels.
 
 namespace ctbrowser::shell {
 
@@ -11,6 +17,7 @@ namespace {
 
 constexpr double tau = 2.0 * std::numbers::pi;
 
+/// A 2D vector in double precision, for the stroker's geometry.
 struct vec {
     double x = 0, y = 0;
 };
@@ -38,9 +45,9 @@ struct vec {
     return l > 0 ? a * (1.0 / l) : vec{};
 }
 
-// How many straight pieces an arc of `radius` device pixels needs for the
-// chord to stay within a quarter pixel of the curve - and capped, so a radius
-// blown up by a huge transform cannot cost unbounded time.
+/// How many straight pieces an arc of \p radius device pixels needs for the
+/// chord to stay within a quarter pixel of the curve, capped at 1024 so a
+/// radius blown up by a huge transform cannot cost unbounded time.
 [[nodiscard]] int arc_segments(double radius, double sweep) {
     const double r = std::max(radius, 0.5);
     const double step = 2.0 * std::acos(std::clamp(1.0 - 0.25 / r, -1.0, 1.0));
@@ -48,8 +55,9 @@ struct vec {
     return static_cast<int>(std::clamp(wanted, 1.0, 1024.0));
 }
 
-// How many segments a Bezier of this on-screen size needs. Enough that the
-// straight-line error is under about a third of a pixel, and capped.
+/// How many segments to flatten a Bezier into: about one per three device
+/// pixels of control-polygon length (\p extent), at least 4 and at most 256.
+/// This is a heuristic and does not bound the flattening error.
 [[nodiscard]] int curve_steps(double extent) {
     return static_cast<int>(std::clamp(extent / 3.0 + 4.0, 4.0, 256.0));
 }
@@ -103,7 +111,7 @@ std::optional<std::pair<double, double>> path_builder::last_user_point() const {
 
 void path_builder::quadratic_curve_to(double cx, double cy, double x, double y) {
     ensure_subpath(cx, cy);
-    // Flattened in DEVICE space: the transform is affine, so the curve through
+    // Flattened in device space: the transform is affine, so the curve through
     // the transformed control points is the transform of the curve, and the
     // segment count then follows the curve's size on screen.
     const point control = device(cx, cy);
@@ -155,13 +163,13 @@ void path_builder::elliptic_arc(double x, double y, double rx, double ry, double
     // is nothing before it.
     line_to_device(at(from));
     if (sweep == 0) { return; }
-    // AND LEAVING ALONG ITS TANGENT. A chord leaves the end of an arc turned
-    // half a segment away from the curve, so a butt cap or a join there - cut
-    // square to the first chord - was tilted with it: at a line width of 180
-    // that is several pixels of the stroke missing beside the arc's end
-    // (2d.path.arc.selfintersect.2). A sliver of a step at each end makes the
-    // first and last chords the tangents, and the stroker's joins fill the
-    // rest.
+    // The arc leaves each end along its tangent. A chord leaves the end of an
+    // arc turned half a segment away from the curve, so a butt cap or a join
+    // there, cut square to the first chord, would tilt with it: at a line
+    // width of 180 that is several pixels of the stroke missing beside the
+    // arc's end (2d.path.arc.selfintersect.2). A sliver of a step at each end
+    // makes the first and last chords the tangents, and the stroker's joins
+    // fill the rest.
     const double sliver = 1.0 / (1024.0 * static_cast<double>(steps));
     line_to_device(at(from + sweep * sliver));
     for (int i = 1; i < steps; ++i) {
@@ -173,13 +181,13 @@ void path_builder::elliptic_arc(double x, double y, double rx, double ry, double
 
 namespace {
 
-// The spec's sweep between two angles (4.12.5.1.14 "ellipse"): a whole turn
-// when the difference is a turn or more in the drawing direction, otherwise
-// the part of a turn from one to the other going that way round.
-//
-// Going the "wrong" way by a whole number of turns is a whole turn, not
-// nothing: arc(x, y, r, 0, 2 * PI, true) is a circle in every engine, and
-// 2d.line.join.round draws the circle that hides its join with exactly that.
+/// The sweep between two angles, per HTML 4.12.5.1.14 "ellipse": a whole
+/// turn when the difference is a turn or more in the drawing direction,
+/// otherwise the part of a turn from one angle to the other in that direction.
+///
+/// Going the "wrong" way by a whole number of turns is a whole turn, not
+/// nothing: arc(x, y, r, 0, 2 * PI, true) is a circle in every engine, and
+/// 2d.line.join.round draws the circle that hides its join with exactly that.
 [[nodiscard]] double arc_sweep(double from, double to, bool anticlockwise) {
     if (!anticlockwise) {
         if (to - from >= tau) { return tau; }
@@ -316,7 +324,7 @@ std::optional<std::array<float, 4>> canvas_gradient::sample(double x, double y) 
     }
     case kind::radial: {
         // The largest w for which the circle at w passes through the point
-        // and has a radius that is not negative (4.12.5.1.10 step 4).
+        // and has a radius that is not negative (HTML 4.12.5.1.10 step 4).
         if (x0 == x1 && y0 == y1 && r0 == r1) { return std::nullopt; }
         const double cdx = x1 - x0;
         const double cdy = y1 - y0;
@@ -372,7 +380,7 @@ std::optional<std::array<float, 4>> canvas_gradient::sample(double x, double y) 
 
 // --- the stroker -------------------------------------------------------------
 //
-// A stroke is an OUTLINE, filled. Every segment becomes a rectangle, every
+// A stroke is an outline, filled. Every segment becomes a rectangle, every
 // corner a join, every open end a cap, each built in the user space of the
 // transform in force now - that is where the line width is measured - and
 // mapped back to the device. Each piece is wound the same way round, so a
@@ -444,8 +452,8 @@ canvas_path canvas_context::stroke_outline(const canvas_path & path, const rect 
             emit({end + n, far + n, far - n, end - n});
         }
     };
-    // ONE SIDE of a segment: the band between a and b and their offsets. The
-    // offsets are the vertices' own normals where the path is SMOOTH (below),
+    // One side of a segment: the band between a and b and their offsets. The
+    // offsets are the vertices' own normals where the path is smooth (below),
     // and on the inside of a turn tighter than the line is wide the two cross
     // - the band then is the two triangles either side of the crossing, which
     // is what sweeping the normal from a to b covers.
@@ -471,8 +479,8 @@ canvas_path canvas_context::stroke_outline(const canvas_path & path, const rect 
         for (std::size_t i = 0; i < segments; ++i) {
             dir[i] = normalized(pts[(i + 1) % n] - pts[i]);
         }
-        // A FLATTENED CURVE IS NOT A POLYGON. Where the path turns by only a
-        // few degrees - every vertex of an arc or a Bezier - the stroke is
+        // A flattened curve is not a polygon. Where the path turns by less
+        // than 10 degrees (every vertex of an arc or a Bezier) the stroke is
         // the curve's, swept by the normal at each vertex (the bisector of
         // the two segments'), and needs no join. A rectangle per chord instead
         // is the stroke of the polygon, and on the inside of an arc narrower
@@ -510,7 +518,7 @@ canvas_path canvas_context::stroke_outline(const canvas_path & path, const rect 
     const bool dashed = !state_.dash.empty() && dash_total > 0 && std::isfinite(dash_total);
     const std::size_t entries = state_.dash.size();
 
-    // WHERE A DASH CAN SHOW: `cull` grown by the farthest any piece of a dash
+    // Where a dash can show: `cull` grown by the farthest any piece of a dash
     // reaches from its centre line - half the width, a square cap's corner or
     // a miter's tip - through the transform's largest stretch (bounded by its
     // Frobenius norm), and a pixel or two for rounding. A stretch of path
@@ -561,7 +569,7 @@ canvas_path canvas_context::stroke_outline(const canvas_path & path, const rect 
     double intervals = 0;
 
     for (const canvas_path::subpath & sub : path.subpaths) {
-        // Back to user space, with ZERO-LENGTH SEGMENTS PRUNED: a moveTo and a
+        // Back to user space, with zero-length segments pruned: a moveTo and a
         // lineTo to the same point strokes nothing, whatever the cap.
         std::vector<vec> pts;
         pts.reserve(sub.points.size());
@@ -584,7 +592,7 @@ canvas_path canvas_context::stroke_outline(const canvas_path & path, const rect 
             stroke_polyline(pts, closed);
             continue;
         }
-        // DASHES: walk the outline with the pattern, starting lineDashOffset
+        // Dashes: walk the outline with the pattern, starting lineDashOffset
         // into it, and stroke each "on" run as an open polyline of its own.
         if (closed) { pts.push_back(pts.front()); }
         std::vector<std::pair<double, double>> shown(pts.size() - 1);
@@ -686,9 +694,9 @@ canvas_path canvas_context::stroke_outline(const canvas_path & path, const rect 
 
 namespace {
 
-// Nonzero or even-odd containment of a device point, with a point ON an edge
-// counting as inside - "points on the path itself must be considered to be
-// inside the path".
+/// Nonzero or even-odd containment of a device point, with a point on an edge
+/// (within 1e-4) counting as inside: "points on the path itself must be
+/// considered to be inside the path".
 [[nodiscard]] bool contains(const canvas_path & path, double x, double y,
                             canvas_context::fill_rule rule) {
     int winding = 0;

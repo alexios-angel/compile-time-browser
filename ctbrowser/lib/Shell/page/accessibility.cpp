@@ -1,4 +1,6 @@
-// The computed ROLE and the accessible NAME of an element - what a screen
+//===- ctbrowser/lib/Shell/page/accessibility.cpp - Role and name ---------===//
+//
+// The computed role and the accessible name of an element: what a screen
 // reader would be told, and what testdriver's get_computed_role and
 // get_computed_label ask a browser for (ctdrive's `accessibility` command).
 //
@@ -13,6 +15,8 @@
 // ponytail: CSS generated content (::before/::after) contributes nothing, and
 // "presentation" conflict resolution (a focusable element keeps its role) is
 // not done - the two corners of the algorithm no test here reaches.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/shell/bindings.hpp>
@@ -31,7 +35,8 @@ namespace accessibility {
 
 namespace {
 
-// ARIA 1.2's concrete roles, and the 1.3 name `image` the synonym folds to.
+/// ARIA 1.2's concrete roles, plus the ARIA 1.3 name `image` that the
+/// `img` synonym folds to.
 constexpr std::string_view concrete_roles[] = {"alert",         "alertdialog",
                                                "application",   "article",
                                                "banner",        "blockquote",
@@ -201,8 +206,8 @@ std::string_view implicit_role(const read_txn & txn, atom_table & atoms, node_id
         }
         return type == "hidden" ? "" : "generic";
     }
-    // Everything else - <div>, <span>, a custom element - is in the tree as a
-    // generic container; the document's own two are its root.
+    // <html>, <head>, <script>, <style> and <template> have no role. Everything
+    // else (<div>, <span>, a custom element) is a generic container.
     if (tag == "html" || tag == "head" || tag == "script" || tag == "style" || tag == "template") {
         return "";
     }
@@ -227,17 +232,17 @@ bool is_embedded_control(std::string_view role) {
 
 } // namespace accessibility
 
-// testdriver's get_computed_role / get_computed_label, through ctdrive: the
-// element is whatever `getter(slot)` returns in the page (testdriver-vendor.js
-// keeps what it was asked about under a slot number), and the answer is the
-// role or the name. Nothing when the getter does not hand back one of this
-// document's elements.
+/// testdriver's get_computed_role / get_computed_label, through ctdrive: the
+/// element is whatever `getter(slot)` returns in the page (testdriver-vendor.js
+/// keeps what it was asked about under a slot number), and the answer is the
+/// role, or the name when \p label is true. Nullopt when the getter does not
+/// hand back one of this document's elements.
 std::optional<std::string> dom_bindings::computed_accessibility(std::string_view getter,
                                                                 double slot, bool label) {
     if (cx_ == nullptr || doc_ == nullptr) { return std::nullopt; }
     context & cx = *cx_;
     const auto in_realm = enter_realm(cx);
-    // A property of the WINDOW, which is where `window.x = f` put it - the
+    // A property of the window object, which is where `window.x = f` put it - the
     // realm's own global table is the other storage.
     value fn = value::undefined();
     if (script::object_object * window = window_object(); window != nullptr) {
@@ -256,7 +261,7 @@ std::optional<std::string> dom_bindings::computed_accessibility(std::string_view
     const node_id root = handle_of(element);
     if (!root) { return std::nullopt; }
     flush_layout();
-    // NOT IN A DOCUMENT, NOT IN THE TREE: a detached element has no role and
+    // A detached element is not in the accessibility tree: it has no role and
     // no name (aria-element-reflection-labelledby.html asks before inserting).
     if (!is_connected(root)) { return std::string{}; }
 
@@ -397,12 +402,12 @@ std::optional<std::string> dom_bindings::computed_accessibility(std::string_view
             return std::string{txn.text(current)};
         }
         if (!is_element(current)) { return {}; }
-        // EACH ELEMENT ONCE: a label holding the very control it names, or two
-        // elements labelledby each other, reach a node already being computed,
+        // Each element counts once: a label holding the very control it names,
+        // or two elements labelledby each other, reach a node already being computed,
         // and it contributes nothing the second time.
         if (std::ranges::find(visited, current) != visited.end()) { return {}; }
         visited.push_back(current);
-        // 2A.
+        // 2A: hidden nodes contribute nothing.
         if (!state.allow_hidden && hidden(current)) { return {}; }
         // 2B: aria-labelledby, not followed from inside another one.
         if (!state.labelledby) {
@@ -416,7 +421,7 @@ std::optional<std::string> dom_bindings::computed_accessibility(std::string_view
             }
         }
         const std::string role = role_of(current);
-        // 2C: a control inside the label of ANOTHER one contributes its value.
+        // 2C: a control inside the label of another one contributes its value.
         if (state.recursion && current != root && accessibility::is_embedded_control(role)) {
             if (role == "textbox" || role == "searchbox") {
                 return string_of(property(current, "value"));

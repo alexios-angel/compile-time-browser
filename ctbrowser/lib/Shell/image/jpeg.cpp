@@ -1,30 +1,32 @@
+//===- ctbrowser/lib/Shell/image/jpeg.cpp - JPEG decoding -----------------===//
+//
+// JPEG decoding through libjpeg-turbo. This is the only translation unit that
+// includes turbojpeg.h; images.hpp declares looks_like_jpeg and decode_jpeg
+// without any third-party include, as png.cpp does for libpng.
+//
+// libjpeg-turbo is libjpeg's API with SIMD underneath and the decoder
+// essentially everything ships: browsers, Android, and every distribution's
+// libjpeg. A JPEG decoder is an entropy-coded DCT with baseline and
+// progressive scan orders, four subsampling modes, restart markers and colour
+// transforms, and none of it is worth writing here.
+//
+// It uses the TurboJPEG API (`turbojpeg.h`), not libjpeg's own: it decodes
+// from a memory buffer in three calls with no source manager to implement, and
+// reports errors by return code rather than through the setjmp/longjmp error
+// handler libjpeg's native API requires. A longjmp out of a C++ frame would
+// skip the destructors of everything in between.
+//
+// It uses the 2.x spelling (`tjInitDecompress`/`tjDecompressHeader3`/
+// `tjDecompress2`), not the tj3_* functions, for portability: the tj3 API
+// arrived in libjpeg-turbo 3.0, while Ubuntu 24.04 LTS ships 2.1.5. The 2.x
+// entry points are still exported by 3.x without a deprecation attribute, so
+// one code path covers 2.1.5, Homebrew's 3.2 and the 3.1.2 in the mingw
+// sysroot without a version #ifdef.
+//
+//===----------------------------------------------------------------------===//
+
 #include <ctbrowser/shell/image/images.hpp>
 
-// THE ONLY TRANSLATION UNIT THAT KNOWS LIBJPEG-TURBO EXISTS. images.hpp
-// declares two functions and includes nothing third-party, which is the rule
-// url.cpp follows for Boost.URL and png.cpp for libpng.
-//
-// LIBJPEG-TURBO, which is libjpeg's API with SIMD underneath and the decoder
-// essentially everything ships: browsers, Android, and every distribution's
-// libjpeg for over a decade. A JPEG decoder is an entropy-coded DCT with
-// baseline and progressive scan orders, four subsampling modes, restart markers
-// and colour transforms, and none of it is worth writing here.
-//
-// THE TurboJPEG API (`turbojpeg.h`), not libjpeg's own: it decodes from a
-// memory buffer in three calls with no source manager to implement, and it
-// reports errors by return code rather than through the setjmp/longjmp error
-// handler libjpeg's native API requires a caller to install. A longjmp out of a
-// C++ frame would skip the destructors of everything between here and there,
-// which is precisely what this engine must not do.
-//
-// THE 2.x SPELLING (`tjInitDecompress`/`tjDecompressHeader3`/`tjDecompress2`),
-// NOT the tj3_* generation, and that is a portability decision rather than a
-// stylistic one. The tj3 API arrived in libjpeg-turbo 3.0; Ubuntu 24.04 LTS -
-// which is what the shared devbox runs - ships 2.1.5, so a tj3 call is simply
-// not declared there and the build stops dead. The 2.x entry points are still
-// exported by 3.x and carry no deprecation attribute, so ONE code path covers
-// noble's 2.1.5, the 3.2 this machine has through brew, and the 3.1.2 in the
-// mingw sysroot. A version #ifdef would be two paths where one does.
 #include <turbojpeg.h>
 
 #include <cstdint>
@@ -46,8 +48,7 @@ paint::bitmap decode_jpeg(std::span<const std::byte> data) {
 
     tjhandle handle = tjInitDecompress();
     if (handle == nullptr) { return {}; }
-    // ONE EXIT, so the handle cannot leak past an early return. There are four
-    // failure points below and a scope guard is the only way this reads.
+    // Scope guard so the handle is destroyed on every early return below.
     struct closer {
         tjhandle h;
         ~closer() { (void)tjDestroy(h); }
@@ -73,13 +74,13 @@ paint::bitmap decode_jpeg(std::span<const std::byte> data) {
         return {};
     }
 
-    // RGB, THREE BYTES, NOT TJPF_RGBA. TurboJPEG's RGBA pixel formats leave the
-    // fourth byte UNDEFINED - the format has no alpha to put there - so asking
-    // for RGBA and trusting it is how an image decodes correctly and then draws
-    // as fully transparent. The alpha is set here, deliberately, to opaque.
+    // Decode to RGB (three bytes per pixel), not TJPF_RGBA: TurboJPEG's RGBA
+    // pixel formats leave the fourth byte undefined, since JPEG has no alpha,
+    // and trusting it could draw the image fully transparent. The alpha is set
+    // to opaque in the loop below.
     const auto pixels = static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
     std::vector<unsigned char> rgb(pixels * 3U);
-    // pitch 0 means "tightly packed", which is what the loop below assumes.
+    // Pitch 0 means "tightly packed", which is what the loop below assumes.
     if (tjDecompress2(handle, bytes, static_cast<unsigned long>(data.size()), rgb.data(), width, 0,
                       height, TJPF_RGB, 0) != 0) {
         return {};

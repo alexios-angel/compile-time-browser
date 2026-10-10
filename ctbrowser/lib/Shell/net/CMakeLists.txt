@@ -1,3 +1,5 @@
+# Networking: HTTP over libcurl, the fetch policy, and the WHATWG URL parser
+# with its generated IDNA and NFC tables (the .inc files).
 target_sources(ctbrowser-shell PRIVATE
   idna_table.inc
   net.cpp

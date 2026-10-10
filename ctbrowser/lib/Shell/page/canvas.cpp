@@ -1,19 +1,25 @@
+//===- ctbrowser/lib/Shell/page/canvas.cpp - Canvas 2D pixel operations ---===//
+//
+// The pixel half of the canvas 2D context: scanline filling, clipping,
+// shadows, text, drawImage, compositing and the per-document canvas store.
+// canvas_path.cpp holds the geometry (paths, strokes, dashes). canvas.hpp says
+// what each method does; this file says how.
+//
+//===----------------------------------------------------------------------===//
+
 #include <ctbrowser/shell/page/canvas.hpp>
 
 #include <charconv>
 #include <limits>
 
-// canvas: the method bodies - the pixel half. canvas_path.cpp is the geometry.
-// The header says what these do; this says how.
-
 namespace ctbrowser::shell {
 
 namespace {
 
-// A BITMAP THAT CAN EXIST. `canvas.width = 2147483647` is legal and has to
-// read back, but its pixels are eight gigabytes a row: a canvas larger than
-// this gets no pixels at all, which is what a browser that cannot allocate
-// one does too, rather than taking the whole process down trying.
+/// A bitmap of \p width x \p height, or an empty one when that is more than
+/// 2^26 pixels (256 MiB of ARGB). `canvas.width = 2147483647` is legal and must
+/// read back, but a canvas larger than the cap gets an empty bitmap, as a
+/// browser that cannot allocate one does, rather than aborting the process.
 [[nodiscard]] std::shared_ptr<bitmap> make_surface(int width, int height) {
     constexpr std::int64_t most_pixels = std::int64_t{1} << 26;
     if (width < 0 || height < 0 || std::int64_t{width} * std::int64_t{height} > most_pixels) {
@@ -26,7 +32,7 @@ namespace {
 
 void canvas_context::reset_surface(int width, int height) {
     pixels_ = make_surface(width, height);
-    // A resize RESETS the canvas: the pixels are cleared and the drawing state
+    // A resize resets the canvas: the pixels are cleared and the drawing state
     // goes back to its defaults, which includes an empty save stack and an
     // identity transform.
     path_.subpaths.clear();
@@ -70,7 +76,7 @@ void canvas_context::fill_rect(float x, float y, float w, float h) {
 
 void canvas_context::clear_rect(float x, float y, float w, float h) {
     if (!pixels_) { return; }
-    // TRANSPARENT, not white, and a WRITE rather than a blend: a cleared
+    // Transparent, not white, and written rather than blended: a cleared
     // canvas shows the page through it, which is what makes an overlay canvas
     // work at all. Through the transform and inside the clip, like any shape.
     canvas_path rect;
@@ -81,7 +87,7 @@ void canvas_context::clear_rect(float x, float y, float w, float h) {
 }
 
 void canvas_context::stroke_rect(float x, float y, float w, float h) {
-    // ALWAYS THE CLOSED RECTANGLE: one with no height is a line there and
+    // Always the closed rectangle: one with no height is a line there and
     // back, with joins at its ends and no caps (2d.strokeRect.zero.4), and
     // one with no area at all strokes nothing.
     if (w == 0 && h == 0) { return; }
@@ -94,11 +100,11 @@ void canvas_context::stroke_rect(float x, float y, float w, float h) {
 
 void canvas_context::for_each_span(const canvas_path & path, fill_rule rule, int top, int bottom,
                                    const std::function<void(int, int, int)> & emit) const {
-    // AN EDGE TABLE. Every edge is listed once with the rows it spans, sorted
-    // by where it starts, and each scanline looks only at the edges ACTIVE on
-    // it. Testing every edge on every row was fine for a rectangle and is not
-    // for a stroke, which is an outline of a quad per segment and a join per
-    // corner: a stroked circle is a few hundred edges.
+    // An edge table: every edge is listed once with the rows it spans, sorted
+    // by where it starts, and each scanline looks only at the edges active on
+    // it. A stroke is an outline of a quad per segment and a join per corner,
+    // so a stroked circle is a few hundred edges, too many to test on every
+    // row.
     struct edge {
         float x0, y0, x1, y1;
         int direction;
@@ -109,7 +115,7 @@ void canvas_context::for_each_span(const canvas_path & path, fill_rule rule, int
         if (n < 2) { continue; }
         for (std::size_t i = 0; i < n; ++i) {
             const point & a = s.points[i];
-            // An unclosed subpath is still CLOSED FOR FILLING - that is what
+            // An unclosed subpath is still closed for filling - that is what
             // the spec means by an implicit close - so the wrap edge is
             // included here, unlike in the stroker.
             const point & b = s.points[(i + 1) % n];
@@ -129,7 +135,7 @@ void canvas_context::for_each_span(const canvas_path & path, fill_rule rule, int
     const int first = std::max(top, clamp_row(std::floor(edges.front().y0)));
     const int last = std::min(bottom, clamp_row(std::ceil(max_y)));
 
-    // A crossing carries its DIRECTION, which is what the two fill rules
+    // A crossing carries its direction, which is what the two fill rules
     // disagree about: even-odd fills between alternate crossings, nonzero
     // wherever the running total of +1 down and -1 up is not zero. They differ
     // exactly where a path overlaps itself - a five-pointed star drawn as one
@@ -141,7 +147,7 @@ void canvas_context::for_each_span(const canvas_path & path, fill_rule rule, int
     std::vector<crossing> crossings;
     std::vector<std::size_t> active;
     std::size_t next = 0;
-    // A pixel is inside when its CENTRE is, half-open on the right and the
+    // A pixel is inside when its centre is, half-open on the right and the
     // bottom: an edge at x = 10.5 leaves pixel 10 on its left side only, so a
     // one-pixel line at x = 10 is one pixel wide rather than two.
     const auto emit_between = [&](int y, float from, float to) {
@@ -157,8 +163,8 @@ void canvas_context::for_each_span(const canvas_path & path, fill_rule rule, int
         for (const std::size_t i : active) {
             const edge & e = edges[i];
             if (e.y0 > scan) { continue; }
-            // double: float differences at ~1e38 overflow to inf/NaN, which would break
-            // the sort's strict weak ordering.
+            // In double: float differences near 1e38 overflow to inf or NaN,
+            // which would break the sort's strict weak ordering.
             const double x = static_cast<double>(e.x0) + (static_cast<double>(scan) - e.y0) /
                                                              (static_cast<double>(e.y1) - e.y0) *
                                                              (static_cast<double>(e.x1) - e.x0);
@@ -189,7 +195,7 @@ void canvas_context::sample_row(const canvas_paint & paint, int y, int x0, int x
     };
     if (paint.gradient) {
         // Gradients are in the user space of the transform in force when the
-        // shape is DRAWN, so every pixel centre goes back through it.
+        // shape is drawn, so every pixel centre goes back through it.
         if (!state_.matrix.invertible()) { return; }
         const transform inv = state_.matrix.inverse();
         for (int x = x0; x <= x1; ++x) {
@@ -230,8 +236,8 @@ void canvas_context::sample_row(const canvas_paint & paint, int y, int x0, int x
                     : std::clamp(ty, lo_y, hi_y);
         return image.at(tx, ty);
     };
-    // IMAGE SMOOTHING (4.12.5.1.16): with imageSmoothingEnabled, bilinear
-    // between the four texels round the sample - in PREMULTIPLIED colour, so a
+    // Image smoothing (HTML 4.12.5.1.16): with imageSmoothingEnabled, bilinear
+    // between the four texels round the sample - in premultiplied colour, so a
     // transparent neighbour does not darken an edge. A draw that maps texels
     // one to one onto pixels reads each texel's centre, where the two filters
     // agree, so it takes the nearest texel and the cost of one.
@@ -320,7 +326,7 @@ void canvas_context::stroke(const canvas_path & path) {
     if (shadows_drawn()) {
         const auto sx = static_cast<float>(state_.shadow_x);
         const auto sy = static_cast<float>(state_.shadow_y);
-        const float blur = 1025; // draw_shadow's widest spread, and a pixel
+        const float blur = 1025; // draw_shadow's 1024 px reach cap, plus a pixel
         cull = rect{std::min(0.0f, -sx) - blur, std::min(0.0f, -sy) - blur,
                     cull.width + std::fabs(sx) + 2 * blur, cull.height + std::fabs(sy) + 2 * blur};
     }
@@ -339,17 +345,16 @@ void canvas_context::draw_focus_ring(const canvas_path & path) {
     state_ = std::move(saved);
 }
 
-// INTERSECT, never replace. Two clips in a row leave the region they have in
-// common, which is what makes nesting them work - and it is why the old mask is
-// read while the new one is built rather than being cleared first.
+/// Intersects the clip with \p path; never replaces it. Two clips in a row
+/// leave the region they have in common, which is what makes nesting them
+/// work, and is why the old mask is read while the new one is built.
 void canvas_context::clip(const canvas_path & path, fill_rule rule) {
     if (!pixels_ || width() <= 0 || height() <= 0) { return; }
     auto mask = std::make_shared<std::vector<std::uint8_t>>(
         static_cast<std::size_t>(width()) * static_cast<std::size_t>(height()), 0);
-    // HOISTED: the body of this lambda runs per span, and it used to re-derive
-    // the width and re-test the previous mask per PIXEL - 9.4% and then 6.55%
-    // of a Phaser frame. With no clip in place a row is a memset; with one it
-    // is a byte-wise AND.
+    // Hoisted out of the per-span lambda, which is hot (Phaser clips every
+    // frame): with no previous clip a span is a fill of 1s; with one it copies
+    // the previous mask's bits, which intersects the two.
     const int w = width();
     std::uint8_t * into = mask->data();
     const std::uint8_t * previous = state_.clip ? state_.clip->data() : nullptr;
@@ -382,7 +387,7 @@ void canvas_context::clip(const canvas_path & path, fill_rule rule) {
 
 void canvas_context::draw_shadow(const canvas_path & path, fill_rule rule,
                                  const canvas_paint & paint) {
-    // Offsets and blur are in CSS pixels, NOT through the transform. Only the
+    // Offsets and blur are in CSS pixels, not through the transform. Only the
     // shape's own box, moved by the offset and widened by the blur, can be
     // shaded - so that box on the canvas is all that is rasterised, blurred
     // and composited, and a glow round a small shape costs the shape, not the
@@ -409,7 +414,7 @@ void canvas_context::draw_shadow(const canvas_path & path, fill_rule rule,
     if (std::fabs(shift_x) > 1e9 || std::fabs(shift_y) > 1e9) { return; }
     const int ox = static_cast<int>(shift_x);
     const int oy = static_cast<int>(shift_y);
-    // A Gaussian of standard deviation shadowBlur / 2, as THREE BOX BLURS each
+    // A Gaussian of standard deviation shadowBlur / 2, as three box blurs each
     // way - within a few percent of the true curve, and a constant cost per
     // pixel whatever the blur, where a direct kernel is quadratic in it. The
     // box widths are the ones whose three-fold convolution has the Gaussian's
@@ -517,11 +522,11 @@ void canvas_context::draw_shadow(const canvas_path & path, fill_rule rule,
 
 namespace {
 
-// letterSpacing or wordSpacing - a CSS length the setter already checked - in
-// pixels at the current font size. A font-relative unit follows the font as
-// it is NOW, so `1em` doubles when the font does (2d.text.drawing.style.
-// letterSpacing.change.font). ponytail: ex, ch and cap are fixed fractions
-// of the em rather than the face's own metrics, and the viewport units are 0.
+/// letterSpacing or wordSpacing - a CSS length the setter already checked - in
+/// pixels at the current font size. A font-relative unit follows the current
+/// font, so `1em` doubles when the font does (2d.text.drawing.style.
+/// letterSpacing.change.font). ponytail: ex, ch and cap are fixed fractions
+/// of the em rather than the face's own metrics, and the viewport units are 0.
 [[nodiscard]] double spacing_px(std::string_view css, double font_size) {
     double amount = 0;
     const auto [end, ec] = std::from_chars(css.data(), css.data() + css.size(), amount);
@@ -544,7 +549,8 @@ namespace {
     return 0;
 }
 
-// One UTF-8 code point at a time: the length of the sequence at `at`.
+/// The byte length of the UTF-8 sequence starting at \p at, clamped to the
+/// text's end.
 [[nodiscard]] std::size_t code_point_length(std::string_view text, std::size_t at) {
     const auto lead = static_cast<unsigned char>(text[at]);
     const std::size_t n = lead < 0x80    ? 1
@@ -561,7 +567,7 @@ float canvas_context::measure_text(std::string_view text) const {
     const float advance = fonts().advance(text, state_.font_size, state_.font_family,
                                           state_.font_bold, state_.font_italic);
     // letterSpacing after every character and wordSpacing after every space
-    // (4.12.5.1.4, CSS Text 3 §8).
+    // (HTML 4.12.5.1.4, CSS Text 3 §8).
     const double letters = spacing_px(state_.letter_spacing, state_.font_size);
     const double words = spacing_px(state_.word_spacing, state_.font_size);
     if (letters == 0 && words == 0) { return advance; }
@@ -582,14 +588,14 @@ void canvas_context::stroke_text(std::string_view text, float x, float y) {
 
 void canvas_context::draw_text(std::string_view text_in, float x, float y, bool stroke) {
     // "Replace all ASCII whitespace in text with U+0020 SPACE characters"
-    // (4.12.5.1.5, the text preparation algorithm) - a tab or a newline is a
+    // (HTML 4.12.5.1.5, the text preparation algorithm) - a tab or a newline is a
     // space here, never a line break.
     std::string text{text_in};
     std::ranges::replace_if(
         text, [](char c) { return c == '\t' || c == '\n' || c == '\f' || c == '\r'; }, ' ');
     if (!pixels_ || text.empty()) { return; }
-    // WITH SPACING the run is set a character at a time, each at the pen
-    // position the spacing moved it to - the backend draws a run as one.
+    // With spacing, the run is set a character at a time, each at the pen
+    // position the spacing moved it to, because the backend draws a run as one.
     const double letters = spacing_px(state_.letter_spacing, state_.font_size);
     const double words = spacing_px(state_.word_spacing, state_.font_size);
     if (letters != 0 || words != 0) {
@@ -625,18 +631,18 @@ void canvas_context::draw_text(std::string_view text_in, float x, float y, bool 
     if (width <= 0 || ascent + descent <= 0) { return; }
 
     // `draw_run` writes into a raster::surface and a canvas owns a
-    // paint::bitmap. They have the same pixel layout but surface OWNS its
+    // paint::bitmap. They have the same pixel layout but surface owns its
     // storage, so the run is drawn into a scratch surface the size of its own
     // bounding box and copied back.
     //
-    // The scratch is SEEDED FROM THE DESTINATION first. Against a blank one,
+    // The scratch is seeded from the destination first. Against a blank one,
     // blend_over would composite an antialiased glyph edge onto transparent
     // black and that premultiplied result would then be blended into the
     // canvas a second time - a dark halo around every glyph.
     //
     // textAlign shifts along x by a share of the run's width, and
     // textBaseline shifts along y between the font's own metrics. Both are
-    // applied in USER space, before the transform: a rotated centred label must
+    // applied in user space, before the transform: a rotated centred label must
     // be centred on its own baseline, not on the screen's x axis. `start` and
     // `end` follow the direction, and `rtl` is the only one that flips them.
     const bool rtl = state_.direction == "rtl";
@@ -656,9 +662,9 @@ void canvas_context::draw_text(std::string_view text_in, float x, float y, bool 
     } else if (baseline == "bottom" || baseline == "ideographic") {
         shift_y = -descent;
     }
-    const point origin = state_.matrix.apply(x + shift_x, y + shift_y); // the BASELINE
+    const point origin = state_.matrix.apply(x + shift_x, y + shift_y); // the baseline
     if (!std::isfinite(origin.x) || !std::isfinite(origin.y)) { return; }
-    // THE RUN'S BOX: a pixel of margin each side for antialiasing and any
+    // The run's box: a pixel of margin each side for antialiasing and any
     // overhang, an integral left/top so the fraction stays in `where` and
     // sub-pixel positioning survives the round trip, and for a stroke the
     // half line width it reaches past the glyphs' edges. In double: a page
@@ -669,7 +675,7 @@ void canvas_context::draw_text(std::string_view text_in, float x, float y, bool 
     const double box_top = std::floor(static_cast<double>(origin.y - ascent)) - 1 - pad;
     const double box_right = box_left + std::ceil(width) + 3 + 2 * pad;
     const double box_bottom = box_top + std::ceil(ascent + descent) + 3 + 2 * pad;
-    // ONLY THE PART THAT CAN LAND is rasterised: the box clipped to the canvas
+    // Only the part that can land is rasterised: the box clipped to the canvas
     // - grown by the pad for a stroke, whose band at the edge depends on the
     // glyphs that far beyond it. A run drawn mostly off the edge costs only
     // the part that lands, and an entirely off-canvas run costs nothing.
@@ -684,7 +690,7 @@ void canvas_context::draw_text(std::string_view text_in, float x, float y, bool 
     const int h =
         static_cast<int>(std::min(box_bottom, static_cast<double>(pixels_->height + pad))) - top;
 
-    // The glyphs as a coverage MASK, painted through the drawing model like
+    // The glyphs as a coverage mask, painted through the drawing model like
     // any shape, for everything the direct path below cannot do: an outline,
     // a gradient or pattern, an operator other than source-over.
     if (stroke || !state_.fill.is_solid() || state_.composite_mode != composite::source_over) {
@@ -700,7 +706,7 @@ void canvas_context::draw_text(std::string_view text_in, float x, float y, bool 
         }
     }
 
-    // `where.y` is the TOP of the run box, not the baseline: both backends add
+    // `where.y` is the top of the run box, not the baseline: both backends add
     // their own ascent. Passing the baseline through is the failure mode here,
     // and it puts every glyph one ascent too low.
     const rect where{origin.x - static_cast<float>(left),
@@ -731,12 +737,14 @@ void canvas_context::draw_text(std::string_view text_in, float x, float y, bool 
 
 namespace {
 
-// THE SQUARED DISTANCE FROM EVERY CELL TO THE NEAREST ONE HOLDING 0, in place,
-// over a w x h grid whose other cells hold `far_away`: Felzenszwalb and
-// Huttenlocher's exact Euclidean distance transform ("Distance Transforms of
-// Sampled Functions") - the lower envelope of a parabola per cell, down every
-// column and then along every row. O(w * h), however far the distances run.
+/// The initial value of a cell that is not a distance-transform source.
 constexpr double far_away = 1e12;
+/// Replaces every cell of the \p w x \p h \p grid with the squared distance to
+/// the nearest cell holding 0 (other cells hold `far_away`). This is
+/// Felzenszwalb and Huttenlocher's exact Euclidean distance transform
+/// ("Distance Transforms of Sampled Functions"): the lower envelope of a
+/// parabola per cell, down every column and then along every row. O(w * h),
+/// however far the distances run.
 void squared_distances(std::vector<double> & grid, std::size_t w, std::size_t h) {
     const std::size_t longest = std::max(w, h);
     std::vector<double> f(longest);
@@ -774,10 +782,10 @@ void squared_distances(std::vector<double> & grid, std::size_t w, std::size_t h)
     for (std::size_t y = 0; y < h; ++y) { line(y * w, 1, w); }
 }
 
-// THE STROKE OF A COVERAGE MASK: the cells within reach of the glyphs' edge -
-// an inside one (coverage at least half) with an outside one no further than
-// `in_reach`, or an outside one with an inside one no further than
-// `out_reach`. Beyond the mask counts as outside.
+/// The stroke of a coverage mask: 1 for the cells within reach of the glyphs'
+/// edge - an inside one (coverage at least half) with an outside one no further
+/// than \p in_reach, or an outside one with an inside one no further than
+/// \p out_reach. Beyond the mask counts as outside.
 [[nodiscard]] std::vector<std::uint8_t> stroke_band(const raster::surface & mask, int in_reach,
                                                     int out_reach) {
     const auto w = static_cast<std::size_t>(mask.width());
@@ -814,12 +822,12 @@ void squared_distances(std::vector<double> & grid, std::size_t w, std::size_t h)
 
 } // namespace
 
-// Text through the mask. The font backend gives glyph COVERAGE, not outlines,
-// so a fill is that coverage and a stroke is traced on it: a pixel is on the
-// stroke when the glyph's edge passes within half the line width of it - an
-// inside pixel with an outside one that near, or the reverse. ponytail: a
-// mask-traced outline is a pixel coarse at the corners; glyph outlines from
-// the backend would make strokeText exact.
+/// Text through the mask. The font backend gives glyph coverage, not outlines,
+/// so a fill is that coverage and a stroke is traced on it: a pixel is on the
+/// stroke when the glyph's edge passes within half the line width of it - an
+/// inside pixel with an outside one that near, or the reverse. ponytail: a
+/// mask-traced outline is a pixel coarse at the corners; glyph outlines from
+/// the backend would make strokeText exact.
 void canvas_context::paint_glyphs(const std::string & text, point origin, float ascent,
                                   float advance, double reach, int pad, int left, int top, int w,
                                   int h, bool stroke) {
@@ -906,7 +914,7 @@ void canvas_context::draw_image(const std::shared_ptr<const bitmap> & source, do
     dw = (cx1 - cx0) * scale_x;
     dh = (cy1 - cy0) * scale_y;
 
-    // Painted as a PATTERN over the destination rectangle: the source
+    // Painted as a pattern over the destination rectangle: the source
     // rectangle mapped onto it, so the transform, the clip, globalAlpha,
     // shadows and every operator are the same code as for any other shape.
     auto pattern = std::make_shared<canvas_pattern>();
@@ -961,7 +969,7 @@ color canvas_context::with_alpha(color c) const {
 }
 
 std::uint32_t canvas_context::composite_one(int x, int y, std::uint32_t dst, color source) const {
-    // blend_over is exact only onto an OPAQUE backdrop; onto a transparent or
+    // blend_over is exact only onto an opaque backdrop; onto a transparent or
     // translucent one it is the formula's general case, or a half-transparent
     // green over nothing comes out half-dark green.
     if (state_.composite_mode == composite::source_over && (dst >> 24) == 0xFFu) {

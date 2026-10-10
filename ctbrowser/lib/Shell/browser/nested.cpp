@@ -1,30 +1,27 @@
-// browser - nested browsing contexts: a frame's document laid out at the size
-// its <iframe> box got.
+//===- ctbrowser/lib/Shell/browser/nested.cpp - Frame layout --------------===//
 //
-// The bindings build a frame's document (bindings/frames.cpp) and said, in
-// their own header, that "a frame lays out as an empty box" - which was true
-// of the DOM half and is where every read inside a frame stopped: `100vw` in a
-// 200px frame computed against the window, `@media (width: 100vw)` in a
-// frame's sheet answered for the page, and `frame.contentWindow
-// .getComputedStyle(div).height` was the empty declaration an unrendered
-// element gets (css-values' viewport-units-*, 142 subtests over five files,
-// and every cssom file that measures inside an iframe).
+// Nested browsing contexts: a frame's document laid out at the size its
+// <iframe> box got.
 //
-// This is the rendering half: each loaded frame gets a style engine over its
-// own sheets with the media environment of ITS viewport, the cascade, the box
-// tree and layout, run by the same code the page runs through, and the frame's
-// bindings observe the result exactly as the page's do. Recursively, so a
-// frame's frame is laid out inside it. Nothing is painted - the box on screen
-// stays empty, which is the painting half and a display list nested in the
-// page's.
+// bindings/frames.cpp builds a frame's document; this file styles and lays it
+// out, so reads inside a frame (`100vw`, `@media`, getComputedStyle) answer
+// for the frame's own viewport rather than the window's. Each loaded frame
+// gets a style engine over its own sheets with the media environment of its
+// viewport, the cascade, the box tree and layout, run by the same code as
+// the page, and the frame's bindings observe the result exactly as the
+// page's do. This recurses, so a frame's frame is laid out inside it.
 //
-// WHEN. After every page layout, because the frame's size comes from it, and
-// on any read when a frame's document has moved: the bindings over a frame
-// have no mutation hook (a secondary document is built without one), so
-// instead of plumbing one the flush compares the document's version and the
-// CSSOM's edit stamp with what the last layout was made from. That is what
-// `frames_stale` is, and it is proportionate: a frame is re-run only when
-// something in it changed.
+// Frames are not painted yet: the box on screen stays empty. Painting needs a
+// display list nested in the page's.
+//
+// Frames are laid out after every page layout, because the frame's size
+// comes from it, and on any read when a frame's document has changed. The
+// bindings over a frame have no mutation hook (a secondary document is built
+// without one), so instead the flush compares the document's version and the
+// CSSOM's edit stamp with what the last layout was made from; that is
+// frames_stale(). A frame is re-run only when something in it changed.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -32,8 +29,8 @@ namespace ctbrowser::shell {
 
 namespace {
 
-// The content box of a replaced element's fragment: its border box less the
-// border and padding the box resolved. What the frame's viewport is.
+/// The content box size of a replaced element's fragment: its border box less
+/// the border and padding the box resolved. This is the frame's viewport.
 [[nodiscard]] std::pair<float, float> content_size(const fragment & frag) {
     float width = frag.bounds.width;
     float height = frag.bounds.height;
@@ -57,9 +54,9 @@ void browser::layout_frames() {
         for (const dom_bindings::loaded_frame & each : owner.loaded_frames()) {
             const fragment * frag = fragments.find(each.element);
             document & doc = each.bindings->owned_document();
-            // Kept across layouts when nothing moved: the style engine holds
-            // the parsed sheets, and re-parsing them for a page that only
-            // scrolled is the cost "a frame runs only what changed" forbids.
+            // Kept across layouts when nothing changed: the style engine holds
+            // the parsed sheets, and a page that only scrolled must not pay to
+            // re-parse them.
             std::unique_ptr<frame_layout> layout;
             for (auto & old : frame_layouts_) {
                 if (old && old->bindings == each.bindings) { layout = std::move(old); }
@@ -70,11 +67,11 @@ void browser::layout_frames() {
                 layout->element = each.element;
                 layout->bindings = each.bindings;
             }
-            // A frame with no box - `display: none`, or an owner that has not
-            // laid out - renders nothing, and its document reads as unrendered,
-            // which is what getComputedStyle-detached-subtree asserts. It keeps
-            // an entry so that frames_stale() has its version to compare and
-            // does not re-run this on every read of an idle page.
+            // A frame with no box (`display: none`, or an owner that has not
+            // laid out) renders nothing, and its document reads as unrendered,
+            // which is what WPT getComputedStyle-detached-subtree asserts. It
+            // keeps an entry so that frames_stale() has its version to compare
+            // and does not re-run this on every read of an idle page.
             if (frag == nullptr) {
                 each.bindings->observe_layout(nullptr);
                 each.bindings->observe_boxes(nullptr);
@@ -104,9 +101,10 @@ void browser::layout_frames() {
                 env.viewport_width = width;
                 env.viewport_height = height;
                 (void)layout->styles->set_environment(env);
-                // THE FRAME'S SHEETS, as the page's are collected - and, once a
+                // The frame's sheets, collected as the page's are. Once a
                 // script has edited them through the CSSOM, the object model's
-                // text, for the reason refresh_author_styles gives.
+                // text is used instead, for the reason refresh_author_styles
+                // gives.
                 std::string css = collect_author_styles(doc, each.bindings, false);
                 if (each.bindings->style_stamp() != 0) { css = each.bindings->author_style_text(); }
                 layout->styles->clear_origin(ctbrowser::style::author_origin);
@@ -118,12 +116,11 @@ void browser::layout_frames() {
                 // page's resolve_styles keeps it.
                 const ctbrowser::style::style_map before = std::move(layout->resolved);
                 layout->resolved = layout->styles->resolve_all(txn);
-                // A ROOT WITH `overflow: scroll` ALWAYS HAS ITS SCROLLBARS, and
-                // CSS Values 4 §6.1.2 takes them out of the viewport units - the
-                // page does the same by laying out at the narrower width when
-                // it overflows. The cascade is re-run at the reduced size when
-                // the root asks for one, which is one extra pass on a frame
-                // that asked (viewport-units-scrollbars-compute).
+                // A root with `overflow: scroll` always has its scrollbars, and
+                // CSS Values 4 §6.1.2 takes them out of the viewport units. The
+                // cascade is re-run at the reduced size when the root asks for
+                // one, which is one extra pass on a frame that asked (WPT
+                // viewport-units-scrollbars-compute).
                 const auto [inner_width, inner_height] = viewport_less_scroll_root(
                     atoms_, layout->resolved, txn.root(), width, height, options_.scrollbar_width);
                 if (inner_width != width || inner_height != height) {
@@ -132,17 +129,16 @@ void browser::layout_frames() {
                     (void)layout->styles->set_environment(env);
                     layout->resolved = layout->styles->resolve_all(txn);
                 }
-                // THE FRAME'S STYLE CHANGE EVENT, which the page's
-                // resolve_styles also ends with: it starts the frame's
-                // transitions and animations, and it bumps the bindings'
-                // restyle stamp - the only thing that tells a computed-style
-                // object cached on a wrapper that its entries are stale when
-                // NOTHING IN THE FRAME'S DOCUMENT CHANGED and only its viewport
-                // did. Without it `100vw` in a frame resized from 200px to
-                // 400px kept answering 200px (viewport-units-invalidation).
+                // The frame's style change event, as at the end of the page's
+                // resolve_styles: it starts the frame's transitions and
+                // animations, and it bumps the bindings' restyle stamp. The
+                // stamp is the only thing that tells a computed-style object
+                // cached on a wrapper that its entries are stale when only the
+                // frame's viewport changed, not its document (WPT
+                // viewport-units-invalidation).
                 each.bindings->update_css_animations(txn, before, layout->resolved);
-                // AND ITS MediaQueryLists: a frame resized across a query's
-                // breakpoint reports the change (CSSOM View §13), next tick.
+                // A frame resized across a query's breakpoint reports the
+                // change to its MediaQueryLists (CSSOM View §13) next tick.
                 each.bindings->report_media_query_changes();
                 ctbrowser::layout::box_builder builder{atoms_, layout->resolved, measure()};
                 layout->boxes = builder.build(txn, txn.root());

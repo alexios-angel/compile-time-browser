@@ -1,5 +1,10 @@
-// browser - the text selection: the runs it is measured over, where a
-// pointer lands in them, the highlight, and the clipboard verbs.
+//===- ctbrowser/lib/Shell/browser/selection.cpp - Selection --------------===//
+//
+// The page text selection: the text runs it is measured over, where a pointer
+// lands in them, the highlight, and the clipboard verbs (Copy, Cut, Paste,
+// Select All).
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -19,10 +24,10 @@ void browser::clear_selection() {
 }
 
 std::string browser::selected_text() {
-    // Extracted from each NODE'S OWN TEXT over the whole selected range,
-    // not by concatenating the runs. A wrap drops the space it broke at, so
-    // that space is in no run at all - joining the runs would silently
-    // delete a space per line from anything copied off a wrapped paragraph.
+    // Extracted from each node's own text over the whole selected range, not
+    // by concatenating the runs. A wrap drops the space it broke at, so that
+    // space is in no run at all, and joining the runs would delete a space per
+    // line from anything copied off a wrapped paragraph.
     std::string out;
     node_id current;
     std::size_t from = 0;
@@ -56,17 +61,15 @@ std::string browser::selected_text() {
 
 std::vector<browser::text_run> browser::text_runs() const {
     std::vector<text_run> out;
-    flat_map<std::uint64_t, std::size_t> consumed; // per source node
+    flat_map<std::uint64_t, std::size_t> consumed; // Text offset reached, per source node.
     const auto walk = [&](auto && self, const ctbrowser::layout::fragment & f, float dx,
                           float dy) -> void {
         const rect box{f.bounds.x + dx, f.bounds.y + dy, f.bounds.width, f.bounds.height};
         if (!f.text.empty() && f.source) {
-            // WHERE this line begins in the node's text. Found by searching
-            // rather than by accumulating lengths: the wrap DROPS the space
-            // it broke at, so the fragments do not partition the text and
-            // summing their lengths drifts by one character per line - which
-            // made every position past the first line point at the wrong
-            // character.
+            // Where this line begins in the node's text, found by searching
+            // rather than by summing lengths: a wrap drops the space it broke
+            // at, so the fragments do not partition the text and summing
+            // their lengths would drift by one character per line.
             std::size_t & at = consumed[f.source.key()];
             const std::string_view full =
                 f.box != nullptr ? std::string_view{f.box->text} : std::string_view{f.text};
@@ -127,7 +130,7 @@ std::size_t browser::code_point_at(const text_run & run, float x) const {
 std::pair<std::size_t, std::size_t> browser::selected_range(const text_run & run) {
     if (!has_selection()) { return {0, 0}; }
     const std::vector<text_run> runs = text_runs();
-    // Which end comes first in DOCUMENT ORDER - a drag upward selects the
+    // Which end comes first in document order, so a drag upward selects the
     // same text as the same drag downward.
     const auto locate = [&runs](const text_position & p) -> std::size_t {
         std::size_t best = runs.size();
@@ -179,11 +182,8 @@ rect browser::highlight_for(const ctbrowser::layout::fragment & f) {
 
 void browser::run_clipboard_verb(std::string_view verb) {
     clipboard_verb(verb);
-    // EVERY verb that acts on a field moves its caret - Select All to the end
-    // of the value, Paste to past what it inserted, Cut back to where the
-    // deletion started - and none of them did anything about the view, so a
-    // paste into a scrolled field left the caret off screen. One place rather
-    // than three returns, so a verb added later cannot forget.
+    // Every verb that edits a field moves its caret, so scroll it into view
+    // here, once, rather than in each verb's return path.
     if (control_state * control = editable_focus(); control != nullptr) {
         reveal_caret(focused_, *control, kind_of(doc_->read(), focused_));
     }
@@ -191,14 +191,14 @@ void browser::run_clipboard_verb(std::string_view verb) {
 
 void browser::clipboard_verb(std::string_view verb) {
     if (verb == "Select All") {
-        // THE ONE VERB THAT DOES NOT DISPATCH, so this arm may hold a pointer
-        // into the form store: nothing runs between fetching it and using it.
+        // The one verb that does not dispatch, so this arm may hold a pointer
+        // into the form store: no script runs between fetching and using it.
         if (control_state * control = editable_focus(); control != nullptr) {
             forms_.select_all(*control);
             mark(dirty::paint);
             return;
         }
-        // Nothing editable focused: select the whole PAGE.
+        // Nothing editable focused: select the whole page.
         const std::vector<text_run> runs = text_runs();
         if (!runs.empty()) {
             selection_anchor_ = text_position{runs.front().source, runs.front().offset};
@@ -209,36 +209,19 @@ void browser::clipboard_verb(std::string_view verb) {
         return;
     }
     const std::string type = verb == "Copy" ? "copy" : verb == "Cut" ? "cut" : "paste";
-    if (focused_ && bindings_->dispatch(type, focused_)) { return; } // cancelled
+    if (focused_ && bindings_->dispatch(type, focused_)) { return; } // Cancelled.
 
-    // AFTER THE DISPATCH, NOT BEFORE IT. The control used to be fetched at the
-    // top of this function and used down here, across page JavaScript.
-    //
-    // `form_store::states_` is a boost::unordered_flat_map - open addressing,
-    // no reference stability - and a control's state is SEEDED the first time
-    // anything asks for it, which reading `.value` from script does. So a
-    // `cut` or `copy` listener that touches a control the page has not touched
-    // before rehashes the table and moves every entry, and the pointer held
-    // here became a pointer into the freed bucket array. Reproduced with a
-    // listener that creates 96 inputs: `form_store::selected_text` segfaulted
-    // constructing a std::string from the freed state, and the two writes
-    // below - insert_text for Paste, delete_selection for Cut - landed in
-    // freed memory, leaving the live control untouched. Ctrl+X is the trigger.
-    //
-    // RE-FETCHING IS THE FIX, NOT A NODE-BASED MAP, and the difference matters:
-    // reference stability would answer the rehash and nothing else. A listener
-    // may also blur the field, focus another one, remove it from the document,
-    // or navigate - and `browser::load_html` calls `forms_.clear()`. A stable
-    // node would then be a freed node, or worse, a LIVE pointer to the wrong
-    // control that Cut would happily empty. Asking again re-validates all of
-    // it: that something is still focused, that it is still editable, and that
-    // it is the control the page left focused rather than the one it started
-    // with. run_clipboard_verb above already re-fetches after calling this,
-    // for the same reason; this matches it.
+    // Fetch the focused control only after dispatching the event. A `cut`/`copy`
+    // listener runs page JavaScript that may seed new form state (rehashing
+    // form_store::states_, a boost::unordered_flat_map with no reference
+    // stability), blur or remove the field, focus another, or navigate
+    // (loading a page clears forms_). Asking again re-validates that something
+    // is still focused and editable; a node-based map would fix only the
+    // rehash.
     control_state * control = editable_focus();
     if (control == nullptr) {
-        // No editable focused: Copy takes the PAGE selection. Cut and paste
-        // have nowhere to act, and a page is not editable.
+        // No editable focused: Copy takes the page selection. Cut and Paste
+        // have nowhere to act, because a page is not editable.
         if (verb == "Copy" && has_selection()) {
             clipboard_ = selected_text();
             if (clipboard_write_) { clipboard_write_(clipboard_); }
@@ -247,7 +230,7 @@ void browser::clipboard_verb(std::string_view verb) {
     }
     if (verb == "Paste") {
         const std::string text = clipboard_read_ ? clipboard_read_() : clipboard_;
-        // `beforeinput` first, as for typing - and the control asked for
+        // `beforeinput` first, as for typing, and the control is fetched
         // again after it, for the reason above.
         if (!text.empty() && !before_edit("insertFromPaste", text)) {
             if (control_state * live = editable_focus(); live != nullptr) {

@@ -1,12 +1,20 @@
+//===- ctbrowser/lib/Shell/net/url_encoding.cpp - URL text encoding -------===//
+//
+// The text helpers the URL parser shares: UTF-8 to code points and back,
+// percent-encoding with the WHATWG URL Standard's encode sets, and the special
+// schemes with their default ports. § numbers refer to the URL Standard.
+//
+//===----------------------------------------------------------------------===//
+
 #include "url_internal.hpp"
 
 namespace ctbrowser::shell::url_detail {
 // --- code points in and out ---------------------------------------------------
 
-// The input as code points. A malformed byte decodes as itself (decode_utf8's
-// rule), so a Latin-1 attribute value still parses; a WTF-8 lone surrogate
-// comes through as its surrogate code point and is replaced where the
-// standard says (percent-encoding, the host).
+/// The input as code points. A malformed byte decodes as itself (decode_utf8's
+/// rule), so a Latin-1 attribute value still parses; a WTF-8 lone surrogate
+/// comes through as its surrogate code point and is replaced where the
+/// standard says (percent-encoding, the host).
 [[nodiscard]] std::u32string code_points(std::string_view utf8) {
     std::u32string out;
     out.reserve(utf8.size());
@@ -14,19 +22,22 @@ namespace ctbrowser::shell::url_detail {
     return out;
 }
 
+/// Appends \p c as UTF-8, writing U+FFFD for a surrogate or out-of-range value.
 void append_scalar(std::string & out, char32_t c) {
     append_utf8(out, is_surrogate(c) || c > 0x10FFFF ? 0xFFFDu : c);
 }
 
+/// \p text as UTF-8, with surrogates replaced by U+FFFD.
 [[nodiscard]] std::string utf8_of(std::u32string_view text) {
     std::string out;
     for (const char32_t c : text) { append_scalar(out, c); }
     return out;
 }
 
-// "UTF-8 decode without BOM": bytes to code points, every malformed sequence
-// U+FFFD. decode_utf8 hands back the lead byte and advances by one for those,
-// so a code point >= 0x80 that took one byte is the tell.
+/// Encoding Standard "UTF-8 decode without BOM": bytes to code points, with
+/// every malformed sequence replaced by U+FFFD. decode_utf8 hands back the lead
+/// byte and advances by one for those, so a code point >= 0x80 that took one
+/// byte marks a malformed sequence.
 [[nodiscard]] std::u32string decode_replacing(std::string_view bytes) {
     std::u32string out;
     for (std::size_t at = 0; at < bytes.size();) {
@@ -38,8 +49,10 @@ void append_scalar(std::string & out, char32_t c) {
     return out;
 }
 
-// --- §1.3 percent-encode sets --------------------------------------------------
+// --- URL Standard §1.3: percent-encode sets -------------------------------------------------
 
+/// True when \p c must be percent-encoded in \p set. Every set includes the
+/// C0 control set (and, here, everything above U+007E).
 [[nodiscard]] constexpr bool in_set(char32_t c, encode_set set) noexcept {
     if (c < 0x20 || c > 0x7E) { return true; } // the C0 control set, in every set
     const auto any = [c](std::string_view chars) {
@@ -58,6 +71,7 @@ void append_scalar(std::string & out, char32_t c) {
     return false;
 }
 
+/// Appends \p c to \p out, as `%XX` for each UTF-8 byte when it is in \p set.
 void percent_encode(std::string & out, char32_t c, encode_set set) {
     if (!in_set(c, set)) {
         out.push_back(static_cast<char>(c));
@@ -80,8 +94,10 @@ void percent_encode(std::string & out, char32_t c, encode_set set) {
     return out;
 }
 
-// --- §4.2 special schemes --------------------------------------------------------
+// --- URL Standard §4.2: special schemes --------------------------------------------------------
 
+/// The default port of a special scheme; nullopt for `file` and every
+/// non-special scheme.
 [[nodiscard]] std::optional<std::uint16_t> default_port(std::string_view scheme) noexcept {
     if (scheme == "http" || scheme == "ws") { return 80; }
     if (scheme == "https" || scheme == "wss") { return 443; }

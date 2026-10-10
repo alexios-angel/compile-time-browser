@@ -1,6 +1,10 @@
-// browser - a page's lifecycle: loading a document (and the navigation a
-// script queues from inside one), the reset between pages, and what an
-// embedder installs on a browser - natives, fonts, hooks, a script to run.
+//===- ctbrowser/lib/Shell/browser/lifecycle.cpp - Page lifecycle ---------===//
+//
+// A page's lifecycle: loading a document (and the navigation a script queues
+// from inside one), the reset between pages, and what an embedder installs
+// on a browser: natives, fonts, hooks, a script to run.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -11,18 +15,16 @@ void browser::load_html(std::string_view html) {
 }
 
 void browser::load_document(std::string_view html, source_kind kind) {
-    // A NAVIGATION FROM INSIDE A SCRIPT IS QUEUED, NOT PERFORMED. `element.click()`
-    // reaches `browser::activate`, which calls the embedder's navigate hook, and
-    // an embedder's hook calls this - ctbrowse's does - so this function can be
-    // re-entered from inside a script that `run_scripts` is running.
+    // A navigation from inside a script is queued, not performed.
+    // `element.click()` reaches `browser::activate`, which calls the
+    // embedder's navigate hook, and an embedder's hook (ctbrowse's, for one)
+    // calls this, so this function can be re-entered from inside a script that
+    // `run_scripts` is running.
     //
-    // DOING IT IMMEDIATELY WAS A USE-AFTER-FREE, and one that predates giving
-    // every <script> its own program: the nested load resets `script_` and
-    // frees the programs, and then returns into an interpreter still executing
-    // one of them, on a context that no longer exists. It also let the
-    // abandoned page's remaining scripts run against the new document, read it
-    // and overwrite it - measured, with the discarded page's second script
-    // writing into a page that had already finished loading.
+    // Loading immediately would reset `script_` and free the running programs
+    // while the interpreter is still executing one of them (use-after-free),
+    // and would let the old page's remaining scripts run against the new
+    // document.
     //
     // Deferring is also what a browser does: navigation is not synchronous.
     // The script that asked for it finishes, `run_scripts` stops at the next
@@ -36,9 +38,8 @@ void browser::load_document(std::string_view html, source_kind kind) {
     loading_ = true;
     load_one_page(html, kind);
     loading_ = false;
-    // A queued navigation, and any it queues in turn. A page that navigates on
-    // load forever is a page that hangs in a real browser too, so there is no
-    // cap here that a real one does not also lack.
+    // A queued navigation, and any it queues in turn. There is no cap: a page
+    // that navigates on load forever hangs in a real browser too.
     while (pending_load_) {
         std::string next = std::move(*pending_load_);
         const source_kind next_kind = pending_kind_;
@@ -50,18 +51,18 @@ void browser::load_document(std::string_view html, source_kind kind) {
 }
 
 void browser::load_one_page(std::string_view html, source_kind kind) {
-    source_html_ = html; // what location.reload() re-runs
+    source_html_ = html; // What location.reload() re-runs.
     source_kind_ = kind;
     // Both the document and the cascade are rebuilt. Keeping the old style
     // engine would accumulate every page's <style> rules across navigations,
     // which shows up as the previous page bleeding into the next one.
     reset_document();
-    // XML AND HTML ARE TWO FRONT ENDS, not one with a flag. See dom/xml.hpp:
+    // XML and HTML are two front ends, not one with a flag. See dom/xml.hpp:
     // nothing is implied, every tag may self-close, case is preserved, and a
     // `<script>` written as `<![CDATA[ ... ]]>` is code rather than code with
     // a marked section on the front. A malformed XML document does not
-    // recover - there is nothing to recover to - so the error is kept and the
-    // partial tree is loaded, which is what lets an embedder show it.
+    // recover (there is nothing to recover to), so the error is kept and the
+    // partial tree is loaded, which lets an embedder show it.
     xml_error_.clear();
     parse_result parsed;
     if (kind == source_kind::xml) {
@@ -69,11 +70,11 @@ void browser::load_one_page(std::string_view html, source_kind kind) {
         parsed = std::move(read.tree);
         xml_error_ = std::move(read.error);
     } else if (const std::string declared = prescan_encoding(html); !declared.empty()) {
-        // What the page DECLARES it is encoded as - the BOM or the <meta>
-        // prescan - is what `document.characterSet` answers; UTF-8 otherwise.
-        // THE HTML ITSELF IS PARSED BY run_scripts, because the parse and the
-        // scripts are one thing: HTML 13.2.6.4.8 stops the parser at every
-        // `</script>` and runs it against the tree built so far, and
+        // What the page declares it is encoded as (the BOM or the <meta>
+        // prescan) is what `document.characterSet` answers; UTF-8 otherwise.
+        // The HTML itself is parsed later by run_scripts, because the parse
+        // and the scripts are one process: HTML 13.2.6.4.8 stops the parser at
+        // every `</script>` and runs it against the tree built so far, and
         // `document.write` from it goes into the parser's input stream. See
         // bindings/document/write.cpp.
         doc_->set_encoding(declared);
@@ -84,21 +85,21 @@ void browser::load_one_page(std::string_view html, source_kind kind) {
     style_error_.clear();
     resource_loads_.clear();
     announced_loads_.clear();
-    // BEFORE THE PARSE, because it clears the SVG store the parse fills - and
-    // the <img> walk it does is redone before every layout anyway
+    // Before the parse, because it clears the SVG store the parse fills. The
+    // <img> walk it does is redone before every layout anyway
     // (refresh_images), which is where the elements the parse made are seen.
     load_images();
     for (const auto & [id, source] : parsed.svg_sources) { svg_.set_source(id, source); }
     mark(dirty::everything);
-    // THE PARSE AND THE SCRIPTS. An XML document's tree is already built; an
+    // The parse and the scripts. An XML document's tree is already built; an
     // HTML page's is built here, script by script.
     run_scripts();
     title_ = extract_title();
-    // Images and fonts are resolved BEFORE layout, because an <img> with no
-    // width attribute takes its size from the decoded bitmap and layout has
-    // no way to ask; the page's @font-face files for the same reason.
-    // The sheets the last script did not see - or all of them, on a page
-    // with no script.
+    // Styles, images and fonts are resolved before layout, because an <img>
+    // with no width attribute takes its size from the decoded bitmap and
+    // layout has no way to ask; the page's @font-face files likewise. Load the
+    // sheets the last script did not see, or all of them on a page with no
+    // script.
     if (!author_sheet_loaded_) {
         load_author_styles();
     } else {
@@ -108,9 +109,8 @@ void browser::load_one_page(std::string_view html, source_kind kind) {
     // The sheets and scripts above are owed their `load`. Handed over here
     // because run_scripts has only just built the bindings that queue them.
     announce_resource_loads();
-    // AND THE PAGE HAS LOADED. Announced on the next tick, not here - see
-    // browser::load_event_pending_ for why the delay is the point rather than
-    // an accident.
+    // The page has loaded. That is announced on the next tick, not here; see
+    // browser::load_event_pending_ for why the delay is deliberate.
     load_event_pending_ = true;
 }
 
@@ -118,19 +118,19 @@ void browser::reset_document() {
     doc_ = std::make_unique<document>(atoms_);
     styles_ = std::make_unique<ctbrowser::style::engine>(atoms_);
     install_text_measure();
-    // BEFORE the first sheet, so its conditions are evaluated against the real
+    // Before the first sheet, so its conditions are evaluated against the real
     // viewport rather than against the 1024x768 default and then corrected.
     (void)media_environment_changed();
     styles_->add_sheet(ctbrowser::style::ua_css, ctbrowser::style::ua_origin);
-    // The engine object is NEW, so bindings that outlive this call would be
-    // matching selectors through a freed one.
+    // The style engine object is new, and bindings that outlive this call
+    // would otherwise match selectors through the freed one.
     if (bindings_) { bindings_->observe_style_engine(*styles_); }
     resolved_.clear();
 }
 
 void browser::reload() {
     const std::string source = source_html_;
-    // by value: load_document clears source_html_'s referent
+    // Copied: load_document overwrites source_html_.
     load_document(source, source_kind_);
 }
 
@@ -145,23 +145,21 @@ void browser::define_native(std::string name, script::native_fn fn) {
     if (script_) { install_embedder_natives(); }
 }
 
-// WHERE THE VENDORED FACES ARE, and the reason it is a function rather than
-// three lines inside use_real_fonts: a PACKAGER has to ask the same question.
-// The faces are loaded through the asset registry under names that begin with
-// this directory, so an application that bakes them in has to bake them under
-// the names the run will ask for - and a packager that worked the directory out
-// for itself would be a second copy of this rule, free to drift from the one
-// that decides at run time.
+/// The directory holding the vendored font faces: $CTBROWSER_FONT_PATH, or
+/// "fonts". It is a function rather than a few lines inside use_real_fonts
+/// because a packager must ask the same question: the faces are loaded
+/// through the asset registry under names that begin with this directory, so
+/// an application that bakes them in must use the names the run will ask
+/// for, and a second copy of this rule could drift.
 std::string browser::default_font_directory() {
     const char * from_env = std::getenv("CTBROWSER_FONT_PATH");
     return from_env != nullptr ? std::string{from_env} : std::string{"fonts"};
 }
 
 bool browser::use_real_fonts(std::string_view directory) {
-    // An empty directory means "ask the build". Resolved HERE rather than as a
-    // default argument because a default argument cannot read the environment,
-    // and resolved for every caller rather than at seventeen call sites
-    // because the eighteenth would be the one that forgot.
+    // An empty directory means "use default_font_directory()". It is resolved
+    // here, not as a default argument (which cannot read the environment), so
+    // no caller has to repeat the rule.
     std::string resolved;
     if (directory.empty()) {
         resolved = default_font_directory();
@@ -169,17 +167,14 @@ bool browser::use_real_fonts(std::string_view directory) {
     }
     std::unique_ptr<ctbrowser::raster::ttf_backend> backend = ctbrowser::raster::make_ttf_backend();
     if (!backend) { return false; }
-    // The baked-in faces first, if this build has any. They go into the same
-    // registry the loop below reads, under the same names, so nothing after
-    // this point knows or cares whether a face came from the binary or the
-    // disk - which is what the registry-before-filesystem order was always
-    // for. A build without them registers nothing and the loop reads the
-    // directory, exactly as before.
+    // Register the faces embedded in the binary, if any, under the same names
+    // the loop below loads, so the loop does not care whether a face came from
+    // the binary or the disk. Without embedded faces it reads the directory.
     (void)register_embedded_fonts(assets_, directory);
-    // The EMBEDDER named this directory, not the page, so a confined registry
+    // The embedder named this directory, not the page, so a confined registry
     // may read from it wherever it is.
     assets_.add_root(std::filesystem::path{directory});
-    // family, then the four (bold, italic) files that make it up.
+    // A CSS family name and the file stem of its four (bold, italic) files.
     struct vendored {
         std::string_view family;
         std::string_view stem;
@@ -200,14 +195,14 @@ bool browser::use_real_fonts(std::string_view directory) {
         }
     }
     if (backend->face_count() == 0) { return false; }
-    backend->set_default_family("serif"); // what the UA sheet gives <body>
+    backend->set_default_family("serif"); // What the UA sheet gives <body>.
     ttf_ = std::move(backend);
     load_page_fonts();
     fonts_ = ttf_.get();
     renderer_.fonts = fonts_;
-    // The canvas measures and draws its own text, so it needs the same backend
-    // - otherwise a page's canvas keeps the bitmap font while the document
-    // around it switches to real faces.
+    // The canvas measures and draws its own text, so it needs the same
+    // backend; otherwise a page's canvas keeps the bitmap font while the
+    // document around it switches to real faces.
     canvases_.set_fonts(fonts_);
     // Everything measured so far was measured with the other font.
     mark(dirty::everything);
@@ -227,21 +222,19 @@ bool browser::run_script(std::string_view source) {
         script_error_ = compiled->error;
         return false;
     }
-    // KEPT, not scoped. A closure holds a `const function_proto *` into its
-    // program, and anything that calls back later - a timer, a listener,
-    // requestAnimationFrame - dereferences it long after this returned. A
-    // temporary works exactly until the first callback.
+    // Kept, not scoped. A closure holds a `const function_proto *` into its
+    // program, and anything that calls back later (a timer, a listener,
+    // requestAnimationFrame) dereferences it long after this returns.
     const script::program & kept = *compiled;
     extra_programs_.push_back(std::move(compiled));
     const script::run_result result = script_->run(kept);
-    // CLEARED ON SUCCESS, not only set on failure. It was only ever assigned,
-    // so one broken script made every later good one report that same error for
-    // the rest of the page's life - and callers use this to decide whether the
-    // script ran at all.
+    // Reset on every run so that one failing script does not make later
+    // successful ones report its error; callers use this to tell whether the
+    // script ran.
     script_error_ = result.ok ? std::string{} : result.error;
-    // A SUCCESSFUL RUN DOES NOT ERASE A FAULT IT DID NOT CAUSE. Callbacks
-    // report through the same field, and running any script afterwards - a
-    // test's probe, a devtools eval - would otherwise clear the one message
+    // A successful run does not erase a fault it did not cause. Callbacks
+    // report through the same field, and running any script afterwards (a
+    // test's probe, a devtools eval) would otherwise clear the one message
     // saying why the page stopped responding.
     if (script_error_.empty() && bindings_ && !bindings_->callback_error().empty()) {
         script_error_ = bindings_->callback_error();

@@ -1,3 +1,15 @@
+//===- net.hpp - Synchronous HTTP client ------------------------*- C++ -*-===//
+//
+// HTTP over libcurl, which also brings TLS (Schannel on Windows), so the cross
+// build has https:// with no OpenSSL. See docs/build.md.
+//
+// Synchronous: a request blocks the frame it is made in, which is why the
+// timeout is short by default and why the asset registry is consulted first;
+// a page that bakes its resources in never waits.
+//
+// No third-party header is included here: curl.h stays in net.cpp.
+//
+//===----------------------------------------------------------------------===//
 #pragma once
 #include <cstddef>
 #include <string>
@@ -6,60 +18,45 @@
 
 #include <ctbrowser/shell/net/policy.hpp>
 
-// HTTP over libcurl, which also brings TLS - Schannel on Windows - so the
-// cross build has https:// with no OpenSSL. See docs/build.md.
-//
-// SYNCHRONOUS: a request BLOCKS the frame it is made in, which is why the
-// timeout is short by default and why the asset registry is consulted first -
-// a page that bakes its resources in never waits.
-//
-// NOTHING third-party is included above: curl.h lives in net.cpp and reaches
-// nobody.
-
 namespace ctbrowser::shell {
 
+/// Options for http_get.
 struct http_options {
     int timeout_ms = 5000;
     int max_redirects = 5;
-    // Exceeding this limit fails the request and discards its partial body.
-    // Zero accepts only an empty body.
+    /// The largest body accepted (8 MiB). Exceeding it fails the request and
+    /// discards the partial body. Zero accepts only an empty body.
     std::size_t max_bytes = 8U * 1024U * 1024U;
     std::string user_agent = "ctbrowser/2.0";
-    // Which schemes, hosts and addresses may be reached, checked on the URL, on
-    // every redirect hop and on the connected address. The body cap is the
-    // smaller of max_bytes and policy.max_body_bytes.
+    /// Which schemes, hosts and addresses may be reached, checked on the URL, on
+    /// every redirect hop and on the connected address. The body cap is the
+    /// smaller of max_bytes and policy.max_body_bytes.
     fetch_policy policy{};
 };
 
+/// The outcome of http_get.
 struct http_response {
     int status = 0;
-    std::string url;   // the FINAL url, after redirects
-    std::string error; // non-empty: the request never completed
+    std::string url;   // The final URL, after redirects.
+    std::string error; // Non-empty when the request never completed.
     std::vector<std::byte> body;
     std::string content_type;
 
-    // `Response.ok` in the fetch API is the 2xx range, and it is NOT the same
-    // question as "did the request complete" - a 404 completed.
+    /// `Response.ok` in the fetch API: the 2xx range. Not the same question as
+    /// completed(); a 404 completed.
     [[nodiscard]] bool ok() const noexcept { return status >= 200 && status < 300; }
     [[nodiscard]] bool completed() const noexcept { return error.empty(); }
 };
 
-// Whether this build can do https:// at all.
-//
-// A RUNTIME QUESTION NOW, and it had to become one. This was constexpr on
-// CTBROWSER_WITH_TLS, which was set by `find_package(OpenSSL)` - correct while
-// the transport was Asio and the engine linked OpenSSL itself. With libcurl the
-// engine links no TLS library at all: curl brings its own, and on Windows that
-// is SCHANNEL, the operating system's stack, which no OpenSSL probe can see.
-//
-// So the transport answers instead, and the libcurl one answers by ASKING
-// LIBCURL - curl_version_info reports what it was actually built with, which
-// cannot drift from the truth the way a build-system guess can.
+/// Whether this build can do https://. Asks libcurl (curl_version_info) at
+/// run time, because curl brings its own TLS backend (Schannel on Windows),
+/// which no build-time OpenSSL probe can detect.
 [[nodiscard]] bool tls_available() noexcept;
 
-// GET, following redirects (each hop re-checked against options.policy). NEVER THROWS: a failure is
-// an `error` on the response, because that is what the caller has to turn into a rejected promise
-// anyway, and because an exception crossing into the script engine has nowhere to go.
+/// GET \p url, following redirects (each hop re-checked against
+/// options.policy). Never throws: a failure is an `error` on the response,
+/// because the caller has to turn it into a rejected promise anyway, and an
+/// exception crossing into the script engine has nowhere to go.
 [[nodiscard]] http_response http_get(std::string_view url, http_options options = {});
 
 } // namespace ctbrowser::shell

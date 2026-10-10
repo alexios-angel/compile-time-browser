@@ -1,3 +1,26 @@
+//===- composite.hpp - Canvas compositing and blend modes -------*- C++ -*-===//
+//
+// `globalCompositeOperation`: how a new pixel combines with the one under it.
+//
+// p5.js's tint() depends on it: it composites with luminosity, color, multiply
+// and destination-in, and treating them all as source-over draws a tinted
+// sprite as a solid rectangle of the tint colour. It is also all of p5's
+// `blendMode()`, whose fourteen names are these operators under different
+// spellings, and it is how any page draws a glow, a mask or a knockout.
+//
+// The maths is the W3C Compositing and Blending Level 1 formula, exactly:
+//
+//     Cs' = (1 - ab) x Cs + ab x B(Cb, Cs)      the blend, weighted by backdrop
+//     co  = as x Fa x Cs' + ab x Fb x Cb        premultiplied result
+//     ao  = as x Fa + ab x Fb
+//
+// with (Fa, Fb) chosen by the Porter-Duff operator. Every mode in the spec is
+// one blend function B and one pair of coefficients, so there is no per-mode
+// special case below, and the table can be checked against the spec line by
+// line.
+//
+//===----------------------------------------------------------------------===//
+
 #pragma once
 #include <algorithm>
 #include <cmath>
@@ -6,33 +29,9 @@
 
 #include <ctbrowser/paint/paint.hpp>
 
-// `globalCompositeOperation` - how a new pixel combines with the one under it.
-//
-// Ignoring it was a silent wrong answer with a real victim: p5.js builds a
-// tinted image out of FIVE composited draws - luminosity, color, multiply,
-// destination-in - and with every mode treated as source-over the `multiply`
-// fillRect covers the whole canvas and the `destination-in` that would restore
-// the alpha channel does nothing. A tinted sprite came out as a solid rectangle
-// of the tint colour. Found by comparing a page against Chrome pixel by pixel.
-//
-// It is also all of `blendMode()`, which p5 exposes as fourteen names that are
-// these operators under different spellings, and it is how any page draws a
-// glow, a mask or a knockout.
-//
-// The maths is the W3C Compositing and Blending Level 1 formula and not an
-// approximation of it:
-//
-//     Cs' = (1 - ab) x Cs + ab x B(Cb, Cs)      the blend, weighted by backdrop
-//     co  = as x Fa x Cs' + ab x Fb x Cb        premultiplied result
-//     ao  = as x Fa + ab x Fb
-//
-// with (Fa, Fb) chosen by the Porter-Duff operator. Every mode in the spec is
-// one blend function B and one pair of coefficients, so there is no per-mode
-// special case anywhere below - which is the point: a table of formulas is
-// checkable against the spec line by line, and a pile of cases is not.
-
 namespace ctbrowser::shell {
 
+/// A `globalCompositeOperation` value: a Porter-Duff operator or a blend mode.
 enum class composite : std::uint8_t {
     // Porter-Duff. source_over is the default and the only one most pages use.
     source_over,
@@ -66,7 +65,9 @@ enum class composite : std::uint8_t {
     luminosity,
 };
 
-// The spec's own names, so the property round-trips exactly what a page set.
+/// Maps a spec name ("source-over", "xor", ...) to its operator. Returns
+/// source_over for an unknown name; the canvas binding treats that as "not
+/// recognised" unless the name was "source-over" itself.
 [[nodiscard]] inline composite composite_from_name(std::string_view name) {
     struct entry {
         std::string_view name;
@@ -103,23 +104,21 @@ enum class composite : std::uint8_t {
     for (const entry & known : table) {
         if (known.name == name) { return known.mode; }
     }
-    // An UNKNOWN value leaves the operator alone, per spec - assigning rubbish to
-    // globalCompositeOperation is not an error and must not silently change how
-    // the next shape is drawn.
+    // Per spec an unknown value leaves the operator unchanged and is not an
+    // error; the caller detects this return and ignores the assignment.
     return composite::source_over;
 }
 
-// WHETHER A PIXEL THE SOURCE NEVER TOUCHED HAS TO CHANGE.
-//
-// Five operators clear the rest of the canvas: put as = 0 in the formula above
-// and ao comes out 0 for source-in, source-out, destination-in,
-// destination-atop and copy. So `destination-in` with a small shape does not
-// mask that shape - it throws away everything outside it, which is exactly what
-// a page uses it for.
-//
-// canvas_context handles this by snapshotting the backdrop and clearing the
-// surface before such a draw: an untouched pixel is then transparent, which is
-// the right answer, and a touched one composites against the snapshot.
+/// Whether a pixel the source never touched has to change.
+///
+/// Five operators clear the rest of the canvas: put as = 0 in the formula above
+/// and ao comes out 0 for source-in, source-out, destination-in,
+/// destination-atop and copy. So `destination-in` with a small shape throws
+/// away everything outside that shape, which is what pages use it for.
+///
+/// canvas_context handles this by snapshotting the backdrop and clearing the
+/// surface before such a draw: an untouched pixel is then transparent, which is
+/// the right answer, and a touched one composites against the snapshot.
 [[nodiscard]] inline constexpr bool clears_untouched(composite mode) noexcept {
     return mode == composite::source_in || mode == composite::source_out ||
            mode == composite::destination_in || mode == composite::destination_atop ||
@@ -130,14 +129,15 @@ namespace detail {
 
 // --- the separable blend functions, per channel, on 0..1 ------------------
 
-// Not constexpr: soft-light takes a square root, and std::sqrt is not.
+/// B(Cb, Cs) for one channel of a separable blend mode; non-blending modes
+/// return the source channel. Not constexpr: soft-light takes a square root,
+/// and std::sqrt is not constexpr.
 [[nodiscard]] inline float blend_channel(composite mode, float cb, float cs) {
     switch (mode) {
     case composite::multiply: return cb * cs;
     case composite::screen: return cb + cs - cb * cs;
     case composite::overlay:
-        // Hard-light with the arguments swapped, which is what the spec says it
-        // is - writing it that way keeps the two from drifting apart.
+        // The spec defines overlay as hard-light with the arguments swapped.
         return blend_channel(composite::hard_light, cs, cb);
     case composite::darken: return std::min(cb, cs);
     case composite::lighten: return std::max(cb, cs);
@@ -169,8 +169,7 @@ namespace detail {
 // --- the non-separable ones ------------------------------------------------
 //
 // These are defined on the colour as a whole, in the spec's own terms: Lum, Sat,
-// ClipColor, SetLum, SetSat. Written out rather than approximated, because
-// "roughly luminosity" is the kind of thing that looks fine and is wrong.
+// ClipColor, SetLum, SetSat, written out exactly.
 
 struct rgb {
     float r = 0;
@@ -178,10 +177,13 @@ struct rgb {
     float b = 0;
 };
 
+/// The spec's Lum(C).
 [[nodiscard]] inline constexpr float luminance(rgb c) noexcept {
     return 0.3f * c.r + 0.59f * c.g + 0.11f * c.b;
 }
 
+/// The spec's ClipColor(C): pulls out-of-range channels back into 0..1
+/// while keeping the luminance.
 [[nodiscard]] inline rgb clip_color(rgb c) {
     const float lum = luminance(c);
     const float low = std::min({c.r, c.g, c.b});
@@ -205,15 +207,18 @@ struct rgb {
     return c;
 }
 
+/// The spec's SetLum(C, l).
 [[nodiscard]] inline rgb set_luminance(rgb c, float want) {
     const float shift = want - luminance(c);
     return clip_color(rgb{c.r + shift, c.g + shift, c.b + shift});
 }
 
+/// The spec's Sat(C).
 [[nodiscard]] inline constexpr float saturation_of(rgb c) noexcept {
     return std::max({c.r, c.g, c.b}) - std::min({c.r, c.g, c.b});
 }
 
+/// The spec's SetSat(C, s).
 [[nodiscard]] inline rgb set_saturation(rgb c, float want) {
     const float low = std::min({c.r, c.g, c.b});
     const float high = std::max({c.r, c.g, c.b});
@@ -238,8 +243,8 @@ struct rgb {
            mode == composite::color_blend || mode == composite::luminosity;
 }
 
-// The Porter-Duff coefficients. Every blend mode composites with source-over's
-// pair, which is what makes `multiply` a blend and `source-in` an operator.
+/// The Porter-Duff coefficients. Every blend mode composites with source-over's
+/// pair, which is what makes `multiply` a blend and `source-in` an operator.
 struct coefficients {
     float fa = 1;
     float fb = 0;
@@ -264,13 +269,12 @@ struct coefficients {
 
 } // namespace detail
 
-// One source pixel over one backdrop pixel. Both 0xAARRGGBB and NOT
-// premultiplied, which is what the rest of this engine stores - the formula
-// wants premultiplied, so this multiplies in and divides back out.
+/// One source pixel over one backdrop pixel. Both are 0xAARRGGBB and not
+/// premultiplied, which is what the rest of this engine stores; the formula
+/// wants premultiplied, so this multiplies in and divides back out.
 [[nodiscard]] inline std::uint32_t composite_pixel(composite mode, std::uint32_t backdrop,
                                                    std::uint32_t source) {
-    // The overwhelmingly common case, and the one that must not pay for any of
-    // the rest: an opaque source over anything, source-over.
+    // Fast path for the most common case: an opaque source with source-over.
     if (mode == composite::source_over && (source >> 24) == 0xFF) { return source; }
 
     static constexpr float inv = 1.0f / 255.0f;
@@ -283,8 +287,8 @@ struct coefficients {
                          static_cast<float>((source >> 8) & 0xFF) * inv,
                          static_cast<float>(source & 0xFF) * inv};
 
-    // Cs' - the blended colour, weighted by how opaque the backdrop is. With no
-    // backdrop there is nothing to blend WITH, so the source passes through:
+    // Cs': the blended colour, weighted by how opaque the backdrop is. With no
+    // backdrop there is nothing to blend with, so the source passes through;
     // that is why `multiply` onto a transparent canvas draws the source rather
     // than black.
     detail::rgb blended = cs;
@@ -304,9 +308,9 @@ struct coefficients {
     if (out_alpha <= 0.0f) { return 0; } // fully transparent has no colour
 
     const auto channel = [&](float source_channel, float backdrop_channel) {
-        // Premultiplied out, then divided back by the result's alpha - which is
-        // the step that is easy to leave out and shows up as a colour that goes
-        // pale wherever it is semi-transparent.
+        // Premultiplied, then divided back by the result's alpha. Leaving out
+        // the division gives wrong colours wherever the result is
+        // semi-transparent.
         const float premultiplied = as * k.fa * source_channel + ab * k.fb * backdrop_channel;
         return static_cast<std::uint32_t>(
             std::clamp(premultiplied / out_alpha, 0.0f, 1.0f) * 255.0f + 0.5f);

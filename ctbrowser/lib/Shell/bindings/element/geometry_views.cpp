@@ -1,3 +1,13 @@
+//===- geometry_views.cpp - Element geometry and scrolling ----------------===//
+//
+// Element geometry and scrolling bindings: locating an element's fragments,
+// getBoundingClientRect/getClientRects, GeometryUtils (getBoxQuads,
+// convert*FromNode), checkVisibility, and scroll/scrollTo/scrollBy/
+// scrollIntoView with the scrollTop/scrollLeft machinery. Bare section
+// numbers (§6) refer to the CSSOM View specification.
+//
+//===----------------------------------------------------------------------===//
+
 #include "../computed_style/internal.hpp"
 #include "internal.hpp"
 
@@ -59,10 +69,10 @@ point dom_bindings::scroll_offset_of(node_id id) const {
     return it == element_scrolls_.end() ? point{} : it->second;
 }
 
-// "Scroll an element to x, y" - CSSOM View §6, with the clamp of §2's
-// rightward-and-downward overflow directions. A box with nothing to scroll -
-// `overflow: visible`, or no box at all - ignores the write, as the setters'
-// "no associated scrolling box" step says.
+/// "Scroll an element to x, y" (§6), with the clamp of §2's
+/// rightward-and-downward overflow directions. A box with nothing to scroll
+/// (`overflow: visible`, or no box at all) ignores the write, as the setters'
+/// "no associated scrolling box" step says.
 void dom_bindings::scroll_element_to(node_id id, double x, double y) {
     flush_layout();
     const located at = locate(id);
@@ -79,9 +89,9 @@ void dom_bindings::scroll_element_to(node_id id, double x, double y) {
     queue_scroll_event(id);
 }
 
-// The scrollTop/scrollLeft getters, §6: zero for the root in quirks mode and
-// for a box-less element; the window's position for the root, and for a
-// quirks-mode body that is not potentially scrollable; else the offset.
+/// The scrollTop/scrollLeft getters, §6: zero for the root in quirks mode and
+/// for a box-less element; the window's position for the root, and for a
+/// quirks-mode body that is not potentially scrollable; else the offset.
 double dom_bindings::scroll_position(node_id id, char axis) {
     flush_layout();
     const bool quirks = doc_->quirks();
@@ -122,11 +132,12 @@ node_id dom_bindings::scrolling_element() {
     return potentially_scrollable(body) ? node_id{} : body;
 }
 
-// "Determine the scroll-into-view position" (§6.1) for one scrolling box,
-// given the target's rectangle and the box's, both in viewport coordinates,
-// and the box's current position: where the box would have to scroll to.
 namespace {
 
+/// "Determine the scroll-into-view position" (§6.1) along one axis for one
+/// scrolling box: given the alignment `how`, the box's current scroll position,
+/// and the target's and box's edges in viewport coordinates, returns where the
+/// box would have to scroll to.
 [[nodiscard]] float align_edge(std::string_view how, float current, float target_a, float target_b,
                                float box_a, float box_b) {
     const float element = target_b - target_a;
@@ -189,9 +200,9 @@ void dom_bindings::scroll_into_view(node_id id, std::string_view block, std::str
 
 namespace {
 
-// ScrollToOptions, read the way the methods' overloads resolve: two numbers,
-// or one dictionary - whose `behavior` must be one of the three keywords -
-// or nothing. `bad` is the TypeError the IDL conversion would raise.
+/// ScrollToOptions, read the way the methods' overloads resolve: two numbers,
+/// or one dictionary (whose `behavior` must be one of the three keywords), or
+/// nothing. `bad` is set where the IDL conversion would raise a TypeError.
 struct scroll_arguments {
     std::optional<double> x, y;
     bool bad = false;
@@ -225,8 +236,10 @@ struct scroll_arguments {
 
 } // namespace
 
-// Every fragment carries its untransformed box and the mapping from box-local
-// coordinates to the viewport. Rectangle and GeometryUtils APIs share this walk.
+/// Returns one box_geometry per fragment of `self`: the untransformed `kind`
+/// box ("border", "padding", "content" or "margin") and the mapping from
+/// box-local coordinates to the viewport. The rectangle and GeometryUtils APIs
+/// share this walk.
 std::vector<dom_bindings::box_geometry> dom_bindings::client_boxes_of(node_id self,
                                                                       std::string_view kind) const {
     std::vector<box_geometry> out;
@@ -325,12 +338,12 @@ std::vector<rect> dom_bindings::client_rects_of(node_id self) {
     return out;
 }
 
-// getClientRects() (§7), GeometryUtils (§10) and checkVisibility (HTML) on
-// Element.prototype.
+/// Installs getBoundingClientRect() and getClientRects() (§7), GeometryUtils
+/// (§10) and checkVisibility (HTML) on Element.prototype.
 void dom_bindings::install_element_geometry(context & cx) {
     // §7 "getBoundingClientRect()": the smallest rectangle round every
-    // client rect that has a size - an inline over three lines answers the
-    // union, not its first line - the first rect when all are empty, and a
+    // client rect that has a size (an inline over three lines answers the
+    // union, not its first line), the first rect when all are empty, and a
     // zero DOMRect for an element with no box.
     define_operation(
         cx, {"Element"}, "getBoundingClientRect", 0, [this](context & c, std::span<value>) {
@@ -352,9 +365,9 @@ void dom_bindings::install_element_geometry(context & cx) {
             }
             return make_dom_rect(c, bound.value_or(rects.front()));
         });
-    // Every fragment of the element, in viewport coordinates and tree order -
-    // an inline split over lines has one per line - as a DOMRectList: an
-    // array carrying `item`, which is what a page indexes and measures.
+    // getClientRects(): every fragment of the element, in viewport coordinates
+    // and tree order (an inline split over lines has one per line), as a
+    // DOMRectList: an array carrying `item`.
     define_operation(cx, {"Element"}, "getClientRects", 0, [this](context & c, std::span<value>) {
         const value out = c.make_array();
         auto * items = static_cast<script::array_object *>(out.as_heap());
@@ -373,8 +386,8 @@ void dom_bindings::install_element_geometry(context & cx) {
         return out;
     });
     // getBoxQuads({box, relativeTo}): one DOMQuad per box of the element, in
-    // the coordinate space of `relativeTo`'s border box - the viewport when
-    // it is the document or absent. Nothing for an element with no box.
+    // the coordinate space of `relativeTo`'s border box, or of the viewport
+    // when it is the document or absent. Empty for an element with no box.
     define_operation(cx, {"Element"}, "getBoxQuads", 0, [this](context & c, std::span<value> args) {
         const value options = args.empty() ? value::undefined() : args[0];
         std::string box = dict_string(c, options, "box");
@@ -459,8 +472,7 @@ void dom_bindings::install_element_geometry(context & cx) {
     // checkVisibility(options), HTML: false with no box; with the option, a
     // `visibility` other than visible, an inclusive ancestor at `opacity: 0`,
     // or a `content-visibility: auto` ancestor whose content is off-screen.
-    // ponytail: `content-visibility` is not a property the cascade carries,
-    // so its hidden case is not seen here.
+    // A `content-visibility: hidden` ancestor always makes it false.
     define_operation(
         cx, {"Element"}, "checkVisibility", 0, [this](context & c, std::span<value> args) {
             const node_id self = receiver(c);
@@ -501,20 +513,21 @@ void dom_bindings::install_element_geometry(context & cx) {
         });
 }
 
-// WHAT A FINISHED SCROLL'S PROMISE RESOLVES WITH: a ScrollResult whose
-// `interrupted` is false - an instant scroll is never cut short by another
-// (element-scroll-promises reads the member off the settled value).
+/// The promise a finished scroll resolves with: a ScrollResult whose
+/// `interrupted` is false, since an instant scroll is never cut short by
+/// another.
 value dom_bindings::scroll_settled(context & c) {
     auto * result = c.allocate<script::object_object>();
     result->set("interrupted", value::boolean(false));
     return c.make_promise(value::object(result), false);
 }
 
-// scroll(), scrollTo(), scrollBy() and scrollIntoView() on Element.prototype
-// (§6). The three scroll methods return the Promise the specification gives
-// them - a rejected one for an argument the IDL refuses, a resolved one
-// once the (instant) scroll is done; `smooth` completes at once, which the
-// suite accepts because it reads the end position.
+/// Installs scroll(), scrollTo(), scrollBy() and scrollIntoView() on
+/// Element.prototype (§6), and the geometry methods through
+/// install_element_geometry. The three scroll methods return the Promise the
+/// specification gives them: rejected for an argument the IDL refuses,
+/// resolved once the scroll is done. Every scroll is instant; `smooth` also
+/// completes at once, which tests accept because they read the end position.
 void dom_bindings::install_element_scrolling(context & cx) {
     const auto rejected = [](context & c, std::string_view what) {
         const value error = c.make_error("TypeError", std::string{what});
@@ -576,7 +589,7 @@ void dom_bindings::install_element_scrolling(context & cx) {
                 }
             } else if (!args.empty() && !args[0].is_nullish() && !context::truthy(args[0])) {
                 // `null` is the (boolean or ScrollIntoViewOptions) union's
-                // dictionary arm - block "start" - and only a falsy boolean is
+                // dictionary arm, so block "start"; only a falsy boolean is
                 // "end".
                 block = "end";
             }
@@ -584,9 +597,5 @@ void dom_bindings::install_element_scrolling(context & cx) {
             return scroll_settled(c);
         });
 }
-
-// FROM THE CASCADE rather than the box: the root's box carries no resolved
-// properties (box_builder::build sets its style and nothing else), and the
-// rule is about computed values in either axis.
 
 } // namespace ctbrowser::shell

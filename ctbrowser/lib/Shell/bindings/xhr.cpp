@@ -1,20 +1,25 @@
-// dom_bindings - `XMLHttpRequest`, the XMLHttpRequest Standard (§4), over the
-// same resource loading fetch() uses (load_resource: the asset registry, a
-// file beside the page, the network when allowed).
+//===- xhr.cpp - XMLHttpRequest bindings ------------------------*- C++ -*-===//
 //
-// An XHR is an EventTarget whose state machine the page watches:
-// `readyState` UNSENT -> OPENED -> HEADERS_RECEIVED -> LOADING -> DONE, a
+// `XMLHttpRequest` (XMLHttpRequest Standard §4), installed by
+// dom_bindings::install_xhr over the same resource loading fetch() uses
+// (load_resource: the asset registry, a file beside the page, the network
+// when allowed).
+//
+// An XHR is an EventTarget whose state machine the page watches: `readyState`
+// goes UNSENT -> OPENED -> HEADERS_RECEIVED -> LOADING -> DONE, with a
 // `readystatechange` event at each step, then `load` (or `error`/`abort`/
-// `timeout`) and `loadend`, with `progress` events on the way. An
-// asynchronous send does the work on a later turn - one of the page's own
-// timers, as fetch() queues - so `xhr.onload` assigned after `send()` still
-// hears it; a synchronous one (`open(m, u, false)`) finishes inside `send`.
+// `timeout`) and `loadend`, with `progress` events on the way. An asynchronous
+// send does the work on a later turn, on one of the page's own timers as
+// fetch() does, so `xhr.onload` assigned after `send()` still fires; a
+// synchronous one (`open(m, u, false)`) finishes inside `send`.
 //
-// What is here is what a test or a loader reads: the state, the events, the
+// Implemented is what a test or a loader reads: the state, the events, the
 // handler properties, `responseText`/`response` in the text, json,
 // arraybuffer, blob and document types, the status, `getResponseHeader`,
-// `overrideMimeType`, `abort()`, `timeout`. Request headers and bodies are
-// taken and not sent: nothing here opens a socket for a POST.
+// `overrideMimeType`, `abort()` and `timeout`. Request headers and bodies are
+// accepted but not sent: nothing here opens a socket for a POST.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/dom/encoding.hpp>
 #include <ctbrowser/shell/bindings.hpp>
@@ -51,20 +56,23 @@ constexpr int headers_received = 2;
 constexpr int loading = 3;
 constexpr int done = 4;
 
+/// The private slot `slot` of `self` as an int; 0 when absent.
 [[nodiscard]] int number_slot(script::object_object & self, const std::string & slot) {
     const value * held = self.find(slot);
     return held == nullptr ? 0 : static_cast<int>(context::to_number(*held));
 }
 
+/// The private slot `slot` of `self` as a string; empty when absent or not a
+/// string.
 [[nodiscard]] std::string string_slot(context & cx, script::object_object & self,
                                       const std::string & slot) {
     const value * held = self.find(slot);
     return held == nullptr || !held->is_string() ? std::string{} : cx.to_string(*held);
 }
 
-// A MIME type's `charset` parameter, empty when there is none. ponytail: found
-// the way a <meta> content's is, not by a full MIME type parse; a quoted `;`
-// in an earlier parameter would confuse it.
+/// A MIME type's `charset` parameter, empty when there is none. ponytail:
+/// found the way a <meta> content's is, not by a full MIME type parse, so a
+/// quoted `;` in an earlier parameter would confuse it.
 [[nodiscard]] std::string_view charset_parameter(std::string_view mime) {
     const std::size_t semicolon = mime.find(';');
     return semicolon == std::string_view::npos
@@ -72,10 +80,10 @@ constexpr int done = 4;
                : encoding_from_meta_content(mime.substr(semicolon + 1));
 }
 
-// "Get a final encoding" (XHR 3.6.8): the RESPONSE's charset, and then the
-// override MIME type's when that has one - an override naming only a type
-// leaves the response's charset standing - by the Encoding Standard's label
-// table; empty when there is none or it names no encoding.
+/// "Get a final encoding" (XHR 3.6.8): the override MIME type's charset if it
+/// has one, else the response's (an override naming only a type leaves the
+/// response's charset standing), resolved through the Encoding Standard's
+/// label table. Empty when there is none or it names no encoding.
 [[nodiscard]] std::string final_encoding(std::string_view response_type,
                                          std::string_view override_type) {
     std::string_view label = charset_parameter(response_type);
@@ -89,11 +97,11 @@ constexpr int done = 4;
 
 namespace detail {
 
-// "UTF-8 decode" (Encoding 6): a UTF-8 BOM dropped and NO OTHER sniffed - FE FF
-// at the front of a fetch() body is two U+FFFDs, not UTF-16 - then the UTF-8
-// decoder (4.2), each ill-formed subsequence one U+FFFD, so a page reads
-// scalar values, never raw bytes taken for Latin-1. What a Body's text() and
-// json() read with.
+/// "UTF-8 decode" (Encoding 6): drops a UTF-8 BOM and sniffs no other (FE FF
+/// at the front of a fetch() body is two U+FFFDs, not UTF-16), then runs the
+/// UTF-8 decoder (4.2), making each ill-formed subsequence one U+FFFD. A page
+/// therefore reads scalar values, never raw bytes taken for Latin-1. A Body's
+/// text() and json() decode with this.
 [[nodiscard]] std::string utf8_decode(std::string_view bytes) {
     if (bytes.starts_with("\xEF\xBB\xBF")) { bytes.remove_prefix(3); }
     std::string out;
@@ -143,8 +151,8 @@ namespace detail {
     return out;
 }
 
-// "Decode" (Encoding 6) a body by the encoding `name`, UTF-8 when it is empty:
-// a BOM decides first.
+/// "Decode" (Encoding 6) a body by the encoding `name`, UTF-8 when it is
+/// empty. A BOM, if present, overrides `name`.
 [[nodiscard]] std::string decode_body(std::string_view bytes, std::string_view name) {
     if (bytes.starts_with("\xEF\xBB\xBF")) { return utf8_decode(bytes); }
     if (bytes.starts_with("\xFE\xFF")) {
@@ -230,18 +238,21 @@ void dom_bindings::install_xhr(context & cx) {
         s->set(state_slot, value::number(state));
         fire(c, self, "readystatechange", false);
     };
-    // THE RESPONSE ARRIVES: the bytes, the status and the type recorded, then
-    // the state walk with its events. `generation` guards a request that was
-    // re-opened or aborted while its send was queued.
+    // The response arrives: the bytes, the status and the type are recorded,
+    // then the state machine steps through with its events. `generation`
+    // guards against a request that was re-opened or aborted while its send
+    // was queued.
     const auto finish = [this, fire, set_state](context & c, value self, int generation) {
         auto * s = object_of(self);
         if (s == nullptr || number_slot(*s, generation_slot) != generation) { return; }
         const std::string url = string_slot(c, *s, url_slot);
         loaded_resource loaded = load_resource(url);
+        // A 404 is still a response (status 404, a `load` event). Only a
+        // failure to load at all is a network error.
         const bool failed = !loaded.failure.empty() && loaded.status != 404;
         s->set(status_slot, value::number(failed ? 0 : loaded.status));
         s->set(type_slot, c.string(loaded.type));
-        // THE TEXT RESPONSE (3.6.9): the bytes decoded by the final
+        // The text response (3.6.9): the bytes decoded by the final
         // encoding, else as UTF-8.
         s->set(text_slot, c.string(decode_body(
                               std::string_view{reinterpret_cast<const char *>(loaded.body.data()),
@@ -287,7 +298,7 @@ void dom_bindings::install_xhr(context & cx) {
                                     ? given
                                     : resolve(location_href_, given);
         // "Encoding-parse" it (4.5.1 steps 7-8): a URL the parser refuses
-        // against the document's address - `http://user@/`, `file://a%/` -
+        // against the document's address (`http://user@/`, `file://a%/`)
         // is a SyntaxError, not a request for the string as written. A page
         // with no address has nothing to parse against, and its relative
         // paths are the asset registry's.
@@ -296,7 +307,7 @@ void dom_bindings::install_xhr(context & cx) {
             throw_dom_exception(c, "SyntaxError", "XMLHttpRequest.open: invalid URL " + given);
             return value::undefined();
         }
-        // Re-opening ABORTS the request in flight: its queued finish sees a
+        // Re-opening aborts the request in flight: its queued finish sees a
         // new generation and does nothing.
         s->set(generation_slot, value::number(number_slot(*s, generation_slot) + 1));
         s->set(method_slot, c.string(method));
@@ -404,16 +415,18 @@ void dom_bindings::install_xhr(context & cx) {
     const auto getter = [&cx, proto](const char * name, script::native_fn get) {
         define_getter(cx, *proto, name, std::move(get));
     };
-    // THE DOCUMENT RESPONSE (XHR 3.6.9): the body parsed by its FINAL MIME
-    // type - the override when there is one, else the response's, else
-    // text/xml - as XML for an XML type, as HTML only when `responseType`
-    // is "document" (an empty one never parses HTML), and null for anything
-    // else. Parsed once and kept: `responseXML` is the same Document every
-    // time. By the parser DOMParser runs, not by the page's `DOMParser`.
+    // The document response (XHR 3.6.9): the body parsed by its final MIME
+    // type (the override when there is one, else the response's, else
+    // text/xml) as XML for an XML type, as HTML only when `responseType` is
+    // "document" (an empty one never parses HTML), and null for anything
+    // else. Parsed once and cached, so `responseXML` is the same Document every
+    // time. Parsing calls the engine's DOMParser implementation
+    // (parse_from_string) directly, so a page that replaces
+    // `window.DOMParser` cannot intercept it.
     //
-    // AN HTML DOCUMENT HAS ITS OWN ENCODING: the final MIME type's charset,
-    // else what a prescan of the first 1024 bytes finds, else UTF-8 - and
-    // `characterSet` says which. Not the text response's, and not the
+    // An HTML document has its own encoding: the final MIME type's charset,
+    // else what a prescan of the first 1024 bytes finds, else UTF-8, and
+    // `characterSet` reports which. It is neither the text response's nor the
     // page's: a response is never decoded by the document that asked.
     const auto document_response = [this](context & c, script::object_object & s,
                                           bool html_allowed) -> value {
@@ -477,7 +490,8 @@ void dom_bindings::install_xhr(context & cx) {
         if (s == nullptr || number_slot(*s, state_slot) < headers_received) { return c.string(""); }
         return c.string(string_slot(c, *s, url_slot));
     });
-    // `responseType`: one of the seven, settable until LOADING; `""` is
+    // `responseType`: one of "", "arraybuffer", "blob", "document", "json" or
+    // "text" (any other value is ignored), settable until LOADING; "" means
     // "text". `responseText` is for the two text types only, `responseXML`
     // for "" and "document" (InvalidStateError otherwise).
     define_getter(

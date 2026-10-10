@@ -1,32 +1,36 @@
-// dom_bindings - the insertion and attribute change steps of the two controls
-// whose state lives beside the tree rather than in it: a radio button's
-// checkedness (HTML 4.10.5.1.16) and an option's selectedness (4.10.10 and
-// 4.10.7). Run from mutated() over the document's write log, so an insertion
-// or an attribute write by any path - a Node method, innerHTML, the parser -
-// takes its steps before the script that made it can look.
+//===- form_writes.cpp - Form control state writes --------------*- C++ -*-===//
 //
-//   * A RADIO whose checkedness is true after it becomes connected, gains a
+// dom_bindings::settle_form_writes: the insertion and attribute change steps
+// of the two controls whose state lives beside the tree rather than in it: a radio button's
+// checkedness (HTML 4.10.5.1.16) and an option's selectedness (HTML 4.10.10
+// and 4.10.7). Run from mutated() over the document's write log, so an
+// insertion or an attribute write by any path (a Node method, innerHTML, the
+// parser) takes its steps before the script that made it can look.
+//
+//   * A radio whose checkedness is true after it becomes connected, gains a
 //     form owner, has its name, type or form attribute changed, or is given
 //     its `checked` attribute while clean (which sets the checkedness)
-//     unchecks every other radio in its group - so the LAST of two checked
+//     unchecks every other radio in its group, so the last of two checked
 //     radios the parser met wins, and `text.type = 'radio'` unchecks the radio
 //     it joins.
-//   * AN OPTION'S `selected` ATTRIBUTE, added or removed, sets a clean
+//   * An option's `selected` attribute, added or removed, sets a clean
 //     option's selectedness to match, and its select re-settles ("reset a
-//     select's selectedness" - removing the selected one selects the first
+//     select's selectedness": removing the selected one selects the first
 //     enabled option); and an option inserted into a single select's list of
-//     options with its selectedness true - or given it by the attribute -
+//     options with its selectedness true (or given it by the attribute)
 //     deselects the others.
 //
-// ONE BATCH, IN ORDER. The log holds everything since the last mutation, and
-// the tree is already in its final shape: two checked radios the parser
-// inserted are both present when the first one's steps run. So each step
-// leaves alone a control that has a LATER step of its own in the batch - it
-// was not there yet, in the order the writes happened - and that is what makes
-// the last one win. For the same reason an attribute written while its
-// element was not yet where it ended up - innerHTML copies an element's
-// attributes in before the element - takes no steps of its own: its
+// The writes are settled as one batch, in order. The log holds everything
+// since the last mutation, and the tree is already in its final shape: two
+// checked radios the parser inserted are both present when the first one's
+// steps run. So each step leaves alone a control that has a later step of
+// its own in the batch (in write order it was not there yet), and that is
+// what makes the last one win. For the same reason an attribute written
+// while its element was not yet where it ended up (innerHTML copies an
+// element's attributes in before the element) takes no steps of its own: its
 // insertion, later in the batch, takes them where it lands.
+//
+//===----------------------------------------------------------------------===//
 
 #include "helpers.hpp"
 
@@ -42,8 +46,8 @@ void dom_bindings::settle_form_writes(const std::vector<document::write_note> & 
     using edit = document::write_note::edit;
     struct step {
         node_id node;
-        bool attribute = false; // an attribute change, else an insertion
-        bool removal = false;   // ...the attribute was removed
+        bool attribute = false; ///< An attribute change, else an insertion.
+        bool removal = false;   ///< The attribute change was a removal.
     };
     std::vector<step> steps;
     {
@@ -51,9 +55,9 @@ void dom_bindings::settle_form_writes(const std::vector<document::write_note> & 
         const auto radio = [&](node_id at) {
             return helpers.is(txn, at, "input") && helpers.input_type(txn, this, at) == "radio";
         };
-        // Where each inserted node's LAST insertion is: a subtree walked for
+        // Where each inserted node's last insertion is: a subtree walked for
         // one insertion skips a descendant inserted again later, which its own
-        // note covers - so a parse, one note per element, walks each once.
+        // note covers, so a parse (one note per element) walks each node once.
         std::unordered_map<std::uint64_t, std::size_t> inserted_at;
         for (std::size_t i = 0; i < writes.size(); ++i) {
             if (writes[i].kind == edit::inserted && writes[i].child) {
@@ -102,7 +106,7 @@ void dom_bindings::settle_form_writes(const std::vector<document::write_note> & 
         if (!txn.contains(at.node)) { continue; }
         if (helpers.is(txn, at.node, "option")) {
             // The attribute's change steps: a clean option's selectedness
-            // follows it - a dirty one's is the script's or the user's.
+            // follows it; a dirty one's belongs to the script or the user.
             const bool was = helpers.option_selected(c, txn, this, at.node);
             bool now = was;
             if (at.attribute && !context::truthy(helpers.slot_of(c, this, at.node, dirty_slot))) {
@@ -129,9 +133,9 @@ void dom_bindings::settle_form_writes(const std::vector<document::write_note> & 
             helpers.input_type(txn, this, at.node) != "radio") {
             continue;
         }
-        // An insertion is one of the radio's phenomena when it CONNECTED the
-        // radio or gave it a form owner; into a detached, formless tree it is
-        // neither, and two checked radios may sit there together.
+        // An insertion unchecks the rest of the group only when it connected
+        // the radio or gave it a form owner; in a detached tree with no form,
+        // two checked radios may coexist.
         if (!at.attribute && !is_connected(at.node) && !helpers.form_owner(txn, this, at.node)) {
             continue;
         }

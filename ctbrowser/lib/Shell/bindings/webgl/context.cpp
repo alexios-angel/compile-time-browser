@@ -1,5 +1,10 @@
-// dom_bindings - the WebGL context: creating it once per canvas, the wrapper
-// object getContext hands back, resizing, presenting, and the refused-call list.
+//===- context.cpp - getContext for WebGL -----------------------*- C++ -*-===//
+//
+// The WebGL context of a canvas: creating it once per canvas, the wrapper
+// object getContext returns, resizing, presenting, and the list of GL calls
+// the context refused.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -25,14 +30,15 @@ value dom_bindings::webgl_context_object(context & cx, node_id id, int version) 
     const auto txn = doc_->read();
     const int width = static_cast<int>(size_attribute(txn, id, "width", 300));
     const int height = static_cast<int>(size_attribute(txn, id, "height", 150));
-    // THE SAME SURFACE THE 2D PATH DRAWS INTO. A canvas has one set of pixels
-    // whichever context it handed out, and the painter reads them through
-    // canvases_->pixels_of - so a WebGL draw has to land there or nothing
-    // composites it.
-    // ONE CONTEXT PER CANVAS: a canvas that already handed out a 2D context
-    // answers null to `webgl` (4.12.5.1, getContext step 3). Sharing it was also
-    // a heap overread - the 2D clip mask is sized to the bitmap, and present()
-    // re-dimensioned that bitmap under it. The key is canvas.cpp's cache key.
+    // WebGL draws into the same surface the 2D path uses: a canvas has one set
+    // of pixels whichever context it handed out, and the painter reads them
+    // through canvases_->pixels_of, so a WebGL draw must land there to be
+    // composited.
+    // One context per canvas: a canvas that already handed out a 2D context
+    // answers null to `webgl` (HTML 4.12.5.1, getContext step 3). Sharing the
+    // surface would also overread the heap, because the 2D clip mask is sized
+    // to the bitmap and present() re-dimensions that bitmap. The map key is
+    // canvas.cpp's cache key.
     const auto existing = webgl_contexts_.find(id.key());
     const bool first = existing == webgl_contexts_.end() || !existing->second;
     if (first) {
@@ -45,71 +51,57 @@ value dom_bindings::webgl_context_object(context & cx, node_id id, int version) 
     }
     canvas_context * surface = canvases_->context_for(id, width, height);
     if (surface == nullptr) { return value::null(); }
-    // THE BUFFER MATCHES THE DEVICE. A surface made at an older size (by
+    // The buffer matches the device. A surface made at an older size (by
     // toDataURL, before a width attribute changed) is re-made at this one, so
-    // present() never has to re-dimension a bitmap it only borrows. Only
-    // before the context exists: afterwards it holds a pointer into the surface.
+    // present() never has to re-dimension a bitmap it only borrows. This is
+    // done only before the context exists, because afterwards the context
+    // holds a pointer into the surface.
     if (first && (surface->width() != width || surface->height() != height)) {
         canvases_->resize(id, width, height);
     }
 
     auto & made = webgl_contexts_[id.key()];
-    // `made` IS A REFERENCE INTO THE MAP, so it is non-null from here on
-    // whatever happened - which is why the freshness has to be captured before
-    // the create rather than tested after it. Checking `made != nullptr`
-    // afterwards is always true, and that mistake converted an existing WebGL 1
-    // context into a WebGL 2 one the moment a page asked for `webgl2`.
+    // `made` is a reference into the map, so test for a fresh context before
+    // creating one; after the create it is always non-null.
     const bool created = !made;
     if (!made) {
         made = std::make_unique<webgl_context>(
             const_cast<paint::bitmap *>(surface->surface().get()), width, height);
-        // THERE IS NO BACKEND TO CHOOSE ANY MORE. The software rasteriser is
-        // gone, so a context is an ANGLE context or it is nothing - see
-        // docs/history/webgl-rewrite.md. What used to be `use_angle()` is now the
-        // only path, and `driver::deterministic` is the runtime switch that
-        // replaces it.
-        //
-        // AND IF THE DEVICE WILL NOT COME UP, getContext RETURNS null. That is
-        // what a browser does when there is no driver, and it is the difference
-        // between a page taking its own no-WebGL branch and a page throwing
-        // halfway through its first frame - which is what nine render tests
-        // reported as "Unable to create VAO" the moment the software fallback
-        // was removed.
+        // Every context is an ANGLE context (docs/history/webgl-rewrite.md);
+        // `driver::deterministic` selects the software device at runtime. If
+        // the device does not come up, getContext returns null, as a browser
+        // with no driver does, so the page takes its own no-WebGL branch
+        // instead of throwing partway through its first frame.
         if (!made->device().ok()) {
             made.reset();
             return value::null();
         }
     }
     webgl_context * gl = made.get();
-    // THE VERSION IS DECIDED ONCE, WHEN THE CONTEXT IS CREATED. A canvas has
-    // one context type for ever: the spec says a request for a different id
-    // returns null rather than converting what is there, and the cache check
-    // below is where that null comes from.
+    // The version is decided once, when the context is created. A canvas keeps
+    // one context type: a request for a different id returns null rather than
+    // converting the existing context, and the cache check below returns that
+    // null.
     if (created && version >= 2) { gl->set_version(2); }
     const bool webgl2 = gl->version() >= 2;
 
-    // THE SAME JS OBJECT, not just the same state. getContext is idempotent in
-    // the spec, and a page compares what it gets - `if (this.gl !== canvas
-    // .getContext('webgl'))` is a real pattern - so handing back a fresh wrapper
-    // each call is observably wrong even when the state behind it is shared.
+    // Return the same JS object, not just the same state. getContext is
+    // idempotent in the spec, and pages compare what they get (`if (this.gl
+    // !== canvas.getContext('webgl'))` is a real pattern), so a fresh wrapper
+    // per call is observably wrong even when the state behind it is shared.
     if (const auto seen = webgl_objects_.find(id.key()); seen != webgl_objects_.end()) {
-        // A CANVAS HAS ONE CONTEXT TYPE, FOR EVER. The spec is explicit: once
-        // a canvas has a context, asking for a DIFFERENT id returns null - it
-        // does not convert, and it does not hand back the one it has under the
-        // wrong name. `webgl` and `webgl2` are different ids.
-        //
-        // Handing back the WebGL 1 object for a `webgl2` request is the shape
-        // that matters here: a page would feature-detect on a non-null answer
-        // and then reach for constants and methods that are not on it.
+        // A canvas keeps one context type: asking for a different id (`webgl`
+        // vs `webgl2`) returns null rather than the existing context, which a
+        // page would otherwise feature-detect as support it lacks.
         if (gl->version() != version) { return value::null(); }
         return value::object(seen->second);
     }
 
     auto * obj = cx.allocate<script::object_object>();
-    // So `gl instanceof WebGLRenderingContext` is true, which Phaser asks - and
-    // `instanceof WebGL2RenderingContext` for a version 2 context, which is a
-    // DIFFERENT interface rather than a subclass. A page gets the same answer
-    // from both tests that a browser would give it.
+    // So `gl instanceof WebGLRenderingContext` is true, which Phaser checks,
+    // and `instanceof WebGL2RenderingContext` for a version 2 context.
+    // WebGL2RenderingContext is a separate interface, not a subclass, so a
+    // page gets the same answer from both tests that a browser gives.
     const value & interface_prototype = webgl2 ? webgl2_prototype_ : webgl_prototype_;
     if (interface_prototype.is_object()) { obj->prototype = interface_prototype; }
     webgl_objects_[id.key()] = obj;
@@ -117,9 +109,7 @@ value dom_bindings::webgl_context_object(context & cx, node_id id, int version) 
     obj->set("drawingBufferWidth", value::number(width));
     obj->set("drawingBufferHeight", value::number(height));
 
-    // THE SURFACE, in the order it was always installed: the constant table,
-    // then every method. One function until 2026-09-08; the three below are
-    // its halves, split where they share no local.
+    // Install the constant table, then the methods.
     install_webgl_constants(obj, webgl2);
     install_webgl_methods(cx, obj, gl, surface);
     install_webgl_draw_methods(cx, obj, gl, surface, width, height, webgl2);

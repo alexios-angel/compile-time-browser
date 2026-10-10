@@ -1,3 +1,11 @@
+//===- form_data_and_submission.cpp - FormData and form submission --------===//
+//
+// FormData and the form's entry list (HTML 4.10.21.4), the SubmitEvent and
+// FormDataEvent interfaces, and HTMLFormElement's submit(), requestSubmit()
+// and reset(), including how a submission becomes a planned navigation.
+//
+//===----------------------------------------------------------------------===//
+
 #include "helpers.hpp"
 
 #include <ctbrowser/dom/encoding.hpp>
@@ -7,11 +15,11 @@ using namespace detail;
 using namespace input_types;
 
 namespace {
-// A form's "constructing entry list" and "firing submission events" flags.
+/// A form's "constructing entry list" and "firing submission events" flags.
 constexpr std::string_view constructing_slot = "__constructingEntryList";
 constexpr std::string_view firing_slot = "__firingSubmissionEvents";
 
-// `window[name].prototype`, or undefined when no such interface is defined.
+/// `window[name].prototype`, or undefined when no such interface is defined.
 [[nodiscard]] value interface_prototype_of(context & c, std::string_view name) {
     if (!c.has_global(name)) { return value::undefined(); }
     const value ctor = c.global(name);
@@ -24,7 +32,7 @@ void dom_bindings::install_control_form_data(context & cx) {
     // --- the entry list and FormData, HTML 4.10.21.4 and XHR's FormData -----------------
     //
     // A FormData is a list of (name, value) pairs held as a hidden JS array of
-    // two-element arrays on the object - traced by the collector - with the
+    // two-element arrays on the object (so the collector traces them), with the
     // prototype's methods over it. A value is a string, or the object it was
     // given when that is a Blob or a File.
     const auto entries_of = [](context & c) -> script::array_object * {
@@ -36,7 +44,7 @@ void dom_bindings::install_control_form_data(context & cx) {
         return static_cast<script::array_object *>(held->as_heap());
     };
     // "Create an entry" (XHR 5.1): the name, and a string value, converted to
-    // SCALAR VALUE STRINGS - a lone surrogate is U+FFFD - whether the entry
+    // scalar value strings (a lone surrogate becomes U+FFFD), whether the entry
     // comes from a form control or from FormData's append/set (USVString).
     const auto make_entry = [](context & c, const std::string & name, value held) {
         const value pair = c.make_array();
@@ -52,8 +60,8 @@ void dom_bindings::install_control_form_data(context & cx) {
         return static_cast<script::array_object *>(pair.as_heap())->items.at(1);
     };
     // "Construct the entry list" for a form: the submittable elements'
-    // successful controls, in tree order, then the `formdata` event. FALSE -
-    // the specification's null - when the form is already constructing one
+    // successful controls, in tree order, then the `formdata` event. Returns
+    // false (the specification's null) when the form is already constructing one
     // (its "constructing entry list" flag, a slot on the form): a `formdata`
     // listener that submits the form again must not recurse.
     // `encoding` is the one "_charset_" reports: the submission's picked
@@ -70,14 +78,14 @@ void dom_bindings::install_control_form_data(context & cx) {
         const auto add = [&](const std::string & name, value held) {
             list->items.push_back(make_entry(c, name, held));
         };
-        // The form's SUBMITTABLE elements (4.10.21.4 step 4) - an image
-        // button among them, which form.elements does not list.
+        // The form's submittable elements (HTML 4.10.21.4 step 4), including
+        // image buttons, which form.elements does not list.
         for (const node_id one : helpers.submittable_of_form(b, form)) {
             const auto txn = b->doc_->read();
             if (!txn.contains(one) || helpers.is_disabled(txn, b, one)) { continue; }
-            // A FORM-ASSOCIATED CUSTOM ELEMENT (step 5.5-5.7): its submission
-            // value - nothing for null, a FormData's entries, else the value
-            // under its name.
+            // A form-associated custom element (steps 5.5-5.7) contributes its
+            // submission value: nothing for null, a FormData's entries, else
+            // the value under its name.
             if (const value face =
                     b->face_submission_value_ ? b->face_submission_value_(one) : value::undefined();
                 !face.is_undefined()) {
@@ -149,8 +157,9 @@ void dom_bindings::install_control_form_data(context & cx) {
                 continue;
             }
             if (type == "file") {
-                // Each selected File under the name - and with none, one
-                // empty File of type application/octet-stream (5.10).
+                // Each selected File under the name, or, with none selected, one
+                // empty File of type application/octet-stream (HTML 4.10.21.4,
+                // "construct the entry list").
                 const std::vector<value> files = files_in(helpers.slot_of(c, b, one, "__files"));
                 for (const value & file : files) { add(name, file); }
                 if (files.empty()) {
@@ -170,9 +179,10 @@ void dom_bindings::install_control_form_data(context & cx) {
                 continue;
             }
             if (local == "textarea") {
-                // THE WRAPPING TRANSFORMATION (4.10.11): with wrap=hard, LF
-                // breaks so no line is longer than `cols` characters - at
-                // exactly `cols` code points, which re-wraps to itself.
+                // The wrapping transformation (HTML 4.10.11): with wrap=hard,
+                // insert LF breaks so no line is longer than `cols` characters
+                // (default 20). A line of exactly `cols` code points re-wraps
+                // to itself.
                 std::string text = helpers.value_of(txn, b, one);
                 if (ascii_iequals(helpers.attribute_of(txn, b, one, "wrap"), "hard")) {
                     long long cols = 0;
@@ -201,9 +211,9 @@ void dom_bindings::install_control_form_data(context & cx) {
             } else {
                 add(name, c.string(helpers.value_of(txn, b, one)));
             }
-            // THE DIRNAME ENTRY (4.10.18.2): where dirname applies - a textarea
-            // and the hidden, text, search, tel, url, email, password and
-            // submit states - the element's directionality under its name.
+            // The dirname entry (HTML 4.10.18.2): where dirname applies (a
+            // textarea and the hidden, text, search, tel, url, email, password
+            // and submit states), the element's directionality under its name.
             const bool dirname_applies = local == "textarea" || type == "hidden" ||
                                          type == "text" || type == "search" || type == "tel" ||
                                          type == "url" || type == "email" || type == "password" ||
@@ -499,20 +509,20 @@ void dom_bindings::install_control_form_data(context & cx) {
     //
     // `submit()` fires no `submit` event; `requestSubmit()` validates, fires
     // it, and builds the list unless it was cancelled. Then the submission
-    // itself, 4.10.21.3 from step 6: the entry list; the submitter's method,
-    // action, enctype and target over the form's; the row of the scheme
-    // table; and a navigation PLANNED at the navigable the target names
-    // (navigate_form_target, frames.cpp) - or, for the page itself, the
-    // browser's (last_submission).
+    // itself, HTML 4.10.21.3 from step 6: the entry list; the submitter's
+    // method, action, enctype and target over the form's; the row of the
+    // scheme table; and a navigation planned at the navigable the target names
+    // (navigate_form_target, frames.cpp), or, for the page itself, by the
+    // browser (last_submission).
     const auto build_submission = [new_form_data, entry_list, entry_name,
                                    entry_value](context & c, dom_bindings * b, node_id form,
                                                 node_id submitter) -> bool {
         const value data = new_form_data(c);
         if (!data.is_object()) { return false; }
-        // "Picking an encoding for the form" (4.10.21.3): the first label in
-        // `accept-charset` that names an encoding - UTF-8 when the attribute
-        // names none - else the document's, and UTF-8 for the three an output
-        // encoding cannot be.
+        // "Picking an encoding for the form" (HTML 4.10.21.3): the first label
+        // in `accept-charset` that names an encoding (UTF-8 when the attribute
+        // names none), else the document's; UTF-8 replaces the three encodings
+        // that cannot be an output encoding.
         std::string encoding;
         {
             const auto txn = b->doc_->read();
@@ -535,14 +545,14 @@ void dom_bindings::install_control_form_data(context & cx) {
         if (!entry_list(c, b, form, submitter, data, encoding) || c.throw_pending()) {
             return false;
         }
-        // "If form cannot navigate, then return" - a `formdata` listener
-        // that removed the form ended the submission.
+        // "If form cannot navigate, then return": a `formdata` listener
+        // that removed the form ends the submission.
         if (!b->is_connected(form)) { return false; }
-        // THE ENTRY LIST, for the encodings: a string entry's text, and a
-        // File's name, type and bytes apart - multipart/form-data sends all
-        // three, the other two the name alone. Read from the entries' and the
-        // Files' OWN SLOTS, the internal slots the specifications give them,
-        // and never through a getter: no page code runs here, so a `formdata`
+        // The entry list for the encoders: a string entry's text, and a File's
+        // name, type and bytes kept apart (multipart/form-data sends all
+        // three, the other two the name alone). Read from the entries' and the
+        // Files' own slots, the internal slots the specifications give them,
+        // never through a getter: no page code runs here, so a `formdata`
         // listener that kept `e.formData` cannot grow the list under the walk
         // (which goes by index regardless).
         std::vector<form_entry> entries;
@@ -579,7 +589,7 @@ void dom_bindings::install_control_form_data(context & cx) {
                 entries.push_back(std::move(entry));
             }
         }
-        // THE SUBMITTER'S OWN ATTRIBUTES FIRST (4.10.18.6): a submit button's
+        // The submitter's own attributes win (HTML 4.10.18.6): a submit button's
         // formaction, formmethod, formenctype and formtarget, and where it has
         // none the form's. submit() has no submitter, and requestSubmit()
         // without one submits from the form.
@@ -614,9 +624,9 @@ void dom_bindings::install_control_form_data(context & cx) {
                 const std::string folded = ascii_lower_copy(*stated);
                 if (folded == "multipart/form-data" || folded == "text/plain") { enctype = folded; }
             }
-            // "Getting an element's target" (4.6.4): formtarget, the form's
+            // "Getting an element's target" (HTML 4.6.4): formtarget, the form's
             // target, else the first <base target>; one with an ASCII tab or
-            // newline AND a `<` is `_blank`.
+            // newline and a `<` becomes `_blank`.
             target = pick("formtarget", "target").value_or(document_base_target(txn, *b->atoms_));
             if (target.find_first_of("\t\n\r") != std::string::npos &&
                 target.find('<') != std::string::npos) {
@@ -624,11 +634,11 @@ void dom_bindings::install_control_form_data(context & cx) {
             }
             base = document_base_url(txn, *b->atoms_, b->fallback_base_url());
         }
-        // ponytail: a dialog submission closes no <dialog> - "close the
-        // dialog" with the submitter's value is the upgrade.
+        // ponytail: a dialog submission closes no <dialog>; implementing "close
+        // the dialog" with the submitter's value is the upgrade.
         if (method == "dialog") { return true; }
         // "If action is the empty string, let action be the URL of the form
-        // document", then parsed against its base URL - a failure ends it. A
+        // document", then parsed against its base URL; a failure ends it. A
         // page with no address keeps the action as written, a name the asset
         // registry resolves.
         if (action.empty()) { action = b->location_href_; }
@@ -642,8 +652,8 @@ void dom_bindings::install_control_form_data(context & cx) {
         // ponytail: a javascript: action runs in the target and a mailto: one
         // leaves the browser; neither is here.
         if (scheme == "javascript" || scheme == "mailto") { return true; }
-        // "Mutate action URL": the query REPLACED by the urlencoded entry
-        // list, the fragment kept.
+        // "Mutate action URL": the query is replaced by the urlencoded entry
+        // list, and the fragment kept.
         const auto with_query = [](const std::string & at, const std::string & query) {
             const std::size_t hash = at.find('#');
             const std::string fragment =
@@ -681,7 +691,7 @@ void dom_bindings::install_control_form_data(context & cx) {
         (void)b->navigate_form_target(form, std::move(navigation));
         return true;
     };
-    // HTML 4.10.21.3 "submit" FROM A SUBMITTER - not from submit(): the form
+    // HTML 4.10.21.3 "submit" from a submitter (not from submit()): the form
     // must be connected; interactive validation unless `novalidate` or the
     // submitter's `formnovalidate`; the firing-submission-events flag (step
     // 6: while this submission validates and fires `submit`, another one
@@ -743,7 +753,7 @@ void dom_bindings::install_control_form_data(context & cx) {
                     const auto txn = doc_->read();
                     if (submitter) {
                         is_button = form_store::is_submit_button(txn, *atoms_, submitter);
-                        // The submitter's FORM OWNER must be this form - so
+                        // The submitter's form owner must be this form, so
                         // one inside it with `form=""` (no owner) is refused.
                         owned = helpers.form_owner(txn, this, submitter) == form;
                     }
@@ -767,11 +777,10 @@ void dom_bindings::install_control_form_data(context & cx) {
     // activation behaviour (`reset_form_`, the browser's) are both this.
     const auto reset_steps = [this, helpers](context & c, node_id form, bool ce_reactions) {
         if (helpers.fire(c, this, form, "reset", true, true, helpers.plain)) { return; }
-        // HTML 4.10.21.5: each RESETTABLE element whose form
-        // owner is this form runs its reset algorithm, in
-        // tree order - a control inside the form that names
-        // another with `form=` is not this form's, and one
-        // outside that names this one is.
+        // HTML 4.10.21.5: each resettable element whose form owner is this
+        // form runs its reset algorithm, in tree order. A control inside the
+        // form that names another form with `form=` belongs to that form; one
+        // outside that names this form belongs here.
         std::vector<std::pair<node_id, std::string>> outputs;
         std::vector<node_id> custom;
         {
@@ -781,11 +790,10 @@ void dom_bindings::install_control_form_data(context & cx) {
                     custom.push_back(one);
                     continue;
                 }
-                // The store forgets the control and reseeds it
-                // from its attributes - which is the reset -
-                // but indeterminate is not the reset's to clear, and
-                // the selection stays where it was, clamped to the
-                // default value (a changed value moves no cursor).
+                // The store forgets the control and reseeds it from its
+                // attributes, which is the reset. Indeterminate is not the
+                // reset's to clear, and the selection stays where it was,
+                // clamped to the default value (a changed value moves no cursor).
                 const control_state * held = forms_->find(one);
                 if (held == nullptr) {
                     forms_->reset_form(txn, one);
@@ -808,9 +816,8 @@ void dom_bindings::install_control_form_data(context & cx) {
                         }
                     });
                 }
-                // An output goes back to the default value
-                // mode AND its text to the default value
-                // (4.10.12, "string replace all").
+                // An output goes back to the default value mode and its text
+                // to the default value (HTML 4.10.12, "string replace all").
                 if (helpers.is(txn, one, "output")) {
                     const value held_default = helpers.slot_of(c, this, one, "__defaultValue");
                     if (held_default.is_string()) {
@@ -823,12 +830,12 @@ void dom_bindings::install_control_form_data(context & cx) {
         for (const auto & [one, text] : outputs) { set_text(one, text); }
         wrote_to_control_ = true;
         mutated();
-        // A form-associated custom element's reset is its
-        // formResetCallback, a reaction - after every built-in control's.
-        // reset() is [CEReactions], so they run as it returns; a reset
-        // button's activation is no such scope, so they wait on the backup
-        // element queue, which a microtask drains (HTML 4.13.6) - the click
-        // returns before any formResetCallback runs.
+        // A form-associated custom element's reset is its formResetCallback, a
+        // reaction that runs after every built-in control's reset. reset() is
+        // [CEReactions], so they run as it returns; a reset button's activation
+        // is no such scope, so they wait on the backup element queue, which a
+        // microtask drains (HTML 4.13.6): the click returns before any
+        // formResetCallback runs.
         const auto enqueue = [this, custom] {
             const std::size_t from = custom_reactions_.size();
             for (const node_id one : custom) {
@@ -852,9 +859,9 @@ void dom_bindings::install_control_form_data(context & cx) {
                 }));
         }
     };
-    // "LOCKED FOR RESET" (4.10.21.5 steps 1, 2 and 5): a `reset` listener that
-    // resets the same form again - form.reset(), or a click on its reset
-    // button - does nothing, where it recursed until the stack gave out.
+    // "Locked for reset" (HTML 4.10.21.5 steps 1, 2 and 5): while a form is
+    // resetting, a nested reset of the same form (form.reset() or a
+    // reset-button click from a `reset` listener) does nothing.
     const auto locked = std::make_shared<std::vector<std::uint64_t>>();
     const auto reset_form = [reset_steps, locked](context & c, node_id form, bool ce_reactions) {
         if (std::ranges::find(*locked, form.key()) != locked->end()) { return; }

@@ -1,35 +1,33 @@
-// dom_bindings - CSS Animations and CSS Transitions, driven from the cascade.
+//===- animations/css.cpp - CSS Animations and Transitions ------*- C++ -*-===//
 //
-// WHAT HAPPENS AFTER A STYLE RESOLUTION. The browser hands over the previous
-// style map and the new one (browser::resolve_styles) and this walks the
-// document once, in tree order, looking only at elements whose computed style
-// object CHANGED - the cascade interns styles, so an untouched element's
-// pointer is the same and costs nothing here.
+// CSS Animations and CSS Transitions, driven from the cascade. After each
+// style resolution the browser hands over the previous style map and the new
+// one (browser::resolve_styles), and this walks the document once, in tree
+// order, looking only at elements whose computed style object changed. The
+// cascade interns styles, so an untouched element keeps the same pointer and
+// costs nothing here.
 //
 //   * CSS Transitions 1 §3, per property named by `transition-property` (or
 //     every property, for `all`): the before-change value is the previous
-//     style's text with the element's running animations sampled on top of it
-//     - which is what makes a reversed transition start from where it is - and
-//     the after-change value is the new style's. A difference the pair can
+//     style's text with the element's running animations sampled on top of it,
+//     which makes a reversed transition start from where it is; the
+//     after-change value is the new style's. A difference the pair can
 //     interpolate starts a CSSTransition; `transition-behavior: allow-discrete`
-//     lets a pair that cannot start one that flips at 50%. A running transition
-//     whose end value changed is cancelled and replaced, with §3.1's reversing
-//     shortening when the new end is where it started.
-//   * CSS Animations 1 §5, per index in `animation-name`: a name that means a
-//     `@keyframes` rule gets a CSSAnimation whose KeyframeEffect is built from
-//     the rule and the element's `animation-*` longhands. The SAME record
-//     survives a restyle while the name stays at its index - a page that
-//     changes `animation-duration` mid-flight keeps its start time - and a name
-//     that goes away cancels it.
+//     lets a pair that cannot interpolate start one that flips at 50%. A
+//     running transition whose end value changed is cancelled and replaced,
+//     with §3.1's reversing shortening when the new end is where it started.
+//   * CSS Animations 1 §5, per index in `animation-name`: a name that matches
+//     a `@keyframes` rule gets a CSSAnimation whose KeyframeEffect is built
+//     from the rule and the element's `animation-*` longhands. The same record
+//     survives a restyle while the name stays at its index (a page that
+//     changes `animation-duration` mid-flight keeps its start time), and a
+//     name that goes away cancels it.
 //
-// Both are `animation_record`s in the Web Animations model (animations.cpp):
-// the overlay samples them at the flush that made them, which is how a
-// `-50s` delay on a `100s` duration reads as the midpoint synchronously.
+// Both are `animation_record`s in the Web Animations model (animations.cpp).
+// The style overlay samples them in the same flush that created them, which is
+// how a `-50s` delay on a `100s` duration reads as the midpoint synchronously.
 //
-// THE PROPERTY TABLE IS THE LIMIT. A longhand it does not carry -
-// `animation-timing-function`, `animation-fill-mode`, `transition-behavior` -
-// is an expando on `el.style` and never reaches the cascade, so its initial
-// value is what applies here until the table grows the row.
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/shell/bindings.hpp>
@@ -57,14 +55,16 @@ namespace {
 constexpr double nan = std::numeric_limits<double>::quiet_NaN();
 constexpr double infinity = std::numeric_limits<double>::infinity();
 
+/// True for an unresolved time, which the Web Animations model stores as NaN.
 [[nodiscard]] bool unresolved(double t) noexcept {
     return std::isnan(t);
 }
 
+/// The items of a comma-separated list value, such as `transition-duration`.
 using items = std::vector<std::string>;
 
-// A comma-separated property value as its items, each trimmed. An empty value
-// is an empty list; the caller supplies the initial value.
+/// Splits a comma-separated property value into its items, each trimmed. An
+/// empty value is an empty list; the caller supplies the initial value.
 [[nodiscard]] items items_of(std::string_view text) {
     items out;
     for (const std::string_view part : split_top_level(text, ",")) {
@@ -74,13 +74,15 @@ using items = std::vector<std::string>;
     return out;
 }
 
-// CSS Animations 1 §5.2: a list shorter than `animation-name` repeats.
+/// Returns item `i` of `list`, repeating a list shorter than `animation-name`
+/// (CSS Animations 1 §5.2); `fallback` for an empty list.
 [[nodiscard]] std::string_view item_at(const items & list, std::size_t i,
                                        std::string_view fallback) {
     return list.empty() ? fallback : list[i % list.size()];
 }
 
-// `<time>` as milliseconds: `100s`, `250ms`; anything else is `fallback`.
+/// Parses a `<time>` (`100s`, `250ms`) as milliseconds; anything else is
+/// `fallback`.
 [[nodiscard]] double time_ms(std::string_view text, double fallback) {
     double n = 0;
     const auto [end, ec] = std::from_chars(text.data(), text.data() + text.size(), n);
@@ -91,31 +93,32 @@ using items = std::vector<std::string>;
     return fallback;
 }
 
+/// True when `text` is a `<time>`.
 [[nodiscard]] bool is_time(std::string_view text) {
     return !unresolved(time_ms(text, nan));
 }
 
-// THE TWO SHORTHANDS, READ HERE BECAUSE THE CASCADE KEEPS THEM WHOLE. The
-// property table files `transition: opacity .15s linear` as one declaration
-// (lib/Style/css/properties/shorthands.cpp, shape::whole), so the longhands
-// this file asks for are empty while the page said everything. Their grammars
-// are `<single-transition>#` (CSS Transitions 1 §2.5) and `<single-animation>#`
-// (CSS Animations 1 §5.9): per item, the first `<time>` is the duration and
-// the second the delay, an easing is the timing function, and the keywords
-// that are not one of those are the property, or the animation's count,
-// direction, fill, play state and name. A longhand the page did declare wins
-// over the shorthand's item, which is the cascade's answer for a page that
-// wrote the longhand after it.
-// ponytail: this belongs in shorthands.cpp as a real split; it moves there
-// when the table grows `transition-behavior` and the animation longhands.
+/// The `transition` and `animation` shorthands read item by item
+/// (`<single-transition>#`, CSS Transitions 1 §2.5; `<single-animation>#`, CSS
+/// Animations 1 §5.9). The shorthand table now splits both into longhands
+/// (lib/Style/css/properties/shorthands/internal.hpp, shape::transition and
+/// shape::animation), so this is only a fallback for a style that still holds
+/// the shorthand text. A declared longhand always wins over the shorthand's
+/// item. Per item, the first `<time>` is the duration and the second the
+/// delay; an easing is the timing function; other keywords fill the remaining
+/// slots (property, or the animation's count, direction, fill, play state and
+/// name).
 struct shorthand_lists {
     items property, duration, delay, easing, behavior; // transition
     items name, count, direction, fill, play_state;    // animation, with the above
 };
 
+/// Reads a `transition` (`animation` false) or `animation` shorthand value.
 [[nodiscard]] shorthand_lists read_shorthand(std::string_view text, bool animation) {
     shorthand_lists out;
     for (const std::string & item : items_of(text)) {
+        // For `animation`, `property` holds the animation name (default
+        // `none`); it is pushed to both `out.property` and `out.name` below.
         std::string property = animation ? "none" : "all";
         std::string duration = "0s";
         std::string delay = "0s";
@@ -198,8 +201,8 @@ struct shorthand_lists {
     return out;
 }
 
-// The computed text of one property on a style: what it declared or inherited,
-// else the table's initial value.
+/// Returns the computed text of one property on a style: what it declared or
+/// inherited, else the property table's initial value.
 [[nodiscard]] std::string_view value_on(const style::computed_style & style, atom_table & atoms,
                                         std::string_view property) {
     const std::string_view held = trim(style.get(atoms.intern(property)), html_whitespace);
@@ -208,13 +211,14 @@ struct shorthand_lists {
     return known != nullptr ? known->initial : std::string_view{};
 }
 
-// A property `transition-property: all` covers: not the animation and
-// transition properties themselves, and not a custom property.
+/// True for a property that `transition-property: all` covers: anything but
+/// the animation and transition properties themselves and custom properties.
 [[nodiscard]] bool covered_by_all(std::string_view property) {
     return !property.starts_with("--") && !property.starts_with("animation") &&
            !property.starts_with("transition");
 }
 
+/// Strips matching single or double quotes from an `animation-name` item.
 [[nodiscard]] std::string_view unquoted_name(std::string_view text) {
     if (text.size() >= 2 && (text.front() == '"' || text.front() == '\'') &&
         text.back() == text.front()) {
@@ -227,8 +231,9 @@ struct shorthand_lists {
 
 // --- interpolation -------------------------------------------------------------
 //
-// The value types live in lib/Style/easing.cpp (`interpolate_text`,
-// `composite_text`): this file only asks the two questions the model asks.
+// Value interpolation lives in lib/Style/easing.cpp; these two wrappers expose
+// it to the Web Animations model: can a pair interpolate, and what is the
+// value at progress `p`.
 
 std::string dom_bindings::interpolate_value(std::string_view property, std::string_view from,
                                             std::string_view to, double p,
@@ -249,8 +254,8 @@ void dom_bindings::cancel_record(std::size_t index) {
     a.cancelled_at = unresolved(active) ? 0 : active;
     if (cx_ != nullptr && play_state(a) != "idle" && !a.finished_settled) {
         // Web Animations 4.4.3 "cancel an animation": the finished promise is
-        // rejected with an AbortError AND its [[PromiseIsHandled]] is set to
-        // true - a page that never asked for `finished` must not hear an
+        // rejected with an AbortError and its [[PromiseIsHandled]] is set to
+        // true, so a page that never asked for `finished` does not see an
         // unhandledrejection for it.
         cx_->mark_promise_handled(a.finished);
         cx_->settle_promise(a.finished,
@@ -273,11 +278,11 @@ void dom_bindings::fire_animation_event(std::size_t index, std::string_view type
     const value event = make_event(*cx_, type, a.owner);
     auto * object = static_cast<script::object_object *>(event.as_heap());
     object->set("cancelable", value::boolean(false));
-    // The interface's prototype, off its global constructor: the event
-    // interfaces are not in the node-interface registry `interface_prototype`
-    // reads, and `instanceof AnimationEvent` is what a page asks.
-    // The constructor is a native, whose `prototype` is an own slot rather
-    // than a property the chain walk finds - the same read `instanceof` does.
+    // Take the interface's prototype from its global constructor, so that
+    // `instanceof AnimationEvent` holds; the event interfaces are not in the
+    // node-interface registry that `interface_prototype` reads. The constructor
+    // is a native whose `prototype` is an own slot, read directly here as
+    // `instanceof` does.
     if (const value ctor = cx_->global(transition ? "TransitionEvent" : "AnimationEvent");
         ctor.is_kind(script::heap_kind::native)) {
         const value * proto =
@@ -296,9 +301,9 @@ void dom_bindings::update_css_animations(const read_txn & txn, const style::styl
                                          const style::style_map & after) {
     ++restyle_generation_;
     if (cx_ == nullptr || selector_engine_ == nullptr) { return; }
-    // WHO OWNS WHAT, once: a page in the interpolation harness holds hundreds
-    // of elements and hundreds of live records, and asking "this element's
-    // records" by scanning the list per element made a flush quadratic.
+    // Index each element's live records once up front. Scanning the whole
+    // record list per element made a flush quadratic on pages with hundreds of
+    // animated elements (e.g. the WPT interpolation tests).
     owned_.clear();
     for (std::size_t i = 0; i < animations_.size(); ++i) {
         animation_record & a = animations_[i];
@@ -332,6 +337,8 @@ void dom_bindings::update_css_animations(const read_txn & txn, const style::styl
                     if (previous) {
                         // The before-change style: the previous text with the
                         // running animations sampled on top, at this moment.
+                        // 16px is the default font size, used only to resolve
+                        // em-based values; the result is compared, not laid out.
                         std::vector<std::pair<std::string, std::string>> current;
                         if (!records.empty()) {
                             current = animated_values(
@@ -349,10 +356,10 @@ void dom_bindings::update_css_animations(const read_txn & txn, const style::styl
         for (const node_id child : txn.children(node)) { self(self, child); }
     };
     walk(walk, txn.root());
-    // Whatever no element kept - the element left the document, lost its
-    // style, or its name went away - is cancelled. Its event, like every
-    // other, fires from the browser's next tick (tick_animations): nothing
-    // here runs script, because this runs inside a flush a script asked for.
+    // Cancel whatever no element kept: the element left the document, lost its
+    // style, or its name went away. The cancel event, like every other, fires
+    // from the browser's next tick (tick_animations); nothing here runs script,
+    // because this runs inside a flush that a script may have requested.
     for (std::size_t i = 0; i < animations_.size(); ++i) {
         animation_record & a = animations_[i];
         if (a.kind == animation_kind::script || a.seen || play_state(a) == "idle") { continue; }
@@ -375,9 +382,9 @@ void dom_bindings::update_css_transitions(
     const items delays = list("transition-delay", whole.delay);
     const items easings = list("transition-timing-function", whole.easing);
     const items behaviors = list("transition-behavior", whole.behavior);
-    // THE COMMON CASE IS NOTHING: `transition-property` is `all` on every
-    // element, so every changed element arrives here, and a duration of 0s
-    // with no transition already running is a page that asked for none.
+    // The common case is no transition at all: `transition-property` is `all`
+    // by default, so every changed element arrives here, and a 0s duration and
+    // delay with no transition already running means the page asked for none.
     const bool owns_one = std::ranges::any_of(records, [&](std::size_t i) {
         return animations_[i].kind == animation_kind::css_transition;
     });
@@ -413,7 +420,7 @@ void dom_bindings::update_css_transitions(
         return physical.empty() ? std::string{name} : physical;
     };
     // A property that is not animatable never transitions, allow-discrete or
-    // not (interpolate-size-interpolation).
+    // not (WPT interpolate-size-interpolation).
     const auto consider = [&](std::string_view logical) {
         const std::string name = physical_of(logical);
         if (!style::css::animatable(name)) { return; }
@@ -436,7 +443,7 @@ void dom_bindings::update_css_transitions(
     for (const std::string & p : properties) {
         if (ascii_iequals(p, "all") || ascii_iequals(p, "none")) { continue; }
         const std::string name = p.starts_with("--") ? p : ascii_lower_copy(p);
-        // A SHORTHAND NAMES ITS LONGHANDS (CSS Transitions 1 §2.1): the
+        // A shorthand names its longhands (CSS Transitions 1 §2.1): the
         // cascade holds `border-width` as four, and each gets its transition.
         const std::span<const std::string_view> longhands = style::css::longhands_of(name);
         if (longhands.empty()) {
@@ -490,10 +497,9 @@ void dom_bindings::update_css_transitions(
         const std::string_view as =
             animation_detail::interpolates_as(selector_engine_, *atoms_, property);
 
-        // Each side's `currentcolor` is that side's `color` (CSS Color 4
-        // §7.1), for every property but `color` itself.
-        // ...and a shadow with no colour is in that colour too, so it pairs
-        // with a coloured one (box-shadow-interpolation).
+        // Each side's `currentcolor` is that side's `color` (CSS Color 4 §7.1),
+        // for every property but `color` itself. A shadow with no colour also
+        // takes that colour, so it can pair with a coloured shadow.
         const auto resolved = [&](const style::computed_style & style, std::string_view text) {
             if (property == "color") { return std::string{text}; }
             const std::string_view color = value_on(style, *atoms_, "color");
@@ -507,8 +513,8 @@ void dom_bindings::update_css_transitions(
             if (name == property) { before_value = trim(text, html_whitespace); }
         }
         const std::string after_value = resolved(after, value_on(after, *atoms_, property));
-        // Whether the pair interpolates is asked under the AFTER-CHANGE
-        // style's `interpolate-size` (CSS Values 5 §interpolate-size,
+        // Whether the pair interpolates is decided by the after-change style's
+        // `interpolate-size` (CSS Values 5 §interpolate-size; WPT
         // interpolate-size-which-value).
         style::css::length_context sizing;
         sizing.interpolate_keywords =
@@ -564,7 +570,7 @@ void dom_bindings::update_css_transitions(
         running.seen = true;
         running.tree_order = tree_order;
         if (play_state(running) == "finished") {
-            // A COMPLETED transition stays until the property moves on from
+            // A completed transition stays until the property moves on from
             // its end value; then it is forgotten and the change is a fresh one.
             if (running.end_value == after_value) { continue; }
             cancel_record(existing);
@@ -583,8 +589,9 @@ void dom_bindings::update_css_transitions(
             continue;
         }
         if (running.reversing_start == after_value) {
-            // §3.1: heading back where it came from, in proportion to how far
-            // it got - by the timing function's output, not the clock's.
+            // CSS Transitions 1 §3.1: heading back where it came from, shortened
+            // in proportion to how far it got, measured by the timing
+            // function's output rather than elapsed time.
             const double progress = sample_timing(running).progress;
             const double old_factor = running.reversing_factor;
             const double factor = std::clamp(
@@ -665,12 +672,11 @@ void dom_bindings::update_css_animation_list(node_id element, std::size_t tree_o
             frame.values = k.values;
             keyframes.push_back(std::move(frame));
         }
-        // A MISSING 0% KEYFRAME IS SYNTHESISED WITH THE ELEMENT'S TIMING
-        // FUNCTION (CSS Animations 1 §4.1, §4.3): its values are the
-        // underlying ones, which only the sampler knows, so it goes in
-        // empty and carries the easing the interval from it needs. Without
-        // it a `to`-only rule ran its first interval linearly, whatever
-        // `animation-timing-function` said.
+        // A missing 0% keyframe is synthesised with the element's timing
+        // function (CSS Animations 1 §4.1, §4.3). Its values are the underlying
+        // ones, which only the sampler knows, so it is added empty but carries
+        // the easing; otherwise a `to`-only rule would run its first interval
+        // linearly.
         if (std::ranges::none_of(keyframes,
                                  [](const animation_keyframe & k) { return k.offset == 0; })) {
             animation_keyframe from;
@@ -721,8 +727,9 @@ void dom_bindings::update_css_animation_list(node_id element, std::size_t tree_o
             e.composite = composite;
             e.timing = timing;
             e.keyframes = std::move(keyframes);
-            // `animation-play-state` moved: the CSS pause and its release,
-            // without disturbing a pause a script made (CSS Animations 2 §5.3).
+            // `animation-play-state` changed: apply the CSS pause or its
+            // release without disturbing a pause a script made (CSS Animations
+            // 2 §5.3).
             if (paused && !a.css_paused) {
                 const double current = animation_current_time(a);
                 a.hold_time = unresolved(current) ? 0 : current;

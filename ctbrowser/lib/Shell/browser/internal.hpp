@@ -1,6 +1,10 @@
+//===- ctbrowser/lib/Shell/browser/internal.hpp - Internals -----*- C++ -*-===//
+//
+// Private to lib/Shell/browser/ and not installed: the includes and small
+// helpers shared by the files that implement browser's methods.
+//
+//===----------------------------------------------------------------------===//
 #pragma once
-// Private to lib/Shell/browser/ - not installed. The includes every file of
-// the browser's method bodies shares.
 
 #include <chrono>
 #include <cstdlib>
@@ -11,10 +15,10 @@
 
 namespace ctbrowser::shell {
 
-// The viewport a document's units resolve against once its root's
-// scrollbars are taken out: CSS Values 4 §6.1.2 excludes them when the root
-// is `overflow: scroll` (a root that always shows them), and only then. The
-// page and a frame ask the same question of their resolved styles.
+/// The viewport a document's units resolve against once its root's
+/// scrollbars are taken out. CSS Values 4 §6.1.2 excludes them when the root
+/// is `overflow: scroll` (a root that always shows them), and only then. Both
+/// the page and a frame call this with their resolved styles.
 [[nodiscard]] inline std::pair<float, float> viewport_less_scroll_root(
     atom_table & atoms, const ctbrowser::style::style_map & resolved, node_id root, float width,
     float height, float scrollbar) {

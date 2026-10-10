@@ -1,3 +1,10 @@
+//===- collections.cpp - CSSOM sheets and rule lists ------------*- C++ -*-===//
+//
+// dom_bindings::install_stylesheet_collections: the MediaList, StyleSheetList,
+// CSSRuleList, StyleSheet and CSSStyleSheet interfaces.
+//
+//===----------------------------------------------------------------------===//
+
 #include "helpers.hpp"
 
 #include <ctbrowser/shell/net/url.hpp>
@@ -9,10 +16,10 @@ using namespace detail;
 void dom_bindings::install_stylesheet_collections(context & cx, script::object_object * internals) {
     // --- MediaList
     //
-    // A VIEW OF A RECORD'S QUERY LIST, not a list of its own. `mediaText`,
+    // A view of a record's query list, not a list of its own. `mediaText`,
     // `appendMedium` and `deleteMedium` all write through to the sheet or the
     // media rule the object came from, which is what makes
-    // `rule.media.appendMedium('print')` change `rule.cssText` - the two are one
+    // `rule.media.appendMedium('print')` change `rule.cssText`: the two are one
     // list read two ways rather than two lists that have to be kept in step.
     script::object_object * media_proto =
         cssom_interface(cx, internals, "MediaList", nullptr, nullptr);
@@ -31,9 +38,9 @@ void dom_bindings::install_stylesheet_collections(context & cx, script::object_o
         [this](context & c, std::span<value> a) {
             std::vector<std::string> * queries = receiver_media(c);
             if (queries == nullptr) { return value::undefined(); }
-            // [LegacyNullToEmptyString]: `media.mediaText = null` EMPTIES the
-            // list rather than parsing the string "null", which
-            // `css/cssom/MediaList.html` asserts by name.
+            // [LegacyNullToEmptyString]: `media.mediaText = null` empties the
+            // list rather than parsing the string "null" (WPT
+            // css/cssom/MediaList.html).
             const std::string text = a.empty() || a[0].is_null() || a[0].is_undefined()
                                          ? std::string{}
                                          : c.to_string(a[0]);
@@ -55,16 +62,16 @@ void dom_bindings::install_stylesheet_collections(context & cx, script::object_o
         [this](context & c, std::span<value> a) {
             std::vector<std::string> * queries = receiver_media(c);
             if (queries == nullptr) { return value::undefined(); }
-            // "Parse A MEDIA QUERY" - singular. `appendMedium("screen, print")` is
-            // not two appends and it is not one query called `screen, print`
-            // either: the parse returns null, and step 1 says return. A top-level
-            // comma is the whole test for it.
+            // "Parse a media query", singular. `appendMedium("screen, print")` is
+            // not two appends and not one query called `screen, print` either:
+            // the parse returns null, and step 1 says return. A top-level comma
+            // is the whole test for it.
             const std::string one = arg_string(c, a, 0);
             if (split_on_commas(one).size() != 1) { return value::undefined(); }
             const std::string added = serialize_media_query_text(one);
             if (added.empty()) { return value::undefined(); }
             // "If comparing medium with any of the media queries in the collection
-            // returns true, then return" - appending a medium twice is a no-op.
+            // returns true, then return": appending a medium twice is a no-op.
             if (std::find(queries->begin(), queries->end(), added) != queries->end()) {
                 return value::undefined();
             }
@@ -79,20 +86,20 @@ void dom_bindings::install_stylesheet_collections(context & cx, script::object_o
         [this](context & c, std::span<value> a) {
             std::vector<std::string> * queries = receiver_media(c);
             if (queries == nullptr) { return value::undefined(); }
-            // A REQUIRED ARGUMENT, so calling it with none is a TypeError and not a
-            // NotFoundError about the empty string - `medialist-interfaces-002.html`
-            // asserts which of the two by name.
+            // The argument is required, so calling it with none is a TypeError,
+            // not a NotFoundError about the empty string (WPT
+            // css/cssom/medialist-interfaces-002.html).
             if (a.empty()) {
                 c.throw_error("TypeError", "deleteMedium requires a medium");
                 return value::undefined();
             }
             const std::string wanted = serialize_media_query_text(c.to_string(a[0]));
-            // "Remove ALL media queries in the collection that match" - a list may
-            // hold the same query twice (`screen, print, screen`) and removing only
-            // the first leaves one behind that the page has just asked to be rid of.
+            // "Remove all media queries in the collection that match": a list may
+            // hold the same query twice (`screen, print, screen`), and removing
+            // only the first would leave one behind.
             const auto gone = std::remove(queries->begin(), queries->end(), wanted);
             if (wanted.empty() || gone == queries->end()) {
-                // "If nothing was removed, then throw a NotFoundError" - the one
+                // "If nothing was removed, then throw a NotFoundError": the one
                 // place in the CSSOM where deleting something absent is an error.
                 throw_dom_exception(c, "NotFoundError", "that medium is not in the list");
                 return value::undefined();
@@ -146,9 +153,9 @@ void dom_bindings::install_stylesheet_collections(context & cx, script::object_o
         cx, *base_proto, "ownerNode",
         [this](context & c, std::span<value>) {
             const css_sheet_record * sheet = receiver_sheet(c);
-            // NULL ONCE THE OWNER NO LONGER CARRIES IT: a `<link>` that was
-            // disabled or removed keeps this record for the page that holds it,
-            // and the record answers that it belongs to nothing. The owner's tree
+            // Null once the owner no longer carries the sheet: a `<link>` that
+            // was disabled or removed keeps this record for the page that holds
+            // it, and the record answers that it belongs to nothing. The owner's tree
             // is re-walked first, so the answer follows a `link.disabled = true`
             // made a statement ago.
             if (sheet == nullptr || !sheet->owner) { return value::null(); }
@@ -161,9 +168,9 @@ void dom_bindings::install_stylesheet_collections(context & cx, script::object_o
             return wrap(c, sheet->owner);
         },
         {}, script::attr_configurable);
-    // An `@import`'s sheet knows its rule, and through it its parent - and
-    // deleteRule detaches the rule from its sheet, which is what makes
-    // `parentStyleSheet` null afterwards (cssimportrule-parent.html).
+    // An `@import`'s sheet knows its rule, and through it its parent; deleteRule
+    // detaches the rule from its sheet, which makes `parentStyleSheet` null
+    // afterwards (WPT css/cssom/cssimportrule-parent.html).
     const auto owner_rule = [this](context & c) -> const css_rule_record * {
         const css_sheet_record * sheet = receiver_sheet(c);
         if (sheet == nullptr || sheet->owner_rule >= css_rule_store_.size()) { return nullptr; }
@@ -190,7 +197,7 @@ void dom_bindings::install_stylesheet_collections(context & cx, script::object_o
         [this](context & c, std::span<value>) {
             const css_sheet_record * sheet = receiver_sheet(c);
             // "The title attribute must return the title or null if the title is
-            // the empty string" - and a CONSTRUCTED sheet has no title at all,
+            // the empty string", and a constructed sheet has no title at all,
             // whatever was passed to the constructor.
             if (sheet == nullptr || sheet->constructed || sheet->title.empty()) {
                 return value::null();
@@ -234,12 +241,12 @@ void dom_bindings::install_stylesheet_collections(context & cx, script::object_o
     script::object_object * sheet_proto = cssom_interface(
         cx, internals, "CSSStyleSheet", "StyleSheet", [this](context & c, std::span<value> args) {
             // `new CSSStyleSheet(options)`. `media` and `disabled` are honoured;
-            // `title` is NOT, which is not an omission - the specification says
-            // a constructed sheet has no title however it was constructed, and
-            // `CSSStyleSheet-constructable.html` asserts exactly that.
-            // `baseURL` is parsed against the document's; one that cannot be
-            // parsed is a NotAllowedError (CSSStyleSheet-constructable-baseURL).
-            // Nothing here resolves a `url()` against it, so it is only checked.
+            // `title` is deliberately ignored, because the specification says a
+            // constructed sheet has no title (WPT
+            // css/cssom/CSSStyleSheet-constructable.html). An absolute `baseURL`
+            // that cannot be parsed is a NotAllowedError
+            // (CSSStyleSheet-constructable-baseURL.html). Nothing here resolves
+            // a `url()` against it, so it is only checked.
             if (!args.empty() && args[0].is_object()) {
                 auto * options = static_cast<script::object_object *>(args[0].as_heap());
                 if (const value * base = options->find("baseURL");
@@ -266,7 +273,7 @@ void dom_bindings::install_stylesheet_collections(context & cx, script::object_o
             }
             return sheet_object_for(c, at);
         });
-    // "If the origin-clean flag is unset, throw a SecurityError" - the first
+    // "If the origin-clean flag is unset, throw a SecurityError": the first
     // step of cssRules, insertRule and deleteRule alike, CSSOM 6.3.
     const auto origin_dirty = [this](context & c) {
         const css_sheet_record * sheet = receiver_sheet(c);
@@ -279,7 +286,7 @@ void dom_bindings::install_stylesheet_collections(context & cx, script::object_o
         [this, origin_dirty](context & c, std::span<value>) {
             // [SameObject]: `sheet.cssRules === sheet.cssRules` and
             // `sheet.cssRules === sheet.rules` are both asserted, so the list is
-            // built once and REFRESHED rather than rebuilt.
+            // built once and refreshed rather than rebuilt.
             script::object_object * self = object_of(c.current_this());
             const css_sheet_record * sheet = receiver_sheet(c);
             if (self == nullptr || sheet == nullptr || origin_dirty(c)) {
@@ -294,7 +301,7 @@ void dom_bindings::install_stylesheet_collections(context & cx, script::object_o
             return list;
         },
         {}, script::attr_configurable);
-    // `rules` is the legacy alias and must be the SAME object.
+    // `rules` is the legacy alias and must be the same object.
     sheet_proto->define_accessor("rules",
                                  value::object(cx.allocate<script::native_object>(
                                      "get rules",
@@ -313,13 +320,11 @@ void dom_bindings::install_stylesheet_collections(context & cx, script::object_o
                 return value::undefined();
             }
             const std::string text = c.to_string(args[0]);
-            // `insertRule(text)` and `insertRule(text, undefined)` ARE THE SAME
-            // CALL. `index` is an optional unsigned long defaulting to 0, and Web
+            // `insertRule(text)` and `insertRule(text, undefined)` are the same
+            // call. `index` is an optional unsigned long defaulting to 0, and Web
             // IDL says an `undefined` passed for an optional argument means the
-            // default was not supplied - it is not `ToNumber(undefined)`, which is
-            // NaN and was answering IndexSizeError for a perfectly ordinary
-            // insertion. `insertRule-no-index.html` and its four siblings are one
-            // subtest each of exactly that.
+            // default applies; it is not `ToNumber(undefined)`, which is NaN and
+            // would throw IndexSizeError (WPT css/cssom/insertRule-no-index.html).
             const double asked =
                 args.size() > 1 && !args[1].is_undefined() ? context::to_number(args[1]) : 0;
             if (!(asked >= 0) || asked > static_cast<double>(sheet->rules.size())) {
@@ -343,16 +348,14 @@ void dom_bindings::install_stylesheet_collections(context & cx, script::object_o
                 throw_dom_exception(c, "SyntaxError", "@import is not allowed here");
                 return value::undefined();
             }
-            // WHAT MAY PRECEDE WHAT - CSSOM 6.3.3 steps 4 and 5, and the two steps
-            // answer different questions. Step 4 is about the POSITION: `@import`
-            // may only go where everything before it is `@charset`, `@layer` or
-            // another `@import`, `@namespace` may additionally follow those, and
-            // everything else may only go after all of them. Step 5 is about the
-            // WHOLE LIST: a `@namespace` may not be added to a sheet that already
-            // has a style rule in it at all, wherever the insertion point is,
-            // because the namespace would change what the existing selectors mean.
-            // `at-namespace.html` is one assertion of exactly that and says so in
-            // its title.
+            // What may precede what, CSSOM 6.3.3 steps 4 and 5. Step 4 is about
+            // position: `@import` may only follow other `@import`s, `@namespace`
+            // may follow `@import`s and `@namespace`s, and anything else must
+            // come after all of them. (`@charset` and `@layer` statements, which
+            // the spec also allows first, are not modelled here.) Step 5 is about
+            // the whole list: a `@namespace` may not be added to a sheet that
+            // already has any other rule, because it would change what the
+            // existing selectors mean.
             const auto rule_type = [this, sheet](std::size_t i) {
                 const std::size_t which = sheet->rules[i];
                 return which < css_rule_store_.size() ? css_rule_store_[which]->type : 0;
@@ -370,7 +373,7 @@ void dom_bindings::install_stylesheet_collections(context & cx, script::object_o
             } else if (kind == namespace_rule) {
                 allowed = before_ok(import_rule, namespace_rule);
             } else {
-                // Nothing else may be inserted BEFORE an `@import` or a
+                // Nothing else may be inserted before an `@import` or a
                 // `@namespace`, so every rule from the insertion point on must be
                 // neither.
                 for (std::size_t i = at; i < sheet->rules.size(); ++i) {
@@ -412,7 +415,7 @@ void dom_bindings::install_stylesheet_collections(context & cx, script::object_o
                 throw_dom_exception(c, "IndexSizeError", "there is no rule at that index");
                 return value::undefined();
             }
-            // THE MIRROR OF THE INSERT RULE, CSSOM 6.3.4: removing a `@namespace`
+            // The mirror of the insert rule, CSSOM 6.3.4: removing a `@namespace`
             // from a sheet that has anything but `@import` and `@namespace` in it
             // would change what the remaining selectors mean, so it is refused.
             const std::size_t going = sheet->rules[static_cast<std::size_t>(asked)];
@@ -463,11 +466,11 @@ void dom_bindings::install_stylesheet_collections(context & cx, script::object_o
             return value::number(-1);
         },
         script::attr_builtin);
-    // The two differ in HOW they refuse, not in what they refuse: `replaceSync`
-    // THROWS a NotAllowedError and `replace` returns a promise REJECTED with
-    // one. `CSSStyleSheet-constructable-replace-on-regular-sheet.html` asserts
-    // both halves separately, and a throw out of `replace` fails that test with
-    // an uncaught exception rather than the rejection it is waiting for.
+    // `replaceSync` and `replace` differ in how they refuse, not in what they
+    // refuse: `replaceSync` throws a NotAllowedError and `replace` returns a
+    // promise rejected with one; a throw out of `replace` would surface as an
+    // uncaught exception rather than a rejection (WPT
+    // css/cssom/CSSStyleSheet-constructable-replace-on-regular-sheet.html).
     const auto replace_rules = [this](context & c, std::span<value> args) -> bool {
         css_sheet_record * sheet = receiver_sheet(c);
         if (sheet == nullptr || !sheet->constructed) { return false; }
@@ -490,10 +493,10 @@ void dom_bindings::install_stylesheet_collections(context & cx, script::object_o
     set_method(
         cx, *sheet_proto, "replace",
         [this, replace_rules](context & c, std::span<value> args) {
-            // The work is synchronous - there is no subresource to fetch, `@import`
-            // being ignored - so the promise is already settled. What matters to a
-            // page is that it IS a promise, that it resolves with the sheet, and
-            // that a refusal arrives as a rejection.
+            // The work is synchronous (there is no subresource to fetch, since
+            // `@import` is ignored), so the promise is already settled. What
+            // matters to a page is that it is a promise, that it resolves with
+            // the sheet, and that a refusal arrives as a rejection.
             const value self = c.current_this();
             if (!replace_rules(c, args)) {
                 return c.make_promise(make_dom_exception(c, "NotAllowedError",

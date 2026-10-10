@@ -1,6 +1,10 @@
-// browser - what a page loads besides scripts: the font backend and the
-// page's @font-face files, and the <img> set - bitmaps through image_store,
-// SVG intercepted before it.
+//===- ctbrowser/lib/Shell/browser/resources.cpp - Fonts and images -------===//
+//
+// What a page loads besides scripts: the font backend and the page's
+// @font-face files, and the <img> set (bitmaps through image_store, SVG
+// intercepted before it).
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -20,16 +24,16 @@ void browser::load_page_fonts() {
         const std::vector<std::byte> bytes = assets_.load(face.source);
         if (!bytes.empty()) { (void)ttf_->add_face(face.family, face.bold, face.italic, bytes); }
     }
-    // The faces may have changed, so the `0` advances measured before are
-    // stale: hand the measurement over again, which drops the engine's cache.
+    // The faces may have changed, so the `0` advances measured before (for
+    // `ch`) are stale: hand the measurement over again, which drops the
+    // engine's cache.
     install_text_measure();
 }
 
-// CSS Values 4 §6.1.1: `ch` is the advance of `0` in the element's font, and
-// only a font backend knows it. The engine measures through this; without it
-// `ch` folds to half an em and `width: 3ch` in a 10px monospace is 15px for
-// three 6px zeros - 97 of line-break-ch-unit's 194 subtests (5af74d62 landed
-// the engine half and named this line as the missing shell half).
+/// Gives the style engine a text measurement callback. CSS Values 4 §6.1.1:
+/// `ch` is the advance of `0` in the element's font, and only a font backend
+/// knows it. Without this `ch` falls back to half an em, and `width: 3ch` in a
+/// 10px monospace font becomes 15px instead of three 6px zeros.
 void browser::install_text_measure() {
     styles_->set_text_measure(
         [this](std::string_view text, float size, std::string_view family, bool bold, bool italic) {
@@ -37,16 +41,16 @@ void browser::install_text_measure() {
         });
 }
 
-// Whether these bytes are SVG. Content first, name second, because a file
-// served as `chart` is still an SVG and a `.svg` that turns out to be a PNG is
-// not - and because this decides which of two rasterisers sees the bytes, which
-// is not a decision to make on a file extension alone.
 namespace {
 
+/// Whether these bytes are SVG, judged by content alone: a file served as
+/// `chart` is still an SVG and a `.svg` that turns out to be a PNG is not, and
+/// this decides which of two rasterisers sees the bytes.
 [[nodiscard]] bool looks_like_svg(std::string_view bytes) {
     std::size_t at = 0;
-    // A BOM, then whitespace. An SVG written by a tool that emits UTF-8 BOMs is
-    // otherwise not recognised, and the failure - a blank box - says nothing.
+    // Skip a UTF-8 BOM, then whitespace. Without this an SVG from a tool that
+    // emits BOMs is not recognised, and the failure (a blank box) says
+    // nothing.
     if (bytes.size() >= 3 && bytes.compare(0, 3, "\xEF\xBB\xBF") == 0) { at = 3; }
     while (at < bytes.size() &&
            (bytes[at] == ' ' || bytes[at] == '\t' || bytes[at] == '\n' || bytes[at] == '\r')) {
@@ -62,29 +66,26 @@ namespace {
 } // namespace
 
 void browser::load_images() {
-    // HERE, not beside canvases_.clear() in run_scripts. A canvas is created BY
-    // a script, so clearing before scripts run is right for one; an SVG source
-    // is found by this walk, which happens BEFORE scripts, so clearing there
-    // deletes what was just loaded. Both are per-document - they just have
-    // different producers, and this is the one that resets with its own writer.
+    // The SVG store is cleared here, not beside canvases_.clear() in
+    // run_scripts. A canvas is created by a script, so clearing before
+    // scripts run is right for one; an SVG source is found by this walk, which
+    // happens before scripts, so clearing there would delete what was just
+    // loaded.
     //
-    // The SVG clear is the ONLY thing this adds over refresh_images, and it is
-    // per-document: an inline <svg>'s source comes from the parse and is re-set
-    // by the caller straight after, so a refresh must not wipe it.
+    // The SVG clear is the only thing this adds over refresh_images, and it
+    // is per-document: an inline <svg>'s source comes from the parse and is
+    // re-set by the caller straight after, so a refresh must not wipe it.
     svg_.clear();
     refresh_images();
 }
 
-// AN <img> WHOSE src A SCRIPT SET has a bitmap too.
-//
-// load_images ran once per document, before scripts, so `img.src = url` and
-// `document.body.appendChild(new Image())` laid out at 0x0 forever - the
-// attribute was right, the decode was cached, and layout had nothing to measure.
-// Silently: a zero-sized box is what a missing image looks like.
-//
-// Called before every layout, which is cheap for the reason that matters:
-// image_store caches by name, so this is a tree walk and an attribute read per
-// <img>, not a decode.
+/// Re-resolves every <img>'s bitmap or SVG source, so an image whose src a
+/// script set (`img.src = url`, `appendChild(new Image())`) has a size at the
+/// next layout.
+///
+/// Called before every layout. That is cheap because image_store caches by
+/// name, so this is a tree walk and an attribute read per <img>, not a
+/// decode.
 void browser::refresh_images() {
     images_by_node_.clear();
     const auto txn = doc_->read();
@@ -94,12 +95,12 @@ void browser::refresh_images() {
         if (txn.tag(at).value_or(atom{}) == img_tag) {
             const std::string_view src = txn.attribute_value(at, src_attribute);
             if (!src.empty()) {
-                // SVG IS INTERCEPTED BEFORE image_store EVER SEES IT. Not a
-                // decoder plugged into image_store: its cache is keyed by name
-                // and decodes once, which cannot produce a raster at the size
-                // the box turns out to be. It also means SDL3_image's own SVG
-                // loader is never reached, so both platforms rasterise through
-                // plutosvg and one golden serves both.
+                // SVG is intercepted before image_store sees it, not decoded
+                // by a plugin: image_store's cache is keyed by name and decodes
+                // once, which cannot produce a raster at the size the box turns
+                // out to be. It also means SDL3_image's own SVG loader is never
+                // reached, so both platforms rasterise through plutosvg and one
+                // golden serves both.
                 const std::vector<std::byte> bytes = assets_.load(src);
                 const std::string_view text{reinterpret_cast<const char *>(bytes.data()),
                                             bytes.size()};

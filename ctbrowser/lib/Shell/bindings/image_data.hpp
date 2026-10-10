@@ -1,3 +1,10 @@
+//===- image_data.hpp - ImageData construction helpers ----------*- C++ -*-===//
+//
+// Helpers that build ImageData objects for the 2D canvas bindings
+// (createImageData, getImageData) and the ImageData constructor: argument
+// conversion, the size check, and the object itself.
+//
+//===----------------------------------------------------------------------===//
 #pragma once
 
 #include <ctbrowser/script/script.hpp>
@@ -14,7 +21,9 @@
 
 namespace ctbrowser::shell::detail {
 
-// CanvasImageData's coordinates and dimensions are WebIDL [EnforceRange] long.
+/// Converts `value` as a WebIDL [EnforceRange] long, the type of
+/// CanvasImageData's coordinates and dimensions. Throws a TypeError and
+/// returns nullopt when the number is not finite or outside int32.
 [[nodiscard]] inline std::optional<std::int32_t> image_data_long(script::context & cx,
                                                                  script::value value) {
     const double number = std::trunc(cx.to_number_value(value));
@@ -27,8 +36,10 @@ namespace ctbrowser::shell::detail {
     return static_cast<std::int32_t>(number);
 }
 
-// The VM's dense typed-array representation stores one value per channel.
-// Check the existing array/vector limits before multiplying or allocating.
+/// The number of channel bytes (width * height * 4) for an ImageData, or
+/// nullopt after throwing a RangeError when it exceeds the VM's array limit.
+/// The VM's dense typed-array representation stores one value per channel,
+/// so the check runs before multiplying or allocating.
 [[nodiscard]] inline std::optional<std::size_t> image_data_length(script::context & cx,
                                                                   std::uint64_t width,
                                                                   std::uint64_t height) {
@@ -41,11 +52,14 @@ namespace ctbrowser::shell::detail {
     return static_cast<std::size_t>(width * height * 4);
 }
 
-// THE ImageData BRAND: every one made here carries it, under a key no page
-// can spell, and it is what putImageData converts its argument by - not the
-// prototype, which a subclass changes and a page can replace.
+/// The ImageData brand. Every ImageData made here carries it under a key no
+/// page can spell, and putImageData recognises its argument by it rather than
+/// by the prototype, which a subclass changes and a page can replace.
 inline constexpr std::string_view image_data_brand = CTBROWSER_PRIVATE_KEY("ctbrowser:image-data");
 
+/// Builds an ImageData of `width` x `height`. `bytes` becomes its `data`;
+/// when undefined, a zero-filled Uint8ClampedArray is allocated. Returns
+/// undefined with a RangeError pending when the size is too large.
 [[nodiscard]] inline script::value make_image_data(
     script::context & cx, std::uint64_t width, std::uint64_t height,
     script::value bytes = script::value::undefined()) {
@@ -67,7 +81,7 @@ inline constexpr std::string_view image_data_brand = CTBROWSER_PRIVATE_KEY("ctbr
     out->set("height", script::value::number(static_cast<double>(height)));
     out->set("data", bytes);
     out->set(image_data_brand, script::value::boolean(true));
-    // AN ImageData, to `instanceof` as well: its prototype is the realm's
+    // An ImageData for `instanceof` as well: its prototype is the realm's
     // ImageData.prototype (install_window gives the constructor one).
     if (const script::value ctor = cx.global("ImageData"); ctor.is_callable()) {
         if (const script::value proto = cx.lookup_property(ctor, "prototype"); proto.is_object()) {

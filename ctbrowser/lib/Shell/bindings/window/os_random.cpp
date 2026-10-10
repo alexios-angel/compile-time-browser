@@ -1,5 +1,9 @@
-// The OS CSPRNG behind os_random.hpp - the only file that names the platform
+//===- os_random.cpp - OS cryptographic random bytes ------------*- C++ -*-===//
+//
+// The OS CSPRNG behind os_random.hpp; the only file that names the platform
 // call.
+//
+//===----------------------------------------------------------------------===//
 
 #include "os_random.hpp"
 
@@ -18,8 +22,8 @@ namespace ctbrowser::shell {
 
 bool os_random(std::span<std::uint8_t> out) noexcept {
 #if defined(_WIN32)
-    // Callers ask for at most 65536 bytes (getRandomValues' quota), well
-    // inside a ULONG.
+    // Callers ask for at most 65536 bytes (getRandomValues' quota), which fits
+    // in a ULONG.
     return BCryptGenRandom(nullptr, out.data(), static_cast<ULONG>(out.size()),
                            BCRYPT_USE_SYSTEM_PREFERRED_RNG) == 0;
 #elif defined(__APPLE__)

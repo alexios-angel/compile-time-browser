@@ -1,25 +1,40 @@
+//===- ctbrowser/lib/Shell/net/url_parser.cpp - The basic URL parser ------===//
+//
+// The WHATWG URL Standard's "basic URL parser" (§4.4): the state machine that
+// turns input text into a url_record, plus the Windows drive letter and
+// dot-segment tests it needs. The same function runs the URL setters, which
+// start it in a given state on an existing record.
+//
+//===----------------------------------------------------------------------===//
+
 #include "url_internal.hpp"
 
 namespace ctbrowser::shell::url_detail {
+/// URL Standard "Windows drive letter": an ASCII letter then `:` or `|`.
 [[nodiscard]] bool windows_drive_letter(std::u32string_view s) noexcept {
     return s.size() == 2 && is_alpha(s[0]) && (s[1] == ':' || s[1] == '|');
 }
+/// A Windows drive letter whose second code point is `:`.
 [[nodiscard]] bool normalized_windows_drive_letter(std::string_view s) noexcept {
     return s.size() == 2 && is_alpha(static_cast<unsigned char>(s[0])) && s[1] == ':';
 }
+/// A drive letter followed by the end or by `/`, `\`, `?` or `#`.
 [[nodiscard]] bool starts_with_windows_drive_letter(std::u32string_view s) noexcept {
     return s.size() >= 2 && windows_drive_letter(s.substr(0, 2)) &&
            (s.size() == 2 || s[2] == '/' || s[2] == '\\' || s[2] == '?' || s[2] == '#');
 }
+/// A single-dot path segment: `.` or `%2e`, case-insensitively.
 [[nodiscard]] bool single_dot(std::string_view s) noexcept {
     return s == "." || ascii_iequals(s, "%2e");
 }
+/// A double-dot path segment: `..` with either dot possibly written `%2e`.
 [[nodiscard]] bool double_dot(std::string_view s) noexcept {
     return s == ".." || ascii_iequals(s, ".%2e") || ascii_iequals(s, "%2e.") ||
            ascii_iequals(s, "%2e%2e");
 }
 
-// §4.4 "shorten a URL's path".
+/// WHATWG URL Standard §4.4 "shorten a URL's path": drops the last segment,
+/// except a lone normalized Windows drive letter on a file: URL.
 void shorten_path(url_record & url) {
     if (url.scheme == "file" && url.path.size() == 1 &&
         normalized_windows_drive_letter(url.path[0])) {
@@ -28,8 +43,10 @@ void shorten_path(url_record & url) {
     if (!url.path.empty()) { url.path.pop_back(); }
 }
 
-// The state machine. `url` is fresh for a plain parse and the record being
-// written for a setter (`override` given); false is the standard's failure.
+/// The WHATWG URL Standard "basic URL parser" state machine; the step numbers
+/// below are that algorithm's. \p url is fresh for a plain parse, or the record
+/// being modified by a setter when \p override is given. Returns false on
+/// failure.
 [[nodiscard]] bool basic_parse(std::string_view raw, const url_record * base, url_record & url,
                                std::optional<state> override) {
     std::string cleaned;

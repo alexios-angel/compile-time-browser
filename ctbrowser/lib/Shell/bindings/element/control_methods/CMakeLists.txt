@@ -1,3 +1,4 @@
+# The installers that element/control_methods.cpp calls, one per area.
 target_sources(ctbrowser-shell PRIVATE
   collections_and_labels.cpp
   data_transfer.cpp

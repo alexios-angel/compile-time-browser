@@ -1,11 +1,15 @@
-// dom_bindings - `createImageBitmap` and `ImageBitmap` (HTML 8.10).
+//===- image_bitmap.cpp - createImageBitmap and ImageBitmap -----*- C++ -*-===//
 //
-// A bitmap cut from an image source, ready to draw: an <img>, a <canvas>, an
-// ImageData, another ImageBitmap, or a Blob whose bytes decode as an image.
-// The promise it answers is REJECTED, never thrown past: a source with nothing
-// to draw - an <img> not yet decoded, a detached bitmap, a Blob that is no
-// image - is an InvalidStateError, a zero-sized crop a RangeError, and a value
-// that is no image source at all the TypeError of its IDL conversion.
+// `createImageBitmap` and `ImageBitmap` (HTML 8.10), installed by
+// dom_bindings::install_image_bitmap.
+//
+// An ImageBitmap is a bitmap cut from an image source, ready to draw: an <img>,
+// a <canvas>, an ImageData, another ImageBitmap, or a Blob whose bytes decode
+// as an image. Errors reject the returned promise and are never thrown: a
+// source with nothing to draw (an <img> not yet decoded, a detached bitmap, a
+// Blob that is not an image) is an InvalidStateError, a zero-sized crop a
+// RangeError, and a value that is no image source at all the TypeError of its
+// IDL conversion.
 //
 // The pixels live in the image store under a handle of their own
 // (image_store::adopt), which is what drawImage reads through image_argument;
@@ -14,6 +18,8 @@
 // ponytail: no resizeWidth/resizeHeight, imageOrientation or premultiplyAlpha
 // options, no <video>, SVG image or OffscreenCanvas source, and no structured
 // clone or transfer of an ImageBitmap.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/shell/bindings.hpp>
 
@@ -30,13 +36,14 @@ namespace ctbrowser::shell {
 
 namespace {
 
-// The most pixels one bitmap may hold (2^26, 256 MiB): past it an allocation
-// is a page's to choose.
+/// The most pixels one bitmap may hold: 2^26, i.e. 256 MiB of RGBA. Larger
+/// requests are rejected so a page cannot force an arbitrarily large
+/// allocation.
 constexpr double largest_area = 67108864.0;
 
-// The crop of 8.10 step "the source rectangle": (sx, sy, sw, sh) with a
-// negative width or height measured back from its corner, and whatever falls
-// outside the source transparent black.
+/// The crop of 8.10 step "the source rectangle": (sx, sy, sw, sh), with a
+/// negative width or height measured back from its corner. Whatever falls
+/// outside the source is transparent black.
 [[nodiscard]] paint::bitmap crop(const paint::bitmap & source, double sx, double sy, double sw,
                                  double sh) {
     if (sw < 0) {
@@ -49,8 +56,9 @@ constexpr double largest_area = 67108864.0;
     }
     const auto x0 = static_cast<long long>(std::floor(sx));
     const auto y0 = static_cast<long long>(std::floor(sy));
-    // Bounded by the source's own area and then some: a page may ask for an
-    // enormous rectangle, and an allocation it controls must not be one.
+    // Cap each side at 16384 pixels: the caller already rejects crops above
+    // largest_area, and this keeps a page from choosing the size of the
+    // allocation through the crop rectangle.
     constexpr double largest = 16384.0;
     const int w = static_cast<int>(std::min(std::ceil(sw), largest));
     const int h = static_cast<int>(std::min(std::ceil(sh), largest));
@@ -77,8 +85,8 @@ void dom_bindings::install_image_bitmap(context & cx) {
             return value::undefined();
         });
     const value proto = value::object(made.proto);
-    // The handle of a live bitmap, or null for a detached one or a receiver
-    // that is none.
+    // The image-store handle of `this`, or nullopt if `this` is not an
+    // ImageBitmap. A detached bitmap's handle no longer resolves in images_.
     const auto bitmap_handle = [](context & c) -> std::optional<int> {
         const value self = c.current_this();
         if (!self.is_object()) { return std::nullopt; }
@@ -136,7 +144,7 @@ void dom_bindings::install_image_bitmap(context & cx) {
         auto * object =
             source.is_object() ? static_cast<script::object_object *>(source.as_heap()) : nullptr;
         if (object != nullptr && object->find(image_bitmap_property) != nullptr) {
-            // Another ImageBitmap - detached is the InvalidStateError.
+            // Another ImageBitmap; a detached one is an InvalidStateError.
             pixels = images_ == nullptr ? nullptr
                                         : images_->at(static_cast<int>(context::to_number(
                                               *object->find(image_bitmap_property))));
