@@ -1143,8 +1143,24 @@ inline void copy_json_properties(ctbrowser::json_value & target,
 inline void require_element(ctbrowser::element_ref element) {
     ctbrowser::validate_element(element).value();
 }
-inline void require_dataset_element(ctbrowser::element_ref element) {
+// A DOM entry's element input. The host contract supplies no HTML form: a form
+// answers its controls by index and by any name ahead of every member
+// ([LegacyOverrideBuiltIns], HTML 4.10.3), so a control named `getAttribute`
+// or `jquery` changes what the typed DOM proof and the element facts read,
+// and the past names map behind that lives in the page's wrapper, not here.
+// A Data session's inputs are only keys. ponytail: a form a query returns
+// still reads as an ordinary element; refuse it at its member reads too if a
+// compiled program must match the VM there.
+inline void require_entry_element(ctbrowser::element_ref element) {
     require_element(element);
+    const auto view = element.owner->read();
+    if (view.element_ns(element.id) == ctbrowser::node_ns::html &&
+        view.local_name(element.id) == "form") {
+        throw std::invalid_argument("DOM entry requires a contracted element other than a form");
+    }
+}
+inline void require_dataset_element(ctbrowser::element_ref element) {
+    require_entry_element(element);
     // The host contract supplies only HTML/SVG elements. Other namespace URIs
     // still live in Shell and cannot be recovered from a public node_id.
     if (element.owner->read().element_ns(element.id) == ctbrowser::node_ns::other) {

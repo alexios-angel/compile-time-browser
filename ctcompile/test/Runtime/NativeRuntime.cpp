@@ -857,6 +857,29 @@ int main() {
     CHECK(rejects([&] { (void)js_document_t{dom, wrongStyles}; }));
     CHECK(rejects([&] { (void)js_element_t{{&dom, button}, wrongStyles}; }));
 
+    // A DOM entry's element input is never an HTML form, whose controls answer
+    // by index and name ahead of every member (HTML 4.10.3). A Data session's
+    // key and a query result may be one.
+    const auto refusesForm = [](auto check, ctbrowser::element_ref input) {
+        try {
+            check(input);
+        } catch (const std::invalid_argument &) { return true; }
+        return false;
+    };
+    const auto entry = [](ctbrowser::element_ref input) { require_entry_element(input); };
+    const auto dataset = [](ctbrowser::element_ref input) { require_dataset_element(input); };
+    const auto key = [](ctbrowser::element_ref input) { require_element(input); };
+    const auto form = dom.create_element(atoms.intern("form"));
+    dom.append_child(replacement, form).value();
+    CHECK(refusesForm(entry, {&dom, form}) && refusesForm(dataset, {&dom, form}));
+    CHECK(!refusesForm(key, {&dom, form}));
+    CHECK(!refusesForm(entry, {&dom, replacement}));
+    const auto svgForm = dom.create_element(atoms.intern("form"), ctbrowser::node_ns::svg);
+    CHECK(!refusesForm(entry, {&dom, svgForm}));
+    CHECK(document.querySelector(js_string{"form"})->value() ==
+          (ctbrowser::element_ref{&dom, form}));
+    dom.remove_child(form).value();
+
     // The global facade follows a scoped binding; explicit views keep their owner.
     static_assert(std::is_empty_v<document_object>);
     static_assert(!std::is_default_constructible_v<document_scope>);
