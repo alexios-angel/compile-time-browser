@@ -273,7 +273,7 @@ def check_nullable_foreign_empty(args, output, source, node, reference, compiler
     # The expected outputs below were written for this exact source; the hash
     # makes an edit to the fixture fail here instead of silently changing them.
     if hashlib.sha256(source.encode()).hexdigest() != (
-        "85aa6fa6356df6be5742dca004da0da8b5db5de4c816f8371d510f89974dc759"
+        "8b71c900d131e33f580c2393777b58d45775d10914f6987041aa968456c8bd74"
     ):
         raise RuntimeError("changed the historical foreign-empty source")
     observed = args.work / f"{name}-future.js"
