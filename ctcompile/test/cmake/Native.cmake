@@ -154,14 +154,14 @@ ctcompile_native_fixture(structs Objects/struct.js)
 # Phase 57A: dense, uniformly numeric array literals, as std::vector<double>
 ctcompile_native_fixture(arrays Objects/array.js)
 # Current own-contents evidence permits only bounded local Number overwrites.
-ctcompile_native_fixture(array_overwrite Objects/array-overwrite.js)
-ctcompile_native_fixture(array_overwrite_unoptimized Objects/array-overwrite.js NO_DEFAULT_OPTIMIZATIONS)
-ctcompile_native_fixture(array_read_overwrite Objects/array-read-overwrite.js)
-ctcompile_native_fixture(array_read_overwrite_unoptimized Objects/array-read-overwrite.js NO_DEFAULT_OPTIMIZATIONS)
-ctcompile_native_fixture(array_shrink Objects/array-shrink.js)
-ctcompile_native_fixture(array_shrink_unoptimized Objects/array-shrink.js NO_DEFAULT_OPTIMIZATIONS)
-ctcompile_native_fixture(array_overwrite_loop Objects/array-overwrite-loop.js)
-ctcompile_native_fixture(array_overwrite_loop_unoptimized Objects/array-overwrite-loop.js NO_DEFAULT_OPTIMIZATIONS)
+ctcompile_native_fixture(array_overwrite Objects/array/overwrite.js)
+ctcompile_native_fixture(array_overwrite_unoptimized Objects/array/overwrite.js NO_DEFAULT_OPTIMIZATIONS)
+ctcompile_native_fixture(array_read_overwrite Objects/array/read-overwrite.js)
+ctcompile_native_fixture(array_read_overwrite_unoptimized Objects/array/read-overwrite.js NO_DEFAULT_OPTIMIZATIONS)
+ctcompile_native_fixture(array_shrink Objects/array/shrink.js)
+ctcompile_native_fixture(array_shrink_unoptimized Objects/array/shrink.js NO_DEFAULT_OPTIMIZATIONS)
+ctcompile_native_fixture(array_overwrite_loop Objects/array/overwrite-loop.js)
+ctcompile_native_fixture(array_overwrite_loop_unoptimized Objects/array/overwrite-loop.js NO_DEFAULT_OPTIMIZATIONS)
 
 # === PHASE 63 STEPS 2 AND 3: the claimed set, per corpus ===
 # ============================================================================
@@ -196,7 +196,7 @@ ctcompile_native_fixture(array_overwrite_loop_unoptimized Objects/array-overwrit
 # and those were never claimed. It now reads --ctjs-resolve-globals' own
 # counters, and prints the per-name refusal reasons as the roadmap for them.
 if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt AND Python3_EXECUTABLE)
-  # THE BROWSER DRIVERS - CTNative/Browser/*.py and Ownership/native_data_session.py
+  # THE BROWSER DRIVERS - CTNative/Browser/*.py and Ownership/data_session.py
   # - are lit tests beside their sources since 2026-09-15, like the seventeen
   # drivers that already were. The one thing they need that lit cannot find is
   # the compiler for the DOM's public API, which needs C++23 std::expected -
@@ -260,7 +260,7 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt AND Pytho
   # refusal now spells the chain out to whatever stopped that. Walked closure
   # by closure over the callees a ctjs.call_direct reaches: bootstrap's 19 are
   # 3 lifted and 16 whose chain ends in a cell written EXACTLY ONCE from a
-  # constant undefined - the hoisted `var`/`const` shape closure-refusals.mlir
+  # constant undefined - the hoisted `var`/`const` shape CTNative/Lowering/Closures/refusals.mlir
   # pinned as HOISTED.
   #
   # THAT LEVER WAS PULLED - PART 24 PHASE 59 SLICE 2 STEP 1 - AND THE CLAIMED

@@ -413,7 +413,7 @@ case.
   archive is pulled in only to satisfy an undefined symbol; if link order lets
   libstdc++ answer first, the binary uses the system allocator and looks
   identical. `ctbrowser::allocator_name()` ASKS mimalloc whether a fresh
-  allocation came from its own regions, and `ctbrowser/unittests/unit/core_basics` asserts it.
+  allocation came from its own regions, and `ctbrowser/unittests/unit/core/basics` asserts it.
 * **The wrong major version.** apt ships v2, this tree pins v3, and they are
   different allocators behind the same header name - compile against one and
   link the other and the result is undefined behaviour that starts as a crash
@@ -980,7 +980,7 @@ attributable to the two lines above.
 
 ### And it exposed a bug in `Math.cbrt`
 
-`ctbrowser/unittests/js/vm_stdlib` asserted `Math.cbrt(27)` printed "3" and had been passing
+`ctbrowser/unittests/js/vm/stdlib` asserted `Math.cbrt(27)` printed "3" and had been passing
 against **3.0000000000000004** for as long as it existed, because six-decimal
 formatting printed "3" either way. glibc's `cbrt` is up to an ulp out on a
 perfect cube; V8 returns the exact root. Corrected for the exact case only - a

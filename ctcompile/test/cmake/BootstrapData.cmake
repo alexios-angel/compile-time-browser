@@ -129,6 +129,6 @@ if(CTCOMPILE_ENABLE_MLIR)
   ctcompile_unit_test(host-contract LIBS ctcompile::ctnative-lowering MLIRParser)
   # checkSeededMapResults - the seeded/per-key/joined Map result proofs over the
   # shared two-method fixture - has been its own executable since 2026-09-08,
-  # when HostContract.cpp reached 1,068 lines. Same fixtures (HostContractFixtures.h).
+  # when HostContract.cpp reached 1,068 lines. Same fixtures (CTNative/HostContract/Fixtures.h).
   ctcompile_unit_test(host-contract-seeded-maps LIBS CTNativeAnalysis MLIRParser)
 endif()

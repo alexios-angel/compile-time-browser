@@ -171,7 +171,7 @@ void checker::walk_statement(std::int32_t idx, list_kind kind, std::vector<bindi
         // is the value a compiled program hands back, and the way a program
         // hands one back is `return` at its top level: `unittests/js`
         // compiles `return (expr);` for every expression it checks,
-        // `unittests/unit/script_gc` has fourteen of them and
+        // `unittests/unit/script/gc` has fourteen of them and
         // `test/corpus/babylon` another. Refusing it would refuse the
         // engine's own API to buy fifteen tests.
         //

@@ -15,7 +15,7 @@ from CTNative.harness import (
     native_tools,
     run,
 )
-from CTNative.Browser.native_dom import link_options
+from CTNative.Browser.dom.dom import link_options
 from CTNative.Exports.boundary import FUNCTION as CTJS_FUNCTION, NATIVE as NATIVE_FUNCTION
 
 PROGRAMS = {

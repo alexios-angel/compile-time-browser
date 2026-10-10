@@ -34,7 +34,7 @@
 // undefined symbol, so an override that nothing references can be silently
 // dropped and the build will simply use the system allocator while looking
 // exactly the same. `ctbrowser::allocator_name()` exists to be asked, and
-// unittests/unit/core_basics asserts on it.
+// unittests/unit/core/basics asserts on it.
 
 #if CTBROWSER_WITH_MIMALLOC
 

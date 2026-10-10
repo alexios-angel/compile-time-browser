@@ -414,7 +414,7 @@ int main() {
     mlir::MLIRContext context;
     context.getOrLoadDialect<ctjs::CTJSDialect>();
     checkCapturedMap(context);
-    // checkSharedMap(context) is OwnedGlobalSharedMap.cpp now.
+    // checkSharedMap(context) is GlobalSharedMap/SharedMap.cpp now.
     auto module = parsed(context, fixture, "owned global method fixture parses");
     if (!module) { return 1; }
     const auto contract = contractFor(*module);

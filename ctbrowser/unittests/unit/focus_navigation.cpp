@@ -13,7 +13,7 @@
 #include <ctbrowser/style/style.hpp>
 
 #include "check.hpp"
-#include "cssom_probe.hpp"
+#include "cssom/probe.hpp"
 
 #include <string>
 

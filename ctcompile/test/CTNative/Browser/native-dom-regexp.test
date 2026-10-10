@@ -1,2 +1,0 @@
-# Focus on original Bootstrap replacement bodies, keys, effects and provenance.
-# RUN: python3 %S/native_dom_strings.py --regexp-only %dom_driver --node %node --reference %native_reference

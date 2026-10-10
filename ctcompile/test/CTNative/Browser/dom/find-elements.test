@@ -1,0 +1,2 @@
+# Original Bootstrap R.find snapshots admit proved bounded element consumers.
+# RUN: python3 %S/find_elements.py %dom_driver

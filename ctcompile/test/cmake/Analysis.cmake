@@ -91,7 +91,7 @@ endif()
 # IT NEEDS NO MLIR, like ctcompile-test-type-oracle: every question here is put
 # to the interpreter, and the module check is a string search over a file the
 # build printed. Gate 4(d) - the recorder over this file - belongs to the
-# escape-oracle work and its escape-claims/check.py; 4(g) is deferred by the
+# escape-oracle work and its claims/check.py; 4(g) is deferred by the
 # design itself until 55B emits anything.
 set(_cyc_js "${CMAKE_CURRENT_SOURCE_DIR}/Analysis/Escape/cycle.js")
 # THE DRIVER READS THE SAME FILE EVERYTHING ELSE DOES - the recorder, the
@@ -194,7 +194,7 @@ add_test(NAME ctcompile_escape_oracle COMMAND ctcompile-test-type-oracle --escap
 # PLACE A FRAME ENDS, AS A TABLE - FrameEnds.def's citations are checked
 # beside the ABI table's in Core/def-citations.test.
 
-# The escape claims over four corpora: Analysis/Escape/escape-claims/*.test.
+# The escape claims over four corpora: Analysis/Escape/claims/*.test.
 
 # A compiled frame's ip contains a catch-pad id, never a bytecode coordinate.
 # Real AOT entries cover return, caught throw and mixed AOT/VM unwind without
@@ -202,12 +202,12 @@ add_test(NAME ctcompile_escape_oracle COMMAND ctcompile-test-type-oracle --escap
 # [--out RECORDING], parsed by ctbrowser/tools/support/options.hpp - as is the
 # return oracle's below.
 ctcompile_unit_test(escape-oracle-aot LIBS ctbrowser::ctbrowser ctbrowser-options)
-# Both AOT recordings through the Python checker: Analysis/Escape/aot-oracle.test.
+# Both AOT recordings through the Python checker: Analysis/Escape/aot/oracle.test.
 
 # Observe the real boxed emitter's normalized return value, retaining the
 # compiled sentinel coordinate rather than inventing a static source site.
 if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
-  set(_aot_return_js "${CMAKE_CURRENT_SOURCE_DIR}/Analysis/Escape/aot-return.js")
+  set(_aot_return_js "${CMAKE_CURRENT_SOURCE_DIR}/Analysis/Escape/aot/return.js")
   ctcompile_embed_js(escape-oracle-aot-return.js.inc "${_aot_return_js}")
   ctcompile_compile_js(escape-oracle-aot-return.generated.cpp "${_aot_return_js}"
                        ENTRIES oracleReturn oracleLocal oracleCtor)

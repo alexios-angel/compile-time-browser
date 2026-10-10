@@ -3,7 +3,7 @@
 // creator - primitives cross as they are, functions cross wrapped, and any
 // other object, or anything thrown, is a TypeError of the side that asked.
 
-#include "vm_expect.hpp"
+#include "vm/expect.hpp"
 
 namespace {
 

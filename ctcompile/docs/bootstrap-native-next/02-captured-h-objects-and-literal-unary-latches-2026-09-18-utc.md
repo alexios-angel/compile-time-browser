@@ -446,13 +446,13 @@ Focused devbox validation, evidence `/tmp/ctcompile-capture-finish/`:
 - Built `ctjs-opt`, `ctjs-translate`, `ctcompile-test-native-reference` and
   `ctcompile-test-exception-recovery`: **4 successful build actions**. The first
   build found a typed-value conditional mismatch in new code; corrected.
-- Exact `CTNative/Lowering/Objects/class-dom.mlir`: **1/1 (16.28s)**, including
+- Exact `CTNative/Lowering/Objects/classes/dom/basics.mlir`: **1/1 (16.28s)**, including
   both providers, C++ layouts, optimization settings, GCC/Clang and Script/AOT
   exclusion. Three preliminary failures (**3.15s / 3.46s / 3.82s**) showed that
   the new test also requested conditional-cell/entry-flow or Boolean-arithmetic
   support. The new fixture was narrowed to captured getter selection; the
   preserved `class_element` specimen was never rewritten.
-- Exact `CTNative/Lowering/Objects/class-initialization.mlir`: **1/1 (198.53s)**.
+- Exact `CTNative/Lowering/Objects/classes/initialization.mlir`: **1/1 (198.53s)**.
 - Exact `ctcompile_exception_recovery`: **1/1 (3.66s; total 3.67s)**.
 
 All five source/test hashes match the devbox; native and hash wrappers exit **0**.
@@ -509,11 +509,11 @@ Focused devbox validation only; evidence: `/tmp/ctcompile-dom-class-compose/`.
   Initial build found a missing include in new DOM preparation; corrected.
   Successful rebuilds took **8, 4 and 4 actions**, with explicit affected targets.
 - Exact `ctcompile_escape_analysis_arrays`: **1/1 (0.98s)**.
-- Exact `Analysis/Escape/escape-claims/signed-bitnot.test`: **1/1 (0.18s)**.
+- Exact `Analysis/Escape/claims/signed/bitnot.test`: **1/1 (0.18s)**.
 - Exact `ctcompile_exception_recovery`: final **1/1 (3.43s; total 3.44s)**,
   initial **1/1 (3.45s)**. Includes ten class/DOM transaction cases across both
   providers, checking successful publication and rollback after refusal.
-- Exact `CTNative/Lowering/Objects/class-dom.mlir`: final **1/1 (15.55s)**,
+- Exact `CTNative/Lowering/Objects/classes/dom/basics.mlir`: final **1/1 (15.55s)**,
   **44 Node/interpreter observations / 8 combined native executions / 208 refusals**.
   Preserved `class_key` and `class_order` now execute in the existing GCC/Clang,
   explicit/deduced, optimized/unoptimized, both-provider gate with Script/AOT
@@ -521,7 +521,7 @@ Focused devbox validation only; evidence: `/tmp/ctcompile-dom-class-compose/`.
   unused-body adversaries and mixed-authority controls remain refused.
   Initial run failed **3.35s** at the DOM manifest parser; corrected before the
   **15.59s** pass. Final run also covers stricter lifting-size accounting.
-- Exact `CTNative/Lowering/Objects/class-initialization.mlir`: **1/1 (191.53s)**.
+- Exact `CTNative/Lowering/Objects/classes/initialization.mlir`: **1/1 (191.53s)**.
 
 All twelve changed source/test hashes match the devbox. Final build/native/evidence
 wrappers exit **0**. Required pinned `tools/format.sh --check` retains **26 existing
@@ -577,9 +577,9 @@ Focused devbox checks only; evidence: `/tmp/ctcompile-dom-fields/`.
 - Exact `ctcompile_escape_analysis_arrays`: **1/1 (0.96s; total 0.97s)**.
   Dense/induction/structured rows **652 / 697 / 319**; budget cutoffs
   **25,082 / 47,124 / 23,548**.
-- Exact `Analysis/Escape/escape-claims/bounded-power.test`: **1/1 (0.11s)**,
+- Exact `Analysis/Escape/claims/bounded-power.test`: **1/1 (0.11s)**,
   **26 observed sites / 13 sound / zero violations / 13 of 15 precision**.
-- Exact `CTNative/Lowering/Objects/class-dom.mlir`: **1/1 (13.89s)**,
+- Exact `CTNative/Lowering/Objects/classes/dom/basics.mlir`: **1/1 (13.89s)**,
   **44 Node/interpreter observations / 8 combined native executions /
   134 refusals**. Six new field sources execute alongside the two direct-receiver
   sources. Three original class sources and fourteen adversarial class bodies

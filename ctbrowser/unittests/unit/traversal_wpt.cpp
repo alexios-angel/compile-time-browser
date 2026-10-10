@@ -1,9 +1,9 @@
 // DOM 6's NodeIterator and TreeWalker against dom/traversal: the state as
 // read-only accessors on the prototype, a root in another document of the
 // realm, the filter's callback semantics, and the walks. The pattern is
-// unit/dom_nodes_wpt.cpp's: one expression against a fresh page, and whatever
+// unit/dom/nodes_wpt.cpp's: one expression against a fresh page, and whatever
 // it logged. The defaults and the tree-order walks are in
-// unit/document_api_wpt.cpp already.
+// unit/document/api_wpt.cpp already.
 
 #include <ctbrowser.hpp>
 

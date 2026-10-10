@@ -17,7 +17,7 @@
 //   emit no `unary_minus` at all. If this file ever stops showing
 //   `unary_minus`, the constraint has gone silent.
 //
-// The importer maps op::to_number to unary plus. string-coercions.test covers
+// The importer maps op::to_number to unary plus. string/coercions.test covers
 // source String conversion; this IR fixture isolates the numeric identity rule.
 //
 // THE `$0` AND `$1` ARE NOT DECORATION. cIdentifier() maps `$` to `_`, and

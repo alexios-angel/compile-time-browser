@@ -77,7 +77,7 @@
 // reader nothing.
 //
 // `a.length = 5` on a one-element array gives four holes. Only a complete
-// non-growing contents proof admits length assignments; array-shrink.mlir
+// non-growing contents proof admits length assignments; array/shrink.mlir
 // covers the retained dense prefix and clearing to zero.
 //
 // LENGTH: ctjs.func private @grow$1
@@ -93,7 +93,7 @@
 //
 // INDEXED: ctjs.func private @stored$1
 // The original uncalled body now proves density, but its unvisited element
-// types still refuse. The separate called array-overwrite.js exercises emission.
+// types still refuse. The separate called ../../Fixtures/Objects/array/overwrite.js exercises emission.
 // INDEXED-SAME: ctnative.not_native = "an array whose elements are <unvisited>, not numbers"
 
 // `delete a[0]` now reaches the opaque __ctbrowser_delete host call.

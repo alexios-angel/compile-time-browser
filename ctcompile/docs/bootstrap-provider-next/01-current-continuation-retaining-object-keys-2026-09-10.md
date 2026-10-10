@@ -525,7 +525,7 @@ Its SHA-256 is
 `80b192281418b92f773f12308bfa3b93ce5160880da6aa3ced1ae29bf1329c3c`.
 It preserves all calls and the Number observation, has complete ownership, and
 admits **5/5 native** in both modes. Both historical sources remain unchanged in
-`test/CTNative/Ownership/native_owned_global_maps/sources.py`.
+`test/CTNative/Ownership/global_maps/sources/__init__.py`.
 
 A fresh thirteen-source probe after the String commits records **all thirteen
 typed Node/interpreter comparisons agreeing** and the same outcomes in both
@@ -763,7 +763,7 @@ Missing writes, a wrong tag, optional or boxed values must not masquerade as
 valid Boolean observations.
 
 Extend the original Boolean source and literal-copy candidate in
-`test/CTNative/Ownership/native_owned_global_maps/sources.py` and its execution driver, the two existing
+`test/CTNative/Ownership/global_maps/sources/__init__.py` and its execution driver, the two existing
 scalar query/type functions, and `global-undefined.mlir` controls. Exercise both
 false and true, mixed/optional actual types, all writes/effects, stale/exhausted
 proofs, source/prepared cloning and wrong-tag/missing-store observation

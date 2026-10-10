@@ -1,2 +1,0 @@
-# Exact !0/!1 origins preserve synchronous Boolean state and its proof boundary.
-# RUN: python3 %S/native_dom_boolean_origins.py %dom_driver --node %node --reference %native_reference

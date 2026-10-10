@@ -16,7 +16,7 @@
 //
 // Text is measured with monospace_measure: one character is `font_size * 0.6`.
 
-#include "layout_fixture.hpp"
+#include "layout/fixture.hpp"
 
 namespace {
 

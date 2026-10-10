@@ -7,4 +7,4 @@ ctcompile_test_sources(ctcompile-test-owned-global-methods
   GlobalMethodsFixtures.h
 )
 
-add_subdirectory(OwnedGlobalSharedMap)
+add_subdirectory(GlobalSharedMap)

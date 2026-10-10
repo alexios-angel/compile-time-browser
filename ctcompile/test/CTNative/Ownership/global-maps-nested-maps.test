@@ -1,3 +1,0 @@
-# Execute finite nested Map schemas and their refusals without the VM.
-# One of the five groups of native_owned_global_maps (global-maps.test is the rest).
-# RUN: python3 -m CTNative.Ownership.native_owned_global_maps.driver --group nested-maps --translate ctjs-translate --opt ctjs-opt --work %t --node %node --reference %native_reference

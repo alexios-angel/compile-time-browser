@@ -1,0 +1,19 @@
+ctcompile_test_sources(ctcompile-test-owned-global-shared-map
+  Main.cpp
+  SavedScalarReads.cpp
+  NumericEntry.cpp
+  DefiniteAbsence.cpp
+  LeafReadbacks.cpp
+  LeafObjects.cpp
+  NestedCalls.cpp
+  ObjectKeyArguments.cpp
+  RetainedObjectKeyFamily.cpp
+  DOMKeyInputs.cpp
+  SharedMap.cpp
+  Tests.h
+)
+
+add_subdirectory(Captured)
+add_subdirectory(LeafObjects)
+add_subdirectory(LeafReadbacks)
+add_subdirectory(SharedMap)

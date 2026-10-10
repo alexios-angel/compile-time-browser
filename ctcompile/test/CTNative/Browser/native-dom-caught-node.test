@@ -1,2 +1,0 @@
-# A direct catch consumes its node before the caller's document can die.
-# RUN: python3 %S/native_dom_caught_node.py %dom_driver --node %node --reference %native_reference

@@ -113,7 +113,7 @@ name), so the only frame-0 locals are for..of items and catch parameters — and
 those ARE capturable, which is what makes `for (const x of xs) fns.push(() => x)`
 close over each element at the top level.
 
-`ctbrowser/unittests/unit/page_scripts` compiles the real example pages and asserts what each
+`ctbrowser/unittests/unit/page/scripts` compiles the real example pages and asserts what each
 one does; `ctbrowser/unittests/js/vm_*.cpp` - six files, split by topic - have a
 test per language feature.
 

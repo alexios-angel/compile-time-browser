@@ -1,2 +1,0 @@
-# Gate private DOM Data storage against the unchanged source proof and real documents.
-# RUN: python3 %S/native_dom_data_session.py %dom_driver --node %node --reference %native_reference

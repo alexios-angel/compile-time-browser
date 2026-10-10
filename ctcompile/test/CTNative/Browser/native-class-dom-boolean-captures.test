@@ -1,2 +1,0 @@
-# Actual synchronous shared Boolean state survives class and closure normalization.
-# RUN: python3 %S/native_class_dom_boolean_captures.py %dom_driver --node %node --reference %native_reference

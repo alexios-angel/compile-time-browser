@@ -1,2 +1,0 @@
-# Proved element for-of uses ordinary native loops over typed browser snapshots.
-# RUN: python3 %S/native_dom_element_iteration.py %dom_driver

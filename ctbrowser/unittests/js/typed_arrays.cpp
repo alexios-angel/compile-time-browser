@@ -1,5 +1,5 @@
 // Typed arrays, ArrayBuffer and DataView - clauses 23.2, 25.1 and 25.3 - as
-// built by lib/Script/builtins/collections/typed_arrays/. vm_stdlib.cpp keeps
+// built by lib/Script/builtins/collections/typed_arrays/. vm/stdlib.cpp keeps
 // the older coercion assertions; this file is the rest: the %TypedArray%
 // intrinsic and its prototype methods, buffers that resize and detach, a
 // DataView in both byte orders, and the Uint8Array base64/hex codecs.

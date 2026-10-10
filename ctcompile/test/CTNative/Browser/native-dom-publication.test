@@ -1,2 +1,0 @@
-# Compose constructor registration with DOM record ownership and preserve saved aliases.
-# RUN: python3 %S/native_dom_publication.py --translate ctjs-translate --opt ctjs-opt --node %node --reference %native_reference --clang %dom_clang --build %build --include %{monorepo}/ctbrowser/include --nm %nm --work %t

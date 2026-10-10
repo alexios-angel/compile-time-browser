@@ -102,7 +102,7 @@ find_package(Threads REQUIRED)
 #
 # REQUIRED once found, and PUBLIC on purpose: an executable that links the
 # engine but not mimalloc would resolve operator new from libstdc++ instead and
-# silently run on the system allocator. unittests/unit/core_basics asks
+# silently run on the system allocator. unittests/unit/core/basics asks
 # ctbrowser::allocator_name() so that mistake is a test failure.
 #
 # The Windows sysroot gets it from tools/mingw/build-libs-mingw.sh.

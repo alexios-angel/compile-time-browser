@@ -78,7 +78,7 @@ answer that the CSSOM layer then cannot be asked for.
 
 Two real defects in `lib/Style/css/calc/` (one file, `calc.cpp`, at the time), both found by reading these
 failures rather than by guessing. Both are proved by
-`unittests/unit/style_calc.cpp`, and neither moved a render golden.
+`unittests/unit/style/calc.cpp`, and neither moved a render golden.
 
 ### `calc()` may resolve to a `<number>` — CSS Values 3 §8.1
 

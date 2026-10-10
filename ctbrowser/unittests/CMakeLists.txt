@@ -56,8 +56,19 @@ target_precompile_headers(${_pch_anchor} PRIVATE <ctbrowser.hpp>)
 set(_pch_excluded core_basics core_text core_uri core_json
                   dom_token_list dom_element dom_shadow dom_dataset
                   style_easing style_closest timer_queue listener_registry)
-get_property(_unit_targets DIRECTORY unit PROPERTY BUILDSYSTEM_TARGETS)
-get_property(_js_targets DIRECTORY js PROPERTY BUILDSYSTEM_TARGETS)
+# A directory's targets and those of every directory below it: the tests live
+# in folders (unit/aot/, js/vm/) since 2026-10-09.
+function(ctbrowser_targets_below dir out)
+  get_property(targets DIRECTORY "${dir}" PROPERTY BUILDSYSTEM_TARGETS)
+  get_property(children DIRECTORY "${dir}" PROPERTY SUBDIRECTORIES)
+  foreach(child IN LISTS children)
+    ctbrowser_targets_below("${child}" below)
+    list(APPEND targets ${below})
+  endforeach()
+  set(${out} ${targets} PARENT_SCOPE)
+endfunction()
+ctbrowser_targets_below(unit _unit_targets)
+ctbrowser_targets_below(js _js_targets)
 foreach(_pch_target IN LISTS _unit_targets _js_targets)
   string(REPLACE "ctbrowser-test-" "" _pch_name "${_pch_target}")
   if(_pch_name STREQUAL selectors OR _pch_name IN_LIST _pch_excluded)

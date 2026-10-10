@@ -12,4 +12,4 @@ ctcompile_test_sources(ctcompile-test-escape-oracle-aot AOTOracle.cpp)
 
 ctcompile_test_sources(ctcompile-test-escape-oracle-aot-return AOTReturnOracle.cpp)
 
-add_subdirectory(EscapeAnalysisArrays)
+add_subdirectory(Arrays)

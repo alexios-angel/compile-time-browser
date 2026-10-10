@@ -10,7 +10,7 @@
 // `std::to_chars`/`std::from_chars`, which both toolchains provide in full, so
 // Boost.Charconv would add a compiled dependency for nothing.
 //
-// `unittests/js/number_format.cpp` pins every one of these against V8.
+// `unittests/js/number/format.cpp` pins every one of these against V8.
 
 namespace ctbrowser {
 

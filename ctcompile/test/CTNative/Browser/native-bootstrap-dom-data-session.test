@@ -1,2 +1,0 @@
-# Gate the pinned Bootstrap Data program with three document-owned input keys.
-# RUN: python3 %S/native_bootstrap_dom_data_session.py %dom_driver --node %node --reference %native_reference

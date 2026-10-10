@@ -46,7 +46,7 @@
 // and two stubs - `all-confined` (wrong, must be caught and NAMED) and
 // `all-escapes` (sound, zero precision). One recorder, one file: the escape
 // half rides in the same recording, header version 2.
-#include "TypeOracle/Fixtures.h"
+#include "Oracle/Fixtures.h"
 #include <ctbrowser.hpp>
 
 #include <ctbrowser/script/builtins.hpp>

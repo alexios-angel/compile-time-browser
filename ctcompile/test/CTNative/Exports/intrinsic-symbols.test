@@ -1,0 +1,2 @@
+# Intrinsic entries preserve typed captures and guarded descriptions with explicit String identity.
+# RUN: python3 %S/intrinsic_symbols.py %dom_driver --node %node --reference %native_reference

@@ -5,7 +5,7 @@
 //
 // Both cases were carved out of the unit tests on 2026-10-09 - the WebGL one
 // from unittests/unit/canvas_context.cpp, the input one from
-// unittests/unit/page_input.cpp - so that their JavaScript lives in files. The
+// unittests/unit/page/input.cpp - so that their JavaScript lives in files. The
 // assertions are theirs, unchanged.
 
 #include <ctbrowser.hpp>

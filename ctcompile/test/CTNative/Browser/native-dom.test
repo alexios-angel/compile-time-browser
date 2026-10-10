@@ -1,5 +1,0 @@
-# Compile typed actions and queries against the real DOM/Core/Style: an
-# action-only browser entry gate (native_dom.py says what it is not). The DOM
-# public API needs C++23 std::expected, so the compiler is %dom_clang - the
-# host compiler when it is Clang, else the pinned clang-std-embed.
-# RUN: python3 %S/native_dom.py %dom_driver

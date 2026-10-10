@@ -8,7 +8,7 @@
 // written.
 //
 // `aria-attribute-reflection-enumerated.tentative.html` is the corpus file, and
-// unit/element_attrs.cpp holds the nullable-DOMString half of the same table.
+// unit/element/attrs.cpp holds the nullable-DOMString half of the same table.
 
 #include <ctbrowser.hpp>
 

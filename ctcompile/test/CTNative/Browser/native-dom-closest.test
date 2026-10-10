@@ -1,2 +1,0 @@
-# Guarded selector results call the public DOM/Style APIs without retaining handles.
-# RUN: python3 %S/native_dom_closest.py %dom_driver

@@ -174,7 +174,7 @@ This does not establish a root for an unguarded caller. Canonical indexed and
 `for…of` loops over `R.find` members are supported as described below. General
 borrowed transport, initialization and the application driver remain unfinished.
 
-The focused `CTNative/Browser/native-dom-document-default.test` passes **32 native
+The focused `CTNative/Browser/dom/document/default.test` passes **32 native
 executions and 92 refusals, 86.49 s**, with the unchanged vendor-pinned `R.find`
 body, both providers, GCC/Clang, printing layouts and optimization policies.
 It covers omitted/explicit-undefined calls, both document anchor positions,
@@ -192,7 +192,7 @@ regressions pass **2/2, 168.70 s**: respectively **16 native executions/14 refus
 and **64/100**. Source admission and browser behavior are unchanged by this
 carrier migration.
 
-The focused `CTNative/Browser/native-dom-document.test` passes **48 native
+The focused `CTNative/Browser/dom/document/basics.test` passes **48 native
 executions and 82 refusals** across borrowed/owned providers, both compilers,
 printing layouts and optimization policies. Public DOM/Style clients cover both
 anchor positions, empty/replaced roots, detached anchors, root inclusion, live hover,
@@ -201,7 +201,7 @@ failure order and absence of Script symbols. The focused host-contract CTest pas
 **1/1** with schema and programmatic-provider controls; these are not full-suite or
 Node/VM differential results.
 
-The focused `CTNative/Browser/native-dom-document-all.test` passes **32 native
+The focused `CTNative/Browser/dom/document/all.test` passes **32 native
 executions and 84 refusals** in **87.38s**, across borrowed/owned providers,
 GCC/Clang, both printing layouts and optimization policies. It covers both anchor
 positions, typed snapshot storage, current-root selection, ordered writes,
@@ -1028,7 +1028,7 @@ VM adapters use the same platform implementation and retain their own value
 conversion, JavaScript exceptions and Shell notifications. This entry does not
 deliver Shell mutation observers, custom-element callbacks, events or rendering.
 
-The focused `CTNative/Browser/native-dom.test` lit case compiles and executes real
+The focused `CTNative/Browser/dom/dom.test` lit case compiles and executes real
 DOM clients with GCC and the configured C++23 Clang, both printing layouts and
 optimization policies. It checks document domains, detached subtree lifetime,
 ordered mutations, String/Boolean conversion, validation failures, refusal

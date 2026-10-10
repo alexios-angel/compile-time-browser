@@ -11,9 +11,9 @@
 // <option>.
 //
 // This file keeps that subject. The scrollbar, the popups, the clipboard and
-// the page selection that shared the original file are page_chrome.cpp; the
-// controls are control_editing.cpp and control_scrolling.cpp; the listener
-// rules are event_listeners.cpp.
+// the page selection that shared the original file are page/chrome.cpp; the
+// controls are control/editing.cpp and control/scrolling.cpp; the listener
+// rules are event/listeners.cpp.
 //
 // One of five files carved out of unittests/unit/chrome_basics.cpp on
 // 2026-09-07, when it had reached 2,299 lines. Every case is verbatim and in

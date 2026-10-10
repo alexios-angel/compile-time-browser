@@ -11,7 +11,7 @@
 // browser implements - for `new URL()`, `location.*`, `a.href`, every relative
 // `src` and the HTTP client alike. Two parsers for one job drift apart, and
 // nothing can compare them; this file has been that bug twice (see the history
-// in unittests/unit/url_basics.cpp and docs/history/ada-url.md).
+// in unittests/unit/url/basics.cpp and docs/history/ada-url.md).
 //
 // NOT RFC 3986. Until 2026-09 this was Boost.URL with the input percent-encoded
 // first to get it past a strict parser, and eight of fifteen measured cases

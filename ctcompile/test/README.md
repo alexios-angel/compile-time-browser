@@ -6,15 +6,16 @@ separate homes.
 
 | Directory | Contents |
 | --- | --- |
-| `Analysis/Escape/` | Escape proofs, claims, fixtures and differential oracles |
+| `Analysis/Escape/` | Escape proofs, the `claims/` corpus, the `Arrays/` suite and differential oracles |
 | `Analysis/Types/` | Type inference, lattice, claims and type oracles |
 | `Analysis/Ownership/` | Global roots, method tables and captured Map owners |
 | `CTJS/` | Dialect IR, bytecode import and transformations |
 | `CTNative/` | Native IR and pass tests in `IR/`, `BindingTime/`, `Optimization/`, `PartialEvaluation/`, `Precomputation/`, `Specialization/` and `Supercompilation/` |
+| `CTNative/Browser/` | DOM entry drivers in `dom/`, `class_dom/` and `bootstrap/`: each case is a `.test` beside its same-stem `.py` driver |
 | `CTNative/Lowering/` | Native admission and emission tests grouped into `Maps/`, `Objects/`, `Closures/`, `Scalars/`, `Exceptions/`, `Admission/` and `Emission/` |
-| `CTNative/Ownership/` | Owned global execution checks and the `native_owned_global_maps/` source and lifetime modules |
+| `CTNative/Ownership/` | Owned global execution checks, and `global_maps/`: the owned-global-maps package (`driver/`, `harness/`, `sources/`) beside its tests |
 | `CTNative/Exports/` | Published native entry points and their source specimen |
-| `CTNative/HostContract/` | Host proof unit tests, source checks and `Provider/` state, read and mutation cases |
+| `CTNative/HostContract/` | Host proof unit tests and their `DOM/` fixtures, the `SeededMaps/` suite, source checks and `Provider/` state, read and mutation cases |
 | `CTNative/ExceptionRecovery/` | Exception-region recovery unit tests |
 | `CTNative/Fixtures/` | Pipeline inputs grouped into `Maps/`, `Objects/`, `Closures/`, `Scalars/`, `ControlFlow/` and `Optimization/` |
 | `CTNative/Checks/` | The build's native pipeline script and the python gates (compilation unit, clean compile, printing) every fixture `.test` runs |
@@ -39,7 +40,13 @@ with their pass or target; `.mlir`, `.td` and `.test` files are discovered by li
 including the two handwritten EmitC fixtures under `CTNative/Fixtures/`.
 
 Name files for the behavior they check; omit prefixes already supplied by the
-directory. Use PascalCase for C++ files, kebab-case for scripts and lit cases,
+directory. Files whose names start with the same word share a folder named
+for it, recursively (`claims/primitive/`, `class_dom/boolean/`); a
+singular/plural pair (`nested-map-proof`, `nested-maps`) or one compound term
+(`lift-to-scf`) is not a family, and a family's own case is `basics` inside its
+folder when that folder is a Python package. Every folder that holds C++ owns a
+CMakeLists.txt, which adds only its immediate subfolders
+(tools/check/check-cmake-hygiene.py checks the first half). Use PascalCase for C++ files, kebab-case for scripts and lit cases,
 and underscores for importable Python modules. Give a test and its dedicated
 helper the same stem. Keep standard tool filenames and upstream fixture names.
 
@@ -64,7 +71,7 @@ then run only that lit case on the devbox under the same lock:
 
 ```bash
 ~/.lit-venv/bin/lit -sv projects/compile-time-browser/build/ctcompile/test \
-  --filter='^ctcompile :: CTNative/Browser/native-dom-assignment[.]test$'
+  --filter='^ctcompile :: CTNative/Browser/dom/assignment[.]test$'
 ```
 
 Use the generated build-tree lit configuration so substitutions and features

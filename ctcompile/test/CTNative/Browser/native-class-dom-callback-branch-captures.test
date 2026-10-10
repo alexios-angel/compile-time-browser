@@ -1,2 +1,0 @@
-# Conditional captures keep their original initialization, effects and lifetime proof.
-# RUN: python3 %S/native_class_dom_callback_branch_captures.py %dom_driver --node %node --reference %native_reference

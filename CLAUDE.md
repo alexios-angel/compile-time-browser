@@ -82,7 +82,7 @@ install mimalloc` (v3, pinned in `tools/Brewfile`), or
 `tools/mingw/build-libs-mingw.sh` for the Windows sysroot. It measured -4.2%
 instructions on Linux and **-11.7% wall on the Windows .exe**, because Windows'
 CRT allocator is much further behind than glibc's. Opt out with
-`-DCTBROWSER_USE_MIMALLOC=OFF`; `ctbrowser/unittests/unit/core_basics` asks
+`-DCTBROWSER_USE_MIMALLOC=OFF`; `ctbrowser/unittests/unit/core/basics` asks
 `ctbrowser::allocator_name()` which allocator is ACTUALLY linked, because a
 global `operator new` in a static archive can be silently dropped by link order.
 

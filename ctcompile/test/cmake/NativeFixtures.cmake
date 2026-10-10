@@ -52,7 +52,7 @@ ctcompile_native_fixture(closures Closures/closure.js CLAIMS 20 9 23 17)
 ctcompile_native_fixture(receivers Objects/receiver.js CLAIMS 16 7 8 10)
 # An argument is a parameter too: the top level, seven that build a literal,
 # seven callees, `both()` making two.
-ctcompile_native_fixture(object_arguments Objects/object-argument.js CLAIMS 16 7 15 9)
+ctcompile_native_fixture(object_arguments Objects/argument.js CLAIMS 16 7 15 9)
 # `new` builds a struct in the frame; every call here is the lift's own.
 ctcompile_native_fixture(constructors Objects/constructor.js CLAIMS 14 6 7 8)
 # Slice 1b: a capture filled from the enclosing closure (`enclosing_indices`).
@@ -80,7 +80,7 @@ ctcompile_native_fixture(string_snapshots Maps/string-snapshots.js)
 # with NaN/signed-zero keys, mutation, aliasing and ordered snapshots.
 ctcompile_native_fixture(maps Maps/map.js CLAIMS 22 19 23 2)
 # Owned Map handles survive closed factory returns and lifted captures.
-ctcompile_native_fixture(map_flow Maps/map-flow.js CLAIMS 29 22 44 8)
+ctcompile_native_fixture(map_flow Maps/flow.js CLAIMS 29 22 44 8)
 # A returned callable owns immutable captures and preserves Map aliasing.
 ctcompile_native_fixture(returned_closures Closures/returned-closure.js CLAIMS 35 22 36 23)
 # Stored functions own their captures through a returned method table.
@@ -92,7 +92,7 @@ ctcompile_native_fixture(nested_maps Maps/nested-map.js CLAIMS 14 12 25 1)
 # Identity-only object keys own fresh allocations across closed calls/returns.
 ctcompile_native_fixture(object_keys Maps/object-key.js CLAIMS 14 10 22 12)
 # Conditional has/set/get follows must-presence and erasure effects.
-ctcompile_native_fixture(map_presence Maps/map-presence.js CLAIMS 15 14 30 0)
+ctcompile_native_fixture(map_presence Maps/presence.js CLAIMS 15 14 30 0)
 # Tagged optional scalars distinguish null, undefined and present NaN.
 ctcompile_native_fixture(optional_scalars Scalars/optional-scalars.js CLAIMS 29 25 119 11)
 # A closed scalar union preserves boolean/number identity, including Data's

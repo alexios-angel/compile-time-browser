@@ -1,2 +1,0 @@
-# Bound document queries produce local snapshots of typed C++ element views.
-# RUN: python3 %S/native_dom_document_all.py %dom_driver

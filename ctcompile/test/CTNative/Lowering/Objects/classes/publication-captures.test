@@ -1,0 +1,1 @@
+// RUN: python3 %S/publication_captures.py --translate ctjs-translate --opt ctjs-opt --node %node --reference %native_reference --clang %dom_clang --include %{monorepo}/ctbrowser/include --build %build --nm %nm --work %t

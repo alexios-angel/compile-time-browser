@@ -1,8 +1,11 @@
-# Each top-level source is one independently runnable test.
-file(GLOB tests RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}" CONFIGURE_DEPENDS *.cpp)
-foreach(test IN LISTS tests)
-  get_filename_component(name "${test}" NAME_WE)
-  ctbrowser_test(${name})
-endforeach()
-
-add_subdirectory(vm_functions)
+# One folder per first word the tests' names share, and the rest here. Each
+# folder's CMakeLists.txt calls ctbrowser_test_directory(), which names a test
+# for its path below this directory - vm/objects.cpp is `vm_objects`
+# (cmake/modules/CTTest.cmake) - and adds its own subfolders.
+set(CTBROWSER_TEST_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
+ctbrowser_test_directory()
+add_subdirectory(array)
+add_subdirectory(number)
+add_subdirectory(promise)
+add_subdirectory(regexp)
+add_subdirectory(vm)

@@ -1,0 +1,2 @@
+# Original prototype methods preserve their explicit element receiver and intrinsic identities.
+# RUN: python3 %S/prototype_query.py %dom_driver

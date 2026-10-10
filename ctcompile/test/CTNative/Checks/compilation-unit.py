@@ -172,7 +172,7 @@ def main():
         # retain their header-only link; both reject Script and boxed AOT symbols.
         libraries = []
         if args.core_build:
-            from CTNative.Browser.native_dom import link_options
+            from CTNative.Browser.dom.dom import link_options
 
             _, libraries = link_options(
                 argparse.Namespace(build=args.core_build, include=Path(CORE_INCLUDE[2:])),

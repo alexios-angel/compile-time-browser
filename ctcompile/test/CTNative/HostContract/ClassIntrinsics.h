@@ -1,7 +1,7 @@
 #pragma once
 
 #include "../../../lib/CTNative/HostContract/Analysis.h"
-#include "HostContractFixtures.h"
+#include "Fixtures.h"
 
 namespace ctcompile::test::host_contract {
 

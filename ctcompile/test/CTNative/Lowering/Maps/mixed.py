@@ -1,0 +1,370 @@
+#!/usr/bin/env python3
+"""Execute finite Map key/value storage and independently proved read types."""
+
+import importlib.util
+from pathlib import Path
+import re
+
+from CTNative.harness import (
+    CORE_INCLUDE,
+    RUNTIME_INCLUDE,
+    build_and_run,
+    native_args,
+    native_pipeline,
+    native_tools,
+)
+
+spec = importlib.util.spec_from_file_location(
+    "representation", Path(__file__).with_name("representation.py")
+)
+representation = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(representation)
+boundary, run = representation.boundary, representation.run
+
+
+def number_object_lifetime(cpp, ordered):
+    factory = re.search(r"\b(ownedNumberObjectKeys_\d+)\(\)", cpp)
+    assert factory
+    changed, count = re.subn(r"\bmain\(\)", "ctnative_test_entry()", cpp)
+    assert count == 1
+    # Inspect the emitted Map's actual owners after its factory frame is gone.
+    # Weak observations do not keep a deleted key alive themselves.
+    observer = r"""
+int main() {
+    if (ctnative_test_entry() != 0) { return 90; }
+    for (int round = 0; round < 128; ++round) {
+        auto map = FACTORY();
+        std::weak_ptr<ctnative::identity_object> key;
+        for (const auto & entry : ENTRIES) {
+            std::visit([&](const auto & alternative) {
+                if constexpr (std::is_same_v<std::decay_t<decltype(alternative)>,
+                                             std::shared_ptr<ctnative::identity_object>>) {
+                    key = alternative;
+                }
+            }, entry.first);
+        }
+        if (key.expired() || map->size() != 2) { return 91; }
+        auto alias = map;
+        map.reset();
+        if (key.expired()) { return 92; }
+        if (round % 2 == 0) { alias->clear(); }
+        else { alias.reset(); }
+        if (!key.expired()) { return 93; }
+    }
+    return 0;
+}
+"""
+    return changed + observer.replace("FACTORY", factory[1]).replace(
+        "ENTRIES", "map->entries" if ordered else "*map"
+    )
+
+
+def forge_map_facts(text, read_type):
+    def replace(match):
+        attributes = (match[2] or "{}")[1:-1]
+        attributes = re.sub(
+            r"(?:,\s*)?ctnative\.map_(?:present(?:\s*=\s*(?:true|false))?"
+            r'|(?:read_type|write_type|key_type)\s*=\s*"[^"]*")',
+            "",
+            attributes,
+        )
+        attributes = attributes.strip().removeprefix(",").strip()
+        forged = (
+            'ctnative.map_present = true, ctnative.map_read_type = "'
+            + read_type
+            + '", ctnative.map_write_type = "string", ctnative.map_key_type = "string"'
+        )
+        return match[1].rstrip() + " {" + forged + (", " + attributes if attributes else "") + "}"
+
+    return re.sub(r"(^\s*%[-\w.$]+ = ctjs\.call [^\n{]+)(\{[^\n}]*\})?", replace, text, flags=re.M)
+
+
+def check_nullable_read_facts(args, source):
+    _, prepared, _ = boundary.prepare(args, "mixed-nullable-read-facts", source)
+    proved = run([args.opt, "--ctnative-binding-time-analysis", str(prepared)]).stdout
+    assert proved.count('ctnative.map_read_type = "nullable_string"') == 1
+    assert proved.count('ctnative.map_read_type = "bool"') == 1
+    # Derivation also runs before native types exist. Both a fresh bogus claim
+    # and one inserted over prior derived facts must reproduce the live proof.
+    for phase, text in [("fresh", prepared.read_text()), ("stale", proved)]:
+        for tag in ("bool", "nullable_string"):
+            forged = forge_map_facts(text, tag)
+            assert forged != text
+            path = args.work / f"mixed-nullable-read-{phase}-{tag}.mlir"
+            path.write_text(forged)
+            assert run([args.opt, "--ctnative-binding-time-analysis", str(path)]).stdout == proved
+
+
+def compile_and_run(args, name, cpp, expected, compilers, nm):
+    out = args.work / f"{name}.cpp"
+    out.write_text(cpp)
+    for index, compiler in enumerate(compilers):
+        binary = args.work / f"{name}-{index}"
+        assert build_and_run(compiler, out, binary, nm=nm).stdout == expected, name
+    return out
+
+
+def check_scalar_payloads(args, node, reference, compilers, nm):
+    # Historical source names stay unchanged when their storage becomes native.
+    cases = {
+        "nullable-number-payload-refused": 2,
+        "nullable-boolean-payload-refused": 2,
+        "saved-missing-refused": 0,
+        "saved-join-missing-refused": 12,
+        "scalar-payloads": 5110511,
+    }
+    for fixture, value in cases.items():
+        source = (args.fixtures / f"{fixture}.js").read_text()
+        for ordered in (False, True):
+            name = fixture + ("-ordered" if ordered else "-associative")
+            js = args.work / f"{name}.js"
+            js.write_text(source + ((args.fixtures / "snapshot.js").read_text() if ordered else ""))
+            expected = f"trace={value}\n" + ("traceSnapshot=1\n" if ordered else "")
+            assert run([node, "-e", representation.NODE_GLOBALS, str(js)]).stdout == expected, name
+            assert run([str(reference), str(js)]).stdout == expected, name
+            ir = args.work / f"{name}.mlir"
+            native_pipeline(args, js, ir)
+            cpp = run([args.translate, "--mlir-to-cpp", str(ir)]).stdout
+            assert ", ctnative::nullable_scalar>" in cpp, name
+            assert "ctbrowser::script" not in cpp, name
+            assert ("#define CTNATIVE_ORDERED_MAPS 1" in cpp) == ordered, name
+            compile_and_run(args, name, cpp, expected, compilers, nm)
+
+
+def check_isolated_nullable_helpers(args, source, node, reference, compilers, nm):
+    # Either nullable keys or nullable payloads must request their helpers alone.
+    # Reuse existing functions without expanding the full layout/sanitizer matrix.
+    cases = [
+        (
+            "nullable-numbers-only",
+            "nullableNumberKeys",
+            "traceNullableNumbers",
+            41234,
+            "ctnative::number_map<ctnative::nullable_string>",
+            "nullableNumberKeys()",
+        ),
+        (
+            "nullable-payloads-only",
+            "nullablePayloadTags",
+            "traceNullablePayloadTags",
+            1023,
+            "map_storage<double, ctnative::nullable_string>",
+            "nullablePayloadTags()",
+        ),
+        (
+            "mixed-nullable-read-only",
+            "mixedNullableRead",
+            "traceMixedNullableRead",
+            17182024,
+            "map_storage<std::string, std::variant<ctnative::js_boolean_t, ctnative::nullable_string>>",
+            "mixedNullableRead(true, false) * 1000000 + mixedNullableRead(true, true) * 10000"
+            " + mixedNullableRead(false, false) * 100 + mixedNullableRead(false, true)",
+        ),
+    ]
+    for name, symbol, trace, value, carrier, expression in cases:
+        function = re.search(r"^function " + symbol + r"\([^)]*\) \{\n.*?^\}", source, re.M | re.S)
+        assert function
+        js = args.work / f"{name}.js"
+        js.write_text(function[0] + f"\nvar {trace} = {expression};\n")
+        expected = f"{trace}={value}\n"
+        assert run([node, "-e", representation.NODE_GLOBALS, str(js)]).stdout == expected
+        assert run([str(reference), str(js)]).stdout == expected
+        if symbol == "mixedNullableRead":
+            check_nullable_read_facts(args, js.read_text())
+        ir = args.work / f"{name}.mlir"
+        native_pipeline(args, js, ir)
+        cpp = run([args.translate, "--mlir-to-cpp", str(ir)]).stdout
+        assert '#include "ctcompile/CTNative/Runtime/ctnative.hpp"' in cpp
+        assert carrier in cpp
+        assert "ctbrowser::script" not in cpp
+        if symbol == "mixedNullableRead":
+            assert "ctnative::map_get_present_nullable_as<ctnative::nullable_string>" in cpp
+        compile_and_run(args, name, cpp, expected, compilers, nm)
+
+
+def main():
+    args = native_args(__doc__, "fixtures")
+    node, reference = args.node, args.reference
+    compilers, nm = native_tools(reference)
+    source = (args.fixtures / "mixed.js").read_text()
+    for ordered in (False, True):
+        name = "ordered" if ordered else "associative"
+        text = source + ((args.fixtures / "snapshot.js").read_text() if ordered else "")
+        js = args.work / f"{name}.js"
+        js.write_text(text)
+        expected = (
+            "traceBranches=23\ntraceDead=2\ntraceGuardBoolean=12\ntraceGuardDisjoint=117\n"
+            "traceGuardNumber=133\ntraceGuardString=12\n"
+            "traceMixedNullableBranches=1111\ntraceMixedNullableJoin=1111\n"
+            "traceMixedNullablePayload=3131\ntraceMixedNullableRead=17182024\n"
+            "traceMixedNullableTags=2047\n"
+            "traceNullableNumbers=41234\ntraceNullableOwned=151515\n"
+            "traceNullablePayloadOwned=111\ntraceNullablePayloadTags=1023\n"
+            "traceNullablePerUse=3131\ntraceNullableTags=4095\n"
+            "traceNumberObjectKeys=63\ntraceNumberObjectOwned=2\ntraceNumberObjectPayload=1\n"
+            "traceNumbers=1334\ntraceRewrite=1\n"
+            "traceSaved=1\ntraceSavedAlias=82\ntraceSavedBoolean=1\ntraceSavedBranch=11\n"
+            "traceSavedCall=1\ntraceSavedJoinBoolean=12\ntraceSavedJoinNumber=56\n"
+            "traceSavedJoinString=12\ntraceSavedNumber=42\n"
+            "traceShortBoolean=11\ntraceShortFalsy=12\ntraceShortNumber=1133\ntraceShortSaved=11\n"
+            "traceShortString=111\ntraceShortTemporary=12\n"
+        )
+        if ordered:
+            expected += "traceSnapshot=1\n"
+        assert run([node, "-e", representation.NODE_GLOBALS, str(js)]).stdout == expected
+        assert run([str(reference), str(js)]).stdout == expected
+        ir = args.work / f"{name}.mlir"
+        native_pipeline(args, js, ir)
+        deduced = args.work / f"{name}-deduced.mlir"
+        run([args.opt, "--ctnative-print-deduced", str(ir), "-o", str(deduced)])
+        for label, module in [("plain", ir), ("deduced", deduced)]:
+            cpp = run([args.translate, "--mlir-to-cpp", str(module)]).stdout
+            assert "ctbrowser::script" not in cpp
+            assert "std::variant<ctnative::js_boolean_t," in cpp and "map_get_present_as<" in cpp
+            assert "ctnative::number_map<ctnative::nullable_string>" in cpp
+            assert (
+                "map_storage<ctnative::nullable_string, std::variant<ctnative::js_boolean_t, std::string>>"
+                in cpp
+            )
+            assert "std::variant<ctnative::js_boolean_t, ctnative::nullable_string>" in cpp
+            assert "map_storage<double, ctnative::nullable_string>" in cpp
+            assert "map_storage<ctnative::nullable_string, ctnative::nullable_string>" in cpp
+            assert (
+                "map_storage<std::string, std::variant<ctnative::js_boolean_t, ctnative::nullable_string>>"
+                in cpp
+            )
+            assert "ctnative::map_get_present_nullable_as<ctnative::nullable_string>" in cpp
+            key_carrier = "std::variant<double, std::shared_ptr<ctnative::identity_object>>"
+            assert f"ctnative::number_map<{key_carrier}>" in cpp
+            assert f"ctnative::map_storage<{key_carrier}, ctnative::object_value>" in cpp
+            assert ("#define CTNATIVE_ORDERED_MAPS 1" in cpp) == ordered
+            lifetime = number_object_lifetime(cpp, ordered)
+            out = compile_and_run(args, f"{name}-{label}", lifetime, expected, compilers, nm)
+            if label == "plain":
+                sanitized = build_and_run(
+                    compilers[1],
+                    out,
+                    args.work / f"{name}-sanitized",
+                    flags=["-std=c++23", RUNTIME_INCLUDE, CORE_INCLUDE],
+                    sanitize=True,
+                )
+                assert sanitized.stdout == expected
+    check_isolated_nullable_helpers(args, source, node, reference, compilers, nm)
+    check_scalar_payloads(args, node, reference, compilers, nm)
+    for fixture in args.fixtures.glob("*-refused.js"):
+        name = fixture.stem
+        js, ir, count = boundary.prepare(args, name, fixture.read_text())
+        expected = run([node, "-e", representation.NODE_GLOBALS, str(js)]).stdout
+        assert run([str(reference), str(js)]).stdout == expected
+        before = ir.read_text()
+        forged = forge_map_facts(before, "bool")
+        assert forged != before
+        variants = [("original", before), ("forged", forged)]
+        if name.startswith("mixed-nullable"):
+            variants.append(("nullable-forged", forge_map_facts(before, "nullable_string")))
+        for label, contents in variants:
+            current = args.work / f"{name}-{label}.mlir"
+            current.write_text(contents)
+            for repeat in range(2):
+                output = args.work / f"{name}-{label}-{repeat}.mlir"
+                run(
+                    [
+                        args.opt,
+                        "--ctnative-lower-to-emitc=optimize=false",
+                        str(current),
+                        "-o",
+                        str(output),
+                    ]
+                )
+                result = output.read_text()
+                scalar_key = name in {"nullable-number-key-refused", "nullable-boolean-key-refused"}
+                if scalar_key or name in {
+                    "nullable-number-payload-refused",
+                    "nullable-boolean-payload-refused",
+                    "saved-missing-refused",
+                    "saved-join-missing-refused",
+                }:
+                    # These historical names predate optional scalar key support
+                    # (7b456d79). Keep both source bodies and forged-fact controls.
+                    assert not boundary.FUNCTION.search(result), name
+                    assert len(boundary.NATIVE.findall(result)) == count, name
+                    assert "ctnative.not_native" not in result, name
+                    storage = (
+                        "ctnative::make_number_map<ctnative::nullable_scalar>"
+                        if scalar_key
+                        else ", ctnative::nullable_scalar>"
+                    )
+                    assert storage in result, name
+                    current = output
+                    continue
+                assert not re.search(r"\bemitc.func @main\(", result), name
+                assert (
+                    len(boundary.FUNCTION.findall(result)) + len(boundary.NATIVE.findall(result))
+                    == count
+                )
+                if name == "number-object-extra-alternative-refused":
+                    assert "native Map needs supported keys" in result, name
+                    assert "!ctnative.variant<" in result, name
+                elif name in {
+                    "saved-join-tags-refused",
+                    "short-truthy-bool-refused",
+                    "short-wrong-condition-refused",
+                }:
+                    assert (
+                        "mixed native Map write needs one proved scalar alternative" in result
+                    ), name
+                elif name == "scalar-payload-snapshot-refused":
+                    assert (
+                        "nullable scalar Map value snapshot needs a tagged element carrier"
+                        in result
+                    )
+                elif name in {
+                    "nullable-snapshot-refused",
+                    "mixed-nullable-snapshot-refused",
+                    "nullable-payload-snapshot-refused",
+                    "mixed-nullable-payload-snapshot-refused",
+                }:
+                    assert (
+                        "native Map snapshot requires confined numeric or string elements" in result
+                    ), name
+                elif name in {
+                    "mixed-nullable-temporary-refused",
+                    "mixed-nullable-payload-temporary-refused",
+                }:
+                    # The scalar union now has a carrier; Map storage still
+                    # requires an independently proved alternative.
+                    boundary_kind = (
+                        "write" if name == "mixed-nullable-payload-temporary-refused" else "key"
+                    )
+                    assert (
+                        f"nullable native Map {boundary_kind} needs a proved scalar, String or "
+                        "absent alternative with an owning carrier" in result
+                    ), name
+                elif name == "mixed-nullable-branch-callee-refused":
+                    assert (
+                        "native Map instance escapes or is mutated through `ctjs.call`" in result
+                    ), name
+                else:
+                    assert (
+                        "mixed native Map read needs independent present payload type evidence"
+                        in result
+                    ), name
+                current = output
+                if label == "nullable-forged" and repeat == 0:
+                    stale = forge_map_facts(result, "nullable_string")
+                    assert stale != result
+                    current = args.work / f"{name}-nullable-stale.mlir"
+                    current.write_text(stale)
+    print(
+        "mixed Maps: 75 associative/ordered observations, owning nullable String and Boolean/String keys/payloads, "
+        "Number/Object identity keys with unchanged object payloads and 128 owner-release rounds; "
+        "Node/interpreter, GCC/Clang, plain/deduced and ASan/UBSan; "
+        "isolated nullable-key, nullable-payload and mixed nullable-read helpers; "
+        "fresh/stale finite nullable read proofs; "
+        "35 storage/read/write-proof refusals and six admitted scalar key/payload controls, "
+        "with forged key/nullable facts and reruns"
+    )
+
+
+if __name__ == "__main__":
+    main()

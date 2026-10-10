@@ -3,21 +3,21 @@
 //
 // SPLIT 2026-09-08: checkSeededMapResults moved to HostContractSeededMaps.cpp
 // (its own executable), and the fixtures, `check`, `contractFor`, `replaced` and
-// the shared two-method Map fixture builders moved to HostContractFixtures.h.
+// the shared two-method Map fixture builders moved to Fixtures.h.
 // Everything else is verbatim, in its original order.
 
 #include "ClassIntrinsics.h"
-#include "DOMBranchFilter.h"
-#include "DOMCustomIteration.h"
-#include "DOMDataset.h"
-#include "DOMIteration.h"
-#include "DOMIteratorClose.h"
-#include "DOMJSON.h"
-#include "DOMNullable.h"
-#include "DOMNumbers.h"
-#include "DOMPrototypeQuery.h"
-#include "DOMSnapshotLengths.h"
-#include "DOMURI.h"
+#include "DOM/BranchFilter.h"
+#include "DOM/CustomIteration.h"
+#include "DOM/Dataset.h"
+#include "DOM/Iteration.h"
+#include "DOM/IteratorClose.h"
+#include "DOM/JSON.h"
+#include "DOM/Nullable.h"
+#include "DOM/Numbers.h"
+#include "DOM/PrototypeQuery.h"
+#include "DOM/SnapshotLengths.h"
+#include "DOM/URI.h"
 #include "Fingerprint.h"
 #include "llvm/ADT/StringSet.h"
 

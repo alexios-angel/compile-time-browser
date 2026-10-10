@@ -1,2 +1,0 @@
-# Supplied arguments, default producers and pre-selection snapshots remain distinct.
-# RUN: python3 %S/native_class_dom_parameter_defaults.py %dom_driver --node %node --reference %native_reference

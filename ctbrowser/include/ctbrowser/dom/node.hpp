@@ -61,7 +61,7 @@ enum class node_kind : std::uint8_t {
     // THE THREE KINDS A PAGE CAN HOLD BUT NEVER SEES DRAWN. None of them is
     // laid out, styled, matched by a selector or counted as an element, so
     // every switch downstream treats them the way it treats a comment - and
-    // `unittests/unit/dom_special_nodes` is what asserts they got there.
+    // `unittests/unit/dom/special_nodes` is what asserts they got there.
     //
     // A DocumentType: `tag` is its name and `text` its public and system
     // identifiers - see document::create_document_type. It lives under the

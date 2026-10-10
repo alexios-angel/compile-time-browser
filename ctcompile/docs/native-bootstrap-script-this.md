@@ -78,7 +78,7 @@ this advances a wrapper proof without admitting the exact Data probe natively.
 
 ## Verification
 
-[`script_this`](../../ctbrowser/unittests/unit/script_this.cpp) checks default
+[`script_this`](../../ctbrowser/unittests/unit/script/this.cpp) checks default
 identity, shared data bindings, overwritten aliases, strict-script and module
 scope, lexical arrows, separate contexts, and receiver lifetime after all
 visible aliases and the previous register window have been removed. Its
@@ -86,7 +86,7 @@ collection checks assert that collections actually ran. The entry tests cover
 direct and reentrant execution with interpreted and compiled bodies, checking
 both the AOT receiver argument and the `ct_aot_this` result.
 
-[`dom_interfaces`](../../ctbrowser/unittests/unit/dom_interfaces.cpp) checks
+[`dom_interfaces`](../../ctbrowser/unittests/unit/dom/interfaces.cpp) checks
 that Shell supplies its Window identity and that changing `globalThis` does
 not change a script's receiver. The six standalone script/module fixtures
 agree with Node. Five focused devbox runtime tests pass. The unchanged 11-scenario

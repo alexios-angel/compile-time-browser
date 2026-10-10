@@ -63,7 +63,7 @@
 // BITWISE-NOT: ctnative.not_native
 
 // Exact Number/String concatenation uses the typed String overload and public
-// Core formatting; string-coercions.test checks the executable results.
+// Core formatting; ../Scalars/string/coercions.test checks the executable results.
 // CONCAT: emitc.func @concat_1({{.*}}!emitc.opaque<"ctnative::js_num">{{.*}}) -> !emitc.opaque<"ctnative::js_string">
 // CONCAT: add {{.*}} : (!emitc.opaque<"ctnative::js_num">, !emitc.opaque<"ctnative::js_string">) -> !emitc.opaque<"ctnative::js_string">
 // CONCAT-NOT: ctnative.not_native

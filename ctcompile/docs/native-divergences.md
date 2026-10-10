@@ -254,7 +254,7 @@ require an independent environment and own-data proof before admission expands.
   the setter also retains its child argument after the apparent field is deleted.
 
 `ctcompile_escape_claims_fixture` additionally runs the separate
-`escape-claims/inherited-{getter,setter,iteration}.js` sources. Each oracle
+`claims/inherited/{getter,setter,iteration}.js` sources. Each oracle
 process starts a fresh context, records retention through globals, and joins
 the matching compiler claim by program/function/pc. The check requires Passed
 receiver claims, the setter child's Stored claim, and zero oracle violations.

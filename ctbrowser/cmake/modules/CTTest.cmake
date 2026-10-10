@@ -29,9 +29,9 @@ if(NOT CTBROWSER_CPPTRACE OR NOT CTBROWSER_CPPTRACE_INCLUDE)
                  "brew install cpptrace, or tools/mingw/build-libs-mingw.sh for the cross build.")
 endif()
 
-# `ctbrowser_test(<bucket>/<name>)`. The argument is a PATH and everything
-# derived from it is the BASENAME - the target, and more importantly the ctest
-# name. `ctest -R vm_` has to keep working: it is in docs/build.md's
+# `ctbrowser_test(<path> [NAME <name>])`. The argument is a PATH and the target
+# and - more importantly - the ctest name are its BASENAME, unless NAME says
+# otherwise. `ctest -R vm_` has to keep working: it is in docs/build.md's
 # command blocks and in what the ratchet tools pass through.
 #
 # Where check.hpp, dom_probe.hpp, js_expect.hpp and the sanitizer suppression
@@ -40,7 +40,11 @@ endif()
 set(CTBROWSER_TEST_SUPPORT_DIR "${PROJECT_SOURCE_DIR}/test/support")
 
 function(ctbrowser_test path)
+  cmake_parse_arguments(_test "" "NAME" "" ${ARGN})
   get_filename_component(name "${path}" NAME_WE)
+  if(_test_NAME)
+    set(name "${_test_NAME}")
+  endif()
   add_executable(ctbrowser-test-${name} ${path}.cpp)
   if(CTBROWSER_CPPTRACE AND CTBROWSER_CPPTRACE_INCLUDE)
     target_link_libraries(ctbrowser-test-${name} PRIVATE "${CTBROWSER_CPPTRACE}")
@@ -97,6 +101,25 @@ function(ctbrowser_test path)
   # that name this variable themselves; there is no way to append that works on
   # every CMake this project supports.
   set_tests_properties(${name} PROPERTIES ENVIRONMENT "CTBROWSER_FONT_PATH=${PROJECT_SOURCE_DIR}/resources/fonts")
+endfunction()
+
+# `ctbrowser_test_directory()`: every .cpp in the calling directory is a test,
+# named for its path below CTBROWSER_TEST_ROOT with `/` spelled `_` -
+# unittests/unit/aot/basics.cpp is `aot_basics`, the name it had before the
+# unittests were put into folders (2026-10-09). unittests/unit and
+# unittests/js set the root; each folder below owns a CMakeLists.txt that
+# calls this, as check-cmake-hygiene requires of a directory holding C++.
+function(ctbrowser_test_directory)
+  file(RELATIVE_PATH prefix "${CTBROWSER_TEST_ROOT}" "${CMAKE_CURRENT_SOURCE_DIR}")
+  file(GLOB tests RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}" CONFIGURE_DEPENDS *.cpp)
+  foreach(test IN LISTS tests)
+    get_filename_component(stem "${test}" NAME_WE)
+    set(name "${stem}")
+    if(prefix)
+      string(REPLACE "/" "_" name "${prefix}/${stem}")
+    endif()
+    ctbrowser_test(${stem} NAME ${name})
+  endforeach()
 endfunction()
 
 # Benchmarks are NOT ctest gates - the numbers move with the machine, and a

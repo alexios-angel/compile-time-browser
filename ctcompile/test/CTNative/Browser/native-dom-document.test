@@ -1,2 +1,0 @@
-# The source document is explicitly bound to a validated element's owning DOM and live Style.
-# RUN: python3 %S/native_dom_document.py %dom_driver

@@ -10,7 +10,7 @@
 // name does not reach it, and a forged object is not mistaken for the real one.
 
 #include "js_expect.hpp"
-#include "vm_expect.hpp"
+#include "vm/expect.hpp"
 
 int main() {
     // ---- Map / Set -----------------------------------------------------

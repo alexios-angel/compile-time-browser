@@ -4,5 +4,5 @@ ctcompile_test_sources(ctcompile-test-type-claims Claims.cpp)
 
 ctcompile_test_sources(ctcompile-test-ctnative-lattice Lattice.cpp)
 
-add_subdirectory(TypeInference)
-add_subdirectory(TypeOracle)
+add_subdirectory(Inference)
+add_subdirectory(Oracle)

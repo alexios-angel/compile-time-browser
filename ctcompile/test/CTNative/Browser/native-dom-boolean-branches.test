@@ -1,2 +1,0 @@
-# One local Boolean follows dynamic If arms while preserving original results.
-# RUN: python3 %S/native_dom_boolean_branches.py %dom_driver --node %node --reference %native_reference

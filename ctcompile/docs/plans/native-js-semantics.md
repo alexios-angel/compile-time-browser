@@ -15,7 +15,7 @@ examples must distinguish browser and Node behavior.
 
 No full wtfjs corpus has been imported or executed. The adapted primitive
 `baNaNa` witness is now a named passing source check in
-`CTNative/Lowering/Scalars/string-coercions.test`: 18 distinct Node/VM/native
+`CTNative/Lowering/Scalars/string/coercions.test`: 18 distinct Node/VM/native
 observations, eight native executions, four refusal controls, optional String
 and generic-addition admission controls and one distinguishing mutation. The follow-up
 `string-arithmetic.test` passes 26 further observations across eight native modes,

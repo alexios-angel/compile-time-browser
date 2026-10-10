@@ -1,6 +1,6 @@
 #pragma once
 
-#include "HostContractFixtures.h"
+#include "Fixtures.h"
 #include "mlir/IR/AsmState.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/SHA256.h"

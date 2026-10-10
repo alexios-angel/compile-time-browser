@@ -667,7 +667,7 @@ of wrapping through ToUint32; `Number.parseInt`/`parseFloat` exist and are the
 SAME function objects as the globals; and the `Number` predicates and the
 `String` statics are non-enumerable, so `Object.keys(Number)` is empty.
 
-`unittests/js/array_generics.cpp` is the regression net — 96 assertions, in the
+`unittests/js/array/generics.cpp` is the regression net — 96 assertions, in the
 suite, no corpus needed — and `property_attributes.cpp` gained 32 more.
 
 ### What is deliberately NOT done

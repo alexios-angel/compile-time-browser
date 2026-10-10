@@ -589,7 +589,7 @@ browser baseline and the separate evidence-collector Node-path correction.
 
 ## Preceding argument gate, 2026-09-07
 
-`CTNative/Ownership/global-maps.test` covers **25 complete native programs**:
+`CTNative/Ownership/global_maps/core.test` covers **25 complete native programs**:
 fourteen at **4/4**, ten shared setter/getter variants at **5/5**, and one
 three-method variant at **6/6**. They cover publication, mutation, growing keys,
 repeated growth, primitive operations, overwrite/deletion, fluent calls, and

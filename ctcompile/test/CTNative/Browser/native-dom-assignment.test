@@ -1,2 +1,0 @@
-# Ordered fresh-object assignments preserve original M's payload ownership.
-# RUN: python3 %S/native_dom_assignment.py %dom_driver --node %node --reference %native_reference

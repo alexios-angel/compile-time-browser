@@ -314,7 +314,7 @@ void ct_aot_leave_return(ct_aot_frame * f, std::uint64_t result) {
 // because "taking one without a compiled `try` to test it would be
 // inventing on no evidence".
 //
-// There is a compiled `try` now - unittests/unit/aot_throw - and the fix
+// There is a compiled `try` now - unittests/unit/aot/throw - and the fix
 // taken is neither of the two: call_frame RECORDS the slot at the moment
 // unwind_to_handler writes it. The row's second option, adding the slot to
 // this helper's parameters, would have changed a signature two code

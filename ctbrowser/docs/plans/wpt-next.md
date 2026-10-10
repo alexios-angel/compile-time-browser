@@ -435,7 +435,7 @@ attribute case table this engine does not carry, `<selectedcontent>`, the
 scripted html5lib files; B - a subclass instance is not a typed array,
 `ta.buffer === ta.buffer` is false, `$262.detachArrayBuffer` throws; U -
 nothing named: urltestdata.json (893) and setters_tests.json (278) pass
-whole in `unittests/unit/url_wpt`, so what url/ still fails is the
+whole in `unittests/unit/url/wpt`, so what url/ still fails is the
 bindings' surface, not the parser; F - `tooLong`/`tooShort` (the store
 cannot tell a user's edit from a script's), and the input type states'
 value sanitisation, which the wrapper's own `value`/`checked` accessors

@@ -219,7 +219,7 @@ parameters remain excluded. Every stored alternative still participates in schem
 inference. All input annotations are cleared and rederived. See the nested-Map
 document for its additional presence and containment proofs.
 
-`ctcompile/test/CTNative/Lowering/Maps/map-mixed.mlir` checks saved Bool/Number/String chains across associative
+`ctcompile/test/CTNative/Lowering/Maps/mixed.mlir` checks saved Bool/Number/String chains across associative
 and insertion-ordered modules with Node/interpreter, GCC/Clang, explicit/deduced
 output and ASan/UBSan. Negative programs cover branch tags, possible alias
 writes, direct callee writes, `has`, deletion and unproved nonliteral payloads,

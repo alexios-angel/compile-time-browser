@@ -1,2 +1,0 @@
-# Proved Symbol properties retain native identities while driving public DOM calls.
-# RUN: python3 %S/native_dom_symbols.py %dom_driver --node %node --reference %native_reference

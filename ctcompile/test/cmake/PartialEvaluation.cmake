@@ -1,10 +1,10 @@
 # The ordinary differential pipeline, with opt-in compile-time heap evaluation.
 # Numeric observers receive heap arguments, so they remain runtime functions.
-ctcompile_native_fixture(object_values Objects/object-values.js)
-ctcompile_native_fixture(object_fields Objects/object-fields.js)
-ctcompile_native_fixture(partial_evaluation Optimization/partial-evaluation.js PARTIAL_EVALUATE)
-ctcompile_native_fixture(partial_prefix Optimization/partial-prefix.js PARTIAL_EVALUATE)
-ctcompile_native_fixture(partial_closures Optimization/partial-closures.js PARTIAL_EVALUATE)
+ctcompile_native_fixture(object_values Objects/values.js)
+ctcompile_native_fixture(object_fields Objects/fields.js)
+ctcompile_native_fixture(partial_evaluation Optimization/partial/evaluation.js PARTIAL_EVALUATE)
+ctcompile_native_fixture(partial_prefix Optimization/partial/prefix.js PARTIAL_EVALUATE)
+ctcompile_native_fixture(partial_closures Optimization/partial/closures.js PARTIAL_EVALUATE)
 ctcompile_native_fixture(symbolic Optimization/symbolic.js PRECOMPUTE)
 ctcompile_native_fixture(deforestation Optimization/deforestation.js DEFOREST)
 ctcompile_native_fixture(specialization Optimization/specialization.js

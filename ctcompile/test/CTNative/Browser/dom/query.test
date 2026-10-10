@@ -1,0 +1,2 @@
+# Element queries use ctbrowser's existing scoped traversal and guarded node borrows.
+# RUN: python3 %S/query.py %dom_driver

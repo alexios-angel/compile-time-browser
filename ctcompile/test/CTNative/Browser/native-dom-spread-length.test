@@ -1,2 +1,0 @@
-# Original Bootstrap R.find counts use public DOM/Style without a VM.
-# RUN: python3 %S/native_dom_spread_length.py %dom_driver

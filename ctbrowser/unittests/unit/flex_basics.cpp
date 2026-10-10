@@ -18,7 +18,7 @@
 // wrong is invisible until the gutters double, so it is asserted rather than
 // inferred.
 
-#include "layout_fixture.hpp"
+#include "layout/fixture.hpp"
 
 namespace {
 

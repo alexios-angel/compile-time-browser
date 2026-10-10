@@ -16,7 +16,7 @@ specificity above every selector, which puts it in the cascade at
 so `engine::resolve` SPLICES the attribute's normal declarations in at the
 importance boundary rather than appending them at the end. Appending is the
 easy mistake and it is invisible until a page uses `!important` to override a
-widget's inline style; `unittests/unit/style_cascade` has a test per step, verified by
+widget's inline style; `unittests/unit/style/cascade` has a test per step, verified by
 planting the mistake and watching exactly those two fail.
 
 Parsed as a declaration list by `style/css/`. It used to go through the SHEET
@@ -335,5 +335,5 @@ empty - Bootstrap's `.fade` is `transition: opacity .15s linear`.
 Colours interpolate in premultiplied sRGB (`interpolate_value`, beside
 `style::interpolate_text`'s numbers); everything else still flips at the
 midpoint. Pseudo-elements do not animate, and `var()` inside a keyframe is not
-substituted. `unittests/unit/css_animations.cpp` pins the harness's shapes,
+substituted. `unittests/unit/css/animations.cpp` pins the harness's shapes,
 the reversal, the events and the idle wakeup.

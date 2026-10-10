@@ -1,2 +1,0 @@
-# Original Bootstrap R.find preserves guarded and checked current-document root receivers.
-# RUN: python3 %S/native_dom_document_default.py %dom_driver

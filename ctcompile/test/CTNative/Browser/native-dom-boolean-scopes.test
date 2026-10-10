@@ -1,2 +1,0 @@
-# Branch-local initialization preserves the exact synchronous Boolean lifetime.
-# RUN: python3 %S/native_dom_boolean_scopes.py %dom_driver --node %node --reference %native_reference

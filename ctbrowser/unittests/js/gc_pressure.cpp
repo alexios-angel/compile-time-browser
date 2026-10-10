@@ -18,7 +18,7 @@
 // the heap was bounded when the script returned - the two facts an unbounded
 // collector gets wrong.
 
-#include "vm_expect.hpp"
+#include "vm/expect.hpp"
 
 int main() {
     const program prog = compiler::compile(R"(

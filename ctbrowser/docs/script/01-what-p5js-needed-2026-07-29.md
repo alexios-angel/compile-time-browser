@@ -746,7 +746,7 @@ cosmetic:
 | `Number("inf")` | `Infinity` | `NaN` |
 
 `core/number_format.hpp` is the whole of it - five functions, each named for
-its clause - and `ctbrowser/unittests/js/number_format.cpp` pins every case against **V8**, plus
+its clause - and `ctbrowser/unittests/js/number/format.cpp` pins every case against **V8**, plus
 the round-trip property `Number(String(x)) === x` over twenty literals. The
 expectations were taken from node before the code was written, which is the only
 reason the file failed on the day it was committed rather than agreeing with the

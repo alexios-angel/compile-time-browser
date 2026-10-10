@@ -1,2 +1,0 @@
-# Consume fixed Boolean slots only after the complete original mutable-state proof.
-# RUN: python3 %S/native_class_dom_boolean_mixed_captures.py %dom_driver --node %node --reference %native_reference

@@ -7,7 +7,7 @@ from pathlib import Path
 import re
 import shutil
 
-from CTNative.Browser import native_dom as dom
+from CTNative.Browser.dom import dom
 from CTNative.harness import find_compilers, run
 from Target.Cpp.harness import FLAGS
 

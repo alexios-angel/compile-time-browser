@@ -121,7 +121,7 @@ with a synchronous asset registry, is also the end), data blocks and
 `nomodule` never. Text is inserted per 13.2.6.1 - onto the Text node before
 the insertion point - so `write("a"); write("b")` is one node, and an implied
 `<head>` exists on every parsed page. The gate for all of it is
-`unittests/unit/document_write`.
+`unittests/unit/document/write`.
 
 **THE TOKENIZER AND TREE BUILDER ARE THE SPECIFICATION'S (2026-09-16).** The
 practical-subset parser gave 748 of the 1713 html5lib tree-construction
@@ -594,7 +594,7 @@ Three things the SDL layer was missing and now has:
   coordinates under letterboxed presentation. invaders is 320x240 in a 960x720
   window, so every pointer event arrived at three times its true position.
 
-`ctbrowser/unittests/unit/page_input` drives all of it, and finishes by holding a key
+`ctbrowser/unittests/unit/page/input` drives all of it, and finishes by holding a key
 through MDN's breakout and asserting the frames differ — with a key the page
 ignores as the control, so "the frames differ" cannot pass by nondeterminism.
 
@@ -772,7 +772,7 @@ to scope a store to.
 `fetch()` used to do the work and hand back an already-settled promise. That was
 the only option while `await` could not suspend - a pending promise would have
 evaluated to `undefined` and the rest of the function would have run with it -
-and it is why `ctbrowser/unittests/unit/image_basics` read a fetch's result before `load_html`
+and it is why `ctbrowser/unittests/unit/image/basics` read a fetch's result before `load_html`
 returned.
 
 It queues now. `fetch()` makes a PENDING promise, records the request, and the

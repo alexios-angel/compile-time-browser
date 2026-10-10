@@ -4,7 +4,7 @@
 // pair. Each assertion is one that test262's built-ins/Map or /Set rows
 // failed on 2026-09-12.
 
-#include "vm_expect.hpp"
+#include "vm/expect.hpp"
 
 namespace {
 

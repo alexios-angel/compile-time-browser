@@ -1,7 +1,7 @@
 // HTMLHyperlinkElementUtils (HTML 4.6.3) on <a> and <area>, against a live
 // page - one case per rule url/a-element.html and
 // url/url-setters-a-area.window.js found the other answer to. The pattern is
-// unit/document_api_wpt.cpp's: one expression against a fresh page, and
+// unit/document/api_wpt.cpp's: one expression against a fresh page, and
 // whatever it logged.
 
 #include <ctbrowser.hpp>

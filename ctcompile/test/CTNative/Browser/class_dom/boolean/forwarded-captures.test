@@ -1,0 +1,2 @@
+# Prove original forwarded fixed slots before compacting local mutable captures.
+# RUN: python3 %S/forwarded_captures.py %dom_driver --node %node --reference %native_reference

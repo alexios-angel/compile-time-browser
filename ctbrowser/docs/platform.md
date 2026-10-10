@@ -198,7 +198,7 @@ application/x-www-form-urlencoded. Until this date it was Boost.URL - RFC 3986,
 which is not the specification a browser implements - and `docs/history/ada-url.md`
 records the eight of fifteen measured cases that differed.
 
-**Measured**: `unittests/unit/url_wpt` drives the suite's own
+**Measured**: `unittests/unit/url/wpt` drives the suite's own
 `url/resources/urltestdata.json` (893 inputs) and `setters_tests.json` (278
 cases) through the parser with no VM in between and asserts every one passes
 at the pinned WPT commit. It reads the corpus from `~/.cache/wpt` when

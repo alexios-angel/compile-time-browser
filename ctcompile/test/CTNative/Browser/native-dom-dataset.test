@@ -1,1 +1,0 @@
-# RUN: python3 %S/native_dom_dataset.py %dom_driver --node %node --reference %native_reference

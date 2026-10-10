@@ -1,2 +1,0 @@
-# Conditional borrower bodies retain snapshots and acquire proved state edges after inlining.
-# RUN: python3 %S/native_dom_boolean_borrowers.py %dom_driver --node %node --reference %native_reference

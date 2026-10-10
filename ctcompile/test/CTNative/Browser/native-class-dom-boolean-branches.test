@@ -1,2 +1,0 @@
-# If-only synchronous state uses follow unconditional cell and callback creation.
-# RUN: python3 %S/native_class_dom_boolean_branches.py %dom_driver --node %node --reference %native_reference

@@ -1,5 +1,5 @@
 #include "../../../lib/CTNative/Analysis/OwnedGlobalRoots.h"
-#include "../../CTNative/HostContract/HostContractFixtures.h"
+#include "../../CTNative/HostContract/Fixtures.h"
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"

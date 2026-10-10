@@ -1,0 +1,2318 @@
+// RUN: split-file %s %t
+// RUN: python3 %S/../check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name power-index-overwrite
+// RUN: FileCheck %s < %t/escape-claims-power-index-overwrite.claims
+
+// Zero/unit exponents preserve each source operation, actual writes and snapshots.
+// Reloads must be disjoint from every write; general powers remain unproved.
+// CHECK: escape {{[0-9a-f]+}} 1 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 2 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 3 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 4 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 5 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 6 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 7 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 8 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 9 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 10 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 11 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 12 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 13 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 14 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 15 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 16 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 17 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 18 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 19 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 20 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 21 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 22 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 23 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 24 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 25 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 26 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 27 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 28 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 29 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 30 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 31 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 32 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 33 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 34 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 35 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 36 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 37 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 38 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 39 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 40 {{[0-9]+}} obj confined
+
+// CHECK: escape {{[0-9a-f]+}} 41 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 42 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 43 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 44 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 45 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 46 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 47 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 48 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 49 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 50 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 51 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 52 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 53 {{[0-9]+}} obj escapes:stored
+
+
+// At most two varying values use exact scalar powers; interior values still need a range proof.
+// CHECK: escape {{[0-9a-f]+}} 54 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 55 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 56 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 57 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 58 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 59 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 60 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 61 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 62 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 63 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 64 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 65 {{[0-9]+}} obj escapes:stored
+
+// Positive powers of signed-unit bases include zero between the endpoint images.
+// CHECK: escape {{[0-9a-f]+}} 66 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 67 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 68 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 69 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 70 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 71 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 72 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 73 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 74 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 75 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 76 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 77 {{[0-9]+}} obj confined
+
+// Both power operands may vary only within independently proved scalar identities.
+// CHECK: escape {{[0-9a-f]+}} 78 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 79 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 80 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 81 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 82 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 83 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 84 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 85 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 86 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 87 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 88 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 89 {{[0-9]+}} obj escapes:stored
+
+// Negative varying exponents require a signed-unit base lattice that excludes zero.
+// CHECK: escape {{[0-9a-f]+}} 90 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 91 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 92 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 93 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 94 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 95 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 96 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 97 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 98 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 99 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 100 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 101 {{[0-9]+}} obj escapes:stored
+
+// A proved singleton exponent uses the existing invariant-exponent proof.
+// CHECK: escape {{[0-9a-f]+}} 102 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 103 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 104 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 105 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 106 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 107 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 108 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 109 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 110 {{[0-9]+}} obj escapes:stored
+
+// A proved singleton base uses the existing invariant-base proof and its exact scalar identities.
+// CHECK: escape {{[0-9a-f]+}} 111 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 112 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 113 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 114 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 115 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 116 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 117 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 118 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 119 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 120 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 121 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 122 {{[0-9]+}} obj escapes:stored
+
+// Odd varying exponents of nonpositive signed-unit bases cannot create a positive unit.
+// CHECK: escape {{[0-9a-f]+}} 123 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 124 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 125 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 126 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 127 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 128 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 129 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 130 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 131 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 132 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 133 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 134 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 135 {{[0-9]+}} obj escapes:stored
+
+// Varying zero/unit exponents keep every bounded base image exact.
+// CHECK: escape {{[0-9a-f]+}} 136 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 137 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 138 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 139 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 140 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 141 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 142 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 143 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 144 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 145 {{[0-9]+}} obj escapes:stored
+
+// The zero/unit union retains only congruences shared by the base and one.
+// CHECK: escape {{[0-9a-f]+}} 146 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 147 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 148 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 149 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 150 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 151 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 152 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 153 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 154 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 155 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 156 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 157 {{[0-9]+}} obj escapes:stored
+
+// Correlated whole-key refinement proves own bounds before checking independent reload gaps.
+// CHECK: escape {{[0-9a-f]+}} 158 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 159 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 160 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 161 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 162 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 163 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 164 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 165 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 166 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 167 {{[0-9]+}} obj escapes:stored
+
+// CHECK: escape {{[0-9a-f]+}} 168 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 169 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 170 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 171 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 172 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 173 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 174 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 175 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 176 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 177 {{[0-9]+}} obj escapes:stored
+
+// A varying divisor must prove one exact value before ordinary division/remainder.
+// CHECK: escape {{[0-9a-f]+}} 178 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 179 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 180 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 181 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 182 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 183 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 184 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 185 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 186 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 187 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 188 {{[0-9]+}} obj confined
+
+// Singleton shift counts retain ordinary conversion, masking and producer checks.
+// CHECK: escape {{[0-9a-f]+}} 189 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 190 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 191 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 192 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 193 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 194 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 195 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 196 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 197 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 198 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 199 {{[0-9]+}} obj escapes:stored
+
+// Singleton bitwise masks retain both operand orders and every producer check.
+// CHECK: escape {{[0-9a-f]+}} 200 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 201 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 202 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 203 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 204 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 205 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 206 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 207 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 208 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 209 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 210 {{[0-9]+}} obj escapes:stored
+
+// Bounded varying masks reuse whole-key refinement and independent reload proofs.
+// CHECK: escape {{[0-9a-f]+}} 211 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 212 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 213 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 214 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 215 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 216 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 217 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 218 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 219 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 220 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 221 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 222 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 223 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 224 {{[0-9]+}} obj confined
+
+// Varying shift counts refine whole keys before exact own-write replay.
+// CHECK: escape {{[0-9a-f]+}} 225 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 226 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 227 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 228 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 229 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 230 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 231 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 232 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 233 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 234 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 235 {{[0-9]+}} obj confined
+
+// Varying divisors refine exact own keys without losing reload or retention checks.
+// CHECK: escape {{[0-9a-f]+}} 236 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 237 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 238 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 239 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 240 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 241 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 242 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 243 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 244 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 245 {{[0-9]+}} obj escapes:stored
+
+// Correlated powers subdivide to existing exact identities; actual general powers still refuse.
+// CHECK: escape {{[0-9a-f]+}} 246 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 247 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 248 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 249 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 250 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 251 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 252 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 253 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 254 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 255 {{[0-9]+}} obj escapes:stored
+
+// Bounded varying subtraction reuses exact ordered scalar transfers.
+// CHECK: escape {{[0-9a-f]+}} 256 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 257 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 258 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 259 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 260 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 261 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 262 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 263 {{[0-9]+}} obj escapes:stored
+
+// Bounded varying multiplication proves every visit, including interior extrema.
+// CHECK: escape {{[0-9a-f]+}} 264 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 265 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 266 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 267 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 268 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 269 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 270 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 271 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 272 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 273 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 274 {{[0-9]+}} obj escapes:stored
+
+// Bounded varying addition reuses exact scalar sums without erasing source intermediates.
+// CHECK: escape {{[0-9a-f]+}} 275 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 276 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 277 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 278 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 279 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 280 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 281 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 282 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 283 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 284 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 285 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 286 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 287 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 288 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 289 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 290 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 291 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 292 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 293 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 294 {{[0-9]+}} obj escapes:stored
+
+
+// Mixed power enclosures must discharge unvisited poles and bases with exact scalar identities.
+// CHECK: escape {{[0-9a-f]+}} 295 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 296 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 297 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 298 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 299 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 300 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 301 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 302 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 303 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 304 {{[0-9]+}} obj escapes:stored
+
+// CHECK: escape {{[0-9a-f]+}} 305 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 306 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 307 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 308 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 309 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 310 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 311 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 312 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 313 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 314 {{[0-9]+}} obj escapes:stored
+
+// CHECK: escape {{[0-9a-f]+}} 315 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 316 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 317 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 318 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 319 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 320 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 321 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 322 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 323 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 324 {{[0-9]+}} obj escapes:stored
+
+// Invariant shift bases retain ordered conversion, count wrapping and reload gaps.
+// CHECK: escape {{[0-9a-f]+}} 325 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 326 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 327 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 328 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 329 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 330 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 331 {{[0-9]+}} obj confined
+// CHECK: escape {{[0-9a-f]+}} 332 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 333 {{[0-9]+}} obj escapes:stored
+// CHECK: escape {{[0-9a-f]+}} 334 {{[0-9]+}} obj escapes:stored
+
+//--- source.js
+function unit() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[i ** 1] = 0;
+    return a;
+}
+function stringUnit() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[i ** "1"] = 0;
+    return a;
+}
+function zero() {
+    var child = {}, a = [0, child];
+    for (var i = 0; i < a.length; i++) a[i ** 0] = 0;
+    return a;
+}
+function nullZero() {
+    var child = {}, a = [0, child];
+    for (var i = 0; i < a.length; i++) a[i ** null] = 0;
+    return a;
+}
+function signedBase() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[2 + (-i) ** 1] = 0;
+    return a;
+}
+function gappedUnit() {
+    var child = {}, a = [child, 0, child];
+    for (var i = 0; i < a.length; i += 2) a[i ** 1] = 0;
+    return a;
+}
+function reloadedZero() {
+    var child = {}, a = [0, child];
+    for (var i = 0; i < a.length; i++) a[i ** a[0]] = 0;
+    return a;
+}
+function reloadedUnitGap() {
+    var child = {}, a = [child, 1, child];
+    for (var i = 0; i < a.length; i += 2) a[i ** a[1]] = 0;
+    return a;
+}
+function retainedZero() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[i ** 0] = 0;
+    return a;
+}
+function saved() {
+    var child = {}, a = [child, child], saved = a[1];
+    for (var i = 0; i < a.length; i++) a[i ** 1] = 0;
+    return saved;
+}
+function laterStore() {
+    var child = {}, a = [0, child, child];
+    for (var i = 0; i < a.length; i++) {
+        a[i ** a[0]] = 0;
+        a[0] = 1;
+    }
+    return a;
+}
+function overlappingExponent() {
+    var child = {}, a = [1, child];
+    for (var i = 0; i < a.length; i++) a[i ** a[0]] = 0;
+    return a;
+}
+function nonunitExponent() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[i ** 2] = 0;
+    return a;
+}
+function changingExponent() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[i ** i] = 0;
+    return a;
+}
+function reversedOperands() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[1 ** i] = 0;
+    return a;
+}
+function noncanonicalExponent() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[i ** "01"] = 0;
+    return a;
+}
+function undefinedExponent() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[i ** undefined] = 0;
+    return a;
+}
+unit(); stringUnit(); zero(); nullZero(); signedBase(); gappedUnit();
+reloadedZero(); reloadedUnitGap(); retainedZero(); saved(); laterStore();
+overlappingExponent(); nonunitExponent(); changingExponent(); reversedOperands();
+noncanonicalExponent(); undefinedExponent();
+
+function unitBase() {
+    var child = {}, a = [0, child];
+    for (var i = 0; i < a.length; i++) a[1 ** i] = 0;
+    return a;
+}
+function stringBase() {
+    var child = {}, a = [0, child];
+    for (var i = 0; i < a.length; i++) a["1" ** i] = 0;
+    return a;
+}
+function booleanBase() {
+    var child = {}, a = [0, child];
+    for (var i = 0; i < a.length; i++) a[true ** i] = 0;
+    return a;
+}
+function negativeExponent() {
+    var child = {}, a = [0, child];
+    for (var i = 0; i < a.length; i++) a[1 ** (-i)] = 0;
+    return a;
+}
+function crossingExponent() {
+    var child = {}, a = [0, child, 0];
+    for (var i = 0; i < a.length; i++) a[1 ** (i - 1)] = 0;
+    return a;
+}
+function reloadedUnitBase() {
+    var child = {}, a = [1, child];
+    for (var i = 0; i < a.length; i++) a[a[0] ** i] = 0;
+    return a;
+}
+function laterBaseStore() {
+    var child = {}, a = [1, child, child];
+    for (var i = 0; i < a.length; i++) {
+        a[a[0] ** i] = 0;
+        a[0] = 0;
+    }
+    return a;
+}
+function overlappingBase() {
+    var child = {}, a = [0, 1, child];
+    for (var i = 0; i < a.length; i++) a[a[1] ** i] = 0;
+    return a;
+}
+function savedUnitBase() {
+    var child = {}, a = [0, child], saved = a[1];
+    for (var i = 0; i < a.length; i++) a[1 ** i] = 0;
+    return saved;
+}
+function zeroBase() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[0 ** i] = 0;
+    return a;
+}
+unitBase(); stringBase(); booleanBase(); negativeExponent(); crossingExponent();
+reloadedUnitBase(); laterBaseStore(); overlappingBase(); savedUnitBase(); zeroBase();
+
+function falseBase() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[false ** i] = 0;
+    return a;
+}
+function nullBase() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[null ** i] = 0;
+    return a;
+}
+function zeroStringBase() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a["0" ** i] = 0;
+    return a;
+}
+function negativeZeroBase() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[(-0) ** i] = 0;
+    return a;
+}
+function reloadedZeroBase() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[a[2] ** i] = 0;
+    return a;
+}
+function positiveZeroBase() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[0 ** (i + 1)] = 0;
+    return a;
+}
+function savedZeroBase() {
+    var child = {}, a = [child, child], saved = a[1];
+    for (var i = 0; i < a.length; i++) a[0 ** i] = 0;
+    return saved;
+}
+function laterZeroBaseStore() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) {
+        a[a[2] ** i] = 0;
+        a[2] = 1;
+    }
+    return a;
+}
+function overlappingZeroBase() {
+    var child = {}, a = [0, child];
+    for (var i = 0; i < a.length; i++) a[a[0] ** i] = 0;
+    return a;
+}
+function negativeZeroExponent() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[0 ** (i - 1)] = 0;
+    return a;
+}
+function growingZeroBase() {
+    var child = {}, a = [child];
+    for (var i = 0; i < a.length; i++) a[0 ** i] = 0;
+    return a;
+}
+function descendingZeroExponent() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[0 ** (1 - i)] = 0;
+    return a;
+}
+function nonzeroZeroBaseStart() {
+    var child = {}, a = [child, 0];
+    for (var i = 1; i < a.length; i++) a[0 ** i] = 0;
+    return a;
+}
+falseBase(); nullBase(); zeroStringBase(); negativeZeroBase(); reloadedZeroBase();
+positiveZeroBase(); savedZeroBase(); laterZeroBaseStore(); overlappingZeroBase();
+negativeZeroExponent(); growingZeroBase(); descendingZeroExponent(); nonzeroZeroBaseStart();
+
+function negativeUnitParity() {
+    var child = {}, a = [child, 0, child];
+    for (var i = 0; i < a.length; i++) a[1 + (-1) ** i] = 0;
+    return a;
+}
+function negativeStringParity() {
+    var child = {}, a = [child, 0, child];
+    for (var i = 0; i < a.length; i++) a[1 + "-1" ** i] = 0;
+    return a;
+}
+function negativeExponentParity() {
+    var child = {}, a = [child, 0, child];
+    for (var i = 0; i < a.length; i++) a[1 + (-1) ** (-i)] = 0;
+    return a;
+}
+function evenExponentParity() {
+    var child = {}, a = [0, 0, child];
+    for (var i = 0; i < a.length; i++) a[1 + (-1) ** (2 * i)] = 0;
+    return a;
+}
+function oddExponentParity() {
+    var child = {}, a = [child, 0, 0];
+    for (var i = 0; i < a.length; i++) a[1 + (-1) ** (2 * i + 1)] = 0;
+    return a;
+}
+function singletonExponentParity() {
+    var child = {}, a = [child, 0];
+    for (var i = 1; i < a.length; i++) a[1 + (-1) ** i] = 0;
+    return a;
+}
+function reloadedParityBase() {
+    var child = {}, a = [child, -1, child];
+    for (var i = 0; i < a.length; i++) a[1 + a[1] ** i] = 0;
+    return a;
+}
+function retainedParityChild() {
+    var child = {}, a = [child, 0, child];
+    for (var i = 0; i < a.length; i += 2) a[1 + (-1) ** i] = 0;
+    return a;
+}
+function laterParityBaseStore() {
+    var child = {}, a = [child, -1, child];
+    for (var i = 0; i < a.length; i++) {
+        a[1 + a[1] ** i] = 0;
+        a[1] = 0;
+    }
+    return a;
+}
+function overlappingParityBase() {
+    var child = {}, a = [-1, 0, child];
+    for (var i = 0; i < a.length; i++) a[1 + a[0] ** i] = 0;
+    return a;
+}
+function negativeParityKey() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[(-1) ** i] = 0;
+    return a;
+}
+function fractionalParityExponent() {
+    var child = {}, a = [child, 0, child];
+    for (var i = 0; i < a.length; i++) a[1 + (-1) ** (i / 2)] = 0;
+    return a;
+}
+function growingParityKey() {
+    var child = {}, a = [child, 0];
+    for (var i = 0; i < a.length; i++) a[1 + (-1) ** i] = 0;
+    return a;
+}
+negativeUnitParity(); negativeStringParity(); negativeExponentParity(); evenExponentParity();
+oddExponentParity(); singletonExponentParity(); reloadedParityBase(); retainedParityChild();
+laterParityBaseStore(); overlappingParityBase(); negativeParityKey(); fractionalParityExponent();
+growingParityKey();
+
+function stringTwoPointPower() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[i ** "2"] = 0;
+    return a;
+}
+function twoPointExponent() {
+    var child = {}, a = [0, child, child];
+    for (var i = 0; i < a.length; i++) a[2 ** (i % 2)] = 0;
+    return a;
+}
+function reloadedTwoPointBase() {
+    var child = {}, a = [3, child, 0, child];
+    for (var i = 0; i < a.length; i++) a[a[0] ** (i % 2)] = 0;
+    return a;
+}
+function retainedTwoPointGap() {
+    var child = {}, a = [3, child, child, child];
+    for (var i = 0; i < a.length; i++) a[a[0] ** (i % 2)] = 0;
+    return a;
+}
+function savedTwoPointPower() {
+    var child = {}, a = [child, child], saved = a[1];
+    for (var i = 0; i < a.length; i++) a[i ** 2] = 0;
+    return saved;
+}
+function laterTwoPointBaseStore() {
+    var child = {}, a = [3, child, 0, child];
+    for (var i = 0; i < a.length; i++) {
+        a[a[0] ** (i % 2)] = 0;
+        a[0] = 1;
+    }
+    return a;
+}
+function overlappingTwoPointBase() {
+    var child = {}, a = [0, 3, 0, child];
+    for (var i = 0; i < a.length; i++) a[a[1] ** (i % 2)] = 0;
+    return a;
+}
+function evenTwoPointPower() {
+    var child = {}, a = [0, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[(i - 1) ** 2] = 0;
+    return a;
+}
+function oddTwoPointPower() {
+    var child = {}, a = [child, 0, child];
+    for (var i = 0; i < a.length; i += 2) a[1 + (i - 1) ** 3] = 0;
+    return a;
+}
+function interiorPowerBase() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[(i - 1) ** 2] = 0;
+    return a;
+}
+function unprovedPowerEndpoint() {
+    var child = {}, a = [0, child, child];
+    for (var i = 0; i < a.length; i++) a[2 ** (i % 3)] = 0;
+    return a;
+}
+function negativeTwoPointExponent() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[i ** -1] = 0;
+    return a;
+}
+stringTwoPointPower(); twoPointExponent(); reloadedTwoPointBase(); retainedTwoPointGap();
+savedTwoPointPower(); laterTwoPointBaseStore(); overlappingTwoPointBase(); evenTwoPointPower();
+oddTwoPointPower(); interiorPowerBase(); unprovedPowerEndpoint(); negativeTwoPointExponent();
+
+function signedUnitOdd() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[1 + (i - 1) ** 3] = 0;
+    return a;
+}
+function stringSignedUnit() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[(i - 1) ** "2"] = 0;
+    return a;
+}
+function reloadedSignedUnitExponent() {
+    var child = {}, a = [child, child, 2];
+    for (var i = 0; i < a.length; i++) a[(i - 1) ** a[2]] = 0;
+    return a;
+}
+function laterSignedUnitExponentStore() {
+    var child = {}, a = [child, child, 2];
+    for (var i = 0; i < a.length; i++) {
+        a[(i - 1) ** a[2]] = 0;
+        a[2] = 1;
+    }
+    return a;
+}
+function overlappingSignedUnitExponent() {
+    var child = {}, a = [2, child, 0];
+    for (var i = 0; i < a.length; i++) a[(i - 1) ** a[0]] = 0;
+    return a;
+}
+function interiorSignedUnitReload() {
+    var child = {}, a = [child, 3, child];
+    for (var i = 0; i < a.length; i++) a[1 + (i - 1) ** a[1]] = 0;
+    return a;
+}
+function savedSignedUnitPower() {
+    var child = {}, a = [child, child, 0], saved = a[0];
+    for (var i = 0; i < a.length; i++) a[(i - 1) ** 2] = 0;
+    return saved;
+}
+function negativeSignedUnitExponent() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[(i - 1) ** -2] = 0;
+    return a;
+}
+function fractionalSignedUnitExponent() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[(i - 1) ** 0.5] = 0;
+    return a;
+}
+function noncanonicalSignedUnitExponent() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[(i - 1) ** "02"] = 0;
+    return a;
+}
+function retainedSignedUnitGap() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[(i - 1) ** 2] = 0;
+    return a;
+}
+function descendingSignedUnitPower() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[(1 - i) ** 2] = 0;
+    return a;
+}
+signedUnitOdd(); stringSignedUnit(); reloadedSignedUnitExponent(); laterSignedUnitExponentStore();
+overlappingSignedUnitExponent(); interiorSignedUnitReload(); savedSignedUnitPower();
+negativeSignedUnitExponent(); fractionalSignedUnitExponent(); noncanonicalSignedUnitExponent();
+retainedSignedUnitGap(); descendingSignedUnitPower();
+
+function varyingPositivePower() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[i ** (i + 1)] = 0;
+    return a;
+}
+function varyingSignedOddPower() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[1 + (i - 1) ** (2 * i + 1)] = 0;
+    return a;
+}
+function varyingSignedEvenPower() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[(i - 1) ** (2 * i)] = 0;
+    return a;
+}
+function retainedVaryingPower() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[1 + (i - 1) ** i] = 0;
+    return a;
+}
+function savedVaryingPower() {
+    var child = {}, a = [child, child], saved = a[0];
+    for (var i = 0; i < a.length; i++) a[i ** (i + 1)] = 0;
+    return saved;
+}
+function reloadedVaryingPower() {
+    var child = {}, a = [child, child, 1];
+    for (var i = 0; i < a.length; i++) a[(i % 2) ** (i + a[2])] = 0;
+    return a;
+}
+function laterVaryingPowerStore() {
+    var child = {}, a = [child, child, 1];
+    for (var i = 0; i < a.length; i++) {
+        a[(i % 2) ** (i + a[2])] = 0;
+        a[2] = 0;
+    }
+    return a;
+}
+function overlappingVaryingPower() {
+    var child = {}, a = [1, child, 0];
+    for (var i = 0; i < a.length; i++) a[(i % 2) ** (i + a[0])] = 0;
+    return a;
+}
+function negativeVaryingExponent() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[i ** (i - 1)] = 0;
+    return a;
+}
+function fractionalVaryingExponent() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[i ** (i / 2)] = 0;
+    return a;
+}
+function generalVaryingPower() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[(i % 3) ** (i % 3)] = 0;
+    return a;
+}
+function negativeVaryingKey() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[(i - 1) ** (2 * i + 1)] = 0;
+    return a;
+}
+varyingPositivePower(); varyingSignedOddPower(); varyingSignedEvenPower(); retainedVaryingPower();
+savedVaryingPower(); reloadedVaryingPower(); laterVaryingPowerStore(); overlappingVaryingPower();
+negativeVaryingExponent(); fractionalVaryingExponent(); generalVaryingPower(); negativeVaryingKey();
+
+function negativeUnitVaryingPower() {
+    var child = {}, a = [child, 0, child];
+    for (var i = 0; i < a.length; i += 2) a[1 + (i - 1) ** (i - 3)] = 0;
+    return a;
+}
+function crossingUnitVaryingPower() {
+    var child = {}, a = [child, 0, child];
+    for (var i = 0; i < a.length; i += 2) a[1 + (i - 1) ** (i - 1)] = 0;
+    return a;
+}
+function evenNegativeVaryingPower() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[(i - 1) ** (i - 2)] = 0;
+    return a;
+}
+function retainedNegativeVaryingGap() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i += 2) a[1 + (i - 1) ** (i - 3)] = 0;
+    return a;
+}
+function reloadedNegativeVaryingPower() {
+    var child = {}, a = [child, 3, child];
+    for (var i = 0; i < a.length; i += 2) a[1 + (i - 1) ** (i - a[1])] = 0;
+    return a;
+}
+function laterNegativeVaryingStore() {
+    var child = {}, a = [child, 3, child];
+    for (var i = 0; i < a.length; i += 2) {
+        a[1 + (i - 1) ** (i - a[1])] = 0;
+        a[1] = 1;
+    }
+    return a;
+}
+function overlappingNegativeVaryingPower() {
+    var child = {}, a = [3, 0, child];
+    for (var i = 0; i < a.length; i += 2) a[1 + (i - 1) ** (i - a[0])] = 0;
+    return a;
+}
+function savedNegativeVaryingPower() {
+    var child = {}, a = [child, 0, child], saved = a[0];
+    for (var i = 0; i < a.length; i += 2) a[1 + (i - 1) ** (i - 3)] = 0;
+    return saved;
+}
+function interiorZeroNegativeVaryingPower() {
+    var child = {}, a = [child, 0, child];
+    for (var i = 0; i < a.length; i++) a[1 + (i - 1) ** (i - 3)] = 0;
+    return a;
+}
+function fractionalNegativeVaryingPower() {
+    var child = {}, a = [child, 0, child];
+    for (var i = 0; i < a.length; i += 2) a[1 + (i - 1) ** ((i - 3) / 2)] = 0;
+    return a;
+}
+function nonunitNegativeVaryingPower() {
+    var child = {}, a = [child, 0, child];
+    for (var i = 0; i < a.length; i += 2) a[1 + (i - 2) ** (i - 3)] = 0;
+    return a;
+}
+function negativeUnitVaryingKey() {
+    var child = {}, a = [child, 0, child];
+    for (var i = 0; i < a.length; i += 2) a[(i - 1) ** (i - 3)] = 0;
+    return a;
+}
+negativeUnitVaryingPower(); crossingUnitVaryingPower(); evenNegativeVaryingPower();
+retainedNegativeVaryingGap(); reloadedNegativeVaryingPower(); laterNegativeVaryingStore();
+overlappingNegativeVaryingPower(); savedNegativeVaryingPower(); interiorZeroNegativeVaryingPower();
+fractionalNegativeVaryingPower(); nonunitNegativeVaryingPower(); negativeUnitVaryingKey();
+
+function singletonZeroPower() {
+    var child = {}, a = [child, 0, 0];
+    for (var i = 0; i < a.length; i++) a[i ** (i % 1) - 1] = 0;
+    return a;
+}
+function singletonUnitPower() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[i ** (i % 1 + 1)] = 0;
+    return a;
+}
+function retainedSingletonPower() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[i ** (i % 1) - 1] = 0;
+    return a;
+}
+function savedSingletonPower() {
+    var child = {}, a = [child, 0, 0], saved = a[0];
+    for (var i = 0; i < a.length; i++) a[i ** (i % 1) - 1] = 0;
+    return saved;
+}
+function reloadedSingletonExponent() {
+    var child = {}, a = [child, 1, 0];
+    for (var i = 0; i < a.length; i++) a[i ** (i % a[1]) - 1] = 0;
+    return a;
+}
+function laterSingletonExponentStore() {
+    var child = {}, a = [child, 1, 0];
+    for (var i = 0; i < a.length; i++) {
+        a[i ** (i % a[1]) - 1] = 0;
+        a[1] = 0;
+    }
+    return a;
+}
+function overlappingSingletonExponent() {
+    var child = {}, a = [1, child, 0];
+    for (var i = 0; i < a.length; i++) a[i ** (i % a[0]) - 1] = 0;
+    return a;
+}
+function nonsingletonPower() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[i ** (i % 2 + 1)] = 0;
+    return a;
+}
+function negativeSingletonPower() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[i ** (i % 1 - 1)] = 0;
+    return a;
+}
+singletonZeroPower(); singletonUnitPower(); retainedSingletonPower(); savedSingletonPower();
+reloadedSingletonExponent(); laterSingletonExponentStore(); overlappingSingletonExponent();
+nonsingletonPower(); negativeSingletonPower();
+
+function singletonBasePower() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[(i % 1 + 2) ** (i % 2) - 1] = 0;
+    return a;
+}
+function negativeSingletonBasePower() {
+    var child = {}, a = [child, 0, 0, child];
+    for (var i = 0; i < a.length; i++) a[1 - (i % 1 - 2) ** (i % 2)] = 0;
+    return a;
+}
+function retainedSingletonBasePower() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[(i % 1 + 2) ** (i % 2) - 1] = 0;
+    return a;
+}
+function savedSingletonBasePower() {
+    var child = {}, a = [child, child, 0], saved = a[0];
+    for (var i = 0; i < a.length; i++) a[(i % 1 + 2) ** (i % 2) - 1] = 0;
+    return saved;
+}
+function reloadedSingletonBasePower() {
+    var child = {}, a = [child, child, 2];
+    for (var i = 0; i < a.length; i++) a[(i % 1 + a[2]) ** (i % 2) - 1] = 0;
+    return a;
+}
+function positiveSingletonZeroBase() {
+    var child = {}, a = [child, 1, 0];
+    for (var i = 0; i < a.length; i++) a[(i % 1) ** (i + a[1])] = 0;
+    return a;
+}
+function laterSingletonBaseStore() {
+    var child = {}, a = [child, child, 2];
+    for (var i = 0; i < a.length; i++) {
+        a[(i % 1 + a[2]) ** (i % 2) - 1] = 0;
+        a[2] = 0;
+    }
+    return a;
+}
+function overlappingSingletonBasePower() {
+    var child = {}, a = [2, child, 0];
+    for (var i = 0; i < a.length; i++) a[(i % 1 + a[0]) ** (i % 2) - 1] = 0;
+    return a;
+}
+function nonsingletonBasePower() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[(i % 2 + 2) ** (i % 2) - 1] = 0;
+    return a;
+}
+function generalSingletonBasePower() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[(i % 1 + 2) ** (i % 3) - 1] = 0;
+    return a;
+}
+function negativeSingletonBaseExponent() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[(i % 1 + 2) ** (i % 2 - 1)] = 0;
+    return a;
+}
+function negativeSingletonZeroBase() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[(i % 1) ** (i - 1)] = 0;
+    return a;
+}
+singletonBasePower(); negativeSingletonBasePower(); retainedSingletonBasePower();
+savedSingletonBasePower(); reloadedSingletonBasePower(); positiveSingletonZeroBase();
+laterSingletonBaseStore(); overlappingSingletonBasePower(); nonsingletonBasePower();
+generalSingletonBasePower(); negativeSingletonBaseExponent(); negativeSingletonZeroBase();
+
+function tightNonpositiveOddPower() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[1 + (i - 1) ** (2 * i + 1)] = 0;
+    return a;
+}
+function descendingNonpositiveOddPower() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[1 + (-i) ** (2 * i + 1)] = 0;
+    return a;
+}
+function savedNonpositiveOddPower() {
+    var child = {}, a = [child, child], saved = a[0];
+    for (var i = 0; i < a.length; i++) a[1 + (i - 1) ** (2 * i + 1)] = 0;
+    return saved;
+}
+function retainedNonpositiveOddPower() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[1 + (i % 2 - 1) ** (2 * i + 1)] = 0;
+    return a;
+}
+function reloadedNonpositiveOddPower() {
+    var child = {}, a = [child, child, 1];
+    for (var i = 0; i < a.length; i++) a[1 + (i % 2 - 1) ** (2 * i + a[2])] = 0;
+    return a;
+}
+function laterNonpositiveOddStore() {
+    var child = {}, a = [child, child, 1];
+    for (var i = 0; i < a.length; i++) {
+        a[1 + (i % 2 - 1) ** (2 * i + a[2])] = 0;
+        a[2] = 0;
+    }
+    return a;
+}
+function overlappingNonpositiveOddPower() {
+    var child = {}, a = [1, child, 0];
+    for (var i = 0; i < a.length; i++) a[1 + (i % 2 - 1) ** (2 * i + a[0])] = 0;
+    return a;
+}
+function mixedNonpositivePower() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[1 + (i - 1) ** (i + 1)] = 0;
+    return a;
+}
+function zeroNonpositivePower() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[1 + (i % 2 - 1) ** (2 * i)] = 0;
+    return a;
+}
+function evenNonpositivePower() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[1 + (i % 2 - 1) ** (2 * i + 2)] = 0;
+    return a;
+}
+function positiveUnitOddPower() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[1 + (i % 2) ** (2 * i + 1)] = 0;
+    return a;
+}
+function negativeNonpositiveOddPower() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[1 + (i - 1) ** (2 * i - 3)] = 0;
+    return a;
+}
+function fractionalNonpositivePower() {
+    var child = {}, a = [child, child];
+    for (var i = 0; i < a.length; i++) a[1 + (i - 1) ** (i / 2 + 1)] = 0;
+    return a;
+}
+tightNonpositiveOddPower(); descendingNonpositiveOddPower(); savedNonpositiveOddPower();
+retainedNonpositiveOddPower(); reloadedNonpositiveOddPower(); laterNonpositiveOddStore();
+overlappingNonpositiveOddPower(); mixedNonpositivePower(); zeroNonpositivePower();
+evenNonpositivePower(); positiveUnitOddPower(); negativeNonpositiveOddPower();
+fractionalNonpositivePower();
+
+function varyingZeroUnitPower() {
+    var child = {}, a = [child, 0, child];
+    for (var i = 0; i < a.length; i++) a[(i % 2 + 2) ** (i % 2) - 1] = 0;
+    return a;
+}
+function negativeVaryingZeroUnitPower() {
+    var child = {}, a = [child, 0, child, 0];
+    for (var i = 0; i < a.length; i++) a[1 - (i % 2 - 2) ** (i % 2)] = 0;
+    return a;
+}
+function savedVaryingZeroUnitPower() {
+    var child = {}, a = [child, 0, child], saved = a[0];
+    for (var i = 0; i < a.length; i++) a[(i % 2 + 2) ** (i % 2) - 1] = 0;
+    return saved;
+}
+function reloadedVaryingZeroUnitPower() {
+    var child = {}, a = [child, 2, child];
+    for (var i = 0; i < a.length; i++) a[(i % 2 + 2) ** (i % a[1]) - 1] = 0;
+    return a;
+}
+function laterVaryingZeroUnitStore() {
+    var child = {}, a = [child, 2, child];
+    for (var i = 0; i < a.length; i++) {
+        a[(i % 2 + 2) ** (i % a[1]) - 1] = 0;
+        a[1] = 1;
+    }
+    return a;
+}
+function overlappingVaryingZeroUnitPower() {
+    var child = {}, a = [2, child, child];
+    for (var i = 0; i < a.length; i++) a[(i % 2 + 2) ** (i % a[0]) - 1] = 0;
+    return a;
+}
+function fractionalVaryingZeroUnitPower() {
+    var child = {}, a = [child, 0, child];
+    for (var i = 0; i < a.length; i++) a[(i % 2 + 2) ** (i / 2) - 1] = 0;
+    return a;
+}
+function outsideVaryingZeroUnitPower() {
+    var child = {}, a = [child, 0, child];
+    for (var i = 0; i < a.length; i++) a[(i % 2 + 3) ** (i % 2) - 1] = 0;
+    return a;
+}
+function negativeVaryingNonunitExponent() {
+    var child = {}, a = [child, 0, child];
+    for (var i = 0; i < a.length; i++) a[(i % 2 + 2) ** (i % 2 - 1) - 1] = 0;
+    return a;
+}
+function higherVaryingNonunitExponent() {
+    var child = {}, a = [child, 0, child];
+    for (var i = 0; i < a.length; i++) a[(i % 2 + 2) ** (i % 3) - 1] = 0;
+    return a;
+}
+varyingZeroUnitPower(); negativeVaryingZeroUnitPower(); savedVaryingZeroUnitPower();
+reloadedVaryingZeroUnitPower(); laterVaryingZeroUnitStore(); overlappingVaryingZeroUnitPower();
+fractionalVaryingZeroUnitPower(); outsideVaryingZeroUnitPower();
+negativeVaryingNonunitExponent(); higherVaryingNonunitExponent();
+
+function dividedZeroUnitPower() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[((2 * i + 1) ** (i % 2) - 1) / 2] = 0;
+    return a;
+}
+function descendingDividedZeroUnitPower() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[(1 - (1 - 2 * i) ** (i % 2)) / 2] = 0;
+    return a;
+}
+function negativeDivisorZeroUnitPower() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[(1 - (2 * i + 1) ** (i % 2)) / -2] = 0;
+    return a;
+}
+function strideFourZeroUnitPower() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[((4 * i + 1) ** (i % 2) - 1) / 4] = 0;
+    return a;
+}
+function reducedCongruenceZeroUnitPower() {
+    var child = {}, a = [child, 0, 0, child];
+    for (var i = 0; i < a.length; i++) a[((4 * (i % 2) + 3) ** (i % 2) - 1) / 2] = 0;
+    return a;
+}
+function savedDividedZeroUnitPower() {
+    var child = {}, a = [child, child, 0], saved = a[0];
+    for (var i = 0; i < a.length; i++) a[((2 * i + 1) ** (i % 2) - 1) / 2] = 0;
+    return saved;
+}
+function retainedDividedZeroUnitPower() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[((2 * i + 1) ** (i % 2) - 1) / 2] = 0;
+    return a;
+}
+function reloadedDividedZeroUnitPower() {
+    var child = {}, a = [child, child, 2];
+    for (var i = 0; i < a.length; i++) a[((2 * i + 1) ** (i % a[2]) - 1) / 2] = 0;
+    return a;
+}
+function laterDividedZeroUnitStore() {
+    var child = {}, a = [child, child, 2];
+    for (var i = 0; i < a.length; i++) {
+        a[((2 * i + 1) ** (i % a[2]) - 1) / 2] = 0;
+        a[2] = 1;
+    }
+    return a;
+}
+function overlappingDividedZeroUnitPower() {
+    var child = {}, a = [2, child, 0];
+    for (var i = 0; i < a.length; i++) a[((2 * i + 1) ** (i % a[0]) - 1) / 2] = 0;
+    return a;
+}
+function mismatchedUnitResiduePower() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[((2 * i + 2) ** (i % 2) - 1) / 2] = 0;
+    return a;
+}
+function fractionalDividedZeroUnitPower() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[((2 * i + 1) ** (i % 2) - 1) / 3] = 0;
+    return a;
+}
+dividedZeroUnitPower(); descendingDividedZeroUnitPower(); negativeDivisorZeroUnitPower();
+strideFourZeroUnitPower(); reducedCongruenceZeroUnitPower(); savedDividedZeroUnitPower();
+retainedDividedZeroUnitPower(); reloadedDividedZeroUnitPower(); laterDividedZeroUnitStore();
+overlappingDividedZeroUnitPower(); mismatchedUnitResiduePower(); fractionalDividedZeroUnitPower();
+
+function boundedCorrelatedPower() {
+    var child = {}, a = [0, child, child];
+    for (var i = 0; i < a.length; i++) a[(2 * i) ** (i % 2)] = 0;
+    return a;
+}
+function negativeEnclosurePower() {
+    var child = {}, a = [child, 0, 0];
+    for (var i = 0; i < a.length; i++) a[1 - (2 * i - 1) ** (i % 2)] = 0;
+    return a;
+}
+function retainedBoundedPower() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[(2 * i) ** (i % 2)] = 0;
+    return a;
+}
+function savedBoundedPower() {
+    var child = {}, a = [0, child, child], saved = a[1];
+    for (var i = 0; i < a.length; i++) a[(2 * i) ** (i % 2)] = 0;
+    return saved;
+}
+function reloadedBoundedPower() {
+    var child = {}, a = [2, child, child];
+    for (var i = 0; i < a.length; i++) a[(2 * i) ** (i % a[0])] = 0;
+    return a;
+}
+function laterBoundedPower() {
+    var child = {}, a = [2, child, child];
+    for (var i = 0; i < a.length; i++) {
+        a[(2 * i) ** (i % a[0])] = 0;
+        a[0] = 1;
+    }
+    return a;
+}
+function overlappingBoundedPower() {
+    var child = {}, a = [0, 2, child];
+    for (var i = 0; i < a.length; i++) a[(2 * i) ** (i % a[1])] = 0;
+    return a;
+}
+function outsideBoundedPower() {
+    var child = {}, a = [0, child, child];
+    for (var i = 0; i < a.length; i++) a[(3 * (i % 3)) ** (i % 2)] = 0;
+    return a;
+}
+function negativeKeyBoundedPower() {
+    var child = {}, a = [0, child, child];
+    for (var i = 0; i < a.length; i++) a[-((2 * i) ** (i % 2))] = 0;
+    return a;
+}
+function fractionalBoundedPower() {
+    var child = {}, a = [0, child, child];
+    for (var i = 0; i < a.length; i++) a[(2 * (i % 2)) ** (i / 2)] = 0;
+    return a;
+}
+boundedCorrelatedPower(); negativeEnclosurePower(); retainedBoundedPower(); savedBoundedPower();
+reloadedBoundedPower(); laterBoundedPower(); overlappingBoundedPower(); outsideBoundedPower();
+negativeKeyBoundedPower(); fractionalBoundedPower();
+
+function correlatedIntegralDivision() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[((i + 2) ** (i % 2) - 1) / 2] = 0;
+    return a;
+}
+function negativeCorrelatedDivision() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[(1 - (i + 2) ** (i % 2)) / -2] = 0;
+    return a;
+}
+function retainedCorrelatedDivision() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[((i + 2) ** (i % 2) - 1) / 2] = 0;
+    return a;
+}
+function savedCorrelatedDivision() {
+    var child = {}, a = [child, child, 0], saved = a[0];
+    for (var i = 0; i < a.length; i++) a[((i + 2) ** (i % 2) - 1) / 2] = 0;
+    return saved;
+}
+function reloadedCorrelatedDivision() {
+    var child = {}, a = [child, child, 2];
+    for (var i = 0; i < a.length; i++) a[((i + 2) ** (i % a[2]) - 1) / 2] = 0;
+    return a;
+}
+function laterCorrelatedDivisionStore() {
+    var child = {}, a = [child, child, 2];
+    for (var i = 0; i < a.length; i++) {
+        a[((i + 2) ** (i % a[2]) - 1) / 2] = 0;
+        a[2] = 1;
+    }
+    return a;
+}
+function overlappingCorrelatedDivision() {
+    var child = {}, a = [2, child, 0];
+    for (var i = 0; i < a.length; i++) a[((i + 2) ** (i % a[0]) - 1) / 2] = 0;
+    return a;
+}
+function fractionalCorrelatedDivision() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[((i + 1) ** (i % 2) - 1) / 2] = 0;
+    return a;
+}
+function zeroCorrelatedDivisor() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[((i + 2) ** (i % 2) - 1) / 0] = 0;
+    return a;
+}
+function outsideCorrelatedDivision() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[((i % 2 + 6) ** (i % 2) - 1) / 2] = 0;
+    return a;
+}
+correlatedIntegralDivision(); negativeCorrelatedDivision(); retainedCorrelatedDivision();
+savedCorrelatedDivision(); reloadedCorrelatedDivision(); laterCorrelatedDivisionStore();
+overlappingCorrelatedDivision(); fractionalCorrelatedDivision(); zeroCorrelatedDivisor();
+outsideCorrelatedDivision();
+
+function singletonDivisorPower() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[((i + 2) ** (i % 2) - 1) / (1 ** i + 1)] = 0;
+    return a;
+}
+function negativeSingletonDivisorPower() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[(1 - (i + 2) ** (i % 2)) / -(1 ** i + 1)] = 0;
+    return a;
+}
+function retainedSingletonDivisorPower() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[((i + 2) ** (i % 2) - 1) / (1 ** i + 1)] = 0;
+    return a;
+}
+function savedSingletonDivisorPower() {
+    var child = {}, a = [child, child, 0], saved = a[0];
+    for (var i = 0; i < a.length; i++) a[((i + 2) ** (i % 2) - 1) / (1 ** i + 1)] = 0;
+    return saved;
+}
+function reloadedSingletonDivisorPower() {
+    var child = {}, a = [child, child, 1];
+    for (var i = 0; i < a.length; i++) a[((i + 2) ** (i % 2) - 1) / (a[2] ** i + 1)] = 0;
+    return a;
+}
+function laterSingletonDivisorStore() {
+    var child = {}, a = [child, child, 1];
+    for (var i = 0; i < a.length; i++) {
+        a[((i + 2) ** (i % 2) - 1) / (a[2] ** i + 1)] = 0;
+        a[2] = 0;
+    }
+    return a;
+}
+function overlappingSingletonDivisorPower() {
+    var child = {}, a = [1, child, 0];
+    for (var i = 0; i < a.length; i++) a[((i + 2) ** (i % 2) - 1) / (a[0] ** i + 1)] = 0;
+    return a;
+}
+function fractionalSingletonDivisorPower() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[((i + 1) ** (i % 2) - 1) / (1 ** i + 1)] = 0;
+    return a;
+}
+function zeroSingletonDivisorPower() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[((i + 2) ** (i % 2) - 1) / (1 ** i - 1)] = 0;
+    return a;
+}
+function varyingDivisorPower() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[((i + 2) ** (i % 2) - 1) / (0 ** i + 1)] = 0;
+    return a;
+}
+function singletonRemainderPower() {
+    var child = {}, a = [child, 1];
+    for (var i = 0; i < a.length; i++) a[i % (1 ** i)] = 0;
+    return a;
+}
+singletonDivisorPower(); negativeSingletonDivisorPower(); retainedSingletonDivisorPower();
+savedSingletonDivisorPower(); reloadedSingletonDivisorPower(); laterSingletonDivisorStore();
+overlappingSingletonDivisorPower(); fractionalSingletonDivisorPower(); zeroSingletonDivisorPower();
+varyingDivisorPower(); singletonRemainderPower();
+
+function singletonSignedShift() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[i >> (1 ** i)] = 0;
+    return a;
+}
+function singletonUnsignedShift() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[(-i) >>> -(1 ** i)] = 0;
+    return a;
+}
+function singletonLeftShift() {
+    var child = {}, a = [child, 1, child];
+    for (var i = 0; i < a.length; i++) a[(i >> 1) << (1 ** i)] = 0;
+    return a;
+}
+function maskedSingletonShift() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[i >> (1 ** i + 32)] = 0;
+    return a;
+}
+function retainedSingletonShift() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[i >> (1 ** i)] = 0;
+    return a;
+}
+function savedSingletonShift() {
+    var child = {}, a = [child, child, 0], saved = a[0];
+    for (var i = 0; i < a.length; i++) a[i >> (1 ** i)] = 0;
+    return saved;
+}
+function reloadedSingletonShift() {
+    var child = {}, a = [child, child, 1];
+    for (var i = 0; i < a.length; i++) a[i >> (a[2] ** i)] = 0;
+    return a;
+}
+function laterSingletonShiftStore() {
+    var child = {}, a = [child, child, 1];
+    for (var i = 0; i < a.length; i++) {
+        a[i >> (a[2] ** i)] = 0;
+        a[2] = 0;
+    }
+    return a;
+}
+function overlappingSingletonShift() {
+    var child = {}, a = [1, child, 0];
+    for (var i = 0; i < a.length; i++) a[i >> (a[0] ** i)] = 0;
+    return a;
+}
+function varyingShiftCount() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[i >> (0 ** i)] = 0;
+    return a;
+}
+function negativeSingletonShift() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[(-i) >> (1 ** i)] = 0;
+    return a;
+}
+singletonSignedShift(); singletonUnsignedShift(); singletonLeftShift(); maskedSingletonShift();
+retainedSingletonShift(); savedSingletonShift(); reloadedSingletonShift(); laterSingletonShiftStore();
+overlappingSingletonShift(); varyingShiftCount(); negativeSingletonShift();
+
+function singletonAndMask() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[i & (1 ** i)] = 0;
+    return a;
+}
+function singletonOrMask() {
+    var child = {}, a = [0, child, 0];
+    for (var i = 0; i < a.length; i++) a[(i >> 1) | (1 ** i)] = 0;
+    return a;
+}
+function singletonXorMask() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[(i >> 1) ^ (1 ** i)] = 0;
+    return a;
+}
+function commutedSingletonMask() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[(1 ** i) ^ (i >> 1)] = 0;
+    return a;
+}
+function retainedSingletonMask() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[i & (1 ** i)] = 0;
+    return a;
+}
+function savedSingletonMask() {
+    var child = {}, a = [child, child, 0], saved = a[0];
+    for (var i = 0; i < a.length; i++) a[i & (1 ** i)] = 0;
+    return saved;
+}
+function reloadedSingletonMask() {
+    var child = {}, a = [child, child, 1];
+    for (var i = 0; i < a.length; i++) a[i & (a[2] ** i)] = 0;
+    return a;
+}
+function laterSingletonMaskStore() {
+    var child = {}, a = [child, child, 1];
+    for (var i = 0; i < a.length; i++) {
+        a[i & (a[2] ** i)] = 0;
+        a[2] = 0;
+    }
+    return a;
+}
+function overlappingSingletonMask() {
+    var child = {}, a = [1, child, 0];
+    for (var i = 0; i < a.length; i++) a[i & (a[0] ** i)] = 0;
+    return a;
+}
+function varyingBitwiseMask() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[i & (0 ** i)] = 0;
+    return a;
+}
+function negativeSingletonMask() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[i | -(1 ** i)] = 0;
+    return a;
+}
+singletonAndMask(); singletonOrMask(); singletonXorMask(); commutedSingletonMask();
+retainedSingletonMask(); savedSingletonMask(); reloadedSingletonMask(); laterSingletonMaskStore();
+overlappingSingletonMask(); varyingBitwiseMask(); negativeSingletonMask();
+
+function varyingAndMask() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[i & (2 - i)] = 0;
+    return a;
+}
+function varyingOrMask() {
+    var child = {}, a = [0, child, child];
+    for (var i = 0; i < a.length; i++) a[i | (2 - i)] = 0;
+    return a;
+}
+function varyingXorMask() {
+    var child = {}, a = [child, 0, child];
+    for (var i = 0; i < a.length; i++) a[i ^ (2 - i)] = 0;
+    return a;
+}
+function commutedVaryingMask() {
+    var child = {}, a = [child, 0, child];
+    for (var i = 0; i < a.length; i++) a[(2 - i) ^ i] = 0;
+    return a;
+}
+function retainedVaryingMask() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[i & (2 - i)] = 0;
+    return a;
+}
+function savedVaryingMask() {
+    var child = {}, a = [child, child, 0], saved = a[0];
+    for (var i = 0; i < a.length; i++) a[i & (2 - i)] = 0;
+    return saved;
+}
+function reloadedVaryingMask() {
+    var child = {}, a = [child, 2, child];
+    for (var i = 0; i < a.length; i++) a[i ^ (a[1] - i)] = 0;
+    return a;
+}
+function laterVaryingMaskStore() {
+    var child = {}, a = [child, 2, child];
+    for (var i = 0; i < a.length; i++) {
+        a[i ^ (a[1] - i)] = 0;
+        a[1] = 0;
+    }
+    return a;
+}
+function overlappingVaryingMask() {
+    var child = {}, a = [2, 0, child];
+    for (var i = 0; i < a.length; i++) a[i ^ (a[0] - i)] = 0;
+    return a;
+}
+function fractionalVaryingMask() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[i & (i / 2)] = 0;
+    return a;
+}
+function negativeVaryingMask() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[i | -i] = 0;
+    return a;
+}
+function extendingVaryingMask() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[i ^ (3 - i)] = 0;
+    return a;
+}
+function dividedVaryingMask() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[(i ^ (2 - i)) / 2] = 0;
+    return a;
+}
+function convertedVaryingMask() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[((i * 1073741824) ^ ((2 - i) * 1073741824)) >>> 31] = 0;
+    return a;
+}
+
+varyingAndMask(); varyingOrMask(); varyingXorMask();
+commutedVaryingMask(); retainedVaryingMask(); savedVaryingMask();
+reloadedVaryingMask(); laterVaryingMaskStore(); overlappingVaryingMask();
+fractionalVaryingMask(); negativeVaryingMask(); extendingVaryingMask();
+dividedVaryingMask(); convertedVaryingMask();
+
+function varyingRightShift() {
+    var child = {}, a = [child, 1, child];
+    for (var i = 0; i < a.length; i++) a[i >> (2 - i)] = 0;
+    return a;
+}
+
+function varyingUnsignedShift() {
+    var child = {}, a = [child, 1, child];
+    for (var i = 0; i < a.length; i++) a[i >>> (2 - i)] = 0;
+    return a;
+}
+
+function varyingLeftShift() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[(i >> 1) << (2 - i)] = 0;
+    return a;
+}
+
+function retainedVaryingShift() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[i >> (2 - i)] = 0;
+    return a;
+}
+
+function savedVaryingShift() {
+    var child = {}, a = [child, 1, child], saved = a[0];
+    for (var i = 0; i < a.length; i++) a[i >> (2 - i)] = 0;
+    return saved;
+}
+
+function reloadedVaryingShift() {
+    var child = {}, a = [child, 2, child];
+    for (var i = 0; i < a.length; i++) a[i >> (a[1] - i)] = 0;
+    return a;
+}
+
+function laterVaryingShiftStore() {
+    var child = {}, a = [child, 2, child];
+    for (var i = 0; i < a.length; i++) {
+        a[i >> (a[1] - i)] = 0;
+        a[1] = 0;
+    }
+    return a;
+}
+
+function overlappingVaryingShift() {
+    var child = {}, a = [2, 0, child];
+    for (var i = 0; i < a.length; i++) a[i >> (a[0] - i)] = 0;
+    return a;
+}
+
+function fractionalVaryingShift() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[i >> (i / 2)] = 0;
+    return a;
+}
+
+function negativeVaryingShift() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[-i >> (2 - i)] = 0;
+    return a;
+}
+
+function wrappedVaryingShift() {
+    var child = {}, a = [child, 0, 0];
+    for (var i = 0; i < a.length; i++) a[i >> (i + 32)] = 0;
+    return a;
+}
+
+varyingRightShift(); varyingUnsignedShift(); varyingLeftShift();
+retainedVaryingShift(); savedVaryingShift(); reloadedVaryingShift();
+laterVaryingShiftStore(); overlappingVaryingShift(); fractionalVaryingShift();
+negativeVaryingShift(); wrappedVaryingShift();
+
+function varyingQuotient() {
+    var child = {}, a = [0, child, 0];
+    for (var i = 0; i < a.length; i++) a[(i + 1) / (i + 1)] = 0;
+    return a;
+}
+function varyingRemainder() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[i % (i + 1)] = 0;
+    return a;
+}
+function negativeVaryingRemainder() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[i % -(i + 1)] = 0;
+    return a;
+}
+function retainedVaryingDivisor() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[(i + 1) / (i + 1)] = 0;
+    return a;
+}
+function savedVaryingDivisor() {
+    var child = {}, a = [0, child, 0], saved = a[1];
+    for (var i = 0; i < a.length; i++) a[(i + 1) / (i + 1)] = 0;
+    return saved;
+}
+function reloadedVaryingDivisor() {
+    var child = {}, a = [1, child, 0];
+    for (var i = 0; i < a.length; i++) a[(i + 1) / (i + a[0])] = 0;
+    return a;
+}
+function laterVaryingDivisorStore() {
+    var child = {}, a = [1, child, 0];
+    for (var i = 0; i < a.length; i++) {
+        a[(i + 1) / (i + a[0])] = 0;
+        a[0] = 0;
+    }
+    return a;
+}
+function overlappingVaryingDivisor() {
+    var child = {}, a = [child, 1, 0];
+    for (var i = 0; i < a.length; i++) a[(i + 1) / (i + a[1])] = 0;
+    return a;
+}
+function interiorZeroVaryingDivisor() {
+    var child = {}, a = [0, child, 0];
+    for (var i = 0; i < a.length; i++) a[(i - 1) / (i - 1)] = 0;
+    return a;
+}
+function fractionalVaryingDivisor() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[i / (i + 1)] = 0;
+    return a;
+}
+
+varyingQuotient(); varyingRemainder(); negativeVaryingRemainder();
+retainedVaryingDivisor(); savedVaryingDivisor(); reloadedVaryingDivisor();
+laterVaryingDivisorStore(); overlappingVaryingDivisor();
+interiorZeroVaryingDivisor(); fractionalVaryingDivisor();
+
+function correlatedPower() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[i ** (2 - i)] = 0;
+    return a;
+}
+function reversedCorrelatedPower() {
+    var child = {}, a = [0, child, 0];
+    for (var i = 0; i < a.length; i++) a[(2 - i) ** i] = 0;
+    return a;
+}
+function retainedCorrelatedPower() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[i ** (2 - i)] = 0;
+    return a;
+}
+function savedCorrelatedPower() {
+    var child = {}, a = [child, child, 0], saved = a[0];
+    for (var i = 0; i < a.length; i++) a[i ** (2 - i)] = 0;
+    return saved;
+}
+function reloadedCorrelatedPower() {
+    var child = {}, a = [child, child, 2];
+    for (var i = 0; i < a.length; i++) a[i ** (a[2] - i)] = 0;
+    return a;
+}
+function laterCorrelatedPowerStore() {
+    var child = {}, a = [child, child, 2];
+    for (var i = 0; i < a.length; i++) {
+        a[i ** (a[2] - i)] = 0;
+        a[2] = 0;
+    }
+    return a;
+}
+function overlappingCorrelatedPower() {
+    var child = {}, a = [2, child, 0];
+    for (var i = 0; i < a.length; i++) a[i ** (a[0] - i)] = 0;
+    return a;
+}
+function crossingCorrelatedPower() {
+    var child = {}, a = [child, 1, child];
+    for (var i = 0; i < a.length; i++) a[(i - 1) ** (i - 1) + 1] = 0;
+    return a;
+}
+function poleCorrelatedPower() {
+    var child = {}, a = [child, 0, child];
+    for (var i = 0; i < a.length; i++) a[(i - 1) ** (i - 2) + 1] = 0;
+    return a;
+}
+function generalCorrelatedPower() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[i ** i % 3] = 0;
+    return a;
+}
+correlatedPower(); reversedCorrelatedPower(); retainedCorrelatedPower(); savedCorrelatedPower();
+reloadedCorrelatedPower(); laterCorrelatedPowerStore(); overlappingCorrelatedPower();
+crossingCorrelatedPower(); poleCorrelatedPower(); generalCorrelatedPower();
+
+function varyingDifference() {
+    var child = {}, a = [0, child, 0];
+    for (var i = 0; i < a.length; i++) a[(i + 1) - i] = 0;
+    return a;
+}
+function retainedVaryingDifference() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[(i + 1) - i] = 0;
+    return a;
+}
+function savedVaryingDifference() {
+    var child = {}, a = [0, child, 0], saved = a[1];
+    for (var i = 0; i < a.length; i++) a[(i + 1) - i] = 0;
+    return saved;
+}
+function reloadedVaryingDifference() {
+    var child = {}, a = [1, child, 0];
+    for (var i = 0; i < a.length; i++) a[(i + a[0]) - i] = 0;
+    return a;
+}
+function laterVaryingDifferenceStore() {
+    var child = {}, a = [1, child, 0];
+    for (var i = 0; i < a.length; i++) {
+        a[(i + a[0]) - i] = 0;
+        a[0] = 0;
+    }
+    return a;
+}
+function overlappingVaryingDifference() {
+    var child = {}, a = [child, 1, 0];
+    for (var i = 0; i < a.length; i++) a[(i + a[1]) - i] = 0;
+    return a;
+}
+function reversedVaryingDifference() {
+    var child = {}, a = [0, child, 0];
+    for (var i = 0; i < a.length; i++) a[i - (i + 1)] = 0;
+    return a;
+}
+function fractionalVaryingDifference() {
+    var child = {}, a = [child, 0, 0];
+    for (var i = 0; i < a.length; i++) a[(i / 2) - (i / 2)] = 0;
+    return a;
+}
+varyingDifference(); retainedVaryingDifference(); savedVaryingDifference();
+reloadedVaryingDifference(); laterVaryingDifferenceStore(); overlappingVaryingDifference();
+reversedVaryingDifference(); fractionalVaryingDifference();
+
+function varyingProduct() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[i * (2 - i)] = 0;
+    return a;
+}
+function reversedVaryingProduct() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[(2 - i) * i] = 0;
+    return a;
+}
+function retainedVaryingProduct() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[i * (2 - i)] = 0;
+    return a;
+}
+function savedVaryingProduct() {
+    var child = {}, a = [child, child, 0], saved = a[1];
+    for (var i = 0; i < a.length; i++) a[i * (2 - i)] = 0;
+    return saved;
+}
+function signedVaryingProduct() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[(i - 1) * (i - 1)] = 0;
+    return a;
+}
+function reloadedVaryingProduct() {
+    var child = {}, a = [child, child, 2];
+    for (var i = 0; i < a.length; i++) a[i * (a[2] - i)] = 0;
+    return a;
+}
+function laterVaryingProductStore() {
+    var child = {}, a = [child, child, 2];
+    for (var i = 0; i < a.length; i++) {
+        a[i * (a[2] - i)] = 0;
+        a[2] = 0;
+    }
+    return a;
+}
+function overlappingVaryingProduct() {
+    var child = {}, a = [child, 2, 0];
+    for (var i = 0; i < a.length; i++) a[i * (a[1] - i)] = 0;
+    return a;
+}
+function interiorVaryingProductGrowth() {
+    var child = {}, a = [child, child, child, child];
+    for (var i = 0; i < a.length; i++) a[i * (4 - i)] = 0;
+    return a;
+}
+function fractionalVaryingProduct() {
+    var child = {}, a = [child, 0, 0];
+    for (var i = 0; i < a.length; i++) a[(i / 2) * (2 - i / 2)] = 0;
+    return a;
+}
+function unboundedVaryingProduct() {
+    var child = {}, a = [child, 0, 0];
+    for (var i = 0; i < a.length; i++) a[(i * 4294967295) * (2 - i) * 0] = 0;
+    return a;
+}
+varyingProduct(); reversedVaryingProduct(); retainedVaryingProduct(); savedVaryingProduct();
+signedVaryingProduct(); reloadedVaryingProduct(); laterVaryingProductStore();
+overlappingVaryingProduct(); interiorVaryingProductGrowth(); fractionalVaryingProduct();
+unboundedVaryingProduct();
+
+function varyingSum() {
+    var child = {}, a = [0, child, 0];
+    for (var i = 0; i < a.length; i++) a[i + (1 - i)] = 0;
+    return a;
+}
+function reversedVaryingSum() {
+    var child = {}, a = [0, child, 0];
+    for (var i = 0; i < a.length; i++) a[(1 - i) + i] = 0;
+    return a;
+}
+function retainedVaryingSum() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[i + (1 - i)] = 0;
+    return a;
+}
+function savedVaryingSum() {
+    var child = {}, a = [0, child, 0], saved = a[1];
+    for (var i = 0; i < a.length; i++) a[i + (1 - i)] = 0;
+    return saved;
+}
+function reloadedVaryingSum() {
+    var child = {}, a = [1, child, 0];
+    for (var i = 0; i < a.length; i++) a[i + (a[0] - i)] = 0;
+    return a;
+}
+function laterVaryingSumStore() {
+    var child = {}, a = [1, child, 0];
+    for (var i = 0; i < a.length; i++) {
+        a[i + (a[0] - i)] = 0;
+        a[0] = 0;
+    }
+    return a;
+}
+function overlappingVaryingSum() {
+    var child = {}, a = [child, 1, 0];
+    for (var i = 0; i < a.length; i++) a[i + (a[1] - i)] = 0;
+    return a;
+}
+function interiorVaryingSumGrowth() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[(i % 2) + (i % 2) + 1] = 0;
+    return a;
+}
+function fractionalVaryingSum() {
+    var child = {}, a = [child, 0, 0];
+    for (var i = 0; i < a.length; i++) a[(i / 2) + -(i / 2)] = 0;
+    return a;
+}
+function unboundedVaryingSum() {
+    var child = {}, a = [child, 0, 0];
+    for (var i = 0; i < a.length; i++) a[(i + 4294967295) + -(i + 4294967295)] = 0;
+    return a;
+}
+function stringVaryingSum() {
+    var child = {}, a = [child, 0, 0];
+    for (var i = 0; i < a.length; i++) a[(i + "") + (0 - i)] = 0;
+    return a;
+}
+varyingSum(); reversedVaryingSum(); retainedVaryingSum(); savedVaryingSum();
+reloadedVaryingSum(); laterVaryingSumStore(); overlappingVaryingSum();
+interiorVaryingSumGrowth(); fractionalVaryingSum(); unboundedVaryingSum(); stringVaryingSum();
+
+function boundedRemainderSum() {
+    var child = {}, a = [child, child, 0, 0, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 3) a[((i % 5) + 4294967292) % 2] = 0;
+    return a;
+}
+function boundedRemainderProduct() {
+    var child = {}, a = [child, child, 0, 0, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 3) a[((i % 5) * 1431655765) % 2] = 0;
+    return a;
+}
+function boundedRemainderDifference() {
+    var child = {}, a = [child, child, 0, 0, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 3) a[-(-4294967292 - (i % 5)) % 2] = 0;
+    return a;
+}
+function retainedRemainderSum() {
+    var child = {}, a = [child, child, child, 0, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 3) a[((i % 5) + 4294967292) % 2] = 0;
+    return a;
+}
+function savedRemainderSum() {
+    var child = {}, a = [child, child, 0, 0, 0, 0, 0], saved = a[0];
+    for (var i = 0; i < a.length; i += 3) a[((i % 5) + 4294967292) % 2] = 0;
+    return saved;
+}
+function unboundedRemainderSum() {
+    var child = {}, a = [child, child, 0, 0, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 3) a[((i % 5) + 4294967293) % 2] = 0;
+    return a;
+}
+function fractionalRemainderSum() {
+    var child = {}, a = [child, child, 0, 0, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 3) a[(((i % 5) + 4294967292) / 2) % 2] = 0;
+    return a;
+}
+function reloadedRemainderSum() {
+    var child = {}, a = [child, child, 4294967292, 0, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 3) a[((i % 5) + a[2]) % 2] = 0;
+    return a;
+}
+function laterRemainderSumStore() {
+    var child = {}, a = [child, child, 4294967292, 0, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 3) {
+        a[((i % 5) + a[2]) % 2] = 0;
+        a[2] = 0;
+    }
+    return a;
+}
+boundedRemainderSum(); boundedRemainderProduct(); boundedRemainderDifference();
+retainedRemainderSum(); savedRemainderSum(); unboundedRemainderSum();
+fractionalRemainderSum(); reloadedRemainderSum(); laterRemainderSumStore();
+
+function mixedPowerExponent() {
+    var child = {}, a = [child, child, 0, 0, 0, 0, 0, 0];
+    for (var i = 1; i < a.length; i += 3) a[0 ** ((i % 5) - 1)] = 0;
+    return a;
+}
+
+function mixedPowerBase() {
+    var child = {}, a = [child, child, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    for (var i = 4; i < a.length; i += 4) a[((i % 5) - 3) ** 2] = 0;
+    return a;
+}
+
+function retainedMixedPowerExponent() {
+    var child = {}, a = [child, child, child, 0, 0, 0, 0, 0];
+    for (var i = 1; i < a.length; i += 3) a[0 ** ((i % 5) - 1)] = 0;
+    return a;
+}
+
+function savedMixedPowerExponent() {
+    var child = {}, a = [child, child, 0, 0, 0, 0, 0, 0], saved = a[0];
+    for (var i = 1; i < a.length; i += 3) a[0 ** ((i % 5) - 1)] = 0;
+    return saved;
+}
+
+function reloadedMixedPowerExponent() {
+    var child = {}, a = [child, child, 1, 0, 0, 0, 0, 0];
+    for (var i = 1; i < a.length; i += 3) a[0 ** ((i % 5) - a[2])] = 0;
+    return a;
+}
+
+function laterMixedPowerExponentStore() {
+    var child = {}, a = [child, child, 1, 0, 0, 0, 0, 0];
+    for (var i = 1; i < a.length; i += 3) {
+        a[0 ** ((i % 5) - a[2])] = 0;
+        a[2] = 0;
+    }
+    return a;
+}
+
+function overlappingMixedPowerExponent() {
+    var child = {}, a = [child, 1, child, 0, 0, 0, 0, 0];
+    for (var i = 1; i < a.length; i += 3) a[0 ** ((i % 5) - a[1])] = 0;
+    return a;
+}
+
+function poleMixedPowerExponent() {
+    var child = {}, a = [child, child, 0, 0, 0, 0, 0, 0];
+    for (var i = 1; i < a.length; i += 3) a[0 ** ((i % 5) - 2)] = 0;
+    return a;
+}
+
+function generalMixedPowerBase() {
+    var child = {}, a = [child, child, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    for (var i = 4; i < a.length; i += 4) a[((i % 5) - 2) ** 2] = 0;
+    return a;
+}
+
+function fractionalMixedPowerExponent() {
+    var child = {}, a = [child, child, 0, 0, 0, 0, 0, 0];
+    for (var i = 1; i < a.length; i += 3) a[0 ** (((i % 5) - 1) / 2)] = 0;
+    return a;
+}
+
+mixedPowerExponent();
+mixedPowerBase();
+retainedMixedPowerExponent();
+savedMixedPowerExponent();
+reloadedMixedPowerExponent();
+laterMixedPowerExponentStore();
+overlappingMixedPowerExponent();
+poleMixedPowerExponent();
+generalMixedPowerBase();
+fractionalMixedPowerExponent();
+
+function twoPointProduct() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i - 1) * 4294967295) >>> 31] = 0;
+    return a;
+}
+function reverseTwoPointProduct() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[(-4294967295 * (i - 1)) >>> 31] = 0;
+    return a;
+}
+function retainedTwoPointProduct() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i += 2) a[((i - 1) * 4294967295) >>> 31] = 0;
+    return a;
+}
+function savedTwoPointProduct() {
+    var child = {}, a = [child, child, 0], before = a[0];
+    for (var i = 0; i < a.length; i += 2) a[((i - 1) * 4294967295) >>> 31] = 0;
+    return before;
+}
+function reloadTwoPointProduct() {
+    var child = {}, a = [child, child, 4294967295];
+    for (var i = 0; i < a.length; i += 2) a[((i - 1) * a[2]) >>> 31] = 0;
+    return a;
+}
+function laterTwoPointProductStore() {
+    var child = {}, a = [child, child, 4294967295];
+    for (var i = 0; i < a.length; i += 2) {
+        a[((i - 1) * a[2]) >>> 31] = 0;
+        a[2] = 0;
+    }
+    return a;
+}
+function overlappingTwoPointProduct() {
+    var child = {}, a = [child, 4294967295, child];
+    for (var i = 0; i < a.length; i += 2) a[((i - 1) * a[1]) >>> 31] = 0;
+    return a;
+}
+function unboundedTwoPointProduct() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i - 1) * 4294967296) >>> 31] = 0;
+    return a;
+}
+function fractionalTwoPointProduct() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i - 1) * 2147483647.5) >>> 31] = 0;
+    return a;
+}
+function threePointProduct() {
+    var child = {}, a = [child, child, 0, 0, 0];
+    for (var i = 0; i < a.length; i += 2) a[((i - 1) * 4294967295) >>> 31] = 0;
+    return a;
+}
+twoPointProduct(); reverseTwoPointProduct(); retainedTwoPointProduct(); savedTwoPointProduct();
+reloadTwoPointProduct(); laterTwoPointProductStore(); overlappingTwoPointProduct();
+unboundedTwoPointProduct(); fractionalTwoPointProduct(); threePointProduct();
+
+function invariantNumeratorDivision() {
+    var child = {}, a = [0, 0, child, child, 0, 0, child];
+    for (var i = 0; i < a.length; i++) a[6 / ((i % 3) + 1)] = 0;
+    return a;
+}
+function invariantNumeratorRemainder() {
+    var child = {}, a = [child, 0, child];
+    for (var i = 0; i < a.length; i++) a[2 % (i + 1)] = 0;
+    return a;
+}
+function negativeInvariantNumerator() {
+    var child = {}, a = [child, 0, child];
+    for (var i = 0; i < a.length; i++) a[-(-2 % (i + 1))] = 0;
+    return a;
+}
+function retainedInvariantNumerator() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[2 % (i + 1)] = 0;
+    return a;
+}
+function savedInvariantNumerator() {
+    var child = {}, a = [child, 0, child], before = a[0];
+    for (var i = 0; i < a.length; i++) a[2 % (i + 1)] = 0;
+    return before;
+}
+function reloadInvariantNumerator() {
+    var child = {}, a = [child, 1, child];
+    for (var i = 0; i < a.length; i++) a[2 % (i + a[1])] = 0;
+    return a;
+}
+function laterInvariantNumeratorStore() {
+    var child = {}, a = [child, 1, child];
+    for (var i = 0; i < a.length; i++) {
+        a[2 % (i + a[1])] = 0;
+        a[1] = 0;
+    }
+    return a;
+}
+function overlappingInvariantNumerator() {
+    var child = {}, a = [1, child, child];
+    for (var i = 0; i < a.length; i++) a[2 % (i + a[0])] = 0;
+    return a;
+}
+function poleInvariantNumerator() {
+    var child = {}, a = [child, 0, child];
+    for (var i = 0; i < a.length; i++) a[2 % i] = 0;
+    return a;
+}
+function fractionalInvariantNumerator() {
+    var child = {}, a = [child, 0, child];
+    for (var i = 0; i < a.length; i++) a[2 / (i + 1)] = 0;
+    return a;
+}
+invariantNumeratorDivision(); invariantNumeratorRemainder(); negativeInvariantNumerator();
+retainedInvariantNumerator(); savedInvariantNumerator(); reloadInvariantNumerator();
+laterInvariantNumeratorStore(); overlappingInvariantNumerator(); poleInvariantNumerator();
+fractionalInvariantNumerator();
+
+function invariantShiftBase() {
+    var child = {}, a = [0, child, child];
+    for (var i = 0; i < a.length; i++) a[1 << (i % 2)] = 0;
+    return a;
+}
+function invariantUnsignedShiftBase() {
+    var child = {}, a = [0, child, child, 0, child];
+    for (var i = 0; i < a.length; i++) a[4 >>> (i % 3)] = 0;
+    return a;
+}
+function negativeInvariantShiftBase() {
+    var child = {}, a = [child, 0, child];
+    for (var i = 0; i < a.length; i++) a[(-8 >> (i % 3)) & 3] = 0;
+    return a;
+}
+function wrappingInvariantShiftCount() {
+    var child = {}, a = [child, child, 0];
+    for (var i = 0; i < a.length; i++) a[(1 << (i + 31)) >>> 31] = 0;
+    return a;
+}
+function retainedInvariantShiftBase() {
+    var child = {}, a = [child, child, child];
+    for (var i = 0; i < a.length; i++) a[1 << (i % 2)] = 0;
+    return a;
+}
+function savedInvariantShiftBase() {
+    var child = {}, a = [0, child, child], before = a[1];
+    for (var i = 0; i < a.length; i++) a[1 << (i % 2)] = 0;
+    return before;
+}
+function reloadInvariantShiftBase() {
+    var child = {}, a = [1, child, child];
+    for (var i = 0; i < a.length; i++) a[a[0] << (i % 2)] = 0;
+    return a;
+}
+function laterInvariantShiftBaseStore() {
+    var child = {}, a = [1, child, child];
+    for (var i = 0; i < a.length; i++) {
+        a[a[0] << (i % 2)] = 0;
+        a[0] = 0;
+    }
+    return a;
+}
+function overlappingInvariantShiftBase() {
+    var child = {}, a = [child, 1, child];
+    for (var i = 0; i < a.length; i++) a[a[1] << (i % 2)] = 0;
+    return a;
+}
+function fractionalInvariantShiftCount() {
+    var child = {}, a = [0, child, child];
+    for (var i = 0; i < a.length; i++) a[1 << (i / 2)] = 0;
+    return a;
+}
+invariantShiftBase(); invariantUnsignedShiftBase(); negativeInvariantShiftBase();
+wrappingInvariantShiftCount(); retainedInvariantShiftBase(); savedInvariantShiftBase();
+reloadInvariantShiftBase(); laterInvariantShiftBaseStore(); overlappingInvariantShiftBase();
+fractionalInvariantShiftCount();

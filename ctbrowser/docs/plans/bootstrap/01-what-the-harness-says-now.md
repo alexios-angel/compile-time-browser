@@ -58,7 +58,7 @@ The selector subset was deliberately NOT widened, which is what makes those
 numbers trustworthy: the resolved styles are byte-identical to the old front end's
 on all six fixtures, so the only thing that changed is how they were arrived at.
 Two spec details corrected a wrong assumption along the way, both recorded in
-`ctbrowser/unittests/unit/css_syntax.cpp`: a `<hash-token>`'s id flag does not distinguish a
+`ctbrowser/unittests/unit/css/syntax.cpp`: a `<hash-token>`'s id flag does not distinguish a
 colour from a selector (`#fff` is id-like, and `#fff {}` really does select
 `id="fff"`), and a `<percentage-token>` carries no type flag at all.
 
@@ -80,7 +80,7 @@ or a property not in the set (`border-radius` on `.form-check-input[type=checkbo
 for instance). The parity harness measures the END of the pipeline and cannot see a
 correct front-end rung at all.
 
-So the front end now has its own score, in `ctbrowser/unittests/unit/css_syntax.cpp`: how many of
+So the front end now has its own score, in `ctbrowser/unittests/unit/css/syntax.cpp`: how many of
 Bootstrap's 2,950 selectors can match, with a FLOOR that may only be raised. A rung
 that widens the grammar and does not move that number has not done what it claimed.
 

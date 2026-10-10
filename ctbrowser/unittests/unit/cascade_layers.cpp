@@ -9,7 +9,7 @@
 #include <ctbrowser/style/style.hpp>
 
 #include "check.hpp"
-#include "style_fixture.hpp"
+#include "style/fixture.hpp"
 
 #include <string>
 #include <string_view>

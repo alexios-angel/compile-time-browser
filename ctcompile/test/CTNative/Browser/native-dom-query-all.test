@@ -1,2 +1,0 @@
-# Element query snapshots retain document-owned identities and static membership.
-# RUN: python3 %S/native_dom_query_all.py %dom_driver

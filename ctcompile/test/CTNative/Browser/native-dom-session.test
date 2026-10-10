@@ -1,2 +1,0 @@
-# Gate owned synchronous DOM entries; retained Data keys remain outside this contract.
-# RUN: python3 %S/native_dom_session.py %dom_driver

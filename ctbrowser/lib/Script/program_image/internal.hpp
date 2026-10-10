@@ -58,7 +58,7 @@ constexpr std::uint32_t format_version = 8; // 6: function_proto::length
 // Reproduced end to end: eight patched bytes in a `.ctapp` made `ctrun` fault in
 // `context::type_of` at an address the file chose. The engine had already met
 // this mechanism arriving through a Float64Array and canonicalises there
-// (`view_get`, and unittests/js/number_basics.cpp); an image is the same
+// (`view_get`, and unittests/js/number/basics.cpp); an image is the same
 // boundary and had no such rule.
 //
 // REFUSED RATHER THAN CANONICALISED, which is a decision and rests on a fact

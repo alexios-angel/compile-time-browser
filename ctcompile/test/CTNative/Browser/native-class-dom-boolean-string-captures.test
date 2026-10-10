@@ -1,2 +1,0 @@
-# Fixed Strings feed exact String equality; retained state and results stay Boolean.
-# RUN: python3 %S/native_class_dom_boolean_string_captures.py %dom_driver --node %node --reference %native_reference

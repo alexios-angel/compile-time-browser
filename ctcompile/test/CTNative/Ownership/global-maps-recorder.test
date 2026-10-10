@@ -1,3 +1,0 @@
-# Execute the owned Map recorders and their lifetimes without the VM.
-# One of the five groups of native_owned_global_maps (global-maps.test is the rest).
-# RUN: python3 -m CTNative.Ownership.native_owned_global_maps.driver --group recorder --translate ctjs-translate --opt ctjs-opt --work %t --node %node --reference %native_reference

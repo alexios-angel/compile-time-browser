@@ -41,7 +41,7 @@ where fixtures and shared build helpers belong.
 | Bytecode import | `lib/CTJS/Import/Bytecode/` | Per-function state, instruction dispatch, operator tables and support routines |
 | Operation definitions | `include/ctcompile/CTJS/IR/Ops/` | TableGen records grouped by bindings, properties, runtime, operators, containers, modules, calls, functions, structured exceptions, suspension and frames |
 | Test registration | `test/cmake/` | Core/boxed, lit, runtime, analysis, native, native guards and native fixtures |
-| Oracle fixtures | `test/Analysis/Types/TypeOracle/` | JavaScript programs with hand-computed observations |
+| Oracle fixtures | `test/Analysis/Types/Oracle/` | JavaScript programs with hand-computed observations |
 
 `CTJSOps.td` remains the TableGen entry point and includes its operation groups
 in their original order. `test/CMakeLists.txt` includes registration groups in

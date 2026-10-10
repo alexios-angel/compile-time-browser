@@ -1,6 +1,6 @@
 // DOM 5's Range and StaticRange against dom/ranges - one case per algorithm
 // of DOM 5.5, each on a tiny tree, named after the WPT file that asserts it.
-// The pattern is unit/dom_nodes_wpt.cpp's: one expression against a fresh
+// The pattern is unit/dom/nodes_wpt.cpp's: one expression against a fresh
 // page, and whatever it logged.
 
 #include <ctbrowser.hpp>

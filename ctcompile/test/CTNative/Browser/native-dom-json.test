@@ -1,3 +1,0 @@
-# Original M's protected body, JSON.parse(decodeURIComponent(t)), as native
-# json_value, compared against Node and the VM (native_dom_json.py).
-# RUN: python3 %S/native_dom_json.py %dom_driver --node %node --reference %native_reference

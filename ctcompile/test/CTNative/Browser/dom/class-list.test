@@ -1,0 +1,2 @@
+# Class list actions and queries call the shared public DOM token-list implementation.
+# RUN: python3 %S/class_list.py %dom_driver

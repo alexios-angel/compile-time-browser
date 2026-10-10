@@ -72,7 +72,7 @@ nothing else in the tree:
   landed), so a good many rewordings are still invisible to `check-ctcompile`;
 * a **reordered** check, where two refusals are reachable for one program and
   the order the checks run decides which one you get (see
-  `test/CTNative/Lowering/Admission/refusal-equality-order.mlir` for a worked pair);
+  `test/CTNative/Lowering/Admission/refusal/equality-order.mlir` for a worked pair);
 * a function that quietly stopped being claimed, which no differential can see;
 * a fixpoint step that replaced a precise reason with `calls \`X\`, which is not
   native`.
