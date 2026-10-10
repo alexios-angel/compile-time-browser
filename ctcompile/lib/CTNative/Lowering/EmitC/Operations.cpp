@@ -8,6 +8,7 @@
 //===----------------------------------------------------------------------===//
 #include "../Admission/Admission.h"
 #include "Emitter.h"
+#include "Vectors.h"
 #include "ctcompile/Support/CppLiterals.hpp"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 
@@ -156,6 +157,7 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
     if (replaceMap(o)) { return; }
     if (replaceIdentityField(o)) { return; }
     if (replaceStringValue(o)) { return; }
+    if (replaceStringArray(*this, o)) { return; }
 
     // Frame bookkeeping lowers to nothing. frame_enter's result is used by
     // every frame_exit and root after it, and walk order visits it first, so

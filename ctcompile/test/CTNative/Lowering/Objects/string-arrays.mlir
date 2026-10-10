@@ -1,6 +1,9 @@
 // Arrays of Strings that stay refused, each with its reason: an array made in
-// a loop body whose variable the loop carries out, an array whose elements
-// are not all Strings, and split by a RegExp literal other than /\s+/.
+// a loop body and read after the loop (so its variable is carried out of the
+// loop with its hoisted undefined), an array whose elements are not all
+// Strings, and split by a RegExp literal other than /\s+/. An array used only
+// inside the loop that made it is not carried at all: --ctjs-lift-to-scf drops
+// the unread loop argument.
 //
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/loop.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=LOOP
@@ -16,13 +19,12 @@
 
 //--- loop.js
 function lastRow() {
-    var out = '';
+    var row;
     for (var i = 0; i < 2; i++) {
-        var row = ['a'];
+        row = ['a'];
         row.push('b');
-        out = row.join(',');
     }
-    return out;
+    return row.join(',');
 }
 var last = lastRow();
 
