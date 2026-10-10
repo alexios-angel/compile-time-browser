@@ -69,6 +69,46 @@ public:
         for (const auto child : found) { snapshot.emplace_back(child, *styles); }
         return snapshot;
     }
+
+    /// Element.tagName (DOM §4.9): the qualified name, ASCII-uppercased for an
+    /// HTML element in an HTML document, as the VM's element wrapper spells it.
+    js_string tagName() const {
+        const ctbrowser::element_ref element = value();
+        const auto txn = element.owner->read();
+        std::string name{
+            element.owner->atoms().text(txn.tag(element.id).value_or(ctbrowser::atom{}))};
+        if (txn.element_ns(element.id) == ctbrowser::node_ns::html && !element.owner->xml()) {
+            ctbrowser::ascii_upper_in_place(name);
+        }
+        return js_string{std::move(name)};
+    }
+    /// Element.id (DOM §4.9): the `id` attribute, or "" without one.
+    js_string id() const { return reflected("id"); }
+    /// Element.className (DOM §4.9): the `class` attribute, or "" without one.
+    js_string className() const { return reflected("class"); }
+    /// ParentNode.children (DOM §4.2.6): the element children in tree order.
+    /// A snapshot, where the VM's HTMLCollection is live: a program that
+    /// changes the children while holding the result must not be admitted.
+    std::vector<js_element_t> children() const {
+        const ctbrowser::element_ref element = value();
+        const auto txn = element.owner->read();
+        std::vector<js_element_t> snapshot;
+        for (const ctbrowser::node_id child : txn.children(element.id)) {
+            if (txn.tag(child).has_value()) {
+                snapshot.emplace_back(ctbrowser::element_ref{element.owner, child}, *styles);
+            }
+        }
+        return snapshot;
+    }
+
+private:
+    /// A reflected DOMString attribute (HTML §2.6.1): the content attribute's
+    /// value, or "" when it is absent.
+    js_string reflected(std::string_view attribute) const {
+        const ctbrowser::element_ref element = value();
+        return js_string{
+            ctbrowser::get_element_attribute(*element.owner, element.id, attribute).value_or("")};
+    }
 };
 
 /// A borrowed view of a document and its style engine, for document-level
