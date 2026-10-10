@@ -77,6 +77,15 @@ with it.
   `~/.cache/ctcompile-emitter-merge`. On 2026-10-09 the fork carried 13
   conflicts against 23.1.0. `--self-test` checks the analysis on a planted
   example.
+- `tools/check/comment-only.py` — **proves a change touched only comments**.
+  For each file changed since a base revision, it compares the code with
+  comments removed: C, C++, JavaScript, MLIR and TableGen by token, Python
+  without comments or docstrings, CMake, shell and lit by `#` (or `//` for lit
+  tests that use it). Lit and fixture inputs must also keep their line count and
+  every RUN and CHECK line, because tests read their line numbers. Run it as
+  `tools/check/comment-only.py <base> [paths...]`; exit 0 means comment-only.
+  It gated the 2026-10-10 rewrite of 1,896 files' comments. `--self-test`
+  checks it on planted examples.
 - `tools/check/check-workload.py` — **whether a workload is DONE**: whether
   every ctbrowser JS, CSS and HTML test of Bootstrap, p5, Phaser or Babylon
   runs on native C++ from ctcompile, with no VM.
