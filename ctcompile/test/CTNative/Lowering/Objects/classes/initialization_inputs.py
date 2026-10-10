@@ -12,8 +12,9 @@ from CTNative.HostContract import contract as host
 from CTNative.harness import CLEANUP, FLAGS, find_compilers, run, threshold, without_intrinsic
 from CTNative.Lowering.Objects.constructor_refusals import NODE, check_mutable_helper, check_native
 
-# The implementation hook and function metadata retain separate Node/VM
-# observations. Inherited static getter lookup now agrees between the engines.
+# The implementation hook retains separate Node/VM observations. Static name
+# and length accessors and inherited static getter lookup now agree between
+# the engines.
 OBSERVATIONS = {
     "class-map-record-nested-nullable-direct": (594414, 594414),
     "class-map-record-nested-nullable-holder": (15927, 15927),
@@ -786,8 +787,8 @@ OBSERVATIONS = {
     "static-forward-chain": (1, 1),
     "static-order": (1323, 1323),
     "static-unused-setter": (7, 7),
-    "static-name": (1, 0),
-    "static-length": (7, 0),
+    "static-name": (1, 1),
+    "static-length": (7, 7),
     "static-home": (1, 0),
     "static-caller": (1, 1),
     "static-arguments": (1, 1),
