@@ -66,6 +66,9 @@ struct lowering {
     lowering(mlir::DataFlowSolver & s, mlir::MLIRContext * c, mlir::ModuleOp m)
         : solver(s), context(c), module(m), declarative(declarativePatterns(c)) {}
     llvm::StringSet<> globals; ///< Scalar globals the emitted unit declares.
+    /// An ordinary script (no host contract): its DOM elements are the
+    /// runtime's views and its page reads call Runtime/Page.hpp.
+    bool pageViews = false;
     /// Static cells (ClosureLifting/RunOnce.cpp): each namespace-scope variable
     /// a lowered function names, with its C++ type, declared by
     /// declareGlobals() in name order.

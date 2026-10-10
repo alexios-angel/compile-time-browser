@@ -192,6 +192,18 @@ inline std::vector<js_element_t> document_object::querySelectorAll(
     return document_scope::active().querySelectorAll(selector);
 }
 
+/// `document.documentElement` where the program uses it as an element without
+/// a null check (css-dump.js's walk starts there). A document with no root
+/// element throws; the VM throws a TypeError at the first member read of the
+/// null, so the message names it. Like the other DOM errors in this header it
+/// is a C++ exception native `catch` cannot see, so admission keeps a `try`
+/// around such a read refused.
+inline js_element_t require_document_element() {
+    std::optional<js_element_t> root = document.documentElement();
+    if (!root) { throw std::invalid_argument("TypeError: document.documentElement is null"); }
+    return *std::move(root);
+}
+
 /// Converts an optional view to the plain element_ref carrier, with an empty
 /// element_ref for null.
 inline ctbrowser::element_ref element_or_null(const std::optional<js_element_t> & element) {

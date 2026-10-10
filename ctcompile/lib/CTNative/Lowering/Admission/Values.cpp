@@ -380,7 +380,8 @@ bool admission::isVectorKeyString(mlir::Operation * o) {
 /// ones: the three implicit arguments (erased once their declaration closures
 /// are gone), a declaration or lifted closure's result, an unboxed cell, map
 /// bookkeeping, the lift's poison (replaced by NaN), a key constant (a member
-/// name) and a load_global that only names a direct call's callee. function()
+/// name), a load_global that only names a direct call's callee, and one of
+/// `document` or `window` that only its page read uses. function()
 /// exempts this list from the carrier check; retype() asks the same question.
 bool admission::lowersToNothing(mlir::Value v) {
     if (auto arg = llvm::dyn_cast<mlir::BlockArgument>(v)) {
@@ -391,7 +392,7 @@ bool admission::lowersToNothing(mlir::Value v) {
     if (isNativeMapBookkeeping(o)) { return true; }
     if (isDeclarationClosure(o) || isKeyOnlyString(o) || isVectorKeyString(o)) { return true; }
     if (isLiftedClosure(o) || isUnboxedCell(o)) { return true; }
-    if (isVectorCallPlumbing(o)) { return true; }
+    if (isVectorCallPlumbing(o) || isPageGlobal(o)) { return true; }
     if (o->getName().getStringRef() == "ub.poison") { return true; }
     return llvm::isa<ctjs::LoadGlobalOp>(o) && feedsOnlyDirectCallees(v);
 }

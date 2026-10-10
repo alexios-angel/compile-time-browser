@@ -202,6 +202,11 @@ void lowering::retype(ctjs::FuncOp fn) {
                                : mlir::Type(ec::LValueType::get(owner)));
             return;
         }
+        // An ordinary script's DOM element is the runtime's view of it.
+        if (c == carrier::domElement && pageViews) {
+            v.setType(ec::OpaqueType::get(context, kPageElementType));
+            return;
+        }
         // A tuple (a tuple literal, or an element read from an array of them)
         // is a std::pair of its positions.
         if (carrierOf(typeOf(v)) == carrier::tuple) {

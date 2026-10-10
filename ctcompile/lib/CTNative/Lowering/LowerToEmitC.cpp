@@ -682,6 +682,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         }
 
         lowering lower{solver, &getContext(), module};
+        lower.pageViews = !hostContract;
         lower.groups = &groups;
         if (domData) {
             if (!admittedGlobals || !admittedGlobals->proved() ||
@@ -763,6 +764,11 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                         // The RegExp literal factory behind split(/\s+/) lowers
                         // to nothing; it is not a program global.
                         if (isVectorCallPlumbing(load)) { return; }
+                        // Nor are `document` and `window` when only their
+                        // page reads use them; those lower to runtime calls.
+                        if (!hostContract && isPageGlobal(load)) { return; }
+                        // Nor is the global `undefined`, which is a constant.
+                        if (!hostContract && TypeInference::isUndefinedGlobal(load)) { return; }
                         name = load.getName();
                     }
                     if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(o)) {
