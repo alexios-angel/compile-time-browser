@@ -213,6 +213,19 @@ static Type mergeSameFamily(Type a, Type b) {
     }
 
     if (llvm::isa<VecType>(a)) { return mergeElements<VecType>(a, b); }
+    // Tuples of one arity meet position by position; another arity is a
+    // different record, so the two become alternatives of a union.
+    if (auto tupleA = llvm::dyn_cast<TupleType>(a)) {
+        auto tupleB = llvm::dyn_cast<TupleType>(b);
+        if (!tupleB || tupleA.getElements().size() != tupleB.getElements().size()) {
+            return Type();
+        }
+        llvm::SmallVector<Type> elements;
+        for (auto [left, right] : llvm::zip_equal(tupleA.getElements(), tupleB.getElements())) {
+            elements.push_back(meet(left, right));
+        }
+        return TupleType::get(context, elements);
+    }
     if (llvm::isa<SetType>(a)) { return mergeElements<SetType>(a, b); }
     if (auto mapA = llvm::dyn_cast<MapType>(a)) {
         auto mapB = llvm::dyn_cast<MapType>(b);

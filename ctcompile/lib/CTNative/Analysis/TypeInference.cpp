@@ -282,6 +282,76 @@ mlir::Type TypeInference::elementTypeOf(mlir::Operation * op, mlir::Value array)
     return appended == appends_.end() ? element : joinLattices(op, appended->second, element);
 }
 
+mlir::Type TypeInference::elementVectorType(mlir::Operation * op,
+                                            llvm::ArrayRef<const TypeLattice *> operands,
+                                            bool & pending) {
+    mlir::MLIRContext * c = op->getContext();
+    // The element type of the array `members` names: the join of everything
+    // stored into it, plus String when an owner is a split result. Null with
+    // `pending` set while every stored value is still unvisited.
+    const auto element = [&](llvm::ArrayRef<mlir::Value> members) -> mlir::Type {
+        mlir::Type joined = joinLattices(op, elementVectorStores(members), mlir::Type{});
+        if (splitsAString(members)) { joined = meet(joined, stringType(c)); }
+        return joined;
+    };
+    const auto typeOf = [](const TypeLattice * lattice) { return lattice->getValue().getType(); };
+    if (auto array = llvm::dyn_cast<ctjs::CreateArrayOp>(op)) {
+        const auto members = elementVectorAliases(array.getResult());
+        if (members.empty()) { return {}; }
+        // A dense array the numeric proof also accepts keeps that proof's
+        // type unless it holds Strings, and an empty one stays numeric.
+        const bool dense = isDenseVectorSite(array.getResult());
+        if (elementVectorStores(members).empty() && !splitsAString(members)) {
+            return dense ? mlir::Type{} : mlir::Type(VecType::get(c, stringType(c)));
+        }
+        const mlir::Type stored = element(members);
+        if (!stored) {
+            pending = true;
+            return {};
+        }
+        // Only Strings are lowered this way yet. Any other element type keeps
+        // the dense proof's type, or none, and with it that proof's refusal.
+        if (!llvm::isa<StrType>(stored)) { return {}; }
+        return VecType::get(c, stored);
+    }
+    if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) {
+        auto vector = llvm::dyn_cast_or_null<VecType>(typeOf(operands[0]));
+        if (!vector || !llvm::isa<StrType>(vector.getElementType()) ||
+            elementVectorAliases(read.getObject()).empty()) {
+            return {};
+        }
+        const llvm::StringRef key = ctjs::constantKey(read.getKey());
+        if (key == "length") { return doubleType(c); }
+        // An index past the end, a fraction or a negative reads undefined.
+        if (key.empty() && isProvedNumeric(operands[1])) {
+            return meet(absentType(c), vector.getElementType());
+        }
+        return {};
+    }
+    // push, join and sort answer only on a proved vector of Strings.
+    const auto ofStrings = [&](const TypeLattice * lattice) {
+        auto vector = llvm::dyn_cast_or_null<VecType>(typeOf(lattice));
+        return vector && llvm::isa<StrType>(vector.getElementType());
+    };
+    switch (vectorCallOf(op)) {
+    case VectorCall::push: return ofStrings(operands[1]) ? doubleType(c) : mlir::Type{};
+    case VectorCall::join: return ofStrings(operands[1]) ? stringType(c) : mlir::Type{};
+    // `a.sort()` is `a`.
+    case VectorCall::sort: return ofStrings(operands[1]) ? typeOf(operands[1]) : mlir::Type{};
+    case VectorCall::split:
+    case VectorCall::splitSpace: {
+        if (!llvm::isa_and_nonnull<StrType>(typeOf(operands[1]))) { return {}; }
+        const auto members = elementVectorAliases(op->getResult(0));
+        if (members.empty()) { return VecType::get(c, stringType(c)); }
+        const mlir::Type stored = element(members);
+        return VecType::get(c, stored ? stored : stringType(c));
+    }
+    case VectorCall::regexp:
+    case VectorCall::none: return {};
+    }
+    return {};
+}
+
 mlir::Type TypeInference::joinLattices(mlir::Operation * op, mlir::ValueRange values,
                                        mlir::Type seed) {
     for (mlir::Value value : values) {
@@ -599,6 +669,13 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
         }
         return mlir::success();
     }
+
+    // Vectors of one proved element type, and split on a String.
+    bool pendingVector = false;
+    if (const mlir::Type vectorAnswer = elementVectorType(op, operands, pendingVector)) {
+        return answer(vectorAnswer);
+    }
+    if (pendingVector) { return mlir::success(); }
 
     // The operand-sensitive rules, which exist only because of BigInt. Each one
     // is "the numeric answer, if neither operand can be a BigInt".

@@ -2,8 +2,9 @@
 //
 // js_string, the C++ type generated native code uses for a JavaScript String,
 // string_length, which counts UTF-16 code units as JavaScript does, and the
-// String.prototype methods native code calls by name (to_lower_case, trim,
-// trim_end_any; string_at is in ctnative.hpp beside nullable_string).
+// String object whose prototype methods native code calls
+// (`ctnative::String.prototype.trim.call(s)`); `s[i]` is string_at in
+// ctnative.hpp, beside nullable_string.
 //
 //===----------------------------------------------------------------------===//
 
@@ -20,6 +21,7 @@
 #include <string_view>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 namespace ctnative {
 
@@ -103,23 +105,115 @@ inline std::size_t string_length(std::string_view text) {
     return units;
 }
 
+/// The RegExp literal `/\s+/` with no flags, which the compiler recognises as
+/// split's separator. A tag rather than a RegExp: the runtime has no regular
+/// expression engine, so each recognised literal is its own overload.
+struct whitespace_run_t {};
+inline constexpr whitespace_run_t whitespace_run{};
+
 /// String.prototype.toLowerCase (ECMA-262 22.1.3.28): Unicode's default full
 /// lowercase, Final_Sigma included, from the same core tables the VM uses.
-inline js_string to_lower_case(const js_string & text) {
-    return js_string{ctbrowser::unicode_case(text.value(), false)};
-}
+struct to_lower_case_method {
+    js_string call(const js_string & self) const {
+        return js_string{ctbrowser::unicode_case(self.value(), false)};
+    }
+};
 
 /// String.prototype.trim (ECMA-262 22.1.3.32): TrimString with both ends, over
 /// WhiteSpace and LineTerminator (the StrWhiteSpaceChar set).
-inline js_string trim(const js_string & text) {
-    return js_string{ctbrowser::trim_js_space(text.value())};
-}
+struct trim_method {
+    js_string call(const js_string & self) const {
+        return js_string{ctbrowser::trim_js_space(self.value())};
+    }
+};
 
-/// `text.replace(/[set]+$/, '')` (ECMA-262 22.1.3.19 with a RegExp whose only
-/// match is the maximal run of `set` characters at the end): `text` without
-/// that run. `set` must be ASCII; an ASCII byte is never part of a multibyte
-/// WTF-8 sequence, so the byte scan matches the code point scan.
-inline js_string trim_end_any(const js_string & text, std::string_view set) {
+/// String.prototype.split (ECMA-262 22.1.3.23) with no limit.
+struct split_method {
+    /// A String separator. An empty separator splits into UTF-16 code units
+    /// (a pair's halves apart); an empty text gives [""] unless the separator
+    /// is empty too.
+    std::vector<js_string> call(const js_string & self, const js_string & separator) const {
+        const std::string & s = self.value();
+        const std::string & sep = separator.value();
+        std::vector<js_string> out;
+        // A separator holding a lone surrogate (lead byte ED) can match half
+        // of a pair that WTF-8 stores as one four-byte code point, so that
+        // case and the empty separator work on UTF-16 units. Otherwise UTF-8
+        // is self-synchronizing and a byte match is a code-unit match.
+        if (sep.empty() || sep.find('\xED') != std::string::npos) {
+            const std::u16string units = ctbrowser::wtf8_to_utf16(s);
+            const std::u16string needle = ctbrowser::wtf8_to_utf16(sep);
+            const std::u16string_view all{units};
+            if (needle.empty()) {
+                for (std::size_t i = 0; i < all.size(); ++i) {
+                    out.emplace_back(ctbrowser::utf16_to_wtf8(all.substr(i, 1)));
+                }
+                return out;
+            }
+            std::size_t from = 0;
+            for (auto at = all.find(needle); at != std::u16string_view::npos;
+                 at = all.find(needle, from)) {
+                out.emplace_back(ctbrowser::utf16_to_wtf8(all.substr(from, at - from)));
+                from = at + needle.size();
+            }
+            out.emplace_back(ctbrowser::utf16_to_wtf8(all.substr(from)));
+            return out;
+        }
+        std::size_t from = 0;
+        for (auto at = s.find(sep); at != std::string::npos; at = s.find(sep, from)) {
+            out.emplace_back(std::string_view{s}.substr(from, at - from));
+            from = at + sep.size();
+        }
+        out.emplace_back(std::string_view{s}.substr(from));
+        return out;
+    }
+    /// The separator `/\s+/` (ECMA-262 22.2.6.14, RegExp.prototype[@@split]):
+    /// the text cut at every maximal run of WhiteSpace or LineTerminator, which
+    /// is what `\s` matches (22.2.2.9). A leading or trailing run leaves an
+    /// empty first or last piece, and the empty text gives [""].
+    std::vector<js_string> call(const js_string & self, whitespace_run_t) const {
+        const std::string_view s{self.value()};
+        std::vector<js_string> out;
+        std::size_t piece = 0;
+        for (std::size_t at = 0; at < s.size();) {
+            const std::string_view rest = s.substr(at);
+            const std::size_t run =
+                rest.size() - ctbrowser::trim_js_space(rest, true, false).size();
+            if (run == 0) {
+                (void)ctbrowser::decode_utf8(s, at);
+                continue;
+            }
+            out.emplace_back(s.substr(piece, at - piece));
+            at += run;
+            piece = at;
+        }
+        out.emplace_back(s.substr(piece));
+        return out;
+    }
+};
+
+/// The String.prototype methods native code calls, as stateless method
+/// objects: generated code reads `ctnative::String.prototype.trim.call(s)`,
+/// the JavaScript spelling. Only the methods the compiler lowers are here.
+struct string_prototype {
+    to_lower_case_method toLowerCase;
+    trim_method trim;
+    split_method split;
+};
+/// The String constructor's members. `String(x)` conversion is not lowered,
+/// so it has no call operator.
+struct string_constructor {
+    string_prototype prototype;
+};
+inline constexpr string_constructor String{};
+
+/// The lowering of `text.replace(/[set]+$/, '')` (ECMA-262 22.1.3.19 with the
+/// one RegExp literal shape the compiler recognises there, whose only match
+/// is the maximal run of `set` characters at the end): `text` without that
+/// run. Not String.prototype.replace itself, which would need a RegExp and
+/// GetSubstitution. `set` must be ASCII; an ASCII byte is never part of a
+/// multibyte WTF-8 sequence, so the byte scan matches the code point scan.
+inline js_string strip_trailing_run(const js_string & text, std::string_view set) {
     const std::string & bytes = text.value();
     const auto last = bytes.find_last_not_of(set);
     return js_string{std::string_view{bytes}.substr(0, last == std::string::npos ? 0 : last + 1)};

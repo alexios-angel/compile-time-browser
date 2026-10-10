@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 #include "../Admission/Admission.h"
 #include "Emitter.h"
+#include "Vectors.h"
 
 namespace ctcompile::ctnative::lowering_detail {
 
@@ -55,8 +56,13 @@ void lowering::retype(ctjs::FuncOp fn) {
     // The proof of a vector's current contents is invalidated even by
     // retyping operands, so every admitted vector access is collected before
     // the source IR changes.
+    // Arrays of Strings are planned the same way, and first: a dense array
+    // that holds Strings belongs to that plan, not to the numeric one.
+    const llvm::DenseSet<mlir::Value> stringArrays = planStringArrays(*this, fn);
     forEachNestedValue(fn.getBody(), [&](mlir::Value value) {
-        if (TypeInference::isDenseVectorSite(value)) { collectVector(value); }
+        if (TypeInference::isDenseVectorSite(value) && !stringArrays.contains(value)) {
+            collectVector(value);
+        }
     });
     // Preserve complete receiver schemas before replacements erase solver
     // identities. Read result facts must never choose the storage schema.
@@ -166,6 +172,19 @@ void lowering::retype(ctjs::FuncOp fn) {
         }
         if (c == carrier::string && admission::lowersToNothing(v)) {
             v.setType(mlir::Float64Type::get(context));
+            return;
+        }
+        // An array of Strings is a std::vector<ctnative::js_string>, owned
+        // where it is made and borrowed by address through SCF, like the
+        // dense arrays below.
+        if (stringArrays.contains(v)) {
+            const auto owner = ec::OpaqueType::get(context, kStringArrayType);
+            const bool borrowed =
+                llvm::isa<mlir::BlockArgument>(v) ||
+                (v.getDefiningOp() &&
+                 llvm::isa<mlir::scf::IfOp, mlir::scf::WhileOp>(v.getDefiningOp()));
+            v.setType(borrowed ? mlir::Type(ec::PointerType::get(owner))
+                               : mlir::Type(ec::LValueType::get(owner)));
             return;
         }
         // A dense array takes its own vector carrier, which carrierType()

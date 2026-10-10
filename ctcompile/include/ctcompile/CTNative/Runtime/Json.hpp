@@ -1,7 +1,7 @@
 //===- Json.hpp - Native JSON.stringify ------------------------*- C++ -*-===//
 //
-// json_quote and json_stringify: JSON.stringify for the values native code
-// builds as ctbrowser::json_value trees. Only programs that call them include
+// ctnative::JSON, whose stringify serializes the values native code builds as
+// ctbrowser::json_value trees. Only programs that call it include
 // this header; the quoting is ctbrowser core's, which the VM's JSON.stringify
 // also calls, so the two cannot escape a string differently.
 //
@@ -22,13 +22,6 @@
 #include <variant>
 
 namespace ctnative {
-
-/// QuoteJSONString (ECMA-262 25.5.2.3) of `text`, the quotes included.
-inline js_string json_quote(const js_string & text) {
-    std::string out;
-    ctbrowser::quote_json(text.value(), out);
-    return js_string{std::move(out)};
-}
 
 namespace detail {
 /// SerializeJSONProperty (ECMA-262 25.5.2.2) for one node, with no replacer
@@ -74,10 +67,19 @@ inline void json_write(const ctbrowser::json_value & value, std::string & out) {
 /// JSON.stringify(value) (ECMA-262 25.5.2.1) with no replacer and no space
 /// argument. The tree holds no undefined, function or symbol, so every value
 /// serializes and the result is always a String.
-inline js_string json_stringify(const ctbrowser::json_value & value) {
-    std::string out;
-    detail::json_write(value, out);
-    return js_string{std::move(out)};
-}
+struct stringify_method {
+    js_string operator()(const ctbrowser::json_value & value) const {
+        std::string out;
+        detail::json_write(value, out);
+        return js_string{std::move(out)};
+    }
+};
+
+/// The JSON object's members native code calls: generated code reads
+/// `ctnative::JSON.stringify(tree)`.
+struct json_object {
+    stringify_method stringify;
+};
+inline constexpr json_object JSON{};
 
 } // namespace ctnative

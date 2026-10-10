@@ -628,43 +628,48 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         // every caller native too: a refused caller keeps a ctjs.call_direct,
         // which must name a ctjs.func with a body, and a lowered function no
         // longer has one. So a refusal propagates along the call graph both
-        // ways, each step naming the function that caused it.
-        for (bool changed = true; changed;) {
-            changed = false;
-            for (ctjs::FuncOp fn : functions) {
-                const bool native = nativeSet.contains(fn.getOperation());
-                // A native end of an edge whose other end is not native stops
-                // being native; the reason names the other end.
-                const auto edge = [&](mlir::Operation * target, const llvm::Twine & forward,
-                                      const llvm::Twine & backward) {
-                    const bool targetNative = target && nativeSet.contains(target);
-                    if (native && !targetNative) {
-                        nativeSet.erase(fn.getOperation());
-                        notNative(fn, forward);
-                        changed = true;
-                    } else if (!native && targetNative) {
-                        nativeSet.erase(target);
-                        notNative(target, backward);
-                        changed = true;
-                    }
-                };
-                // A retained closure is an edge too: create_closure names its
-                // target even when the enclosing function never invokes it.
-                fn.getBody().walk([&](ctjs::CreateClosureOp made) {
-                    if (environmentTarget(made).empty()) { return; }
-                    edge(symbols.lookup(environmentTarget(made)),
-                         "retains `" + environmentTarget(made) + "`, which is not native",
-                         "retained by `" + fn.getSymName() + "`, which is not native");
-                });
-                fn.getBody().walk([&](ctjs::CallDirectOp call) {
-                    edge(symbols.lookup(call.getCallee()),
-                         "calls `" + call.getCallee() + "`, which is not native",
-                         "called by `" + fn.getSymName() + "`, which is not native");
-                });
+        // ways, each step naming the function that caused it. The global
+        // census below can refuse the script entry after this has run, so it
+        // runs again then.
+        const auto closeNativeSet = [&] {
+            for (bool changed = true; changed;) {
+                changed = false;
+                for (ctjs::FuncOp fn : functions) {
+                    const bool native = nativeSet.contains(fn.getOperation());
+                    // A native end of an edge whose other end is not native stops
+                    // being native; the reason names the other end.
+                    const auto edge = [&](mlir::Operation * target, const llvm::Twine & forward,
+                                          const llvm::Twine & backward) {
+                        const bool targetNative = target && nativeSet.contains(target);
+                        if (native && !targetNative) {
+                            nativeSet.erase(fn.getOperation());
+                            notNative(fn, forward);
+                            changed = true;
+                        } else if (!native && targetNative) {
+                            nativeSet.erase(target);
+                            notNative(target, backward);
+                            changed = true;
+                        }
+                    };
+                    // A retained closure is an edge too: create_closure names its
+                    // target even when the enclosing function never invokes it.
+                    fn.getBody().walk([&](ctjs::CreateClosureOp made) {
+                        if (environmentTarget(made).empty()) { return; }
+                        edge(symbols.lookup(environmentTarget(made)),
+                             "retains `" + environmentTarget(made) + "`, which is not native",
+                             "retained by `" + fn.getSymName() + "`, which is not native");
+                    });
+                    fn.getBody().walk([&](ctjs::CallDirectOp call) {
+                        edge(symbols.lookup(call.getCallee()),
+                             "calls `" + call.getCallee() + "`, which is not native",
+                             "called by `" + fn.getSymName() + "`, which is not native");
+                    });
+                }
             }
-        }
-        llvm::erase_if(accepted,
-                       [&](ctjs::FuncOp fn) { return !nativeSet.contains(fn.getOperation()); });
+            llvm::erase_if(accepted,
+                           [&](ctjs::FuncOp fn) { return !nativeSet.contains(fn.getOperation()); });
+        };
+        closeNativeSet();
         if (admittedDOM && (!llvm::is_contained(accepted, admittedDOM->entry()) ||
                             llvm::any_of(admittedDOM->callbacks(), [&](ctjs::FuncOp callback) {
                                 return !llvm::is_contained(accepted, callback);
@@ -732,44 +737,55 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                        return llvm::isa<ctjs::CallDirectOp>(user);
                    });
         };
-        llvm::StringSet<> storedGlobals;
-        for (ctjs::FuncOp fn : accepted) {
-            fn.getBody().walk([&](ctjs::StoreGlobalOp store) {
-                if (!bindsAFunction(store)) { storedGlobals.insert(store.getName()); }
-            });
-        }
-        llvm::SmallVector<llvm::StringRef> neverStored;
-        for (ctjs::FuncOp fn : accepted) {
-            fn.getBody().walk([&](mlir::Operation * o) {
-                if (admittedGlobals &&
-                    (admittedGlobals->lookup(o) || admittedGlobals->objectGlobal(o))) {
-                    return;
+        // A refused entry leaves its callees without a native caller, so the
+        // call graph is closed again and the census redone over what is left.
+        for (bool refusedEntry = true; refusedEntry;) {
+            refusedEntry = false;
+            lower.globals.clear();
+            llvm::StringSet<> storedGlobals;
+            for (ctjs::FuncOp fn : accepted) {
+                fn.getBody().walk([&](ctjs::StoreGlobalOp store) {
+                    if (!bindsAFunction(store)) { storedGlobals.insert(store.getName()); }
+                });
+            }
+            llvm::SmallVector<llvm::StringRef> neverStored;
+            for (ctjs::FuncOp fn : accepted) {
+                fn.getBody().walk([&](mlir::Operation * o) {
+                    if (admittedGlobals &&
+                        (admittedGlobals->lookup(o) || admittedGlobals->objectGlobal(o))) {
+                        return;
+                    }
+                    llvm::StringRef name;
+                    if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(o)) {
+                        if (admittedDOM && domBookkeeping(*admittedDOM, load)) { return; }
+                        if (callsOnly(load) || isNativeMapBookkeeping(load)) { return; }
+                        // The RegExp literal factory behind split(/\s+/) lowers
+                        // to nothing; it is not a program global.
+                        if (isVectorCallPlumbing(load)) { return; }
+                        name = load.getName();
+                    }
+                    if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(o)) {
+                        if (bindsAFunction(store)) { return; }
+                        name = store.getName();
+                    }
+                    if (name.empty()) { return; }
+                    if (lower.globals.insert(name).second && !storedGlobals.contains(name)) {
+                        neverStored.push_back(name);
+                    }
+                });
+            }
+            if (!neverStored.empty()) {
+                llvm::sort(neverStored);
+                const auto entry = llvm::find_if(accepted, isScriptEntry);
+                if (entry != accepted.end()) {
+                    notNative(*entry, "global `" + neverStored.front() +
+                                          "` is read but never stored, so it is undefined - which "
+                                          "this tier carries as NaN, and printing that as a number "
+                                          "is not what the interpreter answers");
+                    nativeSet.erase(entry->getOperation());
+                    closeNativeSet();
+                    refusedEntry = true;
                 }
-                llvm::StringRef name;
-                if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(o)) {
-                    if (admittedDOM && domBookkeeping(*admittedDOM, load)) { return; }
-                    if (callsOnly(load) || isNativeMapBookkeeping(load)) { return; }
-                    name = load.getName();
-                }
-                if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(o)) {
-                    if (bindsAFunction(store)) { return; }
-                    name = store.getName();
-                }
-                if (name.empty()) { return; }
-                if (lower.globals.insert(name).second && !storedGlobals.contains(name)) {
-                    neverStored.push_back(name);
-                }
-            });
-        }
-        if (!neverStored.empty()) {
-            llvm::sort(neverStored);
-            const auto entry = llvm::find_if(accepted, isScriptEntry);
-            if (entry != accepted.end()) {
-                notNative(*entry, "global `" + neverStored.front() +
-                                      "` is read but never stored, so it is undefined - which "
-                                      "this tier carries as NaN, and printing that as a number "
-                                      "is not what the interpreter answers");
-                accepted.erase(entry);
             }
         }
 

@@ -1,0 +1,21 @@
+# Differential test of string-arrays.js: the program is lowered to C++ with
+# arrays of Strings as std::vector<ctnative::js_string> and the runtime's
+# String and Array objects, compiled against public Core (split and sort read
+# UTF-16 through it), checked for interpreter symbols with nm, run, and every
+# global compared with the interpreter's (compilation-unit.py). A `not ...
+# --mutate G` line corrupts global G and requires the comparison to fail
+# naming G. compile-clean.py checks a warning-free build on both toolchains.
+
+# RUN: python3 %S/string-arrays.py --translate ctjs-translate --opt ctjs-opt --js %S/string-arrays.js --out %t/string-arrays.emitc.mlir
+# RUN: ctjs-translate --mlir-to-cpp %t/string-arrays.emitc.mlir | FileCheck %s
+# RUN: %compilation_unit --module %t/string-arrays.emitc.mlir --js %S/string-arrays.js --work %t --name string_arrays --core-build %build
+# RUN: not %compilation_unit --module %t/string-arrays.emitc.mlir --js %S/string-arrays.js --work %t --name string_arrays_off_by_one --core-build %build --mutate size 2>&1 | FileCheck %s --check-prefix=OFF-BY-ONE
+# RUN: %compile_clean --module %t/string-arrays.emitc.mlir --work %t --name string_arrays
+
+# CHECK: #include "ctcompile/CTNative/Runtime/Array.hpp"
+# CHECK-DAG: std::vector<ctnative::js_string>
+# CHECK-DAG: ctnative::Array.prototype.push.call(
+# CHECK-DAG: ctnative::Array.prototype.join.call(
+# CHECK-DAG: ctnative::Array.prototype.sort.call(
+# CHECK-DAG: ctnative::String.prototype.split.call({{.*}}, ctnative::whitespace_run)
+# OFF-BY-ONE: global 'size' differs
