@@ -1,3 +1,9 @@
+//===- ctbrowser/lib/Style/css/substitute/syntax.cpp - attr() types -------===//
+//
+// Locating substitution functions in a token stream, the `<syntax>` grammar of
+// attr()'s `type()` argument, and matching a value against that syntax.
+//
+//===----------------------------------------------------------------------===//
 #include "internal.hpp"
 
 namespace ctbrowser::style::css::substitute_detail {
@@ -10,7 +16,7 @@ namespace ctbrowser::style::css::substitute_detail {
     return ascii_iequals(name, want);
 }
 
-// The first substitution function in the stream, at the OUTERMOST level it
+// The first substitution function in the stream, at the outermost level it
 // appears at. Outermost because substituting an inner one first would rewrite
 // text the outer one is about to replace wholesale.
 [[nodiscard]] bool find_call(const token_stream & s, call & out) {
@@ -46,7 +52,7 @@ namespace ctbrowser::style::css::substitute_detail {
         for (; j < s.tokens.size() && depth > 0; ++j) {
             const css_token & t = s.tokens[j];
             if (t.type == token_type::eof) { break; }
-            // `var(ident(...))`: a FUNCTION in the name position is a name
+            // `var(ident(...))`: a function in the name position is a name
             // that is not known until it has been substituted.
             if (is_var && depth == 1 && !have_name && out.comma_at == 0 &&
                 t.type == token_type::function) {
@@ -69,9 +75,9 @@ namespace ctbrowser::style::css::substitute_detail {
                 continue;
             }
             // `var( <custom-property-name> , <declaration-value>? )`: the name is
-            // the FIRST token and nothing but whitespace may follow it before
-            // the comma. `var(--foo type(*))` names no property and is invalid,
-            // which `attr-all-types` asks for by name.
+            // the first token, and only whitespace may follow it before the
+            // comma. `var(--foo type(*))` is invalid (WPT
+            // css/css-values/attr-all-types.html).
             if (t.type == token_type::whitespace) { continue; }
             if (!have_name && t.type == token_type::ident) {
                 out.name_at = j;
@@ -88,7 +94,7 @@ namespace ctbrowser::style::css::substitute_detail {
         if (out.comma_at == 0) { out.comma_at = out.close; }
         // The argument list is read after substitution.
         if (is_attr || is_if || is_ident || is_random_item || is_custom) { return true; }
-        if (!have_name || after_name) { return false; } // `var()` with no name is invalid
+        if (!have_name || after_name) { return false; } // `var()` with no name is invalid.
         return true;
     }
     return false;
@@ -98,9 +104,9 @@ namespace ctbrowser::style::css::substitute_detail {
                                        std::size_t last) {
     std::string out;
     for (std::size_t i = first; i < last; ++i) {
-        // A <url-token>'s text is its BODY, `url(` and `)` consumed around it
-        // and not recorded: without them `url(a.png), attr(...)` substitutes
-        // to `a.png, ...` (attr-security).
+        // A <url-token>'s text is only its body, so add back `url(` and `)`;
+        // otherwise `url(a.png), attr(...)` would substitute to `a.png, ...`
+        // (WPT css/css-values/attr-security.html).
         const bool url = s.tokens[i].type == token_type::url;
         if (url) { out += "url("; }
         out += s.text_of(s.tokens[i]);
@@ -109,10 +115,9 @@ namespace ctbrowser::style::css::substitute_detail {
     return out;
 }
 
-// A substituted value must not have gained a top-level `!important` or `;`. §3 says a
-// var() that expands to either is invalid, and the reason is structural rather than
-// pedantic: the declaration's priority and its extent were both decided before
-// substitution, so a value that changes them afterwards has escaped the grammar.
+// A substituted value must not contain a top-level `!` (as in `!important`) or
+// `;`. CSS Variables 1 §3 makes a var() that expands to either invalid: the
+// declaration's priority and extent were fixed before substitution.
 [[nodiscard]] bool introduced_structure(std::string_view value) {
     const token_stream s = tokenize(value);
     int depth = 0;
@@ -151,7 +156,7 @@ namespace ctbrowser::style::css::substitute_detail {
         ++i;
         skip_space();
         if (s.tokens[i].type != token_type::eof) { return std::nullopt; }
-        return out; // empty means "anything"
+        return out; // Empty means "anything".
     }
     for (;;) {
         skip_space();
@@ -184,6 +189,9 @@ namespace ctbrowser::style::css::substitute_detail {
     }
 }
 
+// Splits a value into the items of a `+` (space-separated) or `#`
+// (comma-separated) multiplier, ignoring separators nested in brackets. Any
+// other multiplier, such as 0, gives the whole value as one item.
 [[nodiscard]] std::vector<item> items_of(const token_stream & s, char multiplier) {
     std::vector<item> out;
     int depth = 0;
@@ -230,8 +238,8 @@ namespace ctbrowser::style::css::substitute_detail {
     const bool single = it.first == it.last;
     const std::string text = slice_of(s, it);
     if (text.empty()) { return std::nullopt; }
-    // A math function is matched by what it resolves to. An answer this cannot
-    // reach here - `1lh`, `sibling-index()` - is well formed and accepted.
+    // A math function is matched by the type it resolves to. One that cannot be
+    // resolved without layout, such as `1lh` or `sibling-index()`, is accepted.
     const auto math_fits = [&](auto && accepts) -> std::optional<std::string> {
         if (t.type != token_type::function || !may_have_math(text)) { return std::nullopt; }
         const math_answer answer = evaluate_math(text, length_context{});
@@ -309,7 +317,7 @@ namespace ctbrowser::style::css::substitute_detail {
         return std::nullopt;
     }
     if (type == "image") {
-        // A URL IS AN IMAGE, except where an attribute wrote it.
+        // A URL is an image, except where an attribute wrote it.
         if (t.type == token_type::url) {
             return single && !from_attribute ? std::optional{text} : std::nullopt;
         }
@@ -354,7 +362,7 @@ namespace ctbrowser::style::css::substitute_detail {
 [[nodiscard]] std::optional<std::string> match_syntax(
     std::string_view value, const std::vector<syntax_alternative> & syntax, bool from_attribute) {
     const token_stream s = tokenize(value);
-    if (syntax.empty()) { return std::string{trim(value, html_whitespace)}; } // `*`
+    if (syntax.empty()) { return std::string{trim(value, html_whitespace)}; } // `*`.
     for (const syntax_alternative & alt : syntax) {
         if (alt.keyword) {
             const std::vector<item> whole = items_of(s, 0);

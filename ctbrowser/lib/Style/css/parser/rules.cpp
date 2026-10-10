@@ -1,3 +1,9 @@
+//===- rules.cpp - CSS at-rule name classification ------------------------===//
+//
+// at_kind_of: maps an at-rule name to the at_kind the parser dispatches on.
+//
+//===----------------------------------------------------------------------===//
+
 #include "internal.hpp"
 
 namespace ctbrowser::style::css::parser_detail {

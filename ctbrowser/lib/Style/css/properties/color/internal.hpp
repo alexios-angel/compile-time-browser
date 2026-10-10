@@ -1,10 +1,11 @@
-#pragma once
-
-// `<color>`, CSS Color 4 and 5: the grammar, the colour spaces, and the two
-// serialisations - the SPECIFIED one `el.style.color` reads back and the
-// COMPUTED one `getComputedStyle` reports.
+//===- color/internal.hpp - CSS <color> internals ---------------*- C++ -*-===//
 //
-// THE SHAPE. A colour is parsed into a small tree (`parsed`): a keyword, a hex,
+// `<color>`, CSS Color 4 and 5: the grammar, the colour spaces, and the two
+// serialisations - the specified one `el.style.color` reads back and the
+// computed one `getComputedStyle` reports. Bare § numbers refer to CSS
+// Color 4.
+//
+// A colour is parsed into a small tree (`parsed`): a keyword, a hex,
 // an absolute function with its channels, a relative colour over an origin,
 // a `color-mix()` over items, and the handful of CSS Color 5 wrappers. The
 // tree is what the specified serialisation walks - `rgb(from rebeccapurple r
@@ -13,16 +14,20 @@
 // of which may be `none`, and an alpha. The computed serialisation is over
 // that.
 //
-// LEGACY IS A FLAG, NOT A SPACE. `red`, `#f00`, `rgb(255 0 0)` and `hsl(0 100%
+// Legacy is a flag, not a space. `red`, `#f00`, `rgb(255 0 0)` and `hsl(0 100%
 // 50%)` all serialise as `rgb(255, 0, 0)` (CSS Color 4 §15.2) while `color(srgb
 // 1 0 0)`, `rgb(from red r g b)` and `color-mix(in srgb, red, red)` serialise
 // as `color(srgb 1 0 0)`: the same sRGB triple, told apart only by how it was
 // written. `resolved::legacy` is that fact and nothing else.
 //
-// THE CONVERSIONS are the specification's own sample code (§17 and the
+// The conversions are the specification's own sample code (§17 and the
 // conversions.js it publishes), with the rational matrices it gives so the
 // out-of-gamut tests, which compare to 1e-4, agree. Everything passes through
 // XYZ D65; Lab and ProPhoto are D50 and adapt through Bradford.
+//
+//===----------------------------------------------------------------------===//
+
+#pragma once
 
 #include "../internal.hpp"
 
@@ -38,13 +43,14 @@ using namespace detail;
 
 // --- the vocabulary -------------------------------------------------------
 
-// CSS Color 4 §6.1's named colours, with their sRGB values. `transparent` and
-// `currentcolor` are keywords of their own below.
+/// A colour keyword and its sRGB value as 0xRRGGBB.
 struct named {
     std::string_view name;
     std::uint32_t rgb;
 };
 
+/// CSS Color 4 §6.1's named colours. `transparent` and `currentcolor` are
+/// keywords of their own, handled by the reader and resolve().
 inline constexpr named named_colors[] = {
     {"aliceblue", 0xF0F8FF},
     {"antiquewhite", 0xFAEBD7},
@@ -196,12 +202,12 @@ inline constexpr named named_colors[] = {
     {"yellowgreen", 0x9ACD32},
 };
 
-// §6.2's system colours and the deprecated ones §6.3 keeps parsing, with the
-// light-scheme values Chromium ships: CSSOM makes a colour's resolved value
-// the used one, so `background-color: Menu` reads back as an `rgb()`
-// (getComputedStyle-resolved-colors). The dark table below is what
-// `color-scheme: dark` swaps in (CSS Color Adjust 1 §2); a name not in it
-// is the same in both schemes.
+/// §6.2's system colours and the deprecated ones §6.3 keeps parsing, with the
+/// light-scheme values Chromium ships: CSSOM makes a colour's resolved value
+/// the used one, so `background-color: Menu` reads back as an `rgb()` (WPT
+/// getComputedStyle-resolved-colors). The dark table below is what
+/// `color-scheme: dark` swaps in (CSS Color Adjust 1 §2); a name not in it
+/// is the same in both schemes.
 inline constexpr named system_colors[] = {
     {"accentcolor", 0x0075FF},
     {"accentcolortext", 0xFFFFFF},
@@ -247,6 +253,7 @@ inline constexpr named system_colors[] = {
     {"windowtext", 0x000000},
 };
 
+/// The system colours that differ under `color-scheme: dark`.
 inline constexpr named dark_system_colors[] = {
     {"activetext", 0xFF9E9E},   {"buttonborder", 0x6B6B6B},     {"buttonface", 0x6B6B6B},
     {"buttontext", 0xFFFFFF},   {"canvas", 0x121212},           {"canvastext", 0xFFFFFF},
@@ -259,10 +266,11 @@ inline constexpr named dark_system_colors[] = {
     {"infotext", 0xFFFFFF},
 };
 
+/// Looks `word` up in `table`, ASCII case-insensitively; null if absent.
 [[nodiscard]] const named * find_named(std::span<const named> table, std::string_view word);
 
-// The colour spaces this file computes in: the four polar/cylindrical ones,
-// the two Lab-likes, and the predefined RGB and XYZ spaces of `color()`.
+/// The colour spaces colours are computed in: the four polar/cylindrical ones,
+/// the two Lab-likes, and the predefined RGB and XYZ spaces of `color()`.
 enum class space : std::uint8_t {
     srgb,
     hsl,
@@ -281,16 +289,20 @@ enum class space : std::uint8_t {
     xyz_d65,
 };
 
+/// The CSS spelling of a space, as `color()` and color-mix() write it.
 [[nodiscard]] std::string_view space_name(space s) noexcept;
 
+/// The spaces `color()` names; `xyz` is `xyz-d65`.
 [[nodiscard]] std::optional<space> predefined_space(std::string_view word);
 
+/// The spaces `color-mix(in ...)` names: the predefined ones plus hsl, hwb,
+/// lab, lch, oklab and oklch.
 [[nodiscard]] std::optional<space> interpolation_space(std::string_view word);
 
-// §12.2's ANALOGOUS COMPONENTS: which category each slot of each space is
-// in. A missing component carries forward to the slot of the same category
-// in another space, and the XYZ spaces count as super-saturated RGB. hwb's
-// whiteness and blackness are analogous to nothing.
+/// §12.2's analogous components: which category each slot of each space is
+/// in. A missing component carries forward to the slot of the same category
+/// in another space, and the XYZ spaces count as super-saturated RGB. hwb's
+/// whiteness and blackness are analogous to nothing.
 enum class part : std::uint8_t {
     red,
     green,
@@ -304,28 +316,38 @@ enum class part : std::uint8_t {
     blackness,
 };
 
+/// The category of each of a space's three slots.
 [[nodiscard]] std::array<part, 3> parts_of(space s) noexcept;
 
+/// The slot holding `p` in `s`, or -1.
 [[nodiscard]] int slot_of(space s, part p) noexcept;
 
+/// The hue slot of a polar space, or -1.
 [[nodiscard]] int hue_slot(space s) noexcept;
 
+/// The chroma/saturation slot of a polar space, or -1 (hwb has none).
 [[nodiscard]] int colorfulness_slot(space s) noexcept;
 
+/// The channel keywords a relative colour may use, in slot order; `alpha` is
+/// always the fourth.
 [[nodiscard]] std::array<std::string_view, 3> channel_keywords(space s) noexcept;
 
+/// What 100% means in `slot` of `s` (slot 3 is alpha); `bytes` selects rgb()'s
+/// 0..255 range for sRGB.
 [[nodiscard]] double percent_reference(space s, int slot, bool bytes) noexcept;
 
 // --- the resolved colour ----------------------------------------------------
 
+/// A colour evaluated to numbers: one space, three channels each of which may
+/// be missing (`none`), and an alpha. A missing channel's value is 0.
 struct resolved {
     space cs = space::srgb;
     std::array<double, 3> c{};
     std::array<bool, 3> none{};
     double alpha = 1.0;
     bool alpha_none = false;
-    // See the file comment: written as rgb()/hex/named/hsl()/hwb() with every
-    // channel present, and therefore serialised as `rgb()`.
+    /// See the file comment: written as rgb()/hex/named/hsl()/hwb() with every
+    /// channel present, and therefore serialised as `rgb()`.
     bool legacy = false;
 
     [[nodiscard]] bool any_none() const noexcept {
@@ -337,9 +359,11 @@ using vec3 = std::array<double, 3>;
 
 using mat3 = std::array<std::array<double, 3>, 3>;
 
+/// The matrix-vector product m * v.
 [[nodiscard]] vec3 mul(const mat3 & m, const vec3 & v) noexcept;
 
-// The matrices, as CSS Color 4 §17 publishes them.
+// The matrices, as CSS Color 4 §17 publishes them. `lin_X_to_xyz` takes
+// linear-light X to XYZ D65 (D50 for ProPhoto), and `xyz_to_lin_X` back.
 inline constexpr mat3 lin_srgb_to_xyz{{{506752.0 / 1228815, 87881.0 / 245763, 12673.0 / 70218},
                                        {87098.0 / 409605, 175762.0 / 245763, 12673.0 / 175545},
                                        {7918.0 / 409605, 87881.0 / 737289, 1001167.0 / 1053270}}};
@@ -413,8 +437,11 @@ inline constexpr mat3 lms_to_xyz{{{1.2268798758459243, -0.5578149944602171, 0.28
                                   {-0.0405757452148008, 1.1122868032803170, -0.0717110580655164},
                                   {-0.0763729366746601, -0.4214933324022432, 1.5869240198367816}}};
 
+/// The D50 reference white in XYZ, from its chromaticity (0.3457, 0.3585).
 inline constexpr vec3 d50_white{0.3457 / 0.3585, 1.0, (1.0 - 0.3457 - 0.3585) / 0.3585};
 
+// Transfer functions: lin_* decode a gamma-encoded channel to linear light,
+// gam_* encode it. Sign-preserving.
 [[nodiscard]] double lin_srgb(double v) noexcept;
 
 [[nodiscard]] double gam_srgb(double v) noexcept;
@@ -431,10 +458,14 @@ inline constexpr vec3 d50_white{0.3457 / 0.3585, 1.0, (1.0 - 0.3457 - 0.3585) / 
 
 [[nodiscard]] double gam_2020(double v) noexcept;
 
+/// Applies `f` to each component of `v`.
 [[nodiscard]] vec3 map3(const vec3 & v, double (*f)(double) noexcept) noexcept;
 
+/// A hue in degrees wrapped into [0, 360); a non-finite hue is 0.
 [[nodiscard]] double normalize_hue(double h) noexcept;
 
+// hsl/hwb <-> sRGB, Lab/OKLab <-> XYZ D65, and Lab <-> LCH: CSS Color 4's
+// sample code. Hues in degrees, hsl/hwb percentages in 0..100, sRGB in 0..1.
 [[nodiscard]] vec3 hsl_to_rgb(double hue, double sat, double light) noexcept;
 
 [[nodiscard]] double rgb_to_hue(const vec3 & rgb) noexcept;
@@ -457,29 +488,40 @@ inline constexpr vec3 d50_white{0.3457 / 0.3585, 1.0, (1.0 - 0.3457 - 0.3585) / 
 
 [[nodiscard]] vec3 lch_to_lab(const vec3 & lch) noexcept;
 
+/// Space `s`'s channels to XYZ D65; the caller passes `none` as zero.
 [[nodiscard]] vec3 to_xyz(space s, vec3 c) noexcept;
 
+/// XYZ D65 to space `s`'s channels.
 [[nodiscard]] vec3 from_xyz(space s, const vec3 & xyz) noexcept;
 
+/// The colourfulness at or below which `s`'s hue is powerless (§4.4.1).
 [[nodiscard]] double hue_epsilon(space s) noexcept;
 
+/// Makes a powerless hue missing before a conversion (§4.4.1).
 void settle_powerless(resolved & r) noexcept;
 
+/// Whether `s` is sRGB, hsl or hwb.
 [[nodiscard]] bool srgb_family(space s) noexcept;
 
+/// Converts a colour to space `to`, carrying missing components forward
+/// (§11.2, §12.2).
 [[nodiscard]] resolved convert(const resolved & from, space to);
 
+/// A channel value with six significant digits, no exponent.
 [[nodiscard]] std::string channel_text(double v);
 
+/// A legacy sRGB channel (0..255 scale) clamped and rounded to a byte.
 [[nodiscard]] std::string byte_text(double v);
 
+/// A legacy alpha as CSSOM's <alphavalue>: the shortest fraction that rounds
+/// to the same 8-bit alpha.
 [[nodiscard]] std::string legacy_alpha_text(double alpha);
 
 // --- the parsed tree --------------------------------------------------------
 
-// One channel as written: a literal, `none`, a relative colour's keyword, or a
-// math function kept as text (its simplified specified form) with what it
-// evaluates to when that can be known before a font size exists.
+/// One channel as written: a literal, `none`, a relative colour's keyword, or a
+/// math function kept as text (its simplified specified form) with what it
+/// evaluates to when that can be known before a font size exists.
 struct channel {
     enum class kind : std::uint8_t {
         number,
@@ -493,8 +535,8 @@ struct channel {
     double value = 0.0;   // number; percent as 0..100; angle in degrees
     std::string text;     // keyword lowercased; calc as simplified specified text
     std::string raw_calc; // the calc as written, for evaluation against a context
-    // A calc() with an answer at parse time (no relative units, no tree
-    // counting), and which kind of answer.
+    /// A calc() with an answer at parse time (no relative units, no tree
+    /// counting), and which kind of answer.
     bool resolvable = false;
     double resolved_value = 0.0;
     kind resolved_kind = kind::number;
@@ -502,11 +544,15 @@ struct channel {
 
 struct parsed;
 
+/// One colour argument of color-mix(), light-dark() or color-layers(), with
+/// its color-mix() weight if one was written.
 struct mix_item {
     std::unique_ptr<parsed> color;
     std::optional<channel> weight; // a percentage, or a calc()
 };
 
+/// A colour as written, as a tree: what the specified serialisation walks and
+/// resolve() evaluates.
 struct parsed {
     enum class kind : std::uint8_t {
         keyword, // named, system, currentcolor, transparent, -webkit-*
@@ -526,8 +572,8 @@ struct parsed {
     std::string fn; // canonical function name: rgb hsl hwb lab lch oklab oklch color
     space cs = space::srgb;
     bool legacy_syntax = false; // the comma form of rgb()/hsl()
-    // rgb()'s channels are 0..255 where color(srgb ...)'s are 0..1: the one
-    // function whose numbers are not the space's own unit.
+    /// rgb()'s channels are 0..255 where color(srgb ...)'s are 0..1: the one
+    /// function whose numbers are not the space's own unit.
     bool bytes = false;
     std::array<channel, 3> ch{};
     std::optional<channel> alpha;
@@ -541,35 +587,50 @@ struct parsed {
 
 // --- the reader -------------------------------------------------------------
 
-// The units a channel calc() can be answered with before a font size or a
-// viewport exists.
+/// The units a channel calc() can be answered with before a font size or a
+/// viewport exists.
 inline constexpr std::string_view context_free_units[] = {
     "px", "cm", "mm", "q", "in", "pt", "pc", "deg", "grad", "rad", "turn", "s", "ms"};
 
+/// Whether tokens [begin, end) evaluate without an element or layout.
 [[nodiscard]] bool parse_time_answerable(const token_stream & ts, std::size_t begin,
                                          std::size_t end);
 
+/// The math functions a channel or a mix weight may be written with.
 inline constexpr std::string_view math_names[] = {
     "calc",     "min",      "max",           "clamp",         "round", "mod",  "rem",
     "sin",      "cos",      "tan",           "asin",          "acos",  "atan", "atan2",
     "pow",      "sqrt",     "hypot",         "log",           "exp",   "abs",  "sign",
     "calc-mix", "progress", "sibling-index", "sibling-count", "random"};
 
+// The specified serialisation (specified.cpp). `slot` is a channel index,
+// 0-2, or 3 for alpha.
+
+/// A literal channel in the function's own unit (a percentage resolved).
 [[nodiscard]] double literal_value(const channel & c, space cs, int slot, bool bytes) noexcept;
 
+/// The specification's parse-time clamps for one channel.
 [[nodiscard]] double clamp_literal(double v, space cs, int slot, bool absolute,
                                    bool bytes) noexcept;
 
+/// Whether a channel's value is known at parse time.
 [[nodiscard]] bool channel_settled(const channel & c) noexcept;
 
+/// Whether every channel is known at parse time; `none` counts only when
+/// `none_ok`.
 [[nodiscard]] bool all_settled(const parsed & p, bool none_ok) noexcept;
 
+/// An absolute rgb()/hsl()/hwb() with every channel settled, as sRGB.
 [[nodiscard]] resolved settled_legacy(const parsed & p);
 
+/// Whether serialising an hsl()/hwb() origin as `rgb()` would lose its hue.
 [[nodiscard]] bool origin_loses_in_rgb(const parsed & p);
 
+/// An sRGB colour as `rgb(r, g, b)` or `rgba(r, g, b, a)`.
 [[nodiscard]] std::string legacy_text(const resolved & r);
 
+/// The specified serialisation of a parsed colour; `as_origin` when nested as
+/// an origin or a mix item.
 std::string serialize_specified(const parsed & p, bool as_origin);
 
 [[nodiscard]] std::string modern_channel_text(const channel & c, space cs, int slot,
@@ -587,46 +648,59 @@ std::string serialize_specified(const parsed & p, bool as_origin);
 
 // --- resolving --------------------------------------------------------------
 
+/// What resolving a colour may consult.
 struct resolve_context {
     std::string_view current_color; // computed text, or empty
     const length_context * lengths = nullptr;
     bool dark = false; // the used colour scheme
 };
 
+/// Evaluates a parsed colour against `ctx`; `depth` counts nesting.
 std::optional<resolved> resolve(const parsed & p, const resolve_context & ctx, int depth);
 
+/// Evaluates a channel calc(), substituting a relative colour's keywords.
 [[nodiscard]] std::optional<double> evaluate_channel(const channel & c, space cs, int slot,
                                                      bool bytes, const resolved * origin,
                                                      const resolve_context & ctx);
 
-// The value of one channel of an absolute or relative colour, and whether it
-// is missing. `origin` is the relative colour's origin in the target space.
+/// The value of one channel of an absolute or relative colour, and whether it
+/// is missing.
 struct channel_answer {
     double value = 0.0;
     bool none = false;
 };
 
+/// One channel's value; `origin` is the relative colour's origin in the
+/// target space, or null for an absolute colour.
 [[nodiscard]] std::optional<channel_answer> channel_value(const channel & c, space cs, int slot,
                                                           bool bytes, const resolved * origin,
                                                           const resolve_context & ctx);
 
+/// A colour's channels in the units a relative colour's keywords read
+/// (rgb(): 0..255).
 [[nodiscard]] resolved as_keywords(resolved r, bool bytes) noexcept;
 
+/// Resolves an absolute or relative colour function.
 [[nodiscard]] std::optional<resolved> resolve_absolute(const parsed & p,
                                                        const resolve_context & ctx, int depth);
 
+/// Interpolates two colours in `cs` with weights p1 and p2 (§12).
 [[nodiscard]] resolved interpolate(resolved a, resolved b, space cs, std::string_view hue_method,
                                    double p1, double p2, double alpha_multiplier);
 
+/// Resolves a color-mix().
 [[nodiscard]] std::optional<resolved> resolve_mix(const parsed & p, const resolve_context & ctx,
                                                   int depth);
 
 std::optional<resolved> resolve(const parsed & p, const resolve_context & ctx, int depth);
 
+/// A resolved colour in the modern syntax.
 [[nodiscard]] std::string modern_text(const resolved & r);
 
+/// The computed-value serialisation getComputedStyle reports.
 [[nodiscard]] std::string serialize_computed(const resolved & r);
 
+/// Parses `text` as one whole <color>; null if invalid or anything follows.
 [[nodiscard]] std::unique_ptr<parsed> parse_text(std::string_view text);
 
 } // namespace ctbrowser::style::css::color_detail

@@ -1,16 +1,22 @@
+//===- grammar/position.cpp - The position grammar ------------ -*- C++ -*-===//
+//
+// The computed value of a `<position>`: each half resolved to a percentage or
+// length from the physical start edge, with the flow-relative keywords
+// (`x-start`, `y-end`, ...) mapped through the writing mode and direction.
+//
+//===----------------------------------------------------------------------===//
+
 #include "internal.hpp"
 
 namespace ctbrowser::style::css {
 
 using namespace grammar_detail;
 
-// --- the computed `<position>` -----------------------------------------------
-
 namespace {
 
-// One component of a position as the computed value reads it: a keyword, or an
-// offset with its text - a percentage keeping its number so `right 30%` can fold
-// to `70%` without re-parsing the string.
+/// One component of a position as the computed value reads it: a keyword, or
+/// an offset with its text. A percentage keeps its number so `right 30%` can
+/// fold to `70%` without re-parsing the string.
 struct position_component {
     position_axis kind = position_axis::none;
     std::string text;
@@ -18,9 +24,9 @@ struct position_component {
     double number = 0;
 };
 
-// The components, functions kept whole. `position_axis_of` reads one token;
-// a `calc()` is several, and its text is the slice of the source from the
-// function token to its matching close paren.
+/// Splits a position into components, keeping functions whole.
+/// `position_axis_of` reads one token; a `calc()` is several, and its text is
+/// the slice of the source from the function token to its matching `)`.
 [[nodiscard]] bool position_components(const token_stream & ts,
                                        std::vector<position_component> & out) {
     for (std::size_t i = 0; i < ts.tokens.size(); ++i) {
@@ -38,8 +44,8 @@ struct position_component {
                 if (type == token_type::close_paren) { --depth; }
             }
             const css_token & last = ts.tokens[j - 1];
-            // A rebuilt (escaped) token is not a slice of the source, and a
-            // position with an escape in a calc() is not worth a second path.
+            // A rebuilt (escaped) token is not a slice of the source; a position
+            // with an escape inside a calc() is rejected rather than handled.
             if (t.text >= ts.source_length || last.text >= ts.source_length) { return false; }
             one.kind = position_axis::offset;
             one.text = std::string_view{ts.pool}.substr(t.text, last.text + last.length - t.text);
@@ -56,15 +62,16 @@ struct position_component {
     return !out.empty();
 }
 
+/// A physical edge along one axis.
 enum class box_side : std::uint8_t {
     start,
     center,
     end
 };
 
-// The physical side a keyword names, the flow-relative ones folded through
-// `flipped` - which is what the writing mode and direction reduce to for one
-// axis.
+/// The physical side a keyword names. The flow-relative keywords are mapped
+/// through `flipped`, which is what the writing mode and direction reduce to
+/// for one axis.
 [[nodiscard]] box_side physical_side(std::string_view word, bool flipped) {
     if (word == "center") { return box_side::center; }
     const bool is_end = word == "right" || word == "bottom" || word == "x-end" || word == "y-end";
@@ -72,9 +79,9 @@ enum class box_side : std::uint8_t {
     return (is_end != (flow && flipped)) ? box_side::end : box_side::start;
 }
 
-// `<side> <offset>?` as a percentage or a length from the START edge. A
-// percentage offset from the end folds; a length from the end is a calc(),
-// which is how every browser writes `right 20px`.
+/// `<side> <offset>?` as a percentage or a length from the start edge. A
+/// percentage offset from the end folds (`right 30%` is `70%`); a length from
+/// the end becomes a calc(), as every browser writes `right 20px`.
 [[nodiscard]] std::string computed_half(box_side side, const position_component * offset) {
     if (offset == nullptr) {
         return side == box_side::start ? "0%" : (side == box_side::center ? "50%" : "100%");

@@ -1,17 +1,21 @@
-// calc() - the SPECIFIED value of a sum that will not fold: CSS Values 4 §10.12's
-// simplification over the calculation TREE and §10.13's serialisation of it.
+//===- ctbrowser/lib/Style/css/calc/tree.cpp - The calculation tree -------===//
 //
-// The symbolic evaluator answers for a sum of terms - `calc(10px + 1em + 10%)`
-// - and the evaluator for one with a magnitude. What neither can answer is a
-// sum with a comparison in it that layout has to decide: `calc((min(10px, 20%)
-// + max(1rem, 2%)) * 2)` is not a term, and CSS Values 4 does not say to keep
-// the author's bytes; it says to simplify the tree - fold what folds around
-// the min() and the max() - and print it in a canonical order:
-// `calc(2 * (min(10px, 20%) + max(1rem, 2%)))`. calc-serialization-002,
-// calc-nesting-002 and the minmax-*-serialize files read that order.
+// The value of a calc() sum that will not fold: CSS Values 4 §10.12's
+// simplification over the calculation tree, and §10.13's serialization of it.
 //
-// This is that tree, and nothing else: the two evaluators are still asked
-// first, and this runs only for the sums they had no answer for.
+// The symbolic evaluator answers for a sum of terms (`calc(10px + 1em + 10%)`)
+// and the evaluator for one with a magnitude. Neither can answer a sum holding
+// a comparison that layout has to decide: `calc((min(10px, 20%) +
+// max(1rem, 2%)) * 2)` is not a term. CSS Values 4 says to simplify the tree,
+// folding what folds around the min() and the max(), and print it in a
+// canonical order: `calc(2 * (min(10px, 20%) + max(1rem, 2%)))`. The WPT tests
+// calc-serialization-002, calc-nesting-002 and minmax-*-serialize check that
+// order.
+//
+// The two evaluators are still asked first; this runs only for the sums they
+// had no answer for.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -22,16 +26,17 @@ namespace ctbrowser::style::css::detail {
 
 namespace {
 
+/// One node of a calculation tree (CSS Values 4 §10.12).
 struct node {
     enum class kind : std::uint8_t {
-        number,    // `value`
-        dimension, // `value` in `unit`, which is canonical for a context-free unit
-        percent,   // `value`%
-        function,  // a math function this tree does not open: `text`
+        number,    ///< `value`.
+        dimension, ///< `value` in `unit`, which is canonical for a context-free unit.
+        percent,   ///< `value`%.
+        function,  ///< A math function this tree does not open, kept as `text`.
         sum,
         product,
-        negate, // one child
-        invert, // one child
+        negate, ///< One child.
+        invert, ///< One child.
     };
     kind what = kind::number;
     double value = 0.0;
@@ -44,9 +49,9 @@ struct node {
     }
 };
 
-// One leaf from simplified TEXT: `calc(6px)`, `calc(0.5)`, `calc(10%)` or the
-// bare forms, as simplify_math and specified_math print them. Nothing for
-// anything else.
+/// One leaf from simplified text: `calc(6px)`, `calc(0.5)`, `calc(10%)` or the
+/// bare forms, as simplify_math and specified_math print them. `nullopt` for
+/// anything else.
 [[nodiscard]] std::optional<node> leaf_of(std::string_view text) {
     std::string_view inner = trim(text, html_whitespace);
     if (ascii_istarts_with(inner, "calc(") && inner.ends_with(')')) {
@@ -75,13 +80,13 @@ struct node {
     return std::nullopt;
 }
 
-// Recursive descent over the tokens of one <calc-sum>, CSS Values 4 §10.1.
-// `ok` latches false at the first token that is not arithmetic.
+/// Recursive descent over the tokens of one <calc-sum>, CSS Values 4 §10.1.
+/// `ok_` latches false at the first token that is not arithmetic.
 class reader {
 public:
-    // With `ctx`, the tree is a COMPUTED value: a relative length becomes
-    // pixels and a nested function is folded against the bases rather than
-    // simplified without them.
+    /// With `ctx`, the tree is a computed value: a relative length becomes
+    /// pixels and a nested function is folded against the bases rather than
+    /// simplified without them.
     reader(const token_stream & ts, const length_context * ctx) : t_(ts), ctx_(ctx) {}
 
     [[nodiscard]] std::optional<node> read() {
@@ -182,15 +187,15 @@ private:
             out.what = node::kind::dimension;
             out.value = tok.number;
             out.unit = ascii_lower_copy(unit);
-            // A context-free unit is written in its family's canonical one:
+            // A context-free unit is written in its type's canonical unit:
             // `1in` is `96px` (§10.12); against bases, so is a relative one.
             //
-            // ...WHEN THAT LOSES NOTHING. The text this writes is parsed again
-            // by the cascade, and `100dpi` as `1.041667dppx` is six digits of
-            // a number that had more: `calc(100dpi + 20dpi * sign(38px -
-            // 2em))` came out 0.833334dppx instead of 0.833333dppx
-            // (signs-abs-computed). A conversion the printed number cannot
-            // carry keeps the author's unit.
+            // Only when that loses nothing, though. The cascade parses this
+            // text again, and `100dpi` printed as `1.041667dppx` loses digits:
+            // `calc(100dpi + 20dpi * sign(38px - 2em))` would give
+            // 0.833334dppx instead of 0.833333dppx (WPT signs-abs-computed).
+            // A conversion the printed number cannot carry keeps the author's
+            // unit.
             if (context_free_unit(unit)) {
                 // from_chars, not stod: stod is strtod, which reads the locale's
                 // decimal point, and it throws on a text no number can round-trip.
@@ -223,7 +228,7 @@ private:
             } else if (ascii_iequals(word, "e")) {
                 out.value = std::numbers::e;
             } else {
-                return fail(); // `infinity`, `NaN`: a term the evaluators own
+                return fail(); // `infinity`, `NaN`: terms the evaluators own.
             }
             ++at_;
             return out;
@@ -269,7 +274,7 @@ private:
         }
     }
 
-    // One past the `)` that closes the function at `open`, or the eof.
+    /// One past the `)` that closes the function at `open`, or the eof.
     [[nodiscard]] std::size_t end_of_function(std::size_t open) const noexcept {
         int depth = 0;
         for (std::size_t i = open; i < t_.tokens.size(); ++i) {
@@ -291,7 +296,8 @@ private:
     return a.what == b.what && a.unit == b.unit;
 }
 
-// §10.12, bottom up.
+/// Simplifies the tree bottom up, as CSS Values 4 §10.12 "simplify a
+/// calculation tree" describes.
 [[nodiscard]] node simplify(node root) {
     for (node & child : root.children) { child = simplify(std::move(child)); }
     switch (root.what) {
@@ -388,14 +394,14 @@ private:
     }
 }
 
-// §10.13.
+/// Serializes a simplified tree in canonical order, CSS Values 4 §10.13.
 [[nodiscard]] std::string serialize(const node & root);
 
 [[nodiscard]] std::string serialize_leaf(const node & leaf, bool absolute) {
     const double v = absolute ? std::fabs(leaf.value) : leaf.value;
-    // A NEGATIVE ZERO KEEPS ITS SIGN: `sign(-0em / 1px)` is -0 and `sign(0em /
-    // 1px)` is 0, and signs-abs-computed reads the difference back through
-    // `1 / sign(...)`.
+    // A negative zero keeps its sign: `sign(-0em / 1px)` is -0 and
+    // `sign(0em / 1px)` is 0, and WPT signs-abs-computed observes the
+    // difference through `1 / sign(...)`.
     const std::string sign = v == 0.0 && std::signbit(v) ? "-" : "";
     switch (leaf.what) {
     case node::kind::number: return sign + serialize_number(v);
@@ -405,7 +411,7 @@ private:
     }
 }
 
-// A child in parentheses when it is a sum or a product: `(2 * (10px + min()))`.
+/// A child, in parentheses when it is a sum or a product: `(2 * (10px + min()))`.
 [[nodiscard]] std::string serialize_child(const node & child) {
     if (child.what == node::kind::sum || child.what == node::kind::product) {
         return "(" + serialize(child) + ")";
@@ -459,7 +465,7 @@ private:
     case node::kind::product: {
         // The numeric factors first, as every engine writes a product:
         // `10deg * sign(1em - 10px)`, never `sign(1em - 10px) * 10deg`
-        // (css-color's rgb-valid and hsl-valid read it back that way).
+        // (WPT css-color rgb-valid and hsl-valid expect it that way).
         std::vector<const node *> sorted;
         for (const node & child : root.children) { sorted.push_back(&child); }
         const auto rank = [](const node * n) {

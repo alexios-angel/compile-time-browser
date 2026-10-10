@@ -1,16 +1,27 @@
+//===- tables.cpp - Shorthand tables -------------------------- -*- C++ -*-===//
+//
+// Lookups over the shorthand table: the longhands each shorthand expands to,
+// the shorthands a longhand belongs to, legacy `-webkit-` name aliases and
+// the logical/physical group of a property.
+//
+//===----------------------------------------------------------------------===//
 #include "internal.hpp"
 
 namespace ctbrowser::style::css::shorthand_detail {
 
+/// Maps a legacy `-webkit-` alias to the property it stands for
+/// (`-webkit-border-*-radius`, the flexbox names, `-webkit-appearance`);
+/// any other name is returned unchanged.
 [[nodiscard]] std::string_view radius_name(std::string_view name) {
     if (ascii_istarts_with(name, "-webkit-border-") &&
         ascii_iequals(name.substr(name.size() - 7), "-radius") && find_property(name) != nullptr) {
         return name.substr(8);
     }
-    // THE OTHER LEGACY NAME ALIASES (CSS Cascade 5 §legacy name alias): a
-    // name that IS another property's at parse time - set, read and written
-    // back under the new one, and no property of its own. Flexbox 1 §9's
-    // twelve `-webkit-` names and CSS UI 4's `-webkit-appearance`.
+    // The other legacy name aliases (CSS Cascade 5, "legacy name alias"): a
+    // name that is another property's name at parse time. It is set, read and
+    // written back under the new name and has no property of its own. These
+    // are Flexbox 1 §9's twelve `-webkit-` names and CSS UI 4's
+    // `-webkit-appearance`.
     static constexpr std::string_view webkit[] = {
         "align-content",   "align-items", "align-self", "flex",        "flex-basis",
         "flex-direction",  "flex-flow",   "flex-grow",  "flex-shrink", "flex-wrap",
@@ -23,8 +34,10 @@ namespace ctbrowser::style::css::shorthand_detail {
     return name;
 }
 
-// The table with its longhand lists split once. `all` is every longhand the
-// property table has except the two CSS Cascade 4 §3.1 leaves out.
+/// The shorthand table with each longhand list split once, built on first use.
+/// `all` expands to every longhand in the property table except the two that
+/// CSS Cascade 4 §3.1 leaves out (`direction`, `unicode-bidi`) and the legacy
+/// aliases.
 const std::vector<expansion> & expansions() {
     static const std::vector<expansion> built = [] {
         std::vector<expansion> out;
@@ -48,6 +61,7 @@ const std::vector<expansion> & expansions() {
     return built;
 }
 
+/// The expansion of shorthand `name` (ASCII case-insensitive), or null.
 [[nodiscard]] const expansion * expansion_of(std::string_view name) {
     for (const expansion & e : expansions()) {
         if (ascii_iequals(e.syntax->name, name)) { return &e; }
@@ -55,9 +69,9 @@ const std::vector<expansion> & expansions() {
     return nullptr;
 }
 
-// The shorthands a longhand belongs to, in PREFERRED ORDER: the one with the
-// most longhands first, so `border` is tried before `border-width` before
-// `border-top`, and `all` before everything.
+/// The shorthands a longhand belongs to, in preferred order: the one with the
+/// most longhands first, so `border` is tried before `border-width` before
+/// `border-top`, and `all` before everything.
 [[nodiscard]] std::vector<const expansion *> shorthands_for(std::string_view longhand) {
     std::vector<const expansion *> out;
     for (const expansion & e : expansions()) {
@@ -69,11 +83,15 @@ const std::vector<expansion> & expansions() {
     return out;
 }
 
+/// The initial value of `longhand`, or empty if it is not a known property.
 [[nodiscard]] std::string_view initial_of(std::string_view longhand) {
     const property_syntax * p = find_property(longhand);
     return p == nullptr ? std::string_view{} : p->initial;
 }
 
+/// The logical property group `name` belongs to (its name with the side
+/// removed, e.g. `margin-inline-start` -> `margin`) and which kind of side it
+/// names. A property in no group returns an empty group with mapping::none.
 [[nodiscard]] logical_group group_of(std::string_view name) {
     if (name.starts_with("border-") && name.ends_with("-radius")) {
         const bool logical = name.find("-start") != std::string_view::npos ||

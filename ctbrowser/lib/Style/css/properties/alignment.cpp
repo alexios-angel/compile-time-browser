@@ -1,3 +1,5 @@
+//===- alignment.cpp - CSS Box Alignment values ---------------------------===//
+//
 // CSS Box Alignment 3: the six longhands and the three `place-*` shorthands.
 //
 //   align-content    normal | <baseline-position> | <content-distribution>
@@ -13,6 +15,8 @@
 //
 // Serialised as CSSOM writes it: `first baseline` is `baseline`, `legacy`
 // comes before its keyword, the overflow keyword before its position.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -27,14 +31,17 @@ constexpr std::string_view self_positions =
     "center start end self-start self-end flex-start flex-end anchor-center";
 constexpr std::string_view distributions = "space-between space-around space-evenly stretch";
 
+/// Which alignment longhand family a value belongs to: *-content, *-self or
+/// *-items. The justify/align side is a separate flag.
 enum class axis : std::uint8_t {
     content,
     self_,
     items,
 };
 
-// The words of the value from `at`, matched against `property`'s grammar;
-// answers the canonical text and advances `at` past what it read, or fails.
+/// Reads one alignment value from `words` starting at `at`, using the
+/// grammar of axis `kind` (justify-* when `justify`), into its canonical
+/// text. Advances `at` past what it read; returns false if nothing matches.
 [[nodiscard]] bool read_alignment(std::span<const std::string> words, std::size_t & at, axis kind,
                                   bool justify, std::string & out) {
     if (at >= words.size()) { return false; }
@@ -94,6 +101,8 @@ enum class axis : std::uint8_t {
     return false;
 }
 
+/// The axis and justify flag of an alignment longhand; nullopt for any other
+/// property.
 [[nodiscard]] std::optional<std::pair<axis, bool>> axis_of(std::string_view property) {
     static constexpr std::pair<std::string_view, std::pair<axis, bool>> table[] = {
         {"align-content", {axis::content, false}}, {"justify-content", {axis::content, true}},
@@ -137,8 +146,8 @@ bool split_place(std::string_view shorthand, std::string_view value, std::string
         // One value sets both, except that a baseline alignment has no
         // justify-content spelling and takes `start` there.
         justify = kind == axis::content && align.ends_with("baseline") ? "start" : align;
-        // `legacy` is justify-items' alone; alone it is `normal` on the
-        // align side and cannot come from here at all.
+        // `legacy` cannot appear here: the align-side read (justify = false)
+        // rejects it.
         return true;
     }
     if (!read_alignment(*words, at, kind, true, justify)) { return false; }

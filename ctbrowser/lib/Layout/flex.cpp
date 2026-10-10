@@ -1,3 +1,10 @@
+//===- ctbrowser/lib/Layout/flex.cpp - Flexbox layout -----------*- C++ -*-===//
+//
+// Flex layout (flex_flow::measure and flex_flow::arrange). The header
+// <ctbrowser/layout/flex.hpp> documents what is and is not supported; this
+// file follows the steps of CSS Flexbox 1 §9 in order.
+//
+//===----------------------------------------------------------------------===//
 #include <ctbrowser/layout/flex.hpp>
 
 #include <algorithm>
@@ -7,38 +14,32 @@
 #include <utility>
 #include <vector>
 
-// flex: the function bodies.
-// The header says what this computes and what it deliberately does not; this
-// says how, in the order Flexbox 1 §9 says to do it.
-
 namespace ctbrowser::layout {
 namespace {
 
-// "This size is not known." A container's main size is indefinite when it is a
-// `column` with no stated height, and a flex line cannot be filled against a
-// size nobody has yet - which is why an indefinite main size means no flexing at
-// all rather than flexing against zero.
-//
-// Spelled once here because `constraints::available_height` already uses 0 for
-// "as tall as it needs to be" and a second 0-means-unknown would be a trap: a
-// container really can be 0 tall.
+/// "This size is not known." A container's main size is indefinite when it is a
+/// `column` with no stated height, and a flex line cannot be filled against a
+/// size nobody has yet, so an indefinite main size means no flexing at all
+/// rather than flexing against zero.
+///
+/// It is -1 rather than 0 because `constraints::available_height` already uses
+/// 0 for "as tall as it needs to be", and a container really can be 0 tall.
 constexpr float indefinite = -1.0f;
 
 [[nodiscard]] constexpr bool is_definite(float v) noexcept {
     return v >= 0;
 }
 
-// MAX FIRST, THEN MIN, because min wins - the same order and the same reason as
-// outer_width_of (lib/Layout/algorithm.cpp): a box whose minimum exceeds its
-// maximum takes the minimum, which CSS 2.1 §10.4 says outright and which this
-// order produces with no special case. `max < 0` means there is no maximum.
+/// Clamps `value` to [min, max], applying the maximum first so the minimum wins
+/// when they conflict (CSS 2.1 §10.4), as outer_width_of in
+/// lib/Layout/algorithm.cpp does. `max < 0` means there is no maximum.
 [[nodiscard]] float clamp_extent(float value, float min, float max) {
     return std::max(min, max < 0 ? value : std::min(value, max));
 }
 
-// One flex item, carried through every pass. The algorithm is a sequence of
-// passes and each needs what the one before it wrote, so this is one struct
-// rather than eight parallel arrays indexed by the same integer.
+/// One flex item, carried through every pass. The algorithm is a sequence of
+/// passes and each needs what the one before it wrote, so this is one struct
+/// rather than eight parallel arrays indexed by the same integer.
 struct flex_item {
     const box_node * box = nullptr;
     constraints c;         // the item's containing block, for its own percentages
@@ -46,9 +47,9 @@ struct flex_item {
     float main_margin = 0; // both margins on the main axis, autos counted as 0
     float cross_margin = 0;
     float main_padding = 0;
-    // The margins at the FLEX-START edge of each axis - which is the right margin
-    // under `row-reverse` and the bottom one under `wrap-reverse`, not the left
-    // and the top. See where these are filled in.
+    /// The margins at the flex-start edge of each axis: the right margin under
+    /// `row-reverse` and the bottom one under `wrap-reverse`, not the left and
+    /// the top.
     float main_lead = 0;
     float cross_lead = 0;
     bool main_start_auto = false; // flex-relative, like the two above
@@ -70,14 +71,13 @@ struct flex_item {
     float cross = 0; // the item's border-box size on the cross axis
 };
 
-// `align-self`, resolved against the container's `align-items`.
-//
-// `auto` defers to the container and `normal` behaves as `stretch` in a flex
-// container - the two spellings of "nothing was said" arriving from two
-// properties. BASELINE ALIGNMENT IS NOT IMPLEMENTED: §8.3 already says an item
-// whose baseline cannot be determined aligns to flex-start, so answering that is
-// the honest subset rather than an approximation, and it is recorded as a known
-// difference in docs/plans/bootstrap.md.
+/// `align-self`, resolved against the container's `align-items`.
+///
+/// `auto` defers to the container and `normal` behaves as `stretch` in a flex
+/// container: the two spellings of "nothing was said" arriving from two
+/// properties. Baseline alignment is not implemented. `baseline` is treated as
+/// flex-start, which Flexbox §8.3 prescribes for an item whose baseline cannot
+/// be determined.
 [[nodiscard]] flex_align resolved_align(const box_node & container, const box_node & item) {
     flex_align out = item.flex.self;
     if (out == flex_align::auto_) { out = container.flex.items; }
@@ -86,11 +86,12 @@ struct flex_item {
     return out;
 }
 
-// A COLUMN CONTAINER'S ITEM IS SIZED ACROSS FIRST, and that asymmetry is why the
-// two axes are not one shared code path. How TALL a box is depends on how WIDE
-// it is, because its text wraps - so down a column the cross size has to be
-// settled before the main size can even be asked for, while across a row the
-// main size comes first and the cross size falls out of laying the item out.
+/// The cross size (width) of an item in a column container. A column's item is
+/// sized across first, and that asymmetry is why the two axes are not one shared
+/// code path: how tall a box is depends on how wide it is, because its text
+/// wraps. Down a column the cross size has to be settled before the main size
+/// can be asked for, while across a row the main size comes first and the cross
+/// size falls out of laying the item out.
 [[nodiscard]] float column_cross_size(const box_node & container, const flex_item & it,
                                       float content_width, const measure_text_fn & measure_text) {
     const box_node & child = *it.box;
@@ -102,13 +103,10 @@ struct flex_item {
     } else if (container.flex.wrap == flex_wrap::nowrap &&
                resolved_align(container, child) == flex_align::stretch && !it.cross_start_auto &&
                !it.cross_end_auto) {
-        // STRETCH ONLY WHEN THERE IS ONE LINE, because a stretched item is as wide
-        // as its LINE and the lines do not exist yet. Pre-stretching every item to
-        // the whole container made each line as wide as the container, so a
-        // two-line column put its second line entirely outside itself. Where there
-        // may be several lines the item takes its content size here and the
-        // placement pass stretches it to whatever line it landed on - which is the
-        // same order the row axis uses, and it is why that axis never had this bug.
+        // Stretch here only for a single-line (nowrap) container. A stretched
+        // item is as wide as its line, and with wrapping the lines do not exist
+        // yet: the placement pass stretches the item to its line later, as on the
+        // row axis.
         size = content_width - it.cross_margin;
     } else {
         // Shrink to fit, the same clamp an inline-flex container takes: an item
@@ -127,10 +125,10 @@ struct flex_item {
     return std::max(0.0f, clamp_extent(size, min, max));
 }
 
-// Where a run starts, and how much space goes between its members, for one of
-// the six distribution values. `justify-content` distributes ITEMS along a line
-// and `align-content` distributes LINES across the container by the same six
-// rules, which is why they share an enum and share this.
+/// Where a run starts, and how much space goes between its members, for one of
+/// the six distribution values. `justify-content` distributes items along a line
+/// and `align-content` distributes lines across the container by the same six
+/// rules, which is why they share an enum and share this.
 struct distribution {
     float start = 0;
     float between = 0;
@@ -138,7 +136,7 @@ struct distribution {
 
 [[nodiscard]] distribution distribute(flex_align how, float free, std::size_t count) {
     if (count == 0) { return {}; }
-    // OVERFLOW FALLS BACK TO START for the three space-* values, per §8.2. Left
+    // Overflow falls back to start for the three space-* values, per §8.2. Left
     // alone, `space-between` on a negative free space would give a negative gap:
     // the items would overlap each other while the first one still sat at the
     // start, which is worse in both directions at once.
@@ -167,27 +165,27 @@ struct distribution {
     return {};
 }
 
-// THE INNER FLEX BASE SIZE - the CONTENT box, padding excluded. §9.7.4 weights
-// an item's share of a shrink by this and not by its border box, and the two are
-// a real distance apart here because every size in this engine names the border
-// box: two 200px items shrinking into 300px are 150/150 only if neither is
-// padded, and 166.67/133.33 if one of them has 100px of it. Blink calls the same
-// quantity flex_base_content_size for the same reason.
-//
-// It is NOT the same question as `box-sizing`, which is about what the AUTHOR's
-// `width` names; this is fixed by the spec whatever that says.
+/// The inner flex base size: the content box, padding excluded. §9.7.4 weights
+/// an item's share of a shrink by this and not by its border box, and the two
+/// differ here because every size in this engine names the border box: two
+/// 200px items shrinking into 300px are 150/150 only if neither is padded, and
+/// 166.67/133.33 if one of them has 100px of it. Blink calls the same quantity
+/// flex_base_content_size.
+///
+/// This is independent of `box-sizing`, which is about what the author's
+/// `width` names; this is fixed by the spec whatever that says.
 [[nodiscard]] float inner_base(const flex_item & it) {
     return std::max(0.0f, it.base - it.main_padding);
 }
 
-// §9.7, RESOLVING THE FLEXIBLE LENGTHS of one line.
-//
-// A FIXED-POINT ITERATION, and there is no correct single-pass version of it.
-// Growing three `.col`s from a flex base size of zero in a 960px row gives 320
-// each - but only after each has been clamped to its own [min-content, max-width]
-// and the loop has confirmed that nobody's clamp handed free space back for the
-// others to re-share. One proportional pass gets the common case right and the
-// interesting case wrong, silently.
+/// §9.7, resolving the flexible lengths of one line.
+///
+/// This is a fixed-point iteration; there is no correct single-pass version.
+/// Growing three `.col`s from a flex base size of zero in a 960px row gives 320
+/// each, but only after each has been clamped to its own [min-content,
+/// max-width] and the loop has confirmed that nobody's clamp handed free space
+/// back for the others to re-share. One proportional pass gets the common case
+/// right and the interesting case wrong, silently.
 void resolve_flexible_lengths(std::vector<flex_item> & items, std::span<const std::size_t> line,
                               float line_main, float main_gap) {
     const float gaps = line.size() > 1 ? main_gap * static_cast<float>(line.size() - 1) : 0.0f;
@@ -195,7 +193,7 @@ void resolve_flexible_lengths(std::vector<flex_item> & items, std::span<const st
     for (const std::size_t i : line) {
         hypothetical_total += items[i].hypothetical + items[i].main_margin;
     }
-    // WHICH FACTOR IS IN PLAY is decided once, from the hypothetical sizes, and
+    // Which factor is in play (grow or shrink) is decided once, from the hypothetical sizes, and
     // never revisited. Re-deciding it per pass would let a line that overshoots
     // while growing start shrinking, then overshoot the other way, and never
     // converge.
@@ -211,12 +209,10 @@ void resolve_flexible_lengths(std::vector<flex_item> & items, std::span<const st
         it.target = it.frozen ? it.hypothetical : it.base;
     }
 
-    // §9.7.3, THE INITIAL FREE SPACE: computed ONCE, from the state the pre-freeze
-    // above left behind, and never recomputed. The fraction a sub-one factor sum
-    // takes below is a fraction of THIS, not of what is left after some other item
-    // hit its clamp - scaling the remainder instead compounds the shrinkage on
-    // every pass, so `flex-grow: .25` beside an item that froze at its max-width
-    // came out 225 where Chrome says 250.
+    // §9.7.3: the initial free space is computed once, after the pre-freeze
+    // above, and never recomputed. The sub-one factor-sum rule below takes a
+    // fraction of this value; scaling what remains instead would compound the
+    // shrinkage on every pass.
     float initial_free = line_main - gaps;
     for (const std::size_t i : line) {
         const flex_item & it = items[i];
@@ -241,10 +237,10 @@ void resolve_flexible_lengths(std::vector<flex_item> & items, std::span<const st
         if (unfrozen == 0) { return; }
 
         // §9.7.4: when the unfrozen flex factors sum to less than one, only that
-        // FRACTION of the INITIAL free space is distributed - which is what makes
-        // `flex-grow: .5` take half the room rather than all of it - and only when
-        // that is the SMALLER of the two, which is what stops it overshooting once
-        // other items have frozen.
+        // fraction of the initial free space is distributed, which is what makes
+        // `flex-grow: .5` take half the room rather than all of it. It applies
+        // only when that is the smaller of the two, which stops it overshooting
+        // once other items have frozen.
         float free = remaining;
         if (factor_sum < 1) {
             const float scaled = initial_free * factor_sum;
@@ -260,9 +256,9 @@ void resolve_flexible_lengths(std::vector<flex_item> & items, std::span<const st
                 if (growing) {
                     target = it.base + free * it.grow / factor_sum;
                 } else if (scaled_shrink_sum > 0) {
-                    // SHRINKING IS WEIGHTED BY THE BASE SIZE and growing is not.
+                    // Shrinking is weighted by the base size and growing is not.
                     // Two items with the same `flex-shrink` do not give up the
-                    // same number of pixels, they give up the same PROPORTION -
+                    // same number of pixels, they give up the same proportion,
                     // which is what stops a narrow item collapsing to nothing
                     // beside a wide one.
                     target = it.base + free * (inner_base(it) * it.shrink) / scaled_shrink_sum;
@@ -290,8 +286,8 @@ void resolve_flexible_lengths(std::vector<flex_item> & items, std::span<const st
                 ++froze;
             }
         }
-        // A non-zero total with nothing to freeze is arithmetically impossible -
-        // the total IS the sum of the violations - but a float sum of
+        // A non-zero total with nothing to freeze is arithmetically impossible
+        // (the total is the sum of the violations), but a float sum of
         // opposite-signed terms can land on a value no individual term's sign
         // matches. Freezing everything terminates; spinning here does not.
         if (froze == 0) {
@@ -321,17 +317,17 @@ intrinsic_sizes flex_flow::measure(const box_node & b, const constraints & c,
     for (const box_node & child : b.children) {
         const constraints child_c{basis, c.available_height, child.font_size};
         const resolved_edges child_edges = resolve_edges(child, child_c);
-        // WHAT THE ITEM CONTRIBUTES, asked in the one place that answers it for
+        // What the item contributes, asked in the one place that answers it for
         // every parent: its own border box plus its margins, with a stated `width`
         // and its min/max clamps already applied.
         intrinsic_sizes item = outer_intrinsic(child, child_c, measure_text);
         float item_min = item.min_content;
         float item_max = item.max_content;
         const float outside = child_edges.horizontal_margin();
-        // A DEFINITE FLEX BASIS OVERRIDES THE `width` outer_intrinsic honoured,
-        // because that is where the freeze loop will start - `flex: 0 0 100px` on
-        // a `width: 50%` item is 100px wide. Only across a ROW: down a column the
-        // basis is a HEIGHT and says nothing about the width, which is the cross
+        // A definite flex basis overrides the `width` outer_intrinsic honoured,
+        // because that is where the freeze loop will start: `flex: 0 0 100px` on
+        // a `width: 50%` item is 100px wide. Only across a row: down a column the
+        // basis is a height and says nothing about the width, which is the cross
         // size column_cross_size will take from `width` instead.
         //
         // A percentage has no answer while the container's own width is the
@@ -340,9 +336,9 @@ intrinsic_sizes flex_flow::measure(const box_node & b, const constraints & c,
             const float inner = child_edges.horizontal_inner();
             float stated = 0;
             if (child.flex.basis.is_intrinsic()) {
-                // A KEYWORD BASIS names one of the item's content sizes -
-                // `content` and `max-content` the larger, `min-content` the
-                // smaller, `fit-content` and `auto` the larger here too - and a
+                // A keyword basis names one of the item's content sizes
+                // (`content` and `max-content` the larger, `min-content` the
+                // smaller, `fit-content` and `auto` the larger here too), and a
                 // calc-size() over it runs over that.
                 const intrinsic_sizes content = measure_box(child, child_c, measure_text);
                 stated =
@@ -355,19 +351,17 @@ intrinsic_sizes flex_flow::measure(const box_node & b, const constraints & c,
             }
             stated = std::max(0.0f, stated);
             item_max = stated + outside;
-            // A SHRINKABLE item can still give back everything down to its
+            // A shrinkable item can still give back everything down to its
             // automatic minimum, so its minimum contribution is the smaller of the
             // two. An inflexible one is its base size and nothing else.
             item_min =
                 child.flex.shrink > 0 ? std::min(item_min, stated + outside) : stated + outside;
         }
-        // A GROWABLE item is not capped by its base size: `flex: 1 0 0` has a base
-        // of ZERO and would otherwise contribute nothing at all, which collapsed an
-        // inline-flex container full of `.col`s to width 0. The spec's own answer
-        // (§9.9.1) is the LINE's max-content flex fraction, which needs a second
-        // pass over the line; the larger of the two is the same answer whenever one
-        // item dominates and an under-estimate otherwise, and it is recorded as a
-        // known difference rather than left as a zero.
+        // A growable item contributes at least its max-content width, so
+        // `flex: 1 0 0` (base size zero) does not shrink an inline-flex container
+        // to 0. The spec (Flexbox §9.9.1) uses the line's max-content flex
+        // fraction, which needs a second pass. Taking the larger of the two values
+        // is exact when one item dominates and an under-estimate otherwise.
         if (horizontal && child.flex.grow > 0) {
             const intrinsic_sizes content = measure_box(child, child_c, measure_text);
             item_max =
@@ -382,7 +376,7 @@ intrinsic_sizes flex_flow::measure(const box_node & b, const constraints & c,
     if (!horizontal) { return out; } // a column stacks: the widest item is the width
 
     const float gaps = counted > 1 ? gap * static_cast<float>(counted - 1) : 0.0f;
-    // A WRAPPING container's minimum is its widest item, because it may put every
+    // A wrapping container's minimum is its widest item, because it may put every
     // item on its own line; a nowrap container's is the sum, because it may not.
     if (b.flex.wrap == flex_wrap::nowrap) { out.min_content = sum_min + gaps; }
     out.max_content = sum_max + gaps;
@@ -394,7 +388,7 @@ fragment flex_flow::arrange(const box_node & b, const constraints & c,
     const bool horizontal = b.flex.horizontal();
     const resolved_edges edges = resolve_edges(b, c);
 
-    // --- 1. THE CONTAINER'S OWN BOX ---------------------------------------
+    // --- 1. The container's own box ---------------------------------------
     //
     // Everything but `inline-flex` goes through the same outer_width_of every
     // other formatting context uses, which is what makes `.row`'s -12px side
@@ -402,16 +396,15 @@ fragment flex_flow::arrange(const box_node & b, const constraints & c,
     // than in a flex-shaped copy of that arithmetic.
     float outer_width = 0;
     if (b.inline_level && b.width.is_auto() && c.forced_width < 0) {
-        // SHRINK TO FIT, through the shared helper - the one thing `inline-flex`
+        // Shrink to fit, through the shared helper: the one thing `inline-flex`
         // does differently from `flex`, and exactly what `inline-block` does
-        // differently from `block`. Two copies of that clamp would be two answers
-        // to one question, and the block one is the same code.
+        // differently from `block`.
         outer_width = shrink_to_fit_width(b, c, edges, measure_text);
     } else {
         outer_width = outer_width_of(b, c, edges, measure_text);
     }
     const float content_width = std::max(0.0f, outer_width - edges.horizontal_inner());
-    // A STATED HEIGHT IS THE BORDER BOX, the same as a stated width - which is
+    // A stated height is the border box, the same as a stated width, which is
     // what block_flow::arrange already means when it assigns the resolved height
     // straight to the fragment and starts its cursor at pad_top.
     const float outer_height = has_definite_height(b, c)
@@ -435,19 +428,19 @@ fragment flex_flow::arrange(const box_node & b, const constraints & c,
     out.box = &b;
     out.source = b.source;
 
-    // --- 2. THE ITEMS ------------------------------------------------------
+    // --- 2. The items ------------------------------------------------------
     const float child_height = is_definite(content_height) ? content_height : 0.0f;
     std::vector<flex_item> items;
     items.reserve(b.children.size());
     for (const box_node & child : b.children) {
-        // AN OUT-OF-FLOW CHILD IS NOT A FLEX ITEM (§4): it takes no part in the
+        // An out-of-flow child is not a flex item (§4): it takes no part in the
         // free-space arithmetic at all. It leaves an empty fragment at its static
         // position, exactly as it does in a block container, and
         // layout::apply_positioning places it once the ancestor chain is known.
         //
         // Its static position is the flex container's content origin rather than
-        // a cursor, because a flex container has no cursor to be partway along -
-        // §4 says as much, and it is what Chrome does.
+        // a cursor, because a flex container has no cursor to be partway along
+        // (§4), and it is what Chrome does.
         if (child.is_out_of_flow()) { continue; }
         flex_item it;
         it.box = &child;
@@ -458,12 +451,10 @@ fragment flex_flow::arrange(const box_node & b, const constraints & c,
         it.cross_margin = horizontal ? it.edges.margin_top + it.edges.margin_bottom
                                      : it.edges.horizontal_margin();
         it.main_padding = horizontal ? it.edges.horizontal_inner() : it.edges.vertical_inner();
-        // THE LEADING MARGIN IS THE ONE AT THE FLEX-START EDGE, which under
-        // `row-reverse` is the RIGHT margin and under `wrap-reverse` the BOTTOM
-        // one. Naming them physically instead put the free space an auto margin
-        // absorbs on the wrong side of its item, and offset every reversed item by
-        // exactly (trailing margin - leading margin) - invisible whenever the two
-        // are equal, which is why a symmetric test does not catch it.
+        // Leading margins are at the flex-start edge: the right margin under
+        // `row-reverse`, the bottom margin under `wrap-reverse`. Bugs here are
+        // invisible when the two margins are equal, so test with asymmetric
+        // margins.
         const bool reversed = b.flex.reversed();
         const bool cross_reversed = b.flex.wrap == flex_wrap::wrap_reverse;
         it.main_lead = horizontal ? (reversed ? it.edges.margin_right : it.edges.margin_left)
@@ -487,15 +478,15 @@ fragment flex_flow::arrange(const box_node & b, const constraints & c,
         it.shrink = child.flex.shrink;
         items.push_back(std::move(it));
     }
-    // `order`, as a STABLE sort - and the stability is the property rather than
-    // an implementation detail. Two items with the same order value keep their
+    // `order`, as a stable sort; the stability is required, not an
+    // implementation detail. Two items with the same order value keep their
     // document order, which is the whole of what `order: 1` on one of three
     // columns means.
     std::stable_sort(items.begin(), items.end(), [](const flex_item & x, const flex_item & y) {
         return x.box->flex.order < y.box->flex.order;
     });
 
-    // --- 3. FLEX BASE SIZES AND HYPOTHETICAL MAIN SIZES (§9.2) -------------
+    // --- 3. Flex base sizes and hypothetical main sizes (§9.2) -------------
     for (flex_item & it : items) {
         const box_node & child = *it.box;
         const length & preferred = horizontal ? child.width : child.height;
@@ -506,10 +497,10 @@ fragment flex_flow::arrange(const box_node & b, const constraints & c,
         const float main_basis = is_definite(inner_main) ? inner_main : 0.0f;
         const bool main_percent_resolves = is_definite(inner_main);
 
-        // THE ITEM'S CONTENT-BASED MAIN SIZE, and the two axes ask it
-        // differently. Across a row it is the max-content WIDTH, which
-        // measure_box answers. Down a column it is a HEIGHT, and the only way to
-        // know a box's height is to lay it out - at the width it is about to get,
+        // The item's content-based main size; the two axes ask for it
+        // differently. Across a row it is the max-content width, which
+        // measure_box answers. Down a column it is a height, and the only way to
+        // know a box's height is to lay it out, at the width it is about to get,
         // because how wide a box is decides how many lines its text takes.
         float content_main = 0;
         float min_content_main = 0;
@@ -522,7 +513,7 @@ fragment flex_flow::arrange(const box_node & b, const constraints & c,
             it.placed = layout_box(
                 child, constraints{content_width, child_height, child.font_size, it.cross, true},
                 measure_text);
-            // THE CONTENT'S height, not the fragment's: the fragment already
+            // The content's height, not the fragment's: the fragment already
             // honours the item's own `height`, and a keyword basis names what
             // the content came to on its own.
             content_main =
@@ -530,14 +521,14 @@ fragment flex_flow::arrange(const box_node & b, const constraints & c,
             min_content_main = content_main;
         }
 
-        // AN INTRINSIC KEYWORD ON THE MAIN AXIS (CSS Sizing 3 §5, Flexbox
+        // An intrinsic keyword on the main axis (CSS Sizing 3 §5, Flexbox
         // §9.2.3): across a row it is the content size it names; down a
         // column a keyword height behaves as `auto`, which is the content
         // size too. fit-content is the clamp within the definite main size.
         // A calc-size() over a keyword runs over that size, and over `auto` it
         // runs over what auto means for the property: the content size for the
         // item's `width`/`height`, and for `flex-basis` the main size property
-        // it defers to (§7.2.3) - so `flex-basis: calc-size(auto, size * 2)` on
+        // it defers to (§7.2.3), so `flex-basis: calc-size(auto, size * 2)` on
         // a `width: 125px` item is 250. A plain keyword is the identity. The
         // sizes here are border boxes, so the calculation is handed the content
         // box and answers a border box like every other.
@@ -581,11 +572,9 @@ fragment flex_flow::arrange(const box_node & b, const constraints & c,
         }
         it.base = std::max(0.0f, it.base);
 
-        // A PERCENTAGE MAXIMUM THAT CANNOT RESOLVE BEHAVES AS `none`, exactly as
-        // the two branches above treat an unresolvable percentage size as `auto`.
-        // Resolving it against zero instead made it a definite maximum of 0, which
-        // then clamped the automatic minimum to 0 as well and collapsed the item -
-        // `max-height: 100%` in a column with no stated height gave height 0.
+        // A percentage maximum that cannot resolve (no definite main size)
+        // behaves as `none`, just as an unresolvable percentage size behaves as
+        // `auto`. Resolving it against 0 would collapse the item.
         it.max_main = max_len.is_auto() || (max_len.u == unit::percent && !main_percent_resolves)
                           ? indefinite
                       : max_len.is_intrinsic() ? keyword_main(max_len, content_main)
@@ -593,8 +582,8 @@ fragment flex_flow::arrange(const box_node & b, const constraints & c,
         if (min_len.is_intrinsic()) {
             it.min_main = std::max(0.0f, keyword_main(min_len, min_content_main));
         } else if (min_len.is_auto() || (min_len.u == unit::percent && !main_percent_resolves)) {
-            // THE AUTOMATIC MINIMUM SIZE (§4.5). `min-width: auto` on a flex item
-            // is NOT zero: it is min(the specified size suggestion, the content
+            // The automatic minimum size (§4.5). `min-width: auto` on a flex item
+            // is not zero: it is min(the specified size suggestion, the content
             // size suggestion), which is what stops a long unbreakable token being
             // squeezed to nothing. Bootstrap's `.card { min-width: 0 }` exists
             // precisely to defeat it, which is the evidence that it matters.
@@ -609,9 +598,9 @@ fragment flex_flow::arrange(const box_node & b, const constraints & c,
         it.hypothetical = clamp_extent(it.base, it.min_main, it.max_main);
     }
 
-    // --- 4. COLLECT INTO LINES (§9.3) --------------------------------------
+    // --- 4. Collect into lines (§9.3) --------------------------------------
     //
-    // `.row { flex-wrap: wrap }` IS the Bootstrap grid: thirteen twelfths cannot
+    // `.row { flex-wrap: wrap }` is the Bootstrap grid: thirteen twelfths cannot
     // share a line, so this step is what puts the thirteenth on a second one.
     std::vector<std::vector<std::size_t>> lines;
     if (b.flex.wrap == flex_wrap::nowrap || !is_definite(inner_main) || items.empty()) {
@@ -625,7 +614,7 @@ fragment flex_flow::arrange(const box_node & b, const constraints & c,
         for (std::size_t i = 0; i < items.size(); ++i) {
             const float outer = items[i].hypothetical + items[i].main_margin;
             const float with_gap = line.empty() ? outer : used + main_gap + outer;
-            // AT LEAST ONE ITEM PER LINE, however wide it is: an item that does
+            // At least one item per line, however wide it is: an item that does
             // not fit on an empty line still has to go somewhere, and starting a
             // new line for it would make no progress and loop forever.
             if (!line.empty() && with_gap > inner_main) {
@@ -640,12 +629,12 @@ fragment flex_flow::arrange(const box_node & b, const constraints & c,
         if (!line.empty()) { lines.push_back(std::move(line)); }
     }
 
-    // --- 5. RESOLVE THE FLEXIBLE LENGTHS, AND SIZE ACROSS ------------------
+    // --- 5. Resolve the flexible lengths, and size across ------------------
     std::vector<float> line_cross(lines.size(), 0.0f);
     float main_extent = 0; // what the content actually reached along the main axis
     for (std::size_t l = 0; l < lines.size(); ++l) {
         const std::vector<std::size_t> & line = lines[l];
-        // AN INDEFINITE MAIN SIZE MEANS NO FLEXING: there is no free space to
+        // An indefinite main size means no flexing: there is no free space to
         // share out, so every item takes its hypothetical size and the container
         // sizes to their sum. That is CSS's rule, not a shortcut.
         if (is_definite(inner_main)) {
@@ -679,18 +668,14 @@ fragment flex_flow::arrange(const box_node & b, const constraints & c,
         }
         main_extent = std::max(main_extent, used_main);
 
-        // THE LINE'S CROSS SIZE: the tallest item on it, margins included. A
-        // SINGLE-LINE container with a definite cross size takes that instead,
-        // per §9.4.3 - which is what makes `align-items: center` in a 120px row
+        // The line's cross size: the tallest item on it, margins included. A
+        // single-line container with a definite cross size takes that instead,
+        // per §9.4.3, which is what makes `align-items: center` in a 120px row
         // centre against 120 rather than against the tallest column.
         //
-        // "SINGLE-LINE" MEANS `flex-wrap: nowrap` (§5.2), not "produced one line".
-        // A wrapping container that happens to fit on one is still multi-line, and
-        // testing the count instead let it skip align-content entirely. The two
-        // agree for the DEFAULT `align-content`, which stretches the single line to
-        // fill the container anyway - which is why the Bootstrap rows still land in
-        // the same place, and why the difference only shows when a page asks for
-        // something other than stretch.
+        // "Single-line" means `flex-wrap: nowrap` (§5.2), not "produced one
+        // line": a wrapping container whose items fit on one line is still
+        // multi-line and still goes through align-content.
         float tallest = 0;
         for (const std::size_t i : line) {
             tallest = std::max(tallest, items[i].cross + items[i].cross_margin);
@@ -699,7 +684,7 @@ fragment flex_flow::arrange(const box_node & b, const constraints & c,
             b.flex.wrap == flex_wrap::nowrap && is_definite(inner_cross) ? inner_cross : tallest;
     }
 
-    // --- 6. ALIGN THE LINES (§9.6) -----------------------------------------
+    // --- 6. Align the lines (§9.6) -----------------------------------------
     float cross_extent = lines.empty() ? 0.0f : cross_gap * static_cast<float>(lines.size() - 1);
     for (const float size : line_cross) { cross_extent += size; }
     const float cross_free = is_definite(inner_cross) ? inner_cross - cross_extent : 0.0f;
@@ -710,7 +695,7 @@ fragment flex_flow::arrange(const box_node & b, const constraints & c,
     distribution lines_at{};
     if (is_definite(inner_cross) && cross_free != 0) {
         if (line_align == flex_align::stretch) {
-            // STRETCH SHARES THE LEFTOVER AMONG THE LINES rather than moving
+            // Stretch shares the leftover among the lines rather than moving
             // them, which is the one distribution value that changes a size
             // instead of a position. Only when there is leftover: a negative
             // remainder is overflow, and lines do not shrink.
@@ -724,7 +709,7 @@ fragment flex_flow::arrange(const box_node & b, const constraints & c,
         }
     }
 
-    // --- 7. PLACE ----------------------------------------------------------
+    // --- 7. Place ----------------------------------------------------------
     const float used_main_size = is_definite(inner_main) ? inner_main : main_extent;
     const float used_cross_size = is_definite(inner_cross) ? inner_cross : cross_extent;
     float cross_at = lines_at.start;
@@ -737,7 +722,7 @@ fragment flex_flow::arrange(const box_node & b, const constraints & c,
             autos += (items[i].main_start_auto ? 1u : 0u) + (items[i].main_end_auto ? 1u : 0u);
         }
         const float free = used_main_size - used;
-        // AUTO MAIN MARGINS EAT THE FREE SPACE FIRST (§9.5), and only what is
+        // Auto main margins take the free space first (§9.5), and only what is
         // left reaches justify-content. `.navbar-nav { margin-right: auto }` is
         // the whole of how Bootstrap pushes the rest of a navbar to the right,
         // and treating that margin as zero put every navbar item hard left.
@@ -752,23 +737,20 @@ fragment flex_flow::arrange(const box_node & b, const constraints & c,
             if (it.main_start_auto) { main_at += auto_share; }
             const float main_position = main_at + it.main_lead;
 
-            // THE CROSS POSITION, within this line.
+            // The cross position, within this line.
             const flex_align align = resolved_align(b, *it.box);
             const length & cross_len = horizontal ? it.box->height : it.box->width;
             if (align == flex_align::stretch && cross_len.is_auto() && !it.cross_start_auto &&
                 !it.cross_end_auto) {
-                // Stretch is a SIZE, not a position: the item becomes as tall as
+                // Stretch is a size, not a position: the item becomes as tall as
                 // its line. Applied after the item was laid out for the same
-                // reason table_flow equalises a row's cells afterwards - a block
+                // reason table_flow equalises a row's cells afterwards: a block
                 // stacks from its own top edge, so nothing inside moves.
                 //
-                // AND IT IS CLAMPED, per §9.4.11: a stretched item still honours
-                // its own min and max cross size, so `max-height: 50px` in a 200px
-                // row is 50 tall and not 200. The column axis already clamped in
-                // column_cross_size and the row axis did not, which made the two
-                // disagree about the same rule.
-                // A keyword bound on the cross axis is left to the item's own
-                // layout, which already applied it.
+                // The stretched size is clamped to the item's own min/max cross
+                // size (§9.4.11): `max-height: 50px` in a 200px row is 50 tall.
+                // Keyword bounds are left to the item's own layout, which
+                // already applied them.
                 const length & cross_min = horizontal ? it.box->min_height : it.box->min_width;
                 const length & cross_max = horizontal ? it.box->max_height : it.box->max_width;
                 const float cross_basis = horizontal ? used_cross_size : content_width;
@@ -787,7 +769,7 @@ fragment flex_flow::arrange(const box_node & b, const constraints & c,
             const float cross_free_here = line_cross[l] - it.cross - it.cross_margin;
             float cross_offset = 0;
             if (it.cross_start_auto || it.cross_end_auto) {
-                // Auto CROSS margins centre or push, exactly as on the main axis.
+                // Auto cross margins centre or push, exactly as on the main axis.
                 if (cross_free_here > 0) {
                     cross_offset = it.cross_start_auto && it.cross_end_auto ? cross_free_here / 2
                                    : it.cross_start_auto                    ? cross_free_here
@@ -802,10 +784,10 @@ fragment flex_flow::arrange(const box_node & b, const constraints & c,
             }
             const float cross_position = cross_at + cross_offset + it.cross_lead;
 
-            // REVERSE IS A MIRROR, applied once at the end rather than threaded
+            // Reverse is a mirror, applied once at the end rather than threaded
             // through every placement decision above. `row-reverse` mirrors the
             // main axis and `wrap-reverse` the cross one, and mirroring the final
-            // position flips the item ORDER and the alignment together, which is
+            // position flips the item order and the alignment together, which is
             // exactly what both keywords mean.
             const float main_final =
                 b.flex.reversed() ? used_main_size - main_position - it.target : main_position;
@@ -839,7 +821,7 @@ fragment flex_flow::arrange(const box_node & b, const constraints & c,
         cross_at += line_cross[l] + cross_gap + lines_at.between;
     }
 
-    // ITEMS ARE EMITTED IN ORDER-MODIFIED ORDER, which is Chrome's paint order
+    // Items are emitted in order-modified order, which is Chrome's paint order
     // (CSS Display 3 §3.3): `order` moves an item in front of its siblings for
     // painting as well as for placement. Everything that looks a fragment up does
     // so by node id, so no consumer depends on the source ordering.

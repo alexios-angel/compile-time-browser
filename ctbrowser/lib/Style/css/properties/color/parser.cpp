@@ -1,9 +1,20 @@
+//===- parser.cpp - CSS <color> reader ------------------------------------===//
+//
+// Reads a CSS Color 4/5 <color> from tokens into the `parsed` tree that the
+// specified serialisation and resolve() work on, and the property-grammar hook
+// match_color.
+//
+//===----------------------------------------------------------------------===//
+
 #include "internal.hpp"
 
 #include <ctbrowser/core/depth.hpp>
 
 namespace ctbrowser::style::css::color_detail {
 
+/// Returns true when tokens [begin, end) can be evaluated without an element
+/// or layout: no units that need a context and no element-dependent functions
+/// (var, attr, env, sibling-index, random, ...).
 [[nodiscard]] bool parse_time_answerable(const token_stream & ts, std::size_t begin,
                                          std::size_t end) {
     for (std::size_t i = begin; i < end; ++i) {
@@ -24,11 +35,15 @@ namespace ctbrowser::style::css::color_detail {
     return true;
 }
 
+/// Recursive-descent parser for one CSS <color> over tokens [begin, end).
+/// Every reader returns null (or nullopt) on a syntax error.
 class reader {
 public:
     reader(const token_stream & ts, std::size_t begin, std::size_t end)
         : ts_(ts), at_(begin), end_(end) {}
 
+    /// Reads one <color> filling the whole range, surrounding whitespace
+    /// allowed; null if invalid or anything follows.
     [[nodiscard]] std::unique_ptr<parsed> read_whole() {
         skip_ws();
         std::unique_ptr<parsed> out = color();
@@ -48,7 +63,7 @@ private:
     [[nodiscard]] bool at_close() const noexcept {
         return at_ >= end_ || ts_.tokens[at_].type == token_type::close_paren;
     }
-    // Consumes the `)` that closes the function being read; EOF closes it too.
+    /// Consumes the `)` that closes the function being read; EOF closes it too.
     [[nodiscard]] bool close() noexcept {
         skip_ws();
         if (at_ >= end_) { return true; }
@@ -73,7 +88,7 @@ private:
         return out;
     }
 
-    // --- <color> ---
+    /// One <color>: a keyword, a hex colour, or a colour function.
     [[nodiscard]] std::unique_ptr<parsed> color() {
         const css_token & t = peek();
         if (t.type == token_type::ident) {
@@ -157,8 +172,8 @@ private:
         return out;
     }
 
-    // rgb() hsl() hwb() lab() lch() oklab() oklch() color(), absolute or
-    // relative. `at_` is past the `(` and any whitespace.
+    /// rgb() hsl() hwb() lab() lch() oklab() oklch() color(), absolute or
+    /// relative. `at_` is past the `(` and any whitespace.
     [[nodiscard]] std::unique_ptr<parsed> color_function(std::string fn, space cs) {
         auto out = std::make_unique<parsed>();
         out->k = parsed::kind::absolute;
@@ -253,7 +268,8 @@ private:
         return out;
     }
 
-    // One channel of a colour function. `slot` 0..2, or 3 for the alpha.
+    /// One channel of a colour function. `slot` 0..2, or 3 for the alpha.
+    /// `keywords` are the channel names a relative colour may reference.
     [[nodiscard]] std::optional<channel> read_channel(space cs, int slot, bool relative,
                                                       bool legacy,
                                                       std::span<const std::string_view> keywords) {
@@ -317,10 +333,10 @@ private:
                 symbols.emplace_back("alpha");
             }
             const number_symbols_scope scope{symbols};
-            // OF A TYPE THE SLOT TAKES: a number, a percentage, or in the hue
-            // slot an angle. `calc(h + 1deg)` adds a number to an angle and
-            // `calc(0.56turn * -0.43turn)` is an angle squared; both are
-            // syntax errors wherever they sit.
+            // The calc() must be of a type the slot takes: a number, a
+            // percentage, or in the hue slot an angle. `calc(h + 1deg)` adds a
+            // number to an angle and `calc(0.56turn * -0.43turn)` is an angle
+            // squared; both are syntax errors wherever they sit.
             const auto [outcome, sum] = evaluate_symbolic(out.raw_calc);
             if (outcome == math_outcome::invalid) { return std::nullopt; }
             if (outcome == math_outcome::resolved) {
@@ -363,6 +379,7 @@ private:
         }
     }
 
+    /// The alpha channel, after `/` (or the fourth comma in the legacy form).
     [[nodiscard]] std::optional<channel> read_alpha(bool relative, bool legacy,
                                                     std::span<const std::string_view> keywords) {
         // The alpha slot takes a number or a percentage, never an angle; the
@@ -370,6 +387,8 @@ private:
         return read_channel(space::srgb, 3, relative, legacy, keywords);
     }
 
+    /// An angle in degrees from a value and its unit; nullopt for a non-angle
+    /// unit.
     [[nodiscard]] static std::optional<double> angle_degrees(double v, std::string_view unit) {
         if (ascii_iequals(unit, "deg")) { return v; }
         if (ascii_iequals(unit, "grad")) { return v * 0.9; }
@@ -378,7 +397,7 @@ private:
         return std::nullopt;
     }
 
-    // color-mix( <color-interpolation-method>? , [ <color> && <percentage>? ]#{1,} )
+    /// color-mix( <color-interpolation-method>? , [ <color> && <percentage>? ]#{1,} )
     [[nodiscard]] std::unique_ptr<parsed> color_mix() {
         auto out = std::make_unique<parsed>();
         out->k = parsed::kind::mix;
@@ -431,7 +450,8 @@ private:
         return out;
     }
 
-    // A weight for color-mix: `<percentage [0,100]>`, or a math function.
+    /// A weight for color-mix: `<percentage [0,100]>`, or a math function.
+    /// Returns true with no weight when neither is next.
     [[nodiscard]] bool read_weight(mix_item & item) {
         const css_token & t = peek();
         if (t.type == token_type::percentage) {
@@ -445,6 +465,8 @@ private:
         }
         if (t.type == token_type::function &&
             ascii_iequals_any(function_name_at(at_), math_names)) {
+            // A weight is never relative, so no channel keywords apply;
+            // read_channel still needs three entries.
             static constexpr std::array<std::string_view, 3> none_keywords{"alpha", "alpha",
                                                                            "alpha"};
             std::optional<channel> w = read_channel(space::srgb, 3, false, false, none_keywords);
@@ -459,6 +481,7 @@ private:
         return true; // no weight here
     }
 
+    /// Exactly two comma-separated colours, as light-dark() takes.
     [[nodiscard]] std::unique_ptr<parsed> two_colors(parsed::kind k) {
         auto out = std::make_unique<parsed>();
         out->k = k;
@@ -472,7 +495,7 @@ private:
         return out;
     }
 
-    // alpha( from <color> / <alpha-value> ), CSS Color 5.
+    /// alpha( from <color> / <alpha-value> ), CSS Color 5.
     [[nodiscard]] std::unique_ptr<parsed> alpha_function() {
         auto out = std::make_unique<parsed>();
         out->k = parsed::kind::alpha_fn;
@@ -487,13 +510,15 @@ private:
         if (peek().type != token_type::delim || ts_.text_of(peek()) != "/") { return nullptr; }
         ++at_;
         skip_ws();
+        // Only `alpha` may be referenced here; read_channel takes three
+        // entries, so it is repeated.
         static constexpr std::array<std::string_view, 3> none_keywords{"alpha", "alpha", "alpha"};
         out->alpha = read_alpha(true, false, none_keywords);
         if (!out->alpha) { return nullptr; }
         return out;
     }
 
-    // color-layers( [ <blend-mode> , ]? <color># )
+    /// color-layers( [ <blend-mode> , ]? <color># )
     [[nodiscard]] std::unique_ptr<parsed> color_layers() {
         auto out = std::make_unique<parsed>();
         out->k = parsed::kind::layers;
@@ -524,6 +549,7 @@ private:
         return out;
     }
 
+    /// Nesting cap for colour functions inside colour functions.
     static constexpr int max_depth = 32;
 
     const token_stream & ts_;
@@ -532,7 +558,7 @@ private:
     int depth_ = 0; // of color()'s functions, capped at max_depth
 };
 
-// Reader entry point.
+/// Parses `text` as one whole <color>; null if invalid or anything follows.
 [[nodiscard]] std::unique_ptr<parsed> parse_text(std::string_view text) {
     const token_stream ts = tokenize(text);
     reader in{ts, 0, ts.tokens.size() - 1};

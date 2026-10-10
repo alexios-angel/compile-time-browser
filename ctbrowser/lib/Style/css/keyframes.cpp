@@ -1,12 +1,16 @@
-// style::engine - filing a sheet's `@keyframes` rules (CSS Animations 1 §4),
-// and looking one up by name for the shell's CSSAnimation.
+//===- ctbrowser/lib/Style/css/keyframes.cpp - Filing @keyframes rules ----===//
 //
-// WHAT A KEYFRAME'S VALUE IS HERE. The same text a rule's declaration would
-// have become: a shorthand split into its longhands, each through the
-// property table's `check_declaration`, a custom property kept verbatim, an
-// unknown property dropped. The shell's Web Animations overlay reads these
-// as if a rule had declared them (bindings/animations.cpp), so what applies
-// from a keyframe and what applies from a rule are one grammar.
+// style::engine's handling of `@keyframes` rules (CSS Animations 1 §4): filing
+// a sheet's rules, and looking one up by name for the shell's CSSAnimation.
+//
+// A keyframe stores the same text a rule's declaration would have become: a
+// shorthand split into its longhands, each checked by the property table's
+// `check_declaration`, a custom property kept verbatim, an unknown property
+// dropped. The Web Animations overlay (lib/Shell/bindings/animations.cpp) reads
+// these as if a rule had declared them, so a keyframe and a rule share one
+// grammar.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/style/easing.hpp>
 #include <ctbrowser/style/engine.hpp>
@@ -70,15 +74,17 @@ void engine::file_keyframes(const css::stylesheet & sheet, std::uint8_t origin,
                     }
                     continue;
                 }
-                // ...and a property whose animation type is "not animatable"
-                // is ignored in a keyframe too (CSS Animations 1 §4.1).
+                // A property whose animation type is "not animatable" is
+                // ignored in a keyframe too (CSS Animations 1 §4.1).
                 if (!css::animatable(property)) { continue; }
                 const css::property_syntax * known = css::find_property(property);
                 if (known == nullptr) { continue; }
                 if (known->shorthand) {
                     css::declaration_block expanded;
                     (void)css::set_declaration(expanded, property, text, false);
-                    // Some CSSOM shorthands still retain their authored text.
+                    // set_declaration keeps some shorthands as one entry
+                    // with the authored text; expand those here so a
+                    // keyframe always stores longhands.
                     if (expanded.size() == 1 && expanded[0].name == property) {
                         expanded.clear();
                         for (const auto & [name, value] :
@@ -96,7 +102,7 @@ void engine::file_keyframes(const css::stylesheet & sheet, std::uint8_t origin,
                 if (checked.valid) { put(property, checked.serialized); }
             }
             for (const double offset : frame.offsets) {
-                // TWO KEYFRAMES AT ONE OFFSET MERGE, the later winning per
+                // Two keyframes at one offset merge, the later winning per
                 // property (§4.1), and a later easing likewise.
                 const auto same = std::ranges::find_if(
                     made.keyframes, [offset](const auto & k) { return k.offset == offset; });

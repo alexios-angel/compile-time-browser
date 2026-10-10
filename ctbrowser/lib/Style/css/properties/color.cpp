@@ -1,3 +1,10 @@
+//===- color.cpp - Public CSS colour entry points -------------------------===//
+//
+// The public colour functions declared in style/css/properties.hpp, each a
+// thin wrapper over the parser, resolver and serialisers in color/.
+//
+//===----------------------------------------------------------------------===//
+
 #include "color/internal.hpp"
 
 namespace ctbrowser::style::css {
@@ -80,6 +87,9 @@ std::string sanitize_color(std::string_view value, bool display_p3, bool alpha) 
     if (display_p3) { return modern_text(convert(c, space::display_p3)); }
     // Limited sRGB: eight bits per component, the alpha included.
     resolved srgb = convert(c, space::srgb);
+    // Clamp to [0, 255], round to 6 decimals first so values such as
+    // 127.4999999 from colour-space conversion round as if exact, then round
+    // half up.
     const auto byte = [](double v) {
         return static_cast<int>(
             std::floor(std::round(std::min(255.0, std::max(0.0, v)) * 1e6) / 1e6 + 0.5));

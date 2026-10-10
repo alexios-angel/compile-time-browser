@@ -1,18 +1,18 @@
-// gl::device WITHOUT ANGLE: every method of the device answers "no" and says
+//===- ctbrowser/lib/Raster/gl/stub.cpp - GL device without ANGLE ---------===//
+//
+// gl::device without ANGLE: every method of the device answers "no" and says
 // why, so a build without the libraries still links and still reports.
 //
-// One of four files carved out of a 1,162-line Raster/gl.cpp on 2026-09-08.
-// All are member functions of the one class declared in
-// include/ctbrowser/raster/gl.hpp; the pimpl both branches define is in
-// internal.hpp beside this, with the includes gl.cpp had. Nothing about the
-// public header changed.
+// Member functions of the class declared in include/ctbrowser/raster/gl.hpp;
+// the pimpl both builds define is in internal.hpp beside this file.
 //
-// EVERY DEFINITION HERE IS LINK-REQUIRED: shell/page/webgl.cpp forwards to the
-// device unconditionally, so a method missing from this list is an undefined
-// symbol in a build without ANGLE. Nothing below is ever CALLED without ANGLE
-// beyond the constructor, ok() and error() - getContext returns null the
-// moment ok() says no, and gl_basics skips on available() - which is why one
-// line per method is all a definition needs to be.
+// Every definition here is needed to link: lib/Shell/page/webgl.cpp forwards
+// to the device unconditionally, so a missing method is an undefined symbol
+// in a build without ANGLE. Only the constructor, ok() and error() are ever
+// called (getContext returns null once ok() is false, and the gl_basics test
+// skips when available() is false), so each method just returns a zero value.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -34,12 +34,13 @@ const std::string & device::error() const noexcept {
     return impl_->error;
 }
 
-// The type's zero - false, 0, an empty string or vector, `return;` for void.
+/// Defines a method that returns its type's zero: false, 0, an empty string or
+/// vector, or `return;` for void.
 #define CTBROWSER_GL_NULL(ret, name, params)                                                       \
     ret device::name params {                                                                      \
         return ret();                                                                              \
     }
-// A location that does not exist, which GL spells -1 rather than 0.
+/// Defines a location lookup that answers -1, GL's "no such location".
 #define CTBROWSER_GL_NO_LOCATION(name)                                                             \
     int device::name(unsigned, const std::string &) const {                                        \
         return -1;                                                                                 \

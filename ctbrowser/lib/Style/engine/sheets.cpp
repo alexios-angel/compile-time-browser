@@ -1,3 +1,12 @@
+//===- ctbrowser/lib/Style/engine/sheets.cpp - Sheets -----------*- C++ -*-===//
+//
+// Stylesheet ingestion for style::engine: element state bits, parsing a sheet
+// into the rule index, @layer/@scope/@container/@property/@function
+// bookkeeping, layer ranking, scope-root search and container query
+// evaluation. The declarations are documented in style/engine.hpp.
+//
+//===----------------------------------------------------------------------===//
+
 #include <ctbrowser/style/engine.hpp>
 
 #include <ctbrowser/core/algorithms.hpp>
@@ -6,9 +15,6 @@
 #include <span>
 #include <string>
 #include <vector>
-
-// engine: the method bodies.
-// The header says what these do; this says how.
 
 namespace ctbrowser::style {
 
@@ -41,10 +47,10 @@ void engine::clear_origin(std::uint8_t origin) {
     for (auto & [key, rules] : index_.by_class) { drop(rules); }
     for (auto & [key, rules] : index_.by_tag) { drop(rules); }
     drop(index_.universal);
-    // THE LAYER ORDER AND THE SCOPES GO WITH THE RULES that named them, once
-    // no rule of any origin still points at one: a page that rewrites its
-    // sheet from `@layer b, a` to `@layer a, b` has reordered its layers, and
-    // a table that remembered the old first appearance would say otherwise.
+    // The layer, scope and container tables are reset once no remaining rule (of
+    // any origin) refers to them. A page that rewrites `@layer b, a` to
+    // `@layer a, b` has reordered its layers, and a table that kept the old first
+    // appearance would disagree.
     bool layered = false;
     bool scoped = false;
     const auto scan = [&](const std::vector<rule> & rules) {
@@ -57,10 +63,13 @@ void engine::clear_origin(std::uint8_t origin) {
     for (const auto & [key, rules] : index_.by_class) { scan(rules); }
     for (const auto & [key, rules] : index_.by_tag) { scan(rules); }
     scan(index_.universal);
-    // ...or an `@keyframes` of another origin, which is ranked by its layer too.
+    // An `@keyframes` of another origin also keeps the layer table alive, since
+    // it is ranked by its layer too.
     std::erase_if(keyframes_, [origin](const keyframes_rule & k) { return k.origin == origin; });
     for (const keyframes_rule & k : keyframes_) { layered = layered || k.layer != 0; }
     if (!layered) {
+        // Entry 0 is "unlayered", ranked last (0xFFFFFFFF) so it beats every
+        // layer.
         layer_names_.assign(1, std::string{});
         layer_rank_.assign(1, 0xFFFFFFFFu);
     }
@@ -85,11 +94,10 @@ bool engine::register_property(std::string_view name, css::property_registration
     if (!name.starts_with("--")) { return false; }
     const atom key = atoms_->intern(name);
     if (registrations_.contains(key.id)) { return false; }
-    // THE INITIAL VALUE IS COMPUTATIONALLY INDEPENDENT or the registration is
-    // invalid (CSS Properties and Values API 1 §2.1): one that draws a
-    // `random()`, counts siblings or substitutes has a different answer per
-    // element, and there is no element here. `*` takes anything
-    // (random-computed).
+    // The initial value must be computationally independent or the registration
+    // is invalid (CSS Properties and Values API 1 §2.1): random(), sibling-index(),
+    // sibling-count() and var() give a different answer per element, and there is
+    // no element here. Syntax `*` accepts anything (WPT random-computed).
     if (registration.syntax != "*") {
         const std::string_view initial = registration.initial;
         if (css::may_have_var(initial) || initial.find("random(") != std::string_view::npos ||
@@ -102,20 +110,21 @@ bool engine::register_property(std::string_view name, css::property_registration
     return true;
 }
 
-// Reading the at-rules the parser collected. Both are declaration blocks
-// with a prelude; the descriptors come back through `declarations_of` the
-// way @font-face's do, and the prelude is a run of component values.
+// Helpers for reading the @property and @function rules the parser
+// collected. Both are declaration blocks with a prelude; the descriptors come
+// back through `declarations_of` the way @font-face's do, and the prelude is a
+// run of component values.
 namespace {
 
-// The token at a run's front, when the front IS a single token.
+/// The token at a run's front, or nullptr when the front is not a single token.
 [[nodiscard]] const css::css_token * token_at(const css::stylesheet & sheet,
                                               std::span<const css::component_value> run) {
     if (run.empty() || run.front().kind != css::cv_kind::token) { return nullptr; }
     return &sheet.tokens[run.front().token];
 }
 
-// A run's text: every token's text joined, which is what the tokenizer saw
-// minus the comments.
+/// A run's text: every token's text joined, which is what the tokenizer saw
+/// minus the comments.
 [[nodiscard]] std::string text_of_run(const css::stylesheet & sheet,
                                       std::span<const css::component_value> run) {
     std::string out;
@@ -126,9 +135,10 @@ namespace {
     return out;
 }
 
-// The top-level pieces of `run` split at `separator` tokens, each trimmed:
-// the parameters at commas, a parameter or a declaration at its colon. A
-// separator inside a function or a block is a child and invisible here.
+/// The top-level pieces of `run` split at `separator` tokens (only the first
+/// when `first_only`), each trimmed: the parameters at commas, a parameter or a
+/// declaration at its colon. A separator inside a function or a block is a
+/// child and invisible here.
 [[nodiscard]] std::vector<std::span<const css::component_value>> split_at(
     const css::stylesheet & sheet, std::span<const css::component_value> run,
     css::token_type separator, bool first_only) {
@@ -145,8 +155,8 @@ namespace {
     return pieces;
 }
 
-// A `<css-type>`: `<number>`, `<length>+`, or `type(<number> | auto)`, whose
-// wrapper comes off; nothing at all is `*`.
+/// A `<css-type>` as text: `<number>`, `<length>+`, or `type(<number> | auto)`
+/// with the `type()` wrapper removed; an empty run is `*`.
 [[nodiscard]] std::string syntax_of(const css::stylesheet & sheet,
                                     std::span<const css::component_value> run) {
     run = sheet.trimmed(run);
@@ -164,8 +174,8 @@ namespace {
 // `@property --x { syntax: "<length>"; inherits: true; initial-value: 3px }`,
 // CSS Properties and Values API 1 §2: three descriptors in a block. A rule
 // missing `syntax` or `inherits`, or `initial-value` for a syntax that is not
-// `*`, registers nothing - §2.1 says it is invalid, as is a descriptor marked
-// `!important` - and the first registration of a name is the one that stands.
+// `*`, registers nothing (§2.1 says it is invalid, as is a descriptor marked
+// `!important`), and the first registration of a name is the one that stands.
 void engine::register_at_property_rules(const css::stylesheet & sheet) {
     const atom syntax_key = atoms_->intern_lower("syntax");
     const atom inherits_key = atoms_->intern_lower("inherits");
@@ -219,7 +229,7 @@ void engine::register_at_property_rules(const css::stylesheet & sheet) {
 // in the body (`@media`, `@supports`) are not declarations and are dropped.
 //
 // ponytail: no conditional rules inside a body; add them when a page writes
-// one - the component values are all here.
+// one, since the component values are all here.
 void engine::register_at_function_rules(const css::stylesheet & sheet, std::uint8_t origin) {
     const atom result_key = atoms_->intern_lower("result");
     for (const css::at_rule_block & rule : sheet.functions) {
@@ -288,36 +298,24 @@ void engine::add_sheet(std::string_view css, std::uint8_t origin) {
             }
             return {};
         };
-        // THE URL OUT OF THE TOKENS, not out of the text.
-        //
-        // `url(` WITH AN UNQUOTED BODY IS ITS OWN TOKEN and a quoted one is a
-        // function plus a string - §4.3.6, and token.hpp says so on the
-        // enumerator. So the two spellings do not look alike by the time a
-        // declaration's text is reassembled: `url("f.ttf")` comes back with its
-        // `url(` intact, while `url(f.ttf)` comes back as bare `f.ttf` with
-        // nothing left to recognise it by. Asking the tokens instead makes the
-        // two forms one case.
+        // Read the URL from the tokens, not the reassembled text: an unquoted
+        // `url(f.ttf)` is a single url token whose text is just `f.ttf`, while
+        // `url("f.ttf")` is a function token plus a string (CSS Syntax 3 §4.3.6).
+        // Looking at tokens handles both forms the same way.
         const auto src_url = [&]() -> std::string_view {
             const atom want = atoms_->intern_lower("src");
             for (const css::raw_declaration & d : sheet.declarations_of(face)) {
                 if (d.property != want) { continue; }
                 for (const css::component_value & v : sheet.values_of(d)) {
                     const css::css_token & first = sheet.tokens[v.token];
-                    // The unquoted form: the token's text IS the url, already
-                    // unwrapped by the tokenizer.
-                    // TRIMMED: `url( f.ttf )` keeps the whitespace inside the
-                    // parens in the token's text, and a source with a trailing
-                    // space is a file name nothing can open. `unquoted` trims
-                    // and strips quotes; a url token's body is unquoted by
-                    // definition, so here it only trims.
+                    // Unquoted form: the token text is the URL. `unquoted` trims
+                    // the spaces that `url( f.ttf )` keeps inside the token.
                     if (first.type == css::token_type::url) {
                         return unquoted(sheet.text_of(first));
                     }
-                    // The quoted form: `url` as a function, with the string
-                    // inside. A FUNCTION TOKEN'S TEXT CARRIES ITS `(` - the
-                    // token is the ident and the paren together, which is what
-                    // makes it a function rather than an ident - so the name is
-                    // `url(` and comparing it to `url` never matches.
+                    // Quoted form: a `url(` function token with a string inside. A
+                    // function token's text includes the `(`, so strip it before
+                    // comparing the name.
                     std::string_view name = sheet.text_of(first);
                     if (!name.empty() && name.back() == '(') { name.remove_suffix(1); }
                     if (first.type == css::token_type::function && ascii_iequals(name, "url")) {
@@ -329,17 +327,17 @@ void engine::add_sheet(std::string_view css, std::uint8_t origin) {
                         }
                     }
                 }
-                // A `src` with no url at all - `src: local(Fira)` - is not an
-                // error, it is a face this engine cannot load.
+                // A `src` with no url at all (`src: local(Fira)`) is not an
+                // error; it is a face this engine cannot load.
                 break;
             }
             return {};
         };
 
         page_font entry;
-        // UNQUOTED here: `font-family: 'Press Start 2P'` arrives with its quotes
-        // on, so registering the name as it comes back files the face under a name
-        // no element can ever ask for.
+        // Unquoted here: `font-family: 'Press Start 2P'` arrives with its quotes
+        // on, and registering the name as it comes back would file the face under
+        // a name no element can ever ask for.
         entry.family = std::string{unquoted(value_of("font-family"))};
         entry.source = std::string{src_url()};
         const std::string_view weight = value_of("font-weight");
@@ -352,7 +350,7 @@ void engine::add_sheet(std::string_view css, std::uint8_t origin) {
     register_at_property_rules(sheet);
     register_at_function_rules(sheet, origin);
 
-    // THE SHEET'S CONDITIONS, remapped into the engine's table. A sheet numbers its
+    // The sheet's conditions, remapped into the engine's table. A sheet numbers its
     // own `@media` blocks from 1; the engine holds every sheet's, so index 0 stays the
     // shared unconditional entry and the rest are offset. Their parent links are
     // remapped the same way, so nesting survives the move.
@@ -373,10 +371,10 @@ void engine::add_sheet(std::string_view css, std::uint8_t origin) {
         condition_truth_[i] = condition_holds(i);
     }
 
-    // THE SHEET'S LAYERS, merged into the engine's by NAME: `@layer a` in two
+    // The sheet's layers, merged into the engine's by name: `@layer a` in two
     // sheets is one layer, first declared where it first appeared. An
-    // anonymous layer is nobody else's, so its unnameable name is made unique
-    // to this sheet before the lookup.
+    // anonymous layer (a segment starting with \x01) is nobody else's, so its
+    // name is made unique to this sheet with a serial before the lookup.
     const std::string serial = std::to_string(++sheet_serial_);
     std::vector<std::uint16_t> layer_map(sheet.layers.size() + 1, 0);
     for (std::size_t i = 0; i < sheet.layers.size(); ++i) {
@@ -401,9 +399,9 @@ void engine::add_sheet(std::string_view css, std::uint8_t origin) {
         layer_map[i + 1] = static_cast<std::uint16_t>(found - layer_names_.begin());
     }
     if (!sheet.layers.empty()) { rerank_layers(); }
-    // ...ITS `@keyframes`, each in the engine's layer its block sat in.
+    // Its `@keyframes`, each in the engine's layer its block sat in.
     file_keyframes(sheet, origin, condition_base, layer_map);
-    // ...AND ITS SCOPES, appended: a scope belongs to its sheet.
+    // Its scopes, appended: a scope belongs to its sheet.
     std::vector<std::uint16_t> scope_map(sheet.scopes.size() + 1, 0);
     for (std::size_t i = 0; i < sheet.scopes.size(); ++i) {
         const css::scope_block & s = sheet.scopes[i];
@@ -416,7 +414,7 @@ void engine::add_sheet(std::string_view css, std::uint8_t origin) {
         scope_map[i + 1] = static_cast<std::uint16_t>(scopes_.size() - 1);
     }
 
-    // ...AND ITS `@container` CONDITIONS, appended with their nesting remapped.
+    // Its `@container` conditions, appended with their nesting remapped.
     std::vector<std::uint16_t> container_map(sheet.containers.size() + 1, 0);
     for (std::size_t i = 0; i < sheet.containers.size(); ++i) {
         css::container_condition made = sheet.containers[i];
@@ -425,9 +423,9 @@ void engine::add_sheet(std::string_view css, std::uint8_t origin) {
         container_map[i + 1] = static_cast<std::uint16_t>(containers_.size() - 1);
     }
 
-    // ONE COMPILED SELECTOR PER SELECTOR, and one rule per (selector,
-    // declaration): the push is outside the declaration loop, and a selector
-    // that can never match is never pushed.
+    // One compiled selector per selector, and one rule per (selector,
+    // declaration): the selector push is outside the declaration loop, and a
+    // selector that can never match is never pushed.
     for (const css::raw_rule & r : sheet.rules) {
         for (const compiled_selector & compiled : sheet.selectors_of(r)) {
             if (compiled.parts.empty() || compiled.parts.front().never_matches) { continue; }
@@ -435,12 +433,10 @@ void engine::add_sheet(std::string_view css, std::uint8_t origin) {
             const std::uint32_t sel_index = static_cast<std::uint32_t>(selectors_.size() - 1);
 
             for (const css::raw_declaration & d : sheet.declarations_of(r)) {
-                // NOT EXPANDED HERE, and that is the point of the two-pass cascade. A
-                // shorthand's component count is unknowable before var() substitution -
-                // `border: var(--all)` is ONE token that becomes three - and
-                // substitution needs the element. So the shorthand is recorded whole
-                // and expanded when it is applied, which also keeps its source order:
-                // its longhands land at the shorthand's position in the fold.
+                // Shorthands are stored unexpanded: how many components
+                // `border: var(--all)` has is unknown until var() is substituted,
+                // which needs the element. They are expanded when applied, so their
+                // longhands still land at the shorthand's position in source order.
                 declarations_.push_back(declaration{d.property, std::string{sheet.text_of(d)}});
                 rule filed;
                 filed.selector = sel_index;
@@ -458,10 +454,10 @@ void engine::add_sheet(std::string_view css, std::uint8_t origin) {
     }
 }
 
-// THE LAYER ORDER, CSS Cascade 5 §6.4.3: layers sort by first appearance,
-// nested layers grouped within their parent and BEFORE the parent's own
-// rules, and unlayered rules after every layer. As paths - `a.b` is [a, a.b]
-// - that is a lexicographic compare on the shared prefix, the longer path
+// The layer order (CSS Cascade 5 §6.4.3): layers sort by first appearance,
+// nested layers grouped within their parent and before the parent's own
+// rules, and unlayered rules after every layer. As paths (`a.b` is [a, a.b])
+// that is a lexicographic compare on the shared prefix, the longer path
 // earlier when one is a prefix of the other; the unlayered entry is the empty
 // path, a prefix of everything, and so last.
 void engine::rerank_layers() {
@@ -501,7 +497,7 @@ bool engine::scope_root_for(const read_txn & txn, const ancestor_filter & ancest
     const std::size_t none = depth + 1;
     // Is the element at `d` a root of `e` whose scope holds the subject, with
     // the outer root at `outer` being what `:scope` names in `e`'s roots? A
-    // LIMIT and everything under it is out of scope, the limit itself included
+    // limit and everything under it is out of scope, the limit itself included
     // (CSS Cascade 6 §3.1), so any element strictly below the root down to the
     // subject that matches one ends the candidacy.
     const auto is_root = [&](const scope_entry & e, std::size_t d, std::size_t outer) {
@@ -525,10 +521,10 @@ bool engine::scope_root_for(const read_txn & txn, const ancestor_filter & ancest
         return true;
     };
     // Every root depth of scope `at` that holds the subject, nearest first
-    // under each root of the enclosing scope. An implicit scope - `@scope { }`
-    // with no prelude - is rooted at the sheet's owner node's parent, which
-    // the shell names by key (css::scope_block); one it did not name has no
-    // root and matches nothing.
+    // under each root of the enclosing scope. An implicit scope (`@scope { }`
+    // with no prelude) is rooted at the parent of the sheet's owner node, which
+    // the embedder passes in as css::scope_block::implicit_root; a scope with no
+    // such key has no root and matches nothing.
     using visitor = std::function<void(std::size_t)>;
     const auto each_root = [&](auto && self, std::uint16_t at, const visitor & f) -> void {
         if (at == 0) {
@@ -546,7 +542,7 @@ bool engine::scope_root_for(const read_txn & txn, const ancestor_filter & ancest
     bool found = false;
     each_root(each_root, s, visitor{[&](std::size_t d) {
                   // The subject may be its own scoping root only when the rule's selector
-                  // names it - `.a { }` inside `@scope (.a)` is `:where(:scope) .a`.
+                  // names it: `.a { }` inside `@scope (.a)` is `:where(:scope) .a`.
                   if (d == depth && !explicit_scope) { return; }
                   if (!found || d > root_depth) { root_depth = d; }
                   found = true;
@@ -557,13 +553,10 @@ bool engine::scope_root_for(const read_txn & txn, const ancestor_filter & ancest
 
 namespace {
 
-// `a < b`, `a <= b < c`, `a = b` - a style feature's range form, with every
-// operand present, the two comparisons of a double range pointing one way,
-// and no `!` anywhere.
-// Is the text a style feature's RANGE form - `a < b`, `a <= b < c` - and is
-// that range well formed: every operand present, the two comparisons of a
-// double range pointing one way, no `!` anywhere? nullopt for no range at
-// all (no top-level comparison).
+/// Whether `text` is a style feature's range form (`a < b`, `a <= b < c`) and,
+/// if so, whether it is well formed: every operand present, both comparisons of
+/// a double range pointing the same way, and no `!`. Returns nullopt when there
+/// is no top-level comparison at all.
 [[nodiscard]] std::optional<bool> range_shape(std::string_view text) {
     const css::token_stream s = css::tokenize(text);
     std::vector<char> ops;
@@ -613,7 +606,7 @@ bool engine::container_holds(const read_txn & txn, std::uint16_t c, std::size_t 
     const atom type_key = atoms_->intern_lower("container-type");
     const atom name_key = atoms_->intern_lower("container-name");
     for (; c != 0; c = static_cast<std::uint16_t>(containers_[c].parent)) {
-        // A COMMA LIST HOLDS WHEN ANY OF ITS CONDITIONS DOES, each choosing
+        // A comma list holds when any of its conditions does, each choosing
         // its own container (CSS Conditional 5 §3).
         bool held = false;
         for (const css::container_query & q : containers_[c].queries) {
@@ -629,9 +622,9 @@ bool engine::container_holds(const read_txn & txn, std::uint16_t c, std::size_t 
 
 bool engine::container_query_holds(const read_txn & txn, const css::container_query & e,
                                    std::size_t depth, atom type_key, atom name_key) {
-    // WHICH ANCESTOR IS ASKED (CSS Conditional 5 §2.2): the nearest one
+    // Which ancestor is asked (CSS Conditional 5 §2.2): the nearest one
     // carrying the name, if one was asked, whose `container-type` can answer
-    // every feature the query uses - a size container on each axis a size
+    // every feature the query uses: a size container on each axis a size
     // feature reads, a scroll-state container for `scroll-state()`. A
     // `style()` query asks nothing of it: every element is a style container.
     // ponytail: the requirements are re-read per element per rule; cache them
@@ -640,7 +633,7 @@ bool engine::container_query_holds(const read_txn & txn, const css::container_qu
     // A feature no container has: no container can be asked.
     if (needs.unknown) { return false; }
     bool held = false;
-    // A PSEUDO-ELEMENT'S ORIGINATING ELEMENT is its container candidate too.
+    // A pseudo-element's originating element is its container candidate too.
     for (std::size_t d = depth + (pseudo_wanted_ != atom{} ? 1 : 0); d-- > 0;) {
         if (d >= chain_styles_.size() || !chain_styles_[d]) { continue; }
         const computed_style_ptr & style = chain_styles_[d];
@@ -661,10 +654,10 @@ bool engine::container_query_holds(const read_txn & txn, const css::container_qu
             (needs.scroll_state && !scroll_state)) {
             continue;
         }
-        // THE CONTENT BOX as last laid out. The container is chosen by its
-        // style alone: one with no box to contain - not laid out yet,
-        // `display: none`, an inline box - is still the one asked, and its
-        // sizes are unknown (never-match-container).
+        // The content box as last laid out. The container is chosen by its
+        // style alone: one with no box to contain (not laid out yet,
+        // `display: none`, an inline box) is still the one asked, and its
+        // sizes are unknown (WPT never-match-container).
         css::container_box box;
         if (size || inline_size || scroll_state) {
             const std::optional<container_size> laid = container_size_of(levels_[d][path_[d]].node);
@@ -677,7 +670,7 @@ bool engine::container_query_holds(const read_txn & txn, const css::container_qu
             if (laid && scroll_state) { box.scrollable = laid->scrollable; }
         }
         const css::media_environment & env = environment_;
-        // THE CONTAINER'S FONT, which an `em` in the query measures.
+        // The container's font, which an `em` in the query measures.
         {
             const auto get = [&](std::string_view name) {
                 return style->get(atoms_->intern_lower(name));
@@ -689,13 +682,13 @@ bool engine::container_query_holds(const read_txn & txn, const css::container_qu
                              measure_ ? zero_advance_of(get("font-family"), get("font-weight"),
                                                         get("font-style"), font_size)
                                       : 0.0f);
-            // ...its place among its siblings for sibling-index() and
-            // sibling-count() (sibling-function-container-query)...
+            // Its place among its siblings, for sibling-index() and
+            // sibling-count() (WPT sibling-function-container-query).
             box.lengths.sibling_index = levels_[d][path_[d]].facts.sibling_index;
             box.lengths.sibling_count = levels_[d][path_[d]].facts.sibling_count;
-            // ...and its `cq*` units measure the containers of the
-            // container, as they would on the container itself
-            // (container-units-in-at-container).
+            // Its `cq*` units measure the containers of the container, as
+            // they would on the container itself (WPT
+            // container-units-in-at-container).
             box.lengths.container_width = box.lengths.container_height = -1.0f;
             if (d > 0 && d - 1 < cq_chain_.size()) {
                 const auto [inline_container, block_container] = cq_chain_[d - 1];
@@ -711,16 +704,16 @@ bool engine::container_query_holds(const read_txn & txn, const css::container_qu
                 }
             }
         }
-        // `style(...)` IS THE if() CONDITION OF THE SAME NAME, asked of the
+        // `style(...)` is the if() condition of the same name, asked of the
         // container rather than of the element (CSS Conditional 5 §3.3): its
         // custom properties, its attributes for an `attr()` in a range, its
         // font for an `em`. So it goes through the substituter that answers
-        // `if(style(...): ...)` - plain, boolean and range features, nested
-        // `and`/`or`/`not` - and a third branch keeps unknown apart from
+        // `if(style(...): ...)` (plain, boolean and range features, nested
+        // `and`/`or`/`not`), and a third branch keeps unknown apart from
         // false, since `not` of unknown is still unknown.
         const node_id at = levels_[d][path_[d]].node;
-        // NO random() IN A QUERY (csswg-drafts#10982), written in it or
-        // reached through a custom property: the feature is unknown.
+        // A random() in a query (csswg-drafts#10982), written in it or reached
+        // through a custom property, makes the feature unknown.
         const auto random = [](std::string_view v) {
             return v.find("random(") != std::string_view::npos ||
                    v.find("random-item(") != std::string_view::npos;
@@ -757,7 +750,7 @@ bool engine::container_query_holds(const read_txn & txn, const css::container_qu
             };
             // A registered <color> compares as a computed colour, under the
             // container's used scheme: `light-dark(white, black)` is black
-            // in a dark container (registered-color-style-queries).
+            // in a dark container (WPT registered-color-style-queries).
             conditions.canonical_color = [&](std::string_view v) {
                 bool light = false, dark = false;
                 for (const std::string_view word :
@@ -770,7 +763,7 @@ bool engine::container_query_holds(const read_txn & txn, const css::container_qu
                 const std::string computed = css::computed_color(v, colors);
                 return computed.empty() ? std::string{v} : computed;
             };
-            // `inherit` in a query names the container's PARENT's value.
+            // `inherit` in a query names the container's parent's value.
             conditions.inherited = [&](std::string_view name) -> std::optional<std::string> {
                 if (d == 0 || d - 1 >= chain_styles_.size() || !chain_styles_[d - 1]) {
                     return std::nullopt;
@@ -780,8 +773,8 @@ bool engine::container_query_holds(const read_txn & txn, const css::container_qu
                 return std::string{v};
             };
             conditions.lengths = box.lengths;
-            // A DECLARATION'S `!important` is no part of the value it asks
-            // about (custom-property-style-queries): `style(--foo: bar
+            // A declaration's `!important` is no part of the value it asks
+            // about (WPT custom-property-style-queries): `style(--foo: bar
             // !important)` asks for `bar`.
             std::string asked{text};
             if (const std::size_t bang = asked.rfind('!');
@@ -790,31 +783,31 @@ bool engine::container_query_holds(const read_txn & txn, const css::container_qu
                               "important")) {
                 asked.resize(bang);
             }
-            // Held by name: `word` views it.
+            // Kept in a named string because `word` below views it.
             const std::string answer =
                 css::substitute_var("if(style(" + asked + "): y; not style(" + asked +
                                         "): n; else: u)",
                                     lookup, *atoms_, attributes, &conditions)
                     .value_or("u");
             const std::string_view word = trim(answer, html_whitespace);
-            // A MALFORMED RANGE is unknown whatever the if() made of it.
+            // A malformed range is unknown whatever the if() made of it.
             const std::optional<bool> range = range_shape(text);
             if (range == false) { return css::truth::unknown; }
             if (word == "y") { return css::truth::yes; }
-            // A WELL-FORMED RANGE ANSWERS: two values that cannot be compared
-            // are not in range (at-container-style-parsing); only one with a
-            // `!` or its comparisons pointing both ways is unknown.
+            // A well-formed range answers: two values that cannot be compared
+            // are not in range (WPT at-container-style-parsing); only a range
+            // with a `!` or its comparisons pointing both ways is unknown.
             return word == "n" || range == true ? css::truth::no : css::truth::unknown;
         };
-        // A var() IN THE QUERY is the container's custom property
-        // (size-query-with-var): `(width > var(--w, 100px))`. One that
-        // substitutes to nothing leaves the query false.
+        // A var() in the query reads the container's custom property (WPT
+        // size-query-with-var): `(width > var(--w, 100px))`. One that fails to
+        // substitute leaves the query false.
         std::string substituted;
         std::string_view condition = e.condition;
-        // ...and never a random() substituted AWAY before the query sees it:
-        // random-item() is a substitution function too, and resolving it here
-        // made `style(--length: random-item(--foo, 30px, 30px))` a plain
-        // 30px that matched (random-item-in-container-query).
+        // Skip substitution when the query contains random() or random-item():
+        // both are substitution functions, and resolving them here would hide them
+        // from the query, which must treat them as unknown (WPT
+        // random-item-in-container-query).
         if (css::may_have_var(condition) && !random(condition)) {
             const css::custom_lookup lookup = [&style](atom n) -> std::optional<std::string_view> {
                 const std::string_view v = style->get(n);
@@ -829,7 +822,7 @@ bool engine::container_query_holds(const read_txn & txn, const css::container_qu
         // A name alone asks only that there be such a container.
         held = condition.empty() || css::evaluate_container_condition(condition, env, box, query)
                                             .value_or(css::truth::unknown) == css::truth::yes;
-        break; // the nearest eligible container decides, §2.2
+        break; // The nearest eligible container decides (§2.2).
     }
     return held;
 }

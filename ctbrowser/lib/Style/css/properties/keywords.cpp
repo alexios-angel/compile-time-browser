@@ -1,5 +1,12 @@
-// The keyword-combination grammars: `a || b || c` over a few groups, with
-// one or two words that stand alone. One table, one matcher:
+//===- keywords.cpp - Keyword and list grammars --------------- -*- C++ -*-===//
+//
+// Hand-written grammars for properties the generic property table cannot
+// express. Each parser returns the canonical specified value or nullopt, and
+// match_keywords dispatches to them by property name.
+//
+// The largest group is the keyword combinations, `a || b || c` over a few
+// groups plus one or two words that stand alone, driven by one table
+// (or_grammars) and one matcher (match_or):
 //
 //   text-decoration-line   none | [ underline || overline || line-through || blink ]
 //   text-transform         none | math-auto | [ capitalize | uppercase | lowercase ]
@@ -9,11 +16,18 @@
 //   font-synthesis, the font-variant-* longhands, text-underline-position,
 //   hanging-punctuation
 //
-// ...and the three list grammars beside them: `will-change`, the counter
-// properties, and `scroll-snap-align` / `scroll-snap-type`. A row says which
-// words stand alone, the groups (one word from each, at most), whether the
-// canonical form is the group order or the author's, and the spellings that
-// collapse (`contain scale-down` is `scale-down`).
+// A row says which words stand alone, the groups (at most one word from
+// each), whether the canonical form is the group order or the author's, and
+// the spellings that collapse (`contain scale-down` is `scale-down`).
+//
+// The rest are list and per-property parsers: custom-ident and string lists,
+// will-change, the counter properties, scroll-snap-*, font-*, easing lists,
+// cursor, content, position-try-fallbacks, clip and more.
+//
+// Names in parentheses like `contain-valid` are web-platform-tests files under
+// css/*/parsing/ that check the behaviour described.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -23,25 +37,26 @@ using namespace detail;
 
 namespace {
 
-// `<custom-ident>` EXCLUDES THE CSS-WIDE KEYWORDS AND `default` (CSS Values 4
-// §identifier-value). `revert-rule` is a CSS-wide keyword of CSS Cascade 6 that
-// nothing else here implements, and it is excluded on the same grounds:
-// `will-change: revert-rule` and `counter-reset: default 0` are two of those
-// parsing files' assertions.
+/// Returns whether `word` may not be a `<custom-ident>`. That excludes the
+/// CSS-wide keywords and `default` (CSS Values 4 §identifier-value).
+/// `revert-rule`, a CSS-wide keyword from CSS Cascade 6 that nothing else here
+/// implements, is excluded too: WPT's will-change and counter-reset parsing
+/// tests assert both.
 [[nodiscard]] bool reserved_ident(std::string_view word) {
     return is_wide_keyword(word) || ascii_iequals_any(word, {"default", "revert-rule"});
 }
 
+/// One keyword-combination grammar; see the file header.
 struct or_grammar {
     std::string_view property;
-    std::string_view alone;                 // words valid only on their own
-    std::array<std::string_view, 5> groups; // each a space-separated set; empty ends
-    bool reorder;                           // canonical order is the group order
-    std::string_view collapse_from = {};    // a full spelling that has a short form...
-    std::string_view collapse_to = {};      // ...and the short form
-    std::string_view collapse2_from = {};
+    std::string_view alone;                 ///< Words valid only on their own.
+    std::array<std::string_view, 5> groups; ///< Space-separated sets; an empty one ends.
+    bool reorder;                           ///< The canonical order is the group order.
+    std::string_view collapse_from = {};    ///< A full spelling that has a short form...
+    std::string_view collapse_to = {};      ///< ...and that short form.
+    std::string_view collapse2_from = {};   ///< A second such pair.
     std::string_view collapse2_to = {};
-    bool first_group_required = false; // `[ a | b ] && c?`: the first group must be there
+    bool first_group_required = false; ///< `[ a | b ] && c?`: the first group is required.
 };
 
 constexpr or_grammar or_grammars[] = {
@@ -53,7 +68,7 @@ constexpr or_grammar or_grammars[] = {
      "none math-auto",
      {"capitalize uppercase lowercase", "full-width", "full-size-kana"},
      true},
-    // The SPECIFIED value keeps its words: `layout style paint` is not
+    // The specified value keeps its words: `layout style paint` is not
     // `content` until it computes (contain-valid against contain-computed),
     // and getComputedStyle does that collapse.
     {"contain", "none strict content", {"size inline-size", "layout", "style", "paint"}, true},
@@ -125,6 +140,8 @@ constexpr or_grammar or_grammars[] = {
      true},
 };
 
+/// Matches lowercased `words` against `g`: one `alone` word, or at most one
+/// word from each group. Returns the canonical spelling, or nullopt.
 [[nodiscard]] std::optional<std::string> match_or(const or_grammar & g,
                                                   std::span<const std::string> words) {
     if (words.empty()) { return std::nullopt; }
@@ -158,7 +175,7 @@ constexpr or_grammar or_grammars[] = {
     return out;
 }
 
-// `auto | [ scroll-position | contents | <custom-ident> ]#`, as written.
+/// `auto | [ scroll-position | contents | <custom-ident> ]#`, as written.
 [[nodiscard]] std::optional<std::string> will_change(const token_stream & ts, const scan & found) {
     std::string out;
     bool expect_item = true;
@@ -185,9 +202,9 @@ constexpr or_grammar or_grammars[] = {
     return out;
 }
 
-// `none | [ <counter-name> <integer>? | <reversed-counter-name> <integer>? ]+`,
-// the integer always written: `foo` is `foo 1` for an increment and `foo 0`
-// for a reset or a set.
+/// `none | [ <counter-name> <integer>? | <reversed-counter-name> <integer>? ]+`,
+/// the integer always written: `foo` is `foo 1` for an increment and `foo 0`
+/// for a reset or a set.
 [[nodiscard]] std::optional<std::string> counters(std::string_view property,
                                                   const token_stream & ts, const scan & found) {
     const bool increment = ascii_iequals(property, "counter-increment");
@@ -233,7 +250,8 @@ constexpr or_grammar or_grammars[] = {
             ++k;
         } else if (k < at.size() && ts.tokens[at[k]].type == token_type::function &&
                    may_have_math(ts.text_of(ts.tokens[at[k]]))) {
-            // A calc() integer, rounded (CSS Values 4 §10.10).
+            // A math function in the integer's place (CSS Values 4 §10.10),
+            // kept unrounded; see below.
             std::size_t end = k;
             int depth = 0;
             for (std::size_t j = at[k]; j < ts.tokens.size(); ++j) {
@@ -249,7 +267,7 @@ constexpr or_grammar or_grammars[] = {
             const css_token & last = ts.tokens[at[end - 1]];
             const std::string_view text =
                 std::string_view{ts.pool}.substr(first.text, last.text + last.length - first.text);
-            // The SPECIFIED value keeps the function (CSS Values 4 §10.12);
+            // The specified value keeps the function (CSS Values 4 §10.12);
             // it is rounded to its integer when it computes, in the cascade.
             const math_answer answer = evaluate_math(text, length_context{});
             if (answer.outcome == math_outcome::invalid) { return std::nullopt; }
@@ -269,9 +287,9 @@ constexpr or_grammar or_grammars[] = {
     return out;
 }
 
-// scroll-snap-align: `[ none | start | end | center ]{1,2}`, one word when
-// both are the same. scroll-snap-type: `none | [ x | y | block | inline |
-// both ] [ mandatory | proximity ]?`, `proximity` being the default.
+/// scroll-snap-align: `[ none | start | end | center ]{1,2}`, one word when
+/// both are the same. scroll-snap-type: `none | [ x | y | block | inline |
+/// both ] [ mandatory | proximity ]?`, `proximity` being the default.
 [[nodiscard]] std::optional<std::string> scroll_snap(std::string_view property,
                                                      std::span<const std::string> words) {
     if (words.empty() || words.size() > 2) { return std::nullopt; }
@@ -289,9 +307,9 @@ constexpr or_grammar or_grammars[] = {
     return words[0] + " mandatory";
 }
 
-// font-size-adjust: `none | [ ex-height | cap-height | ch-width | ic-width |
-// ic-height ]? [ from-font | <number [0,inf]> ]`, the default `ex-height`
-// dropped.
+/// font-size-adjust: `none | [ ex-height | cap-height | ch-width | ic-width |
+/// ic-height ]? [ from-font | <number [0,inf]> ]`, the default `ex-height`
+/// dropped.
 [[nodiscard]] std::optional<std::string> font_size_adjust(const token_stream & ts,
                                                           const scan & found) {
     if (found.significant.empty()) { return std::nullopt; }
@@ -329,8 +347,8 @@ constexpr or_grammar or_grammars[] = {
     return std::nullopt;
 }
 
-// The source text of a run of significant tokens, empty when any of it came
-// from the decoded-escape tail of the pool rather than the author's bytes.
+/// The source text of a run of significant tokens, empty when any of it came
+/// from the decoded-escape tail of the pool rather than the author's bytes.
 [[nodiscard]] std::string_view run_text(const token_stream & ts, std::span<const std::size_t> at) {
     if (at.empty()) { return {}; }
     const css_token & first = ts.tokens[at.front()];
@@ -339,11 +357,11 @@ constexpr or_grammar or_grammars[] = {
     return std::string_view{ts.pool}.substr(first.text, last.text + last.length - first.text);
 }
 
-// A MATH FUNCTION'S WHOLE BLOCK AS ONE COMPONENT, typed. `nullopt` when the
-// cursor is not on a function, the block does not close, `calc/` calls it
-// malformed, or it resolves to something other than `want`; `k` is left on the
-// closing paren. It is what lets a property whose grammar is a list of
-// keywords and one number still take `calc()` in the number's place.
+/// Parses the math function at significant index `k` as one component of
+/// type `want`. Returns nullopt when `k` is not on a function, the block does
+/// not close, the math evaluator (css/calc/) rejects it, or it resolves to
+/// another type. Leaves `k` on the closing paren. This lets a keyword list
+/// take calc() in place of its one number.
 [[nodiscard]] std::optional<std::string> math_component(const token_stream & ts, const scan & found,
                                                         std::size_t & k, numeric_type want) {
     if (ts.tokens[found.significant[k]].type != token_type::function) { return std::nullopt; }
@@ -367,13 +385,13 @@ constexpr or_grammar or_grammars[] = {
     return simplify_math(text);
 }
 
-// `<custom-ident>` PROPERTIES: a word the property does not spell for itself.
-// `alone` are that property's own words, valid only as the whole value and NOT
-// custom idents, so `view-transition-class: foo none` is invalid. `lowercase`
-// are words that may stand IN the list and are keywords all the same -
-// `transition-property: ALL, SRC` is `all, SRC`, because a custom ident keeps
-// its case and a keyword never does. `list` says whether more than one may
-// follow and `comma` what separates them.
+/// A property whose value is `<custom-ident>`s: words the property does not
+/// spell for itself. `alone` are the property's own words, valid only as the
+/// whole value and never custom idents, so `view-transition-class: foo none`
+/// is invalid. `lowercase` are words that may stand inside the list but are
+/// still keywords: `transition-property: ALL, SRC` is `all, SRC`, because a
+/// custom ident keeps its case and a keyword never does. `list` says whether
+/// more than one may follow and `comma` whether commas separate them.
 struct ident_grammar {
     std::string_view property;
     std::string_view alone;
@@ -391,6 +409,7 @@ constexpr ident_grammar ident_grammars[] = {
     {"transition-property", "none", "all", true, true},
 };
 
+/// Parses a value of `g`'s custom-ident grammar into its canonical text.
 [[nodiscard]] std::optional<std::string> custom_idents(const ident_grammar & g,
                                                        const token_stream & ts,
                                                        const scan & found) {
@@ -422,11 +441,11 @@ constexpr ident_grammar ident_grammars[] = {
     return out;
 }
 
-// `<string>` PROPERTIES: one string, or one of the property's own keywords.
-// `font-language-override` is the one with a rule about WHICH string: CSS Fonts
-// 4 says an OpenType language system tag, which is one to four characters from
-// the printable ASCII range, and its shortest serialisation drops the trailing
-// spaces the tag is padded with (`"ENG "` is `"ENG"`, `" en "` is `" en"`).
+/// A property whose value is one string or one of its own keywords.
+/// `font-language-override` also restricts which strings: CSS Fonts 4 wants an
+/// OpenType language system tag, one to four printable ASCII characters, and
+/// its shortest serialisation drops the trailing padding spaces (`"ENG "` is
+/// `"ENG"`, `" en "` is `" en"`).
 struct string_grammar {
     std::string_view property;
     std::string_view keywords;
@@ -464,9 +483,9 @@ constexpr string_grammar string_grammars[] = {
     return string_text(body);
 }
 
-// `normal | [ light | dark | <custom-ident> ]+ && only?` (CSS Color Adjust 1).
-// The `&&` is why `light only dark` is invalid where `only light dark` is not:
-// `only` sits beside the whole list, never inside it, and serialises last.
+/// `normal | [ light | dark | <custom-ident> ]+ && only?` (CSS Color Adjust 1).
+/// The `&&` is why `light only dark` is invalid where `only light dark` is not:
+/// `only` sits beside the whole list, never inside it, and serialises last.
 [[nodiscard]] std::optional<std::string> color_scheme(std::span<const std::string> words) {
     if (words.empty()) { return std::nullopt; }
     if (words.size() == 1 && words.front() == "normal") { return words.front(); }
@@ -487,10 +506,10 @@ constexpr string_grammar string_grammars[] = {
     return only ? out + " only" : out;
 }
 
-// `normal | italic | oblique <angle>?` (CSS Fonts 4 §font-style). A zero angle
-// IS `normal` - `oblique 0deg` and `normal` are the same style and serialise
-// the same way - and an angle written in grad or rad keeps its unit, because
-// only a math function is simplified.
+/// `normal | italic | oblique <angle>?` (CSS Fonts 4 §font-style). A zero angle
+/// is `normal` (`oblique 0deg` and `normal` are the same style and serialise
+/// the same way), and an angle written in grad or rad keeps its unit, because
+/// only a math function is simplified.
 [[nodiscard]] std::optional<std::string> font_style(const token_stream & ts, const scan & found) {
     const std::vector<std::size_t> & at = found.significant;
     if (at.empty() || ts.tokens[at[0]].type != token_type::ident) { return std::nullopt; }
@@ -514,8 +533,8 @@ constexpr string_grammar string_grammars[] = {
     return "oblique " + serialize_number(t.number) + ascii_lower_copy(unit);
 }
 
-// `[ a | b | ... ]{1,2}`, the pair written once when both words are the same
-// (`border-image-repeat: space space` is `space`, CSS Backgrounds 3 §6.4).
+/// `[ a | b | ... ]{1,2}`, the pair written once when both words are the same
+/// (`border-image-repeat: space space` is `space`, CSS Backgrounds 3 §6.4).
 struct pair_grammar {
     std::string_view property;
     std::string_view keywords;
@@ -536,8 +555,8 @@ constexpr pair_grammar pair_grammars[] = {
     return words[0];
 }
 
-// `auto | stable && both-edges?` (CSS Overflow 3): `both-edges` needs `stable`
-// beside it, and the pair serialises in that order however it was written.
+/// `auto | stable && both-edges?` (CSS Overflow 3): `both-edges` needs `stable`
+/// beside it, and the pair serialises in that order however it was written.
 [[nodiscard]] std::optional<std::string> scrollbar_gutter(std::span<const std::string> words) {
     if (words.size() == 1 && words.front() == "auto") { return words.front(); }
     if (words.size() == 1 && words.front() == "stable") { return words.front(); }
@@ -548,7 +567,7 @@ constexpr pair_grammar pair_grammars[] = {
     return std::nullopt;
 }
 
-// `none | all | [ digits <integer [2,4]>? ]` (CSS Writing Modes 4).
+/// `none | all | [ digits <integer [2,4]>? ]` (CSS Writing Modes 4).
 [[nodiscard]] std::optional<std::string> text_combine_upright(const token_stream & ts,
                                                               const scan & found) {
     const std::vector<std::size_t> & at = found.significant;
@@ -564,7 +583,7 @@ constexpr pair_grammar pair_grammars[] = {
     return word + " " + serialize_number(n.number);
 }
 
-// `[ auto | reverse ] || <angle>` (CSS Motion 1), the keyword written first.
+/// `[ auto | reverse ] || <angle>` (CSS Motion 1), the keyword written first.
 [[nodiscard]] std::optional<std::string> offset_rotate(const token_stream & ts,
                                                        const scan & found) {
     const std::vector<std::size_t> & at = found.significant;
@@ -598,7 +617,7 @@ constexpr pair_grammar pair_grammars[] = {
     return keyword + " " + angle;
 }
 
-// One `<length-percentage>`, literal or a math function, canonical.
+/// One `<length-percentage>`, literal or a math function, canonical.
 [[nodiscard]] std::optional<std::string> length_percentage(const token_stream & ts,
                                                            std::span<const std::size_t> at) {
     static constexpr property_syntax any_length{"", k::length_percentage, "", "", false, false};
@@ -619,9 +638,9 @@ constexpr pair_grammar pair_grammars[] = {
     return simplify_math(text);
 }
 
-// The comma-separated items of a value, each a run of significant tokens -
-// a comma inside a function's or a block's parentheses is the item's own.
-// `nullopt` for an empty item - a leading, trailing or doubled comma.
+/// The comma-separated items of a value, each a run of significant tokens -
+/// a comma inside a function's or a block's parentheses is the item's own.
+/// `nullopt` for an empty item - a leading, trailing or doubled comma.
 [[nodiscard]] std::optional<std::vector<std::vector<std::size_t>>> comma_items(
     const token_stream & ts, const scan & found) {
     std::vector<std::vector<std::size_t>> items{{}};
@@ -644,9 +663,9 @@ constexpr pair_grammar pair_grammars[] = {
     return items;
 }
 
-// `[ normal | <length-percentage> | <timeline-range-name> <length-percentage>? ]#`
-// (Scroll-driven Animations §animation-range). The offset that names the whole
-// of the named range is dropped, which is 0% at the start and 100% at the end.
+/// `[ normal | <length-percentage> | <timeline-range-name> <length-percentage>? ]#`
+/// (Scroll-driven Animations §animation-range). The offset that names the whole
+/// of the named range is dropped, which is 0% at the start and 100% at the end.
 [[nodiscard]] std::optional<std::string> animation_range(std::string_view property,
                                                          const token_stream & ts,
                                                          const scan & found) {
@@ -686,9 +705,9 @@ constexpr pair_grammar pair_grammars[] = {
     return out;
 }
 
-// `[ from-image || <resolution> ] && snap?` (CSS Images 4). The `&&` is why
-// `3dpi snap from-image` is invalid and `snap 3dpi from-image` is not: `snap`
-// sits beside the pair, never inside it. Written as the author wrote it.
+/// `[ from-image || <resolution> ] && snap?` (CSS Images 4). The `&&` is why
+/// `3dpi snap from-image` is invalid and `snap 3dpi from-image` is not: `snap`
+/// sits beside the pair, never inside it. Written as the author wrote it.
 [[nodiscard]] std::optional<std::string> image_resolution(const token_stream & ts,
                                                           const scan & found) {
     std::string out;
@@ -711,10 +730,10 @@ constexpr pair_grammar pair_grammars[] = {
             continue;
         }
         if (resolution) { return std::nullopt; }
-        // A MATH FUNCTION IS A `<resolution>` TOO, and image-resolution is the
-        // property css/css-values puts every resolution-typed calc() through
-        // (numeric-testcommon.js picks it for `type:'resolution'`), so the
-        // whole of the function's block is one component here.
+        // A math function is a `<resolution>` too. WPT's css/css-values tests
+        // put every resolution-typed calc() through image-resolution (their
+        // numeric-testcommon.js picks it for `type:'resolution'`), so the
+        // function's whole block is one component here.
         if (t.type == token_type::function) {
             const std::optional<std::string> math =
                 math_component(ts, found, k, numeric_type::resolution);
@@ -737,12 +756,12 @@ constexpr pair_grammar pair_grammars[] = {
     return out;
 }
 
-// `[ <family-name> | <generic-family> ]#` (CSS Fonts 4 §2.1): a family is a
-// string or a run of identifiers, none of them a generic family or a
-// CSS-wide keyword - `cursive serif` is no family - and a generic family is
-// one identifier, which is ASCII case-insensitive and folds (`Serif` is
-// `serif`). Anything else between the commas - `Red/Black`, `test@foo`, a
-// string with a word after it - is invalid. serialize_font_family writes it.
+/// `[ <family-name> | <generic-family> ]#` (CSS Fonts 4 §2.1): a family is a
+/// string or a run of identifiers, none of them a generic family or a
+/// CSS-wide keyword - `cursive serif` is no family - and a generic family is
+/// one identifier, which is ASCII case-insensitive and folds (`Serif` is
+/// `serif`). Anything else between the commas - `Red/Black`, `test@foo`, a
+/// string with a word after it - is invalid. serialize_font_family writes it.
 [[nodiscard]] std::optional<std::string> font_family(const token_stream & ts, const scan & found) {
     static constexpr std::string_view generics =
         "serif sans-serif cursive fantasy monospace system-ui emoji math fangsong ui-serif "
@@ -776,8 +795,8 @@ constexpr pair_grammar pair_grammars[] = {
     return serialize_font_family(out);
 }
 
-// A four-character ASCII <string>, the OpenType tag of a feature or an axis
-// (CSS Fonts 4 §6.12, §7.2); its canonical spelling, or nullopt.
+/// A four-character ASCII <string>, the OpenType tag of a feature or an axis
+/// (CSS Fonts 4 §6.12, §7.2); its canonical spelling, or nullopt.
 [[nodiscard]] std::optional<std::string> opentype_tag(const token_stream & ts,
                                                       const css_token & t) {
     if (t.type != token_type::string) { return std::nullopt; }
@@ -789,9 +808,9 @@ constexpr pair_grammar pair_grammars[] = {
     return "\"" + std::string{tag} + "\"";
 }
 
-// `normal | <feature-tag-value>#`, <feature-tag-value> = <opentype-tag>
-// [ <integer [0,∞]> | on | off ]? (CSS Fonts 4 §6.12): a value of 1 - `on`
-// or none at all - is left unwritten, and `off` is 0.
+/// `normal | <feature-tag-value>#`, <feature-tag-value> = <opentype-tag>
+/// [ <integer [0,∞]> | on | off ]? (CSS Fonts 4 §6.12): a value of 1 - `on`
+/// or none at all - is left unwritten, and `off` is 0.
 [[nodiscard]] std::optional<std::string> font_feature_settings(const token_stream & ts,
                                                                const scan & found) {
     const std::vector<std::size_t> & at = found.significant;
@@ -825,7 +844,7 @@ constexpr pair_grammar pair_grammars[] = {
     return out;
 }
 
-// `normal | [ <opentype-tag> <number> ]#` (CSS Fonts 4 §7.2).
+/// `normal | [ <opentype-tag> <number> ]#` (CSS Fonts 4 §7.2).
 [[nodiscard]] std::optional<std::string> font_variation_settings(const token_stream & ts,
                                                                  const scan & found) {
     const std::vector<std::size_t> & at = found.significant;
@@ -846,8 +865,8 @@ constexpr pair_grammar pair_grammars[] = {
     return out;
 }
 
-// `normal | light | dark | <palette-identifier> | <palette-mix()>` (CSS
-// Fonts 4 §9.1), a <palette-identifier> being a <dashed-ident>.
+/// `normal | light | dark | <palette-identifier> | <palette-mix()>` (CSS
+/// Fonts 4 §9.1), a <palette-identifier> being a <dashed-ident>.
 [[nodiscard]] std::optional<std::string> font_palette(const token_stream & ts, const scan & found) {
     const std::vector<std::size_t> & at = found.significant;
     if (at.empty()) { return std::nullopt; }
@@ -862,10 +881,10 @@ constexpr pair_grammar pair_grammars[] = {
     return std::nullopt;
 }
 
-// `symbols( <symbols-type>? <string>+ )` (CSS Counter Styles 3 §6.1, without
-// the <image> alternative engines leave out): two symbols at least for
-// `numeric` and `alphabetic`, and `additive` is no type here. `inner` is the
-// significant tokens between the parentheses.
+/// `symbols( <symbols-type>? <string>+ )` (CSS Counter Styles 3 §6.1, without
+/// the <image> alternative engines leave out): two symbols at least for
+/// `numeric` and `alphabetic`, and `additive` is no type here. `inner` is the
+/// significant tokens between the parentheses.
 [[nodiscard]] bool symbols_valid(const token_stream & ts, std::span<const std::size_t> inner) {
     std::size_t first = 0;
     std::size_t least = 1;
@@ -881,8 +900,9 @@ constexpr pair_grammar pair_grammars[] = {
     return inner.size() - first >= least;
 }
 
-// `<counter-style> | <string> | none` (CSS Lists 3 §3.3): one identifier,
-// one string, or one symbols() - checked only; the freeform path writes it.
+/// `<counter-style> | <string> | none` (CSS Lists 3 §3.3): one identifier,
+/// one string, or one symbols(). Only checked here: the generic `freeform`
+/// fallback in declaration.cpp writes the value as typed.
 [[nodiscard]] bool list_style_type_valid(const token_stream & ts, const scan & found) {
     const std::vector<std::size_t> & at = found.significant;
     if (at.size() == 1) {
@@ -897,10 +917,10 @@ constexpr pair_grammar pair_grammars[] = {
     return symbols_valid(ts, std::span{at}.subspan(1, at.size() - 2));
 }
 
-// `[ <cursor-image> [ <x> <y> ]? , ]* <cursor-predefined>` (CSS UI 4 §4.1),
-// a <cursor-image> being a url(), an image-set(), or a light-dark() of two -
-// no gradient - and <x> <y> two numbers. Only the grammar: the freeform path
-// writes the value.
+/// `[ <cursor-image> [ <x> <y> ]? , ]* <cursor-predefined>` (CSS UI 4 §4.1),
+/// a <cursor-image> being a url(), an image-set(), or a light-dark() of two -
+/// no gradient - and <x> <y> two numbers. Only checked here: the freeform
+/// fallback in declaration.cpp writes the value.
 [[nodiscard]] bool cursor_valid(const token_stream & ts, const scan & found) {
     static constexpr std::string_view predefined =
         "auto default none context-menu help pointer progress wait cell crosshair text "
@@ -973,8 +993,8 @@ constexpr pair_grammar pair_grammars[] = {
     return false;
 }
 
-// `none | [ grow | shrink ] [ consistent | per-line | per-line-all ]?
-// <percentage>?` (CSS Text 4 §10.1).
+/// `none | [ grow | shrink ] [ consistent | per-line | per-line-all ]?
+/// <percentage>?` (CSS Text 4 §10.1).
 [[nodiscard]] std::optional<std::string> text_fit(const token_stream & ts, const scan & found) {
     const std::vector<std::size_t> & at = found.significant;
     const auto word = [&](std::size_t i) {
@@ -997,11 +1017,11 @@ constexpr pair_grammar pair_grammars[] = {
     return out;
 }
 
-// A <'position-area'> as position-try-fallbacks lists it (CSS Anchor
-// Positioning 1 §3.1): one or two keywords of one grammar - x with y, block
-// with inline, self-block with self-inline, or two axis-free ones - with
-// `center` and `span-all` fitting any, the horizontal or block keyword
-// written first and a repeated one once. Lowercase words in.
+/// A <'position-area'> as position-try-fallbacks lists it (CSS Anchor
+/// Positioning 1 §3.1): one or two keywords of one grammar - x with y, block
+/// with inline, self-block with self-inline, or two axis-free ones - with
+/// `center` and `span-all` fitting any, the horizontal or block keyword
+/// written first and a repeated one once. Lowercase words in.
 [[nodiscard]] std::optional<std::string> position_area(std::vector<std::string> words) {
     const auto family = [](std::string_view w) {
         if (w == "center" || w == "span-all") { return 0; }
@@ -1039,10 +1059,10 @@ constexpr pair_grammar pair_grammars[] = {
     return words[0] + " " + words[1];
 }
 
-// `none | [ [ <dashed-ident> || <try-tactic> ] | <'position-area'> ]#` (CSS
-// Anchor Positioning 1 §5.2), a <try-tactic> being flip-block, flip-inline,
-// flip-start, flip-x and flip-y, each once: written with the name first and
-// the tactics in the author's order.
+/// `none | [ [ <dashed-ident> || <try-tactic> ] | <'position-area'> ]#` (CSS
+/// Anchor Positioning 1 §5.2), a <try-tactic> being flip-block, flip-inline,
+/// flip-start, flip-x and flip-y, each once: written with the name first and
+/// the tactics in the author's order.
 [[nodiscard]] std::optional<std::string> position_try_fallbacks(const token_stream & ts,
                                                                 const scan & found) {
     const std::vector<std::size_t> & at = found.significant;
@@ -1092,10 +1112,11 @@ constexpr pair_grammar pair_grammars[] = {
     return out;
 }
 
-// `normal | none | [ <content-replacement> | <content-list> ] [ / [ <string> |
-// <counter> | <attr()> ]+ ]?` (CSS Generated Content 3 §2), with counter() and
-// counters() as CSS Lists 3 §4 writes them and symbols() as CSS Counter Styles 3
-// §6.1 does. Only the grammar: the freeform path writes the value.
+/// `normal | none | [ <content-replacement> | <content-list> ] [ / [ <string> |
+/// <counter> | <attr()> ]+ ]?` (CSS Generated Content 3 §2), with counter() and
+/// counters() as CSS Lists 3 §4 writes them and symbols() as CSS Counter Styles 3
+/// §6.1 does. Only checked here: the freeform fallback in declaration.cpp
+/// writes the value.
 [[nodiscard]] bool content_valid(const token_stream & ts, const scan & found) {
     const std::vector<std::size_t> & at = found.significant;
     const auto type_of = [&](std::size_t k) { return ts.tokens[at[k]].type; };
@@ -1197,12 +1218,12 @@ constexpr pair_grammar pair_grammars[] = {
     return items > 0;
 }
 
-// `<easing-function>#` (CSS Easing 1 §2 and 2 §2), each written canonically:
-// `step-start` is `steps(1, start)`, `step-end` and an `end`/`jump-end` step
-// position are left unwritten, a cubic-bezier()'s x values lie in [0, 1], and
-// a steps() count is a positive integer - two or more for `jump-none`.
-// linear() is kept as written. Anything else - `auto`, `ease-in ease-out`,
-// `steps(2, ())` - is invalid (transition-timing-function-invalid).
+/// `<easing-function>#` (CSS Easing 1 §2 and 2 §2), each written canonically:
+/// `step-start` is `steps(1, start)`, `step-end` and an `end`/`jump-end` step
+/// position are left unwritten, a cubic-bezier()'s x values lie in [0, 1], and
+/// a steps() count is a positive integer - two or more for `jump-none`.
+/// linear() is kept as written. Anything else - `auto`, `ease-in ease-out`,
+/// `steps(2, ())` - is invalid (transition-timing-function-invalid).
 [[nodiscard]] std::optional<std::string> easing_list(const token_stream & ts, const scan & found) {
     const std::optional<std::vector<std::vector<std::size_t>>> items = comma_items(ts, found);
     if (!items) { return std::nullopt; }
@@ -1303,9 +1324,9 @@ constexpr pair_grammar pair_grammars[] = {
     return out;
 }
 
-// `<length [0,∞]>{1,2}` (CSS Tables 3 §border-spacing): the horizontal
-// spacing and the vertical one, which is the horizontal when omitted - kept as
-// written, one value or two (border-spacing-valid).
+/// `<length [0,∞]>{1,2}` (CSS Tables 3 §border-spacing): the horizontal
+/// spacing and the vertical one, which is the horizontal when omitted - kept as
+/// written, one value or two (border-spacing-valid).
 [[nodiscard]] std::optional<std::string> border_spacing(const token_stream & ts,
                                                         const scan & found) {
     static constexpr property_syntax spacing{"", k::length, "", "", false, true};
@@ -1324,9 +1345,9 @@ constexpr pair_grammar pair_grammars[] = {
     return parts.size() == 1 ? parts[0] : parts[0] + " " + parts[1];
 }
 
-// `auto | rect( [ <length> | auto ]#{4} )` (CSS Masking 1, the CSS 2.1
-// property). The comma-separated form is the only one: `rect(10px 20px, 30px
-// 40px)` is a syntax error however many engines once took it.
+/// `auto | rect( [ <length> | auto ]#{4} )` (CSS Masking 1, the CSS 2.1
+/// property), plus CSS 2.1's space-separated `rect(0 0 0 0)`. Mixing the two
+/// separators, as in `rect(10px 20px, 30px 40px)`, is a syntax error.
 [[nodiscard]] std::optional<std::string> clip_rect(const token_stream & ts, const scan & found) {
     const std::vector<std::size_t> & at = found.significant;
     if (at.size() == 1 && ts.tokens[at[0]].type == token_type::ident &&
@@ -1351,7 +1372,7 @@ constexpr pair_grammar pair_grammars[] = {
             want_side = true;
             continue;
         }
-        // THE SEPARATORS ARE UNIFORM. `rect(10px, 20px, 30px, 40px)` is CSS
+        // Separators must be uniform. `rect(10px, 20px, 30px, 40px)` is CSS
         // Masking 1's `[ <length> | auto ]#{4}` and `rect(0 0 0 0)` is CSS 2.1's
         // comma-less form that every engine still takes; `rect(10px 20px, 30px
         // 40px)` is neither, and css-masking/parsing/clip-invalid says so.
@@ -1379,11 +1400,11 @@ constexpr pair_grammar pair_grammars[] = {
     return out + ")";
 }
 
-// `normal | [ stylistic(<feature-value-name>) || historical-forms ||
-// styleset(<feature-value-name>#) || character-variant(<feature-value-name>#) ||
-// swash(<feature-value-name>) || ornaments(<feature-value-name>) ||
-// annotation(<feature-value-name>) ]`, CSS Fonts 4 §6.8: each at most once,
-// one name in all but the two lists, and written back in that order.
+/// `normal | [ stylistic(<feature-value-name>) || historical-forms ||
+/// styleset(<feature-value-name>#) || character-variant(<feature-value-name>#) ||
+/// swash(<feature-value-name>) || ornaments(<feature-value-name>) ||
+/// annotation(<feature-value-name>) ]`, CSS Fonts 4 §6.8: each at most once,
+/// one name in all but the two lists, and written back in that order.
 [[nodiscard]] std::optional<std::string> font_variant_alternates(const token_stream & ts,
                                                                  const scan & found) {
     static constexpr std::array<std::string_view, 7> slots = {
@@ -1536,9 +1557,9 @@ bool match_keywords(std::string_view property, const token_stream & ts, const sc
         handled = true;
         answer = border_spacing(ts, found);
     }
-    // ...a family list or a tag list with a function in it - `random-item()`,
-    // `"liga" calc(10.1)` - is the function's to check, and the free-form path
-    // below keeps it.
+    // A family list or a tag list with a function in it (`random-item()`,
+    // `"liga" calc(10.1)`) is left for the function to check; the freeform
+    // fallback in declaration.cpp keeps it as written.
     const bool has_function = std::ranges::any_of(found.significant, [&ts](std::size_t i) {
         return ts.tokens[i].type == token_type::function;
     });
@@ -1578,7 +1599,7 @@ bool match_keywords(std::string_view property, const token_stream & ts, const sc
         !list_style_type_valid(ts, found)) {
         handled = true;
     }
-    // `content` is only checked here; the freeform path writes a valid one.
+    // `content` is only checked here; the freeform fallback writes a valid one.
     if (!handled && ascii_iequals(property, "content") && !content_valid(ts, found)) {
         handled = true;
     }

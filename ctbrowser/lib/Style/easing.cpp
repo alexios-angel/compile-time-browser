@@ -1,3 +1,11 @@
+//===- ctbrowser/lib/Style/easing.cpp - Easing functions ------------------===//
+//
+// The public entry points of style/easing: evaluating and parsing easing
+// functions (linear, cubic-bezier(), steps()), and interpolating, testing and
+// compositing property values for transitions and animations. The helpers they
+// call are in easing/.
+//
+//===----------------------------------------------------------------------===//
 #include "easing/internal.hpp"
 
 namespace ctbrowser::style {
@@ -25,7 +33,8 @@ using namespace easing_detail;
         return 1;
     }
     // Solve x(t) = input for t by bisection - the curve's x is monotone
-    // because 0 <= x1, x2 <= 1 - then read y(t).
+    // because 0 <= x1, x2 <= 1 - then read y(t). Inputs outside [0, 1] were
+    // handled above by extending the curve along its end tangents.
     const auto at = [](double p1, double p2, double t) {
         const double u = 1 - t;
         return 3 * u * u * t * p1 + 3 * u * t * t * p2 + t * t * t;
@@ -40,6 +49,8 @@ using namespace easing_detail;
     return at(y1, y2, t);
 }
 
+// The step easing function (CSS Easing 1, steps()). `before` is the before
+// flag: exactly at a jump it selects the lower step.
 [[nodiscard]] double easing::step(double input, bool before) const {
     const double n = steps;
     double current = std::floor(input * n);
@@ -205,7 +216,7 @@ using namespace easing_detail;
         if (!unit(*a) || !unit(*b)) { return added; }
         const auto near = [](double u, double v) { return std::fabs(u - v) < 1e-6; };
         const auto text = [](double x, double y, double z, double angle) {
-            const auto tidy = [](double v) { return std::fabs(v) < 5e-7 ? 0.0 : v; }; // no `-0`
+            const auto tidy = [](double v) { return std::fabs(v) < 5e-7 ? 0.0 : v; }; // No `-0`.
             return css::serialize_number(tidy(x)) + " " + css::serialize_number(tidy(y)) + " " +
                    css::serialize_number(tidy(z)) + " " + css::serialize_number(tidy(angle)) +
                    "deg";

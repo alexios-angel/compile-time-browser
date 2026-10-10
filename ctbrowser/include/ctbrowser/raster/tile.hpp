@@ -1,3 +1,17 @@
+//===- tile.hpp - Raster tiles ----------------------------------*- C++ -*-===//
+//
+// Tiles: the unit of raster work. Tiling buys three things:
+//
+//   1. Raster parallelises: each tile is written by one thread and read by
+//      nobody until it is finished.
+//   2. A scroll only rasters what came into view; tiles already covered stay
+//      valid, because they are in content space.
+//   3. An invalidation costs the tiles it touches, not the page.
+//
+// raster/backend/compositor.hpp uses all three: it culls tiles to the viewport
+// and re-rasters only the tiles the backend reports as stale.
+//
+//===----------------------------------------------------------------------===//
 #pragma once
 #include <algorithm>
 #include <cmath>
@@ -7,29 +21,17 @@
 
 #include <ctbrowser/core/core.hpp>
 
-// Tiles: the unit of raster work.
-//
-// Tiling buys three things at once, and it is worth naming them because only
-// the first is obvious:
-//
-//   1. raster parallelises - each tile is written by one thread and read by
-//      nobody until it is finished.
-//   2. a scroll only rasters what came INTO view; the tiles that were already
-//      covered are still valid, because they are in content space.
-//   3. an invalidation costs the tiles it touches, not the page.
-//
-// Only the first is exercised at this stage; the other two need the invalidation
-// tracking that comes with the compositor.
-
 namespace ctbrowser::raster {
 
 using ctbrowser::rect;
 
-// 256 is the size Blink and Skia settled on: big enough that the per-tile
-// overhead disappears, small enough that a partial invalidation is cheap and a
-// tile still fits comfortably in L2.
+/// Tile side length in pixels. 256 is the size Blink and Skia settled on: big
+/// enough that per-tile overhead disappears, small enough that a partial
+/// invalidation is cheap and a tile fits comfortably in L2.
 inline constexpr int default_tile_extent = 256;
 
+/// A tile's position: its layer and its column and row counted from the
+/// layer content's first tile.
 struct tile_id {
     std::uint32_t layer = 0;
     std::uint32_t column = 0;
@@ -37,24 +39,24 @@ struct tile_id {
     [[nodiscard]] friend constexpr bool operator==(tile_id, tile_id) = default;
 };
 
+/// One tile and the area it covers.
 struct tile {
     tile_id id;
-    rect area; // in the layer's CONTENT space, which is why a scroll does not invalidate it
+    rect area; // In the layer's content space, so a scroll does not invalidate it.
 };
 
-// The tiles covering a layer's content bounds - only those whose area meets
-// `visible` when it is not empty.
-//
-// Anchored at the content origin rather than at the bounds' top-left, so a
-// layer whose content starts at a non-zero offset still lands on the same grid
-// as one that starts at zero - otherwise two layers of the same page would
-// disagree about where tile boundaries are. A tile's id counts from the
-// CONTENT's first tile whatever `visible` is, so a scroll keeps the ids stable.
-//
-// THE CULL HAPPENS BEFORE THE LOOP: a `width: 1e7px; height: 1e7px` box is
-// 1.5 billion tiles, and enumerating them to throw all but a screenful away was
-// the whole frame. Tile indices are clamped to +-2^29 so the float-to-int cast
-// is defined for any coordinate, NaN included.
+/// The tiles covering a layer's content bounds; when `visible` is not empty,
+/// only those whose area meets it.
+///
+/// The grid is anchored at the content origin (0, 0) rather than at the bounds'
+/// top-left, so every layer of a page agrees on where tile boundaries are. A
+/// tile's id counts from the content's first tile whatever `visible` is, so a
+/// scroll keeps the ids stable.
+///
+/// The cull narrows the index range before the loop: a 1e7 x 1e7 px box is
+/// 1.5 billion tiles, too many to enumerate and discard. Tile indices are
+/// clamped to +-2^29 so the float-to-int cast is defined for any coordinate,
+/// NaN included.
 [[nodiscard]] inline std::vector<tile> tiles_for(const rect & content, std::uint32_t layer,
                                                  int extent = default_tile_extent,
                                                  const rect & visible = rect{}) {

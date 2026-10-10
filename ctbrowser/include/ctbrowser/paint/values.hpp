@@ -1,3 +1,12 @@
+//===- values.hpp - CSS colour and shadow parsing ------------- -*- C++ -*-===//
+//
+// CSS colours and box shadows, parsed where they are consumed.
+//
+// Same reasoning as layout/values.hpp: a computed style holds many
+// declarations, and parsing every colour while resolving styles would be
+// wasted on properties nothing paints. This parses on demand.
+//
+//===----------------------------------------------------------------------===//
 #pragma once
 #include <charconv>
 #include <cstdint>
@@ -8,20 +17,12 @@
 
 #include <ctbrowser/core/core.hpp>
 
-// CSS colours, parsed where they are consumed.
-//
-// Same reasoning as layout's :values partition - a computed style holds many
-// declarations, and parsing every colour at resolution time would be work done
-// for properties nobody paints. This parses on demand.
-
 namespace ctbrowser::paint {
 
 using ctbrowser::color;
 
-// The CSS named colours a real page actually uses. This is deliberately not
-// the full 148-entry table: the long tail is generated data that belongs with
-// the UA stylesheet port, and a partial list that says so beats a partial list
-// that pretends to be complete.
+/// The CSS named colours real pages commonly use, plus `transparent`. This is
+/// deliberately not the full 148-entry table; any other name answers nullopt.
 [[nodiscard]] inline std::optional<color> named_color(std::string_view name) {
     struct entry {
         std::string_view name;
@@ -43,8 +44,8 @@ using ctbrowser::color;
         {"gainsboro", 0xDCDCDC},  {"tomato", 0xFF6347},    {"salmon", 0xFA8072},
         {"indigo", 0x4B0082},     {"violet", 0xEE82EE},    {"turquoise", 0x40E0D0},
     };
-    // ASCII CASE-INSENSITIVE, like every CSS keyword. `Red` and `RED` are the
-    // same colour, and a page that capitalises one is not asking for nothing.
+    // ASCII case-insensitive, like every CSS keyword: `Red` and `RED` are the
+    // same colour.
     for (const entry & e : table) {
         if (ascii_iequals(e.name, name)) { return color{0xFF000000u | e.rgb}; }
     }
@@ -52,10 +53,10 @@ using ctbrowser::color;
     return std::nullopt;
 }
 
-// #rgb, #rgba, #rrggbb, #rrggbbaa, rgb(...), rgba(...), or a name.
-// Returns nullopt for anything unrecognised so callers can fall back rather
-// than silently painting black - `background-color: <garbage>` must leave the
-// element unpainted, not fill it.
+/// Parses #rgb, #rgba, #rrggbb, #rrggbbaa, rgb(...), rgba(...), or a name.
+/// Returns nullopt for anything unrecognised so callers can fall back rather
+/// than silently painting black: `background-color: <garbage>` must leave the
+/// element unpainted, not fill it.
 [[nodiscard]] inline std::optional<color> parse_color(std::string_view text) {
     text = trim(text, " \t");
     if (text.empty()) { return std::nullopt; }
@@ -71,7 +72,7 @@ using ctbrowser::color;
             if (d < 0) { return std::nullopt; }
             v[i] = static_cast<std::uint8_t>(d);
         }
-        if (digits.size() <= 4) { // shorthand: each digit is doubled
+        if (digits.size() <= 4) { // shorthand: each digit is doubled (d * 17 == 0xdd)
             const std::uint8_t a = digits.size() == 4 ? static_cast<std::uint8_t>(v[3] * 17) : 255;
             return color::rgba(static_cast<std::uint8_t>(v[0] * 17),
                                static_cast<std::uint8_t>(v[1] * 17),
@@ -84,12 +85,8 @@ using ctbrowser::color;
         return color::rgba(byte(0), byte(2), byte(4), a);
     }
 
-    // CSS FUNCTION NAMES ARE ASCII CASE-INSENSITIVE, and this is not pedantry:
-    // Bootstrap's `.text-bg-*` utilities write `RGBA(var(--bs-primary-rgb), ...)`
-    // in capitals, 62 times, so a case-sensitive test dropped the background of
-    // every badge and every coloured label on the page. The box was laid out and
-    // then painted nothing at all, which is the hardest kind of wrong to see:
-    // there is no misplaced pixel to notice, only an absence.
+    // CSS function names are ASCII case-insensitive: Bootstrap's `.text-bg-*`
+    // utilities write `RGBA(var(--bs-primary-rgb), ...)` in capitals.
     if (ascii_istarts_with(text, "rgb(") || ascii_istarts_with(text, "rgba(")) {
         const std::size_t open = text.find('(');
         if (text.back() != ')') { return std::nullopt; }
@@ -126,13 +123,12 @@ using ctbrowser::color;
     return named_color(text);
 }
 
-// ONE `box-shadow`, resolved. Bootstrap 5.3 paints EVERY TABLE CELL's background
-// with one - `box-shadow: inset 0 0 0 9999px <colour>` - so this is not a
-// decoration for later: without it a `.table-striped` has no stripes, a
-// `.table-hover` no hover, and every themed table row is plain white.
-//
-// The lengths are already px, which is what lets this be a paint-time struct: by
-// the time the recorder asks, the cascade has folded every `rem` and `em`.
+/// One `box-shadow`, resolved. Bootstrap 5.3 paints table cell backgrounds
+/// with one (`box-shadow: inset 0 0 0 9999px <colour>`), so `.table-striped`,
+/// `.table-hover` and themed rows depend on it.
+///
+/// The lengths are already px: by the time the recorder asks, the cascade has
+/// folded every `rem` and `em`.
 struct box_shadow {
     float dx = 0;
     float dy = 0;
@@ -141,16 +137,15 @@ struct box_shadow {
     color paint;
     bool inset = false;
 
-    // Can it be drawn as a plain rectangle? A blur needs a real rasterizer
-    // primitive and there is none yet, so a blurred shadow is skipped rather
-    // than drawn hard-edged - a sharp black rectangle where a soft one belongs
-    // is further from Chrome than nothing at all, not closer.
+    /// Whether it can be drawn as a plain rectangle. A blur needs a rasterizer
+    /// primitive there is none of yet, so a blurred shadow is skipped rather
+    /// than drawn hard-edged, which would be further from Chrome than nothing.
     [[nodiscard]] bool sharp() const noexcept { return blur <= 0; }
 };
 
-// `[inset] <dx> <dy> [blur] [spread] [colour]`, comma-separated, in any order for
-// the colour and the `inset` keyword - which is what CSS actually says, and what
-// Bootstrap relies on when it writes `inset 0 0 0 9999px var(...)`.
+/// Parses a `box-shadow` list: `[inset] <dx> <dy> [blur] [spread] [colour]`,
+/// comma-separated, with the colour and the `inset` keyword in any position,
+/// as CSS allows. `none` and malformed shadows are dropped.
 [[nodiscard]] inline std::vector<box_shadow> parse_box_shadow(std::string_view text) {
     std::vector<box_shadow> out;
     if (trim(text, html_whitespace).empty()) { return out; }
@@ -164,7 +159,7 @@ struct box_shadow {
                 shadow.inset = true;
                 continue;
             }
-            // A LENGTH OR A COLOUR, told apart by what it starts with rather than
+            // A length or a colour, told apart by what it starts with rather than
             // by where it sits: `0 0 0 9999px red` and `red 0 0 0 9999px` are the
             // same shadow, and CSS allows both.
             const bool numeric = !part.empty() && (part.front() == '-' || part.front() == '+' ||

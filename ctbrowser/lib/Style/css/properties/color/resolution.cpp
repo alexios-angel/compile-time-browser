@@ -1,10 +1,19 @@
+//===- resolution.cpp - Resolving and computing <color> values ------------===//
+//
+// Evaluates a parsed colour tree into a `resolved` colour against a context
+// (currentcolor, lengths, colour scheme): relative colours, color-mix(),
+// light-dark(), alpha() and contrast-color(); then the computed-value
+// serialisation getComputedStyle reports.
+//
+//===----------------------------------------------------------------------===//
+
 #include "internal.hpp"
 
 namespace ctbrowser::style::css::color_detail {
 
-// A channel calc() against the context, the relative colour's keywords
-// substituted by their numbers first. NaN is nought (CSS Values 4 §10.9's
-// censoring at the top level) and an infinity is left for the clamp.
+/// Evaluates a channel calc() against the context, the relative colour's
+/// keywords substituted by their numbers first. NaN is nought (CSS Values 4
+/// §10.9's censoring at the top level) and an infinity is left for the clamp.
 [[nodiscard]] std::optional<double> evaluate_channel(const channel & c, space cs, int slot,
                                                      bool bytes, const resolved * origin,
                                                      const resolve_context & ctx) {
@@ -45,6 +54,10 @@ namespace ctbrowser::style::css::color_detail {
     return v;
 }
 
+/// One channel's value in the function's own unit: a literal, `none`, a
+/// relative colour's keyword read off `origin`, or an evaluated calc().
+/// nullopt when it cannot be resolved (a keyword without an origin, or a
+/// calc() that does not evaluate).
 [[nodiscard]] std::optional<channel_answer> channel_value(const channel & c, space cs, int slot,
                                                           bool bytes, const resolved * origin,
                                                           const resolve_context & ctx) {
@@ -78,8 +91,8 @@ namespace ctbrowser::style::css::color_detail {
     }
 }
 
-// A resolved colour's channels in the units a relative colour's keywords
-// read: rgb() in 0..255, everything else as the space keeps it.
+/// A resolved colour's channels in the units a relative colour's keywords
+/// read: rgb() in 0..255, everything else as the space keeps it.
 [[nodiscard]] resolved as_keywords(resolved r, bool bytes) noexcept {
     if (r.cs == space::srgb && bytes) {
         for (double & v : r.c) { v *= 255.0; }
@@ -87,6 +100,7 @@ namespace ctbrowser::style::css::color_detail {
     return r;
 }
 
+/// Resolves an absolute or relative colour function.
 [[nodiscard]] std::optional<resolved> resolve_absolute(const parsed & p,
                                                        const resolve_context & ctx, int depth) {
     resolved origin;
@@ -122,14 +136,16 @@ namespace ctbrowser::style::css::color_detail {
         for (double & v : out.c) { v /= 255.0; }
     }
     // An absolute rgb()/hsl()/hwb() with every channel present is a legacy
-    // colour - serialised as `rgb()` - and STAYS IN ITS OWN SPACE, so that
+    // colour - serialised as `rgb()` - and stays in its own space, so that
     // `hsl(from hsl(180 0 50%) h s l)` converts nothing and keeps its hue.
     const bool legacy_function = p.fn == "rgb" || p.fn == "hsl" || p.fn == "hwb";
     out.legacy = legacy_function && !relative && !out.any_none();
     return out;
 }
 
-// §12: the interpolation of two colours in `space`, with their weights.
+/// Interpolates two colours in space `cs` (CSS Color 4 §12) with weights `p1`
+/// and `p2`, using `hue_method` (shorter, longer, increasing, decreasing) for
+/// a polar space, then scales the alpha by `alpha_multiplier`.
 [[nodiscard]] resolved interpolate(resolved a, resolved b, space cs, std::string_view hue_method,
                                    double p1, double p2, double alpha_multiplier) {
     // A missing component takes the other colour's value; missing on both
@@ -206,6 +222,7 @@ namespace ctbrowser::style::css::color_detail {
     return out;
 }
 
+/// Resolves a color-mix().
 [[nodiscard]] std::optional<resolved> resolve_mix(const parsed & p, const resolve_context & ctx,
                                                   int depth) {
     std::vector<resolved> colors;
@@ -223,9 +240,9 @@ namespace ctbrowser::style::css::color_detail {
         if (!w || w->none) { return std::nullopt; }
         weights.emplace_back(std::min(1.0, std::max(0.0, w->value)));
     }
-    // CSS Values 5's normalisation of mix percentages, forced: the omitted
-    // weights share what the written ones left, the total is scaled to one
-    // when it is not nought, and what is short of one comes off the alpha.
+    // CSS Values 5 percentage normalisation for color-mix(): omitted weights
+    // share what the written ones leave, the total is scaled to one when it is
+    // non-zero, and a total below one reduces the alpha.
     double specified = 0.0;
     std::size_t omitted = 0;
     for (const std::optional<double> & w : weights) {
@@ -261,7 +278,11 @@ namespace ctbrowser::style::css::color_detail {
     return out;
 }
 
+/// Resolves any parsed colour against `ctx`. `depth` counts nesting; nullopt
+/// when the colour cannot be resolved here.
 std::optional<resolved> resolve(const parsed & p, const resolve_context & ctx, int depth) {
+    // Nesting limit for relative colours, color-mix() and currentcolor, so a
+    // pathological value cannot recurse without bound.
     if (depth > 32) { return std::nullopt; }
     switch (p.k) {
     case parsed::kind::keyword: {
@@ -306,7 +327,9 @@ std::optional<resolved> resolve(const parsed & p, const resolve_context & ctx, i
     case parsed::kind::contrast: {
         const std::optional<resolved> origin = resolve(*p.origin, ctx, depth + 1);
         if (!origin) { return std::nullopt; }
-        // WCAG's relative luminance, against the sRGB the colour maps to.
+        // contrast-color(): black or white, whichever has the higher WCAG
+        // contrast ratio against the origin's relative luminance (computed in
+        // linear sRGB).
         const vec3 lin = mul(xyz_to_lin_srgb, to_xyz(origin->cs, origin->c));
         const double luminance = 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2];
         resolved out;
@@ -322,6 +345,8 @@ std::optional<resolved> resolve(const parsed & p, const resolve_context & ctx, i
 
 // --- the computed serialisation ----------------------------------------------
 
+/// A resolved colour in the modern syntax: `hsl(...)`, `lab(...)` etc. for the
+/// functional spaces, `color(<space> ...)` for the rest.
 [[nodiscard]] std::string modern_text(const resolved & r) {
     std::string out;
     const bool functional = r.cs == space::hsl || r.cs == space::hwb || r.cs == space::lab ||
@@ -349,6 +374,7 @@ std::optional<resolved> resolve(const parsed & p, const resolve_context & ctx, i
     return out + ")";
 }
 
+/// The computed-value serialisation getComputedStyle reports.
 [[nodiscard]] std::string serialize_computed(const resolved & r) {
     if (r.legacy && !r.any_none()) { return legacy_text(convert(r, space::srgb)); }
     // A computed hsl or hwb with nothing missing is the sRGB colour it names.

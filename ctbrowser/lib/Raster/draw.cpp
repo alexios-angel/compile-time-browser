@@ -1,3 +1,10 @@
+//===- ctbrowser/lib/Raster/draw.cpp - Software rasterizer ------*- C++ -*-===//
+//
+// The fills, the font8x8 glyph walk and the command loop that turn a display
+// list into pixels on a surface. Only draw_into, font8x8_fonts and
+// font8x8_advance are exported; the rest has no caller outside this file.
+//
+//===----------------------------------------------------------------------===//
 #include <ctbrowser/raster/draw.hpp>
 
 #include <ctbrowser/core/algorithms.hpp>
@@ -10,21 +17,19 @@
 #include <span>
 #include <vector>
 
-// draw: the fills, the font8x8 glyph walk and the command loop. Only
-// draw_into, font8x8_fonts and font8x8_advance are exported; the rest has no
-// caller outside this file.
-
 namespace ctbrowser::raster {
 
 namespace {
 
-// font8x8 draws each glyph in an 8x8 cell scaled by an integer factor, so its
-// advance is exact and has no font metrics behind it. Layout must measure with
-// THIS if the raster is to place text where layout thought it would.
+/// The integer factor font8x8 scales its 8x8 cell by at `font_size`. The
+/// advance is exact and has no font metrics behind it, so layout must measure
+/// with this if the raster is to place text where layout thought it would.
 int font8x8_scale(float font_size) noexcept {
     return std::max(1, round_to_pixel(font_size / 8.0f));
 }
 
+/// The number of code points in `text`: every byte that is not a UTF-8
+/// continuation byte (10xxxxxx) starts one.
 std::size_t utf8_length(std::string_view text) noexcept {
     std::size_t n = 0;
     for (const char c : text) {
@@ -53,10 +58,10 @@ void fill_rect(const rect & where, color c, const pixel_rect & clip, surface & i
     }
 }
 
-// A filled ellipse inscribed in `where`, ANTIALIASED at the edge. A hard-edged
-// circle at 13 pixels across - the size of a radio button - looks like a
-// polygon, and the coverage here is cheap: the distance from the centre in
-// normalised ellipse space, one pixel wide at the boundary.
+/// A filled ellipse inscribed in `where`, antialiased at the edge. A hard-edged
+/// circle at 13 pixels across (the size of a radio button) looks like a
+/// polygon, and the coverage here is cheap: the distance from the centre in
+/// normalised ellipse space, one pixel wide at the boundary.
 void fill_ellipse(const rect & where, color c, const pixel_rect & clip, surface & into) {
     const pixel_rect p = intersect(to_pixels(where, into.width(), into.height()), clip);
     if (p.empty() || where.width <= 0 || where.height <= 0) { return; }
@@ -66,7 +71,7 @@ void fill_ellipse(const rect & where, color c, const pixel_rect & clip, surface 
     const float rx = where.width / 2;
     const float ry = where.height / 2;
     // One pixel of falloff, expressed in the same normalised units the test is
-    // in - so a small circle and a large one both get a one-pixel edge.
+    // in, so a small circle and a large one both get a one-pixel edge.
     const float feather = std::max(1.0f / std::max(rx, ry), 0.001f);
     for (int y = p.top; y < p.bottom; ++y) {
         const std::span<std::uint32_t> row = into.row(y);
@@ -84,10 +89,10 @@ void fill_ellipse(const rect & where, color c, const pixel_rect & clip, surface 
     }
 }
 
-// The signed distance from a point to a rounded rectangle, in PIXELS: negative
-// inside, zero on the edge. The standard rounded-box field, with the corner
-// radius chosen by which quadrant the point is in - which is what makes four
-// different radii cost nothing over one.
+/// The signed distance from a point to a rounded rectangle, in pixels: negative
+/// inside, zero on the edge. The standard rounded-box field, with the corner
+/// radius chosen by which quadrant the point is in, which is what makes four
+/// different radii cost nothing over one.
 [[nodiscard]] float round_rect_distance(float px, float py, const rect & box,
                                         const paint::corner_radii & radii) noexcept {
     const float half_w = box.width / 2;
@@ -105,30 +110,30 @@ void fill_ellipse(const rect & where, color c, const pixel_rect & clip, surface 
     return outside + std::min(std::max(qx, qy), 0.0f) - r;
 }
 
-// One pixel of falloff centred on the boundary, which is what `0.5 - d` is.
+/// One pixel of falloff centred on the boundary, which is what `0.5 - d` is.
 [[nodiscard]] float coverage_of(float distance) noexcept {
     return std::clamp(0.5f - distance, 0.0f, 1.0f);
 }
 
-// A rounded rectangle, or - with `ring` above zero - the band that thick along
-// its inside edge, which is what a rounded BORDER is.
-//
-// ANTIALIASED by the same means as the ellipse and for the same reason: a hard
-// edge on a 4px corner reads as a staircase, and Bootstrap puts one on every
-// button, badge, card and alert on the page. The coverage comes from a signed
-// distance to the shape, in pixels, so one implementation serves every radius
-// from a 2px input corner to a 20px pill.
-//
-// A RING IS A DIFFERENCE OF TWO COVERAGES rather than a stroked path: the outer
-// shape less the shape inset by `ring`. That antialiases both edges of the band
-// for free and needs no path machinery, and it is exact for the uniform borders
-// this engine models. Per-side widths and dashes are not this function's job -
-// see the note on emit_border.
+/// A rounded rectangle, or (with `ring` above zero) the band that thick along
+/// its inside edge, which is what a rounded border is.
+///
+/// Antialiased by the same means as the ellipse and for the same reason: a hard
+/// edge on a 4px corner reads as a staircase, and Bootstrap puts one on every
+/// button, badge, card and alert on the page. The coverage comes from a signed
+/// distance to the shape, in pixels, so one implementation serves every radius
+/// from a 2px input corner to a 20px pill.
+///
+/// A ring is a difference of two coverages rather than a stroked path: the
+/// outer shape less the shape inset by `ring`. That antialiases both edges of
+/// the band for free and needs no path machinery, and it is exact for the
+/// uniform borders this engine models. Per-side widths and dashes are not this
+/// function's job; see the note on recorder::emit_border in paint/record.hpp.
 void fill_round_rect(const rect & where, const paint::corner_radii & radii, float ring, color c,
                      const pixel_rect & clip, surface & into) {
-    // AN ORDINARY RECTANGLE TAKES THE ORDINARY PATH. Every fill on a page with no
-    // radius anywhere - which is every golden this repository already has - must
-    // stay byte-identical, and a distance field evaluated per pixel would not be.
+    // A plain rectangle takes fill_rect's path, so fills without radii render
+    // byte-identically to before radii existed; the per-pixel distance field
+    // would feather the edges.
     if (radii.empty() && ring <= 0) {
         fill_rect(where, c, clip, into);
         return;
@@ -139,11 +144,11 @@ void fill_round_rect(const rect & where, const paint::corner_radii & radii, floa
     const bool hollow = ring > 0;
     const rect inner{where.x + ring, where.y + ring, std::max(0.0f, where.width - 2 * ring),
                      std::max(0.0f, where.height - 2 * ring)};
-    // A SQUARE RING THAT SWALLOWS ITS OWN HOLE IS A SOLID RECTANGLE, and drawing
+    // A square ring that swallows its own hole is a solid rectangle, and drawing
     // it as one matters: the distance field feathers its edge by a pixel, so two
-    // adjacent flooded cells left a light SEAM between them where they met.
-    // Bootstrap floods every table cell with `inset 0 0 0 9999px`, so that seam
-    // ran down every column boundary of every table.
+    // adjacent flooded cells would leave a light seam where they meet. Bootstrap
+    // floods every table cell with `inset 0 0 0 9999px`, so that seam would run
+    // down every column boundary of every table.
     if (radii.empty() && (inner.width <= 0 || inner.height <= 0)) {
         fill_rect(where, c, clip, into);
         return;
@@ -168,34 +173,34 @@ void fill_round_rect(const rect & where, const paint::corner_radii & radii, floa
     }
 }
 
-// One horizontal band of `thickness` at `y`, for underline and line-through.
+/// One horizontal band of `thickness` at `y`, for underline and line-through.
 void fill_band(float x, float y, float width, float thickness, color c, const pixel_rect & clip,
                surface & into) {
     fill_rect(rect{x, y, width, thickness < 1 ? 1.0f : thickness}, c, clip, into);
 }
 
-// How far row `gy` of an italic glyph leans right. Two pixels over the cell,
-// top-heavy: one is not visibly slanted at 8x8 and three shears the glyph into
-// its neighbour.
+/// How far row `gy` of an italic glyph leans right. Two pixels over the cell,
+/// top-heavy: one is not visibly slanted at 8x8 and three shears the glyph into
+/// its neighbour.
 [[nodiscard]] constexpr int italic_shift(int gy) noexcept {
     return (7 - gy) / 3;
 }
 
-// Is this pixel of the OUTPUT inked, given the style?
-//
-// BOLD is the glyph OR'd with itself one pixel right - the way bitmap fonts
-// have always been emboldened, and the only way here: there is no second set
-// of bitmaps and no outline to thicken. ITALIC shears the rows.
-//
-// Both read from the same 8x8 source, so neither needs a table of its own.
+/// Whether this pixel of the output is inked, given the style.
+///
+/// Bold is the glyph OR'd with itself one pixel right, the way bitmap fonts
+/// have always been emboldened, and the only way here: there is no second set
+/// of bitmaps and no outline to thicken. Italic shears the rows.
+///
+/// Both read from the same 8x8 source, so neither needs a table of its own.
 [[nodiscard]] bool inked(char32_t cp, int gy, int gx, bool bold, bool italic) {
     const int sx = gx - (italic ? italic_shift(gy) : 0);
     const auto at = [&](int x) { return x >= 0 && x < 8 && font8x8_data::glyph_pixel(cp, gy, x); };
     return at(sx) || (bold && at(sx - 1));
 }
 
-// font8x8: an 8x8 bitmap per code point, scaled by an integer factor. The
-// run's box top is the TOP of the cell, matching how layout positions a line.
+/// font8x8: an 8x8 bitmap per code point, scaled by an integer factor. The
+/// run's box top is the top of the cell, matching how layout positions a line.
 void draw_text(const rect & where, const paint_command & c, const pixel_rect & clip,
                surface & into) {
     if (!std::isfinite(where.x) || !std::isfinite(where.y) || !std::isfinite(c.font_size)) {
@@ -206,9 +211,9 @@ void draw_text(const rect & where, const paint_command & c, const pixel_rect & c
     const std::int64_t origin_y = round_to_pixel(where.y);
     const bool bold = c.face.bold;
     const bool italic = c.face.italic;
-    // A styled glyph reaches past its 8-wide cell - one column for the bold
+    // A styled glyph reaches past its 8-wide cell: one column for the bold
     // smear, two for the italic lean. It is allowed to: an italic that stops
-    // dead at the cell edge is a clipped italic, and the OVERHANG is what makes
+    // dead at the cell edge is a clipped italic, and the overhang is what makes
     // the slant read. The advance is unchanged, which is what keeps layout and
     // this function agreeing about where text goes.
     const int overhang = (bold ? 1 : 0) + (italic ? 2 : 0);
@@ -236,14 +241,14 @@ void draw_text(const rect & where, const paint_command & c, const pixel_rect & c
     }
 }
 
-// font8x8 AS a backend: always present, needs no files, the same pixels on
-// every machine.
+/// font8x8 as a font backend: always present, needs no files, the same pixels
+/// on every machine.
 class font8x8_backend final : public font_backend {
 public:
     [[nodiscard]] float advance(std::string_view text, float font_size, std::string_view, bool,
                                 bool) const override {
-        // The SAME WIDTH whatever the style. font8x8 has one set of bitmaps and
-        // synthesises bold and italic from it (see draw_text) - a smear and a
+        // The same width whatever the style. font8x8 has one set of bitmaps and
+        // synthesises bold and italic from it (see draw_text): a smear and a
         // shear, both of which overhang the cell rather than widening it.
         //
         // Deliberately not wider for bold. Layout measures with this exact
@@ -267,13 +272,15 @@ public:
     }
 };
 
-// A run plus whatever line CSS asked to be drawn through or under it. The bands
-// are the rasterizer's job rather than layout's because their thickness and
-// position follow the FONT - a 1px rule under 40px text looks like a mistake.
+/// A run plus whatever line CSS asked to be drawn through or under it. The bands
+/// are the rasterizer's job rather than layout's because their thickness and
+/// position follow the font: a 1px rule under 40px text looks like a mistake.
 void draw_text_run(const rect & where, const paint_command & c, const pixel_rect & clip,
                    surface & into, const font_backend & fonts) {
     fonts.draw_run(where, c, clip, into);
     if (c.decoration == ctbrowser::paint::text_decoration::none) { return; }
+    // Decoration thickness is font_size / 14 (at least 1px). Line-through sits
+    // at 62% of the ascent below the top, about the x-height middle for font8x8.
     const float thickness = std::max(1.0f, c.font_size / 14.0f);
     const float baseline =
         where.y + fonts.ascent(c.font_size, c.face.family, c.face.bold, c.face.italic);
@@ -283,8 +290,8 @@ void draw_text_run(const rect & where, const paint_command & c, const pixel_rect
     fill_band(where.x, y, where.width, thickness, c.fill, clip, into);
 }
 
-// A bitmap into a tile. Nearest-neighbour: a canvas is laid out at its own
-// pixel size, so the common case is 1:1 and any filtering would only blur it.
+/// A bitmap into a tile. Nearest-neighbour: a canvas is laid out at its own
+/// pixel size, so the common case is 1:1 and any filtering would only blur it.
 void draw_image(const rect & where, const paint_command & c, const pixel_rect & clip,
                 surface & into) {
     if (!c.pixels || c.pixels->empty() || where.width <= 0 || where.height <= 0) { return; }
@@ -328,9 +335,8 @@ void draw_commands(const std::vector<paint_command> & commands, const rect & are
             }
             break;
         case paint_op::fill_rect:
-            // Through the rounded path always: it falls back to fill_rect for a
-            // square, un-ringed fill, which is every fill this engine recorded
-            // before border-radius existed - so no existing render moves.
+            // Always through the rounded path; it falls back to fill_rect when
+            // there is no radius and no ring.
             fill_round_rect(local, c.radii, c.ring, c.fill, clip, into);
             break;
         case paint_op::fill_ellipse: fill_ellipse(local, c.fill, clip, into); break;

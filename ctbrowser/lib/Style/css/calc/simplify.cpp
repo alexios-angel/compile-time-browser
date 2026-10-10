@@ -1,6 +1,10 @@
-// calc() - the SPECIFIED value: simplify_math, CSS Values 4 §10.12, and the
-// syntax check every declaration goes through before the property's own
-// grammar.
+//===- simplify.cpp - Simplifying math functions -------------- -*- C++ -*-===//
+//
+// The specified value of math functions: simplify_math (CSS Values 4 §10.12),
+// canonical_random, calc_size_text, and math_syntax_ok, the syntax check every
+// declaration goes through before the property's own grammar.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -10,22 +14,14 @@ using namespace detail;
 
 namespace {
 
-// Can this text be simplified WHERE IT STANDS - before a font size, a viewport
-// or a containing block exists?
-//
-// CSS Values 4 §10.11 is exact about what may NOT be simplified: `calc(10px +
-// 1em)` keeps both terms because the em has no length yet. This file's evaluator
-// has one mode, which resolves an `em` against whatever context it is handed, so
-// the test is deliberately narrow - every dimension in the text converts by a
-// constant. Anything else is reported as the author wrote it, which is where it
-// was before and cannot be a regression.
-//
-// A PERCENTAGE IS NOT AN OBSTACLE, and excluding it was over-caution: the value
-// model carries a percentage term BESIDE the pixels rather than resolving it, so
-// `calc(50px + calc(40%))` simplifies to `calc(40% + 50px)` with nothing
-// guessed. What genuinely cannot be decided here is COMPARING two of them - the
-// basis may be negative, so `min(1%, 2%)` has no answer - and that is the
-// comparison functions' own business, not this one's.
+/// True when every dimension in `text` converts by a constant, so the value can
+/// be simplified before a font size, viewport or containing block exists (CSS
+/// Values 4 §10.11: `calc(10px + 1em)` keeps both terms because the em has no
+/// length yet). Anything else is kept as written. Percentages are allowed: the
+/// value model keeps a percentage term beside the pixels, so
+/// `calc(50px + calc(40%))` becomes `calc(40% + 50px)` without resolving it.
+/// Comparing two percentages (`min(1%, 2%)`) is undecidable, but that is the
+/// comparison functions' concern, not this check's.
 [[nodiscard]] bool context_free(std::string_view text) {
     const token_stream ts = tokenize(text);
     for (const css_token & t : ts.tokens) {
@@ -39,11 +35,11 @@ namespace {
     return true;
 }
 
-// A simplified math function as a SPECIFIED value: `calc()` around the answer,
-// always. `serialize_calc` writes a COMPUTED value, where a bare `96px` is the
-// whole of it; a specified one keeps the function, which is how a page can tell
-// `width: calc(96px)` from `width: 96px` after the fact - and what every
-// `test_specified_serialization` in the corpus compares against.
+/// A simplified math function as a specified value: always `calc()` around the
+/// answer. `serialize_calc` writes a computed value, where a bare `96px` is the
+/// whole of it; a specified one keeps the function, so a page can tell
+/// `width: calc(96px)` from `width: 96px`, as every WPT
+/// `test_specified_serialization` expects.
 [[nodiscard]] std::string specified_math(const calc_result & value) {
     const std::string text = serialize_calc(value);
     // An infinity or a NaN already carries its own calc(), because there is no
@@ -52,58 +48,50 @@ namespace {
     return "calc(" + text + ")";
 }
 
-// Is `body` exactly ONE `calc()` and nothing else? That is the test for
-// §10.12's redundant-calc rule below.
-//
-// ONE calc() INSIDE ANOTHER, and not one math function inside another, which is
-// where this was and was too wide. `clamp-length-serialize` asks for
-// `calc(calc(0px + clamp(1px, 1em, 1vh)))` back as `calc(0px + clamp(1px, 1em,
-// 1vh))` - a calc in a calc - four times over, and generalising that to every
-// function read the same rule out of `calc(pow(2, sign(1em - 18px)))`, which
-// `calc-complex-unresolved-serialize` wants back WITH its outer calc() on all
-// six of its values. A math function that is not a calc() is a term like any
-// other and the calc() around it is the author's, not this file's to remove.
+/// Whether `body` is exactly one `calc()` and nothing else, the test for
+/// §10.12's redundant-calc rule in simplify_math.
+///
+/// Only a calc() directly inside calc() is redundant. Any other math function
+/// is a term, and the calc() around it is kept (WPT
+/// calc-complex-unresolved-serialize expects `calc(pow(...))` back unchanged).
 [[nodiscard]] bool is_lone_calc(std::string_view body) {
     constexpr std::string_view calc = "calc(";
     if (!ascii_iequals(body.substr(0, calc.size()), calc)) { return false; }
     return span_of(body, 0, calc).end == body.size();
 }
 
-// Is `text` exactly one math function and nothing else, and which one?
+/// The name of the math function `text` consists of exactly, or empty when it
+/// is not exactly one math function.
 [[nodiscard]] std::string_view lone_math_function(std::string_view text) {
     const std::string_view name = math_name_at(text, 0);
     if (name.empty() || span_of(text, 0, name).end != text.size()) { return {}; }
     return name;
 }
 
-// THE FUNCTIONS WHOSE EVERY ARGUMENT IS AN <angle>, and the one place this file
-// can type a math function by WHERE IT SITS rather than by what is in it.
-//
-// A math function's type has to fit its surroundings and nothing here models the
-// grammar of `transform` or `filter`, so all three of `rotate(min(0px))` -
-// turning by a length - `rotate(tan(45deg))` - turning by a number - and
-// `rotate(atan2(90px, 100%))` - turning by a ratio whose percentage has nothing
-// to resolve against - were stored as written. They are sixteen assertions and,
-// between them, the LAST failure in each of `minmax-angle-invalid`,
-// `sin-cos-tan-invalid` and `acos-asin-atan-atan2-invalid`.
-//
-// <zero> IS WHY ONLY A MATH FUNCTION IS JUDGED. CSS Transforms 1 spells it
-// `rotate( [ <angle> | <zero> ] )`, so `rotate(0)` is a rotation by nothing and
-// `rotate(min(0))` is a syntax error, and the difference is exactly whether a
-// function was written.
-//
-// `rotate3d()` is deliberately absent: three of its four arguments are numbers
-// and only the last is an angle, so it is a different rule and not this one.
+/// The functions whose every argument is an <angle>.
+///
+/// Nothing here models the grammar of `transform` or `filter`, so these
+/// functions are checked by position: a math function written as an argument
+/// of one of them must be an angle. `rotate(min(0px))`, `rotate(tan(45deg))`
+/// and `rotate(atan2(90px, 100%))` are invalid (WPT minmax-angle-invalid,
+/// sin-cos-tan-invalid, acos-asin-atan-atan2-invalid).
+///
+/// Only a math function is judged because of <zero>: CSS Transforms 1 spells
+/// it `rotate( [ <angle> | <zero> ] )`, so `rotate(0)` is a rotation by nothing
+/// while `rotate(min(0))` is a syntax error.
+///
+/// `rotate3d()` is deliberately absent: three of its four arguments are
+/// numbers and only the last is an angle, so a different rule applies.
 constexpr std::string_view angle_functions[] = {"rotate(", "rotatex(", "rotatey(", "rotatez(",
                                                 "skew(",   "skewx(",   "skewy(",   "hue-rotate("};
 
-// Is position `at` inside a colour function whose first argument is `from` -
-// CSS Color 5's relative colour syntax, where `r`, `g`, `b`, `alpha` and the
-// rest are channel values a calc() may use?
+/// Whether position `at` is inside a colour function whose first argument is
+/// `from`: CSS Color 5's relative colour syntax, where `r`, `g`, `b`, `alpha`
+/// and the rest are channel values a calc() may use.
 [[nodiscard]] bool inside_relative_color(std::string_view value, std::size_t at) {
     constexpr std::string_view colours[] = {"rgb(", "rgba(",  "hsl(",   "hsla(",  "hwb(",  "lab(",
                                             "lch(", "oklab(", "oklch(", "color(", "alpha("};
-    std::vector<bool> relative; // one entry per open bracket: is it a relative colour?
+    std::vector<bool> relative; // One entry per open bracket: is it a relative colour?
     std::size_t i = 0;
     while (i < at) {
         if (const std::size_t quoted = end_of_string_at(value, i); quoted != i) {
@@ -137,6 +125,8 @@ constexpr std::string_view angle_functions[] = {"rotate(", "rotatex(", "rotatey(
     return std::ranges::any_of(relative, [](bool r) { return r; });
 }
 
+/// Whether every math function written as an argument of an angle-only
+/// function (angle_functions) in `value` is an angle.
 [[nodiscard]] bool angle_arguments_ok(std::string_view value) {
     const length_context ctx;
     std::size_t at = 0;
@@ -157,10 +147,10 @@ constexpr std::string_view angle_functions[] = {"rotate(", "rotatex(", "rotatey(
             const std::string_view one = trim(arg, html_whitespace);
             if (lone_math_function(one).empty()) { continue; }
             // A percentage would have to be a percentage of an angle, and there
-            // is no such thing. This is the same rule the evaluator applies to a
-            // percentage in an expression that ANSWERS with an angle; here the
-            // expression need not have an answer at all - `atan2(90px, 100%)`
-            // has none - and the position alone settles it.
+            // is no such thing. The evaluator applies the same rule to a
+            // percentage in an expression that answers with an angle; here the
+            // expression need not have an answer at all (`atan2(90px, 100%)`
+            // has none), and the position alone settles it.
             if (has_percentage(one)) { return false; }
             const math_answer answer = evaluate_math(one, ctx);
             if (answer.outcome == math_outcome::resolved &&
@@ -173,17 +163,18 @@ constexpr std::string_view angle_functions[] = {"rotate(", "rotatex(", "rotatey(
     return true;
 }
 
-// A FUNCTION WITH NO ANSWER STILL HAS ARGUMENTS, and every one of them is a
-// calculation in its own right. `min(1em, 1px)` cannot be ordered, but
-// `min(10% + 30px, 5em + 5%)` is `min(10% + 30px, 5% + 5em)` - the comparison is
-// undecidable and each side of it is still a sum with a canonical order.
-// `minmax-length-percent-serialize` and `calc-infinity-nan-serialize-length` ask
-// for exactly that, the second one through `min(NaN * 2px, NaN * 4em)`.
-//
-// An argument with no simplified form of its own - `none`, `nearest`,
-// `sibling-index()` - is handed back to `simplify_math`, which copies what it
-// cannot answer for and closes what EOF closed. That recursion terminates
-// because `inner` is always shorter than the function it came out of.
+/// Simplifies each argument of a function that has no answer, since every
+/// argument is a calculation in its own right. `min(1em, 1px)` cannot be
+/// ordered, but `min(10% + 30px, 5em + 5%)` becomes `min(10% + 30px, 5% + 5em)`:
+/// the comparison is undecidable, and each side is still a sum with a
+/// canonical order (WPT minmax-length-percent-serialize and
+/// calc-infinity-nan-serialize-length, the latter via
+/// `min(NaN * 2px, NaN * 4em)`).
+///
+/// An argument with no simplified form of its own (`none`, `nearest`,
+/// `sibling-index()`) is handed back to `simplify_math`, which copies what it
+/// cannot answer for and closes what end of input closed. The recursion
+/// terminates because `inner` is always shorter than the function it came from.
 [[nodiscard]] std::string simplified_arguments(std::string_view name, std::string_view inner) {
     return rewritten_arguments(name, inner, [](std::string_view one) {
         if (const auto [outcome, sum] = evaluate_symbolic(one); outcome == math_outcome::resolved) {
@@ -191,7 +182,7 @@ constexpr std::string_view angle_functions[] = {"rotate(", "rotatex(", "rotatey(
         }
         // A sum around a comparison layout has to decide is simplified over
         // its tree (tree.cpp): `(min(10%, 30px) + 10px) * 2 + 10px` is
-        // `10px + (2 * (10px + min(10%, 30px)))` (minmax-length-percent-serialize).
+        // `10px + (2 * (10px + min(10%, 30px)))` (WPT minmax-length-percent-serialize).
         if (lone_math_function(trim(one, html_whitespace)).empty()) {
             if (const std::optional<std::string> tree = simplify_sum_text(one)) { return *tree; }
         }
@@ -199,18 +190,18 @@ constexpr std::string_view angle_functions[] = {"rotate(", "rotatex(", "rotatey(
     });
 }
 
-// A calc-mix() THAT COULD NOT FOLD is still normalised (CSS Values 5
-// §calc-mix): each weight clamped to [0%, 100%], the omitted ones sharing what
-// is left below 100% equally, a total over 100% scaled down to it, and an item
-// weighing nothing dropped - so `calc-mix(10px 75%, 3em 75%)` is
-// `calc-mix(10px 50%, 3em 50%)` before there is a font size. A weight written
-// as a function has no number yet, and then nothing is normalised: the items
-// are written as they came, values simplified (calc-mix-serialize).
+/// Normalizes a calc-mix() that could not fold (CSS Values 5 §calc-mix): each
+/// weight clamped to [0%, 100%], the omitted ones sharing what is left below
+/// 100% equally, a total over 100% scaled down to it, and an item weighing
+/// nothing dropped. So `calc-mix(10px 75%, 3em 75%)` becomes
+/// `calc-mix(10px 50%, 3em 50%)` before there is a font size. A weight written
+/// as a function has no number yet, and then nothing is normalized: the items
+/// are written as they came, values simplified (WPT calc-mix-serialize).
 [[nodiscard]] std::string simplified_calc_mix(std::string_view inner) {
     struct item {
         std::string_view value;
         std::optional<double> weight;
-        std::string_view weight_text; // as written, for when nothing is normalised
+        std::string_view weight_text; // As written, for when nothing is normalized.
     };
     std::vector<item> items;
     bool literal = false;
@@ -279,8 +270,8 @@ constexpr std::string_view angle_functions[] = {"rotate(", "rotatex(", "rotatey(
         if (weight == 0.0) { continue; }
         emit(one.value, serialize_calc(calc_result{0.0, weight, true}));
     }
-    // Every weight zero: nought, of the first value's kind - which for a value
-    // that has no symbolic form is a percentage when one is written in it.
+    // Every weight zero: the answer is zero, of the first value's type. For a
+    // value with no symbolic form, that is a percentage when one is written in it.
     if (first && !items.empty()) {
         if (const auto [outcome, sum] = evaluate_symbolic(items.front().value);
             outcome == math_outcome::resolved && sum.symbols.empty()) {
@@ -298,20 +289,22 @@ constexpr std::string_view angle_functions[] = {"rotate(", "rotatex(", "rotatey(
 } // namespace
 
 std::string simplify_math(std::string_view value) {
+    // The recursion budget of the text-level passes (math_step in internal.hpp):
+    // a pathologically nested value is returned unsimplified rather than taking
+    // billions of calls. The outermost call checks it again on the way out.
     const math_step step;
     if (step.exhausted()) { return std::string{value}; }
-    // The bases do not exist yet - that is what makes this the SPECIFIED value -
-    // so `context_free` above is what decides whether a function may be touched
-    // at all, and this context is only ever handed expressions that need none.
+    // The bases do not exist yet (that is what makes this the specified value),
+    // so `context_free` decides whether a function may be touched at all, and
+    // this context is only ever handed expressions that need none.
     const length_context ctx;
     std::string out;
     std::size_t at = 0;
     while (at < value.size()) {
-        // A MATH FUNCTION WITH ITS OWN VOCABULARY IS COPIED OVER WHOLE, for the
-        // same reason `math_syntax_ok` steps over it: `calc-size(10px, sign(size)
-        // * size)` redefines `size` inside itself, so the `sign()` in there is
-        // not the ordinary one and simplifying it would be answering a question
-        // this file was not asked.
+        // A math function with its own vocabulary is copied over whole, for the
+        // same reason `math_syntax_ok` steps over it:
+        // `calc-size(10px, sign(size) * size)` redefines `size` inside itself,
+        // so the `sign()` in there cannot be simplified as ordinary arithmetic.
         if (ascii_iequals(value.substr(at, 10), "calc-size(") &&
             (at == 0 || !is_name(value[at - 1]))) {
             const std::size_t end = span_of(value, at, "calc-size(").end;
@@ -338,22 +331,22 @@ std::string simplify_math(std::string_view value) {
         const std::size_t from = at + name.size();
         const std::string_view inner = value.substr(from, span.end - from - (span.closed ? 1 : 0));
         at = span.end;
-        // A calc() AROUND ONE OTHER calc() IS REDUNDANT. §10.12's simplification
-        // returns a lone child rather than wrapping it, so
-        // `calc(calc(0px + clamp(...)))` loses exactly one layer.
-        // `clamp-length-serialize` asserts that four times.
+        // A calc() around one other calc() is redundant. §10.12's
+        // simplification returns a lone child rather than wrapping it, so
+        // `calc(calc(0px + clamp(...)))` loses exactly one layer (WPT
+        // clamp-length-serialize).
         //
-        // ...AND SO IS A calc() AROUND A LONE COMPARISON, for a sharper reason.
-        // `min()`, `max()` and `clamp()` are NODES OF THE CALCULATION TREE (CSS
-        // Values 4 §10.9), not opaque leaves: simplifying `calc(clamp(1px, 1em,
-        // 1vh))` leaves a tree whose root IS the Clamp node, and §10.13
-        // serialises a Clamp root as `clamp(...)` with no calc() anywhere.
+        // So is a calc() around a lone comparison. `min()`, `max()` and
+        // `clamp()` are nodes of the calculation tree (CSS Values 4 §10.9), not
+        // opaque leaves: simplifying `calc(clamp(1px, 1em, 1vh))` leaves a tree
+        // whose root is the Clamp node, and §10.13 serializes a Clamp root as
+        // `clamp(...)` with no calc() around it.
         //
-        // That is exactly why the rule stops at the three of them. `pow()` is
-        // not a node type - it is a leaf this file could not evaluate - and a
-        // leaf inside a calc() keeps its calc(), which is what
-        // `calc-complex-unresolved-serialize` asks for on all six of its values.
-        // The two files disagree only if the distinction is "any math function".
+        // The rule stops at those three. `pow()` is not a node type but a leaf
+        // this file could not evaluate, and a leaf inside a calc() keeps its
+        // calc(). Treating every math function this way would break WPT
+        // calc-complex-unresolved-serialize, which clamp-length-serialize does
+        // not require.
         if (ascii_iequals(name, "calc(")) {
             const std::string_view trimmed = trim(body, html_whitespace);
             const std::string_view lone = lone_math_function(trimmed);
@@ -363,8 +356,8 @@ std::string simplify_math(std::string_view value) {
                 continue;
             }
         }
-        // A calc-mix() FOLDS ONLY SYMBOLICALLY - the evaluator says when a
-        // specified one may - and is normalised otherwise.
+        // A calc-mix() folds only symbolically (the evaluator says when a
+        // specified one may), and is normalized otherwise.
         if (ascii_iequals(name, "calc-mix(")) {
             const auto [outcome, sum] = evaluate_symbolic(body);
             if (outcome == math_outcome::resolved && sum.symbols.empty()) {
@@ -382,11 +375,11 @@ std::string simplify_math(std::string_view value) {
         }
         const math_answer answer = evaluate_math(body, ctx);
         if (answer.outcome == math_outcome::resolved && context_free(whole)) {
-            // A PERCENTAGE BESIDE A LENGTH KEEPS THE LENGTH'S TERM EVEN AT
-            // ZERO: `calc(10% + calc-mix(1px 0%, 3% 0%))` is `calc(10% + 0px)`
-            // (§10.12 adds the terms of one unit and drops nothing), which
-            // the magnitude-and-percentage answer cannot say and the symbolic
-            // sum can (calc-mix-serialize).
+            // A percentage beside a length keeps the length's term even at
+            // zero: `calc(10% + calc-mix(1px 0%, 3% 0%))` is `calc(10% + 0px)`
+            // (§10.12 adds the terms of one unit and drops nothing). The
+            // magnitude-and-percentage answer cannot express that and the
+            // symbolic sum can (WPT calc-mix-serialize).
             if (answer.value.has_percent && answer.value.px == 0.0 &&
                 !ascii_iequals(name, "calc-mix(")) {
                 if (const auto [outcome, sum] = evaluate_symbolic(body);
@@ -400,13 +393,12 @@ std::string simplify_math(std::string_view value) {
             out.append(specified_math(answer.value));
             continue;
         }
-        // A SUM THAT COULD NOT BE FOLDED IS STILL SIMPLIFIED. `calc(10px + 1vmin
-        // + 10%)` has no single magnitude before there is a viewport and a
-        // containing block, and §10.12's simplified form is not the author's
-        // bytes but the three terms in §10.13's canonical order -
-        // `calc(10% + 10px + 1vmin)`. There is nothing to guess: the terms are
-        // added per unit and printed, and a comparison whose arguments cannot be
-        // ORDERED still says so and falls through below.
+        // A sum that could not be folded is still simplified.
+        // `calc(10px + 1vmin + 10%)` has no single magnitude before there is a
+        // viewport and a containing block, and §10.12's simplified form is the
+        // three terms in §10.13's canonical order: `calc(10% + 10px + 1vmin)`.
+        // The terms are added per unit and printed; a comparison whose
+        // arguments cannot be ordered falls through below.
         if (const auto [outcome, sum] = evaluate_symbolic(body);
             outcome == math_outcome::resolved) {
             if (const std::string text = serialize_symbolic(sum); !text.empty()) {
@@ -423,29 +415,31 @@ std::string simplify_math(std::string_view value) {
                 continue;
             }
         }
-        // ...AND A calc() AROUND SUCH A COMPARISON IS STILL A TREE, simplified
-        // by §10.12 and written in §10.13's order: `calc((min(10px, 20%) +
-        // max(1rem, 2%)) * 2)` is `calc(2 * (min(10px, 20%) + max(1rem, 2%)))`
-        // (calc-serialization-002, calc-nesting-002, minmax-*-serialize).
+        // A calc() around such a comparison is still a tree, simplified by
+        // §10.12 and written in §10.13's order:
+        // `calc((min(10px, 20%) + max(1rem, 2%)) * 2)` is
+        // `calc(2 * (min(10px, 20%) + max(1rem, 2%)))` (WPT
+        // calc-serialization-002, calc-nesting-002, minmax-*-serialize).
         if (ascii_iequals(name, "calc(")) {
             if (const std::optional<std::string> tree = simplify_sum_text(body)) {
                 out.append("calc(").append(*tree).append(")");
                 continue;
             }
         }
-        // ...AND A FUNCTION WITH NO ANSWER AT ALL STILL HAS ARGUMENTS. §10.11
-        // says a comparison that cannot be ORDERED is its own computed value -
-        // `min(10px, 5%)`, `min(1em, 1px)` - and says nothing about the two
-        // sides of it, which are calculations like any other and simplify like
-        // any other. What genuinely has no simplified form here comes back
-        // through this same function and keeps the author's bytes, which is
-        // where `sibling-index()` and `nearest` land.
+        // A function with no answer at all still has arguments to simplify.
+        // §10.11 says a comparison that cannot be ordered (`min(10px, 5%)`,
+        // `min(1em, 1px)`) is its own computed value; its arguments are
+        // calculations that simplify like any other. What has no simplified
+        // form here, such as `sibling-index()` or `nearest`, comes back through
+        // this same function and keeps the author's text.
         out.append(simplified_arguments(name, inner));
     }
     if (step.outermost() && step.exhausted()) { return std::string{value}; }
     return out;
 }
 
+// Writes every random() in `value` in canonical form: the sharing options
+// spelled out for `property` (see random_key) and each bound simplified.
 std::string canonical_random(std::string_view value, std::string_view property) {
     constexpr std::string_view name = "random(";
     // One bound, in its canonical spelling: a dimension in its canonical unit,
@@ -477,7 +471,7 @@ std::string canonical_random(std::string_view value, std::string_view property) 
     std::string out;
     std::size_t at = 0;
     // The ordinal of the random() being spelled, among the value's in source
-    // order - fold.cpp and the evaluator count the same way.
+    // order. fold.cpp and the evaluator count the same way.
     std::size_t position = 0;
     while (at < value.size()) {
         if (const std::size_t quoted = end_of_string_at(value, at); quoted != at) {
@@ -497,7 +491,7 @@ std::string canonical_random(std::string_view value, std::string_view property) 
         std::vector<std::string_view> args = top_level_arguments(inner);
         // The sharing head: a first argument that is `fixed <number>` or made
         // of the sharing words alone. `infinity` and `NaN` are identifiers too
-        // and are the first BOUND, not a head (random-computed).
+        // and are the first bound, not a head (WPT random-computed).
         std::string head;
         const auto is_head = [](std::string_view text) {
             if (ascii_istarts_with(text, "fixed")) { return true; }
@@ -553,6 +547,9 @@ std::string canonical_random(std::string_view value, std::string_view property) 
     return out;
 }
 
+// The specified value of a whole `calc-size(<basis>, <calculation>)`, or
+// nullopt when it is invalid for a property whose keywords are `keywords`
+// (space-separated).
 std::optional<std::string> calc_size_text(std::string_view value, std::string_view keywords) {
     constexpr std::string_view name = "calc-size(";
     const std::string_view whole = trim(value, html_whitespace);
@@ -567,12 +564,12 @@ std::optional<std::string> calc_size_text(std::string_view value, std::string_vi
     const std::string_view calculation = trim(args[1], html_whitespace);
     if (basis.empty() || calculation.empty()) { return std::nullopt; }
 
-    // THE BASIS: `any`, an intrinsic size keyword, one of the property's own
-    // keywords, another calc-size(), or a <length-percentage>.
+    // The basis: `any`, an intrinsic size keyword the property also takes,
+    // another calc-size(), or a <length-percentage>.
     std::string out{name};
     bool any = false;
     const token_stream ts = tokenize(basis);
-    const bool one_token = ts.tokens.size() == 2; // the token and eof
+    const bool one_token = ts.tokens.size() == 2; // The token and eof.
     if (one_token && ts.tokens.front().type == token_type::ident) {
         const std::string word = ascii_lower_copy(basis);
         const auto listed = [&](std::string_view list) {
@@ -584,8 +581,8 @@ std::optional<std::string> calc_size_text(std::string_view value, std::string_vi
             }
             return false;
         };
-        // An INTRINSIC size keyword the property takes: `none` is max-width's
-        // keyword and no size, `auto` is a size and not max-width's.
+        // An intrinsic size keyword the property takes: `none` is max-width's
+        // keyword but no size, and `auto` is a size but not max-width's.
         any = word == "any";
         if (!any && !(listed("auto content min-content max-content fit-content stretch") &&
                       listed(keywords))) {
@@ -609,8 +606,8 @@ std::optional<std::string> calc_size_text(std::string_view value, std::string_vi
     }
     out += ", ";
 
-    // THE CALCULATION: a <calc-sum> over `size`, a length, and no calc-size()
-    // inside it. What has no answer here - `sign(size) * size` - keeps its bytes.
+    // The calculation: a <calc-sum> over `size`, a length, and no calc-size()
+    // inside it. What has no answer here (`sign(size) * size`) keeps its text.
     for (std::size_t i = 0; i < calculation.size(); ++i) {
         if (ascii_iequals(calculation.substr(i, name.size()), name) &&
             (i == 0 || !is_name(calculation[i - 1]))) {
@@ -629,24 +626,24 @@ std::optional<std::string> calc_size_text(std::string_view value, std::string_vi
     return out + ')';
 }
 
+// Whether every math function in `value` parses, and whether one used as an
+// argument of an angle-only function (rotate, skew, hue-rotate) is an angle.
 bool math_syntax_ok(std::string_view value) {
-    // ...AND OF THE RIGHT KIND FOR WHERE IT SITS, which for the angle-only
-    // functions is a question about position rather than about contents.
     if (!angle_arguments_ok(value)) { return false; }
-    // The bases do not matter to a syntax question - `1em` is well formed at any
-    // font size - so this asks with the defaults rather than making every caller
-    // invent a context it has no use for.
+    // The bases do not matter to a syntax question (`1em` is well formed at any
+    // font size), so this asks with the defaults rather than making every
+    // caller invent a context it has no use for.
     const length_context ctx;
     std::size_t at = 0;
     while (at < value.size()) {
-        // A MATH FUNCTION WITH ITS OWN VOCABULARY IS STEPPED OVER WHOLE.
-        // `calc-size(10px, sign(size) * size)` is a valid declaration and its
+        // A math function with its own vocabulary is stepped over whole.
+        // `calc-size(10px, sign(size) * size)` is a valid declaration whose
         // `size` keyword is meaningless anywhere else, so reading the `sign()`
-        // inside it as ordinary arithmetic reported the whole value invalid -
-        // measured against `css/css-values/calc-size/interpolate-size-parsing`.
-        // Descending into a function this file does not own is right for
-        // `transform: rotate(calc(...))` and wrong here, and the only thing that
-        // tells the two apart is knowing which functions redefine their contents.
+        // inside it as ordinary arithmetic would report the whole value
+        // invalid (WPT css-values/calc-size/interpolate-size-parsing).
+        // Descending into a function is right for `transform: rotate(calc(...))`;
+        // only knowing which functions redefine their contents tells the two
+        // cases apart.
         if (ascii_iequals(value.substr(at, 10), "calc-size(") &&
             (at == 0 || !is_name(value[at - 1]))) {
             at = span_of(value, at, "calc-size(").end;
@@ -662,15 +659,15 @@ bool math_syntax_ok(std::string_view value) {
             continue;
         }
         const function_span span = span_of(value, at, name);
-        // INSIDE A RELATIVE COLOUR the channel keywords are values - `rgb(from
-        // blue r g calc(b + 150))` - and this evaluator has no channels, so a
-        // math function there is left to the colour grammar rather than
-        // condemned for an ident it cannot read (random-serialize).
+        // Inside a relative colour the channel keywords are values
+        // (`rgb(from blue r g calc(b + 150))`), and this evaluator has no
+        // channels, so a math function there is left to the colour grammar
+        // rather than rejected for an ident it cannot read (WPT random-serialize).
         if (!inside_relative_color(value, at) &&
             evaluate_math(body_of(value, at, name, span), ctx).outcome == math_outcome::invalid) {
             return false;
         }
-        // Past the whole function, so a nested one is not checked twice - the
+        // Skip the whole function so a nested one is not checked twice: the
         // outer evaluation already read it.
         at = span.end;
     }

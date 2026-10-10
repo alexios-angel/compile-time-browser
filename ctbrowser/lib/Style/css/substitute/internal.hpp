@@ -1,3 +1,13 @@
+//===- substitute/internal.hpp - Substitution internals ---------*- C++ -*-===//
+//
+// The substituter shared by substitute.cpp and the files in this directory: it
+// expands var(), attr(), if(), ident(), random-item(), inherit() and custom
+// `--name()` calls in one declaration value, and answers the style(), media()
+// and supports() queries an if() asks. syntax.cpp parses attr()'s `type()`
+// syntax and matches values against it; value_functions.cpp holds attr(),
+// ident(), custom function calls and random-item().
+//
+//===----------------------------------------------------------------------===//
 #pragma once
 
 #include <ctbrowser/style/css/substitute.hpp>
@@ -20,16 +30,19 @@
 
 namespace ctbrowser::style::css::substitute_detail {
 
-// §3: twenty substitutions deep is the spec's limit, and a byte budget as well -
-// `--a: var(--b) var(--b)` doubles on every level, so a depth limit alone still
-// allows an exponential blow-up.
+// Substitution limits. CSS Custom Properties 1 (§3) lets an engine cap
+// expansion; this caps nesting at 20 levels and the result at 64 KiB, because
+// `--a: var(--b) var(--b)` doubles in size at every level and a depth limit
+// alone still allows exponential growth.
 inline constexpr int max_depth = 20;
 
+/// The largest substituted value, in bytes (64 KiB); see max_depth.
 inline constexpr std::size_t max_bytes = 64 * 1024;
 
-// One substitution function, located inside a token stream. `var()` and
-// `attr()` share the shape: a name, an optional type (attr only), and a
-// fallback after the first top-level comma.
+/// One substitution function located inside a token stream: `var()`,
+/// `attr()`, `if()`, `ident()`, `random-item()`, `inherit()` or a custom
+/// `--name()` call. The flags say which; `var()`, `attr()` and `inherit()`
+/// share the name-then-fallback shape the index fields describe.
 struct call {
     bool is_attr = false;
     bool is_if = false;
@@ -37,22 +50,27 @@ struct call {
     bool is_random_item = false;
     bool is_inherit = false; // `inherit(--x, fallback)`: var()'s shape, the parent's value
     bool is_custom = false;  // `--name(args)`: a custom function, CSS Functions and Mixins 1
-    // A var() whose name position holds a FUNCTION - `var(ident("--" "x"))` -
-    // which is read only once that function has been substituted.
+    /// A var() whose name position holds a function, as in
+    /// `var(ident("--" "x"))`; the name is read only once that function has
+    /// been substituted.
     bool name_is_call = false;
-    std::size_t open = 0;     // the `var(`, `attr(`, `if(` or `ident(` token
-    std::size_t close = 0;    // the matching `)`, or the eof token if none
-    std::size_t name_at = 0;  // the `--x` ident
-    std::size_t comma_at = 0; // the first top-level comma, or `close` if none
+    std::size_t open = 0;     // The call's function token, e.g. `var(` or `--name(`.
+    std::size_t close = 0;    // The matching `)`, or the eof token if none.
+    std::size_t name_at = 0;  // The `--x` ident.
+    std::size_t comma_at = 0; // The first top-level comma, or `close` if none.
 };
 
 [[nodiscard]] bool is_function_named(const token_stream & s, const css_token & t,
                                      std::string_view want);
 
+/// Finds the first substitution function in `s` and describes it in `out`;
+/// false when there is none.
 [[nodiscard]] bool find_call(const token_stream & s, call & out);
 
 [[nodiscard]] std::string text_between(const token_stream & s, std::size_t first, std::size_t last);
 
+/// True when a substituted value contains a top-level `!` or `;`, which makes
+/// it invalid.
 [[nodiscard]] bool introduced_structure(std::string_view value);
 
 // --- attr(), CSS Values 5 §attr ------------------------------------------------
@@ -60,7 +78,7 @@ struct call {
 //   attr( <attr-name> <attr-type>? , <declaration-value>? )
 //   <attr-type> = type( <syntax> ) | raw-string | <attr-unit>
 //
-// THE ATTRIBUTE'S TEXT IS NOT CSS UNTIL THE TYPE SAYS SO. With no type, or
+// The attribute's text is not CSS until the type says so. With no type, or
 // `raw-string`, the substitution is a <string> holding the text verbatim - which
 // is why `content: attr(title)` has always been safe. With a unit, the text
 // must be a bare number and gains the unit. With `type()`, the text is parsed
@@ -70,82 +88,84 @@ struct call {
 // naming a type that does not exist - is a syntax error whatever the attribute
 // holds.
 
-// One alternative of a `<syntax>`: a type name, or a keyword.
+/// One alternative of a `<syntax>`: a type name, or a keyword.
 struct syntax_alternative {
-    std::string name; // `length`, `number`, ... or the keyword itself
+    std::string name; // `length`, `number`, ... or the keyword itself.
     bool keyword = false;
-    char multiplier = 0; // 0, '+' (space list) or '#' (comma list)
+    char multiplier = 0; // 0, '+' (space list) or '#' (comma list).
 };
 
-// The type names `type()` may ask for. `<url>` is NOT here on purpose: an
-// attribute may not produce a URL (§attr's security note), so asking for one
-// is a syntax error rather than a type this cannot match. `<image>` is - a
-// gradient is an image with no URL in it - and a `url()` in one is refused
-// for the same reason.
+/// The type names `type()` may ask for. `<url>` is deliberately absent: an
+/// attribute may not produce a URL (the security note of CSS Values 5 §attr),
+/// so asking for one is a syntax error rather than a type this cannot match.
+/// `<image>` is present, since a gradient is an image with no URL in it, but a
+/// `url()` inside one is refused for the same reason.
 inline constexpr std::string_view syntax_types[] = {
     "length", "number", "percentage", "length-percentage",  "color",        "integer",
     "angle",  "time",   "resolution", "transform-function", "custom-ident", "transform-list",
     "string", "image",  "frequency"};
 
+/// Parses the `<syntax>` inside `type()`; nullopt when it is malformed or
+/// names an unknown type.
 [[nodiscard]] std::optional<std::vector<syntax_alternative>> parse_syntax(std::string_view text);
 
-// The significant tokens of a stream, as index ranges of the items a
-// multiplier separates: the whole value, its space-separated parts, or its
-// comma-separated parts, each [first, last] over significant tokens with
-// brackets kept whole.
+/// One item of a value as a multiplier separates it: the whole value, one
+/// space-separated part, or one comma-separated part, as the index range
+/// [first, last] over significant tokens with brackets kept whole.
 struct item {
     std::size_t first = 0;
-    std::size_t last = 0; // inclusive
+    std::size_t last = 0; // Inclusive.
 };
 
+/// Splits `s` into the items of `multiplier` ('+', '#', or 0 for the whole value).
 [[nodiscard]] std::vector<item> items_of(const token_stream & s, char multiplier);
 
+/// The source text of one item.
 [[nodiscard]] std::string slice_of(const token_stream & s, const item & it);
 
-// `from_attribute`: the text is an attribute's, read through `attr(x
-// type(...))`, and may make no URL - `<image>` takes no `url()` then.
+/// Matches one item against one type name, returning its substituted text or
+/// nullopt. `from_attribute` means the text is an attribute's, read through
+/// `attr(x type(...))`, and may not make a URL: `<image>` then takes no `url()`.
 [[nodiscard]] std::optional<std::string> match_item(const token_stream & s, const item & it,
                                                     std::string_view type,
                                                     bool from_attribute = false);
 
+/// Matches a whole value against a parsed `<syntax>`, trying each alternative
+/// in order; nullopt when none matches.
 [[nodiscard]] std::optional<std::string> match_syntax(
     std::string_view value, const std::vector<syntax_alternative> & syntax,
     bool from_attribute = false);
 
+/// `text` serialized as a CSS <string>, quoted and escaped.
 [[nodiscard]] std::string quoted(std::string_view text);
 
+/// The non-whitespace tokens of `text` with their source text, used to compare
+/// two values as token streams.
 [[nodiscard]] std::vector<std::pair<token_type, std::string>> significant(std::string_view text);
 
+/// Expands var(), attr(), if(), ident(), random-item(), inherit() and custom
+/// function calls in one declaration value, tracking cycles across custom
+/// properties and attributes.
 class substituter {
 public:
     substituter(const custom_lookup & lookup, atom_table & atoms,
                 const attribute_lookup & attributes, const condition_environment * conditions)
         : lookup_(&lookup), atoms_(&atoms), attributes_(&attributes), conditions_(conditions) {}
 
-    // TWO TOKEN STREAMS JOINED STAY TWO TOKENS. `if(style(--x): a)if(style(--x):
-    // b)` substitutes to `a` beside `b`, which read back as one token `ab`;
-    // CSS Syntax 3 §9 puts an empty comment between two tokens that would
-    // otherwise merge, and so does every engine's serialisation of a custom
-    // property (if-conditionals).
-    //
-    // WHICH PAIRS is CSS Syntax 3 §9.2's table, over the last token of the one
-    // and the first of the other: an ident before an ident, a function, a
-    // url, `-`, a number, a percentage, a dimension, `-->` or `(`; an
-    // at-keyword, a hash or a dimension before the same but `(`; `#` or `-`
-    // before an ident, function, url, `-` or a number of any kind (and `-`
-    // before `-->`); a number before an ident, function, url, number of any
-    // kind or `%`; `@` before an ident, function, url, `-` or `-->`; `.` or
-    // `+` before a number of any kind; and `/` before `*`
-    // (serialize-consecutive-tokens).
+    /// Appends `right` to `left`, inserting an empty comment `/**/` where the
+    /// two would otherwise tokenize as one: `if(style(--x): a)if(style(--x): b)`
+    /// substitutes to `a` beside `b`, which must not read back as `ab`.
     static void join(std::string & left, std::string_view right) {
         if (!left.empty() && !right.empty() && merges(left, right)) { left += "/**/"; }
         left += right;
     }
+    /// True when the last token of `left` and the first of `right` would merge,
+    /// per the table in CSS Syntax 3 §9.2 (serialize consecutive tokens).
     [[nodiscard]] static bool merges(std::string_view left, std::string_view right) {
         const token_stream a = tokenize(left);
         const token_stream b = tokenize(right);
         if (a.tokens.size() < 2 || b.tokens.size() < 2) { return false; }
-        const css_token & x = a.tokens[a.tokens.size() - 2]; // the last before eof
+        const css_token & x = a.tokens[a.tokens.size() - 2]; // The last before eof.
         const css_token & y = b.tokens.front();
         const auto delim = [](const token_stream & s, const css_token & t, char c) {
             return t.type == token_type::delim && s.text_of(t) == std::string_view{&c, 1};
@@ -174,19 +194,21 @@ public:
         }
     }
 
-    // THE PROPERTY THIS VALUE BELONGS TO, when it is a custom one, so that a
-    // style query reading it back is a cycle: `--x: if(style(--x): a; else: b)`.
+    /// Names the custom property this value belongs to, so that a style query
+    /// reading it back is a cycle: `--x: if(style(--x): a; else: b)`.
     void resolving(atom property) {
         self_ = property;
         resolving_.push_back(property.id);
     }
+    /// True once something in the value reached the property named by
+    /// resolving(), which makes the value cyclic.
     [[nodiscard]] bool reached_self() const noexcept { return root_cycle_; }
 
-    // ONE MATH FUNCTION, against the caller's bases, with the value's
-    // random() functions numbered in order across every expression this
-    // substitution evaluates: `style(random(0, 1) = random(0, 1))` draws
-    // twice, and two `if()`s in one value draw a first and a second
-    // (random-in-if).
+    /// Evaluates one math function against the caller's bases. The value's
+    /// random() functions are numbered in order across every expression this
+    /// substitution evaluates, so `style(random(0, 1) = random(0, 1))` draws
+    /// twice, and two `if()`s in one value draw a first and a second
+    /// (WPT css/css-values/random-in-if).
     [[nodiscard]] math_answer math_of(std::string_view text) {
         length_context ctx = conditions_ != nullptr ? conditions_->lengths : length_context{};
         if (ctx.property.empty() && conditions_ != nullptr) {
@@ -198,6 +220,9 @@ public:
         return answer;
     }
 
+    /// Substitutes every call in `value` into `out`. Returns false when the
+    /// value is invalid at computed-value time (cycle, missing fallback, or a
+    /// depth or size limit exceeded).
     [[nodiscard]] bool run(std::string_view value, std::string & out, int depth) {
         if (depth > max_depth || value.size() > max_bytes) { return false; }
         const token_stream s = tokenize(value);
@@ -211,7 +236,7 @@ public:
             out.assign(value);
             return true;
         }
-        // AN attr() WITHOUT AN ELEMENT IS LEFT AS WRITTEN, and so is an if()
+        // An attr() without an element is left as written, and so is an if()
         // without an environment: the text survives and whoever reads it
         // decides. Everything after it is still substituted.
         if ((found.is_attr && !*attributes_) || (found.is_if && conditions_ == nullptr) ||
@@ -255,7 +280,7 @@ public:
     }
 
 private:
-    // THE FALLBACK is everything after the FIRST comma, commas included:
+    // The fallback is everything after the first comma, commas included:
     // `var(--a, 1px, 2px)` has the fallback `1px, 2px`, because a custom
     // property's value may itself be a comma list.
     [[nodiscard]] bool fallback(const token_stream & s, const call & found, int depth,
@@ -285,21 +310,21 @@ private:
         if (!name_text.starts_with("--")) { return false; }
         const atom name = atoms_->intern(name_text);
 
-        // CYCLE DETECTION. `--a: var(--b); --b: var(--a)` must make BOTH invalid rather
-        // than recursing to the depth limit, and a set of the properties currently
-        // being resolved is what says so.
+        // Cycle detection: `--a: var(--b); --b: var(--a)` must make both invalid
+        // rather than recurse to the depth limit, and the stack of properties
+        // currently being resolved is what says so.
         const bool cyclic = reached_again(name);
         bool ok = false;
         if (conditions_ != nullptr && conditions_->on_read) { conditions_->on_read(name_text); }
         if (!cyclic) {
             if (const std::optional<std::string_view> held = (*lookup_)(name)) {
                 resolving_.push_back(name.id);
-                // A custom property's own value may itself contain var() -
-                // and its attr()s are ITS OWN, computed as they would be for
-                // the property itself: `--x: attr(data-foo)` read through
-                // var(--x) while data-foo is being substituted is the string
-                // it always is, not a ring (attr-cycle 26, 27). A ring through
-                // var() is still caught, by this stack.
+                // A custom property's own value may itself contain var(), and
+                // its attr()s are its own, computed as they would be for the
+                // property itself: `--x: attr(data-foo)` read through var(--x)
+                // while data-foo is being substituted is the string it always
+                // is, not a cycle (WPT css/css-values/attr-cycle.html). A cycle
+                // through var() is still caught, by resolving_.
                 std::vector<std::string> attrs_outside;
                 attrs_outside.swap(attrs_resolving_);
                 ok = run(*held, expansion, depth + 1);
@@ -312,9 +337,9 @@ private:
     }
 
     // inherit( <custom-property-name> , <declaration-value>? ), CSS Values 5
-    // §inherit-notation: the PARENT's computed value of the property, which
+    // §inherit-notation: the parent's computed value of the property, which
     // is what `style(--x: inherit)` already reads, and the fallback when the
-    // parent has none (inherit-function-basic).
+    // parent has none (WPT css/css-values/inherit-function-basic).
     //
     // ponytail: custom properties only, and one level - the parent's own value
     // is substituted in the parent's scope with no grandparent to ask, so
@@ -332,7 +357,7 @@ private:
         return fallback(s, found, depth, expansion);
     }
 
-    // attr(): the argument list is substituted FIRST - `attr(var(--x))` - and
+    // attr(): the argument list is substituted first (`attr(var(--x))`) and
     // read after, and what the attribute holds is then judged by the type.
     [[nodiscard]] bool attribute(const token_stream & outer, const call & found, int depth,
                                  std::string & expansion);
@@ -358,21 +383,21 @@ private:
     //
     //   --name( <declaration-value>#? )
     //
-    // The arguments are substituted in the CALLER's scope and bound to the
+    // The arguments are substituted in the caller's scope and bound to the
     // parameters: a missing one takes its default, a typed one is computed
     // like the type it names, and too many or a missing one with no default
     // makes the call invalid. The body's locals and `result` are then
-    // substituted in the FUNCTION's scope - parameters and locals first, the
+    // substituted in the function's scope - parameters and locals first, the
     // calling element's custom properties after - and a typed `result` is
     // computed like its type on the way out. What comes out replaces the
     // call, and an untyped result is a token stream the caller reads.
     //
     // A `random()` met while computing a typed parameter or result is keyed on
-    // the function and the slot (`--f/result`, `--f/--x`) and on THIS
-    // INVOCATION as its element: `property-index-scoped` there is the same
+    // the function and the slot (`--f/result`, `--f/--x`) and on this
+    // invocation as its element: `property-index-scoped` there is the same
     // draw wherever the call sits and `element-scoped` differs per call
-    // (random-in-custom-function). An untyped one escapes as text and is drawn
-    // where it lands.
+    // (WPT css/css-values/random-in-custom-function). An untyped one escapes
+    // as text and is drawn where it lands.
     [[nodiscard]] bool custom_call(const token_stream & outer, const call & found, int depth,
                                    std::string & expansion);
 
@@ -401,23 +426,23 @@ private:
     // like any other; `else` always holds. No branch holding is invalid at
     // computed-value time, exactly as a `var()` with nothing to substitute.
     //
-    // A CONDITION IS SUBSTITUTED BEFORE IT IS READ - `style(--x: var(--y))`
+    // A condition is substituted before it is read - `style(--x: var(--y))`
     // compares against what `--y` holds and `if(var(--else): ...)` is an
     // `else` branch - and a condition that fails to substitute, or does not
-    // parse as a condition, is simply false: `if-conditionals` writes both
-    // `if(style(--x) and invalid: a; else: b)` and `if(style(--missing:
-    // var(--missing)): a; else: b)` and asks for `b`. A `!` anywhere in the
-    // argument list is different: no branch can contain one, so the whole
-    // function is malformed.
+    // parse as a condition, is simply false: WPT css/css-values/if-conditionals
+    // writes both `if(style(--x) and invalid: a; else: b)` and
+    // `if(style(--missing: var(--missing)): a; else: b)` and asks for `b`. A
+    // `!` anywhere in the argument list is different: no branch can contain
+    // one, so the whole function is malformed.
     [[nodiscard]] bool conditional(const token_stream & outer, const call & found, int depth,
                                    std::string & expansion) {
         const std::size_t first = found.open + 1;
-        const std::size_t last = found.close; // the `)` or eof, exclusive
-        if (first >= last) { return false; }  // `if()`
+        const std::size_t last = found.close; // The `)` or eof, exclusive.
+        if (first >= last) { return false; }  // `if()`.
         // The branches, split at the top-level `;`.
         struct branch {
             std::size_t from = 0;
-            std::size_t colon = 0; // the first top-level `:`, or `to` if none
+            std::size_t colon = 0; // The first top-level `:`, or `to` if none.
             std::size_t to = 0;
         };
         std::vector<branch> branches;
@@ -456,7 +481,7 @@ private:
         }
         if (branches.empty()) { return false; }
         for (const branch & b : branches) {
-            if (b.colon == last || b.colon > b.to) { return false; } // no `:`
+            if (b.colon == last || b.colon > b.to) { return false; } // No `:`.
             const std::string condition =
                 std::string{trim(text_between(outer, b.from, b.colon), html_whitespace)};
             bool holds = false;
@@ -467,8 +492,9 @@ private:
                         evaluate_condition(substituted, depth) == truth::yes;
             } else if (!cyclic_ && !root_cycle_) {
                 // A var() the condition could not resolve makes only the
-                // FEATURE holding it false, not the whole condition: `style(not
-                // (--x: var(--y)))` with a cyclic `--y` is true (if-cycle).
+                // feature holding it false, not the whole condition: `style(not
+                // (--x: var(--y)))` with a cyclic `--y` is true
+                // (WPT css/css-values/if-cycle).
                 // The features substitute their own values as they are read.
                 holds = evaluate_condition(condition, depth) == truth::yes;
             }
@@ -550,14 +576,14 @@ private:
         return boolean_expression(s, from, to, test, enclosed).value_or(truth::unknown);
     }
 
-    // IS `name` ALREADY BEING RESOLVED - and if so, whose cycle is it? A cycle
+    // Is `name` already being resolved, and if so, whose cycle is it? A cycle
     // back to the property whose value this whole substitution is (`self_`) is
     // remembered for good: an `if()` whose condition reached it is invalid
     // whichever branch would have been taken, and so is a var() of it
-    // (if-cycle). A cycle back to the property a style query is currently
-    // computing (`owners_.back()`) makes THAT property valueless, which the
-    // query then reads as false. A cycle among any other properties merely
-    // leaves them without a value.
+    // (WPT css/css-values/if-cycle). A cycle back to the property a style query
+    // is currently computing (`owners_.back()`) makes that property valueless,
+    // which the query then reads as false. A cycle among any other properties
+    // merely leaves them without a value.
     [[nodiscard]] bool reached_again(atom name) {
         if (std::find(resolving_.begin(), resolving_.end(), name.id) == resolving_.end()) {
             return false;
@@ -575,8 +601,8 @@ private:
         if (reached_again(key)) { return std::nullopt; }
         const std::optional<std::string_view> held = (*lookup_)(key);
         if (!held) { return std::nullopt; }
-        // The property's own value is resolved AS ITS OWN: a cycle back to it
-        // found while computing it makes IT invalid, not the query that asked.
+        // The property's own value is resolved as its own: a cycle back to it
+        // found while computing it makes it invalid, not the query that asked.
         const bool outer_cyclic = cyclic_;
         cyclic_ = false;
         owners_.push_back(key);
@@ -590,7 +616,7 @@ private:
         return out;
     }
 
-    // ONE NUMERIC VALUE FOR A RANGE QUERY. A lone `--x` is the property's
+    // One numeric value for a range query. A lone `--x` is the property's
     // computed value; anything else is the text as written. Either then has to
     // be one number, dimension or percentage - `calc(3px + 3px)` folds, `initial`
     // does not - and a percentage is its own family, so `1px >= 1%` is
@@ -630,7 +656,7 @@ private:
     }
 
     [[nodiscard]] static truth compare(magnitude a, std::string_view op, magnitude b) {
-        // A UNITLESS ZERO IS A LENGTH where a length is wanted (CSS Values 4
+        // A unitless zero is a length where a length is wanted (CSS Values 4
         // §6.1 <zero>), and nowhere else: `0 = 0px` holds, `0 = 0%` does not.
         const auto zero_length = [](const magnitude & m) {
             return m.type == numeric_type::number && !m.percent && m.value == 0.0;
@@ -661,7 +687,7 @@ private:
         // a `!` anywhere making the feature invalid.
         struct op_at {
             std::size_t at = 0;
-            std::size_t width = 1; // `<=` is two delim tokens
+            std::size_t width = 1; // `<=` is two delim tokens.
             std::string text;
         };
         std::vector<op_at> ops;
@@ -745,7 +771,7 @@ private:
         }
         std::string query_text;
         if (!run(text_between_view(s, colon + 1, to), query_text, depth + 1)) {
-            return truth::no; // a value nothing can substitute matches nothing
+            return truth::no; // A value nothing can substitute matches nothing.
         }
         const std::string_view query = trim(query_text, html_whitespace);
         if (custom) {
@@ -761,7 +787,7 @@ private:
             const auto parent = [&]() -> std::optional<std::string> {
                 return conditions_->inherited ? conditions_->inherited(property) : std::nullopt;
             };
-            // THE CSS-WIDE KEYWORDS NAME A VALUE TO COMPARE WITH rather than
+            // The CSS-wide keywords name a value to compare with rather than
             // being one: `initial` is the guaranteed-invalid value an
             // unregistered property starts from and the initial value a
             // registered one has, `inherit` is the parent's, and `unset` is
@@ -815,12 +841,11 @@ private:
     atom_table * atoms_;
     const attribute_lookup * attributes_;
     const condition_environment * conditions_;
-    // The properties currently being expanded, innermost last. A vector rather than a
-    // set because it is never more than a handful deep and a linear scan of four
-    // integers beats hashing one.
+    // The properties currently being expanded, innermost last. Bounded by
+    // max_depth, so a linear scan beats a hash set.
     std::vector<std::uint32_t> resolving_;
     // The attributes whose values are being substituted, outermost first, and
-    // whether a cycle through them was found (attr-cycle).
+    // whether a cycle through them was found.
     std::vector<std::string> attrs_resolving_;
     bool attr_cycle_ = false;
     // The property whose value this is, the properties whose values style
@@ -830,8 +855,8 @@ private:
     std::vector<atom> owners_;
     bool root_cycle_ = false;
     bool cyclic_ = false;
-    std::uint32_t randoms_seen_ = 0; // the random() functions math_of has numbered
-    std::uint64_t calls_ = 0;        // the custom function calls made, for their keys
+    std::uint32_t randoms_seen_ = 0; // The random() functions math_of has numbered.
+    std::uint64_t calls_ = 0;        // The custom function calls made, for their keys.
 };
 
 } // namespace ctbrowser::style::css::substitute_detail

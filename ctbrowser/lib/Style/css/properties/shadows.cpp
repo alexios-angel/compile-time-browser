@@ -1,8 +1,13 @@
-// `box-shadow` and `text-shadow`, CSS Backgrounds 3 §7.2 and Text Decoration
-// 3 §4: `none | <shadow>#` where a shadow is `<color>? && <length>{2,4} &&
-// inset?` (three lengths and no `inset` for text). The lengths are one run -
-// `4px inset -4px` is not a shadow - and the third may not be a negative
-// literal. Serialised colour first, then the lengths, then `inset`.
+//===- shadows.cpp - Shadow list grammar ---------------------- -*- C++ -*-===//
+//
+// Parses and canonicalises `box-shadow` and `text-shadow` (CSS Backgrounds 3
+// §7.2 and Text Decoration 3 §4): `none | <shadow>#`, where a shadow is
+// `<color>? && <length>{2,4} && inset?` (at most three lengths and no `inset`
+// for text). The lengths form one contiguous run (`4px inset -4px` is not a
+// shadow), and the third, the blur radius, may not be a negative literal. The
+// canonical form writes the colour first, then the lengths, then `inset`.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -12,6 +17,9 @@ using namespace detail;
 
 namespace {
 
+/// Parses one comma-separated shadow, the significant tokens at `at`, and
+/// returns its canonical text, or nullopt when it is invalid. `box` selects
+/// the `box-shadow` grammar (four lengths and `inset` allowed).
 [[nodiscard]] std::optional<std::string> one_shadow(const token_stream & ts,
                                                     const std::vector<std::size_t> & at, bool box) {
     std::string colour;
@@ -126,7 +134,7 @@ bool match_shadow_list(std::string_view property, const token_stream & ts, const
         const std::optional<std::string> text = one_shadow(ts, one, box);
         if (!text) {
             out.clear();
-            return true; // modelled, and invalid
+            return true; // Modelled, and invalid.
         }
         out += (out.empty() ? "" : ", ") + *text;
     }

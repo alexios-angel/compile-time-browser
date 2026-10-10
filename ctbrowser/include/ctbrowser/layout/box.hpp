@@ -1,3 +1,15 @@
+//===- box.hpp - The box tree and its builder ----------------- -*- C++ -*-===//
+//
+// The box tree, which is not the DOM tree, and box_builder, which builds it
+// from a document and its computed styles.
+//
+// Layout results live here and not on DOM nodes, so layout does not mutate
+// shared document state, and so boxes with no element behind them can exist.
+// CSS requires such boxes: a block container with both inline and block
+// children must wrap each inline run in an anonymous block box, and the DOM
+// has no node to hang that box on.
+//
+//===----------------------------------------------------------------------===//
 #pragma once
 #include <algorithm>
 #include <charconv>
@@ -20,247 +32,200 @@
 
 #include <ctbrowser/layout/values.hpp>
 
-// The box tree, which is NOT the DOM tree.
-//
-// This separation is the whole point of the stage. In the previous engine, layout wrote its
-// results back onto the DOM node - n.x, n.y, n.w, n.h, ui_lines, ui_font_px -
-// and that one decision caused three problems at once: layout could not run
-// concurrently (it mutated shared state), the node struct carried thirty-odd
-// fields that only layout cared about, and there was nowhere to put a box that
-// has no element behind it.
-//
-// That last one matters more than it sounds. CSS requires boxes the document
-// does not contain. A block container holding a mix of inline and block
-// children has to wrap the inline runs in ANONYMOUS block boxes, or the
-// formatting contexts interleave illegally. There is no DOM node to hang those
-// on, which is why every real engine has a box tree and the previous engine could not do it.
-
 namespace ctbrowser::layout {
 
 using ctbrowser::node_id;
 using ctbrowser::style::computed_style_ptr;
 
+/// What kind of box a box_node is, which picks its formatting context.
 enum class box_kind : std::uint8_t {
-    block,     // a block-level box
-    inline_,   // an inline-level box
-    text,      // a run of text
-    anonymous, // a generated block wrapping inline children; no source element
-    table,     // a <table>: its rows share COLUMN widths, which is the whole
-               // reason it cannot be laid out as blocks - a block sizes itself
-               // from its own content, and a cell has to size itself from a
-               // column its siblings in other rows also occupy
-    flex,      // a flex container. Like a table and for the same reason: its
-               // children's sizes are not their own business, because free
-               // space is distributed ACROSS them. `display: inline-flex` is
-               // this kind too, with inline_level set - the inside and the
-               // outside of a display value are two independent questions
-    replaced,  // a box whose size comes from the ELEMENT, not its children:
-               // <canvas>, <input>, <select>, <textarea>, <img>. CSS calls
-               // these replaced elements, and the distinction is load bearing -
-               // laying one out from its children gives a zero-size canvas.
+    block,     ///< A block-level box.
+    inline_,   ///< An inline-level box.
+    text,      ///< A run of text.
+    anonymous, ///< A generated block wrapping inline children; no source element.
+    table,     ///< A <table>: its rows share column widths, so it cannot be laid
+               ///< out as blocks. A block sizes itself from its own content; a
+               ///< cell sizes itself from a column its siblings in other rows
+               ///< also occupy.
+    flex,      ///< A flex container. Like a table, its children's sizes are not
+               ///< their own, because free space is distributed across them.
+               ///< `display: inline-flex` is this kind too, with inline_level
+               ///< set: the inside and outside of a display value are separate.
+    replaced,  ///< A box whose size comes from the element, not its children:
+               ///< <canvas>, <input>, <select>, <textarea>, <img>. CSS calls these
+               ///< replaced elements; laying one out from its children would
+               ///< give a zero-size canvas.
 };
 
+/// One box in the box tree, with every style property layout needs already
+/// resolved.
 struct box_node {
     box_kind kind = box_kind::block;
     node_id source; // empty for anonymous boxes
-    // A ::before or ::after box's ORIGINATING ELEMENT, and its text's: the
-    // box is not the element, so `source` stays empty and a geometry query
-    // never finds it, but a hit on a pseudo-element is a hit on the element
-    // it belongs to (CSS Pseudo 4 §4.1) - Bootstrap's `.stretched-link::after`
-    // is an overlay whose clicks go to its <a>. Empty everywhere else.
+    /// A ::before or ::after box's originating element, and its text's: the
+    /// box is not the element, so `source` stays empty and a geometry query
+    /// never finds it, but a hit on a pseudo-element is a hit on the element
+    /// it belongs to (CSS Pseudo 4 §4.1); Bootstrap's `.stretched-link::after`
+    /// is an overlay whose clicks go to its <a>. Empty everywhere else.
     node_id origin;
-    // The element's tag, for the handful of decisions that are about WHAT an
-    // element is rather than about its style - table parts, list items. A view
-    // into the atom table, which outlives every box tree built from it.
+    /// The element's tag, for the handful of decisions that are about what an
+    /// element is rather than about its style (table parts, list items). A view
+    /// into the atom table, which outlives every box tree built from it.
     std::string_view tag;
     computed_style_ptr style; // shared; anonymous boxes inherit their parent's
     std::string text;         // text boxes only
     std::vector<box_node> children;
 
-    // Resolved once at construction so the algorithms do not re-parse strings
-    // for every layout pass. The style is interned and shared, so this is also
-    // shared work in practice.
+    // Every length below is parsed once when the box is built, so the
+    // algorithms do not re-parse strings for every layout pass.
     length width{}, height{};
-    // `min-width` / `max-width`. Ignored entirely before, which is why
-    // `.container` filled its parent instead of stopping at the breakpoint's
-    // max-width - and every child of it was then measured against the wrong
-    // basis, so one missing property moved 27 elements on one fixture.
+    /// `min-width` / `max-width`.
     length min_width{}, max_width{};
-    // `min-height` / `max-height`. Flex consumes them on either main or cross
-    // axis; block flow clamps its finished border box with the same max-then-min
-    // rule. A non-zero minimum also participates in the narrow empty-block
-    // margin-collapse exception.
+    /// `min-height` / `max-height`. Flex consumes them on either main or cross
+    /// axis; block flow clamps its finished border box with the same
+    /// max-then-min rule. A non-zero minimum also participates in the narrow
+    /// empty-block margin-collapse exception.
     length min_height{}, max_height{};
-    // `box-sizing: border-box`: the author's width and height name the BORDER
-    // box. Under the initial `content-box` they name the content box and the
-    // padding and border are added around them (CSS UI 3 §3.1) - every stated
-    // size here was read as the border box regardless, which is only right on a
-    // page that sets border-box on `*`, as Bootstrap does. border_box_size
-    // (layout/algorithm.hpp) is where the two meet.
+    /// `box-sizing: border-box`: the author's width and height name the border
+    /// box. Under the initial `content-box` they name the content box (CSS UI 3
+    /// §3.1). border_box_size (layout/algorithm/common.hpp) applies the
+    /// difference.
     bool border_box = false;
-    // Was the horizontal margin written as the WORD `auto`?
-    //
-    // It cannot be read off `margin.left.is_auto()`, and that is a trap rather than
-    // an inconvenience: `length{}` defaults to `unit::auto_`, so an UNSET margin and
-    // an explicit `auto` are the same value. resolve() answers 0 for both, which is
-    // right for an unset one and is why nothing noticed - until auto-margin centring
-    // arrived and started centring every box with a definite width and no margins
-    // at all. CSS says an unspecified margin is 0; only the keyword means auto.
+    /// Whether the horizontal margin was written as the keyword `auto`.
+    ///
+    /// It cannot be read off `margin.left.is_auto()`: `length{}` defaults to
+    /// `unit::auto_`, so an unset margin and an explicit `auto` are the same
+    /// value. CSS says an unspecified margin is 0; only the keyword centres a
+    /// box.
     bool margin_left_auto = false;
     bool margin_right_auto = false;
-    // The vertical pair, for the same reason and read by flex only. An auto
-    // margin on a flex item absorbs the line's free space (§9.5) on WHICHEVER
-    // axis it is on, and a `column` container's main axis is the vertical one -
-    // so a row-only pair would have made the two axes asymmetric in the one place
-    // they have to behave identically. block_flow still ignores them, which is
-    // correct: a vertical auto margin outside a flex container really is zero.
+    /// The vertical pair, read by flex only. An auto margin on a flex item
+    /// absorbs the line's free space (§9.5) on whichever axis it is on, and a
+    /// `column` container's main axis is the vertical one. block_flow ignores
+    /// them, which is correct: a vertical auto margin outside a flex container
+    /// is zero.
     bool margin_top_auto = false;
     bool margin_bottom_auto = false;
-    // `display: inline-flex` - and, at the button rung, `inline-block`. The box
-    // runs a BLOCK-KIND formatting context inside while participating in its
-    // parent's INLINE one outside, which is the whole of what the two-value
-    // `display` syntax says: the inside and the outside are separate questions.
-    //
-    // A bool rather than a fifth box_kind, because `inline-flex` and `flex` are
-    // the same formatting context and would otherwise duplicate every branch that
-    // dispatches on kind. Consulted ONLY for kinds that would otherwise be
-    // block-level: `inline_`, `text` and `replaced` are inline-level by kind and
-    // leave this false.
+    /// Set for `display: inline-flex` and `inline-block`. The box runs a flex
+    /// or block formatting context inside while it takes part in its parent's
+    /// inline formatting context outside, which is what the two-value `display`
+    /// syntax says.
+    ///
+    /// A bool rather than another box_kind, because `inline-flex` and `flex`
+    /// lay out their children the same way and would otherwise duplicate every
+    /// branch that dispatches on kind. Consulted only for kinds that would
+    /// otherwise be block-level: `inline_`, `text` and `replaced` are
+    /// inline-level by kind and leave this false.
     bool inline_level = false;
-    // `overflow` other than visible/clip establishes an independent block
-    // formatting context. Its children's margins still collapse with each
-    // other, but the first/last ones cannot escape through this box's edges -
-    // especially important when the same box clips their paint.
+    /// `overflow` other than visible/clip establishes an independent block
+    /// formatting context. Its children's margins still collapse with each
+    /// other, but the first/last ones cannot escape through this box's edges,
+    /// which matters most when the same box clips their paint.
     bool blocks_margin_collapse = false;
-    // THE SAME QUESTION AS CSS OVERFLOW 3 ASKS IT: `scroll_container` is
-    // `overflow` hidden/scroll/auto/overlay on either axis - the box has a
-    // scrolling box and a scroll offset (CSSOM View reads and writes it);
-    // `clips_overflow` adds `clip`, which clips paint and the scrollable
-    // overflow contribution to an ancestor but scrolls nothing. Both false is
-    // `visible`, where a descendant that spills out still counts toward the
-    // ancestor's scrollable overflow rectangle (layout/overflow.hpp).
+    /// The CSS Overflow 3 classification. `scroll_container` is `overflow`
+    /// hidden/scroll/auto/overlay on either axis: the box has a scrolling box
+    /// and a scroll offset (CSSOM View reads and writes it). `clips_overflow`
+    /// adds `clip`, which clips paint and the scrollable overflow contribution
+    /// to an ancestor but scrolls nothing. Both false is `visible`, where a
+    /// descendant that spills out still counts toward the ancestor's scrollable
+    /// overflow rectangle (layout/overflow.hpp).
     bool scroll_container = false;
     bool clips_overflow = false;
-    // A FLOW LAYOUT DOES NOT MODEL: right-to-left direction, which turns the
-    // inline axis round, and a vertical writing mode, which turns both.
-    // Layout places everything horizontal-tb, left to right, and a question
-    // whose answer turns on the flow - where a reversed flex container's
-    // scrolling starts - is left in that one mode on each axis the flow
-    // turns, rather than answered for a flow nothing was laid out in.
+    /// Flows layout does not model: right-to-left direction, which reverses
+    /// the inline axis, and a vertical writing mode, which turns both axes.
+    /// Layout places everything horizontal-tb, left to right, and a question
+    /// whose answer depends on the flow (where a reversed flex container's
+    /// scrolling starts) is answered in that one mode on each flagged axis.
     bool unmodelled_inline = false, unmodelled_block = false;
-    // `height: stretch` (CSS Sizing 4 §3.1): the box's margin box fills its
-    // containing block's height when that is definite, and it is `auto` when
-    // it is not. `height` itself reads `auto` for it, as parse_length has it.
+    /// `height: stretch` (CSS Sizing 4 §3.1): the box's margin box fills its
+    /// containing block's height when that is definite, and it is `auto` when
+    /// it is not. `height` itself reads `auto` for it, as parse_length has it.
     bool height_stretch = false;
-    // SIZE CONTAINMENT (CSS Containment 2 §3.2): the box is sized as if it
-    // had no content - on both axes for `contain: size` and `container-type:
-    // size`, on the inline axis for `inline-size` - so a query container's
-    // size never depends on what its queries style.
+    /// Size containment (CSS Containment 2 §3.2): the box is sized as if it
+    /// had no content, on both axes for `contain: size` and `container-type:
+    /// size`, on the inline axis for `inline-size`, so a query container's
+    /// size never depends on what its queries style.
     bool contain_block_size = false;
     bool contain_inline_size = false;
     side_lengths margin{}, padding{};
-    // WHERE THIS BOX IS PLACED, and by whom.
-    //
-    // `static` is the parent's business and everything else is not: a `relative`
-    // box is laid out in flow and then MOVED, and an `absolute` or `fixed` one is
-    // taken out of flow entirely and placed against an ancestor. That split is
-    // why positioning is its own pass over the fragment tree (layout/position.hpp)
-    // rather than a branch inside each formatting context - the box that decides
-    // where an absolute child goes is not its parent, and a formatting context
-    // only ever knows about its own children.
-    // `border-collapse` and `border-spacing`, on a <table>.
-    //
-    // The browser default is `separate` with 2px of spacing, and Bootstrap's
-    // Reboot sets `collapse` on every table - which is what removes the gap
-    // between cells entirely. These were two hardcoded 2px constants in
-    // table_flow, so every table on every page was drawn as though a sheet had
-    // asked for separated borders, and a striped table showed a sliver of the
-    // table's own background between every pair of cells.
+    /// `border-collapse` and `border-spacing` on a <table>. The defaults are
+    /// `separate` with 2px spacing. Bootstrap's Reboot sets `collapse`, which
+    /// removes the gap between cells.
     bool collapse_borders = false;
     length border_spacing{2, unit::px};
+    /// Where this box is placed, and by whom. A `static` box is placed by its
+    /// parent. A `relative` box is laid out in flow and then moved. An
+    /// `absolute` or `fixed` box is taken out of flow and placed against an
+    /// ancestor, which is why positioning is a separate pass over the fragment
+    /// tree (layout/position.hpp).
     position_kind position = position_kind::static_;
-    // `auto` is absence, integer zero is present. Paint uses this to build the
-    // stacking-context tree; layout itself does not change geometry for it.
+    /// `auto` is absence, integer zero is present. Paint uses this to build the
+    /// stacking-context tree; layout itself does not change geometry for it.
     std::optional<int> z_index;
     side_lengths inset{}; // top / right / bottom / left
-    // `transform: translate(x, y)`, which for a translation alone is a pure
-    // offset. Bootstrap's `.translate-middle` is how every centred overlay in the
-    // framework is anchored, and its percentages are of the box's OWN size.
+    /// `transform: translate(x, y)`, which for a translation alone is a pure
+    /// offset. Bootstrap's `.translate-middle` anchors centred overlays this
+    /// way, and its percentages are of the box's own size.
     translation translate{};
-    // Any computed transform establishes a stacking context, including a zero
-    // translation. The translation values alone cannot retain that fact because
-    // both `none` and `translate(0)` resolve to the same pair of offsets.
+    /// Any computed transform establishes a stacking context, including a zero
+    /// translation. The translation values alone cannot retain that fact
+    /// because both `none` and `translate(0)` resolve to the same offsets.
     bool transformed = false;
-    // THE BORDER, which is part of the box and was not in the arithmetic at all.
-    // A `.btn` is `border: 1px solid transparent`, so every button came out two
-    // pixels narrower and two shorter than Chrome's - and over fifty button rows
-    // that is a hundred pixels of accumulated drift down the page.
-    //
-    // Four sides because that is the shape the rule has, even though the SOURCE
-    // is currently one uniform `border-width`: paint reads a uniform border too,
-    // and when the per-side longhands arrive only box_builder has to change.
-    // Zero when `border-style` is `none` or absent, which is the CSS rule and
-    // also why `border-width: 1px` on its own draws and measures nothing.
+    /// The used border width on each side. It is zero on any side whose
+    /// `border-style` is `none`, `hidden` or absent, as CSS requires, so a bare
+    /// `border-width: 1px` draws and measures nothing. See border_of().
     side_lengths border{};
-    // Every flex property, resolved. See flex_spec: a box carries both the
-    // container half and the item half because it may be both at once.
+    /// Every flex property, resolved. See flex_spec: a box carries both the
+    /// container half and the item half because it may be both at once.
     flex_spec flex{};
     float font_size = 16;
-    // THE LINE BOX'S HEIGHT, absolute, resolved once here for the same reason
-    // font_size is: layout would otherwise re-parse a string per line.
-    //
-    // It was `font_size * 1.25` everywhere, hardcoded, so `line-height` did
-    // nothing at all - and it is Bootstrap's most globally consequential
-    // declaration, since `body { line-height: 1.5 }` moves the baseline of every
-    // text box on the page.
+    /// The line box's height in px, resolved once from `line-height` (see
+    /// resolve_line_height) so layout does not re-parse it for every line.
     float line_height = 16 * 1.25f;
-    // Resolved here for the same reason the lengths are: once per element,
-    // rather than per glyph in the rasterizer, which has no cascade to ask.
+    /// The font face, resolved once per element rather than per glyph in the
+    /// rasterizer, which has no cascade to ask.
     text_face face{};
-    // `text-align`, as the share of a line's leftover space that goes before it -
-    // see parse_text_align. Resolved here for the same reason the lengths are,
-    // and INHERITED by the cascade rather than threaded, which is what makes
-    // `.text-center` on a container centre the text of everything inside it.
+    /// `text-align`, as the share of a line's leftover space that goes before
+    /// it (see parse_text_align). Inherited through the cascade, which is what
+    /// makes `.text-center` on a container centre the text of everything
+    /// inside it.
     float text_align = 0;
-    // `opacity`. Read by PAINT rather than by layout - it changes no geometry -
-    // and resolved here with everything else so the recorder has one place to
-    // ask. 1 is opaque, which is both the initial value and what an unreadable
-    // one falls back to.
+    /// `opacity`. Read by paint rather than by layout (it changes no geometry)
+    /// and resolved here so the recorder has one place to ask. 1 is opaque,
+    /// which is both the initial value and the fallback for an unreadable one.
     float opacity = 1;
-    // Does this box draw a list marker? TWO conditions, and each removes it on
-    // its own: the box's display must be `list-item` - any other display takes
-    // the marker away, which is why `.list-group-item`'s `display: flex` shows no
-    // bullet - and `list-style-type` must not be `none`, which every Bootstrap
-    // nav and every `.list-unstyled` sets. Both are stray marks on the page
-    // rather than wrong numbers, so the property diff saw neither.
+    /// Whether this box draws a list marker: its display is `list-item` and its
+    /// `list-style-type` is not `none`. Either condition alone removes the
+    /// marker (Bootstrap's `.list-group-item` uses `display: flex`, and
+    /// `.list-unstyled` sets `none`).
     bool list_marker = false;
     bool underline = false;
     bool line_through = false;
-    // Generated content the recorder draws: a list item's number (0 = a disc,
-    // i.e. an unordered list) and whether a <details> is open. Decided here
-    // because it is a question about the DOCUMENT - which sibling this is, what
-    // the parent element says - and the recorder has neither.
+    /// Generated content the recorder draws: a list item's number (0 = a disc,
+    /// i.e. an unordered list) and whether a <details> is open. Decided here
+    /// because it is a question about the document (which sibling this is,
+    /// what the parent element says), and the recorder has neither.
     int list_ordinal = 0;
     bool details_open = false;
-    // A text box that is ONE SPACE from collapsed inter-element whitespace.
-    // Rendered between inline content and dropped everywhere else; see
-    // drop_collapsible_spaces.
+    /// A text box that is one space from collapsed inter-element whitespace.
+    /// Rendered between inline content and dropped everywhere else; see
+    /// drop_collapsible_spaces.
     bool collapsible_space = false;
-    // `<table border=N>`. A presentational attribute rather than CSS, and it
-    // frames the cells as well as the table, so it rides on the box.
+    /// `<table border=N>`. A presentational attribute rather than CSS, and it
+    /// frames the cells as well as the table, so it rides on the box.
     float border_px = 0;
-    // `white-space: pre`. The text keeps its newlines, and layout has to turn
-    // them into line breaks rather than letting them reach the rasterizer.
+    /// `white-space: pre`. The text keeps its newlines, and layout has to turn
+    /// them into line breaks rather than letting them reach the rasterizer.
     bool preformatted = false;
 
-    // What a replaced element is sized as when the sheet says nothing. Zero
-    // means it has none and falls back to the block rules.
+    /// What a replaced element is sized as when the sheet says nothing. Zero
+    /// means it has none and falls back to the block rules.
     float intrinsic_width = 0;
     float intrinsic_height = 0;
 
     // The table parts. Kept as predicates on the box rather than as more
     // box_kinds: a row and a cell lay out as ordinary blocks, and only the
-    // TABLE needs its own formatting context.
+    // table needs its own formatting context.
     [[nodiscard]] bool is_row() const noexcept { return tag == "tr"; }
     [[nodiscard]] bool is_row_group() const noexcept {
         return tag == "thead" || tag == "tbody" || tag == "tfoot";
@@ -268,49 +233,45 @@ struct box_node {
     [[nodiscard]] bool is_cell() const noexcept { return tag == "td" || tag == "th"; }
 
     [[nodiscard]] bool is_block_level() const noexcept {
-        // `inline-flex` FIRST: the box is one of the kinds below, at an inline
+        // `inline-flex` first: the box is one of the kinds below, at an inline
         // level. Testing the kind first would make an inline-flex container
         // block-level and break the line it is supposed to sit on.
         if (inline_level) { return false; }
-        // A TABLE is block-level. Left out of this, a table shared a line with
-        // whatever came before it - two tables sat side by side, and a table sat
-        // beside the paragraph above it. A FLEX container is block-level for the
-        // same reason.
+        // Tables and flex containers are block-level too, so they never share
+        // a line with their siblings.
         return kind == box_kind::block || kind == box_kind::anonymous || kind == box_kind::table ||
                kind == box_kind::flex;
     }
     [[nodiscard]] bool is_replaced() const noexcept { return kind == box_kind::replaced; }
-    // OUT OF FLOW: it reserves no space among its siblings and its position comes
-    // from an ancestor rather than from its parent's cursor. `relative` is NOT
-    // this - it stays in flow, keeps its slot, and is merely painted elsewhere,
-    // which is the whole difference between the two and the reason a relative box
-    // leaves a hole and an absolute one does not.
+    /// Whether the box is out of flow: it reserves no space among its siblings
+    /// and its position comes from an ancestor rather than from its parent's
+    /// cursor. `relative` is not out of flow: it keeps its slot and is only
+    /// painted elsewhere, which is why a relative box leaves a hole and an
+    /// absolute one does not.
     [[nodiscard]] bool is_out_of_flow() const noexcept {
         return position == position_kind::absolute || position == position_kind::fixed;
     }
-    // Does this box establish a containing block for absolutely positioned
-    // descendants? Anything but `static`, per CSS 2.1 §10.1 - which is why
-    // `.position-relative` with no offsets at all is a real and common
-    // declaration: it exists to be an anchor.
+    /// Whether this box establishes a containing block for absolutely
+    /// positioned descendants: anything but `static`, per CSS 2.1 §10.1. That
+    /// is why `.position-relative` with no offsets is a common declaration: it
+    /// exists to be an anchor.
     [[nodiscard]] bool is_positioned() const noexcept { return position != position_kind::static_; }
+    /// Whether this box lays out its children with inline_flow.
     [[nodiscard]] bool establishes_inline_context() const noexcept {
         // A block whose children are all inline runs an inline formatting
         // context; a block with block children runs a block one. Mixed content
         // never reaches here - the builder wraps it.
         if (kind == box_kind::replaced) { return false; } // its children are not laid out
-        // A FLEX CONTAINER'S CHILDREN ARE FLEX ITEMS, never line participants,
-        // whatever they are made of. Without this a `.d-flex` holding text would
-        // run the inline algorithm - and worse, the parallel driver's guard
-        // (engine.hpp) would read "shares lines: not independent" as false and
-        // hand the items to different workers, which is the one place this whole
-        // rung could ship silently broken.
+        // A flex container's children are flex items, never line participants,
+        // whatever they contain. Without this check a `.d-flex` holding text
+        // would run the inline algorithm.
         if (kind == box_kind::flex) { return false; }
         bool has_in_flow_child = false;
         for (const box_node & c : children) {
             // An out-of-flow child leaves a static-position marker, not a line
-            // box. Counting one made a block containing only `position:absolute`
-            // content one line high, and also stopped its empty vertical margins
-            // collapsing through it.
+            // box. Counting one would make a block containing only
+            // `position:absolute` content one line high, and stop its empty
+            // vertical margins collapsing through it.
             if (c.is_out_of_flow()) { continue; }
             has_in_flow_child = true;
             if (c.is_block_level()) { return false; }
@@ -319,16 +280,15 @@ struct box_node {
     }
 };
 
-// Builds the box tree from a document read view plus resolved styles.
+/// Builds the box tree from a document read view plus resolved styles.
+///
+/// The text measure passed in should be the same one layout and raster use,
+/// so a <button> sized from its label is drawn with the same metric.
 class box_builder {
 public:
-    // The text measure is the SAME one layout and raster use. Guessing a
-    // per-character width here instead is what made a <button> narrower than
-    // its own label - the box was sized with one metric and drawn with another.
-    // An <img>'s size comes from its DECODED BITMAP, which layout cannot get to
-    // - decoding lives in the shell, above this. The browser fills this in;
-    // unset, an <img> with no width/height attribute is zero-sized, which is
-    // what it was before images existed.
+    /// The natural size of an <img> or <svg>. Layout cannot decode images, so
+    /// the embedder supplies this through `intrinsic_image`. When it is unset,
+    /// an <img> with no width/height attribute has zero size.
     struct intrinsic_size {
         float width = 0;
         float height = 0;
@@ -376,22 +336,21 @@ public:
                 atoms.intern("flex-basis"),      atoms.intern("order"),
                 atoms.intern("row-gap"),         atoms.intern("column-gap")} {}
 
-    // `line-height`, to an absolute px.
-    //
-    //   normal          the fallback factor. NOT the font's own metrics: those
-    //                   come from the measure function, which is injected and
-    //                   which a golden pins to font8x8 - so deriving `normal`
-    //                   from them would make every existing render move for a
-    //                   reason that has nothing to do with the sheet.
-    //   <number>        a factor on THIS element's font size, which is why a
-    //                   unitless value is the one that inherits usefully
-    //   <length>        itself
-    //   <percentage>    a factor, resolved against this element's font size
-    //
-    // NOT MODELLED: a PERCENTAGE computes to a length in CSS, so a child should
-    // inherit the resolved px rather than the percentage. Inheriting the text
-    // re-resolves it against the child's own size. The same is true of `em`, and
-    // both go away when the cascade folds units.
+    /// Resolves `line-height` to px.
+    ///
+    ///   normal          1.25 times the font size. Not the font's own metrics:
+    ///                   those come from the injected measure, which goldens
+    ///                   pin to font8x8, so deriving `normal` from them would
+    ///                   move every render for reasons unrelated to the sheet.
+    ///   <number>        a factor on this element's font size, which is why a
+    ///                   unitless value is the one that inherits usefully
+    ///   <length>        itself
+    ///   <percentage>    a factor, resolved against this element's font size
+    ///
+    /// Not modelled: a percentage computes to a length in CSS, so a child
+    /// should inherit the resolved px rather than the percentage. Inheriting
+    /// the text re-resolves it against the child's own size. The same is true
+    /// of `em`, and both go away when the cascade folds units.
     [[nodiscard]] static float resolve_line_height(std::string_view text, float font_size) {
         constexpr float normal_factor = 1.25f;
         const std::string_view value = trimmed(text);
@@ -399,14 +358,15 @@ public:
         const length parsed = parse_length(value);
         // A bare number is not a length: parse_length calls a unitless value
         // `unit::none` and treats it as px, which is right for `width: 5` and
-        // wrong here - `line-height: 1.5` is one and a half times the font size,
-        // not one and a half pixels.
+        // wrong here: `line-height: 1.5` is one and a half times the font
+        // size, not one and a half pixels.
         if (parsed.u == unit::none) { return parsed.value * font_size; }
         if (parsed.u == unit::percent) { return parsed.value / 100.0f * font_size; }
         if (parsed.is_auto()) { return font_size * normal_factor; }
         return parsed.resolve(font_size, font_size);
     }
 
+    /// Builds the box tree for the subtree at `root`.
     [[nodiscard]] box_node build(const read_txn & txn, node_id root);
 
 private:
@@ -418,20 +378,20 @@ private:
                         bool inherited_line_through = false, bool preserve_whitespace = false) {
         int ordinal = 0;
         // A <details> without `open` shows only its <summary>. Asked once, here,
-        // because the state is on the PARENT and the children are what it hides.
+        // because the state is on the parent and the children are what it hides.
         const bool closed_details = atoms_->text(txn.tag(parent).value_or(atom{})) == "details" &&
                                     !txn.has_attribute(parent, atoms_->intern("open"));
         for (const node_id child : txn.children(parent)) {
             const node_kind kind = txn.kind(child).value_or(node_kind::comment);
             if (is_text_kind(kind)) { // Text and its CDATA subclass; nothing else draws
                 const std::string_view text = txn.text(child);
-                // A WHITESPACE-ONLY text node is not always nothing. Between two
-                // inline-level boxes it collapses to one SPACE and is rendered -
-                // `</label> <input>` is a label, a space and a field. Dropping it
-                // outright glued every label to its control and ran the words of
-                // `<b>a</b> <b>b</b>` together. It IS nothing between blocks, and
-                // at the start or end of a line; drop_collapsible_spaces below
-                // decides that once the siblings are known.
+                // A whitespace-only text node is not always nothing. Between two
+                // inline-level boxes it collapses to one space and is rendered:
+                // `</label> <input>` is a label, a space and a field, and
+                // `<b>a</b> <b>b</b>` keeps its words apart. It is nothing
+                // between blocks and at the start or end of a line;
+                // drop_collapsible_spaces decides that once the siblings are
+                // known.
                 if (!preserve_whitespace && trimmed(text).empty()) {
                     box_node space;
                     space.kind = box_kind::text;
@@ -451,14 +411,11 @@ private:
                 t.kind = box_kind::text;
                 t.source = child;
                 t.style = into.style;
-                // COLLAPSED, unless the element preserves whitespace. HTML folds
-                // every run of space/tab/newline into ONE SPACE, and the engine never
-                // did: the newlines in a page's own source went straight to the
-                // rasterizer. font8x8 drew nothing for them so nobody noticed;
-                // a real font draws .notdef, which is a BOX, and a line full of
-                // boxes is what finally showed it up. It also broke wrapping -
-                // `words_that_fit` splits on ' ' alone, so two words joined by a
-                // newline were one unbreakable word and the line overflowed.
+                // Collapse whitespace unless the element preserves it. HTML folds
+                // each run of whitespace into one space. Without this, newlines
+                // reach the rasterizer (where a real font draws them as .notdef
+                // boxes), and words_that_fit, which splits only on ' ', cannot
+                // break the line there.
                 t.text = preserve_whitespace ? std::string{text} : collapse_whitespace(text);
                 t.preformatted = preserve_whitespace;
                 t.font_size = inherited_font;
@@ -478,11 +435,11 @@ private:
             display_kind d =
                 parse_display(prop(style, display_), default_display_for(atoms_->text(tag)));
             if (d == display_kind::none) { continue; } // pruned: no box at all
-            // A FLEX ITEM'S DISPLAY IS BLOCKIFIED. `into` already has its kind by
+            // A flex item's display is blockified. `into` already has its kind by
             // the time it recurses, so the parent's formatting context is known
             // here and this needs no second pass. See blockify().
             if (into.kind == box_kind::flex) { d = blockify(d); }
-            // A CLOSED <details> shows its <summary> AND NOTHING ELSE. This
+            // A closed <details> shows its <summary> and nothing else. This
             // cannot be a UA rule: `details > :not(summary) { display: none }`
             // needs a selector the cascade does not have, and the state lives on
             // the parent rather than on the hidden child.
@@ -495,15 +452,14 @@ private:
                      : (d == display_kind::flex || d == display_kind::inline_flex)
                          ? box_kind::flex
                          : (d == display_kind::inline_level ? box_kind::inline_ : box_kind::block);
-            // `list-item` IS a block box; only its marker differs, and that is
+            // `list-item` is a block box; only its marker differs, and that is
             // paint's business rather than a formatting context's.
-            // THE OUTSIDE OF THE DISPLAY VALUE, which is a separate question from
-            // the inside: `inline-flex` is the flex kind at an inline level and
-            // `inline-block` is the block kind at one. Set from the display value
-            // rather than inferred from the kind, because neither implies the
-            // other - and both take their width from shrink_to_fit_width instead
-            // of filling the containing block, which is the whole of what being
-            // inline-LEVEL means for a box that is not itself an inline box.
+            // The outside of the display value is a separate question from the
+            // inside: `inline-flex` is the flex kind at an inline level and
+            // `inline-block` is the block kind at one. It is set from the
+            // display value rather than inferred from the kind, because neither
+            // implies the other. Both take their width from
+            // shrink_to_fit_width instead of filling the containing block.
             b.inline_level = d == display_kind::inline_flex || d == display_kind::inline_block;
             b.source = child;
             b.tag = tag_text;
@@ -532,9 +488,9 @@ private:
             // for a pseudo-element's (style_box, below).
             style_box(b, style, d, inherited_font, inherited_face, inherited_underline,
                       inherited_line_through);
-            // PRESENTATIONAL ATTRIBUTES. `<table width=400>` and `<td width=50>`
+            // Presentational attributes. `<table width=400>` and `<td width=50>`
             // are how a great deal of existing HTML sizes a table, and they mean
-            // the CSS property - at the bottom of the cascade, so a sheet still
+            // the CSS property, at the bottom of the cascade, so a sheet still
             // wins. A bare number is pixels; `width="50%"` is a percentage.
             if (b.width.is_auto() && (tag_text == "table" || tag_text == "td" || tag_text == "th" ||
                                       tag_text == "col")) {
@@ -547,13 +503,12 @@ private:
                                   : parsed;
                 }
             }
-            // THE BODY'S OVERFLOW PROPAGATES TO THE VIEWPORT when the root's
-            // is `visible` (CSS Overflow 3 §3.3), and the body's own used
-            // value is `visible` then: it is not a scroll container, clips
-            // nothing and keeps its margins collapsing. Without this
-            // `body { overflow: hidden }` made the body the box scrollIntoView
-            // scrolled instead of the page. The root box is the one with no
-            // tag (build()).
+            // The body's overflow propagates to the viewport when the root's is
+            // `visible` (CSS Overflow 3 §3.3), and the body's own used value is
+            // then `visible`: it is not a scroll container, clips nothing and
+            // keeps its margins collapsing. Otherwise `body { overflow: hidden }`
+            // would make the body, not the page, the box scrollIntoView
+            // scrolls. The root box is the one with no tag (build()).
             if (tag_text == "body" && into.tag.empty() && into.source) {
                 const auto visible = [&](atom name) {
                     const std::string_view v = trimmed(prop(into.style, name));
@@ -567,7 +522,7 @@ private:
             if (b.kind == box_kind::replaced) {
                 intrinsic_size_of(txn, child, tag_text, b);
             } else {
-                // `white-space: pre` INHERITS, which is what makes markup inside
+                // `white-space: pre` inherits, which is what makes markup inside
                 // a <pre> keep its layout.
                 const std::string_view white_space = prop(style, white_space_);
                 const bool preserve =
@@ -582,10 +537,10 @@ private:
         }
     }
 
-    // EVERYTHING THE STYLE SAYS OF A BOX, read once into its fields: the sizes,
-    // edges, insets, overflow, containment, flex, font and decoration. `d` is
-    // the display it was built for and `b.kind` is already set; the element's
-    // own attributes and its parent's overflow are the caller's business.
+    /// Reads everything the style says of a box into its fields: the sizes,
+    /// edges, insets, overflow, containment, flex, font and decoration. `d` is
+    /// the display it was built for and `b.kind` is already set; the element's
+    /// own attributes and its parent's overflow are the caller's business.
     void style_box(box_node & b, const computed_style_ptr & style, display_kind d,
                    float inherited_font, const text_face & inherited_face, bool inherited_underline,
                    bool inherited_line_through) {
@@ -612,17 +567,11 @@ private:
             b.unmodelled_inline =
                 b.unmodelled_block || ascii_iequals(trimmed(prop(style, direction_)), "rtl");
         }
-        // The LONGHANDS, which the style engine expands every shorthand
-        // into. Reading `margin`/`padding` directly meant a sheet that said
-        // `padding-left` was ignored outright - including the UA sheet's own
-        // `ul { padding-left: 40px }` and `summary { padding-left: 18px }`.
         b.collapse_borders = trimmed(prop(style, border_collapse_)) == "collapse";
         if (const std::string_view spacing = trimmed(prop(style, border_spacing_));
             !spacing.empty()) {
-            // The two-value form gives horizontal then vertical; only the
-            // first is read, because this engine has one spacing rather than
-            // two. Recorded as a known difference; no page in the suite
-            // writes the two-value form.
+            // Only the first (horizontal) value of the two-value form is read,
+            // because this engine models a single spacing for both axes.
             const length parsed = parse_length(spacing);
             if (!parsed.is_auto()) { b.border_spacing = parsed; }
         }
@@ -654,7 +603,7 @@ private:
             }
         }
         b.inset = sides_of(style, inset_sides_);
-        // THE LOGICAL INSETS, CSS Logical 1 §4.1: `inset-inline-start` is
+        // The logical insets, CSS Logical 1 §4.1: `inset-inline-start` is
         // `left` in a horizontal-tb, left-to-right document, which is the
         // only writing mode here. The cascade keeps the logical longhand as
         // its own declaration, so it is read as the physical one's fallback.
@@ -671,6 +620,8 @@ private:
         const std::string_view transform = trimmed(prop(style, transform_));
         b.transformed = !transform.empty() && !ascii_iequals(transform, "none");
         b.translate = parse_translate(transform);
+        // Read the per-side longhands, which the cascade expands every
+        // shorthand into, and not `margin`/`padding`.
         b.margin = sides_of(style, margin_sides_);
         b.padding = sides_of(style, padding_sides_);
         b.border = border_of(style);
@@ -695,19 +646,19 @@ private:
         b.line_through = inherited_line_through;
         if (const std::string_view decoration = prop(style, text_decoration_);
             !decoration.empty()) {
-            // `none` CLEARS what was inherited, which is how a link inside
+            // `none` clears what was inherited, which is how a link inside
             // underlined text turns its own underline off.
             b.underline = decoration.contains("underline");
             b.line_through = decoration.contains("line-through");
         }
     }
 
-    // `::before` AND `::after` (CSS Pseudo 4 §4.1): the first and the last child
-    // of their element's box, when the cascade filed a style for one
-    // (engine::pseudo_key_of) and its `content` computes to something -
-    // `normal` and `none` make no box. The box has NO SOURCE, as an anonymous
-    // one has none: it is not the element, so a query for the element's box
-    // must not find it, and it has no node of its own.
+    /// Adds `::before` and `::after` boxes (CSS Pseudo 4 §4.1) as the first and
+    /// last child of their element's box, when the cascade filed a style for
+    /// one (engine::pseudo_key_of) and its `content` computes to something
+    /// (`normal` and `none` make no box). The box has no source, like an
+    /// anonymous one: it is not the element, so a query for the element's box
+    /// must not find it, and it has no node of its own.
     void generate_pseudo_elements(const read_txn & txn, node_id element, box_node & into,
                                   bool preserve_whitespace) {
         for (const bool after : {false, true}) {
@@ -730,7 +681,7 @@ private:
             g.style = style;
             g.origin = element;
             style_box(g, style, d, into.font_size, into.face, into.underline, into.line_through);
-            // An EMPTY string is no text at all: `content: ""` is a box with
+            // An empty string is no text at all: `content: ""` is a box with
             // nothing in it, which is what a clearfix or a sized block wants,
             // and an empty text run would make a line of it.
             if (!text->empty()) {
@@ -759,10 +710,10 @@ private:
         }
     }
 
-    // THE TEXT A `content` VALUE GENERATES (CSS Generated Content 3 §1.1):
-    // its strings and each `attr()`'s attribute of the element, in order, up
-    // to the `/` that begins the alternative text. nullopt for `normal` and
-    // `none`, which generate no box.
+    /// The text a `content` value generates (CSS Generated Content 3 §1.1): its
+    /// strings and each `attr()`'s attribute of the element, in order, up to
+    /// the `/` that begins the alternative text. nullopt for `normal` and
+    /// `none`, which generate no box.
     // ponytail: counter(), counters(), the quotes and url() generate nothing -
     // counters need the whole tree's counter scopes; add them when a page
     // reads a list's numbers off its ::before.
@@ -802,10 +753,10 @@ private:
         return out;
     }
 
-    // Where a replaced element's own size comes from. A <canvas> takes its
-    // width/height ATTRIBUTES (not CSS - those scale the bitmap, per spec);
-    // form controls get the sizes Firefox uses, so an unstyled form looks like
-    // a form rather than like a row of zero-height boxes.
+    /// Sets a replaced element's own size. A <canvas> takes its width/height
+    /// attributes (not CSS, which scales the bitmap, per spec); form controls
+    /// get the sizes Firefox uses, so an unstyled form looks like a form rather
+    /// than like a row of zero-height boxes.
     void intrinsic_size_of(const read_txn & txn, node_id id, std::string_view tag,
                            box_node & into) const {
         const auto attribute_number = [&](std::string_view name, float fallback) {
@@ -819,29 +770,25 @@ private:
             into.intrinsic_height = attribute_number("height", 150);
             return;
         }
-        // A NESTED BROWSING CONTEXT AND THE OTHER EMBEDS: CSS 2 §10.3.2's
-        // default object size, 300 by 150, unless the `width`/`height`
-        // attributes say (HTML 15.4.1, the presentational hints of `<iframe>`
-        // and friends). An iframe used to have no intrinsic size at all - a
-        // 0 by line-height box - so `<iframe width=200 height=100>` laid out
-        // nothing and its document's viewport, which is this box, was 0 by
-        // 20: every media query in a frame read that (matchMedia.html).
+        // <iframe>, <embed>, <object> and <video> default to 300x150 (CSS 2
+        // §10.3.2), unless their `width`/`height` attributes say otherwise
+        // (HTML 15.4.1). For an iframe this box is also the nested document's
+        // viewport, so its media queries read this size.
         if (tag == "iframe" || tag == "embed" || tag == "object" || tag == "video") {
             into.intrinsic_width = attribute_number("width", 300);
             into.intrinsic_height = attribute_number("height", 150);
             return;
         }
         if (tag == "img" || tag == "svg") {
-            // The attributes WIN over the natural size - that is how a page
-            // scales a graphic - and ONE of them scales the other through the
-            // aspect ratio, which is why this asks whether each was specified
-            // rather than defaulting each to the natural size independently.
+            // The attributes win over the natural size (that is how a page
+            // scales a graphic), and one of them alone scales the other through
+            // the aspect ratio, which is why this asks whether each was
+            // specified rather than defaulting each to the natural size.
             //
-            // Shared by <img> and <svg> because the rule is the same rule; what
-            // differs is only where the natural size comes from, and both
-            // arrive through the same injected callback. For an SVG that is a
-            // scan of the markup rather than a decoded bitmap, so this stays
-            // true of a build with no SVG rasteriser at all.
+            // Shared by <img> and <svg>; only the source of the natural size
+            // differs, and both arrive through the same injected callback. For
+            // an SVG that is a scan of the markup rather than a decoded bitmap,
+            // so this holds in a build with no SVG rasteriser.
             const intrinsic_size natural = intrinsic_image ? intrinsic_image(id) : intrinsic_size{};
             const bool has_width = !txn.attribute_value(id, atoms_->intern("width")).empty();
             const bool has_height = !txn.attribute_value(id, atoms_->intern("height")).empty();
@@ -867,17 +814,10 @@ private:
             }
             return;
         }
-        // THE INTRINSIC SIZE IS THE CONTENT BOX, and nothing else. A replaced
-        // element's padding and border are added outside it by layout_box, so
-        // reserving room for them here too is counting them twice - and it used
-        // to be the ONLY room a control had, because the UA sheet gave it no
-        // padding and no border at all. That is why every `.form-control` on a
-        // Bootstrap page was 24px tall where Chrome's is 38: its `.375rem` of
-        // padding and its 1px border had nowhere to go.
-        //
-        // The line BOX, not `font_size * 1.25`: `line-height` is a cascaded
-        // property and a control obeys it like anything else. Bootstrap sets 1.5,
-        // which is 4 of those 14 missing pixels.
+        // A form control's intrinsic size is its content box only; layout_box
+        // adds padding and border outside it. The height is the computed line
+        // height, not a fixed multiple of the font size, because controls obey
+        // `line-height`.
         if (tag == "textarea") {
             const float columns = attribute_number("cols", 20);
             const float rows = attribute_number("rows", 2);
@@ -898,10 +838,7 @@ private:
             return;
         }
         if (tag == "select") {
-            // AS WIDE AS ITS WIDEST OPTION, not a fixed twelve characters. The
-            // constant made every select the same size whatever it held - a
-            // three-letter colour picker as wide as a country list - where a
-            // real one shrinks to what it shows.
+            // As wide as its widest option, as a real select is.
             float widest = 0;
             const atom option = atoms_->intern_lower("option");
             const auto walk = [&](auto && self, node_id at) -> void {
@@ -917,60 +854,58 @@ private:
                 for (const node_id child : txn.children(at)) { self(self, child); }
             };
             walk(walk, id);
-            // The gutter on the right is the drop-down arrow's; the painter
-            // draws it 12 in from the edge, so this is what keeps the label
-            // from running underneath it.
-            // The 20 is the drop-down arrow's gutter, which the painter draws in
-            // and which is not padding - a sheet's `padding-right` is added
-            // outside it.
+            // The 20 is the drop-down arrow's gutter, which the painter draws in;
+            // it keeps the label from running under the arrow. It is not
+            // padding: a sheet's `padding-right` is added outside it.
             into.intrinsic_width = widest + 20;
             into.intrinsic_height = into.line_height;
             return;
         }
         if (tag == "button") {
-            // A button is as wide as its LABEL. It is the one replaced element
-            // whose intrinsic size comes from its content, which is why it is
-            // measured here rather than being a constant - a button that fills
-            // the line is not a button.
+            // A button is as wide as its label. It is the one replaced element
+            // whose intrinsic size comes from its content, so it is measured
+            // here rather than being a constant.
             std::string label;
             const auto walk = [&](auto && self, node_id at) -> void {
                 label += txn.text(at);
                 for (const node_id child : txn.children(at)) { self(self, child); }
             };
             walk(walk, id);
+            // 16px of horizontal and 6px of vertical room around the label for
+            // the UA button chrome; 1.25 is the `line-height: normal` factor.
+            // Unreachable while <button> is not in is_replaced_tag
+            // (layout/values.hpp): only replaced boxes come here.
             into.intrinsic_width = text_width(label, into.font_size) + 16;
             into.intrinsic_height = into.font_size * 1.25f + 6;
             return;
         }
     }
 
-    // ANONYMOUS BOX GENERATION. If a block container has both block-level and
-    // inline-level children, the inline runs get wrapped in anonymous blocks.
-    // Without this the two formatting contexts interleave and neither
-    // algorithm has a well-defined input.
-    // A collapsible space is rendered only BETWEEN inline-level content. At the
-    // start or end of its parent, or next to a block-level sibling, it is
-    // nothing at all - which is what stops `<div>\n<p>x</p>\n</div>` from
-    // drawing two spaces around the paragraph.
+    /// Removes collapsible spaces that render as nothing. A collapsible space is
+    /// rendered only between inline-level content; at the start or end of its
+    /// parent, or next to a block-level sibling, it is dropped, which stops
+    /// `<div>\n<p>x</p>\n</div>` from drawing two spaces around the paragraph.
     static void drop_collapsible_spaces(box_node & parent);
 
+    /// Anonymous box generation: when a block container has both block-level
+    /// and inline-level children, each run of inline children is wrapped in an
+    /// anonymous block, so that no formatting context has mixed children.
     static void normalise(box_node & parent);
 
-    // One anonymous box around a run of inline-level children. Shared by the
-    // block rule and the flex one, which differ in WHEN they wrap rather than in
-    // what they produce.
+    /// One anonymous box around a run of inline-level children. Shared by the
+    /// block rule and the flex one, which differ in when they wrap rather than
+    /// in what they produce.
     [[nodiscard]] static box_node wrap_run(const box_node & parent, std::vector<box_node> & run);
 
-    // THE LONGHANDS AND NOTHING ELSE. `flex: 1 0 0` and `gap: 1rem` are expanded
-    // by the cascade (style/engine.hpp), at the shorthand's own position in the
-    // sorted fold, which is what lets a `.flex-grow-0` utility written after
-    // `.col` win. Reading the shorthand here instead would reintroduce exactly
-    // the source-order bug that mechanism exists to prevent, so flex never sees
-    // one.
-    //
-    // A negative grow or shrink factor is invalid and takes the initial value,
-    // per Flexbox 1 §7.2 - not clamped to zero, which would make `flex-shrink:
-    // -1` mean "never shrink" instead of "the declaration is ignored".
+    /// Reads the flex longhands, never the shorthands. `flex: 1 0 0` and
+    /// `gap: 1rem` are expanded by the cascade (style/engine.hpp) at the
+    /// shorthand's own position in the sorted fold, which is what lets a
+    /// `.flex-grow-0` utility written after `.col` win; reading the shorthand
+    /// here would break that source order.
+    ///
+    /// A negative grow or shrink factor is invalid and takes the initial value,
+    /// per Flexbox 1 §7.2, rather than being clamped to zero, which would make
+    /// `flex-shrink: -1` mean "never shrink" instead of "ignored".
     [[nodiscard]] flex_spec flex_of(const computed_style_ptr & style) const {
         flex_spec out;
         out.direction = parse_flex_direction(trimmed(prop(style, flex_.direction)));
@@ -981,40 +916,32 @@ private:
         out.self = parse_flex_align(trimmed(prop(style, flex_.self)), flex_align::auto_);
         out.row_gap = parse_gap(trimmed(prop(style, flex_.row_gap)));
         out.column_gap = parse_gap(trimmed(prop(style, flex_.column_gap)));
-        // `>= 0` rather than a clamp, so an invalid value takes the INITIAL one -
-        // clamping `flex-shrink: -1` to 0 would make it mean "never shrink" where
-        // CSS says the declaration is simply ignored. It also sends a NaN to the
-        // initial value, which the freeze loop's arithmetic depends on.
+        // `>= 0` also sends NaN to the initial value, which the freeze loop's
+        // arithmetic depends on.
         const float grow = parse_flex_number(prop(style, flex_.grow), 0);
         const float shrink = parse_flex_number(prop(style, flex_.shrink), 1);
         out.grow = grow >= 0 ? grow : 0.0f;
         out.shrink = shrink >= 0 ? shrink : 1.0f;
         const std::string_view basis = trimmed(prop(style, flex_.basis));
-        // `content` is the item's max-content size (Flexbox §7.2.3) - unlike
+        // `content` is the item's max-content size (Flexbox §7.2.3), unlike
         // `auto`, which defers to the item's `width` or `height` first.
         out.basis = basis == "content" ? length{0, unit::max_content} : parse_length(basis);
         out.order = static_cast<int>(parse_flex_number(prop(style, flex_.order), 0));
         return out;
     }
 
-    // The used border width, on all four sides.
-    //
-    // `border-style` DECIDES WHETHER THERE IS ONE. A `border-width` with no style
-    // is a used width of zero, per CSS 2.1 §8.5.3 - which is what makes
-    // `border: 0` and a bare `border-width: 2px` behave differently, and what
-    // stops a sheet that names only a colour from silently insetting every box.
+    /// The used border width on each side.
+    ///
+    /// Each side reads its own longhands (`border-bottom-width`,
+    /// `border-bottom-style`) and falls back to the uniform properties, so
+    /// `border-bottom: 1px solid` insets only the bottom. `border-style` decides
+    /// whether there is a border: a `border-width` with no style is a used width
+    /// of zero (CSS 2.1 §8.5.3), which is what makes `border: 0` and a bare
+    /// `border-width: 2px` behave differently.
     [[nodiscard]] side_lengths border_of(const computed_style_ptr & style) const {
-        // PER SIDE, falling back to the uniform property. `border-bottom: 1px
-        // solid` is how Bootstrap draws every divider it has - a card header's
-        // rule, a navbar's underline - and reading only the uniform value inset
-        // the box on all FOUR sides for it, which is 2px of width and 2px of
-        // height the element never asked for.
         const auto one = [&](atom width_name, atom style_name) {
             std::string_view drawn = trimmed(prop(style, style_name));
             if (drawn.empty()) { drawn = trimmed(prop(style, border_style_)); }
-            // `border-style` DECIDES WHETHER THERE IS ONE: a width with no style
-            // is a used width of zero (CSS 2.1 §8.5.3), which is what makes
-            // `border: 0` and a bare `border-width: 2px` behave differently.
             if (drawn.empty() || drawn == "none" || drawn == "hidden") { return length{}; }
             std::string_view text = trimmed(prop(style, width_name));
             if (text.empty()) { text = trimmed(prop(style, border_width_)); }
@@ -1030,16 +957,16 @@ private:
                             one(border_sides_.left, border_style_sides_.left)};
     }
 
-    // The four longhands of one box-edge property.
+    /// The four longhands of one box-edge property.
     struct side_atoms {
         atom top, right, bottom, left;
     };
-    // The twelve flex longhands, grouped rather than added to an already long
-    // member list one at a time.
+    /// The twelve flex longhands.
     struct flex_atoms {
         atom direction, wrap, justify, items, content, self;
         atom grow, shrink, basis, order, row_gap, column_gap;
     };
+    /// Parses the four longhands `names` of one box-edge property.
     [[nodiscard]] side_lengths sides_of(const computed_style_ptr & style,
                                         const side_atoms & names) const {
         side_lengths out;
@@ -1054,33 +981,31 @@ private:
         return trim(v, html_whitespace);
     }
 
-    // A character's width at a font size, through the injected measure when
-    // there is one and a monospace stand-in when there is not.
+    /// The advance width of `text` at `font_size`, from the injected measure if
+    /// there is one, or else from a 0.6em-per-character monospace estimate.
     [[nodiscard]] float text_width(std::string_view text, float font_size,
                                    const text_face & face = {}) const {
         if (measure_) { return measure_(text, font_size, face); }
         return static_cast<float>(text.size()) * font_size * 0.6f;
     }
 
-    // font-family is a LIST of alternatives, and choosing among them is layout's
-    // job - by the time a tile is rastered there is no cascade left to ask. The
-    // first name wins here; a real fallback chain needs to know which faces are
-    // loaded, which is the backend's business, so the backend gets the whole
-    // list only if the first name misses.
-    // A bare number, for a presentational attribute. Not parse_length: that
-    // wants a unit, and `width="400"` has none.
-    // HTML whitespace: every run of space, tab, newline, carriage return or
-    // form feed is ONE SPACE.
+    /// Folds every run of HTML whitespace (space, tab, LF, CR, FF) into one
+    /// space.
     [[nodiscard]] static std::string collapse_whitespace(std::string_view text);
 
+    /// The leading number of a presentational attribute such as `width="400"`,
+    /// or 0 when it does not start with one.
     [[nodiscard]] static float parse_number(std::string_view text);
 
+    /// The first name in a font-family list. Choosing among the alternatives
+    /// happens here because by the time a tile is rastered there is no cascade
+    /// to ask; a real fallback chain needs to know which faces are loaded,
+    /// which is the font backend's business.
     [[nodiscard]] static std::string first_family(std::string_view list);
 
-    // INHERITED, like the cascade says: an element with no font-family of its
-    // own is drawn in its parent's. The resolver takes what it inherited and
-    // overrides only what this element states, which is the same shape
-    // font-size already used.
+    /// The element's font face. It is inherited, as the cascade says: an
+    /// element with no font-family of its own is drawn in its parent's, so this
+    /// starts from `inherited` and overrides only what this element states.
     [[nodiscard]] text_face face_of(const computed_style_ptr & style,
                                     const text_face & inherited) const {
         text_face out = inherited;

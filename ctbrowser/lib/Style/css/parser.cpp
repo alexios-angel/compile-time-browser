@@ -1,3 +1,10 @@
+//===- parser.cpp - CSS stylesheet parsing entry points ------- -*- C++ -*-===//
+//
+// The public entry points of the CSS parser: whole stylesheets, selector
+// lists, declaration lists, and stylesheet byte decoding (CSS Syntax 3 §3.2).
+// The parser itself lives in parser/.
+//
+//===----------------------------------------------------------------------===//
 #include "parser/internal.hpp"
 
 #include <ctbrowser/dom/encoding.hpp>
@@ -13,12 +20,13 @@ stylesheet parse_stylesheet(std::string_view css, atom_table & atoms) {
 
 std::string decode_stylesheet(std::string_view bytes, std::string_view protocol,
                               std::string_view environment) {
-    // The decode algorithm's BOM sniff comes first and wins.
+    // CSS Syntax 3 §3.2: a byte order mark comes first and wins.
     if (bytes.starts_with("\xEF\xBB\xBF")) { return decode_document_bytes(bytes, "UTF-8"); }
     if (bytes.starts_with("\xFE\xFF")) { return decode_document_bytes(bytes, "UTF-16BE"); }
     if (bytes.starts_with("\xFF\xFE")) { return decode_document_bytes(bytes, "UTF-16LE"); }
     std::string_view fallback = encoding_from_label(protocol);
-    // `@charset "` then ASCII other than `"`, then `";`, in the first 1024 bytes.
+    // Then an `@charset "<label>";` rule: `@charset "`, ASCII other than `"`,
+    // then `";`, within the first 1024 bytes.
     constexpr std::string_view charset = "@charset \"";
     if (fallback.empty() && bytes.starts_with(charset)) {
         const std::string_view head = bytes.substr(0, 1024);
@@ -42,6 +50,8 @@ stylesheet parse_selector_text(std::string_view text, atom_table & atoms, bool &
     return p.take_selector_list(invalid, namespaces, nesting);
 }
 
+// True when `text` is exactly one valid selector, as `@supports selector()`
+// requires.
 bool supports_selector(std::string_view text) {
     atom_table atoms;
     parser p{text, atoms};
@@ -50,6 +60,8 @@ bool supports_selector(std::string_view text) {
     return !invalid && parsed.selectors.size() == 1;
 }
 
+// Wraps an `@import ... scope(...)` argument in parentheses unless it already
+// starts with a scope boundary: `(` or `to (`.
 std::string import_scope_prelude(std::string_view argument) {
     const std::string text{trim(argument, html_whitespace)};
     const token_stream s = tokenize(text);

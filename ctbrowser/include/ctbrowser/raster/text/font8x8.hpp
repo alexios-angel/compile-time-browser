@@ -1,24 +1,21 @@
-#ifndef CTBROWSER_V2_RASTER_FONT8X8_HPP
-#define CTBROWSER_V2_RASTER_FONT8X8_HPP
-
-// 8x8 monochrome bitmap font for ASCII 0x00-0x7F, PUBLIC DOMAIN.
+//===- font8x8.hpp - 8x8 bitmap font ----------------------------*- C++ -*-===//
+//
+// An 8x8 monochrome bitmap font for ASCII 0x00-0x7F, public domain.
 // Author: Daniel Hepper <daniel@hepper.net> (font8x8), based on work
 // by Marcel Sondaar / International Business Machines (public domain).
 // https://github.com/dhepper/font8x8 - see NOTICE.
 //
-// Each glyph is 8 bytes, one per row, LSB = leftmost pixel. This is
-// what lets ctbrowser render text through plain SDL rectangles with
-// no font library at all.
+//===----------------------------------------------------------------------===//
+#ifndef CTBROWSER_V2_RASTER_FONT8X8_HPP
+#define CTBROWSER_V2_RASTER_FONT8X8_HPP
 
-// Carried forward from the compile-time engine, deliberately as a COPY.
-// the engine must not include the previous engine's headers - the previous engine's tree is deleted at stage 7, and a
-// dependency on it would have to be untangled then instead of now. The table
-// itself is generated from dhepper's public-domain font8x8 (see NOTICE) and
-// does not change, so a copy costs nothing but the bytes.
+// Each glyph is 8 bytes, one per row, least significant bit = leftmost pixel,
+// so text can be drawn as plain rectangles with no font library at all.
 //
-// It exists at all because the software backend needs deterministic text: a
-// golden image has to be reproducible on a machine with no fonts installed,
-// and a real font stack cannot promise that.
+// The software backend uses it for deterministic text: a golden image has to
+// be reproducible on a machine with no fonts installed, which a real font
+// stack cannot promise. The table was copied from the earlier compile-time
+// engine rather than included from it, and never changes.
 namespace ctbrowser::raster::font8x8_data {
 
 inline constexpr unsigned char font8x8[128][8] = {

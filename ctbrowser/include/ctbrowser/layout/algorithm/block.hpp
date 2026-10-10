@@ -1,19 +1,25 @@
+//===- block.hpp - Block formatting context ------------------- -*- C++ -*-===//
+//
+// The block formatting context: block_flow stacks a box's children vertically
+// and collapses their vertical margins (CSS 2.2 §8.3.1).
+//
+//===----------------------------------------------------------------------===//
 #pragma once
 
 #include <ctbrowser/layout/algorithm/inline.hpp>
 
 namespace ctbrowser::layout {
 
-// --- block formatting context ---------------------------------------------
-// Children stack vertically, each filling the content width unless it says
-// otherwise.
-//
-// Vertical margins are resolved in TWO halves. A child lays out its own subtree
-// independently and returns the adjoining margins it exposes; this context then
-// merges those struts while it performs the sequential stacking pass it already
-// needed for child heights. That is why margin collapsing does not cost the
-// parallel driver its independence: a worker never needs a sibling's margin to
-// lay out local coordinates, only the final assembly needs it to choose `y`.
+/// The block formatting context. Children stack vertically, each filling the
+/// content width unless it says otherwise.
+///
+/// Vertical margins are resolved in two halves. A child lays out its own
+/// subtree independently and returns the adjoining margins it exposes; this
+/// context then merges those struts while it performs the sequential stacking
+/// pass it already needed for child heights. That is why margin collapsing does
+/// not cost the parallel driver its independence: a worker never needs a
+/// sibling's margin to lay out local coordinates, only the final assembly needs
+/// it to choose `y`.
 struct block_flow {
     [[nodiscard]] intrinsic_sizes measure(const box_node & b, const constraints & c,
                                           const measure_text_fn & measure_text) const {
@@ -22,12 +28,8 @@ struct block_flow {
             // An out-of-flow child contributes nothing to what its parent's
             // content wants to be: it is not part of that content.
             if (child.is_out_of_flow()) { continue; }
-            // A TEXT child is measured directly, not handed to inline_flow -
-            // which measures a box's CHILDREN, so it asked a text box what its
-            // children were, got none, and every block whose content is text
-            // measured as ZERO WIDE. Nothing noticed until a table asked how wide
-            // its columns wanted to be and got 0. measure_box owns that
-            // distinction now, along with the three cases this loop got wrong.
+            // outer_intrinsic dispatches on the child's kind (text, replaced,
+            // table, flex), so this loop must not special-case any of them.
             const intrinsic_sizes child_sizes = outer_intrinsic(child, c, measure_text);
             out.min_content = std::max(out.min_content, child_sizes.min_content);
             out.max_content = std::max(out.max_content, child_sizes.max_content);
@@ -38,10 +40,8 @@ struct block_flow {
     [[nodiscard]] fragment arrange(const box_node & b, const constraints & c,
                                    const measure_text_fn & measure_text) const {
         const resolved_edges edges = resolve_edges(b, c);
-        // AN INLINE-LEVEL BLOCK SHRINKS TO FIT rather than filling its containing
-        // block - `display: inline-block`, which is what a `.badge` and a `.btn`
-        // on an `<a>` are. Left as the block rule, every badge on a Bootstrap page
-        // was a full-width bar and the anchor button spanned the row.
+        // An inline-level block (`display: inline-block`, e.g. a `.badge`)
+        // shrinks to fit rather than filling its containing block.
         //
         // `forced_width` still wins: a flex item's main size was decided by its
         // line, and an inline-block that is also a flex item is blockified anyway.
@@ -50,16 +50,13 @@ struct block_flow {
                                       : outer_width_of(b, c, edges, measure_text);
         const float content_width = std::max(0.0f, outer_width - edges.horizontal_inner());
 
-        // THE BOX'S OWN HEIGHT, resolved BEFORE its children are laid out, because
-        // a child's percentage height resolves against it. Left until afterwards -
-        // which is where it used to be - every child was handed an available
-        // height of ZERO, so `height: 50%` had nothing to be a percentage of and
-        // silently became `auto`. Bootstrap's `.h-100` is that declaration, and a
-        // card with a header, a body and a footer is three of them.
-        // `stretch` against a definite height is the containing block's
-        // height less this box's margins, as a border box.
-        // A calc-size() over `stretch` runs its calculation over that size,
-        // measured in the box box-sizing names.
+        // The box's own height is resolved before its children are laid out,
+        // because a child's percentage height (e.g. Bootstrap's `.h-100`)
+        // resolves against it.
+        // `stretch` against a definite height is the containing block's height
+        // less this box's margins, as a border box. A calc-size() over
+        // `stretch` runs its calculation over that size, measured in the box
+        // box-sizing names.
         const auto stretched = [&] {
             const float border =
                 std::max(0.0f, c.available_height - edges.margin_top - edges.margin_bottom);
@@ -108,11 +105,8 @@ struct block_flow {
         float cursor = edges.content_top();
         bool content_collapses_through = false;
         if (b.establishes_inline_context()) {
-            // The box is STILL BLOCK-LEVEL. Only its children share lines.
-            // Conflating the two is what made a block box containing text ignore
-            // its own width, height, padding and margins - and since nearly every
-            // leaf element in a real document contains only text, that was nearly
-            // every leaf element.
+            // The box itself is still block-level; only its children share
+            // lines, so its own width, height, padding and margins still apply.
             fragment lines =
                 inline_flow{}.arrange(b, constraints{content_width, 0, b.font_size}, measure_text);
             for (fragment & line : lines.children) {
@@ -127,7 +121,7 @@ struct block_flow {
             content_collapses_through = !lines.has_line_box;
         } else {
             // The margin left after the previous non-empty border box. It stays
-            // as a STRUT until the next one arrives: reducing it to a scalar
+            // as a strut until the next one arrives: reducing it to a scalar
             // early gets a positive/negative/positive chain wrong.
             margin_strut pending;
             // Leading margins escape through an open parent top until the first
@@ -138,13 +132,13 @@ struct block_flow {
                 const box_node & child = b.children[i];
                 const constraints child_c{content_width, inner_height, child.font_size};
                 const resolved_edges child_edges = resolve_edges(child, child_c);
-                // AN OUT-OF-FLOW CHILD RESERVES NOTHING and is not laid out here:
-                // its size depends on a containing block that is somewhere above,
-                // which this context cannot see. What it leaves behind is an empty
-                // fragment at its STATIC POSITION - where it would have gone - and
-                // that is exactly the number CSS says to use when its offsets are
-                // `auto`. layout::apply_positioning replaces it with the real
-                // thing once the ancestor chain is known.
+                // An out-of-flow child reserves nothing and is not laid out here:
+                // its size depends on a containing block somewhere above, which
+                // this context cannot see. It leaves an empty fragment at its
+                // static position (where it would have gone), which is the
+                // number CSS says to use when its offsets are `auto`.
+                // layout::apply_positioning replaces it with the real thing once
+                // the ancestor chain is known.
                 if (child.is_out_of_flow()) {
                     fragment placeholder;
                     placeholder.box = &child;
@@ -167,8 +161,8 @@ struct block_flow {
                 fragment f = layout_box(child, child_c, measure_text);
                 all_in_flow_children_collapse_through &= f.block_margins.through;
                 // auto_margin_left, not child_edges.margin_left: `margin: 0 auto`
-                // centres a box with a definite width, and that is the whole of how
-                // a page is centred.
+                // centres a box with a definite width, which is how a page is
+                // centred.
                 f.margin_left = auto_margin_left(child, child_c, child_edges, f.bounds.width);
                 // The right margin is whatever the line has left over once the
                 // box and its left margin are placed, which is the resolved one
@@ -229,13 +223,13 @@ struct block_flow {
 
         // A zero/auto-height block with no border, padding or effective line
         // box can join its own top and bottom margins. All empty descendants
-        // join that SAME set, so both exposed struts must carry the whole group.
+        // join that same set, so both exposed struts must carry the whole group.
         // The condition is on computed `height`, not on a used height that
         // max-height happened to clamp to zero.
         const bool height_allows_through = declared_height < 0 || declared_height == 0;
         if (!suppress_edge_collapse && top_edge_is_open && bottom_edge_is_open &&
             min_height_is_zero && height_allows_through && content_collapses_through) {
-            // Keep the edge struts SEPARATE. `through` says they adjoin, and the
+            // Keep the edge struts separate. `through` says they adjoin, and the
             // parent joins them only after using `before` to place this box's
             // own top border edge. Replacing both with the joined value would
             // let a negative bottom margin move that edge.
@@ -244,12 +238,12 @@ struct block_flow {
         cursor += edges.pad_bottom + edges.border_bottom;
 
         out.bounds.width = outer_width;
-        // A calc-size() over `auto` or a keyword runs over the height the
-        // content came to - `cursor` is that border box - and is then clamped
-        // like any other used height.
         // A block-size-contained box's content is nothing (CSS Containment
         // 2 §3.2): an auto height is its padding and border.
         if (b.contain_block_size) { cursor = edges.vertical_inner(); }
+        // A calc-size() over `auto` or a keyword runs over the height the
+        // content came to (`cursor` is that border box) and is then clamped
+        // like any other used height.
         const float used =
             stated_height >= 0 ? stated_height
             : b.height.is_intrinsic()

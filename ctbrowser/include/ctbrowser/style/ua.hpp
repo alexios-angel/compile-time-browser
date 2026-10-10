@@ -1,22 +1,25 @@
+//===- ua.hpp - User-agent stylesheet ---------------------------*- C++ -*-===//
+//
+// The user-agent stylesheet: what a document looks like before anyone styles
+// it. Values from Gecko's html.css and Firefox's modern widget theme.
+//
+// It loads at origin 0 (ua_origin). The cascade in style::engine ranks author
+// rules above it, the order the CSS cascade specifies, so a page saying
+// `h1 { font-size: 12px }` wins with nothing here knowing about it.
+//
+//===----------------------------------------------------------------------===//
 #pragma once
 #include <cstdint>
 #include <string_view>
 
 #include <ctbrowser/core/core.hpp>
 
-// The user-agent stylesheet: what a document looks like before anyone styles it.
-// Values from Gecko's html.css and Firefox's modern widget theme.
-//
-// It loads at ORIGIN 0. The cascade in :engine puts author rules above it on
-// ties, which is exactly the rule the CSS spec gives - so a page saying
-// `h1 { font-size: 12px }` wins without anything here having to know about it.
-
 namespace ctbrowser::style {
 
-// Firefox/Gecko defaults, trimmed to the properties this engine's layout and paint
-// actually read. A declaration nothing consumes is a comment that costs
-// selector matching, so the port is a subset on purpose - it grows when a
-// consumer for the property does.
+/// Firefox/Gecko defaults, trimmed to the properties this engine's layout and
+/// paint read. A declaration nothing consumes still costs selector matching,
+/// so the port is deliberately a subset that grows when a consumer for a
+/// property appears.
 inline constexpr std::string_view ua_css = R"(
     body { margin: 8px; font-family: serif; color: #000000 }
 
@@ -107,30 +110,29 @@ inline constexpr std::string_view ua_css = R"(
     [hidden]:not([hidden=until-found i]):not(embed) { display: none }
 )";
 
-// The chrome palette, in 0xAARRGGBB - the Firefox values, painted by
-// browser::paint_replaced: the frame is a control's border, the accent fills a
-// checked box, and the mark is the tick and the radio's dot.
+/// The widget palette, as 0xAARRGGBB Firefox values painted by
+/// browser::paint_replaced: the frame is a control's border, the accent fills a
+/// checked box, and the mark is the tick and the radio's dot.
 inline constexpr std::uint32_t ua_widget_frame = 0xFF8F8F9Du;
 inline constexpr std::uint32_t ua_widget_accent = 0xFF0060DFu;
 inline constexpr std::uint32_t ua_widget_mark = 0xFFFFFFFFu;
 inline constexpr std::uint32_t ua_widget_field = 0xFFFFFFFFu;
 inline constexpr std::uint32_t ua_selection_highlight = 0xFFB4D5FEu;
-// A DISABLED control. Firefox greys the text and flattens the face; without
-// this a disabled button is indistinguishable from one that works, which is
-// the whole point of the attribute.
+/// A disabled control's colours. Firefox greys the text and flattens the face,
+/// so a disabled button is visibly different from one that works.
 inline constexpr std::uint32_t ua_widget_disabled_text = 0xFF8F8F9Fu;
 inline constexpr std::uint32_t ua_widget_disabled_face = 0xFFF0F0F4u;
-inline constexpr std::uint32_t ua_canvas = 0xFFFFFFFFu; // the page behind everything
-// The overlay scrollbar, in Firefox's greys.
-// The frame `<table border=N>` draws, in Gecko's grey.
+inline constexpr std::uint32_t ua_canvas = 0xFFFFFFFFu; // The page behind everything.
+/// The frame `<table border=N>` draws, in Gecko's grey.
 inline constexpr std::uint32_t ua_table_border = 0xFF808080u;
+/// The overlay scrollbar, in Firefox's greys.
 inline constexpr std::uint32_t ua_scrollbar_track = 0xFFF0F0F0u;
 inline constexpr std::uint32_t ua_scrollbar_thumb = 0xFFC1C1C1u;
 inline constexpr std::uint32_t ua_scrollbar_thumb_active = 0xFF8F8F8Fu;
 
-// The origin the UA sheet loads at. Named rather than spelled 0 at call sites,
-// because "add_sheet(css, 0)" reads like a magic number and it is the entire
-// reason author rules beat these.
+/// The cascade origins: the UA sheet loads at 0 and author sheets at 1, which
+/// is why author rules beat the UA's. Named so call sites do not read like
+/// `add_sheet(css, 0)`.
 inline constexpr std::uint8_t ua_origin = 0;
 inline constexpr std::uint8_t author_origin = 1;
 

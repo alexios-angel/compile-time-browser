@@ -1,16 +1,22 @@
-#pragma once
-
-// The CSSOM declaration block - CSSOM §6.6 - and the shorthand table it needs:
+//===- internal.hpp - Shorthand internals --------------------- -*- C++ -*-===//
+//
+// The CSSOM declaration block (CSSOM §6.6) and the shorthand table it needs:
 // which longhands each shorthand expands to, how a value is split into them,
 // and how they fold back for `cssText` and `getPropertyValue(shorthand)`.
 //
-// A SHORTHAND IS STORED AS ITS LONGHANDS, because that is what every CSSOM
+// A shorthand is stored as its longhands, because that is what every CSSOM
 // question is asked of: `length` counts longhands, `item(i)` names them,
 // `removeProperty("margin")` removes four, and `cssText` reconstructs the
 // shorthand only when all of them are there with one priority. The table below
-// splits the shorthands whose grammar is positional or a `||` of typed parts;
-// one it does not model - `grid`, `transition` - or any value holding a
-// `var()` is kept whole, exactly as every property was before this existed.
+// splits most shorthands into their longhands; a value holding `var()`, or a
+// shorthand whose shape is `whole`, is kept as one declaration.
+//
+// The functions declared here are documented at their definitions in
+// block.cpp, fold.cpp, split.cpp and tables.cpp.
+//
+//===----------------------------------------------------------------------===//
+
+#pragma once
 
 #include "../expansion.hpp"
 #include "../internal.hpp"
@@ -22,70 +28,72 @@ namespace ctbrowser::style::css::shorthand_detail {
 
 using namespace detail;
 
-// HOW A SHORTHAND'S PARTS MAP ONTO ITS LONGHANDS.
+/// How a shorthand's parts map onto its longhands.
 enum class shape : std::uint8_t {
-    sides,           // 1-4 values: top, right, bottom, left, in `margin`'s way
-    pair,            // 1-2 values: start/end, x/y or row/column; one sets both
-    background,      // comma-separated layers, with color in the final layer only
-    mask,            // CSS Masking 1 §7.1: comma-separated `<mask-layer>`s
-    position_try,    // `position-try`: `<'position-try-order'>? <'position-try-fallbacks'>`
-    text_spacing,    // `text-spacing`: `none | auto | <'text-spacing-trim'> || <'text-autospace'>`
-    font_synthesis,  // CSS Fonts 4 §4.7: `none`, or each named synthesis `auto` and the
-                     // rest `none` - `oblique-only` being the style one's third value
-    border_image,    // source || slice [ / width? [ / outset ]? ] || repeat
-    radius,          // 1-4 horizontal radii, optionally `/` and 1-4 vertical radii
-    place,           // `place-*`: an align value then a justify one, each of several words
-    grid_lines,      // grid-row / grid-column / grid-area: `/`-separated grid lines
-    grid_template,   // CSS Grid 2 §7.4: rows / columns, or the areas form (grid.cpp)
-    grid,            // CSS Grid 2 §7.8: a grid-template, or one side auto-flow (grid.cpp)
-    slash_pair,      // `container`: `<'a'> [ / <'b'> ]?`, the second at its initial when omitted
-    bar,             // `a || b || c`: each part goes to the longhand that takes it
-    columns,         // width/count and optional `/ column-height`; resets column-wrap
-    flex,            // Flexbox 1 §7.1.1's own defaults
-    font,            // CSS Fonts 4 §3.1: the four keywords, the size, `/ line-height`, the family;
-                     // the six other font-variant-* longhands reset
-    font_variant,    // CSS Fonts 4 §6.11: `normal`, `none`, or each keyword to the
-                     // font-variant-* longhand that takes it
-    line_clamp,      // CSS Overflow 4 §5.1: `none`, or `<max-lines> || <block-ellipsis>`
-                     // and `-webkit-legacy?`; the `-webkit-` one `none | <integer>`
-    border,          // `bar` over width/style/color, applied to four sides, plus
-                     // border-image reset to its initial values
-    border_axis,     // `border-block` / `border-inline`: `bar` over width/style/
-                     // color applied to the axis's two sides (CSS Logical 1 §4.4)
-    white_space,     // CSS Text 4 §3: one of six keywords, or `<'white-space-collapse'>
-                     // || <'text-wrap-mode'> || <'white-space-trim'>`
-    range,           // `animation-range`: `[ <'animation-range-start'>
-                     // <'animation-range-end'>? ]#`, Scroll-driven Animations 1 §4.2
-    transition,      // `<single-transition>#`, CSS Transitions 2 §3.5: per item a
-                     // property, two times, an easing and a behaviour, in any order
-    animation,       // `<single-animation>#`, CSS Animations 1 §5.9: per item, the
-                     // first <time> is the duration and the second the delay, an
-                     // easing, a count, and the keywords of direction, fill mode
-                     // and play state before anything is a name
-    gap_rule,        // `column-rule`, CSS Gap Decorations 1: a list of `width || style ||
-                     // color` rules (and repeat()s of them), split item by item into the
-                     // three lists; gaps.cpp
-    same,            // one value set on every longhand: `column-rule-inset-start` is
-                     // the cap's start and the junction's
-    rule_inset,      // `column-rule-inset`: `<cap>{1,2} [ / <junction>{1,2} ]?`, the
-                     // junction the cap when omitted
-    axes,            // `rule-*`: the column shorthand (or longhand) of the same name,
-                     // applied to the columns and to the rows; the longhands are the
-                     // column half then the row half
-    text_decoration, // `bar` whose line part is itself several words:
-                     // `underline overline || thickness || style || color`
-    all,             // every longhand; CSS-wide keywords only
-    whole,           // a grammar this table does not split: only a CSS-wide keyword
-                     // reaches the longhands, and only one folds back
+    sides,           ///< 1-4 values: top, right, bottom, left, in `margin`'s way
+    pair,            ///< 1-2 values: start/end, x/y or row/column; one sets both
+    background,      ///< comma-separated layers, with color in the final layer only
+    mask,            ///< CSS Masking 1 §7.1: comma-separated `<mask-layer>`s
+    position_try,    ///< `position-try`: `<'position-try-order'>? <'position-try-fallbacks'>`
+    text_spacing,    ///< `text-spacing`: `none | auto |
+                     ///< <'text-spacing-trim'> || <'text-autospace'>`
+    font_synthesis,  ///< CSS Fonts 4 §4.7: `none`, or each named synthesis `auto` and the
+                     ///< rest `none` - `oblique-only` being the style one's third value
+    border_image,    ///< source || slice [ / width? [ / outset ]? ] || repeat
+    radius,          ///< 1-4 horizontal radii, optionally `/` and 1-4 vertical radii
+    place,           ///< `place-*`: an align value then a justify one, each of several words
+    grid_lines,      ///< grid-row / grid-column / grid-area: `/`-separated grid lines
+    grid_template,   ///< CSS Grid 2 §7.4: rows / columns, or the areas form (grid.cpp)
+    grid,            ///< CSS Grid 2 §7.8: a grid-template, or one side auto-flow (grid.cpp)
+    slash_pair,      ///< `container`: `<'a'> [ / <'b'> ]?`, the second at its initial when omitted
+    bar,             ///< `a || b || c`: each part goes to the longhand that takes it
+    columns,         ///< width/count and optional `/ column-height`; resets column-wrap
+    flex,            ///< Flexbox 1 §7.1.1's own defaults
+    font,            ///< CSS Fonts 4 §3.1: the four keywords, the size, `/ line-height`,
+                     ///< the family; the six other font-variant-* longhands reset
+    font_variant,    ///< CSS Fonts 4 §6.11: `normal`, `none`, or each keyword to the
+                     ///< font-variant-* longhand that takes it
+    line_clamp,      ///< CSS Overflow 4 §5.1: `none`, or `<max-lines> || <block-ellipsis>`
+                     ///< and `-webkit-legacy?`; the `-webkit-` one `none | <integer>`
+    border,          ///< `bar` over width/style/color, applied to four sides, plus
+                     ///< border-image reset to its initial values
+    border_axis,     ///< `border-block` / `border-inline`: `bar` over width/style/
+                     ///< color applied to the axis's two sides (CSS Logical 1 §4.4)
+    white_space,     ///< CSS Text 4 §3: one of six keywords, or `<'white-space-collapse'>
+                     ///< || <'text-wrap-mode'> || <'white-space-trim'>`
+    range,           ///< `animation-range`: `[ <'animation-range-start'>
+                     ///< <'animation-range-end'>? ]#`, Scroll-driven Animations 1 §4.2
+    transition,      ///< `<single-transition>#`, CSS Transitions 2 §3.5: per item a
+                     ///< property, two times, an easing and a behaviour, in any order
+    animation,       ///< `<single-animation>#`, CSS Animations 1 §5.9: per item, the
+                     ///< first <time> is the duration and the second the delay, an
+                     ///< easing, a count, and the keywords of direction, fill mode
+                     ///< and play state before anything is a name
+    gap_rule,        ///< `column-rule`, CSS Gap Decorations 1: a list of `width || style ||
+                     ///< color` rules (and repeat()s of them), split item by item into the
+                     ///< three lists; gaps.cpp
+    same,            ///< one value set on every longhand: `column-rule-inset-start` is
+                     ///< the cap's start and the junction's
+    rule_inset,      ///< `column-rule-inset`: `<cap>{1,2} [ / <junction>{1,2} ]?`, the
+                     ///< junction the cap when omitted
+    axes,            ///< `rule-*`: the column shorthand (or longhand) of the same name,
+                     ///< applied to the columns and to the rows; the longhands are the
+                     ///< column half then the row half
+    text_decoration, ///< `bar` whose line part is itself several words:
+                     ///< `underline overline || thickness || style || color`
+    all,             ///< every longhand; CSS-wide keywords only
+    whole,           ///< a grammar this table does not split: only a CSS-wide keyword
+                     ///< reaches the longhands, and only one folds back
 };
 
+/// One row of the shorthand table.
 struct shorthand_syntax {
     std::string_view name;
     shape kind;
-    std::string_view longhands; // space-separated, in canonical order
-    // What a `bar` shorthand serialises as when every part is its initial
-    // value: `border: none` and `border: medium` both mean "all initial", and
-    // one spelling has to be picked.
+    std::string_view longhands; ///< Space-separated, in canonical order.
+    /// What a `bar` shorthand serialises as when every part is its initial
+    /// value: `border: none` and `border: medium` both mean "all initial", and
+    /// one spelling has to be picked.
     std::string_view all_initial;
 };
 
@@ -96,6 +104,7 @@ inline constexpr std::string_view border_longhands =
     "border-image-source border-image-slice border-image-width border-image-outset "
     "border-image-repeat";
 
+/// Every shorthand this engine splits and folds.
 inline constexpr shorthand_syntax table[] = {
     {"all", shape::all, "", ""},
     {"border", shape::border, border_longhands, "none"},
@@ -294,6 +303,7 @@ inline constexpr shorthand_syntax table[] = {
      ""},
 };
 
+/// A table row with its longhand list split into names (see expansions()).
 struct expansion {
     const shorthand_syntax * syntax = nullptr;
     std::vector<std::string_view> longhands;
@@ -307,12 +317,11 @@ const std::vector<expansion> & expansions();
 
 [[nodiscard]] std::string_view initial_of(std::string_view longhand);
 
-// --- the logical property groups, CSS Logical 1 §1.1 ------------------------
-//
-// `margin-top` and `margin-inline-start` are one group with two MAPPING
-// LOGICS, and a block that has one written between the other's shorthand parts
-// cannot fold the shorthand without changing what wins. The group is the name
-// with its side or axis removed; the logic is which of the three it was.
+/// The logical property groups, CSS Logical 1 §1.1. `margin-top` and
+/// `margin-inline-start` are one group with two mapping logics, and a block
+/// that has one written between the other's shorthand parts cannot fold the
+/// shorthand without changing what wins. The group is the name with its side
+/// or axis removed; the logic is which of the three kinds of side it named.
 enum class mapping : std::uint8_t {
     none,
     physical,
@@ -320,6 +329,7 @@ enum class mapping : std::uint8_t {
     inline_
 };
 
+/// A property's logical group and mapping logic; see group_of().
 struct logical_group {
     std::string group;
     mapping logic = mapping::none;
@@ -327,12 +337,11 @@ struct logical_group {
 
 [[nodiscard]] logical_group group_of(std::string_view name);
 
-// --- splitting a shorthand value into its longhands ---------------------------
-
+/// The outcome of splitting a shorthand value into its longhands.
 enum class split : std::uint8_t {
     ok,
-    whole,  // a value this table cannot divide: kept as one declaration
-    invalid // refused, as the cascade would refuse it
+    whole,  ///< A value this table cannot divide: kept as one declaration.
+    invalid ///< Refused, as the cascade would refuse it.
 };
 
 [[nodiscard]] std::string canonical(std::string_view longhand, std::string_view part, bool & valid);
@@ -362,8 +371,8 @@ split split_border(std::span<const std::string_view> parts, std::vector<std::str
 split split_border_axis(const expansion & e, std::span<const std::string_view> parts,
                         std::vector<std::string> & out);
 
-// CSS Text 4 §3.1: the six `white-space` keywords as their collapse and wrap
-// longhands; each has `white-space-trim: none`.
+/// CSS Text 4 §3.1: the six `white-space` keywords as their collapse and wrap
+/// longhands; each has `white-space-trim: none`.
 inline constexpr std::array<std::string_view, 3> white_space_keywords[] = {
     {"normal", "collapse", "wrap"},           {"pre", "preserve", "nowrap"},
     {"nowrap", "collapse", "nowrap"},         {"pre-wrap", "preserve", "wrap"},
@@ -372,10 +381,10 @@ inline constexpr std::array<std::string_view, 3> white_space_keywords[] = {
 
 split split_white_space(std::span<const std::string_view> parts, std::vector<std::string> & out);
 
-// The eight per-item longhands of `animation`, in the shorthand's canonical
-// order, with what an omitted one is. The three after them - timeline and the
-// range - are reset to their initial values by the shorthand and take no
-// value from it (CSS Animations 2 §5.9).
+/// The eight per-item longhands of `animation`, in the shorthand's canonical
+/// order, with what an omitted one is. The three after them (the timeline and
+/// the range) are reset to their initial values by the shorthand and take no
+/// value from it (CSS Animations 2 §5.9).
 inline constexpr std::array<std::pair<std::string_view, std::string_view>, 8> animation_items = {
     {{"animation-duration", "auto"},
      {"animation-timing-function", "ease"},
@@ -422,13 +431,21 @@ split split_value(const expansion & e, std::string_view text, std::vector<std::s
 
 [[nodiscard]] std::size_t index_of(const declaration_block & block, std::string_view name);
 
+/// Sets `name` to an already-validated `value` the CSSOM way. Returns whether
+/// the block changed.
 bool set_one(declaration_block & block, std::string_view name, std::string value, bool important);
+
+/// Adds `name: value` the way a stylesheet parse does. Returns whether the
+/// block changed.
 
 bool add_parsed(declaration_block & block, std::string_view name, std::string value,
                 bool important);
 
 bool erase_named(declaration_block & block, std::span<const std::string_view> names);
 
+/// Stores `name: text` in `block`, expanding a shorthand into its longhands.
+/// `parsed` is true when `text` comes from a stylesheet parse (add_parsed)
+/// rather than CSSOM (set_one). Returns whether the block changed.
 bool put(declaration_block & block, std::string_view name, std::string_view text, bool important,
          bool parsed);
 

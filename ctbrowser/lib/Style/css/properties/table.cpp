@@ -1,5 +1,11 @@
-// The property table - which properties exist, what each accepts and its
-// initial value - and the two spellings of a property's name.
+//===- ctbrowser/lib/Style/css/properties/table.cpp - Core property table -===//
+//
+// The core property table (which properties exist, what each accepts and its
+// initial value), the lookups over it, the logical-to-physical property
+// mapping, and the conversions between a property's CSS and IDL names.
+// table_modules.cpp holds the rest of the rows.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -11,24 +17,26 @@ using namespace detail;
 
 namespace {
 
-// --- THE TABLE ----------------------------------------------------------
-//
-// Ordered as CSSOM's indexed properties enumerate them, which is to say
-// deliberately rather than alphabetically: the box model first, then the
-// typography, then the flex and table properties. `getComputedStyle`'s `item(i)`
-// walks this.
-//
-// EVERY SHORTHAND IS `freeform`. `margin: 10px 20px` needs the expansion to be
-// refused correctly, and a shorthand this file got half right is the one way it
-// could break a page that works today.
+/// The core property rows, ordered as CSSOM's indexed properties enumerate
+/// them: deliberately rather than alphabetically, the box model first, then
+/// the typography, then the flex and table properties. `getComputedStyle`'s
+/// `item(i)` walks this.
+///
+/// Each row: {name, value kind, keywords, initial value, inherited,
+/// nonnegative, shorthand}; see property_syntax in
+/// include/ctbrowser/style/css/properties.hpp.
+///
+/// Every shorthand is `freeform`: its value is validated by splitting it into
+/// its longhands (shorthands/split.cpp), and a second grammar for it here
+/// could only disagree with that one.
 constexpr property_syntax table[] = {
     // CSS Cascade 4 §3.1: every longhand but `direction` and `unicode-bidi`,
     // and it takes the CSS-wide keywords only. The declaration block in
-    // shorthands.cpp expands it; here so `'all' in style` answers.
+    // shorthands.cpp expands it; the row exists so `'all' in style` is true.
     {"all", k::freeform, "", "", false, false, true},
     // --- the box ---------------------------------------------------------
-    // The keyword set is display.cpp's; listed here for `CSS.supports` and the
-    // computed style, which read the table.
+    // The keyword set is display.cpp's; it is repeated here for `CSS.supports`
+    // and the computed style, which read the table.
     {"display", k::keyword_only,
      "block inline inline-block flex inline-flex grid inline-grid none table inline-table "
      "table-row table-row-group table-header-group table-footer-group table-column "
@@ -64,13 +72,12 @@ constexpr property_syntax table[] = {
      "auto", false, true},
     {"block-size", k::length_percentage, "auto min-content max-content fit-content stretch", "auto",
      false, true},
-    // `interpolate-size` says whether an animation may interpolate BETWEEN a
-    // keyword size and a length. Nothing animates here, so the property does
-    // nothing - but it is a real property with a real two-keyword grammar, and
-    // as an UNKNOWN one `el.style` stored `interpolate-size: 100%` and
-    // `getComputedStyle` did not publish it at all. Both are observable and both
-    // are wrong: `calc-size/interpolate-size-parsing.html` refuses three values
-    // and `-computed.html` asks whether the property exists.
+    // `interpolate-size` says whether an animation may interpolate between a
+    // keyword size and a length. The engine does not act on it, but it is a
+    // real property with a two-keyword grammar: listed so `el.style` refuses
+    // `interpolate-size: 100%` and getComputedStyle publishes it, as WPT
+    // css/css-values/calc-size/interpolate-size-parsing.html and
+    // interpolate-size-computed.html check.
     {"interpolate-size", k::keyword_only, "numeric-only allow-keywords", "numeric-only", true,
      false},
 
@@ -82,7 +89,7 @@ constexpr property_syntax table[] = {
     // The flow-relative sides, CSS Logical 1 §4. The cascade maps each onto
     // the physical side of the element's writing mode and direction
     // (physical_property_of, below); they are rows of their own because the
-    // CSSOM's shorthand rules are about the logical property GROUP a
+    // CSSOM's shorthand rules are about the logical property group a
     // declaration sits in, and `margin-inline: 10px` written between two
     // halves of `margin` decides whether `margin` folds.
     {"margin-inline", k::freeform, "", "0px", false, false, true},
@@ -153,7 +160,7 @@ constexpr property_syntax table[] = {
     {"border-right-color", k::color, "", "currentcolor", false, false},
     {"border-bottom-color", k::color, "", "currentcolor", false, false},
     {"border-left-color", k::color, "", "currentcolor", false, false},
-    // `border` RESETS border-image (CSS Backgrounds 3 §5.3), so the CSSOM
+    // `border` resets border-image (CSS Backgrounds 3 §5.3), so the CSSOM
     // cannot fold twelve side longhands back into `border` without knowing
     // these five are at their initial values. Nothing paints them.
     {"border-image", k::freeform, "", "none", false, false, true},
@@ -163,9 +170,9 @@ constexpr property_syntax table[] = {
     {"border-image-outset", k::number_length, "", "0", false, true},
     {"border-image-repeat", k::freeform, "", "stretch", false, false},
     {"border-radius", k::freeform, "", "0px", false, true, true},
-    // The four per-side shorthands. Named here rather than left out because
-    // `css/cssom/getComputedStyle-getter-v-properties` asks for all four by
-    // name, and a property CSSOM says exists must answer `in`.
+    // The four per-side shorthands. Listed because WPT
+    // css/cssom/getComputedStyle-getter-v-properties asks for all four by name,
+    // and a property CSSOM says exists must answer `in`.
     {"border-top", k::freeform, "", "0px none currentcolor", false, false, true},
     {"border-right", k::freeform, "", "0px none currentcolor", false, false, true},
     {"border-bottom", k::freeform, "", "0px none currentcolor", false, false, true},
@@ -178,9 +185,9 @@ constexpr property_syntax table[] = {
     {"border-spacing", k::freeform, "", "0px", true, true}, // keywords.cpp's grammar
     {"outline", k::freeform, "", "medium none currentcolor", false, false, true},
     {"outline-width", k::length, "thin medium thick", "medium", false, true},
-    // CSS UI 4 §5: an outline's style is a border style but `hidden`, its
-    // colour gained `auto` - the UA's focus colour when the style is `auto` -
-    // and lost CSS 2.1's `invert`, and its offset gained `inset`.
+    // CSS UI 4 §5: an outline's style is any border style except `hidden`
+    // plus `auto`; its colour gained `auto` (the UA's focus colour when the
+    // style is `auto`) and lost CSS 2.1's `invert`; its offset gained `inset`.
     {"outline-style", k::keyword_only,
      "auto none dotted dashed solid double groove ridge inset outset", "none", false, false},
     {"outline-color", k::color, "auto", "currentcolor", false, false},
@@ -206,31 +213,33 @@ constexpr property_syntax table[] = {
     // --- typography ------------------------------------------------------
     {"font", k::freeform, "", "", true, false, true},
     {"font-family", k::freeform, "", "sans-serif", true, false},
-    // THE INITIAL IS `medium` AND THE COMPUTED VALUE IS A LENGTH. `initial` is
-    // read by `getComputedStyle` for an element with no box, and a computed
-    // style reports lengths - Chrome answers `16px` for a `display: none`
-    // element, never `medium`. The keyword stays in the accepted set; what is
-    // recorded here is what the property COMPUTES to when nothing declares it,
-    // which is the medium font size and is 16px in this engine
-    // (layout/values.hpp's `rem` basis is the same number for the same reason).
+    // The spec's initial value is `medium`, but the computed value is a
+    // length. `getComputedStyle` reads `initial` for an element with no box,
+    // and a computed style reports lengths: Chrome answers `16px` for a
+    // `display: none` element, never `medium`. The keyword stays in the
+    // accepted set; what is recorded here is what the property computes to
+    // when nothing declares it, the medium font size, which is 16px in this
+    // engine (layout/values.hpp's `rem` basis is the same number for the same
+    // reason).
     {"font-size", k::length_percentage,
      "xx-small x-small small medium large x-large xx-large xxx-large larger smaller", "16px", true,
      true},
     {"font-style", k::freeform, "", "normal", true, false},
     {"font-weight", k::number, "normal bold bolder lighter", "400", true, true},
-    // A SHORTHAND of the seven font-variant-* longhands, CSS Fonts 4 §6.11.
+    // A shorthand of the seven font-variant-* longhands, CSS Fonts 4 §6.11.
     {"font-variant", k::freeform, "", "normal", true, false, true},
     // CSS Fonts 4 §2.3: `normal`, the eight width keywords, or a
-    // non-negative <percentage> - which each keyword computes to
-    // (font_width_percentage). font-stretch is its legacy name.
+    // non-negative <percentage>, which each keyword computes to
+    // (font_width_percentage). font-stretch is the legacy name of font-width.
     {"font-stretch", k::percentage,
      "normal ultra-condensed extra-condensed condensed semi-condensed semi-expanded expanded "
      "extra-expanded ultra-expanded",
      "100%", true, true},
-    // The rest of CSS Fonts 4's longhands, as freeform text: nothing shapes
-    // with them, but each is a real property whose value a page sets and reads
-    // back through getComputedStyle, with a math function inside it folded
-    // (using-font-relative-units-in-font-properties).
+    // The rest of CSS Fonts 4's longhands. Nothing shapes text with them, but
+    // each is a real property whose value a page sets and reads back through
+    // getComputedStyle, with any math function inside it folded (WPT
+    // using-font-relative-units-in-font-properties). font-width shares
+    // font-stretch's percentage grammar; the others are freeform.
     {"font-width", k::percentage,
      "normal ultra-condensed extra-condensed condensed semi-condensed semi-expanded expanded "
      "extra-expanded ultra-expanded",
@@ -240,19 +249,10 @@ constexpr property_syntax table[] = {
     {"font-variant-alternates", k::freeform, "", "normal", true, false},
     {"font-size-adjust", k::freeform, "", "none", true, true},
     {"font-palette", k::freeform, "", "normal", true, false},
-    // NOT HERE YET: font-feature-settings, font-palette, font-size-adjust,
-    // font-variant-alternates, font-variation-settings and font-width, which
-    // using-font-relative-units-in-font-properties asks to exist. Adding the
-    // six put a page's baseline script heap over 3,000 objects (each known
-    // property is accessors on the style prototypes), and unit/page_async's
-    // heap-growth assertion holds only below that: the collector's threshold
-    // doubles after a collection, so a 3,000-object churn against a baseline
-    // above 3,000 collects on every OTHER tick and the sixtieth sample lands
-    // on the high one (3005 -> 6005). Fix the test's sampling first.
     {"line-height", k::number_length_percentage, "normal", "normal", true, true},
     // CSS Text 4 gave both of these a percentage: `normal | <length-percentage>`.
-    // `calc-letter-spacing` asks for `letter-spacing: calc(100%)` to compute to
-    // `100%` rather than be dropped, which is the same question.
+    // WPT calc-letter-spacing asks for `letter-spacing: calc(100%)` to compute
+    // to `100%` rather than be dropped, which needs the same grammar.
     {"letter-spacing", k::length_percentage, "normal", "normal", true, false},
     {"word-spacing", k::length_percentage, "normal", "normal", true, false},
     // `justify-all` is CSS Text 3 §6.1's: justify, the last line too.
@@ -267,7 +267,7 @@ constexpr property_syntax table[] = {
      false},
     {"text-overflow", k::freeform, "", "clip", false, false},
     {"text-shadow", k::freeform, "", "none", true, false},
-    // CSS Text 4 §3's SHORTHAND of white-space-collapse, text-wrap-mode and
+    // CSS Text 4 §3's shorthand of white-space-collapse, text-wrap-mode and
     // white-space-trim (table_modules.cpp): the six keywords are spellings of
     // the first two, split in shorthands.cpp.
     {"white-space", k::freeform, "", "normal", true, false, true},
@@ -278,7 +278,7 @@ constexpr property_syntax table[] = {
     // Read by the cascade (an inherited property) and by the computed style's
     // logical-to-physical mapping; a property the engine reads must be in
     // this table, because the table is what `el.style.writingMode = x` is
-    // checked against - an unsupported name is an expando there.
+    // checked against: an unsupported name is an expando there.
     {"writing-mode", k::keyword_only,
      "horizontal-tb vertical-rl vertical-lr sideways-rl sideways-lr", "horizontal-tb", true, false},
     {"unicode-bidi", k::keyword_only,
@@ -308,16 +308,17 @@ constexpr property_syntax table[] = {
     {"column-gap", k::length_percentage, "normal", "normal", false, true},
     {"order", k::integer, "", "0", false, false},
     {"z-index", k::integer, "auto", "auto", false, false},
-    // Three more `<integer>` and keyword properties, named because
-    // `calc-rounds-to-integer` sets `10.1` and `1e1` on each and expects the
-    // declaration refused - which an unknown property, stored verbatim, cannot
-    // do. `1e1` is a <number-token> and not an <integer>, CSS Syntax 3 §4.3.12.
+    // Two more `<integer>` properties, listed because WPT calc-rounds-to-integer
+    // sets `10.1` and `1e1` on each and expects the declaration refused, which
+    // an unknown property, stored verbatim, cannot do. `1e1` is a
+    // <number-token> and not an <integer>, CSS Syntax 3 §4.3.12.
     {"orphans", k::integer, "", "2", true, true},
     {"widows", k::integer, "", "2", true, true},
-    // Three more `<integer>` properties nothing lays out, so that `1e1` and
-    // `10.1` are refused where `calc(10.1)` rounds (calc-rounds-to-integer).
-    // `auto`, not `none`: line-clamp's `none` is the three longhands at their
-    // initial values, and max-lines-invalid refuses `none`.
+    // More `<integer>` properties nothing lays out, so that `1e1` and `10.1`
+    // are refused where `calc(10.1)` rounds (WPT calc-rounds-to-integer).
+    // max-lines takes `auto`, not `none`: line-clamp's `none` is the three
+    // longhands at their initial values, and WPT max-lines-invalid refuses
+    // `none`.
     {"max-lines", k::integer, "auto", "auto", false, true},
     {"hyphenate-limit-lines", k::integer, "no-limit", "no-limit", true, true},
     {"hyphenate-limit-chars", k::freeform, "", "auto", true, false}, // declaration.cpp
@@ -347,23 +348,22 @@ constexpr property_syntax table[] = {
     {"animation-delay", k::time, "", "0s", false, false},
     {"animation-name", k::freeform, "", "none", false, false},
     // `none | <custom-ident> | match-element`, CSS View Transitions 1 §4.1.
-    // Nothing transitions here; it is the property ident-function-computed
-    // reads an `ident()` back through, and as an UNKNOWN one getComputedStyle
-    // did not publish it at all.
+    // Nothing transitions here; it is listed so getComputedStyle publishes it,
+    // because WPT ident-function-computed reads an `ident()` back through it.
     {"view-transition-name", k::freeform, "", "none", false, false},
     {"animation-iteration-count", k::number, "infinite", "1", false, true},
     {"filter", k::freeform, "", "none", false, false},
     {"content", k::freeform, "", "normal", false, false},
-    // PROPERTIES WITH NO CONSUMER YET, carried so a page can set and read
-    // them back - every one is a `<length-percentage>` or freeform text, and as
-    // unknown ones getComputedStyle did not publish them (random-computed).
+    // Properties nothing in the engine reads, listed so a page can set them
+    // and read them back through getComputedStyle (WPT random-computed). Each
+    // is a `<length-percentage>` or freeform text.
     {"offset-distance", k::length_percentage, "", "0px", false, false},
     {"offset-path", k::freeform, "", "none", false, false},
     {"shape-margin", k::length_percentage, "", "0px", false, true},
     // SVG 2 §13.2's paints, which CSS Fill and Stroke 3 keeps: `none`, a
-    // colour, the context paints, or a url() with a fallback - which
+    // colour, the context paints, or a url() with a fallback, which
     // declaration.cpp reads beside the colour. They inherit, and a colour
-    // computes and interpolates as one (fill-interpolation). stroke-color is
+    // computes and interpolates as one (WPT fill-interpolation). stroke-color is
     // Fill and Stroke 3's own, a <color> whose initial value is transparent.
     {"fill", k::color, "none context-fill context-stroke", "rgb(0, 0, 0)", true, false},
     {"stroke", k::color, "none context-fill context-stroke", "none", true, false},
@@ -400,8 +400,8 @@ constexpr property_syntax table[] = {
 
 } // namespace
 
-// The core rows above and table_modules.cpp's rows, as one list in one order:
-// `getComputedStyle`'s indexed properties walk it.
+/// The core rows above and table_modules.cpp's rows, as one list in one order:
+/// `getComputedStyle`'s indexed properties walk it.
 [[nodiscard]] const std::vector<property_syntax> & every_property() {
     static const std::vector<property_syntax> all = [] {
         std::vector<property_syntax> out(std::begin(table), std::end(table));
@@ -441,10 +441,11 @@ bool inherited_property(std::string_view name) {
     return inherited.contains(name);
 }
 
-// CSS Logical 1 §2: the four flow-relative sides as physical ones. Block
-// start/end follow the writing mode alone; inline start/end follow it and
-// the direction, and `sideways-lr` is the one mode whose inline axis runs
-// upward.
+/// CSS Logical 1 §2: maps a flow-relative property to its physical one for
+/// the given writing mode and direction, or returns empty if `logical` is not
+/// a flow-relative property. Block start/end follow the writing mode alone;
+/// inline start/end follow it and the direction, and `sideways-lr` is the one
+/// mode whose inline axis runs upward.
 std::string physical_property_of(std::string_view logical, std::string_view writing_mode,
                                  std::string_view direction) {
     const std::string mode = ascii_lower_copy(trim(writing_mode, html_whitespace));
@@ -526,7 +527,7 @@ std::string physical_property_of(std::string_view logical, std::string_view writ
     return {};
 }
 
-// CSSOM §2.1 "serialize an identifier".
+/// CSSOM §2.1 "serialize an identifier".
 std::string serialize_identifier(std::string_view text) {
     std::string out;
     const auto hex_escape = [&out](unsigned char c) {
@@ -538,7 +539,7 @@ std::string serialize_identifier(std::string_view text) {
     };
     for (std::size_t i = 0; i < text.size(); ++i) {
         const auto c = static_cast<unsigned char>(text[i]);
-        // NULL is not escaped, it is REPLACED - §2.1 step 3, the same U+FFFD
+        // NULL is not escaped but replaced by U+FFFD (§2.1 step 3), the same
         // substitution the CSS tokenizer does to its input.
         if (c == 0) {
             out += "\xEF\xBF\xBD";
@@ -548,9 +549,10 @@ std::string serialize_identifier(std::string_view text) {
             hex_escape(c);
             continue;
         }
-        // A LEADING DIGIT, or a digit after a leading `-`, would make the
-        // identifier a number: both are escaped numerically rather than with a
-        // backslash, because `\1` is not a valid identifier start either.
+        // A leading digit, or a digit after a leading `-`, would make the
+        // identifier a number, so it is written as a code-point escape (`\31 `)
+        // rather than as backslash-plus-character, because `\1` would itself be
+        // read as an escape.
         if (c >= '0' && c <= '9' && (i == 0 || (i == 1 && text[0] == '-'))) {
             hex_escape(c);
             continue;
@@ -569,11 +571,13 @@ std::string serialize_identifier(std::string_view text) {
     return out;
 }
 
+/// Converts a CSSOM IDL attribute name (`backgroundColor`, `webkitTransform`,
+/// `cssFloat`) to its CSS property name (`background-color`, ...).
 std::string css_name_of(std::string_view idl) {
-    // A CUSTOM PROPERTY has no IDL name and passes through untouched, capitals
+    // A custom property has no IDL name and passes through untouched, capitals
     // and all: `--myVar` and `--myvar` are two different properties.
     if (idl.starts_with("--")) { return std::string{idl}; }
-    // The two exceptions CSSOM §6.7.1 names by hand.
+    // The one exception CSSOM §6.7.1 names by hand.
     if (idl == "cssFloat") { return "float"; }
     std::string out;
     // `webkitTransform` -> `-webkit-transform`: the prefix's leading dash is
@@ -594,6 +598,8 @@ std::string css_name_of(std::string_view idl) {
     return out;
 }
 
+/// Converts a CSS property name to its CSSOM IDL attribute name; the inverse
+/// of css_name_of.
 std::string idl_name_of(std::string_view css) {
     if (css.starts_with("--")) { return std::string{css}; }
     if (css == "float") { return "cssFloat"; }

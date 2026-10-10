@@ -1,3 +1,12 @@
+//===- ctbrowser/lib/Style/engine/cascade.cpp - The cascade -----*- C++ -*-===//
+//
+// engine::resolve, the cascade for one element: match rules, sort them by
+// cascade priority, substitute var()/attr()/if(), fold math, expand
+// shorthands, map logical to physical properties, and split the result into
+// inherited and own declarations.
+//
+//===----------------------------------------------------------------------===//
+
 #include "cascade_values.hpp"
 
 #include <ctbrowser/style/engine.hpp>
@@ -11,22 +20,18 @@
 #include <utility>
 #include <vector>
 
-// engine: the method bodies.
-// The header says what these do; this says how.
-
 namespace ctbrowser::style {
 
 namespace {
 
-// The most bytes a custom property's value may grow to through inherit(): the
-// same 64 KB css/substitute gives a var() substitution.
+/// The most bytes a custom property's value may grow to through inherit(): the
+/// same 64 KB css/substitute gives a var() substitution.
 constexpr std::size_t max_custom_property_bytes = 64 * 1024;
 
-// A KEYWORD FONT SIZE AS PIXELS (CSS Fonts 4 §2.5): an <absolute-size> is the
-// length the table gives it at the 16px `medium` - the same table
-// easing/numeric.cpp adds with - a <relative-size> steps the parent's by the
-// 1.2 ratio every engine uses, and `initial` is `medium`. Left as text, the
-// box builder read each one as no size at all and inherited the parent's.
+/// Returns a font-size keyword in pixels (CSS Fonts 4 §2.5): an
+/// <absolute-size> from the table at a 16px `medium` (the same table as
+/// easing/numeric.cpp), a <relative-size> as the parent's times or divided by
+/// 1.2, and `initial` as `medium`. Returns nullopt for anything else.
 [[nodiscard]] std::optional<float> font_size_keyword_px(std::string_view word, float parent) {
     static constexpr std::pair<std::string_view, float> sizes[] = {
         {"xx-small", 9}, {"x-small", 10}, {"small", 13},    {"medium", 16},
@@ -45,10 +50,10 @@ constexpr std::size_t max_custom_property_bytes = 64 * 1024;
 computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const element_facts & self,
                                    const ancestor_filter & ancestors, std::size_t depth,
                                    const computed_style_ptr & parent) {
-    // THE PARENT'S WHOLE STYLE, not just its inherited half, and the difference is
-    // `inherit` itself: the keyword takes the parent's value for ANY property,
-    // inherited or not, so `display: inherit` has to be able to read a property
-    // that never travels on its own. The inherited half alone cannot answer that.
+    // `parent` is the parent's whole style, not just its inherited half,
+    // because the `inherit` keyword takes the parent's value for any property,
+    // inherited or not: `display: inherit` has to read a property the inherited
+    // half never carries.
     const inherited_ptr & from = parent ? parent->inherited : no_inherited_;
     // Where this element sits among its siblings, for `sibling-index()` and
     // `sibling-count()`: facts the traversal already gathered for
@@ -57,7 +62,8 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
     sibling_count_ = self.sibling_count;
     element_key_ = key_of(node);
     // The containers this element's `cq*` units measure, as last laid out.
-    // A pseudo-element's are its originating element's own, that included.
+    // A pseudo-element's are its originating element's, including that element
+    // itself as a container.
     cq_width_ = cq_height_ = -1.0f;
     const std::size_t below = depth + (pseudo_wanted_ != atom{} ? 1 : 0);
     if (below > 0 && below - 1 < cq_chain_.size()) {
@@ -69,19 +75,19 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
             if (const auto box = container_size_of(block_container)) { cq_height_ = box->height; }
         }
     }
-    // Gather only the rules whose RIGHTMOST compound could possibly match.
+    // Gather only the rules whose rightmost compound could possibly match.
     matches_.clear();
     collect(index_.by_id, self.id, txn, ancestors, depth);
     for (const atom c : self.classes) { collect(index_.by_class, c, txn, ancestors, depth); }
     collect(index_.by_tag, self.tag, txn, ancestors, depth);
     for (const rule & r : index_.universal) { consider(r, txn, ancestors, depth); }
 
-    // THE CASCADE, CSS Cascade 5 §6.1: importance, then origin - reversed for
-    // important declarations, where the user agent's beat the author's - then
-    // the layer, whose order is likewise reversed for important declarations
-    // (§6.4), then specificity, then scope proximity (Cascade 6 §6.3, nearer
-    // wins), then source order. Sorting ascending and applying in order means
-    // the last write to a property wins, which is exactly the rule.
+    // The cascade order (CSS Cascade 5 §6.1): importance, then origin (reversed
+    // for important declarations, where the user agent's beat the author's),
+    // then the layer, whose order is likewise reversed for important
+    // declarations (§6.4), then specificity, then scope proximity (Cascade 6
+    // §6.3, nearer wins), then source order. Sorting ascending and applying in
+    // order means the last write to a property wins, which is exactly the rule.
     std::ranges::stable_sort(matches_, [this](const rule & a, const rule & b) {
         if (a.important != b.important) { return !a.important; }
         if (a.origin != b.origin) {
@@ -100,28 +106,30 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
     });
 
     declaration_list out;
-    // Applying a declaration means REPLACING the property if it is already
-    // there - the later write wins, which is what "the cascade" reduces to
-    // once the sort has put everything in priority order.
+    // Applying a declaration means replacing the property if it is already
+    // there: the later write wins, which is what the cascade reduces to once the
+    // sort has put everything in priority order.
     //
-    // THE EXPLICIT-DEFAULTING KEYWORDS are resolved here, because here is where
+    // The explicit-defaulting keywords are resolved here, because here is where
     // the parent's value is in hand:
     //
     //   inherit   take the parent's value, whether or not the property inherits
-    //   initial   an EMPTY value, which shadows anything inherited and reads as
-    //             "nothing said" to every consumer - the closest thing to a real
-    //             initial value until the property table carries them
+    //   initial   an empty value, which shadows anything inherited and reads as
+    //             "nothing said", so consumers fall back to the property
+    //             table's initial value (`display` is written as `inline` and a
+    //             custom property gets the guaranteed-invalid value, see put)
     //   unset     drop the declaration: for an inherited property the inherited
     //             value then shows through, and for a non-inherited one absence
     //             already means initial, so dropping is correct for both
-    //   revert    the value the PREVIOUS ORIGIN would have produced
+    //   revert    the value the previous origin would have produced
     //   revert-layer, revert-rule
     //             likewise, one layer or one rule back - see rolled_back
     //
     // Rollbacks search the declarations produced by the fold, after variable
     // substitution, shorthand expansion and logical-to-physical mapping. The
     // raw rule may say `margin` or `margin-block`, neither of which would match
-    // a rollback of `margin-top`. Keep the rule index for origin/layer tests.
+    // a rollback of `margin-top`. Each entry keeps its rule index in matches_
+    // for the origin and layer tests.
     std::vector<std::pair<std::size_t, declaration>> applied;
     std::vector<std::pair<atom, std::size_t>> custom_positions;
     // `folding` is the current rule's position, or the size for inline style.
@@ -137,15 +145,16 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
                       this](const declaration & d) {
         std::string value = d.value;
         const std::string_view property = atoms_->text(d.property);
-        // THE ROLLBACK KEYWORDS, each the cascade with some declarations
+        // The rollback keywords are each the cascade with some declarations
         // struck out (CSS Cascade 5 §7.3): `revert` strikes the author origin,
         // so the answer is the last user-agent declaration (important UA
         // rules that sort after the author's still apply later); `revert-layer`
         // strikes the current layer of the current origin, the style
         // attribute counting as a layer above all of them; `revert-rule` (a
-        // Cascade 6 draft) strikes the current rule - the declarations filed
-        // consecutively under one selector. What is found may be a keyword
-        // itself, so this loops, always to an earlier position.
+        // Cascade 6 draft) strikes the current rule, meaning the declarations
+        // filed consecutively under one selector. What is found may be a
+        // keyword itself, so this loops, always to an earlier position; the
+        // guard of 16 only bounds the loop.
         std::size_t at = folding;
         for (int guard = 0; guard < 16; ++guard) {
             std::size_t found = applied.size();
@@ -186,11 +195,12 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
                 position->second = at;
             }
         }
-        // `display`'s INITIAL VALUE IS `inline`, and it has to be said: an
-        // absent display is the element's own default to the box builder -
-        // what the trimmed UA sheet leaves unwritten - so an empty one would
-        // make `div { display: initial }` a block (css-display/inheritance).
-        // An `unset` a rollback arrived at is the UA's answer and stays absent.
+        // `display`'s initial value is `inline`, and it must be written out: to
+        // the box builder an absent display means the element's own default
+        // (what the trimmed UA sheet leaves unwritten), so an empty one would
+        // make `div { display: initial }` a block (WPT css-display/inheritance).
+        // An `unset` that a rollback arrived at is the UA's answer and stays
+        // absent.
         if (property == "display" &&
             (value == "initial" || (value == "unset" && d.value == "unset"))) {
             value = "inline";
@@ -204,20 +214,20 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
                     break;
                 }
             }
+            // Removing the declaration lets an inherited property show the
+            // parent's value and leaves a non-inherited one at its initial value.
             if (!inherits(property)) { return; }
-            // An inherited property must be actively removed from the own half so
-            // the inherited value shows through; it already is.
             return;
         } else if (value == "initial") {
-            // ON A CUSTOM PROPERTY `initial` IS THE GUARANTEED-INVALID VALUE,
-            // not an empty one: `--bs-table-bg-type: initial` is a SENTINEL that
-            // `var(--bs-table-bg-type, <fallback>)` has to fall through, where an
-            // empty custom property - `--bs-btn-font-family: ;` - is a valid
+            // On a custom property `initial` is the guaranteed-invalid value,
+            // not an empty one: `--bs-table-bg-type: initial` is a sentinel that
+            // `var(--bs-table-bg-type, <fallback>)` has to fall through, while
+            // an empty custom property (`--bs-btn-font-family: ;`) is a valid
             // empty substitution.
             //
-            // The declaration is KEPT, holding the sentinel, rather than
+            // The declaration is kept, holding the sentinel, rather than
             // erased: erasing it would let an ancestor's value show through,
-            // and `initial` means invalid HERE regardless of what was
+            // and `initial` means invalid here regardless of what was
             // inherited.
             if (property.starts_with("--")) {
                 value = std::string{guaranteed_invalid};
@@ -234,7 +244,7 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
         out.push_back(declaration{d.property, std::move(value)});
     };
 
-    // The style ATTRIBUTE. Not a separate origin: it is author-level with a
+    // The style attribute is not a separate origin: it is author-level with a
     // specificity above every selector, so it lands between the normal
     // declarations and the important ones. Chrome and Firefox both give
     //
@@ -242,20 +252,22 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
     //   important inline
     //
     // which is why this is spliced into the fold at the importance
-    // boundary rather than simply appended at the end - `!important` in a
-    // stylesheet has to be able to beat a style attribute.
-    // ...AND NOT FOR A PSEUDO-ELEMENT, which has no style attribute.
+    // boundary rather than simply appended at the end: `!important` in a
+    // stylesheet has to be able to beat a style attribute. A pseudo-element
+    // has no style attribute.
     static const inline_block no_inline;
     const inline_block & own = pseudo_wanted_ ? no_inline : inline_style_of(txn, node);
 
-    // TWO PASSES, and the reason is that custom properties are themselves
-    // cascaded: substitution cannot run inside the fold that produces the values
-    // it needs to read. So pass one applies ONLY custom properties, and pass two
-    // substitutes everything else against them.
+    // The declarations are folded in two main passes because custom properties
+    // are themselves cascaded: substitution cannot run inside the fold that
+    // produces the values it needs to read. So pass one applies only custom
+    // properties, and pass two substitutes everything else against them. (The
+    // font-size, line-height and registered-property pre-passes in between use
+    // the same fold.)
     //
-    // Both passes walk the same sorted list with the same inline-style splice, so
-    // priority is identical between them - and expansion happening in pass two
-    // keeps source order for free: a shorthand's longhands land at the shorthand's
+    // Every pass walks the same sorted list with the same inline-style splice,
+    // so priority is identical between them, and expansion in pass two keeps
+    // source order for free: a shorthand's longhands land at the shorthand's
     // position in the fold, so a longhand written after it still wins and one
     // written before it is still overwritten. Expansion cannot happen earlier,
     // when a rule is recorded, because a shorthand's component count is
@@ -280,17 +292,17 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
         for (const declaration & d : own.important) { apply(d); }
     };
 
-    // PASS ONE: the custom properties, stored verbatim. A custom property's value
-    // is never parsed and never validated - it is a token stream that means
-    // whatever the var() reading it makes of it.
+    // Pass one: the custom properties, stored verbatim. A custom property's
+    // value is never parsed and never validated; it is a token stream that
+    // means whatever the var() reading it makes of it.
     //
-    // ...EXCEPT FOR AN `inherit()` IN ONE, which is replaced NOW (CSS Values
-    // 5 §inherit-notation): it names the PARENT's computed value, and the
-    // parent's cascade has just produced it - a lazy reading later would
-    // have to re-run the parent's substitution in the parent's scope, and
-    // its grandparent's, which is how `--v: e2 inherit(--v)` under `--v:
-    // e1` failed to accumulate (inherit-function-basic). A var() in the
-    // same value stays lazy, as every var() in a custom property is.
+    // The exception is an `inherit()` in one, which is replaced now (CSS Values
+    // 5 §inherit-notation): it names the parent's computed value, which the
+    // parent's cascade has just produced. Reading it lazily later would need
+    // the parent's substitution re-run in the parent's scope, and the
+    // grandparent's, or `--v: e2 inherit(--v)` under `--v: e1` would not
+    // accumulate (WPT inherit-function-basic). A var() in the same value stays
+    // lazy, as every var() in a custom property is.
     fold([&](const declaration & d) {
         if (!atoms_->text(d.property).starts_with("--")) { return; }
         if (d.value.find("inherit(") == std::string::npos) {
@@ -317,7 +329,7 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
                 parent && name.starts_with("--") ? parent->get(atoms_->intern(name)) : "";
             if (!held.empty() && held != guaranteed_invalid) {
                 value += held;
-                // `--v: inherit(--v) inherit(--v)` DOUBLES at every level, so
+                // `--v: inherit(--v) inherit(--v)` doubles at every level, so
                 // thirty nested elements are gigabytes. Past the bytes a var()
                 // substitution may produce (substitute's max_bytes) the
                 // property is guaranteed-invalid, as a too-long var() is.
@@ -336,7 +348,7 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
         put(declaration{d.property, std::move(value)});
     });
 
-    // `nullopt` means NOT DEFINED, which is what makes `var()` take its
+    // `nullopt` means not defined, which is what makes `var()` take its
     // fallback; an empty string means defined and empty, which substitutes to
     // nothing. The guaranteed-invalid sentinel reads as the first of those,
     // which is exactly what CSS Variables §3 says `initial` does to a custom
@@ -356,7 +368,7 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
         }
         return std::nullopt;
     };
-    // ...AND THE ELEMENT'S ATTRIBUTES, for `attr()`. Absent and empty are
+    // The element's attributes, for `attr()`. Absent and empty are
     // different answers here too: `attr(data-x)` on an element without the
     // attribute takes its fallback, and one with `data-x=""` is `""`.
     const css::attribute_lookup attributes =
@@ -365,7 +377,7 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
         if (!txn.has_attribute(node, key)) { return std::nullopt; }
         return std::string{txn.attribute_value(node, key)};
     };
-    // ...AND WHAT `if()` MAY ASK (CSS Values 5 §if-notation): the parent's
+    // What `if()` may ask (CSS Values 5 §if-notation): the parent's
     // custom properties for `style(--x: inherit)`, substituted against the
     // parent's own scope; any property folded so far for `style(color:
     // green)`; and the window for `media()`. The bases are filled in below
@@ -409,6 +421,8 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
     // A custom property's substituted CSS-wide keyword belongs to its own
     // cascade, before another var() reads it. Resolve dependencies first, but
     // keep ordinary token streams lazy (including their attr() provenance).
+    // Both limits of 20 bound pathological custom-property chains: past them a
+    // keyword is left unresolved rather than looping.
     std::vector<atom> resolving_keywords, resolved_keywords;
     const std::function<void(atom)> resolve_keyword = [&](atom name) {
         if (resolving_keywords.size() >= 20 ||
@@ -447,7 +461,8 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
     for (const atom name : custom_names) { resolve_keyword(name); }
 
     // A `font` shorthand carries a font-size and a line-height of its own,
-    // and the two pre-passes below need those before pass two splits it.
+    // and the font-size and line-height pre-passes below need those before
+    // pass two splits it.
     const atom font_ = atoms_->intern_lower("font");
     const auto component_of = [&](const declaration & d,
                                   atom wanted) -> std::optional<std::string> {
@@ -459,12 +474,14 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
         return std::nullopt;
     };
 
-    // PASS ONE AND A HALF: FONT SIZE, ALONE, BEFORE ANYTHING ELSE READS IT.
+    // Font-size pre-pass: resolve font-size before any other property, because
+    // every other `em` depends on it.
     //
     // `em` means the element's own font size on every property except font-size
-    // itself, where it means the parent's - so the one value everything else is
-    // relative to has to be known before the general fold runs. That is not a
-    // convenience: `padding: calc(.5em + 1rem)` and `font-size: 1.25em` in the
+    // itself, where it means the parent's, so the one value everything else is
+    // relative to has to be known before the general fold runs. This is
+    // required, not a convenience: `padding: calc(.5em + 1rem)` and
+    // `font-size: 1.25em` in the
     // same rule resolve their `em` against different numbers, and a single pass
     // cannot produce both.
     float parent_font_size = 16.0f;
@@ -477,28 +494,29 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
             break;
         }
     }
-    // ...AND THE PARENT'S LINE HEIGHT, for `lh` (CSS Values 4 §6.1.1). The
-    // same asymmetry as `em`: `lh` in `font-size` and in `line-height`
-    // itself is the parent's, everywhere else the element's own. The
-    // parent's line-height is inherited text - a number, a length the
-    // parent's cascade already folded to px, a percentage or `normal` - and
-    // resolves against the parent's font size.
+    // The parent's line height, for `lh` (CSS Values 4 §6.1.1). It has the
+    // same asymmetry as `em`: `lh` in `font-size` and in `line-height` itself
+    // is the parent's, everywhere else the element's own. The parent's
+    // line-height is inherited text (a number, a length the parent's cascade
+    // already folded to px, a percentage or `normal`) and resolves against the
+    // parent's font size.
     //
-    // THE ROOT RESOLVES AGAINST THE INITIAL VALUES: `font-size: 1lh` on
+    // The root resolves against the initial values: `font-size: 1lh` on
     // `:root` is 1.25 times 16px, however the root's own font size and
-    // line-height come out (lh-rlh-on-root-001).
+    // line-height come out (WPT lh-rlh-on-root-001).
     const float parent_line_height =
         parent && parent->inherited
             ? line_height_px(parent->inherited->get(line_height_), parent_font_size)
             : 16.0f * 1.25f;
-    // THE ROOT STARTS FROM THE INITIAL VALUES - a `font-size: 3rem` on `:root`
+    // The root starts from the initial values: a `font-size: 3rem` on `:root`
     // is 48px however the previous resolve of this document left the root,
-    // and the two members below persist across resolves (rem-unit-root-element).
+    // because the two members below persist across resolves (WPT
+    // rem-unit-root-element).
     if (!parent) {
         root_font_size_ = 16.0f;
         root_line_height_ = parent_line_height;
     }
-    // THE PARENT'S `0` ADVANCE, for `ch` in `font-size` and the other font-*
+    // The parent's `0` advance, for `ch` in `font-size` and the other font-*
     // properties, where it is the parent's like `em` (CSS Values 4 §6.1.1):
     // the parent's inherited font-family, font-weight and font-style at the
     // parent's size. Measured only when the shell injected a measurement;
@@ -516,29 +534,29 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
     // The root's registered custom properties that measured the viewport
     // before they were computed to pixels - see the root's overflow below.
     std::vector<atom> viewport_registered;
-    std::vector<atom> read; // what the font-size's substitution looked at
-    // Whether the WINNING font-size declaration actually resolved to a length -
-    // a keyword included, see font_size_keyword_px. What does not (`math` and
-    // anything unmodelled) keeps its text and whoever reads it decides.
+    std::vector<atom> read; // What the font-size's substitution looked at.
+    // Whether the winning font-size declaration actually resolved to a length,
+    // a keyword included (see font_size_keyword_px). One that does not (`math`
+    // and anything unmodelled) keeps its text, and whoever reads it decides.
     bool font_size_resolved = false;
     {
-        // The em basis for resolving font-size is the PARENT's; the rem basis is
+        // The em basis for resolving font-size is the parent's; the rem basis is
         // the root's, which for the root element is its own answer and so is
-        // seeded from the parent's - a root `font-size: 2rem` is circular and CSS
-        // resolves it against the initial 16px.
-        // A PERCENTAGE IN A FONT SIZE IS OF THE PARENT'S, and the evaluator
-        // can be told so: `calc(50% + 1px)` folds here rather than waiting
-        // for a containing block it will never be measured against.
+        // seeded from the parent's: a root `font-size: 2rem` is circular, and
+        // CSS resolves it against the initial 16px.
+        // A percentage in a font size is of the parent's, and the evaluator can
+        // be told so: `calc(50% + 1px)` folds here rather than waiting for a
+        // containing block it will never be measured against.
         css::length_context ctx =
             font_context(parent_font_size, parent_line_height, parent_zero_advance);
         ctx.percent_basis = parent_font_size;
         conditions.lengths = ctx;
         conditions.property = "font-size";
-        // A REGISTERED PROPERTY IN FONT-RELATIVE UNITS DEPENDS ON THIS
-        // FONT SIZE, so a font-size reading it is a cycle (CSS Properties
-        // and Values API 1 §2.4): the font-size is invalid at computed-value
-        // time - inherited - and the property takes its initial value
-        // (typed_arithmetic_cycle).
+        // A registered property in font-relative units depends on this font
+        // size, so a font-size reading it is a cycle (CSS Properties and
+        // Values API 1 §2.4): the font-size is invalid at computed-value time
+        // (so inherited) and the property takes its initial value (WPT
+        // typed_arithmetic_cycle).
         read.clear();
         conditions.on_read = [&read, this](std::string_view name) {
             read.push_back(atoms_->intern(name));
@@ -562,14 +580,14 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
                 if (!done) { return; }
                 value = *done;
             }
-            // A calc that does not evaluate keeps its text here, and falls
-            // through to the keyword branch below - which is right for a font
+            // A calc that does not evaluate keeps its text here and falls
+            // through to the keyword branch below, which is right for a font
             // size, because a keyword is a real answer for one.
             if (css::may_have_math(value)) {
                 value = css::fold_math(value, ctx, css::math_context::length).text;
             }
             const std::optional<float> px = css::length_text_to_px(value, ctx);
-            // A percentage font size is the parent's, scaled - the one relative
+            // A percentage font size is the parent's, scaled: the one relative
             // form that is not a length and still has an answer here.
             const std::string_view text = trim(value, html_whitespace);
             if (px) {
@@ -590,7 +608,7 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
                 own_font_size = *keyword;
                 font_size_resolved = true;
             } else {
-                font_size_resolved = false; // a keyword: leave the text alone
+                font_size_resolved = false; // Unmodelled value (e.g. `math`): keep the text.
             }
         });
         // Only the font-size cares what was read.
@@ -599,7 +617,7 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
     // The root's size is what every `rem` in the document resolves against, so it
     // is recorded as the tree is descended rather than looked up per element.
     if (!parent) { root_font_size_ = own_font_size; }
-    // ...AND THE ELEMENT'S OWN `0` ADVANCE, now that its font size is known:
+    // The element's own `0` advance, now that its font size is known:
     // its own winning font-family/weight/style declarations over the
     // parent's face (a value still holding a var() is the parent's).
     float own_zero_advance = 0.0f;
@@ -617,15 +635,15 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
         own_zero_advance = zero_advance_of(face_family, face_weight, face_style, own_font_size);
         if (!parent) { root_zero_advance_ = own_zero_advance; }
     }
-    // PASS ONE AND THREE QUARTERS: LINE HEIGHT, for `lh` in everything else.
-    // The winning `line-height` declaration, substituted and folded against
-    // the PARENT's `lh` and the element's own `em`, then resolved to px. An
-    // absent declaration is the inherited text against the element's OWN
-    // font size - a `1.5` is a factor and inherits as one.
+    // Line-height pre-pass, for `lh` in every other property.
+    // The winning `line-height` declaration is substituted and folded against
+    // the parent's `lh` and the element's own `em`, then resolved to px. An
+    // absent declaration is the inherited text against the element's own
+    // font size: a `1.5` is a factor and inherits as one.
     float own_line_height = line_height_px(
         parent && parent->inherited ? parent->inherited->get(line_height_) : "", own_font_size);
-    // ...and a percentage in a line-height is of the element's own font size,
-    // so `calc(10% / 1px)` is the number 1 here (typed_arithmetic).
+    // A percentage in a line-height is of the element's own font size, so
+    // `calc(10% / 1px)` is the number 1 here (WPT typed_arithmetic).
     css::length_context line_height_lengths =
         font_context(own_font_size, parent_line_height, own_zero_advance);
     line_height_lengths.percent_basis = own_font_size;
@@ -644,7 +662,7 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
                 value = *done;
             }
             if (css::may_have_math(value)) { value = css::fold_math(value, ctx).text; }
-            // A bare number is a factor, not pixels - which is why
+            // A bare number is a factor, not pixels, which is why
             // length_text_to_px is asked only after from_chars has had its
             // turn; a percentage and `normal` are line_height_px's.
             const std::string_view text = trim(value, html_whitespace);
@@ -665,11 +683,11 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
         });
     }
     if (!parent) { root_line_height_ = own_line_height; }
-    // THE ELEMENT'S OWN WRITING MODE, settled before any length resolves:
+    // The element's own writing mode, settled before any length resolves:
     // `vi`/`vb` swap axes in a vertical one (CSS Values 4 §6.1.2), and the
     // property inherits, so the parent's answer stands until a declaration
-    // says otherwise - a keyword, never a length, so nothing to fold.
-    // ...AND ITS DIRECTION, settled the same way: the two together decide
+    // says otherwise. It is a keyword, never a length, so there is nothing to
+    // fold. Its direction is settled the same way; the two together decide
     // which physical side a logical property lands on (CSS Logical 1 §2).
     const auto inherited_keyword = [&](atom property, std::string_view initial) {
         std::string held;
@@ -698,11 +716,11 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
         writing_mode.starts_with("vertical-") || writing_mode.starts_with("sideways-");
     css::length_context lengths = font_context(own_font_size, own_line_height, own_zero_advance);
     lengths.vertical = vertical;
-    // THE LOGICAL -> PHYSICAL MAPPING, CSS Logical 1 §4. A flow-relative
-    // property is stored as the physical one it maps to on THIS element, at
+    // The logical-to-physical mapping (CSS Logical 1 §4). A flow-relative
+    // property is stored as the physical one it maps to on this element, at
     // the declaration's own position in the fold: `margin-left: 1px;
-    // margin-inline-start: 2px` is 2px in ltr and the reverse order is 1px -
-    // whichever spelling of the logical property group came later wins - and
+    // margin-inline-start: 2px` is 2px in ltr and the reverse order is 1px
+    // (whichever spelling of the logical property group came later wins), and
     // layout and getComputedStyle only ever read the physical side. A
     // property that is not logical maps to itself.
     const auto physical = [&](atom property) -> atom {
@@ -711,18 +729,18 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
             name.find("inline") == std::string_view::npos &&
             name.find("start") == std::string_view::npos &&
             name.find("end") == std::string_view::npos) {
-            return property; // nothing flow-relative in the name
+            return property; // Nothing flow-relative in the name.
         }
         const std::string mapped = css::physical_property_of(name, writing_mode, direction);
         return mapped.empty() ? property : atoms_->intern_lower(mapped);
     };
-    // ...EXCEPT IN `line-height` ITSELF, where `lh` is still the parent's -
-    // `line-height: 2lh` folded against its own answer would double it -
-    // and `line_height_lengths` above is what that property folds with; and
-    // EXCEPT IN THE OTHER font-* PROPERTIES, where an `em` is the PARENT's
-    // font size as it is in `font-size`: `font-weight: calc(1em / 1px)`
-    // under a 10px parent is 10 whatever the element's own size
-    // (using-font-relative-units-in-font-properties, CSS Values 4 §6.1.1).
+    // The length bases each property folds with. `lengths` is the default.
+    // `line-height` itself uses line_height_lengths, where `lh` is still the
+    // parent's (`line-height: 2lh` folded against its own answer would double
+    // it). The other font-* properties use the parent's font size for `em`, as
+    // `font-size` does: `font-weight: calc(1em / 1px)` under a 10px parent is
+    // 10 whatever the element's own size (WPT
+    // using-font-relative-units-in-font-properties, CSS Values 4 §6.1.1).
     const css::length_context font_lengths =
         font_context(parent_font_size, parent_line_height, parent_zero_advance);
     const auto lengths_for = [&](atom property) -> const css::length_context & {
@@ -730,15 +748,14 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
         return atoms_->text(property).starts_with("font-") ? font_lengths : lengths;
     };
 
-    // PASS ONE AND SEVEN EIGHTHS: THE REGISTERED CUSTOM PROPERTIES, CSS
-    // Properties and Values API 1 §2.4. An unregistered custom property is
-    // a token stream stored verbatim and read lazily; a registered one has
-    // a computed value like any other property: its declaration is
-    // substituted, parsed against the syntax and computed like the type
-    // it names, and what does not parse - or `initial`, or nothing at all
-    // on a property that does not inherit - is the initial value. It sits
-    // here because a `<length>` computes against the element's own font
-    // size, which the passes above have just settled.
+    // Registered custom properties (CSS Properties and Values API 1 §2.4),
+    // computed after font size and line height because a `<length>` needs them.
+    // An unregistered custom property is a token stream stored verbatim and
+    // read lazily; a registered one has a computed value like any other
+    // property: its declaration is substituted, parsed against the syntax and
+    // computed like the type it names, and what does not parse (or `initial`,
+    // or nothing at all on a property that does not inherit) gets the initial
+    // value.
     //
     // A property that inherits and is not declared here is left to the
     // parent's inherited half, which already holds its computed value:
@@ -750,10 +767,10 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
         for (declaration & d : out) {
             if (d.property == name) { own = &d; }
         }
-        // A `random()` in a registered property is keyed on THAT property
+        // A `random()` in a registered property is keyed on that property
         // (CSS Values 5 §random-caching): `--x` and `--y` on one element
         // draw differently, and `--len-scoped: random(property-scoped, ...)`
-        // draws the same on every element (random-computed).
+        // draws the same on every element (WPT random-computed).
         css::length_context registered_lengths = lengths;
         registered_lengths.property = atoms_->text(name);
         std::optional<std::string> computed;
@@ -771,10 +788,10 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
                 substituted = done.has_value();
                 if (done) { text = std::move(*done); }
             }
-            // A SUBSTITUTED CSS-WIDE KEYWORD IS THAT KEYWORD (CSS Values 5
+            // A substituted CSS-wide keyword is that keyword (CSS Values 5
             // §arbitrary-substitution): `attr(data-x type(*))` holding
-            // `inherit` is the parent's value, `unset` whichever the
-            // registration says (attr-css-wide-keywords).
+            // `inherit` is the parent's value, and `unset` is whichever the
+            // registration says (WPT attr-css-wide-keywords).
             const std::string_view word = trim(text, html_whitespace);
             const bool from_parent = ascii_iequals(word, "inherit") ||
                                      (registration.inherits && (ascii_iequals(word, "unset") ||
@@ -805,15 +822,15 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
         }
     }
 
-    // PASS TWO: everything else. Substitute, then expand, then put.
+    // Pass two: everything else. Substitute, then expand, then put.
     fold([&](const declaration & d) {
         const std::string_view property = atoms_->text(d.property);
         if (property.starts_with("--")) { return; }
         std::string value{d.value};
-        // `unset`: actively REMOVE the property from what has been folded so
-        // far, rather than merely declining to add it. The two are different
-        // whenever an earlier declaration set the same property, and which one
-        // is right depends on when the value became invalid - see both callers.
+        // Removes the property (or every longhand of a shorthand) from what has
+        // been folded so far, for a value invalid at computed-value time: CSS
+        // treats that as `unset`, so an earlier declaration must not show
+        // through.
         const auto unset = [&] {
             const auto erase = [&](atom property_to_erase) {
                 if (folding < matches_.size()) {
@@ -841,11 +858,11 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
             unset();
             return;
         }
-        // THE ROOT'S OVERFLOW MAY NOT HANG ON THE VIEWPORT'S SIZE: it decides
+        // The root's overflow may not depend on the viewport's size: it decides
         // the viewport's scrollbars, which decide what a viewport unit
-        // measures, so a substitution there that reads one - in its own
-        // text, or in a custom property it names - is a cycle, and invalid
-        // at computed-value time (csswg-drafts#13189,
+        // measures, so a substitution there that reads one (in its own text,
+        // or in a custom property it names) is a cycle, and invalid at
+        // computed-value time (csswg-drafts#13189, WPT
         // viewport-units-scroll-no-cycles).
         if (had_var && self.is_root && !pseudo_wanted_ &&
             ascii_iequals_any(property, {"overflow", "overflow-x", "overflow-y"})) {
@@ -870,34 +887,29 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
             conditions.property = std::string{property};
             const std::optional<std::string> done =
                 css::substitute_var(value, lookup, *atoms_, attributes, &conditions);
-            // INVALID AT COMPUTED-VALUE TIME means `unset`, which for an inherited
-            // property lets the inherited value through and otherwise means absent.
-            // NOT "drop it and let an earlier declaration win" - that is the classic
-            // wrong reading, and it is observable: `color: red; color: var(--x)`
-            // renders as the INHERITED colour in Chrome, not red. So the property is
-            // actively removed from what has been folded so far.
-            //
-            // AN EMPTY RESULT is invalid too, and it is the case Bootstrap hits:
-            // it ships seventeen empty-but-valid custom properties, and
-            // `body { text-align: var(--bs-body-text-align) }` reads one. An empty
-            // token stream is a valid substitution but not a valid VALUE.
+            // A failed or empty substitution is invalid at computed-value time,
+            // which means `unset`, not "let an earlier declaration win":
+            // `color: red; color: var(--missing)` is the inherited colour in
+            // Chrome. An empty token stream (Bootstrap's
+            // `text-align: var(--bs-body-text-align)`) is a valid substitution
+            // but not a valid value.
             if (!done || trim(*done, html_whitespace).empty()) {
                 unset();
                 return;
             }
             value = *done;
-            // ...AND SO IS A RESULT THE PROPERTY'S GRAMMAR REFUSES. A value
-            // is validated when it is parsed, and a substituted one was not
+            // So is a result the property's grammar refuses. A value is
+            // validated when it is parsed, and a substituted one was not
             // parsed until now: `width: attr(data-n type(<number>))` is the
             // number `10`, which `width` cannot take, and CSS Variables 1 §3
-            // makes that invalid at computed-value time - `unset`, not
-            // ten pixels (attr-all-types). Asked of the property table,
-            // which refuses nothing for a property it does not model.
+            // makes that invalid at computed-value time: `unset`, not ten
+            // pixels (WPT attr-all-types). The property table answers, and it
+            // refuses nothing for a property it does not model.
             //
-            // ...AND WHAT IT ACCEPTS IT SPELLS, as `el.style` would have:
-            // `z-index: var(--n)` with a 25-digit `--n` is the same
-            // integer, through the same double, as `el.style.zIndex = n`
-            // (serialize-custom-props).
+            // A value it accepts is serialized as `el.style` would have:
+            // `z-index: var(--n)` with a 25-digit `--n` is the same integer,
+            // through the same double, as `el.style.zIndex = n` (WPT
+            // serialize-custom-props).
             if (!css::may_have_math(value)) {
                 css::value_check checked = css::check_declaration(property, value);
                 if (!checked.valid) {
@@ -907,62 +919,62 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
                 value = std::move(checked.serialized);
             }
         }
-        // ...BUT THE DECLARATION BLOCK SPLITS THE UNFOLDED VALUE: its grammars
-        // take a math function as a component, and each longhand's is folded
-        // below against the LONGHAND's own bases and range - a shorthand has
-        // neither (`border-block-width: 3px calc(10px - 0.5em)` is 3px and a
-        // width clamped to 0px, not a refused `-10px`).
-        // A CONTAINER UNIT HAS ITS ANSWER HERE, the one place that knows the
+        // The declaration block splits the unfolded value (`unfolded` below):
+        // its grammars take a math function as a component, and each longhand
+        // is folded below against the longhand's own bases and range, which a
+        // shorthand has neither of (`border-block-width: 3px calc(10px - 0.5em)`
+        // is 3px and a width clamped to 0px, not a refused `-10px`).
+        // A container unit is resolved here, the one place that knows the
         // element's query container (CSS Conditional 5 §4.3): `left: 10cqw`
         // is 7px against a 70px container, and the small viewport's share
-        // on an axis no container sizes (container-units-small-viewport-
+        // on an axis no container sizes (WPT container-units-small-viewport-
         // fallback). The computed value is the absolute length.
         value = cascade_detail::resolve_container_units(std::move(value), lengths_for(d.property));
         const std::string unfolded = value;
-        // CALC, AFTER SUBSTITUTION AND BEFORE EXPANSION - the same ordering
-        // argument as the shorthands: `-1 * var(x)` has no arithmetic to do
+        // Math is folded after substitution and before expansion, for the same
+        // reason as the shorthands: `-1 * var(x)` has no arithmetic to do
         // before substitution, and `border: calc(var(w) * 2) solid red` cannot
         // be split into longhands until its components are single tokens.
         if (css::may_have_math(value)) {
-            // WHAT THE PROPERTY WILL TAKE, passed down, because the evaluator
-            // answers with numbers and only the cascade knows whether one is a
-            // value here: `opacity: calc(2 / 4)` is `0.5`; `width: calc(2 * 3)`
-            // is a syntax error.
+            // The property is passed down because the evaluator answers with
+            // numbers and only the cascade knows whether one is a value here:
+            // `opacity: calc(2 / 4)` is `0.5`; `width: calc(2 * 3)` is a
+            // syntax error.
             css::length_context math_bases = lengths_for(d.property);
             math_bases.property = property;
             css::folded_value done =
                 css::fold_math(value, math_bases, css::math_context_of(property));
             if (!done.ok) {
-                // A CALC THAT DOES NOT EVALUATE IS NOT A VALUE, and the
-                // declaration is invalid. WHICH KIND of invalid depends on where
+                // A calc that does not evaluate is not a value, and the
+                // declaration is invalid. Which kind of invalid depends on where
                 // the value came from, which is why `had_var` is remembered: a
                 // value that went through substitution is invalid at
-                // COMPUTED-VALUE time, and §3 spells that `unset`, so it must
-                // also remove the earlier declaration it beat. One that never
-                // contained a var() is invalid at PARSE time, so the earlier
-                // declaration simply wins and this one is dropped.
+                // computed-value time, which CSS Variables 1 §3 spells `unset`,
+                // so it must also remove the earlier declaration it beat. One
+                // that never contained a var() is invalid at parse time, so the
+                // earlier declaration simply wins and this one is dropped.
                 if (had_var) { unset(); }
                 return;
             }
             value = std::move(done.text);
-            // ...AND CLAMPED TO THE PROPERTY'S RANGE, CSS Values 4 §10.10:
-            // `tab-size: calc(2 * -4)` computes to 0 where a literal `-8`
-            // never got past the grammar. `calc-numbers` asks for exactly
-            // that, and the table already knows which properties have a
-            // floor at zero.
+            // The result is clamped to the property's range (CSS Values 4
+            // §10.10): `tab-size: calc(2 * -4)` computes to 0 where a literal
+            // `-8` never gets past the grammar (WPT calc-numbers). The property
+            // table knows which properties have a floor at zero.
             if (const css::property_syntax * known = css::find_property(property);
                 known != nullptr && known->nonnegative) {
                 value = css::non_negative(value);
             }
-            // ...AND A SUBSTITUTED VALUE IS VALIDATED once its math has an
-            // answer, as the path without math was above: `font-style:
+            // A substituted value is validated once its math has an answer,
+            // as the path without math was above: `font-style:
             // attr(data-foo type(<angle>), calc(10 + 20))` falls back to
             // the number 30, which font-style cannot take, and is invalid
-            // at computed-value time (attr-all-types). A value that is
-            // still a function - `min(10px, 5%)` - is valid as it stands.
-            // Image and layer sizes clamp each component separately. Validate
-            // substituted syntax even if some math remains unresolved, keeping
-            // negative literals distinct from negative calculation results.
+            // at computed-value time (WPT attr-all-types). A value that is
+            // still a function (`min(10px, 5%)`) is valid as it stands.
+            // Image and layer sizes clamp each component separately, so their
+            // substituted syntax is validated on the unfolded text even if some
+            // math remains unresolved, keeping negative literals distinct from
+            // negative calculation results.
             const bool image_components = ascii_iequals_any(
                 property,
                 {"background", "border-image", "border-image-width", "border-image-outset",
@@ -978,25 +990,25 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
                 if (!image_components) { value = std::move(checked.serialized); }
             }
         }
-        // FONT SIZE IS ALREADY RESOLVED - the pre-pass above did it, because
-        // every `em` in every other declaration needed the answer first. Emit
-        // that number rather than re-deriving it here, so there is exactly one
-        // place a font size is computed and no way for the two to disagree.
+        // Font size is already resolved by the pre-pass above, because every
+        // `em` in every other declaration needed the answer first. Emit that
+        // number rather than re-deriving it here, so there is exactly one place
+        // a font size is computed and no way for the two to disagree.
         if (d.property == font_size_ && font_size_resolved) {
             value = css::serialize_calc(css::calc_result{own_font_size, 0.0f, false});
         }
-        // EVERY RELATIVE LENGTH FOLDS TO PIXELS HERE, after expansion so a
+        // Every relative length folds to pixels here, after expansion so a
         // shorthand's components each get their own answer. `padding: 1rem 2em`
         // becomes four px longhands, which is what a computed value is.
         //
         // It happens here rather than in layout because this is the only place
         // that knows all three bases at once: the element's own font size, the
-        // ROOT's, and the viewport.
+        // root's, and the viewport.
         //
-        // A BARE NUMBER IS LEFT ALONE: `line-height: 1.5` is not 1.5px.
+        // A bare number is left alone: `line-height: 1.5` is not 1.5px.
         //
-        // EVERY DIMENSION FAMILY, not only lengths. `transition-delay: 12ms`
-        // computes to `0.012s` and `rotate: 100grad` to `90deg` (CSS Values 4
+        // Every dimension family folds, not only lengths. `transition-delay:
+        // 12ms` computes to `0.012s` and `rotate: 100grad` to `90deg` (CSS Values 4
         // 6.4-6.5); `canonical_dimension_text` is a superset of the length case
         // and still answers `96px` for `1in`.
         const auto folded = [&](std::string text, atom longhand) {
@@ -1035,8 +1047,8 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
                 }
                 return;
             }
-            // A substituted token stream is validated only now. If it is
-            // not overflow grammar, the winning shorthand is invalid at
+            // A substituted token stream is validated only now. If it does not
+            // match the overflow grammar, the winning shorthand is invalid at
             // computed-value time and resets both axes; a parse-time
             // invalid declaration still leaves earlier declarations alone.
             if (had_var && property == "overflow") {
@@ -1053,7 +1065,8 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
     });
 
     // Logical position keywords compute on their own element, before a child
-    // inherits them. Wait for the final writing mode/direction: either can var().
+    // inherits them. This runs after pass two so it sees the final writing mode
+    // and direction, either of which may come from a var().
     const std::string position_mode = conditions.computed("writing-mode").value_or("horizontal-tb");
     const std::string position_direction = conditions.computed("direction").value_or("ltr");
     for (declaration & d : out) {
@@ -1071,14 +1084,13 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
         }
     }
 
-    // SPLIT THE RESULT. Anything inherited goes into a fresh inherited half built
-    // on top of the parent's; everything else stays the element's own.
+    // Split the result. Anything inherited goes into a fresh inherited half
+    // built on top of the parent's; everything else stays the element's own.
     //
-    // THE LOAD-BEARING SHORTCUT: an element that declared nothing inherited keeps
-    // its PARENT'S POINTER verbatim - no copy, no hash, no intern. That is what
-    // makes a 128-entry inherited object free for the thousands of elements that
-    // share one, and it is the difference between this being an optimisation and
-    // being a regression.
+    // The essential shortcut: an element that declared nothing inherited keeps
+    // its parent's pointer verbatim, with no copy, hash or intern. That makes a
+    // large inherited object free for the thousands of elements that share one;
+    // without it, splitting would cost more than it saves.
     declaration_list inherited_here;
     bool any_inherited = false;
     for (const declaration & d : out) {
@@ -1102,7 +1114,7 @@ computed_style_ptr engine::resolve(const read_txn & txn, node_id node, const ele
         result_inherited = table_.intern_inherited(std::move(inherited_here));
     }
     // The own half keeps the inherited properties too. They are redundant with the
-    // inherited half - `get` would find them there - but removing them would make
+    // inherited half (`get` would find them there), but removing them would make
     // an element's own `color: red` invisible to anything that enumerates its own
     // declarations, which is what getComputedStyle's key list is.
     return table_.intern(std::move(out), std::move(result_inherited));

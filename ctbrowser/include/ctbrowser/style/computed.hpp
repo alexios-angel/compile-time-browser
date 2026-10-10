@@ -1,3 +1,19 @@
+//===- computed.hpp - Computed styles ---------------------------*- C++ -*-===//
+//
+// The resolved style of one element, and the table that shares them.
+//
+// Most elements in a real document resolve to the same computed style: every
+// <li> in a list, every cell in a table, every paragraph of body text. A copy
+// per element wastes memory in proportion to document size and, more
+// importantly, loses the cheapest invalidation check: two elements with
+// identical style should be pointer-equal.
+//
+// So computed styles are interned and refcounted. intrusive_ptr rather than
+// shared_ptr: the count lives in the object (one word, one allocation, no
+// separate control block), and these are copied constantly as layout passes
+// them around.
+//
+//===----------------------------------------------------------------------===//
 #pragma once
 #include <boost/container/small_vector.hpp>
 #include <boost/container_hash/hash.hpp>
@@ -10,43 +26,29 @@
 
 #include <ctbrowser/core/core.hpp>
 
-// The resolved style of one element, and the table that shares them.
-//
-// Most elements in a real document resolve to the SAME computed style: every
-// <li> in a list, every cell in a table, every paragraph of body text. Storing
-// a separate copy per element wastes memory in proportion to document size and
-// - more importantly - destroys the cheapest possible invalidation check,
-// because two elements with identical style should be pointer-equal.
-//
-// So computed styles are interned and refcounted. intrusive_ptr rather than
-// shared_ptr: the count lives in the object (one word, one allocation, no
-// separate control block), and these are copied constantly as layout passes
-// them around.
-
 namespace ctbrowser::style {
 
 using ctbrowser::atom;
 
-// One resolved declaration. The value stays textual at this stage - turning
-// "12px" into a length is layout's job, and doing it here would mean parsing
-// values that the box tree never asks for.
+/// One resolved declaration. The value stays textual: turning "12px" into a
+/// length is layout's job, and doing it here would parse values the box tree
+/// never asks for.
 struct declaration {
     atom property;
     std::string value;
     [[nodiscard]] friend bool operator==(const declaration &, const declaration &) = default;
 };
 
-// small_vector because the overwhelming majority of elements carry a handful
-// of declarations; a heap allocation each would dominate.
+/// A small_vector because most elements carry only a handful of declarations;
+/// a heap allocation for each would dominate.
 using declaration_list = boost::container::small_vector<declaration, 8>;
 
-// `boost::hash_combine`, not a hand-rolled FNV-1a: FNV walks a string a BYTE AT
-// A TIME, and boost::hash mixes over word-sized chunks (core/containers.hpp).
-//
-// It hashes exactly what `declaration_list::operator==` compares - the property atom and
-// the value bytes, in order - because a hash that reads less than equality does
-// is a table that returns wrong answers, and one that reads more is a table
-// that misses.
+/// Hashes exactly what `declaration_list::operator==` compares: the property
+/// atom and the value bytes, in order. A hash that read more than equality
+/// does would make equal lists miss each other in the table.
+///
+/// boost::hash_combine rather than a hand-rolled FNV-1a, because FNV walks a
+/// string a byte at a time and boost::hash mixes word-sized chunks.
 [[nodiscard]] inline std::size_t hash_declarations(const declaration_list & d) noexcept {
     std::size_t h = 0;
     for (const declaration & one : d) {
@@ -56,22 +58,20 @@ using declaration_list = boost::container::small_vector<declaration, 8>;
     return h;
 }
 
-// THE INHERITED HALF: every inherited property in scope on this element, plus every
-// custom property, as a FLAT snapshot rather than a parent chain.
-//
-// Flat because reading is what matters. A chain would make `get` walk to the root
-// per property, and `var()` will read this list very hard; a snapshot is one linear
-// scan of a list that is shared by pointer with every element that did not override
-// anything.
-//
-// AND SPLIT FROM THE OWN HALF because that is what keeps the interning invariant
-// alive. Inheritance makes an element's style depend on its parent's, so a single
-// combined list would give two <li> in different lists different styles and the
-// sharing rate would collapse to (inheritance contexts x own halves). Split, the
-// OWN half shares exactly as well as if inheritance did not exist - nothing about
-// it depends on the parent - and the inherited half shares per inheritance
-// CONTEXT, of which a Bootstrap page has a few dozen: `:root` alone carries 128
-// custom properties, and interned that is ONE object and a pointer per element.
+/// The inherited half of a computed style: every inherited property in scope
+/// on this element, plus every custom property, as a flat snapshot rather than
+/// a parent chain.
+///
+/// Flat because reads dominate: a chain would make `get` walk to the root per
+/// property, and `var()` reads this list heavily. A snapshot is one linear scan
+/// of a list shared by pointer with every element that overrode nothing.
+///
+/// It is kept separate from the element's own declarations so that interning
+/// still shares. One combined list would make an element's style depend on its
+/// parent's, so two <li> in different lists would differ. Split, the own half
+/// shares as if inheritance did not exist, and the inherited half shares per
+/// inheritance context, of which a Bootstrap page has a few dozen (`:root`
+/// alone carries 128 custom properties, interned once).
 class inherited_style {
 public:
     explicit inherited_style(declaration_list d) noexcept : declarations(std::move(d)) {}
@@ -97,6 +97,8 @@ private:
 
 using inherited_ptr = boost::intrusive_ptr<const inherited_style>;
 
+/// One element's computed style: its own declarations plus a shared pointer to
+/// what it inherited. Instances are interned by style_table.
 class computed_style {
 public:
     // Interning builds the declaration list first and constructs the style
@@ -106,19 +108,19 @@ public:
     computed_style(const computed_style &) = delete;
     computed_style & operator=(const computed_style &) = delete;
 
-    // The element's OWN declarations - what its own rules said. Named as it was
-    // because every reader outside this file goes through get().
+    /// The element's own declarations (what its matched rules set), excluding
+    /// inherited ones. Read through get(), which also consults `inherited`.
     declaration_list declarations;
-    // What it inherited. Shared with its parent whenever this element declared
-    // nothing inherited, which is most elements.
+    /// What it inherited. Shared with its parent whenever this element declared
+    /// nothing inherited, which is most elements.
     inherited_ptr inherited;
 
-    // OWN FIRST, then inherited - which is the cascade in one line: an element's own
-    // declaration always beats what came down to it.
-    //
-    // An EMPTY own value shadows the inherited one deliberately: that is how
-    // `initial` is expressed, since every reader already treats an empty value as
-    // "nothing said".
+    /// Looks up `property` in the own declarations first, then the inherited
+    /// ones: an element's own declaration always beats what came down to it.
+    ///
+    /// An empty own value deliberately shadows the inherited one: that is how
+    /// `initial` is expressed, since every reader treats an empty value as
+    /// "nothing said".
     [[nodiscard]] std::string_view get(atom property) const noexcept {
         for (const declaration & d : declarations) {
             if (d.property == property) { return d.value; }
@@ -147,15 +149,15 @@ private:
 
 using computed_style_ptr = boost::intrusive_ptr<const computed_style>;
 
-// Interning table. Resolution is single-threaded - the engine mutates its own
-// match state per element - so this is plain storage: one hash lookup per
-// resolved element, and the common case is a style that already exists.
+/// The interning table. Resolution is single-threaded (the engine mutates its
+/// own match state per element), so this is plain storage: one hash lookup per
+/// resolved element, and usually the style already exists.
 // ponytail: unsynchronised; add a mutex back if resolve() ever runs on the pool.
 class style_table {
 public:
-    // A style is (own declarations, inherited pointer). Two elements share one only
-    // when BOTH halves agree, which is the right granularity: the pointer makes the
-    // comparison of the inherited half O(1) rather than a list compare.
+    /// Returns the shared style for (own declarations, inherited pointer). Two
+    /// elements share one only when both halves agree; comparing the inherited
+    /// half is a pointer compare, O(1).
     [[nodiscard]] computed_style_ptr intern(declaration_list && candidate, inherited_ptr from) {
         std::size_t h = hash_declarations(candidate);
         boost::hash_combine(h, from.get());
@@ -170,9 +172,9 @@ public:
         return fresh;
     }
 
-    // The inherited halves get their own table, and it is the one that pays: for a
-    // Bootstrap page there are a few dozen distinct inheritance contexts and
-    // thousands of elements.
+    /// Returns the shared inherited half for `candidate`. This table is where
+    /// sharing pays most: a Bootstrap page has a few dozen distinct inheritance
+    /// contexts and thousands of elements.
     [[nodiscard]] inherited_ptr intern_inherited(declaration_list && candidate) {
         const std::size_t h = hash_declarations(candidate);
         auto & bucket = inherited_by_hash_[h];
@@ -184,14 +186,15 @@ public:
         return fresh;
     }
 
+    /// The number of distinct computed styles interned so far.
     [[nodiscard]] std::size_t distinct_styles() const {
         std::size_t n = 0;
         for (const auto & [h, bucket] : by_hash_) { n += bucket.size(); }
         return n;
     }
-    // Observable on its own, because it is the number that says whether the split is
-    // doing its job. If it tracks the element count, inheritance has collapsed the
-    // sharing and something is putting per-element data in the inherited half.
+    /// The number of distinct inherited halves, which shows whether the split is
+    /// working: if it tracks the element count, something is putting
+    /// per-element data in the inherited half.
     [[nodiscard]] std::size_t distinct_inherited() const {
         std::size_t n = 0;
         for (const auto & [h, bucket] : inherited_by_hash_) { n += bucket.size(); }
@@ -199,7 +202,7 @@ public:
     }
 
 private:
-    // hash -> the styles that share it; collisions are compared for real
+    // Hash -> the styles that share it; collisions are compared for real.
     flat_map<std::size_t, std::vector<computed_style_ptr>> by_hash_;
     flat_map<std::size_t, std::vector<inherited_ptr>> inherited_by_hash_;
 };

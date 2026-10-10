@@ -1,10 +1,13 @@
+//===- ctbrowser/lib/Paint/record.cpp - Display-list recording --*- C++ -*-===//
+//
+// recorder: walks the fragment tree and records a display list in CSS 2.1
+// Appendix E paint order, one stacking context at a time.
+//
+//===----------------------------------------------------------------------===//
 #include <ctbrowser/paint/record.hpp>
 
 #include <algorithm>
 #include <vector>
-
-// record: the method bodies.
-// The header says what these do; this says how.
 
 namespace ctbrowser::paint {
 
@@ -52,17 +55,18 @@ bool recorder::is_flex_item(const fragment & parent, const fragment & child) {
 bool recorder::establishes_stacking_context(const fragment & f, bool flex_item) const {
     if (f.box == nullptr) { return false; }
     const layout::box_node & box = *f.box;
-    // CSS 2.1's positioned integer-z contexts are the centre of this rung.
-    // Flexbox extends that rule to in-flow flex items even when position is
-    // static. The parent relation is deliberately supplied by the caller:
-    // `box_node` describes the item, not the formatting context containing it.
-    // Opacity and transform have to join them now rather than later: both make
-    // their descendants atomic, and opacity's existing subtree fade is only
-    // correct while every command in that subtree remains contiguous.
+    // CSS 2.1: a positioned box with an integer z-index establishes a stacking
+    // context, and Flexbox extends that to in-flow flex items even when position
+    // is static. The caller supplies the parent relation because `box_node`
+    // describes the item, not the formatting context containing it. Opacity and
+    // transform also establish contexts: both make their descendants atomic,
+    // and the opacity fade is only correct while the subtree's commands stay
+    // contiguous.
     if ((box.is_positioned() || flex_item) && box.z_index.has_value()) { return true; }
     if (box.opacity < 1.0f || box.transformed) { return true; }
-    // Fixed and sticky boxes establish contexts even with z-index:auto. They
-    // remain in this display list until S11c gives them non-scrolling layers.
+    // Fixed and sticky boxes establish contexts even with z-index:auto. They stay
+    // in this display list until fixed/sticky boxes get their own non-scrolling
+    // compositor layers.
     return box.position == layout::position_kind::fixed ||
            box.position == layout::position_kind::sticky;
 }
@@ -113,7 +117,7 @@ void recorder::collect_context_contents(const paint_ref & parent, std::span<cons
             ref.order = order++;
             out.positioned.push_back(ref);
             // An auto-z positioned box is not a context. Its descendant
-            // contexts AND positioned boxes still escape to THIS context.
+            // contexts and positioned boxes still escape to this context.
             // Appendix E treats this box as a pseudo-context for its ordinary
             // contents only; it does not trap either kind of descendant.
             collect_context_contents(ref, descendant_clips, order, out);

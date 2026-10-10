@@ -1,7 +1,10 @@
+//===- ctbrowser/lib/Raster/backend/software.cpp - CPU tile backend -------===//
+//
+// software_backend: rasters display-list tiles into CPU surfaces, keeps them
+// across frames, and composites the visible ones into the target surface.
+//
+//===----------------------------------------------------------------------===//
 #include <ctbrowser/raster/backend/software.hpp>
-
-// software: the method bodies.
-// The header says what these do; this says how.
 
 namespace ctbrowser::raster {
 
@@ -36,7 +39,7 @@ void software_backend::resize(int width, int height) {
 }
 
 void software_backend::raster(tile_id id, const display_list & list) {
-    // reserve_tiles ran first - draw() is the caller and always does - so the
+    // reserve_tiles ran first (draw() is the caller and always calls it), so the
     // slot exists and no other thread is writing it.
     slot & s = layers_[id.layer].find(key_of(id))->second;
     raster_calls_.fetch_add(1, std::memory_order_relaxed);
@@ -46,19 +49,18 @@ void software_backend::raster(tile_id id, const display_list & list) {
 
 void software_backend::composite(std::span<const layer> layers) {
     target_.fill(clear_color);
-    // Layers composite back to front, so the outer loop order is load
-    // bearing. Order WITHIN a layer is not: a layer's tiles never overlap,
-    // so each target pixel is touched at most once per layer - which is what
-    // makes it safe to iterate an unordered store and still get a
-    // deterministic image.
+    // Layers composite back to front, so the outer loop order matters. Order
+    // within a layer does not: a layer's tiles never overlap, so each target
+    // pixel is touched at most once per layer, which is what makes it safe to
+    // iterate an unordered store and still get a deterministic image.
     for (std::size_t li = 0; li < layers.size() && li < layers_.size(); ++li) {
         const layer & l = layers[li];
         for (const auto & [key, s] : layers_[li]) {
             if (!s.valid) { continue; }
             const float at_x = s.area.x + l.offset.x;
             const float at_y = s.area.y + l.offset.y;
-            // Tiles are KEPT after they scroll out of view, so that scrolling
-            // back is free - which means the store holds every tile the page
+            // Tiles are kept after they scroll out of view, so that scrolling
+            // back is free, which means the store holds every tile the page
             // has ever shown. Compositing all of them would make a scroll get
             // slower the longer it went on. Skip the ones that land off the
             // target entirely.

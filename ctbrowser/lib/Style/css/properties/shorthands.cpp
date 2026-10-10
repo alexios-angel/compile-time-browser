@@ -1,3 +1,13 @@
+//===- shorthands.cpp - Shorthand helpers --------------------- -*- C++ -*-===//
+//
+// The public face of shorthand handling: validating shorthand values
+// (background, border-radius, border-image, columns), and reading, writing,
+// removing and serialising declarations in a declaration_block so that a
+// shorthand expands into its longhands on the way in and folds back on the
+// way out. The split and fold machinery lives in shorthands/.
+//
+//===----------------------------------------------------------------------===//
+
 #include "shorthands/internal.hpp"
 
 namespace ctbrowser::style::css {
@@ -51,6 +61,8 @@ bool detail::match_border_image(std::string_view property, std::string_view valu
                   "repeating-radial-gradient(", "conic-gradient(", "repeating-conic-gradient("}))) {
             return false;
         }
+        // Exactly one top-level image: any token at depth 0 after the first
+        // means a second value.
         int depth = 0;
         for (const std::size_t at : found.significant) {
             if (depth == 0 && at != found.significant.front()) { return false; }
@@ -85,8 +97,9 @@ bool detail::match_border_image(std::string_view property, std::string_view valu
     return true;
 }
 
-// CSS Multicol 2: auto does not choose width or count until the other
-// component is known; the slash introduces a separate, optional height.
+/// Splits a `columns` value (CSS Multicol 2) into column-width, column-count
+/// and column-height. `auto` does not choose width or count until the other
+/// component is known; the slash introduces a separate, optional height.
 bool detail::split_columns(std::string_view value, std::vector<std::string> & out) {
     const token_stream ts = tokenize(value);
     std::size_t slash = std::string_view::npos;

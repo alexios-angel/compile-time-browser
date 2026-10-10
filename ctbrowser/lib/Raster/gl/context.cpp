@@ -1,12 +1,13 @@
-// gl::device - the EGL side: the driver, the display, the context and the
+//===- ctbrowser/lib/Raster/gl/context.cpp - GL device: EGL setup ---------===//
+//
+// gl::device, the EGL side: the driver, the display, the context and the
 // surface, and the state that is global to a context: viewport, scissor, the
 // clears, capabilities, errors and limits.
 //
-// One of four files carved out of a 1,162-line Raster/gl.cpp on 2026-09-08.
-// All are member functions of the one class declared in
-// include/ctbrowser/raster/gl.hpp; the pimpl both branches define is in
-// internal.hpp beside this, with the includes gl.cpp had. Nothing about the
-// public header changed.
+// Member functions of gl::device (include/ctbrowser/raster/gl.hpp). The pimpl
+// and the shared includes are in internal.hpp beside this file.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -16,15 +17,15 @@ namespace ctbrowser::raster::gl {
 
 namespace {
 
-// THE DRIVER, ASKED FOR BY NAME. The stack this replaces hard-coded SwiftShader
-// here with no way to select anything else, so "safe mode" was a rewrite rather
-// than an argument.
+/// Opens an ANGLE display on its Vulkan back end. `driver::deterministic` pins
+/// the device to SwiftShader so renders are byte-reproducible; `fastest` lets
+/// ANGLE pick.
 [[nodiscard]] EGLDisplay open_display(driver which) {
     const auto get_platform_display = reinterpret_cast<PFNEGLGETPLATFORMDISPLAYEXTPROC>(
         eglGetProcAddress("eglGetPlatformDisplayEXT"));
     if (get_platform_display == nullptr) { return EGL_NO_DISPLAY; }
 
-    // EGLint, NOT EGLAttrib. eglGetPlatformDisplayEXT takes the narrower type
+    // EGLint, not EGLAttrib. eglGetPlatformDisplayEXT takes the narrower type
     // and passing the wider one compiles, then reads the attribute list wrong.
     std::vector<EGLint> attrs{EGL_PLATFORM_ANGLE_TYPE_ANGLE, EGL_PLATFORM_ANGLE_TYPE_VULKAN_ANGLE};
     if (which == driver::deterministic) {
@@ -35,14 +36,14 @@ namespace {
     return get_platform_display(EGL_PLATFORM_ANGLE_ANGLE, EGL_DEFAULT_DISPLAY, attrs.data());
 }
 
-// WHOLE WORDS, SPACE SEPARATED. Every extension name asked about here is a
-// prefix of some other one - `EGL_ANGLE_robust_resource_initialization` sits
-// beside `..._initialization_2` in some builds - so a plain substring search
-// reports an extension the driver does not have, and the attribute is then
-// rejected by eglCreateContext.
-//
-// One function, because EGL and GL both answer with a space-separated list and
-// two copies of this loop is how they drift.
+/// Whether `name` appears in `all` as a whole space-separated word. Every
+/// extension name asked about here is a prefix of some other one
+/// (`EGL_ANGLE_robust_resource_initialization` sits beside
+/// `..._initialization_2` in some builds), so a plain substring search
+/// reports an extension the driver does not have, and the attribute is then
+/// rejected by eglCreateContext.
+///
+/// EGL and GL both answer with a space-separated list, so both use this.
 [[nodiscard]] bool contains_word(std::string_view all, std::string_view name) {
     for (std::size_t at = all.find(name); at != std::string_view::npos;
          at = all.find(name, at + 1)) {
@@ -54,21 +55,19 @@ namespace {
     return false;
 }
 
-// Does this display advertise an extension? A DISPLAY extension is only
-// queryable after eglInitialize, which is why this is asked at construction
-// rather than folded into a constant attribute list.
+/// Whether this display advertises an extension. A display extension is only
+/// queryable after eglInitialize, which is why this is asked at construction
+/// rather than folded into a constant attribute list.
 [[nodiscard]] bool has_extension(EGLDisplay display, std::string_view name) {
     const char * all = eglQueryString(display, EGL_EXTENSIONS);
     return all != nullptr && contains_word(all, name);
 }
 
-// ANGLE'S OWN WORDS, NOT A NUMBER.
-//
-// `glGetError` answers 0x0502 for a draw GL dropped, which names the category
-// and not the defect. KHR_debug answers "An enabled vertex array has no
-// buffer." - and the difference between those two strings is the difference
-// between a pass of guessing and a fix. Every silent-draw defect this back end
-// has had would have announced itself here.
+/// KHR_debug callback: prints ANGLE's own message for each GL event to stderr.
+///
+/// `glGetError` answers 0x0502 (GL_INVALID_OPERATION) for a draw GL dropped,
+/// which names the category and not the defect. KHR_debug answers "An enabled
+/// vertex array has no buffer.", which points at the fix.
 void GL_APIENTRY report_gl_message(GLenum /*source*/, GLenum type, GLuint id, GLenum severity,
                                    GLsizei length, const GLchar * message, const void * /*user*/) {
     const std::string text = length < 0 || message == nullptr
@@ -79,16 +78,16 @@ void GL_APIENTRY report_gl_message(GLenum /*source*/, GLenum type, GLuint id, GL
                  static_cast<unsigned>(id), text.c_str());
 }
 
-// OFF unless `CTBROWSER_GL_DEBUG` is set, and free when it is not: with no
-// callback installed ANGLE never formats a string.
-//
-// SYNCHRONOUS on purpose. An asynchronous callback arrives detached from the
-// call that caused it, and a log you cannot attribute to a line is the kind of
-// evidence that produced four wrong conclusions on this branch already.
-//
-// Resolved through eglGetProcAddress rather than linked: KHR_debug is an
-// extension, the entry point is only present when the context has it, and
-// asking is how you find out rather than assuming and failing to link.
+/// Installs report_gl_message when `CTBROWSER_GL_DEBUG` is set (and not "0").
+/// Off otherwise, and free: with no callback installed ANGLE never formats a
+/// string.
+///
+/// Synchronous on purpose: an asynchronous callback arrives detached from the
+/// call that caused it, so its message could not be tied to a line of code.
+///
+/// Resolved through eglGetProcAddress rather than linked: KHR_debug is an
+/// extension, the entry point is only present when the context has it, and
+/// asking is how you find out rather than assuming and failing to link.
 void install_debug_callback() {
     const char * want = std::getenv("CTBROWSER_GL_DEBUG");
     if (want == nullptr || std::string_view{want} == "0") { return; }
@@ -118,11 +117,8 @@ bool available() {
 }
 
 std::string unavailable_because() {
-    // ASKS THE SAME QUESTION THE CONSTRUCTOR DOES, both drivers, or it answers
-    // about a device nobody would have been given. The first version asked only
-    // about `fastest` and reported the whole subsystem missing on a box where
-    // SwiftShader works perfectly - which skipped the one test that would have
-    // said so.
+    // Try both drivers, as the constructor does. Asking only about `fastest`
+    // would report GL missing on a machine where SwiftShader works.
     for (const driver attempt : {driver::fastest, driver::deterministic}) {
         const EGLDisplay display = open_display(attempt);
         if (display == EGL_NO_DISPLAY) { continue; }
@@ -136,9 +132,8 @@ std::string unavailable_because() {
     EGLint major = 0;
     EGLint minor = 0;
     if (eglInitialize(display, &major, &minor) != EGL_TRUE) {
-        // THE LIKELIEST CAUSE NAMED, because "eglInitialize failed" sends the
-        // next reader nowhere and this exact omission cost an hour when the
-        // release was packaged.
+        // Name the likeliest cause; a bare "eglInitialize failed" gives the
+        // reader nothing to check.
         return "eglInitialize failed - is vk_swiftshader_icd.json beside the libraries?";
     }
     eglTerminate(display);
@@ -149,18 +144,10 @@ device::device(int width, int height, driver which) : impl_{std::make_unique<imp
     impl_->width = width;
     impl_->height = height;
 
-    // THE DRIVER, OVERRIDABLE AT RUN TIME.
-    //
-    // `CTBROWSER_GL_DRIVER=deterministic` forces SwiftShader and `=fastest` asks
-    // for whatever the machine has. It matters most where the two actually
-    // differ, which is nowhere the tests run: the devbox has no GPU, so both
-    // land on SwiftShader, and the Windows .exe on real hardware is the only
-    // place a page gets a GPU at all (docs/platform.md). Comparing the two is
-    // otherwise a rebuild rather than a run.
-    //
-    // Named in the old notes as though it existed; it did not, and its absence
-    // is why "is this a driver difference?" was never a question anyone could
-    // answer in one command.
+    // `CTBROWSER_GL_DRIVER=deterministic` (or `swiftshader`) forces SwiftShader;
+    // `=fastest` asks for the machine's own GPU. This lets a suspected driver
+    // difference be checked with one run instead of a rebuild. On a machine with
+    // no GPU both settings land on SwiftShader (docs/platform.md).
     if (const char * want = std::getenv("CTBROWSER_GL_DRIVER"); want != nullptr) {
         const std::string_view asked{want};
         if (asked == "deterministic" || asked == "swiftshader") {
@@ -170,9 +157,9 @@ device::device(int width, int height, driver which) : impl_{std::make_unique<imp
         }
     }
 
-    // SAFE MODE IS A FLOOR, NOT A CLIFF. `fastest` asks for ANGLE's own device
-    // selection, which on a headless box with no GPU cannot come up at all -
-    // measured: VK_EXT_headless_surface and VK_KHR_surface are simply absent.
+    // SwiftShader is the fallback. `fastest` asks for ANGLE's own device
+    // selection, which on a headless machine with no GPU cannot come up at all
+    // (measured: VK_EXT_headless_surface and VK_KHR_surface are absent).
     //
     // Falling back to SwiftShader is what a browser does and what keeps a page
     // from getting a null context on a machine that can render perfectly well in
@@ -227,20 +214,20 @@ device::device(int width, int height, driver which) : impl_{std::make_unique<imp
         return;
     }
 
-    // THE CONTEXT A BROWSER ASKS FOR, WHICH IS NOT THE ONE A NATIVE APP ASKS
-    // FOR. ANGLE trusts a GLES client: a uniform buffer bound to a binding point
+    // Ask for the context a browser asks for, which is not the one a native app
+    // asks for. ANGLE trusts a GLES client: a uniform buffer bound to a binding point
     // with no storage behind it is undefined behaviour, and the Vulkan back end
     // dereferences the null BufferHelper rather than complaining. The same
-    // mistake in a WEB PAGE has to be an INVALID_OPERATION, and the switch that
-    // makes it one is the context attribute Chrome sets and this did not.
+    // mistake in a web page has to be an INVALID_OPERATION, and the switch that
+    // makes it one is the WebGL-compatibility context attribute Chrome sets.
     //
     // Robust resource initialisation is the second half of the same argument and
-    // is load-bearing for a different reason: WebGL requires an untouched buffer
-    // or texture to read as ZERO, and a byte-compared golden cannot survive
+    // is required for a different reason: WebGL requires an untouched buffer
+    // or texture to read as zero, and a byte-compared golden cannot survive
     // reading whatever the last allocation left in device memory.
     //
-    // ES 3.0, NOT 3.1, AND THE VERSION IS LOAD-BEARING. Measured on the devbox
-    // against SwiftShader, one attribute changed per run:
+    // ES 3.0, not 3.1; the version matters. Measured against SwiftShader, one
+    // attribute changed per run:
     //
     //     ES3.1 bare             OK
     //     ES3.1 +webgl           FAIL (EGL_BAD_MATCH 0x3009)
@@ -248,17 +235,14 @@ device::device(int width, int height, driver which) : impl_{std::make_unique<imp
     //     ES3.0 +webgl           OK
     //     ES3.0 +webgl +robust   OK
     //
-    // ANGLE REFUSES WebGL compatibility on an ES 3.1 context. Asking for 3.1
-    // and then adding the attribute produced NO CONTEXT AT ALL - every WebGL
-    // test failing with "eglCreateContext failed", which reads like ANGLE is
-    // missing rather than like one attribute is wrong.
+    // ANGLE refuses WebGL compatibility on an ES 3.1 context: asking for 3.1
+    // with the attribute produces no context at all.
     //
-    // 3.1 was over-asking in the first place: WebGL 2 is defined against GLES
-    // 3.0, nothing in this file calls a 3.1 entry point, and 3.0 is what Chrome
-    // requests. It also buys correct SHADER validation - ANGLE's
-    // Compiler::SelectShaderSpec answers SH_WEBGL2_SPEC for minor 0 and
-    // SH_GLES3_1_SPEC for minor 1, so 3.1 would have validated page shaders
-    // against the wrong dialect even had the context come up.
+    // 3.0 is also the right version: WebGL 2 is defined against GLES 3.0,
+    // nothing here calls a 3.1 entry point, and 3.0 is what Chrome requests. It
+    // also gives correct shader validation: ANGLE's Compiler::SelectShaderSpec
+    // answers SH_WEBGL2_SPEC for minor 0 and SH_GLES3_1_SPEC for minor 1, so 3.1
+    // would validate page shaders against the wrong dialect.
     std::vector<EGLint> context_attrs{EGL_CONTEXT_MAJOR_VERSION, 3, EGL_CONTEXT_MINOR_VERSION, 0};
     if (has_extension(impl_->display, "EGL_ANGLE_create_context_webgl_compatibility")) {
         context_attrs.push_back(EGL_CONTEXT_WEBGL_COMPATIBILITY_ANGLE);
@@ -271,12 +255,9 @@ device::device(int width, int height, driver which) : impl_{std::make_unique<imp
     context_attrs.push_back(EGL_NONE);
     impl_->context = eglCreateContext(impl_->display, config, EGL_NO_CONTEXT, context_attrs.data());
     if (impl_->context == EGL_NO_CONTEXT) {
-        // THE EGL ERROR CODE, because the attribute list is the thing most
-        // likely to be wrong and the code is the only part that says which way.
-        // Without it this read "eglCreateContext failed" for a whole session
-        // while the cause was one attribute the driver answers EGL_BAD_MATCH
-        // (0x3009) to - indistinguishable, from the message alone, from ANGLE
-        // not being installed.
+        // Append the EGL error code: a rejected context attribute (EGL_BAD_MATCH,
+        // 0x3009) otherwise produces the same message as ANGLE not being
+        // installed.
         char code[32];
         std::snprintf(code, sizeof code, " (EGL error 0x%04X)",
                       static_cast<unsigned>(eglGetError()));
@@ -288,7 +269,7 @@ device::device(int width, int height, driver which) : impl_{std::make_unique<imp
         impl_->error = "eglMakeCurrent failed";
         return;
     }
-    // AFTER make_current, because a debug callback is context state and there
+    // After make_current, because a debug callback is context state and there
     // was no current context to attach it to until this line.
     install_debug_callback();
 }
@@ -317,8 +298,8 @@ bool device::resize(int width, int height) {
     if (!ok()) { return false; }
     if (width == impl_->width && height == impl_->height) { return true; }
 
-    // THE NEW SURFACE FIRST. If eglCreatePbufferSurface fails - a size beyond
-    // EGL_MAX_PBUFFER_WIDTH, say - the old one is still current and the page
+    // Create the new surface first. If eglCreatePbufferSurface fails (a size
+    // beyond EGL_MAX_PBUFFER_WIDTH, say), the old one is still current and the page
     // keeps the drawing buffer it had, which is a stale size rather than no
     // context at all.
     const EGLint attrs[] = {EGL_WIDTH, width, EGL_HEIGHT, height, EGL_NONE};
@@ -329,7 +310,7 @@ bool device::resize(int width, int height) {
         eglDestroySurface(impl_->display, fresh);
         return false;
     }
-    // ONLY NOW is the old one unreferenced. Destroying a surface while it is
+    // Only now is the old one unreferenced. Destroying a surface while it is
     // still the read or draw surface is what EGL calls undefined.
     if (impl_->surface != EGL_NO_SURFACE) { eglDestroySurface(impl_->display, impl_->surface); }
     impl_->surface = fresh;
@@ -361,7 +342,7 @@ std::string device::version() const {
 }
 
 bool device::webgl_compatible() const {
-    // ASKED OF GL, not remembered from the attribute list. eglCreateContext is
+    // Asked of GL, not remembered from the attribute list. eglCreateContext is
     // entitled to ignore an attribute it does not implement, so "we requested
     // it" and "we got it" are two different facts and only the second one is
     // worth reporting.

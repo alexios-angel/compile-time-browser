@@ -1,3 +1,10 @@
+//===- ctbrowser/lib/Style/css/selector.cpp - Selector list entry points --===//
+//
+// The public entry points of the selector parser: known_pseudo_element and
+// parse_selector_list. The parser itself is selector_parser in
+// selector/internal.hpp.
+//
+//===----------------------------------------------------------------------===//
 #include "selector/internal.hpp"
 
 namespace ctbrowser::style::css {
@@ -25,8 +32,9 @@ bool known_pseudo_element(std::string_view name) {
                                                  "checkmark",
                                                  "picker-icon",
                                                  "column"};
-    // A vendor-prefixed pseudo-element - `::-webkit-scrollbar`, `::-moz-selection` -
-    // is whatever that vendor says it is, and every browser parses the others'.
+    // A vendor-prefixed pseudo-element (`::-webkit-scrollbar`,
+    // `::-moz-selection`) is whatever that vendor says it is, and every browser
+    // parses the others' prefixes too.
     return ascii_iequals_any(name, names) || ascii_istarts_with(name, "-webkit-") ||
            ascii_istarts_with(name, "-moz-");
 }

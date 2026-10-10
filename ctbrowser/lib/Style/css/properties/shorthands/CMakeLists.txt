@@ -1,3 +1,4 @@
+# Shorthand splitting and folding for CSS declaration blocks.
 target_sources(ctbrowser-style PRIVATE
   block.cpp
   fold.cpp

@@ -1,3 +1,12 @@
+//===- at_rules.cpp - CSS at-rule parsing ---------------------------------===//
+//
+// The parser's at-rule half: @layer names and statements, the block at-rules
+// (@media, @supports, @layer, @scope, @container, @font-face, @property,
+// @function, @keyframes) and the statement at-rules (@import, @namespace,
+// @charset). See internal.hpp for the parser class.
+//
+//===----------------------------------------------------------------------===//
+
 #include "internal.hpp"
 
 #include <charconv>
@@ -78,7 +87,7 @@ void parser::at_rule_block_of(std::string_view name, std::span<const component_v
     };
     switch (kind) {
     case at_kind::media: {
-        // A REAL CONDITION. The prelude becomes a query list, the list
+        // A real condition. The prelude becomes a query list, the list
         // becomes an entry in the sheet's condition table with the enclosing
         // condition as its parent, and every rule inside records that index.
         // Nothing is evaluated here: a sheet is parsed once and the viewport
@@ -90,7 +99,7 @@ void parser::at_rule_block_of(std::string_view name, std::span<const component_v
         return;
     }
     case at_kind::supports: {
-        // DECIDED NOW, ONCE: what the property table accepts does not
+        // Decided now, once: what the property table accepts does not
         // change. A false condition files its rules under a condition
         // that is never true - `not all` - so the block still parses,
         // and its `@layer` names still count.
@@ -112,6 +121,8 @@ void parser::at_rule_block_of(std::string_view name, std::span<const component_v
         const auto trimmed = sheet_.trimmed(prelude);
         std::string name;
         if (trimmed.empty()) {
+            // An anonymous layer gets a unique name starting with \x01, which no
+            // CSS identifier can contain, so it can never be referenced or merged.
             name = "\x01" + std::to_string(++anonymous_layers_);
         } else if (!layer_name_of(trimmed, name)) {
             return;
@@ -154,10 +165,10 @@ void parser::at_rule_block_of(std::string_view name, std::span<const component_v
     case at_kind::property:
     case at_kind::function: {
         // Collected like @font-face, prelude included, and only at the top
-        // level: one inside a conditional group is discarded as before -
-        // except an `@container` or an `@scope`, whose condition is per
-        // element and which define what they hold regardless of it
-        // (container-inner-at-rules, scope-name-defining-rules).
+        // level or directly inside @container/@scope (whose condition is per
+        // element, so they define what they hold regardless of it); inside
+        // @media/@supports they are discarded (WPT container-inner-at-rules,
+        // scope-name-defining-rules).
         if (nesting_ != 1 && ((container_ == 0 && scope_ == 0) || condition_ != 0)) { return; }
         at_rule_block r;
         r.prelude_first = static_cast<std::uint32_t>(sheet_.values.size());
@@ -213,7 +224,7 @@ void parser::scope_block_of(std::span<const component_value> prelude,
     // `@scope ()`, `@scope to ()`, a selector that is not one: the rule is
     // invalid and its block applies nothing.
     if (invalid) { return; }
-    // No `<scope-start>` at all is the IMPLICIT scope, rooted where the shell said.
+    // No `<scope-start>` at all is the implicit scope, rooted where the shell said.
     if (!has_start) { made.implicit_root = scope_owner_; }
     sheet_.scopes.push_back(made);
     const std::uint32_t saved_scope = scope_;
@@ -253,8 +264,8 @@ void parser::consume_at_rule() {
     }
     const bool ended = here().type == token_type::semicolon;
     if (ended || at_eof()) {
-        // `@namespace [<prefix>]? <url>;` is RECORDED, because it decides
-        // which prefixes the selectors after it may use; a LEADING `@import`
+        // `@namespace [<prefix>]? <url>;` is recorded, because it decides
+        // which prefixes the selectors after it may use; a leading `@import`
         // is too, for whoever can fetch it; `@layer a, b;` declares its
         // layers. `@charset` is consumed and that is all.
         if (ascii_iequals(name, "import")) {
@@ -308,15 +319,15 @@ void parser::record_keyframes(std::span<const component_value> prelude,
             return;
         }
     }
-    // `none` and the CSS-wide keywords are not names (§4.2), and neither is
-    // an empty one.
+    // A @keyframes name may not be empty, `none`, a CSS-wide keyword, or
+    // `default` (CSS Animations <keyframes-name>, CSS Values <custom-ident>).
     if (made.name.empty() || ascii_iequals(made.name, "none") ||
         ascii_iequals(made.name, "initial") || ascii_iequals(made.name, "inherit") ||
         ascii_iequals(made.name, "unset") || ascii_iequals(made.name, "revert") ||
         ascii_iequals(made.name, "revert-layer") || ascii_iequals(made.name, "default")) {
         return;
     }
-    // The children are read through a COPY: emit_declarations appends to
+    // The children are read through a copy: emit_declarations appends to
     // sheet_.values, and a span into it would dangle (see emit_declarations).
     const std::span<const component_value> inner = sheet_.children_of(block);
     const std::vector<component_value> children{inner.begin(), inner.end()};

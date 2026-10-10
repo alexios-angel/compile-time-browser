@@ -1,5 +1,10 @@
-// check_declaration - the answer `el.style[p] = v` and `CSS.supports(p, v)`
-// both need - and the `<supports-condition>` grammar over it.
+//===- declaration.cpp - Declaration validation --------------- -*- C++ -*-===//
+//
+// Declaration validation and serialisation (check_declaration), shared by
+// `el.style[p] = v` and `CSS.supports(p, v)`, plus the @supports condition
+// grammar built on it.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -12,10 +17,12 @@ using namespace detail;
 
 namespace {
 
-// `not X`, `X and Y`, `X or Y`, `(...)` and a bare `( p : v )`. Written over the
-// raw text with a bracket-depth counter rather than over the token stream: the
-// grammar is about the SHAPE of the parentheses, and the tokens have already
-// thrown away which ones were adjacent to what.
+/// Finds `word` (`and`, `or`) at parenthesis depth zero in a @supports
+/// condition, delimited by a space or parenthesis; returns npos if absent.
+/// The condition grammar (`not X`, `X and Y`, `X or Y`, `(...)`, `( p : v )`)
+/// is read from the raw text with a depth counter rather than the token
+/// stream, because it is about the shape of the parentheses and the tokens no
+/// longer record which ones were adjacent to what.
 [[nodiscard]] std::size_t find_top_level(std::string_view text, std::string_view word,
                                          std::size_t from) {
     int depth = 0;
@@ -50,7 +57,7 @@ namespace {
         return condition(body, depth + 1);
     }
     // `selector( <complex-selector> )`, CSS Conditional 4 §6.2: supported when
-    // it parses. A SYNTAX error and a selector this engine cannot match are
+    // it parses. A syntax error and a selector this engine cannot match are
     // different answers, and only the first is "not supported".
     if (ascii_istarts_with(body, "selector(") && body.back() == ')') {
         return supports_selector(body.substr(9, body.size() - 10));
@@ -114,11 +121,11 @@ bool condition(std::string_view text, int depth) {
     return leaf(body.substr(1, body.size() - 2), depth);
 }
 
-// `animation-name`: `[ none | <keyframes-name> ]#` with `<keyframes-name> =
-// <custom-ident> | <string>` (CSS Animations 1 §5.1). A custom ident is not a
-// CSS-wide keyword, `default` or `none`; a string is written back as the
-// identifier it names, except one that spells a word an identifier could not
-// be - `"none"`, `"initial"` - which stays a string.
+/// Matches `animation-name`: `[ none | <keyframes-name> ]#` with
+/// `<keyframes-name> = <custom-ident> | <string>` (CSS Animations 1 §5.1). A
+/// custom ident is not a CSS-wide keyword, `default` or `none`; a string is
+/// written back as the identifier it names, except one that spells a word an
+/// identifier could not be (`"none"`, `"initial"`), which stays a string.
 [[nodiscard]] bool match_animation_name(const token_stream & ts, const scan & found,
                                         std::string & out) {
     bool want_name = true;
@@ -151,8 +158,9 @@ bool condition(std::string_view text, int depth) {
 
 } // namespace
 
-// `revert-rule` is Cascade 5's newest, and the cascade rolls it back like the
-// other two (engine/cascade.cpp), so every property takes it.
+/// True for a CSS-wide keyword. `revert-rule` (CSS Cascade 5) is included
+/// because the cascade rolls it back like `revert` and `revert-layer`
+/// (engine/cascade.cpp), so every property accepts it.
 bool is_wide_keyword(std::string_view word) noexcept {
     return ascii_iequals_any(
         word, {"inherit", "initial", "unset", "revert", "revert-layer", "revert-rule"});
@@ -161,15 +169,10 @@ bool is_wide_keyword(std::string_view word) noexcept {
 value_check check_declaration(std::string_view property, std::string_view value,
                               bool allow_important) {
     std::string_view text = trim(value, html_whitespace);
-    // `!important` COMES OFF FIRST, before a single token is looked at, because
-    // everything below treats a `!` as proof the value is not a value. Split it
-    // here and the rest of this function never has to know the difference.
-    //
-    // It is not optional for the caller to get right: a `style` attribute may
-    // carry one and CSS syntax says so, so refusing it there would DROP the
-    // declaration - a page whose inline `width: 100px !important` stopped
-    // applying at all, which is a great deal worse than mis-reporting its
-    // priority.
+    // Strip `!important` before looking at any token, because everything below
+    // treats a `!` as proof the value is invalid. A `style` attribute may carry
+    // one (CSS syntax allows it), and refusing it would drop the declaration
+    // entirely, which is far worse than mis-reporting its priority.
     bool important = false;
     if (allow_important) {
         const std::size_t bang = text.rfind('!');
@@ -179,21 +182,14 @@ value_check check_declaration(std::string_view property, std::string_view value,
             text = trim(text.substr(0, bang), html_whitespace);
         }
     }
-    // An EMPTY value removes the declaration, which is how `test_invalid_value`
-    // clears the property before setting it and how a page turns one off. It is
-    // reported as invalid because the two callers want the same thing from it:
+    // An empty value removes the declaration (how a page turns one off). It is
+    // reported as invalid because both callers want the same result from it:
     // store nothing.
     if (text.empty()) { return {}; }
 
-    // A BLOCK EOF CLOSED IS CLOSED (CSS Syntax 3 §consume a component value).
-    // The tokenizer closes it, so `scale: calc(sin(pi * sibling-index())` - one
-    // paren short as written - is a perfectly good value; but every grammar
-    // below reads the AUTHOR'S text through the token stream's pool, which is
-    // the text as written, so `calc/` saw an unterminated function and called
-    // the whole declaration a syntax error. The closers go on FIRST and the
-    // value is read once, closed: seventeen assertions of css-values'
-    // sin-cos-tan-computed and minmax-angle-computed are that shape, and the
-    // serialisations below no longer have to append them by hand.
+    // Blocks left open at EOF are closed (CSS Syntax 3), so append the missing
+    // `)`s before parsing; every grammar below reads the author's text and would
+    // otherwise see an unterminated function.
     std::string closed;
     {
         const token_stream probe = tokenize(text);
@@ -213,21 +209,16 @@ value_check check_declaration(std::string_view property, std::string_view value,
         return value_check{true, std::move(serialized), important, found.unknown_function,
                            found.substituted};
     };
-    // THE AUTHOR'S BYTES, for every value this file does not model. A
-    // re-serialised token stream is not the same string - `random-item(auto
-    // ,serif)` comes back as `random-item(auto, serif)` - and `test_valid_value`
-    // asserts the round-trip exactly, so normalising a value whose grammar is
-    // unknown converts a passing test into a failing one for no gain.
-    // Canonicalisation is for the values the table DOES model, where it is the
-    // whole point.
+    // A value whose grammar this file does not model keeps the author's bytes:
+    // re-serialising its tokens would change the string (`random-item(auto
+    // ,serif)` would become `random-item(auto, serif)`), and CSSOM round-trips
+    // must be exact. Canonicalisation is only for the values the table models.
     //
-    // ...EXCEPT THE NUMBERS, STRINGS AND URLS IN THEM, which CSSOM §6.7.2 spells
-    // one way wherever they stand: `.5%` is `0.5%` in a `background-position`
-    // this table leaves freeform exactly as it is in a `width` it types. Only
-    // those three token kinds are respelled; every other byte is the author's.
-    // ...WITH THE BLOCKS EOF CLOSED WRITTEN OUT: a value kept as
-    // `attr(data-foo type(<color>)` would swallow the declaration after it
-    // when the block is serialised and parsed again (attr-all-types).
+    // The exceptions are numbers, strings and URLs, which CSSOM §6.7.2 spells
+    // one way wherever they stand (`.5%` is `0.5%`); normalize_value_tokens
+    // respells only those three token kinds. Both forms also get the closers
+    // for blocks left open at EOF, or a kept `attr(data-foo type(<color>)` would
+    // swallow the next declaration when the block is serialised and reparsed.
     std::string verbatim{text};
     verbatim.append(static_cast<std::size_t>(found.unclosed), ')');
     bool bad_url = false;
@@ -235,8 +226,8 @@ value_check check_declaration(std::string_view property, std::string_view value,
     if (bad_url) { return {}; }
     normalized.append(static_cast<std::size_t>(found.unclosed), ')');
 
-    // A CSS-WIDE KEYWORD is valid for every property, including one this table
-    // has never heard of, and serialises lowercased.
+    // A CSS-wide keyword is valid for every property, including one this table
+    // does not know, and serialises lowercased.
     if (found.significant.size() == 1) {
         const css_token & only = ts.tokens[found.significant.front()];
         if (only.type == token_type::ident && is_wide_keyword(ts.text_of(only))) {
@@ -244,75 +235,61 @@ value_check check_declaration(std::string_view property, std::string_view value,
         }
     }
 
-    // A CUSTOM PROPERTY takes anything that tokenises, by definition (CSS
+    // A custom property takes anything that tokenises, by definition (CSS
     // Variables 1 §2): its value is a token stream, not a value.
     if (property.starts_with("--")) { return yes(std::string{text}); }
 
-    // A value holding var()/env()/attr() is valid by construction - what it
-    // means is not known until substitution. Its ARGUMENT LIST is known now,
-    // though, and two of the functions have one worth checking.
+    // A value holding var()/env()/attr() is valid by construction, since what
+    // it means is not known until substitution. Its argument list is known
+    // now, though, and two of the functions have one worth checking.
     if (!substitution_grammar_ok(ts)) { return {}; }
     if (found.substituted) { return yes(verbatim); }
 
-    // A MALFORMED MATH FUNCTION KILLS THE DECLARATION WHEREVER IT SITS, and
-    // that has to be asked before the property's own grammar because most of the
-    // properties the corpus asks it about are `freeform` ones: `transform:
-    // rotate(calc((0.25turn error)))` is one value of a syntax this table does
-    // not model, wrapped around a calc() that is simply wrong. `calc/` owns
-    // the question - it is the only thing here that knows what `round()` takes -
-    // and it answers only about the functions it implements, so a `calc-size()`
-    // is left alone rather than guessed at.
+    // A malformed math function invalidates the declaration wherever it sits.
+    // This is checked before the property's own grammar because most
+    // properties the web-platform tests use here are `freeform` (this table
+    // does not model their grammar): `transform: rotate(calc((0.25turn
+    // error)))` wraps a broken calc() in an unmodelled value. `calc/` answers
+    // only for the functions it implements, so a `calc-size()` is left alone.
     if (!math_syntax_ok(text)) { return {}; }
-    // ...AND SO DOES A NON-INTEGER LITERAL IN AN <integer> SLOT, in the handful
-    // of freeform properties that have one (grammar.cpp).
+    // So does a non-integer literal in an <integer> slot, in the few freeform
+    // properties that have one (grammar.cpp).
     if (!integer_slots_ok(property, ts)) { return {}; }
 
-    // ...AND A WELL FORMED ONE IS SIMPLIFIED WHEREVER IT SITS. CSS Values 4
-    // §10.12 says a math function's specified value is its simplified form; it
-    // does not say "when the function is the whole value", and the corpus tests
-    // these functions through `transform`, `background-image` and `scale`, none
-    // of which this table models. `calc/` owns the rule and keeps the author's
-    // bytes for everything it cannot answer, so a value with no math in it and a
-    // value whose math needs a font size both come back untouched.
+    // A well-formed math function is simplified wherever it sits: CSS Values 4
+    // §10.12 makes the simplified form the specified value, not only when the
+    // function is the whole value. `calc/` keeps the author's bytes for
+    // anything it cannot answer, so a value with no math and a value whose math
+    // needs a font size both come back untouched.
     std::string simplified = may_have_math(normalized) ? simplify_math(normalized) : normalized;
-    // ...AND A random() SPELLS ITS KEY, which needs the property's name.
+    // A random() also spells out its caching key, which needs the property name.
     if (!property.starts_with("--") && simplified.find("random(") != std::string::npos) {
         simplified = canonical_random(simplified, property);
     }
 
-    // THE ONE DESCRIPTOR WITH A GRAMMAR OF ITS OWN: `unicode-range` is not a
-    // property, and its `<urange>` is a token-level shape no property has.
+    // `unicode-range` is the one descriptor with a grammar of its own: it is not
+    // a property, and its `<urange>` is a token-level shape no property has.
     if (ascii_iequals(property, "unicode-range")) {
         std::string ranges;
         return match_unicode_range(ts, found, ranges) ? yes(std::move(ranges)) : value_check{};
     }
 
     const property_syntax * p = find_property(property);
-    // AN UNKNOWN PROPERTY IS STORED, NOT REFUSED. CSSOM says a page may set one
-    // and read it back; refusing here would be a behaviour change for every
-    // property this table has not reached yet, and the corpora write several.
-    //
-    // ...BUT ITS MATH IS STILL MATH, which is why the two questions above are
-    // asked before this one rather than after it. `offset-rotate:
-    // calc(sign(50%) * 1deg)` and `offset-path: ray(calc(sign(50%) * 1deg))` are
-    // two properties this table has never heard of carrying an expression that
-    // is a syntax error in every property there is, and `calc()` is simplified
-    // by CSS Values 4 §10.12 wherever it stands - the table knowing the name is
-    // not one of the conditions.
+    // An unknown property is stored, not refused: CSSOM lets a page set one and
+    // read it back, and pages set properties this table does not list yet. Its
+    // math is still checked and simplified (above), because a malformed calc()
+    // is invalid in every property and CSS Values 4 §10.12 simplifies calc()
+    // wherever it stands.
     if (p == nullptr) { return yes(simplified); }
 
-    // A PERCENTAGE INSIDE A MATH FUNCTION IS STILL A PERCENTAGE, and this is the
-    // half of §10.11's calculation context that only the table can supply.
-    // `calc/` refuses one whose own answer has no percentages to resolve - an
-    // angle, a time; this refuses one whose PROPERTY has none, which is
-    // `border-left-width: min(1px, 0%)`, `font-weight: sign(10%)` and
-    // `tab-size: abs(10%)`, the last failures of `minmax-length-invalid` and
-    // `signs-abs-invalid`. It is asked before `freeform` because a freeform
-    // property answers yes to it and the two orders are the same answer.
+    // A percentage inside a math function needs a property that accepts
+    // percentages (CSS Values 4 §10.11), so `font-weight: sign(10%)` and
+    // `border-left-width: min(1px, 0%)` are invalid. `calc/` handles the other
+    // half (a result type, such as an angle, with no percentage basis).
     if (!takes_percentage_of(p->kind) && math_uses_percentage(text)) { return {}; }
 
-    // THE GAP RULE LISTS (gaps.cpp): `10px, repeat(auto, thin)`, and the
-    // BASIC SHAPES of clip-path and shape-outside (shapes.cpp).
+    // The gap rule lists (gaps.cpp), such as `10px, repeat(auto, thin)`, and
+    // the basic shapes of clip-path and shape-outside (shapes.cpp).
     {
         std::string serialized;
         if (match_gap_list(property, text, serialized) ||
@@ -322,17 +299,11 @@ value_check check_declaration(std::string_view property, std::string_view value,
         }
     }
 
-    // A `#` LIST IS THE PROPERTY'S OWN GRAMMAR, ONCE PER ITEM. Every longhand
-    // of CSS Animations 1 and CSS Transitions 1 is a comma-separated list - one
-    // value per animation, one per transitioned property - and this table has a
-    // row per PROPERTY, not per item, so `animation-duration: 1s, 2s, 3s` was
-    // refused by the very grammar that makes `1s` valid. The items are asked the
-    // same question the whole value would have been, which keeps the two
-    // answers one definition; only the `#` itself lives here.
-    //
-    // A CSS-WIDE KEYWORD IS NOT AN ITEM (CSS Values 4 §common-keywords): it is a
-    // value for the WHOLE declaration or for nothing, which is what
-    // `animation-duration: 1s, initial` asserts.
+    // Animation and transition longhands are comma-separated lists (one value
+    // per animation or transitioned property); the table has one row per
+    // property, so each item is checked against that row recursively. A
+    // CSS-wide keyword is valid only as the whole value (CSS Values 4
+    // §common-keywords), so `animation-duration: 1s, initial` is invalid.
     if (p->kind != k::freeform && (ascii_istarts_with(property, "animation-") ||
                                    ascii_istarts_with(property, "transition-"))) {
         const std::vector<std::string_view> items = split_top_level(text, ",");
@@ -354,7 +325,7 @@ value_check check_declaration(std::string_view property, std::string_view value,
         if (!match_border_image(p->name, simplified, serialized)) { return {}; }
         return yes(std::move(serialized));
     }
-    // A MASK BORDER IS A BORDER IMAGE whose image is a mask (CSS Masking 1
+    // A mask border is a border image whose image is a mask (CSS Masking 1
     // §8): the same four grammars, under other names and other initials.
     if (ascii_iequals_any(property, {"mask-border-source", "mask-border-slice", "mask-border-width",
                                      "mask-border-outset"})) {
@@ -364,7 +335,7 @@ value_check check_declaration(std::string_view property, std::string_view value,
         return yes(std::move(serialized));
     }
 
-    // AN `<image>` LIST IS FREEFORM WITH ITS GRADIENTS CANONICALISED
+    // An `<image>` list is freeform with its gradients canonicalised
     // (image.cpp): `linear-gradient(in srgb, red, blue)` drops the default
     // method and `radial-gradient(at bottom right, ...)` writes `at right
     // bottom`; a list with no gradient in it keeps the author's bytes.
@@ -377,7 +348,7 @@ value_check check_declaration(std::string_view property, std::string_view value,
         }
     }
 
-    // THE BOX ALIGNMENT LONGHANDS (alignment.cpp): `first baseline` is
+    // The box alignment longhands (alignment.cpp): `first baseline` is
     // `baseline`, `center legacy` is `legacy center`, `safe` needs a position.
     if (p->kind == k::freeform &&
         (ascii_istarts_with(property, "align-") || ascii_istarts_with(property, "justify-"))) {
@@ -395,7 +366,7 @@ value_check check_declaration(std::string_view property, std::string_view value,
         return yes(std::move(serialized));
     }
 
-    // THE BACKGROUND AND MASK LAYER LISTS (backgrounds.cpp).
+    // The background and mask layer lists (backgrounds.cpp).
     if (ascii_istarts_with(property, "background-") || ascii_istarts_with(property, "mask-")) {
         std::string serialized;
         if (match_background_list(property, ts, found, serialized)) {
@@ -404,7 +375,7 @@ value_check check_declaration(std::string_view property, std::string_view value,
         }
     }
 
-    // A SHADOW LIST (shadows.cpp): colour first, lengths, then `inset`.
+    // A shadow list (shadows.cpp): colour first, lengths, then `inset`.
     if (p->kind == k::freeform && ascii_iequals_any(property, {"box-shadow", "text-shadow"})) {
         std::string serialized;
         if (match_shadow_list(property, ts, found, serialized)) {
@@ -413,7 +384,7 @@ value_check check_declaration(std::string_view property, std::string_view value,
         }
     }
 
-    // THE INDIVIDUAL TRANSFORMS AND THE ORIGINS (transforms.cpp).
+    // The individual transforms and transform-origin (transforms.cpp).
     if (p->kind == k::freeform && ascii_iequals_any(property, {"rotate", "scale", "translate",
                                                                "transform", "transform-origin"})) {
         std::string serialized;
@@ -423,15 +394,15 @@ value_check check_declaration(std::string_view property, std::string_view value,
         }
     }
 
-    // `animation-name`'s `[ none | <keyframes-name> ]#` (above): `12`, `one
-    // two` and `one, initial` are refused, `"something"` is `something`.
+    // `animation-name` (match_animation_name above): `12`, `one two` and
+    // `one, initial` are refused, `"something"` is `something`.
     if (ascii_iequals(property, "animation-name")) {
         std::string serialized;
         if (!match_animation_name(ts, found, serialized)) { return {}; }
         return yes(std::move(serialized));
     }
 
-    // THE KEYWORD COMBINATIONS (keywords.cpp): `overline underline` is
+    // Keyword combinations (keywords.cpp): `overline underline` is
     // `underline overline`, `size style layout paint` is `strict`.
     if (p->kind == k::freeform) {
         std::string serialized;
@@ -441,7 +412,7 @@ value_check check_declaration(std::string_view property, std::string_view value,
         }
     }
 
-    // THE GRID GRAMMARS (grid.cpp): track lists, lines, areas and auto-flow.
+    // The grid grammars (grid.cpp): track lists, lines, areas and auto-flow.
     if (p->kind == k::freeform && ascii_istarts_with(property, "grid-")) {
         std::string serialized;
         if (match_grid(property, ts, found, serialized)) {
@@ -698,24 +669,16 @@ value_check check_declaration(std::string_view property, std::string_view value,
         return yes(std::move(serialized));
     }
 
-    // `font-family` IS FREEFORM WITH ONE EXTRA RULE: its strings are the one
-    // place CSSOM unquotes a string on the way back out. `'Lucida Grande'`
-    // reads back as `Lucida Grande`, and serialize-values asks for it.
+    // `font-family` is freeform with one extra rule: its strings are the one
+    // place CSSOM unquotes a string on the way back out, so `'Lucida Grande'`
+    // reads back as `Lucida Grande`.
     if (p->kind == k::freeform) {
         return yes(ascii_iequals(property, "font-family") ? serialize_font_family(simplified)
                                                           : simplified);
     }
 
-    // A `<position>` IS THE ONE MULTI-COMPONENT VALUE THIS TABLE MODELS, so it
-    // is asked before the single-token path: `object-position: 10%` is a whole
-    // value and its canonical form is `10% center`, which no per-token matcher
-    // can produce.
-    //
-    // A math function anywhere in it falls through to the author's bytes rather
-    // than being refused. `object-position: calc(50% - 1px) center` is a
-    // perfectly good position whose components this reader does not evaluate,
-    // and refusing it would be exactly the 80%-right grammar this table exists
-    // not to be.
+    // A <color> property: its own keywords first, then a paint's url()
+    // fallback, then the colour grammar.
     if (p->kind == k::color) {
         // The property's own keywords beside the colour: `invert` is CSS
         // 2.1's outline colour, `auto` is caret-color's and accent-color's.
@@ -725,9 +688,9 @@ value_check check_declaration(std::string_view property, std::string_view value,
                 return yes(ascii_lower_copy(ts.text_of(only)));
             }
         }
-        // A PAINT'S url() - fill and stroke, SVG 2 §13.2: `<url> [ none |
-        // <color> ]?`, the second being what a paint server that does not
-        // load falls back to.
+        // A paint's url() for fill and stroke, SVG 2 §13.2: `<url> [ none |
+        // <color> ]?`, the second part being the fallback used when the paint
+        // server does not load.
         if (ascii_iequals_any(property, {"fill", "stroke"}) && !found.significant.empty()) {
             const std::size_t first = found.significant.front();
             const css_token & head = ts.tokens[first];
@@ -771,7 +734,7 @@ value_check check_declaration(std::string_view property, std::string_view value,
         return {};
     }
 
-    // `display` IS TWO KEYWORDS WITH A SHORT FORM (display.cpp): `inline
+    // `display` is two keywords with short forms (display.cpp): `inline
     // flow-root` is `inline-block` and `flow list-item` is `list-item`.
     if (ascii_iequals(property, "display")) {
         std::string serialized;
@@ -779,10 +742,17 @@ value_check check_declaration(std::string_view property, std::string_view value,
         return {};
     }
 
+    // A `<position>` is the one multi-component value this table models, so it
+    // is matched as a whole before the single-token path: `object-position:
+    // 10%` serialises as `10% center`, which no per-token matcher can produce.
+    //
+    // A math function anywhere in it falls through to the author's bytes rather
+    // than being refused: `object-position: calc(50% - 1px) center` is a valid
+    // position whose components this reader does not evaluate.
     if (p->kind == k::position) {
-        // ITS OWN KEYWORDS FIRST: `offset-anchor: auto` and `offset-position:
-        // normal` are not positions, and no component of one is spelled that
-        // way, so the whole-value matcher below can never answer for them.
+        // The property's own keywords first: `offset-anchor: auto` and
+        // `offset-position: normal` are not positions, so the whole-value
+        // matcher below can never accept them.
         if (found.significant.size() == 1) {
             const css_token & only = ts.tokens[found.significant.front()];
             if (only.type == token_type::ident && has_keyword(p->keywords, ts.text_of(only))) {
@@ -824,7 +794,7 @@ value_check check_declaration(std::string_view property, std::string_view value,
         return yes("fit-content(" + inner + ")");
     }
 
-    // A calc-size() HAS A GRAMMAR OF ITS OWN, and only a sizing property takes
+    // A calc-size() has a grammar of its own, and only a sizing property takes
     // one (CSS Values 5 §calc-size): the basis is judged against the
     // property's keywords and the calculation is simplified with `size` in it.
     if (p->kind == k::length_percentage && ascii_istarts_with(text, "calc-size(")) {
@@ -833,15 +803,12 @@ value_check check_declaration(std::string_view property, std::string_view value,
         return yes(std::move(*sized));
     }
 
-    // A math function over the whole value: `calc/` owns the evaluation and
-    // has a third answer besides folded and invalid.
-    //
-    // ITS TYPE IS CHECKED HERE AND NOT ITS VALUE. What comes back is used only to
-    // ask "is a <length> a value for this property", never to substitute an
-    // answer - the simplification above already wrote the specified form, which
-    // CSS Values 4 §10.12 keeps a function around: `el.style.width = 'calc(1px +
-    // 2px)'` reads back as `calc(3px)` and not as `3px`. Folding to a used
-    // number is the cascade's job, one layer up.
+    // A math function over the whole value: `calc/` evaluates it, and only its
+    // type is checked here ("is a <length> valid for this property"). The
+    // result is never substituted: the simplification above already wrote the
+    // specified form, which CSS Values 4 §10.12 keeps wrapped in a function
+    // (`calc(1px + 2px)` reads back as `calc(3px)`, not `3px`). Folding to a
+    // used number is the cascade's job.
     if (p->kind != k::keyword_only && whole_value_is_math(ts, found)) {
         const math_answer answer = evaluate_math(text, length_context{});
         if (!math_type_fits(*p, answer, text)) { return {}; }
@@ -863,26 +830,24 @@ bool supports_declaration(std::string_view property, std::string_view value) {
     // `allow_important` is true because `@supports (color: red !important)` is a
     // <declaration> and the priority does not change the answer.
     const value_check checked = check_declaration(property, value, true);
-    // A SHORTHAND IS SUPPORTED WHEN IT SPLITS. check_declaration takes a
-    // shorthand's text whole - the split is the declaration block's - so
-    // `margin: foo` passed here while `el.style.margin = 'foo'` stored
-    // nothing. The block's own split answers, on a scratch block.
+    // A shorthand is supported only when it splits into longhands.
+    // check_declaration accepts a shorthand's text whole (splitting is the
+    // declaration block's job), so `margin: foo` would pass here although
+    // `el.style.margin = 'foo'` stores nothing; split it on a scratch block.
     if (checked.valid && !checked.substituted && !longhands_of(property).empty()) {
         declaration_block scratch;
         if (!set_declaration(scratch, property, checked.serialized, false)) { return false; }
     }
-    // ...AND A FUNCTION THIS ENGINE CANNOT EVALUATE IS NOT SUPPORT. `el.style`
-    // still stores such a value - CSSOM says a page may - but a declaration
-    // calling `attr()` or `random-item()` here really would be dropped by the
-    // time anything rendered, and saying otherwise makes a test run and fail
-    // where it should have skipped. A value with a `var()` in it is the
-    // exception, whatever else it calls: it is valid at parse time by
-    // definition (CSS Variables 1 §3), which is all the question asks.
+    // A function this engine cannot evaluate is not supported either.
+    // `el.style` still stores such a value, as CSSOM requires, but it would be
+    // dropped before rendering, so reporting support would make feature
+    // detection lie. A value containing a substitution such as `var()` is the
+    // exception: it is valid at parse time by definition (CSS Variables 1 §3).
     return checked.valid && (checked.substituted || !checked.uses_unknown_function);
 }
 
 bool supports_condition(std::string_view text) {
-    // EOF CLOSES AN OPEN BLOCK (CSS Syntax 3 §5.4.9): `selector(a:hover` is
+    // EOF closes an open block (CSS Syntax 3 §5.4.9): `selector(a:hover` is
     // `selector(a:hover)`.
     const token_stream probe = tokenize(text);
     if (const scan found = scan_tokens(probe); found.unclosed > 0) {

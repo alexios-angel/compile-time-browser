@@ -1,7 +1,17 @@
+//===- split.cpp - Shorthand expansion ------------------------ -*- C++ -*-===//
+//
+// Splitting a shorthand's value into one canonical value per longhand. Each
+// shape of shorthand (shape:: in internal.hpp) has a split_* function here;
+// split_value dispatches on the shape. Every component is checked against its
+// longhand's own grammar, so a shorthand accepts exactly what its longhands do.
+//
+//===----------------------------------------------------------------------===//
 #include "internal.hpp"
 
 namespace ctbrowser::style::css::shorthand_detail {
 
+/// Checks `part` against `longhand`'s grammar, sets `valid`, and returns the
+/// serialised value.
 [[nodiscard]] std::string canonical(std::string_view longhand, std::string_view part,
                                     bool & valid) {
     const value_check checked = check_declaration(longhand, part, false);
@@ -9,7 +19,8 @@ namespace ctbrowser::style::css::shorthand_detail {
     return checked.serialized;
 }
 
-// `sides` and `pair`: positional, each part through its longhand's grammar.
+/// `sides` and `pair`: positional, each part through its longhand's grammar,
+/// with the omitted ones filled in the usual 1-to-4 way (expand_positional).
 split split_positional(const expansion & e, std::span<const std::string_view> parts,
                        std::vector<std::string> & out) {
     const std::size_t n = e.longhands.size();
@@ -27,18 +38,19 @@ split split_positional(const expansion & e, std::span<const std::string_view> pa
     return split::ok;
 }
 
-// `list-style-image` is freeform and would take anything, so it is held to
-// the two shapes an image can have; the type takes the rest.
+/// True if `part` can be an image (`none`, `url()`, `image()`, `image-set()` or
+/// a gradient). `list-style-image` is freeform and would take anything, so
+/// split_bar gives it only these; `list-style-type` takes the rest.
 [[nodiscard]] bool looks_like_image(std::string_view part) {
     return ascii_iequals(part, "none") || ascii_istarts_with(part, "url(") ||
            ascii_istarts_with(part, "image(") || ascii_istarts_with(part, "image-set(") ||
            part.find("gradient(") != std::string_view::npos;
 }
 
-// `bar`: each part goes to the first longhand not yet given that accepts it,
-// TYPED longhands first - `outline-color` is freeform and would otherwise
-// claim `2px` before `outline-width` saw it. A longhand nothing named gets its
-// initial value.
+/// `bar` (`a || b || c`): each part goes to the first longhand not yet given
+/// that accepts it, typed longhands first, because `outline-color` is freeform
+/// and would otherwise claim `2px` before `outline-width` saw it. A longhand
+/// no part names gets its initial value.
 split split_bar(const expansion & e, std::span<const std::string_view> parts,
                 std::vector<std::string> & out) {
     const std::size_t n = e.longhands.size();
@@ -80,12 +92,12 @@ split split_bar(const expansion & e, std::span<const std::string_view> parts,
     return split::ok;
 }
 
-// `flex`, whose omitted parts are NOT the longhands' initial values:
-// `flex: 1` is `1 1 0%` - the omitted basis is the zero every engine writes as
-// `0%` (css-flexbox flex-valid, flex-computed, flex-shorthand) and the one the
-// cascade has always expanded it to (properties/cascade.cpp), so `el.style.flex
-// = "1"` lays out as the same rule would. cssom/flex-serialization's older
-// `0 1 0px` is the one expectation this leaves unmet.
+/// `flex`, whose omitted parts are not the longhands' initial values:
+/// `flex: 1` is `1 1 0%`. The omitted basis is the zero every engine writes as
+/// `0%` (WPT css/css-flexbox/flex-valid, flex-computed, flex-shorthand) and the
+/// one the cascade expands it to (properties/cascade.cpp), so
+/// `el.style.flex = "1"` lays out as the same rule would. WPT
+/// css/cssom/flex-serialization still expects the older `0 1 0px` and fails.
 split split_flex(std::span<const std::string_view> parts, std::vector<std::string> & out) {
     const auto parse = [](std::string_view name,
                           std::string_view part) -> std::optional<std::string> {
@@ -101,10 +113,11 @@ split split_flex(std::span<const std::string_view> parts, std::vector<std::strin
     return split::ok;
 }
 
-// `font`: `[ <style> || <variant> || <weight> || <stretch> ]? <size> [ / <line-height> ]?
-// <family>#`, CSS Fonts 4 §3.1. The keywords before the size are told apart by
-// name, because three of the four longhands are freeform and would take
-// anything; a system font (`caption`, `menu`) stays whole.
+/// `font`: `[ <style> || <variant> || <weight> || <stretch> ]? <size>
+/// [ / <line-height> ]? <family>#`, CSS Fonts 4 §3.1. The keywords before the
+/// size are told apart by name, because three of the four longhands are
+/// freeform and would take anything. A system font (`caption`, `menu`) stays
+/// whole.
 split split_font(std::span<const std::string_view> parts, std::vector<std::string> & out) {
     if (parts.empty()) { return split::invalid; }
     static constexpr std::string_view styles = "italic oblique";
@@ -137,8 +150,8 @@ split split_font(std::span<const std::string_view> parts, std::vector<std::strin
         }
     }
     if (i >= parts.size()) { return split::invalid; }
-    // The size, with `/ line-height` glued to it, glued to the next part, or
-    // standing alone between the two.
+    // The size, with `/ line-height` attached to it, attached to the next
+    // part, or standing alone between the two.
     std::string_view size_part = parts[i++];
     std::string_view height_part;
     if (const std::size_t slash = size_part.find('/'); slash != std::string_view::npos) {
@@ -166,15 +179,15 @@ split split_font(std::span<const std::string_view> parts, std::vector<std::strin
     const value_check families = check_declaration("font-family", family, false);
     if (!families.valid) { return split::invalid; }
     out = {style, variant, weight, stretch, size.serialized, height, families.serialized};
-    out.resize(expansion_of("font")->longhands.size(), "normal"); // the variants it resets
+    out.resize(expansion_of("font")->longhands.size(), "normal"); // Resets the variants.
     return split::ok;
 }
 
-// `font-variant`: `normal` and `none` alone, or keywords and functions each
-// handed to the one longhand that takes it and each longhand's words checked
-// together by its own grammar - which refuses `sub super` and `jis78 jis83`
-// and puts the words in canonical order (CSS Fonts 4 §6.11). `none` is
-// `font-variant-ligatures: none` with the rest `normal`.
+/// `font-variant`: `normal` or `none` alone, or keywords and functions each
+/// handed to the one longhand that takes it. Each longhand's words are then
+/// checked together by its own grammar, which refuses `sub super` and
+/// `jis78 jis83` and puts the words in canonical order (CSS Fonts 4 §6.11).
+/// `none` is `font-variant-ligatures: none` with the rest `normal`.
 split split_font_variant(const expansion & e, std::span<const std::string_view> parts,
                          std::vector<std::string> & out) {
     if (parts.empty()) { return split::invalid; }
@@ -206,13 +219,13 @@ split split_font_variant(const expansion & e, std::span<const std::string_view> 
     return split::ok;
 }
 
-// `line-clamp`: `none` - every longhand initial - or a maximum
-// (`<integer [1,∞]> || auto`, written together) and a block ellipsis in
-// either order, one at least, then `-webkit-legacy` for the legacy
-// continuation (CSS Overflow 4 §5.1). The maximum defaults to `auto`, the
-// ellipsis to `ellipsis`, and the continuation is `collapse`.
-// `-webkit-line-clamp` is `none` or an integer alone, which continues the
-// legacy way with the default ellipsis.
+/// `line-clamp`: `none` (every longhand initial), or a maximum
+/// (`<integer [1,∞]> || auto`, written together) and a block ellipsis in
+/// either order, at least one of them, then `-webkit-legacy` for the legacy
+/// continuation (CSS Overflow 4 §5.1). The maximum defaults to `auto`, the
+/// ellipsis to `ellipsis`, and the continuation is `collapse`.
+/// `-webkit-line-clamp` is `none` or an integer alone, which continues the
+/// legacy way with the default ellipsis.
 split split_line_clamp(const expansion & e, std::span<const std::string_view> parts,
                        std::vector<std::string> & out) {
     if (parts.size() == 1 && ascii_iequals(parts[0], "none")) {
@@ -236,7 +249,7 @@ split split_line_clamp(const expansion & e, std::span<const std::string_view> pa
     if (legacy) { rest = rest.first(rest.size() - 1); }
     bool automatic = false;
     std::string ellipsis;
-    int run = 0; // 0 before the maximum's words, 1 among them, 2 past them
+    int run = 0; // 0 before the maximum's words, 1 among them, 2 past them.
     for (const std::string_view part : rest) {
         const bool is_auto = ascii_iequals(part, "auto");
         std::string text;
@@ -265,7 +278,8 @@ split split_line_clamp(const expansion & e, std::span<const std::string_view> pa
     return split::ok;
 }
 
-// `border`: width || style || color, then every side, then border-image reset.
+/// `border`: width || style || color, copied to every side; border-image is
+/// reset.
 split split_border(std::span<const std::string_view> parts, std::vector<std::string> & out) {
     const expansion * top = expansion_of("border-top");
     std::vector<std::string> one;
@@ -276,16 +290,20 @@ split split_border(std::span<const std::string_view> parts, std::vector<std::str
         for (int side = 0; side < 4; ++side) { out.push_back(component); }
     }
     const expansion * border = expansion_of("border");
+    // The first 12 longhands of `border` are width, style and color for each of
+    // the four sides, filled above; the rest (border-image-*) are only reset.
     for (std::size_t i = 12; i < border->longhands.size(); ++i) {
         out.push_back(std::string{initial_of(border->longhands[i])});
     }
     return split::ok;
 }
 
-// `border-block` / `border-inline`: width || style || color on the axis's
-// start side, copied to its end side.
+/// `border-block` / `border-inline`: width || style || color on the axis's
+/// start side, copied to its end side.
 split split_border_axis(const expansion & e, std::span<const std::string_view> parts,
                         std::vector<std::string> & out) {
+    // longhands[0] is e.g. `border-block-start-width`; dropping "-width" (6
+    // characters) gives the start side's own shorthand.
     const expansion * start = expansion_of(e.longhands[0].substr(0, e.longhands[0].size() - 6));
     std::vector<std::string> one;
     const split result = split_bar(*start, parts, one);
@@ -295,8 +313,9 @@ split split_border_axis(const expansion & e, std::span<const std::string_view> p
     return split::ok;
 }
 
-// `white-space`: a keyword of the table, or the three longhands in any order,
-// each at most once; the trim's `discard-*` words serialise in grammar order.
+/// `white-space`: a keyword from white_space_keywords, or the three longhands'
+/// values in any order, each at most once. The trim's `discard-*` words
+/// serialise in grammar order.
 split split_white_space(std::span<const std::string_view> parts, std::vector<std::string> & out) {
     if (parts.empty()) { return split::invalid; }
     if (parts.size() == 1) {
@@ -335,12 +354,14 @@ split split_white_space(std::span<const std::string_view> parts, std::vector<std
     return split::ok;
 }
 
+/// True if `text` is the initial value of animation_items[i]; for the
+/// duration (i == 0), `0s` also counts.
 [[nodiscard]] bool animation_default(std::size_t i, std::string_view text) {
     return ascii_iequals(text, animation_items[i].second) || (i == 0 && ascii_iequals(text, "0s"));
 }
 
-// An easing function with its arguments respaced: `cubic-bezier( 0, -2, 1, 3 )`
-// is `cubic-bezier(0, -2, 1, 3)`. A keyword is itself.
+/// An easing function with its arguments respaced: `cubic-bezier( 0, -2, 1, 3 )`
+/// becomes `cubic-bezier(0, -2, 1, 3)`. A keyword is returned unchanged.
 [[nodiscard]] std::string canonical_easing(std::string text) {
     const std::size_t open = text.find('(');
     if (open == std::string::npos || text.back() != ')') { return text; }
@@ -354,9 +375,10 @@ split split_white_space(std::span<const std::string_view> parts, std::vector<std
     return out + ")";
 }
 
-// `animation`: one `<single-animation>` per comma, each component to the
-// first longhand of its kind not yet given - the times in order, the
-// keywords of the typed longhands before the name takes what is left.
+/// `animation`: one `<single-animation>` per comma, each component going to
+/// the first longhand of its kind not yet given. The times go in order, and
+/// the typed longhands' keywords are tried before the name takes what is left.
+/// Indices are into animation_items.
 split split_animation(std::string_view value, std::vector<std::string> & out) {
     std::array<std::string, 8> lists;
     for (const std::string_view item : split_top_level(value, ",")) {
@@ -420,17 +442,20 @@ split split_animation(std::string_view value, std::vector<std::string> & out) {
     }
     if (lists[0].empty()) { return split::invalid; }
     out.assign(lists.begin(), lists.end());
+    // Longhands 8 to 10 of `animation` (animation-timeline and
+    // animation-range-*) cannot be set by the shorthand and are only reset.
     for (std::size_t i = 8; i < 11; ++i) {
         out.emplace_back(initial_of(longhands_of("animation")[i]));
     }
     return split::ok;
 }
 
-// `transition`: per comma-separated item, `[ none | <single-transition-property> ]
-// || <time> || <easing-function> || <time> || <transition-behavior-value>`
-// (CSS Transitions 2 §3.5) - the first time the duration, which cannot be
-// negative, the second the delay - each omitted one its longhand's initial
-// value. `none` names no property, so it may stand only in a list of one.
+/// `transition`: per comma-separated item,
+/// `[ none | <single-transition-property> ] || <time> || <easing-function> ||
+/// <time> || <transition-behavior-value>` (CSS Transitions 2 §3.5). The first
+/// time is the duration, which cannot be negative, and the second the delay;
+/// each omitted part gets its longhand's initial value. `none` names no
+/// property, so it may stand only in a list of one.
 split split_transition(std::string_view value, std::vector<std::string> & out) {
     std::array<std::string, 5> lists;
     const std::vector<std::string_view> items = split_top_level(value, ",");
@@ -488,10 +513,11 @@ split split_transition(std::string_view value, std::vector<std::string> & out) {
     return split::ok;
 }
 
-// `animation-range`: per item a start and an optional end, each `normal`,
-// a <length-percentage>, or a <timeline-range-name> with an optional one. An
-// omitted end is the start's range name at 100% when the start names one,
-// and `normal` otherwise (Scroll-driven Animations 1 §4.2).
+/// `animation-range`: per item a start and an optional end, each `normal`, a
+/// <length-percentage>, or a <timeline-range-name> with an optional
+/// <length-percentage>. An omitted end is the start's range name (meaning 100%
+/// of it) when the start names one, and `normal` otherwise (Scroll-driven
+/// Animations 1 §4.2).
 split split_range(std::string_view value, std::vector<std::string> & out) {
     std::string starts, ends;
     for (const std::string_view item : split_top_level(value, ",")) {
@@ -549,7 +575,8 @@ split split_range(std::string_view value, std::vector<std::string> & out) {
     return split::ok;
 }
 
-// Each radius axis has the same nonnegative <length-percentage> grammar as padding.
+/// Splits one axis of a `border-radius` value into at most `maximum`
+/// components. Each has the nonnegative <length-percentage> grammar of padding.
 bool radius_components(std::string_view value, std::size_t maximum,
                        std::vector<std::string> & out) {
     const auto parts = split_top_level(value, html_whitespace);
@@ -563,6 +590,8 @@ bool radius_components(std::string_view value, std::size_t maximum,
     return true;
 }
 
+/// `border-radius`: up to four horizontal radii, then optionally `/` and up to
+/// four vertical ones. Each corner's value is `h` or `h v` when they differ.
 bool split_radius(std::string_view value, std::vector<std::string> & out) {
     const token_stream ts = tokenize(value);
     std::size_t slash = std::string_view::npos;
@@ -593,7 +622,8 @@ bool split_radius(std::string_view value, std::vector<std::string> & out) {
     return true;
 }
 
-// Delimiters outside functions must remain separate even without authored whitespace.
+/// Puts spaces around every top-level `/`, so `10px/20px` splits into three
+/// words like `10px / 20px` does.
 [[nodiscard]] std::string space_slashes(std::string_view value) {
     const token_stream ts = tokenize(value);
     std::string spaced;
@@ -614,7 +644,9 @@ bool split_radius(std::string_view value, std::vector<std::string> & out) {
     return spaced;
 }
 
-// Each || component is contiguous; a slash can follow only the slice or width.
+/// `border-image`: source || slice [ / width [ / outset ]? ]? || repeat. Each
+/// component's words are contiguous; a slash can follow only the slice or
+/// width.
 bool split_border_image(std::string_view value, std::vector<std::string> & out) {
     const std::string spaced = space_slashes(value);
     const auto parts = split_top_level(spaced, html_whitespace);
@@ -654,12 +686,15 @@ bool split_border_image(std::string_view value, std::vector<std::string> & out) 
     return !parts.empty();
 }
 
-// CSS Backgrounds: each layer shares the existing longhand grammars.
+/// `background`: per comma-separated layer, each component goes to the first
+/// longhand grammar that accepts it. Only the last layer may set a color
+/// (index 0). Box keywords set origin (6) and clip (7) together.
 bool split_background(std::string_view value, std::vector<std::string> & out) {
     const auto names = longhands_of("background");
     const auto layers = split_top_level(value, ",");
     if (layers.empty()) { return false; }
-    // split_top_level discards empty fields; the token stream keeps layer boundaries.
+    // split_top_level discards empty fields, so count the top-level commas to
+    // reject an empty layer.
     const token_stream ts = tokenize(value);
     int depth = 0;
     std::size_t commas = 0;
@@ -685,7 +720,8 @@ bool split_background(std::string_view value, std::vector<std::string> & out) {
                                             static_cast<std::size_t>(parts[at + count - 1].data() +
                                                                      parts[at + count - 1].size() -
                                                                      parts[at].data())};
-                // A layer has one <image>, so use the existing scalar image grammar.
+                // A layer has one <image>, so check it with the single-image
+                // grammar of border-image-source.
                 const value_check checked = check_declaration(
                     component == 1 ? "border-image-source" : names[component], text, false);
                 // Do not turn an unsupported image function into a computed image.
@@ -745,12 +781,12 @@ bool split_background(std::string_view value, std::vector<std::string> & out) {
     return true;
 }
 
-// `mask`, CSS Masking 1 §7.1: per comma-separated layer `<mask-reference> ||
-// <position> [ / <bg-size> ]? || <repeat-style> || <geometry-box> || [
-// <geometry-box> | no-clip ] || <compositing-operator> || <masking-mode>`,
-// each part through its longhand's grammar. The boxes need not stand
-// together: one sets the origin and the clip, a second - or `no-clip` - the
-// clip alone.
+/// `mask`, CSS Masking 1 §7.1: per comma-separated layer `<mask-reference> ||
+/// <position> [ / <bg-size> ]? || <repeat-style> || <geometry-box> ||
+/// [ <geometry-box> | no-clip ] || <compositing-operator> || <masking-mode>`,
+/// each part through its longhand's grammar. The boxes need not stand
+/// together: one sets the origin and the clip, and a second (or `no-clip`)
+/// sets the clip alone.
 bool split_mask(std::string_view value, std::vector<std::string> & out) {
     const auto names = longhands_of("mask");
     const auto layers = split_top_level(value, ",");
@@ -830,8 +866,9 @@ bool split_mask(std::string_view value, std::vector<std::string> & out) {
             values[4] = boxes[swapped ? 1 : 0];
             values[5] = boxes[swapped ? 0 : 1];
         }
-        // ...and mask-border, which the shorthand only resets: one value,
-        // not one per layer (CSS Masking 1 §7.1).
+        // The first 8 longhands are per-layer lists; the rest are the
+        // mask-border longhands, which the shorthand only resets, so they get
+        // one value and not one per layer (CSS Masking 1 §7.1).
         for (std::size_t i = 0; i < names.size(); ++i) {
             out[i] = i < 8 ? out[i] + (layer == 0 ? "" : ", ") + values[i] : values[i];
         }
@@ -839,8 +876,9 @@ bool split_mask(std::string_view value, std::vector<std::string> & out) {
     return true;
 }
 
-// `position-try`, CSS Anchor Positioning 1 §5.4: an order keyword only when
-// something follows it, and the rest the fallbacks' own grammar.
+/// `position-try`, CSS Anchor Positioning 1 §5.4: a leading order keyword
+/// counts only when something follows it; the rest goes through
+/// `position-try-fallbacks`' own grammar.
 split split_position_try(std::string_view value, std::vector<std::string> & out) {
     const std::string_view text = trim(value, html_whitespace);
     const std::size_t space = text.find_first_of(" \t\n\r\f");
@@ -858,10 +896,11 @@ split split_position_try(std::string_view value, std::vector<std::string> & out)
     return split::ok;
 }
 
-// `font-synthesis`, CSS Fonts 4 §4.7: `none | [ weight || [ style |
-// oblique-only ] || small-caps || position ]`, each word the `auto` - or,
-// for `oblique-only`, the value - of its longhand and every longhand not
-// named `none`.
+/// `font-synthesis`, CSS Fonts 4 §4.7:
+/// `none | [ weight || [ style | oblique-only ] || small-caps || position ]`.
+/// Each word sets its longhand to `auto` (`oblique-only` sets
+/// font-synthesis-style to `oblique-only`); every longhand not named is
+/// `none`.
 split split_font_synthesis(std::string_view value, std::vector<std::string> & out) {
     out = {"none", "none", "none", "none"};
     std::vector<std::string_view> words;
@@ -891,9 +930,10 @@ split split_font_synthesis(std::string_view value, std::vector<std::string> & ou
     return split::ok;
 }
 
-// `text-spacing`, CSS Text 4 §8.1: `none` is space-all and no-autospace,
-// `auto` both auto, and otherwise a text-spacing-trim keyword at one end
-// with text-autospace's words - or nothing, its initial - beside it.
+/// `text-spacing`, CSS Text 4 §8.1: `none` is `space-all` and `no-autospace`,
+/// `auto` is `auto` for both, and otherwise a text-spacing-trim keyword at one
+/// end with text-autospace's words (or nothing, meaning its initial) beside
+/// it.
 split split_text_spacing(std::string_view value, std::vector<std::string> & out) {
     std::vector<std::string_view> words;
     for (const std::string_view raw : split_top_level(value, html_whitespace)) {
@@ -930,8 +970,8 @@ split split_text_spacing(std::string_view value, std::vector<std::string> & out)
         out = {trim_part.serialized, space.serialized};
         return split::ok;
     }
-    // ...or text-autospace's words alone, the trim at its initial `normal`:
-    // `no-autospace` (text-spacing-valid).
+    // Otherwise text-autospace's words alone, with the trim at its initial
+    // `normal`, as in `no-autospace` (WPT text-spacing-valid).
     if (const value_check space = check_declaration("text-autospace", value, false);
         !words.empty() && space.valid && !is_wide_keyword(space.serialized) &&
         !ascii_iequals(space.serialized, "auto")) {
@@ -941,10 +981,10 @@ split split_text_spacing(std::string_view value, std::vector<std::string> & out)
     return split::invalid;
 }
 
-// A value's halves either side of its one top-level `/`, EMPTY ONES KEPT:
-// `/ 10px` is a first half missing, not a value without a slash, which is
-// what split_top_level - skipping empty fields - made of it. The value alone
-// when there is no slash; nothing when there are two.
+/// A value's halves either side of its one top-level `/`, keeping empty ones:
+/// `/ 10px` has a missing first half, not no slash, which is what
+/// split_top_level (it skips empty fields) would make of it. Returns the value
+/// alone when there is no slash, and nothing when there are two.
 [[nodiscard]] std::vector<std::string_view> slash_halves(std::string_view value) {
     const token_stream ts = tokenize(value);
     std::size_t slash = std::string_view::npos;
@@ -963,8 +1003,8 @@ split split_text_spacing(std::string_view value, std::vector<std::string> & out)
     return {value.substr(0, slash), value.substr(slash + 1)};
 }
 
-// `container`: the name, then `/` and the type, each checked as its own
-// longhand (CSS Conditional 5 §4.3).
+/// `slash_pair`, e.g. `container`: the name, then `/` and the type, each
+/// checked as its own longhand (CSS Conditional 5 §4.3).
 split split_slash_pair(const expansion & e, std::string_view value,
                        std::vector<std::string> & out) {
     const std::vector<std::string_view> halves = slash_halves(value);
@@ -985,7 +1025,7 @@ split split_slash_pair(const expansion & e, std::string_view value,
     return split::ok;
 }
 
-// `same`: the whole value on every longhand, each through its own grammar.
+/// `same`: the whole value on every longhand, each through its own grammar.
 split split_same(const expansion & e, std::string_view value, std::vector<std::string> & out) {
     out.clear();
     for (const std::string_view longhand : e.longhands) {
@@ -996,8 +1036,8 @@ split split_same(const expansion & e, std::string_view value, std::vector<std::s
     return split::ok;
 }
 
-// `column-rule-inset`: one or two caps, then `/` and one or two junctions;
-// without the slash the junctions are the caps (CSS Gap Decorations 1).
+/// `column-rule-inset`: one or two caps, then `/` and one or two junctions;
+/// without the slash the junctions are the caps (CSS Gap Decorations 1).
 split split_rule_inset(const expansion & e, std::string_view value,
                        std::vector<std::string> & out) {
     const std::vector<std::string_view> halves = slash_halves(value);
@@ -1020,8 +1060,8 @@ split split_rule_inset(const expansion & e, std::string_view value,
     return split::ok;
 }
 
-// `rule-*`: the value split by the column property of the same name, and
-// the same values given to the rows.
+/// `rule-*`: the value split by the column property of the same name, and
+/// the same values given to the rows.
 split split_axes(const expansion & e, std::string_view value, std::vector<std::string> & out) {
     const std::string column = "column-" + std::string{e.syntax->name};
     if (const expansion * sub = expansion_of(column)) {
@@ -1035,10 +1075,10 @@ split split_axes(const expansion & e, std::string_view value, std::vector<std::s
     return split_same(e, value, out);
 }
 
-// `text-decoration`: `<line> || <thickness> || <style> || <color>`, where the
-// line is `underline overline ...` - several words, written together. The
-// run of line keywords is taken whole, so `overline blue underline` is two
-// lines and invalid (CSS Text Decoration 4 §2.6).
+/// `text-decoration`: `<line> || <thickness> || <style> || <color>`, where the
+/// line may be several words written together (`underline overline`). The run
+/// of line keywords is taken whole, so `overline blue underline` is two lines
+/// and invalid (CSS Text Decoration 4 §2.6).
 split split_text_decoration(const expansion & e, std::span<const std::string_view> parts,
                             std::vector<std::string> & out) {
     static constexpr std::string_view line_words =
@@ -1074,6 +1114,10 @@ split split_text_decoration(const expansion & e, std::span<const std::string_vie
     return split::ok;
 }
 
+/// Splits shorthand value `text` into one value per longhand of `e`, in
+/// longhand order. A CSS-wide keyword goes to every longhand. Returns
+/// split::whole when the value must be kept unsplit (shape::whole, a system
+/// font, a slash in a `bar` shorthand).
 split split_value(const expansion & e, std::string_view text, std::vector<std::string> & out) {
     const std::string_view value = trim(text, html_whitespace);
     if (is_wide_keyword(value)) {

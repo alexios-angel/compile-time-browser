@@ -1,6 +1,10 @@
-// calc() - finding the math functions in a value's text, and folding them: the
-// name scan that skips quoted runs, the function span, which properties take
-// which answer, and fold_math itself.
+//===- fold.cpp - Folding math functions in values ------------ -*- C++ -*-===//
+//
+// Finding the math functions in a value's text and folding them to computed
+// values: the name scan that skips quoted runs, the function span, which
+// properties take which kind of answer, and fold_math itself.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -10,14 +14,13 @@ using namespace detail;
 
 namespace {
 
-// EVERY MATH FUNCTION THIS FILE EVALUATES, longest first so that a scan which
-// stops at the first match cannot mistake `atan(` for the start of `atan2(`, or
-// `min(` for the start of `minmax(` - which it cannot anyway, because `minmax(`
-// fails the identifier-boundary test below, but the ordering costs nothing and
-// states the intent.
-//
-// `calc-size()` is deliberately ABSENT although CSS Values 5 lists it as a math
-// function: this file cannot evaluate it, and a name here is a promise to try.
+/// Every math function this file evaluates. A name that is a prefix of another
+/// (`atan(` / `atan2(`) must come after it, because the scan takes the first
+/// match.
+///
+/// `calc-size()` is deliberately absent although CSS Values 5 lists it as a
+/// math function: this file cannot evaluate it, and a name here is a promise to
+/// try.
 constexpr std::string_view math_names[] = {
     "sibling-index(", "sibling-count(", "progress(", "random(", "clamp(", "atan2(", "hypot(",
     "calc-mix(",      "round(",         "sqrt(",     "asin(",   "acos(",  "atan(",  "sign(",
@@ -41,15 +44,16 @@ namespace detail {
     return name_at(value, at, math_names);
 }
 
-// ONE PAST THE END OF THE STRING THAT STARTS AT `at`, or `at` itself when no
-// string does. A QUOTED RUN IS NOT CODE: `content: "calc(1px + 1px)"` and
-// `font-family: "round()"` are strings whose bytes happen to spell a function,
-// and reading one as arithmetic either rewrites what the page says or - for
-// `round()` - deletes the declaration for a syntax error inside a literal.
-// `span_of` already skips quotes while it matches parentheses; every scan that
-// looks for a NAME has to as well, and all three of them below do.
-//
-// An unterminated string runs to the end of the value, CSS Syntax 3 §4.3.5.
+/// One past the end of the string that starts at `at`, or `at` itself when no
+/// string does. A quoted run is not code: `content: "calc(1px + 1px)"` and
+/// `font-family: "round()"` are strings whose bytes happen to spell a function,
+/// and reading one as arithmetic would either rewrite what the page says or,
+/// for `round()`, delete the declaration for a syntax error inside a literal.
+/// `span_of` skips quotes while it matches parentheses, and every scan that
+/// rewrites a value skips them through this function (may_have_math, a cheap
+/// pre-filter, does not).
+///
+/// An unterminated string runs to the end of the value (CSS Syntax 3 §4.3.5).
 [[nodiscard]] std::size_t end_of_string_at(std::string_view value, std::size_t at) noexcept {
     const char quote = value[at];
     if (quote != '"' && quote != '\'') { return at; }
@@ -90,10 +94,11 @@ namespace detail {
     return function_span{scan, depth == 0};
 }
 
-// What the evaluator should be handed for the function at [at, span.end): the
-// WHOLE function, name included, for everything but `calc(`. The evaluator reads
-// `min(...)` as a term, and handing it only the argument list would turn
-// `min(1px, 2px)` into the comma-separated nonsense `1px, 2px`.
+/// What the evaluator should be handed for the function at [at, span.end): the
+/// whole function, name included, for everything but `calc(`, whose argument
+/// is handed alone. The evaluator reads `min(...)` as a term, and handing it
+/// only the argument list would turn `min(1px, 2px)` into the meaningless
+/// `1px, 2px`.
 [[nodiscard]] std::string_view body_of(std::string_view value, std::size_t at,
                                        std::string_view name, const function_span & span) {
     if (!ascii_iequals(name, "calc(")) { return value.substr(at, span.end - at); }
@@ -101,21 +106,23 @@ namespace detail {
     return value.substr(from, span.end - from - (span.closed ? 1 : 0));
 }
 
-// ONE PAST A COLOUR FUNCTION WHOSE MATH IS NOT THIS FILE'S, or `at` itself.
-// A relative colour's calc() binds `r` to the origin's channel - `rgb(from
-// red calc(r * 2) g b)` - which only the colour code (properties/color.cpp)
-// can do: folded here, every keyword was nought and every relative colour
-// computed black. A CSS Color 4 function's channel has its own clamp -
-// `lch(50 calc(infinity) 0)` keeps its infinite chroma where this file's 2^25
-// bound is a length's. Both evaluate their calc() against the same length
-// context when the computed value is asked for. An ABSOLUTE rgb()/hsl()/hwb()
-// is still folded: paint reads the cascade's text for it, and a calc() the
-// grammar could answer at parse time is a number by then anyway.
+/// Colour functions whose math this file leaves to the colour code. A relative
+/// colour's calc() binds `r` to the origin's channel
+/// (`rgb(from red calc(r * 2) g b)`), which only properties/color.cpp can do:
+/// folded here, every keyword would be zero and every relative colour black. A
+/// CSS Color 4 function's channel has its own clamp: `lch(50 calc(infinity) 0)`
+/// keeps its infinite chroma, where this file's 2^25 bound is a length's. Both
+/// evaluate their calc() against the same length context when the computed
+/// value is asked for. An absolute rgb()/hsl()/hwb() is still folded: paint
+/// reads the cascade's text for it, and a calc() the grammar could answer at
+/// parse time is a number by then anyway.
 constexpr std::string_view legacy_color_names[] = {"rgba(", "rgb(", "hsla(", "hsl(", "hwb("};
 constexpr std::string_view modern_color_names[] = {
     "lab(",   "lch(",       "oklab(",      "oklch(",          "color(",
     "alpha(", "color-mix(", "light-dark(", "contrast-color(", "color-layers("};
 
+/// One past the colour function at `at` whose math is not this file's (see
+/// legacy_color_names), or `at` itself.
 [[nodiscard]] std::size_t color_function_end(std::string_view value, std::size_t at) noexcept {
     if (const std::string_view name = name_at(value, at, modern_color_names); !name.empty()) {
         return span_of(value, at, name).end;
@@ -162,23 +169,23 @@ constexpr std::string_view modern_color_names[] = {
     return args;
 }
 
-// A FUNCTION WITH NO ANSWER STILL HAS ARGUMENTS, and every one of them is a
-// calculation in its own right. `min(1em, 1px)` cannot be ordered, but
-// `min(10% + 30px, 5em + 5%)` is `min(10% + 30px, 5% + 5em)` - the comparison is
-// undecidable and each side of it is still a sum with a canonical order.
-// `minmax-length-percent-serialize` and `calc-infinity-nan-serialize-length` ask
-// for exactly that, the second one through `min(NaN * 2px, NaN * 4em)`.
+// A function with no answer still has arguments, each a calculation in its own
+// right. `min(1em, 1px)` cannot be ordered, but `min(10% + 30px, 5em + 5%)` is
+// `min(10% + 30px, 5% + 5em)`: the comparison is undecidable and each side is
+// still a sum with a canonical order (WPT minmax-length-percent-serialize and
+// calc-infinity-nan-serialize-length, the latter via
+// `min(NaN * 2px, NaN * 4em)`).
 [[nodiscard]] std::string rewritten_arguments(
     std::string_view name, std::string_view inner,
     const std::function<std::string(std::string_view)> & one) {
     std::vector<std::string_view> arguments = top_level_arguments(inner);
     std::string out{name};
-    // A clamp() WITH AN ABSENT BOUND IS THE COMPARISON THAT IS LEFT. `clamp(none,
-    // 2px, 3em)` bounds nothing below and is `min(2px, 3em)`; `clamp(1em, 2px,
-    // none)` is `max(1em, 2px)`; with neither bound it is its middle argument.
-    // The specification has not said how a clamp() serialises
-    // (w3c/csswg-drafts#13535) and `clamp-partial-serialize.tentative` is the
-    // corpus's reading of it, sixteen assertions, all nested.
+    // A clamp() with an absent bound is the comparison that is left:
+    // `clamp(none, 2px, 3em)` bounds nothing below and is `min(2px, 3em)`,
+    // `clamp(1em, 2px, none)` is `max(1em, 2px)`, and with neither bound it is
+    // its middle argument. The specification has not said how such a clamp()
+    // serializes (w3c/csswg-drafts#13535); this follows WPT
+    // clamp-partial-serialize.tentative.
     if (ascii_iequals(name, "clamp(") && arguments.size() == 3) {
         const auto absent = [&](std::size_t i) {
             return ascii_iequals(trim(arguments[i], html_whitespace), "none");
@@ -206,6 +213,8 @@ constexpr std::string_view modern_color_names[] = {
 
 } // namespace detail
 
+// A cheap pre-filter: may also report a name inside a quoted string, which
+// fold_math then skips.
 bool may_have_math(std::string_view value) noexcept {
     for (std::size_t i = 0; i < value.size(); ++i) {
         if (!math_name_at(value, i).empty()) { return true; }
@@ -213,19 +222,19 @@ bool may_have_math(std::string_view value) noexcept {
     return false;
 }
 
-// THE PROPERTIES WHOSE WHOLE VALUE IS LENGTHS. Sorted and searched linearly,
-// because the list is short and this runs once per math function rather than
-// once per declaration.
+// Which kind of answer `property` accepts from a math function. The length
+// list is sorted and searched linearly, because it is short and this runs once
+// per math function rather than once per declaration.
 //
-// The rule for being ON it is narrow on purpose: every component of the value
+// A property is on the length list only when every component of its value
 // must be a <length>, a <percentage> or a keyword, so that a <number> answer
-// from a math function can only ever be a syntax error. Anything compound -
-// `box-shadow`, `background-position`, `transform`, `border` - is deliberately
-// absent, because math_context applies to EVERY math function in the value and
+// from a math function can only be a syntax error. Anything compound
+// (`box-shadow`, `background-position`, `transform`, `border`) is deliberately
+// absent, because math_context applies to every math function in the value and
 // one of them may legitimately be a number (`transform: scale(calc(1 / 2))`).
 //
-// `line-height` is the one that looks like it belongs here and does not: a
-// unitless `line-height: 1.5` is a number and is the commonest spelling of it.
+// `line-height` looks like it belongs here but does not: a unitless
+// `line-height: 1.5` is a number, and its commonest spelling.
 math_context math_context_of(std::string_view property) noexcept {
     static constexpr std::string_view lengths[] = {
         "block-size",
@@ -304,10 +313,10 @@ math_context math_context_of(std::string_view property) noexcept {
     for (const std::string_view one : lengths) {
         if (ascii_iequals(one, property)) { return math_context::length; }
     }
-    // THE PROPERTIES WHOSE WHOLE VALUE IS AN `<integer>`, which is the same list
-    // `properties/table.cpp` marks `k::integer` - kept here rather than asked of that
-    // table because this file must not depend on it, and four names are cheaper
-    // to repeat than a dependency is to add. Adding a fifth belongs in both.
+    // Properties whose whole value is an <integer>. This copies part of the
+    // `k::integer` list in properties/table.cpp and table_modules.cpp, because
+    // this file must not depend on that table; column-count, max-lines and
+    // hyphenate-limit-lines are not repeated here. Keep the two lists in sync.
     if (ascii_iequals(property, "z-index") || ascii_iequals(property, "order") ||
         ascii_iequals(property, "orphans") || ascii_iequals(property, "widows")) {
         return math_context::integer;
@@ -321,7 +330,7 @@ std::string non_negative(std::string_view folded) {
     for (const css_token & t : ts.tokens) {
         if (t.type == token_type::whitespace) { continue; }
         if (t.type == token_type::eof) { break; }
-        if (lone != nullptr) { return std::string{folded}; } // two values: not this file's
+        if (lone != nullptr) { return std::string{folded}; } // Two values: not this file's.
         lone = &t;
     }
     if (lone == nullptr || lone->number >= 0) { return std::string{folded}; }
@@ -358,9 +367,9 @@ folded_value fold_math(std::string_view value, const length_context & given, mat
     std::string out;
     bool ok = true;
     std::size_t at = 0;
-    // WHICH random() THIS IS, for its automatic key: the ordinal among the
-    // value's random() functions in source order - `margin: random(..)
-    // random(..)` is two, `a, random(..)` holds the first - so two elements
+    // Which random() this is, for its automatic key: the ordinal among the
+    // value's random() functions in source order (`margin: random(..)
+    // random(..)` has two, `a, random(..)` holds the first), so two elements
     // with the same declaration share by ordinal and two ordinals never share.
     // The evaluator counts the ones inside each function and reports back.
     length_context ctx = given;
@@ -388,48 +397,49 @@ folded_value fold_math(std::string_view value, const length_context & given, mat
         const bool is_calc = ascii_iequals(name, "calc(");
         const math_answer answer = evaluate_math(body_of(value, at, name, span), ctx);
         ordinal += answer.randoms;
-        // A NUMBER WHERE THE PROPERTY WANTS A LENGTH IS A SYNTAX ERROR. This is
-        // the guard that makes it safe for the evaluator to answer with numbers
-        // at all: `width: calc(2 * 3)` stays invalid, as CSS says and as this
-        // engine already behaved, while `opacity: calc(2 * 3)` becomes `6`.
+        // A number where the property wants a length is a syntax error. This
+        // guard makes it safe for the evaluator to answer with numbers at all:
+        // `width: calc(2 * 3)` stays invalid, as CSS says, while
+        // `opacity: calc(2 * 3)` becomes `6`.
         const bool wrong_kind = answer.outcome == math_outcome::resolved &&
                                 answer.value.is_number && accepts == math_context::length;
         if (answer.outcome == math_outcome::resolved && !wrong_kind) {
             calc_result computed = answer.value;
-            // AN INFINITY OR A NaN IS CLAMPED AT COMPUTED-VALUE TIME. CSS Values 4
-            // §10.10: a math function's result is clamped to the property's
-            // range when the computed value is made, and an infinite one lands
-            // on whichever bound it overflowed. A NaN has no bound to land on and
-            // computes to zero - `width: calc(NaN * 1px)` is `0px` in every
-            // browser, and `calc-infinity-nan-computed` asserts it over lengths,
-            // times, numbers and percentages.
+            // An infinity or a NaN is clamped at computed-value time (CSS
+            // Values 4 §10.10): a math function's result is clamped to the
+            // property's range when the computed value is made, and an infinite
+            // one lands on whichever bound it overflowed. A NaN has no bound to
+            // land on and computes to zero: `width: calc(NaN * 1px)` is `0px` in
+            // every browser (WPT calc-infinity-nan-computed, over lengths,
+            // times, numbers and percentages).
             //
-            // THE BOUND IS 2^25, which is Chrome's LayoutUnit maximum and,
-            // just as much to the point, small enough that a used value's
-            // `x * 64` is still a finite float. The specification leaves the
-            // magnitude to the implementation; every engine picks one and the
-            // corpus only asks that it be at least a million. The SPECIFIED value
-            // keeps `calc(infinity * 1px)` - that is simplify_math's, not this.
+            // The bound is 2^25 (33554432), Chrome's LayoutUnit maximum, and
+            // small enough that a used value's `x * 64` is still a finite
+            // float. The specification leaves the magnitude to the
+            // implementation; WPT only asks that it be at least a million. The
+            // specified value keeps `calc(infinity * 1px)`: that is
+            // simplify_math's job, not this function's.
             //
-            // ponytail: one bound for every family and every property; the
+            // ponytail: one bound for every type and every property; the
             // per-property range (opacity's [0, 1], a non-negative width) is
             // the cascade's to apply after this.
-            // AN ANGLE HAS NO BOUND TO LAND ON: `rotate(calc(infinity * 1deg))`
-            // is `rotate(0deg)` in Chrome, and calc-infinity-nan-computed
-            // compares the two matrices fifteen times over. A 2^25 degree
-            // rotation is 272 degrees, which is no more the spec's answer and
-            // agrees with nobody.
-            constexpr double bound = 33554432.0;
+            //
+            // An angle has no bound to land on: `rotate(calc(infinity * 1deg))`
+            // is `rotate(0deg)` in Chrome, as WPT calc-infinity-nan-computed
+            // checks. A 2^25 degree rotation would be 272 degrees, which is
+            // neither the spec's answer nor any browser's.
+            constexpr double bound = 33554432.0; // 2^25.
             const bool angle = computed.type == numeric_type::angle;
             const auto clamped = [angle](double v) {
                 if (std::isnan(v) || (angle && std::isinf(v))) { return 0.0; }
                 return std::isinf(v) ? (v > 0 ? bound : -bound) : v;
             };
-            // AN INFINITE LENGTH AGAINST AN OPPOSITE INFINITE PERCENTAGE is a
-            // NaN however the percentage resolves - `calc(infinity * 1px -
-            // infinity * 1%)` is `infinity - infinity` for any basis - and a
-            // NaN is censored to zero (CSS Values 4 §10.9). Clamping the two
-            // halves separately would hand layout two bounds that do not cancel.
+            // An infinite length against an opposite infinite percentage is a
+            // NaN however the percentage resolves
+            // (`calc(infinity * 1px - infinity * 1%)` is `infinity - infinity`
+            // for any basis), and a NaN is censored to zero (CSS Values 4
+            // §10.9). Clamping the two halves separately would hand layout two
+            // bounds that do not cancel.
             if (computed.has_percent && std::isinf(computed.px) && std::isinf(computed.percent) &&
                 std::signbit(computed.px) != std::signbit(computed.percent)) {
                 computed.px = 0.0;
@@ -438,15 +448,16 @@ folded_value fold_math(std::string_view value, const length_context & given, mat
             }
             computed.px = clamped(computed.px);
             computed.percent = clamped(computed.percent);
-            // AN `<integer>` PROPERTY ROUNDS ITS ANSWER, and CSS Values 4 §10.10
-            // says which way: to the nearest integer, with a value exactly halfway
-            // going toward POSITIVE INFINITY. That is `floor(x + 0.5)` and not
-            // `std::round`, which rounds a half away from zero - the two disagree
-            // on every negative half, so `z-index: calc(-3 / 2)` is -1 and not -2.
+            // An <integer> property rounds its answer, and CSS Values 4 §10.10
+            // says which way: to the nearest integer, with a value exactly
+            // halfway going toward positive infinity. That is `floor(x + 0.5)`,
+            // not `std::round`, which rounds a half away from zero; the two
+            // disagree on every negative half, so `z-index: calc(-3 / 2)` is -1,
+            // not -2.
             //
-            // Rounding HERE and not in the evaluator is what makes
-            // `calc(calc(1 / 3) * 3)` come out as 1: only the finished conversion
-            // rounds, never an intermediate.
+            // Rounding here and not in the evaluator is what makes
+            // `calc(calc(1 / 3) * 3)` come out as 1: only the finished
+            // conversion rounds, never an intermediate.
             if (accepts == math_context::integer && computed.is_number &&
                 std::isfinite(computed.px)) {
                 computed.px = std::floor(computed.px + 0.5);
@@ -455,42 +466,35 @@ folded_value fold_math(std::string_view value, const length_context & given, mat
             at = span.end;
             continue;
         }
-        // AN INVALID CALC KEEPS ITS TEXT AND SAYS SO. Keeping the text is what
-        // lets a caller with no better answer carry on; saying so is what lets the
-        // cascade do the right thing instead, which is to treat the declaration as
-        // invalid. Layout reading the text was the wrong outcome: parse_length
-        // cannot read `calc(-1 * 0)` and answers `auto`, where CSS says the
-        // property takes its initial value.
-        //
-        // NO OTHER MATH FUNCTION EVER SAYS SO. `min()`, `max()` and `clamp()`
-        // were kept verbatim by every version of this file before they could be
-        // parsed, so "keep the text, do not condemn the declaration" is the one
-        // answer that cannot regress a page - and for `min(10px, 5%)` it is also
-        // the answer CSS Values 4 §10.11 gives. The same reasoning covers the
-        // fourteen functions added beside them: a `round()` this file cannot fold
-        // is refused where the corpus looks for it, in `check_declaration`, and
-        // not by quietly deleting a stylesheet's declaration.
+        // A calc() that fails keeps its text and sets ok = false, so the
+        // cascade treats the declaration as invalid (CSS says the property then
+        // takes its initial value; layout reading the text would not: its
+        // parse_length answers `auto` for `calc(-1 * 0)`). Other math functions
+        // that cannot be folded keep their text with ok unchanged: for
+        // `min(10px, 5%)` that is the CSS Values 4 §10.11 answer, and genuinely
+        // invalid ones are refused earlier, in check_declaration.
         if (!is_calc && answer.outcome == math_outcome::unresolved) {
-            // ...BUT ITS ARGUMENTS ARE STILL COMPUTED. `min(1em, 10%)` cannot be
-            // ordered without a containing block, and its computed value is
-            // `min(16px, 10%)` all the same: each argument resolves against
-            // the bases the element has (minmax-length-percent-serialize). One
-            // that cannot is folded like any other value, which reaches the
+            // Its arguments are still computed. `min(1em, 10%)` cannot be
+            // ordered without a containing block, but its computed value is
+            // `min(16px, 10%)`: each argument resolves against the bases the
+            // element has (WPT minmax-length-percent-serialize). One that
+            // cannot is folded like any other value, which reaches the
             // functions inside it.
             const std::size_t from = at + name.size();
             const std::string_view inner =
                 value.substr(from, span.end - from - (span.closed ? 1 : 0));
-            // A `random()` THAT WAITS FOR A BASIS KEEPS ITS BASE. `random(10%,
-            // 100%)` in `translate` has no answer until layout, and CSS Values
-            // 5 §random says its computed value is `random(fixed 0.5, 10%,
-            // 100%)`: the base is decided now and written into the value, so
-            // the used value is the same one every time it is asked.
+            // A random() that waits for a basis keeps its base.
+            // `random(10%, 100%)` in `translate` has no answer until layout,
+            // and CSS Values 5 §random says its computed value is
+            // `random(fixed 0.5, 10%, 100%)`: the base is decided now and
+            // written into the value, so the used value is the same every time
+            // it is asked.
             if (ascii_iequals(name, "random(")) {
                 const std::vector<std::string_view> arguments = top_level_arguments(inner);
                 std::string_view options;
                 std::size_t first = 0;
                 // The options are the first argument when it is one: a name,
-                // a UA ident, a scope keyword, `auto` or `fixed` - any
+                // a UA ident, a scope keyword, `auto` or `fixed`: any
                 // identifier that is not one of the numeric constants.
                 if (!arguments.empty()) {
                     const std::string_view head = trim(arguments.front(), html_whitespace);
@@ -551,9 +555,10 @@ folded_value fold_math(std::string_view value, const length_context & given, mat
                     return text;
                 }
                 // A sum around a comparison with no answer is simplified over
-                // its tree against the bases (tree.cpp): `5em + 5%` is `5% +
-                // 80px` and `(min(10%, 30px) + 10px) * 2 + 10px` is `10px + (2
-                // * (10px + min(10%, 30px)))` (minmax-length-percent-serialize).
+                // its tree against the bases (tree.cpp): `5em + 5%` is
+                // `5% + 80px`, and `(min(10%, 30px) + 10px) * 2 + 10px` is
+                // `10px + (2 * (10px + min(10%, 30px)))` (WPT
+                // minmax-length-percent-serialize).
                 if (arg.outcome == math_outcome::unresolved &&
                     math_name_at(trim(one, html_whitespace), 0).empty()) {
                     if (const std::optional<std::string> tree = simplify_sum_text(one, &ctx)) {
@@ -567,8 +572,8 @@ folded_value fold_math(std::string_view value, const length_context & given, mat
         }
         if (is_calc && answer.outcome == math_outcome::unresolved) {
             // The same tree for a calc() the bases cannot finish:
-            // `calc(min(1%, 2%) + max(3%, 4%) + 10%)` computes to `calc(10% +
-            // min(1%, 2%) + max(3%, 4%))` (minmax-percentage-serialize).
+            // `calc(min(1%, 2%) + max(3%, 4%) + 10%)` computes to
+            // `calc(10% + min(1%, 2%) + max(3%, 4%))` (WPT minmax-percentage-serialize).
             if (const std::optional<std::string> tree =
                     simplify_sum_text(body_of(value, at, name, span), &ctx)) {
                 out.append("calc(").append(*tree).append(")");

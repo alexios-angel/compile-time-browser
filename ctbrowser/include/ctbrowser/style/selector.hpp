@@ -1,3 +1,27 @@
+//===- selector.hpp - Compiled selectors ------------------------*- C++ -*-===//
+//
+// Compiled selectors and the structures that make matching cheap, arranged so
+// that most rules are never even considered. Two structures do that, the same
+// two every production engine uses:
+//
+// Bucketing. A selector can only match an element if its rightmost simple
+// selector does, so rules are filed under that: `#nav a` under the tag `a`,
+// `.card .title` under the class `title`, `#main` under the id `main`. Looking
+// up an element consults its own id bucket, its class buckets, its tag bucket
+// and the universal bucket: a handful of rules out of thousands.
+//
+// An ancestor filter. `.sidebar .link` still has to prove some ancestor
+// carries `.sidebar`, and walking to the root for every candidate makes deep
+// documents slow. A bloom filter over the current ancestor chain answers
+// "definitely not present" in constant time, which is almost always the
+// answer. It has false positives and no false negatives, so a positive falls
+// through to the real walk and a negative is conclusive.
+//
+// The filter must count, which is why Boost.Bloom does not fit: the traversal
+// pushes an element's keys on the way down and pops them on the way back up,
+// and a plain bloom filter cannot remove.
+//
+//===----------------------------------------------------------------------===//
 #pragma once
 #include <array>
 #include <boost/container/small_vector.hpp>
@@ -10,78 +34,57 @@
 
 #include <ctbrowser/core/core.hpp>
 
-// Selector matching, arranged so that most rules are never even considered. Two
-// structures do that, and they are the two every production engine uses:
-//
-// BUCKETING. A selector can only match an element if its RIGHTMOST simple
-// selector does. So rules are filed under that: `#nav a` under the tag `a`,
-// `.card .title` under the class `title`, `#main` under the id `main`. Looking
-// up an element consults its own id bucket, its class buckets, its tag bucket
-// and the universal bucket - a handful of rules out of thousands.
-//
-// AN ANCESTOR FILTER. `.sidebar .link` still has to prove some ancestor
-// carries `.sidebar`, and walking to the root for every candidate is what
-// makes deep documents slow. A bloom filter over the current ancestor chain
-// answers "definitely not present" in constant time, which is the answer
-// almost every time. It has false positives and no false negatives, so a
-// positive falls through to the real walk and a negative is conclusive.
-//
-// The filter must COUNT, which is why Boost.Bloom is the wrong tool here: the
-// traversal pushes an element's keys on the way down and pops them on the way
-// back up, and a plain bloom filter cannot remove.
-
 namespace ctbrowser::style {
 
 using ctbrowser::atom;
 
-// The pseudo-class state bits. CANONICAL HERE, because `compound::states` is the
-// field they live in and the selector parser is what writes it; style::engine
-// aliases them so callers can keep saying engine::state_hover.
+/// The pseudo-class state bits. Defined here because `compound::states` holds
+/// them and the selector parser writes it; style::engine aliases them so
+/// callers can say engine::state_hover.
 inline constexpr std::uint32_t state_hover = 1u << 0;
 inline constexpr std::uint32_t state_active = 1u << 1;
 inline constexpr std::uint32_t state_focus = 1u << 2;
 inline constexpr std::uint32_t state_checked = 1u << 3;
 inline constexpr std::uint32_t state_disabled = 1u << 4;
-// `:target` - the document's indicated element, set by the shell from the URL's
-// fragment the way `:focus` is set from the focus (dom_bindings::observe_location).
+/// `:target`: the document's indicated element, set by the shell from the URL's
+/// fragment the way `:focus` is set from the focus.
 inline constexpr std::uint32_t state_target = 1u << 5;
-// `:focus-within` - the element or a descendant has the focus - is derived
-// from `state_focus` when an element's facts are gathered (engine::facts_of),
-// by asking whether the focused element is in the subtree. `:focus-visible`
-// is SET by the shell with the focus, from how the focus got there - the
-// keyboard, a pointer, a script - which is Selectors 4 §9.3's heuristic
-// (shell/browser/focus.cpp, focus_update).
+/// `:focus-within` (the element or a descendant has the focus) is derived from
+/// `state_focus` when an element's facts are gathered (engine::facts_of), by
+/// asking whether the focused element is in the subtree. `:focus-visible` is
+/// set by the shell with the focus, from how the focus got there (keyboard,
+/// pointer, script), which is Selectors 4 §9.3's heuristic
+/// (lib/Shell/browser/focus.cpp).
 inline constexpr std::uint32_t state_focus_within = 1u << 6;
 inline constexpr std::uint32_t state_focus_visible = 1u << 7;
 
+/// How a compound relates to the next one to its right.
 enum class combinator : std::uint8_t {
-    none,               // the rightmost compound
+    none,               // The rightmost compound.
     descendant,         // A B
     child,              // A > B
     next_sibling,       // A + B
     subsequent_sibling, // A ~ B
 };
 
-// `[name]`, `[name=value]` and the four substring forms. The value is OWNED
-// rather than interned or referenced: an attribute value is not an identifier -
-// `[class~="a b"]` has a space in it - and the sheet it was parsed from does not
-// outlive the compiled selector.
+/// The attribute selector operators: `[name]`, `[name=value]` and the four
+/// substring forms.
 enum class attr_op : std::uint8_t {
-    present,   // [a]        - the attribute exists, whatever it holds
+    present,   // [a]        The attribute exists, whatever it holds.
     exact,     // [a=v]
-    includes,  // [a~=v]     - v is one of a whitespace-separated list
-    dash,      // [a|=v]     - v, or v followed by a hyphen. For lang subtags
+    includes,  // [a~=v]     v is one of a whitespace-separated list.
+    dash,      // [a|=v]     v, or v followed by a hyphen (for lang subtags).
     prefix,    // [a^=v]
     suffix,    // [a$=v]
     substring, // [a*=v]
 };
 
-// THE NAMESPACE PREFIX, Selectors 4 §3.2, on a type selector or an attribute
-// selector. `any` is `*|`, which constrains nothing - and is also what an unprefixed
-// TYPE means, because this engine models no default namespace. `none` is `|`: the
-// null namespace, which no element the HTML parser makes is in, and which every
-// attribute `setAttribute` makes is. `named` keeps the prefix for the CSSOM, whose
-// serialiser resolves it against the sheet's `@namespace` rules.
+/// The namespace prefix on a type or attribute selector (Selectors 4 §3.2).
+/// `any` is `*|`, which constrains nothing. `none` is `|`: the null namespace,
+/// which no element the HTML parser makes is in, and which every attribute
+/// `setAttribute` makes is. `named` keeps the prefix for the CSSOM, whose
+/// serialiser resolves it against the sheet's `@namespace` rules. `unset` is
+/// no prefix written.
 enum class ns_prefix : std::uint8_t {
     unset,
     any,
@@ -89,37 +92,38 @@ enum class ns_prefix : std::uint8_t {
     named
 };
 
+/// One attribute selector. The value is owned rather than interned or
+/// referenced: an attribute value is not an identifier (`[class~="a b"]` has a
+/// space in it), and the sheet it was parsed from does not outlive the
+/// compiled selector.
 struct attribute_match {
-    // THE NAME TWICE: folded to lowercase, and exactly as the author wrote it.
-    // Which one applies is a question about the ELEMENT, not about the selector -
-    // an attribute name in a selector is matched ASCII case-insensitively against
-    // an HTML element and case-sensitively against anything else, and this
-    // engine's tokenizer keeps `viewBox`'s capitals inside foreign content on
-    // purpose. Interning both here costs one atom per attribute selector and
-    // saves the matcher a fold per candidate.
+    /// The name twice: folded to lowercase, and exactly as written. Which one
+    /// applies depends on the element: an attribute name in a selector matches
+    /// ASCII case-insensitively against an HTML element and case-sensitively
+    /// against anything else (foreign content keeps `viewBox`'s capitals).
+    /// Interning both costs one atom per attribute selector and saves the
+    /// matcher a fold per candidate.
     atom name;
     atom name_exact;
     std::string value;
     attr_op op = attr_op::present;
-    // The `i` flag. `s` is the default and needs no bit; both are CSS Selectors
-    // Level 4 and Bootstrap uses neither, but they are two lines here and a
-    // silent wrong answer without them.
+    /// The `i` flag (Selectors 4). `s` is the default and needs no bit.
     bool case_insensitive = false;
-    // ...and an explicit `s`, which changes nothing in matching and is kept
-    // for selectorText (attribute-case/cssom.html).
+    /// An explicit `s` flag, which changes nothing in matching and is kept for
+    /// selectorText.
     bool case_sensitive_flag = false;
-    // `[*|title]`, `[|title]`, `[xlink|href]`. Unset is the plain `[title]`, which
-    // the matcher answers by qualified name; the other three are answered by
-    // LOCAL name and the attribute's own namespace, and a named prefix carries
-    // the URI its `@namespace` bound so the matcher can compare it with the one
-    // the DOM stored on the attribute.
+    /// The prefix of `[*|title]`, `[|title]`, `[xlink|href]`. Unset is the plain
+    /// `[title]`, which the matcher answers by qualified name; the other three
+    /// are answered by local name and the attribute's own namespace, and a
+    /// named prefix carries in `ns_uri` the URI its `@namespace` bound, to
+    /// compare with the one the DOM stored on the attribute.
     ns_prefix ns = ns_prefix::unset;
     atom ns_uri;
 };
 
-// Structural requirements that are a question about the element's POSITION rather
-// than about its name or its attributes. A bitfield rather than a list because
-// each is a single yes/no and they compose - `:root:empty` is both.
+/// Structural pseudo-classes: questions about the element's position rather
+/// than its name or attributes. A bitfield rather than a list because each is
+/// a single yes/no and they compose (`:root:empty` is both).
 inline constexpr std::uint32_t structural_root = 1u << 0;
 inline constexpr std::uint32_t structural_empty = 1u << 1;
 inline constexpr std::uint32_t structural_first_child = 1u << 2;
@@ -128,44 +132,44 @@ inline constexpr std::uint32_t structural_only_child = 1u << 4;
 inline constexpr std::uint32_t structural_first_of_type = 1u << 5;
 inline constexpr std::uint32_t structural_last_of_type = 1u << 6;
 inline constexpr std::uint32_t structural_only_of_type = 1u << 7;
-// Not positional, but the same KIND of thing: a predicate on the element answered
-// from facts the traversal gathered, rather than from its name, its attributes or
-// transient UI state - NOT state bits, which nothing sets for these, and
-// `.btn:not(:disabled)` would then match disabled buttons.
+/// Not positional, but answered the same way: from facts the traversal gathers
+/// about the element. They cannot be state bits, because nothing sets state
+/// bits for them and `.btn:not(:disabled)` would then match disabled buttons.
 inline constexpr std::uint32_t structural_disabled = 1u << 8;
 inline constexpr std::uint32_t structural_enabled = 1u << 9;
 inline constexpr std::uint32_t structural_checked = 1u << 10;
 inline constexpr std::uint32_t structural_link = 1u << 11;
-// `:visited` is always FALSE and will stay that way. Chrome restricts it to colour
-// for privacy reasons; never matching is the honest subset rather than a gap.
+/// `:visited` never matches, deliberately. Chrome restricts it to colour for
+/// privacy reasons; never matching is the honest subset rather than a gap.
 inline constexpr std::uint32_t structural_visited = 1u << 12;
-// `:scope` - the query's root, or `:root` when there is none. See engine::scope_.
+/// `:scope`: the query's root, or `:root` when there is none. See
+/// engine::scope_.
 inline constexpr std::uint32_t structural_scope = 1u << 13;
-// `:defined` - HTML §4.13.4. An element whose custom element state is neither
-// "undefined" nor "failed": every built-in (uncustomized) element, and every
-// custom element that has been upgraded. The matcher answers the honest subset
-// it can see from the tree alone - a built-in HTML element, a non-HTML element,
-// and NOT a potential custom element name (autonomous) or an `is=` customized
-// built-in - because the custom element registry lives in the shell and the
-// style matcher is not told which names were defined. An upgraded custom
-// element is thus wrongly not `:defined`; see the engine's is_defined comment.
+/// `:defined` (HTML §4.13.4): an element whose custom element state is neither
+/// "undefined" nor "failed", meaning every built-in element and every upgraded
+/// custom element. The matcher answers the subset it can see from the tree
+/// alone (a built-in HTML element or a non-HTML element matches; a potential
+/// custom element name or an `is=` customized built-in does not), because the
+/// custom element registry lives in the shell and the matcher is not told
+/// which names were defined. An upgraded custom element is thus wrongly not
+/// `:defined`; see the `:defined` comment in lib/Style/engine/selectors.cpp.
 inline constexpr std::uint32_t structural_defined = 1u << 14;
-// `:placeholder-shown` - Selectors 4 §13.3.2: an <input> or <textarea> with a
-// `placeholder` attribute, empty or not, whose value is empty - the value the
-// engine's control-value hook answers once edited, the attribute (or the
-// textarea's text) until then.
+/// `:placeholder-shown` (Selectors 4 §13.3.2): an <input> or <textarea> with a
+/// `placeholder` attribute, empty or not, whose value is empty. The value is
+/// what the engine's control-value hook reports once edited, and the attribute
+/// (or the textarea's text) until then.
 inline constexpr std::uint32_t structural_placeholder_shown = 1u << 15;
-// `:valid` / `:invalid` - HTML §4.16.3: a candidate for constraint validation
-// that satisfies its constraints or does not, and a <form> or <fieldset> by
-// whether an element it covers fails. The form store knows, so the engine's
-// validity hook answers; with no hook neither ever matches.
+/// `:valid` / `:invalid` (HTML §4.16.3): a candidate for constraint validation
+/// that satisfies its constraints or does not, and a <form> or <fieldset> by
+/// whether an element it covers fails. The form store knows, so the engine's
+/// validity hook answers; with no hook neither ever matches.
 inline constexpr std::uint32_t structural_valid = 1u << 16;
 inline constexpr std::uint32_t structural_invalid = 1u << 17;
 
 struct compiled_selector;
 
-// The pseudo-classes that carry an ARGUMENT, so a bit will not do: an `An+B`
-// pattern, or a nested selector list.
+/// The pseudo-classes that carry an argument, so a bit will not do: an `An+B`
+/// pattern, a nested selector list, or text.
 enum class pseudo_kind : std::uint8_t {
     nth_child,
     nth_last_child,
@@ -174,10 +178,9 @@ enum class pseudo_kind : std::uint8_t {
     not_,
     is_,
     where_,
-    // `:lang()` and `:dir()`. Neither is a question about the element's own name,
-    // attributes or position: both are answered from the nearest ANCESTOR carrying
-    // the relevant attribute, so they take their argument as text and the matcher
-    // does the walk.
+    // `:lang()` and `:dir()`. Both are answered from the nearest ancestor
+    // carrying the relevant attribute, so they take their argument as text and
+    // the matcher does the walk.
     lang,
     dir,
     // `:heading` and `:heading(<integer>#)`, Selectors 5 §heading: an h1-h6,
@@ -185,90 +188,90 @@ enum class pseudo_kind : std::uint8_t {
     heading,
 };
 
+/// One argument-carrying pseudo-class.
 struct pseudo_ref {
     pseudo_kind kind = pseudo_kind::nth_child;
-    // `An+B`. `:nth-child(2n+1)` is a=2 b=1; `:nth-child(3)` is a=0 b=3.
+    /// `An+B`. `:nth-child(2n+1)` is a=2 b=1; `:nth-child(3)` is a=0 b=3.
     std::int32_t a = 0;
     std::int32_t b = 0;
-    // The argument of `:not()`, `:is()` or `:where()`. A vector rather than a
-    // small_vector because the type is mutually recursive with compiled_selector -
-    // `:not(:is(.a))` is legal - and std::vector is the container that may name an
-    // incomplete type.
+    /// The argument of `:not()`, `:is()` or `:where()`. A std::vector rather
+    /// than a small_vector because the type is mutually recursive with
+    /// compiled_selector (`:not(:is(.a))` is legal), and std::vector may name an
+    /// incomplete type.
     std::vector<compiled_selector> args;
-    // `:has()`. Its arguments are RELATIVE selectors - `> .a`, `~ .b`, or `.c` for
-    // a descendant - and each is compiled with a synthetic `:scope` compound on
-    // its left, so `:has(> .a)` holds `:scope > .a` and the matcher answers it by
-    // running a scoped query from the subject. Carried as `is_` plus this flag
-    // rather than as a kind of its own, because the CSSOM serialiser switches
-    // over the kinds and lives outside this subsystem; a compound holding one is
-    // marked `dropped`, which sends the serialiser to the author's bytes anyway.
+    /// Set for `:has()`. Its arguments are relative selectors (`> .a`, `~ .b`,
+    /// or `.c` for a descendant), each compiled with a synthetic `:scope`
+    /// compound on its left, so `:has(> .a)` holds `:scope > .a` and the
+    /// matcher answers it by running a scoped query from the subject. Carried
+    /// as `is_` plus this flag rather than as its own kind, because the CSSOM
+    /// serialiser switches over the kinds and lives outside this subsystem; a
+    /// compound holding one is marked `dropped`, which sends the serialiser to
+    /// the author's bytes anyway.
     bool relative = false;
-    // The `:is(<parent list>)` that a nested rule's `&` compiled to - see
-    // compound::nesting; serialised as `&`.
+    /// Set on the `:is(<parent list>)` that a nested rule's `&` compiled to (see
+    /// compound::nesting); serialised as `&`.
     bool nesting = false;
-    // The argument of `:lang()` - a comma-separated list of language RANGES, kept
-    // as written because a range is not an identifier: `*-Latn` is a legal one and
-    // interning it would put a wildcard in the atom table. `:dir()` stores its one
-    // keyword here too, ASCII-lowercased.
+    /// The argument of `:lang()`: a comma-separated list of language ranges,
+    /// kept as written because a range is not an identifier (`*-Latn` is
+    /// legal, and interning it would put a wildcard in the atom table).
+    /// `:dir()` stores its one keyword here too, ASCII-lowercased.
     std::vector<std::string> ranges;
-    // `:heading(1, 2)`'s levels; empty for the bare `:heading`.
+    /// `:heading(1, 2)`'s levels; empty for the bare `:heading`.
     std::vector<std::int32_t> levels;
 };
 
-// One compound selector: `div#id.a.b[x=y]:hover` - a tag, an id, some classes,
-// some attribute requirements, any required pseudo-state bits, and any structural
-// requirements. All optional.
+/// One compound selector, such as `div#id.a.b[x=y]:hover`: a tag, an id, some
+/// classes, some attribute requirements, any required pseudo-state bits, and
+/// any structural requirements. All optional.
 struct compound {
-    atom tag;       // empty => universal, folded to lowercase
-    atom tag_exact; // ...and as written, for a foreign element - see attribute_match
-    atom id;        // empty => unconstrained
+    atom tag;       // Folded to lowercase; empty means universal.
+    atom tag_exact; // The tag as written, for a foreign element (see attribute_match).
+    atom id;        // Empty means unconstrained.
     boost::container::small_vector<atom, 2> classes;
-    // Sized 1 rather than 2: an attribute selector is uncommon, and the ones that
-    // appear almost always appear alone (`[type=checkbox]`, `[disabled]`).
+    // Sized 1 rather than 2: attribute selectors are uncommon, and almost
+    // always appear alone (`[type=checkbox]`, `[disabled]`).
     boost::container::small_vector<attribute_match, 1> attributes;
-    std::uint32_t states = 0;     // :hover, :focus, ... as bits
-    std::uint32_t structural = 0; // :root, :first-child, ... as bits
-    // ...and which of those were written AFTER the pseudo-element -
-    // `::before:hover`, `::view-transition-group(x):only-child` - which
-    // selectorText writes after it again.
+    std::uint32_t states = 0;     // :hover, :focus, ... as bits.
+    std::uint32_t structural = 0; // :root, :first-child, ... as bits.
+    /// Which of those bits were written after the pseudo-element
+    /// (`::before:hover`, `::view-transition-group(x):only-child`), so
+    /// selectorText writes them after it again.
     std::uint32_t states_after_pe = 0;
     std::uint32_t structural_after_pe = 0;
-    // The argument-carrying pseudo-classes. A vector because it is almost always
-    // empty and because the type is recursive; tested LAST of everything in a
-    // compound, since a nested selector list runs the matcher again.
+    /// The argument-carrying pseudo-classes. A std::vector because it is almost
+    /// always empty and the type is recursive. Tested last in a compound,
+    /// since a nested selector list runs the matcher again.
     std::vector<pseudo_ref> pseudos;
-    // THE NAMESPACE PREFIX on the type selector - see ns_prefix - and the URI
-    // it binds: the prefix's `@namespace`, or the sheet's default namespace for
-    // an unprefixed compound (Selectors 4 §6.1.1 puts the implied `*` in it
-    // too). Empty constrains nothing. The matcher knows an element's namespace
-    // as html or svg, so those two URIs match and `none` never does.
+    /// The namespace prefix on the type selector (see ns_prefix) and the URI it
+    /// binds: the prefix's `@namespace`, or the sheet's default namespace for
+    /// an unprefixed compound (Selectors 4 §6.1.1 puts the implied `*` in it
+    /// too). Empty constrains nothing. The matcher knows an element's
+    /// namespace only as HTML or SVG, so those two URIs can match and `none`
+    /// never does.
     ns_prefix ns = ns_prefix::unset;
     atom ns_name;
     atom ns_uri;
-    // A PSEUDO-ELEMENT - `::before`, interned lowercase - or empty. The engine
-    // generates no boxes for one, so a compound carrying it never matches an
-    // element; the name is kept so `selectorText` can be canonical, which is how
-    // `:before` comes back as `::before`.
+    /// A pseudo-element (`::before`, interned lowercase), or empty. The engine
+    /// generates no boxes for one, so a compound carrying it never matches an
+    /// element; the name is kept so `selectorText` can be canonical, which is
+    /// how `:before` comes back as `::before`.
     atom pseudo_element;
-    // WRITTEN WITH `&`, CSS Nesting 1 §2. What the nesting selector MEANS is
-    // compiled into the compound - `:is(<parent list>)` in a nested style
-    // rule, `:where(:scope)` inside `@scope`, `:scope` at the top level - so
-    // the matcher never sees it; this is for `selectorText`, which gives
-    // back `&` rather than what it stood for.
+    /// True when written with `&` (CSS Nesting 1 §2). What `&` means is
+    /// compiled into the compound (`:is(<parent list>)` in a nested style rule,
+    /// `:where(:scope)` inside `@scope`, `:scope` at the top level), so the
+    /// matcher never sees it; this flag lets `selectorText` give back `&`.
     bool nesting = false;
-    bool never_matches = false; // a construct this engine cannot match
-    // A construct the compiled form does not HOLD - `:has()`, `::part(x)`, a
-    // namespaced attribute - so no serialiser can rebuild the author's selector
-    // from it. Distinct from never_matches: `ns|e` is unmatchable and
-    // representable, `:has(a)` is both unmatchable and lost.
+    bool never_matches = false; // A construct this engine cannot match.
+    /// A construct the compiled form does not fully hold (`:has()`,
+    /// `::part(x)`, a namespaced attribute), so no serialiser can rebuild the
+    /// author's selector from it. Independent of never_matches: `:has(a)` is
+    /// matched but not representable.
     bool dropped = false;
 };
 
-// Specificity as the spec's (a, b, c) triple, packed so the cascade's comparison
-// stays one integer compare.
-//
-// Ten bits each, which is 1023 of any category before it saturates; no real sheet
-// reaches that.
+/// Specificity as the spec's (a, b, c) triple, packed so the cascade's
+/// comparison stays one integer compare. Ten bits each, so each count
+/// saturates at 1023; no real sheet reaches that.
 struct specificity {
     std::uint32_t packed = 0;
 
@@ -279,9 +282,8 @@ struct specificity {
         return specificity{(clamp(ids) << 20) | (clamp(classes) << 10) | clamp(types)};
     }
     [[nodiscard]] constexpr specificity operator+(specificity o) const noexcept {
-        // Per-field addition, because the packed values would carry between
-        // fields: two compounds each with one class must be (0,2,0), not (0,1,0)
-        // twice added as integers with a possible carry into the id field.
+        // Per-field addition with saturation: adding the packed integers would
+        // let an overflowing field carry into the next one.
         return of(ids() + o.ids(), classes() + o.classes(), types() + o.types());
     }
     [[nodiscard]] constexpr std::uint32_t ids() const noexcept { return packed >> 20; }
@@ -293,54 +295,56 @@ struct specificity {
     }
 };
 
+/// One complex selector, compiled for matching.
 struct compiled_selector {
-    // stored RIGHTMOST FIRST, because that is the order matching walks them
+    // Stored rightmost first, the order matching walks them.
     boost::container::small_vector<compound, 2> parts;
-    boost::container::small_vector<combinator, 2> links; // links[i] joins parts[i] to parts[i+1]
+    boost::container::small_vector<combinator, 2> links; // links[i] joins parts[i] to parts[i+1].
     specificity spec;
-    // NAMES THE SCOPING ROOT EXPLICITLY - `:scope` or `&` somewhere in it,
-    // nested arguments included. A scoped style rule (CSS Cascade 6 §3.3)
-    // matches only elements IN SCOPE, and the scoping root is in scope; but a
-    // selector that does not say `:scope` is implicitly `:where(:scope)`
-    // plus a descendant combinator, so `.a { }` inside `@scope (.a)` never
-    // styles the root and `:scope { }` does. This flag is that difference.
+    /// Whether the selector names the scoping root explicitly (`:scope` or `&`
+    /// anywhere in it, nested arguments included). A scoped style rule (CSS
+    /// Cascade 6 §3.3) matches only elements in scope, and the scoping root is
+    /// in scope; but a selector that does not say `:scope` is implicitly
+    /// `:where(:scope)` plus a descendant combinator, so `.a { }` inside
+    /// `@scope (.a)` never styles the root while `:scope { }` does.
     bool explicit_scope = false;
 };
 
+/// One rule as the engine files it: a selector and its declaration block, with
+/// everything the cascade needs to order it.
 struct rule {
-    std::uint32_t selector = 0;    // index into selectors
-    std::uint32_t declaration = 0; // index into the sheet's declaration list
-    std::int32_t order = 0;        // source order, the final cascade tiebreak
-    // Which `@media` gated this rule, as an index into the engine's condition table.
-    // 0 is the unconditional entry. Matching tests one bool rather than evaluating
-    // anything, which is what makes a media query cost nothing per candidate.
+    std::uint32_t selector = 0;    // Index into selectors.
+    std::uint32_t declaration = 0; // Index into the sheet's declaration list.
+    std::int32_t order = 0;        // Source order, the final cascade tiebreak.
+    /// Which `@media` gated this rule, as an index into the engine's condition
+    /// table; 0 is the unconditional entry. Matching tests one bool rather than
+    /// evaluating anything, so a media query costs nothing per candidate.
     std::uint32_t condition = 0;
-    // Which `@layer`, as an index into the engine's layer table: 0 is
-    // UNLAYERED. The cascade compares the layers' RANKS (engine::layer_rank_),
-    // not these indices - a layer's place in the order is decided by first
-    // appearance across every sheet, and the index is merely which one.
+    /// Which `@layer`, as an index into the engine's layer table; 0 is
+    /// unlayered. The cascade compares the layers' ranks (engine::layer_rank_),
+    /// not these indices: a layer's place in the order is decided by first
+    /// appearance across every sheet.
     std::uint16_t layer = 0;
-    // Which `@scope`, as an index into the engine's scope table; 0 is none.
+    /// Which `@scope`, as an index into the engine's scope table; 0 is none.
     std::uint16_t scope = 0;
-    // Which `@container`, likewise; 0 is none.
+    /// Which `@container`, likewise; 0 is none.
     std::uint16_t container = 0;
-    // HOW FAR THE SCOPING ROOT IS from the element this rule matched, in
-    // generations (CSS Cascade 6 §6.3): 0 is the root itself. Filled in when
-    // the rule is collected for one element, so it is meaningful only on a
-    // copy in engine::matches_. An unscoped rule is infinitely far.
+    /// How far the scoping root is from the element this rule matched, in
+    /// generations (CSS Cascade 6 §6.3): 0 is the root itself. Filled in when
+    /// the rule is collected for one element, so it is meaningful only on a
+    /// copy in engine::matches_. An unscoped rule is infinitely far (0xFFFF).
     std::uint16_t proximity = 0xFFFF;
     std::uint8_t origin = 0; // 0 = user agent, 1 = author. Author wins.
     bool important = false;
 };
 
-// A counting bloom filter over the ancestors of the element being matched.
-//
-// Counters SATURATE at 255 and are never decremented once saturated. That is
-// deliberate: a saturated counter that got decremented could drop to zero
-// while a matching ancestor was still on the stack, which would be a FALSE
-// NEGATIVE - the filter would reject a selector that actually matches, and
-// the page would render wrong. Refusing to decrement makes the filter merely
-// too permissive forever, which only costs a wasted ancestor walk.
+/// A counting bloom filter over the ancestors of the element being matched.
+///
+/// Counters saturate at 255 and are never decremented once saturated. A
+/// saturated counter that got decremented could drop to zero while a matching
+/// ancestor was still on the stack, a false negative that would reject a
+/// selector that matches. Refusing to decrement only makes the filter too
+/// permissive, which costs a wasted ancestor walk.
 class ancestor_filter {
 public:
     static constexpr std::size_t slots = 4096;
@@ -356,12 +360,14 @@ public:
         for (const atom c : classes) { bump(hash(c), -1); }
     }
 
-    // false => certainly absent from every ancestor. true => maybe present.
+    /// False means certainly absent from every ancestor; true means maybe
+    /// present.
     [[nodiscard]] bool may_contain(atom key) const noexcept {
         if (!key) { return true; }
         const auto [a, b] = hash(key);
         return counters_[a] != 0 && counters_[b] != 0;
     }
+    /// Whether some ancestor may satisfy `c`'s id, tag and classes.
     [[nodiscard]] bool may_match(const compound & c) const noexcept {
         if (c.id && !may_contain(c.id)) { return false; }
         if (c.tag && !may_contain(c.tag)) { return false; }
@@ -376,7 +382,8 @@ private:
         std::size_t a, b;
     };
     [[nodiscard]] static constexpr slot_pair hash(atom key) noexcept {
-        // two independent probes over one 32-bit id
+        // Two independent probes over one 32-bit id; 2654435761 is Knuth's
+        // multiplicative hashing constant (2^32 / golden ratio).
         const std::uint32_t k = key.id * 2654435761u;
         return slot_pair{(k >> 4) % slots, ((k >> 18) ^ (k * 40503u)) % slots};
     }
@@ -385,7 +392,7 @@ private:
             if (delta > 0) {
                 if (counters_[i] != 0xFF) { ++counters_[i]; }
             } else if (counters_[i] != 0xFF && counters_[i] != 0) {
-                --counters_[i]; // saturated counters stay saturated, on purpose
+                --counters_[i]; // Saturated counters stay saturated, on purpose.
             }
         }
     }
@@ -393,7 +400,8 @@ private:
     std::array<std::uint8_t, slots> counters_{};
 };
 
-// Rules filed by their rightmost simple selector.
+/// Rules filed by their rightmost simple selector: id first, else the first
+/// class, else the tag, else universal.
 struct rule_index {
     flat_map<std::uint32_t, std::vector<rule>> by_id;
     flat_map<std::uint32_t, std::vector<rule>> by_class;
@@ -401,17 +409,17 @@ struct rule_index {
     std::vector<rule> universal;
 
     void add(const compiled_selector & sel, rule r) {
-        const compound & key = sel.parts.front(); // rightmost
+        const compound & key = sel.parts.front(); // Rightmost.
         if (key.id) {
             by_id[key.id.id].push_back(r);
         } else if (!key.classes.empty()) {
             by_class[key.classes.front().id].push_back(r);
         } else if (key.tag) {
             by_tag[key.tag.id].push_back(r);
-            // BOTH SPELLINGS when they differ, because the bucket is looked up by
-            // the ELEMENT's tag atom and a foreign element's keeps its capitals.
-            // `linearGradient { }` filed only under the folded name is a rule the
-            // lookup can never reach, whatever the matcher would then say.
+            // File under both spellings when they differ, because the bucket is
+            // looked up by the element's tag atom and a foreign element's keeps
+            // its capitals: `linearGradient { }` filed only under the folded
+            // name could never be found.
             if (key.tag_exact && key.tag_exact != key.tag) {
                 by_tag[key.tag_exact.id].push_back(r);
             }

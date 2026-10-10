@@ -1,11 +1,12 @@
-// gl::device - the draw calls, the fixed-function state around them, and
+//===- ctbrowser/lib/Raster/gl/draw.cpp - GL device: draws ------*- C++ -*-===//
+//
+// gl::device: the draw calls, the fixed-function state around them, and
 // reading the pixels back.
 //
-// One of four files carved out of a 1,162-line Raster/gl.cpp on 2026-09-08.
-// All are member functions of the one class declared in
-// include/ctbrowser/raster/gl.hpp; the pimpl both branches define is in
-// internal.hpp beside this, with the includes gl.cpp had. Nothing about the
-// public header changed.
+// Member functions of gl::device (include/ctbrowser/raster/gl.hpp); the shared
+// pimpl and includes are in internal.hpp beside this file.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -57,18 +58,18 @@ void device::blend_func(int source, int destination) {
 bool device::read_pixels(paint::bitmap & into) const {
     if (!ok()) { return false; }
 
-    // THIS DEVICE'S CONTEXT, not whichever one happens to be current.
+    // Make this device's context current, not whichever one happens to be.
     //
-    // make_current() ran once, at construction. GL's rule is that a second
-    // device on the same thread makes the first one's context stale, and
-    // present() walks EVERY canvas on the page - so with two of them the second
-    // read the first's pixels out of the wrong context. One canvas is the only
-    // case that ever worked, and it worked by coincidence.
+    // make_current() ran once, at construction. A second device on the same
+    // thread makes the first one's context stale, and present() walks every
+    // canvas on the page, so without this a page with two canvases would read
+    // one canvas's pixels out of the other's context.
     eglMakeCurrent(impl_->display, impl_->surface, impl_->surface, impl_->context);
 
-    // THE DRAWING BUFFER, not whatever the page left bound. A page that ends a
-    // frame with a render target still bound - which Babylon does routinely -
-    // had that target read into its canvas instead of the picture it drew.
+    // Read the drawing buffer, not whatever the page left bound. A page that
+    // ends a frame with a render target still bound (Babylon does routinely)
+    // would otherwise get that target in its canvas instead of the picture it
+    // drew.
     //
     // Put back afterwards: this is a read, and a read that changes the binding
     // is a state mutation the page never asked for.
@@ -88,11 +89,11 @@ bool device::read_pixels(paint::bitmap & into) const {
     if (bound != 0) { glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(bound)); }
 
     for (int y = 0; y < h; ++y) {
-        // BOTTOM-LEFT TO TOP-LEFT. GL's origin is not a bitmap's.
+        // Bottom-left to top-left: GL's origin is not a bitmap's.
         const std::size_t row = static_cast<std::size_t>(h - 1 - y) * static_cast<std::size_t>(w);
         for (int x = 0; x < w; ++x) {
             const std::size_t at = (row + static_cast<std::size_t>(x)) * 4;
-            // RGBA IN, ARGB OUT.
+            // RGBA in, ARGB out.
             into.put(x, y,
                      (static_cast<std::uint32_t>(rgba[at + 3]) << 24) |
                          (static_cast<std::uint32_t>(rgba[at + 0]) << 16) |

@@ -1,7 +1,17 @@
+//===- ctbrowser/lib/Style/easing/numeric.cpp - Numeric values ------------===//
+//
+// Value helpers for CSS interpolation and composition: pairing two numeric
+// endpoints, mixing and summing them, colour interpolation in sRGB or Oklab,
+// and rewriting list and shorthand values into a computed shape whose parts
+// can be paired item by item.
+//
+//===----------------------------------------------------------------------===//
 #include "internal.hpp"
 
 namespace ctbrowser::style::easing_detail {
 
+// The comma-separated arguments of a function body, each trimmed. Brackets
+// are not tracked: this is for easing functions, whose arguments are numbers.
 [[nodiscard]] std::vector<std::string_view> split_arguments(std::string_view body) {
     std::vector<std::string_view> out;
     std::size_t start = 0;
@@ -14,6 +24,7 @@ namespace ctbrowser::style::easing_detail {
     return out;
 }
 
+// `text` as a finite number, with nothing else around it.
 [[nodiscard]] std::optional<double> number_of(std::string_view text) {
     double n = 0;
     const auto [end, ec] = std::from_chars(text.data(), text.data() + text.size(), n);
@@ -23,9 +34,11 @@ namespace ctbrowser::style::easing_detail {
     return n;
 }
 
+// The step count of `steps(<integer>, ...)`: a positive integer, clamped to
+// INT_MAX when larger, or nullopt.
 [[nodiscard]] std::optional<int> step_count(std::string_view text) {
     const css::token_stream tokens = css::tokenize(text);
-    if (tokens.tokens.size() != 2) { return std::nullopt; } // one token and EOF
+    if (tokens.tokens.size() != 2) { return std::nullopt; } // One token and EOF.
     const css::css_token & token = tokens.tokens.front();
     if (token.type != css::token_type::number || (token.flags & css::flag_integer) == 0 ||
         tokens.text_of(token) != text) {
@@ -74,9 +87,9 @@ namespace ctbrowser::style::easing_detail {
 // (1 - p) * a + p * b, the specification's own formula, which is also the one
 // that extrapolates sensibly: `p` is outside [0, 1] whenever the easing
 // overshoots. A numeric endpoint goes through the arithmetic at 0 and 1 too:
-// its value is the same and its text is the COMPUTED spelling -
+// its value is the same and its text is the computed spelling -
 // `random(300, 100)` is `300` at progress 1 and not the function
-// (random-in-animations).
+// (WPT css/css-values/random-in-animations).
 [[nodiscard]] css::calc_result mix(const css::calc_result & a, const css::calc_result & b,
                                    double p) {
     // A mix keeps both terms at 0 and 1 too: `10%` to `20px` ends at
@@ -103,17 +116,17 @@ namespace ctbrowser::style::easing_detail {
     return out;
 }
 
-// The text of a numeric result, CLAMPED AS A COMPUTED VALUE IS: an infinity
-// lands on the bound it overflowed and a NaN is zero (CSS Values 4 §10.10) -
-// after the arithmetic rather than before, so `0px` to `calc(infinity * 1px)`
-// is the bound at every progress past zero, which is what the corpus reads.
-// The bound is the fold's (lib/Style/css/calc/fold.cpp). Then an <integer>
-// rounds half up (§3.2), and the property's own range applies: the table's
-// floor at zero (one for positive integers) for a number, length or pure
-// percentage. A mix like `calc(-50px + 40%)` still needs its basis. Then
-// font-weight's [1, 1000] (CSS Fonts 4 §2.2, random-in-animations).
-// ponytail: the one property with a range that is not "non-negative"; give
-// the table a range when a second one animates.
+// The text of a numeric result, clamped the way a computed value is.
+// Infinity becomes ±33554432 (2^25, the same bound calc folding uses in
+// lib/Style/css/calc/fold.cpp) and NaN becomes 0 (CSS Values 4 §10.10).
+// Clamping happens after interpolation, so `0px` to `calc(infinity * 1px)` is
+// the bound at every progress past zero, as the WPT tests expect. Then an
+// <integer> rounds half up, non-negative properties are floored at 0 (1 for
+// integers) unless the value mixes a length with a percentage, which needs
+// its basis to clamp, and font-weight is clamped to [1, 1000] (CSS Fonts 4
+// §2.2).
+// ponytail: font-weight is the only property with a range other than
+// non-negative; add a range to the property table when a second one animates.
 [[nodiscard]] std::string numeric_text(std::string_view property, css::calc_result out) {
     constexpr double bound = 33554432.0;
     const auto clamped = [](double v) {
@@ -167,7 +180,7 @@ namespace ctbrowser::style::easing_detail {
     return color_text({lerp(a.r, b.r), lerp(a.g, b.g), lerp(a.b, b.b), lerp(a.a, b.a)});
 }
 
-// A LEGACY COLOUR - named, hex, rgb(), hsl(), hwb() - interpolates in sRGB;
+// A legacy colour - named, hex, rgb(), hsl(), hwb() - interpolates in sRGB;
 // a pair with a modern one in it interpolates in Oklab (CSS Color 4 §12.1)
 // and reads back as `oklab()`.
 [[nodiscard]] bool legacy_color(std::string_view text) {
@@ -180,6 +193,8 @@ namespace ctbrowser::style::easing_detail {
     return true;
 }
 
+// sRGB to Oklab: linearize each channel, then the two matrices of CSS Color 4
+// §17.4 with a cube root between them.
 [[nodiscard]] oklab oklab_of(const css::srgb_color & c) {
     const auto linear = [](double v) {
         const double m = std::fabs(v);
@@ -195,6 +210,7 @@ namespace ctbrowser::style::easing_detail {
             0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s};
 }
 
+// Interpolates two colours in Oklab with premultiplied alpha, as `oklab()` text.
 [[nodiscard]] std::string lerp_oklab(const css::srgb_color & from, const css::srgb_color & to,
                                      double p) {
     const oklab x = oklab_of(from), y = oklab_of(to);
@@ -203,7 +219,7 @@ namespace ctbrowser::style::easing_detail {
     const auto channel = [&](double a, double b) {
         const double premultiplied = lerp(a * from.a, b * to.a);
         const double v = alpha == 0 ? 0.0 : premultiplied / alpha;
-        return std::fabs(v) < 5e-7 ? 0.0 : v; // no `-0` for a grey's chroma
+        return std::fabs(v) < 5e-7 ? 0.0 : v; // No `-0` for a grey's chroma.
     };
     std::string out = "oklab(" + css::serialize_number(std::clamp(channel(x.l, y.l), 0.0, 1.0)) +
                       " " + css::serialize_number(channel(x.a, y.a)) + " " +
@@ -226,7 +242,7 @@ namespace ctbrowser::style::easing_detail {
     return property == "box-shadow" || property == "text-shadow";
 }
 
-// A LIST WHOSE ADDITION IS CONCATENATION: a shadow list, a transform list and
+// A list whose addition is concatenation: a shadow list, a transform list and
 // a filter list append (CSS Backgrounds 3 §7.2, CSS Transforms 1 §12, Filter
 // Effects 1 §11); every other comma list adds item by item.
 [[nodiscard]] bool appends(std::string_view property) {
@@ -234,31 +250,31 @@ namespace ctbrowser::style::easing_detail {
            property == "backdrop-filter";
 }
 
-// THE COMPUTED SHAPE OF A VALUE WHOSE GRAMMAR LETS THE AUTHOR REORDER OR OMIT:
-// a shadow is `<color> <x> <y> <blur> <spread> inset?` with the colour first
-// and the omitted lengths zero (CSS Backgrounds 3 §7.2, the order the
-// computed-style serialiser prints), a corner radius is two lengths. Paired
-// as written, `10px 30px orange` against `green 20px 20px 20px` has nothing
-// to interpolate; in computed shape it has a colour and three lengths. A
-// shadow list's `none` is the empty list.
-// A LIST THAT REPEATS TO MATCH (CSS Values 4 §4.1, "repeatable list"): the
+// A list that repeats to match (CSS Values 4 §4.1, "repeatable list"): the
 // background and mask layer lists pair the shorter with the longer by
 // repeating it, to the least common multiple of the two lengths.
 [[nodiscard]] bool repeatable(std::string_view property) {
     return property.starts_with("background-") || property.starts_with("mask-");
 }
 
+// The border-image and mask-border properties that take one to four sides.
 [[nodiscard]] bool image_sides(std::string_view property) {
     return property == "border-image-outset" || property == "border-image-width" ||
            property == "border-image-slice" || property == "mask-border-outset" ||
            property == "mask-border-width" || property == "mask-border-slice";
 }
 
+// The computed shape of a value whose grammar lets the author reorder or omit
+// parts. A shadow becomes `<color> <x> <y> <blur> <spread> inset?` with the
+// colour first and omitted lengths zero (CSS Backgrounds 3 §7.2, the order the
+// computed-style serializer prints); a corner radius becomes two lengths.
+// Written as-is, `10px 30px orange` and `green 20px 20px 20px` cannot be
+// paired; in this shape they can. A shadow list's `none` is the empty list.
 [[nodiscard]] std::string computed_shape(std::string_view property, std::string_view text,
                                          const css::length_context & ctx) {
-    // A BORDER SPACING IS A PAIR, the vertical the horizontal when omitted, and
+    // A border spacing is a pair, the vertical the horizontal when omitted, and
     // it interpolates as one: `10px` to `20px` passes `15px 15px`
-    // (border-spacing-interpolation).
+    // (WPT border-spacing-interpolation).
     if (property == "border-spacing") {
         const std::vector<std::string_view> parts = split_top_level(text, html_whitespace);
         std::vector<std::string_view> words;
@@ -270,8 +286,8 @@ namespace ctbrowser::style::easing_detail {
         if (words.size() == 1) { return std::string{words[0]} + " " + std::string{words[0]}; }
         return std::string{text};
     }
-    // A font width's keyword IS its percentage, which is what interpolates:
-    // `normal` to `ultra-expanded` is 100% to 200% (font-stretch-interpolation).
+    // A font width's keyword is its percentage, which is what interpolates:
+    // `normal` to `ultra-expanded` is 100% to 200% (WPT font-stretch-interpolation).
     if (property == "font-width" || property == "font-stretch") {
         if (const std::optional<std::string_view> percentage = css::font_width_percentage(text)) {
             return std::string{*percentage};
@@ -337,7 +353,7 @@ namespace ctbrowser::style::easing_detail {
         const std::vector<std::string_view> parts = split_top_level(text, html_whitespace);
         if (parts.size() == 1) { return std::string{parts[0]} + ' ' + std::string{parts[0]}; }
     }
-    // THE INDIVIDUAL TRANSFORM PROPERTIES (CSS Transforms 2 §7): `scale` is
+    // The individual transform properties (CSS Transforms 2 §7): `scale` is
     // three numbers, `none` is `1 1 1` and one value is both axes; `translate`
     // is three lengths, `none` is zero; `rotate: none` is `0deg`. The computed
     // serialiser drops the defaults again on the way out.
@@ -355,9 +371,9 @@ namespace ctbrowser::style::easing_detail {
         return parts[0] + ' ' + parts[1] + ' ' + parts[2];
     }
     if (property == "rotate" && ascii_iequals(text, "none")) { return "0deg"; }
-    // A TRANSFORM'S LENGTHS ARE ABSOLUTE once computed (CSS Transforms 1
+    // A transform's lengths are absolute once computed (CSS Transforms 1
     // §7): `translateZ(2em)` is 32px at a 16px font, which is what pairs
-    // with `translateZ(3em)` (transform-interpolation-004). A percentage
+    // with `translateZ(3em)` (WPT transform-interpolation-004). A percentage
     // stays one; it needs the reference box.
     if (property == "transform") {
         const css::token_stream ts = css::tokenize(text);
@@ -376,7 +392,7 @@ namespace ctbrowser::style::easing_detail {
         return out;
     }
     // `normal` spacing is none at all (CSS Text 4 §7.1-7.2): `word-spacing:
-    // initial` pairs with `20px` (word-spacing-interpolation).
+    // initial` pairs with `20px` (WPT word-spacing-interpolation).
     if ((property == "word-spacing" || property == "letter-spacing") &&
         ascii_iequals(text, "normal")) {
         return "0px";
@@ -384,7 +400,7 @@ namespace ctbrowser::style::easing_detail {
     // A <position>'s keywords are the percentages they name (CSS Values 5
     // §position): `left top` pairs with `50% 50%`, and perspective-origin's
     // four-value `top 20% left 40%` adds to `left 60% top 80%`
-    // (perspective-origin-composition).
+    // (WPT perspective-origin-composition).
     if (property == "object-position" || property == "offset-anchor" ||
         property == "offset-position" || property == "perspective-origin") {
         if (std::string computed = css::computed_position(text, "", ""); !computed.empty()) {
@@ -394,9 +410,9 @@ namespace ctbrowser::style::easing_detail {
     // ...and so are transform-origin's, horizontal first whichever order they
     // were written in, and the z offset always written, `0px` when omitted
     // (CSS Transforms 1 §6): `top left` pairs with `100% 100%`
-    // (transform-origin-interpolation), and `40px 60px` adds to `160px 140px
-    // 40px` (transform-origin-composition). serialized_shape drops the zero
-    // again.
+    // (WPT transform-origin-interpolation), and `40px 60px` adds to `160px
+    // 140px 40px` (WPT transform-origin-composition). serialized_shape drops
+    // the zero again.
     if (property == "transform-origin") {
         std::vector<std::string_view> words;
         for (const std::string_view raw : split_top_level(text, html_whitespace)) {
@@ -434,7 +450,7 @@ namespace ctbrowser::style::easing_detail {
     }
     // An <absolute-size> is the length it names (CSS Fonts 4 §2.5's table
     // at the 16px medium): `large` adds to `100px` as 18px
-    // (font-size-composition).
+    // (WPT font-size-composition).
     if (property == "font-size") {
         static constexpr std::pair<std::string_view, std::string_view> sizes[] = {
             {"xx-small", "9px"}, {"x-small", "10px"}, {"small", "13px"},    {"medium", "16px"},
@@ -444,14 +460,14 @@ namespace ctbrowser::style::easing_detail {
         }
     }
     // zoom animates by its computed number (CSS Viewport 1 §5): `100%` to
-    // `300%` is 1 to 3, and `normal` is 1 (zoom-interpolation).
+    // `300%` is 1 to 3, and `normal` is 1 (WPT zoom-interpolation).
     if (property == "zoom") {
         if (std::string computed = css::computed_zoom(text, ctx); !computed.empty()) {
             return computed;
         }
     }
     // offset-rotate's keywords are angles too: `reverse` is `auto 180deg`, so
-    // it pairs with `auto 100deg` (offset-rotate-interpolation).
+    // it pairs with `auto 100deg` (WPT offset-rotate-interpolation).
     if (property == "offset-rotate") {
         if (std::string computed = css::computed_offset_rotate(text, false); !computed.empty()) {
             return computed;
@@ -459,7 +475,7 @@ namespace ctbrowser::style::easing_detail {
     }
     // font-variation-settings pairs axis by axis, whatever order either side
     // wrote them in: each list sorted by tag, a repeated tag's last value
-    // winning (font-variation-settings-interpolation).
+    // winning (WPT font-variation-settings-interpolation).
     if (property == "font-variation-settings" && !ascii_iequals(text, "normal")) {
         std::vector<std::pair<std::string, std::string>> axes;
         for (const std::string_view raw : split_top_level(text, ",")) {
@@ -495,6 +511,9 @@ namespace ctbrowser::style::easing_detail {
     return std::string{text};
 }
 
+// Undoes the expansions computed_shape made that the computed serializer
+// would not print: a repeated radius, sides the margin pattern implies, and a
+// zero transform-origin z offset.
 [[nodiscard]] std::string serialized_shape(std::string_view property, std::string text) {
     if (image_sides(property) || property == "hyphenate-limit-chars") {
         const css::value_check checked = css::check_declaration(property, text, false);
@@ -520,6 +539,7 @@ namespace ctbrowser::style::easing_detail {
     return out;
 }
 
+// The non-empty top-level items of a comma list, each trimmed.
 [[nodiscard]] std::vector<std::string_view> comma_items(std::string_view text) {
     std::vector<std::string_view> out;
     for (const std::string_view item : split_top_level(text, ",")) {

@@ -1,3 +1,12 @@
+//===- ctbrowser/lib/Style/engine/selectors.cpp - Matching ------*- C++ -*-===//
+//
+// style::engine's selector matching: the querySelector, matches and closest
+// walks (select, element_matches, closest), resolve_pseudo, cursor_to (which
+// rebuilds the sibling lists for one element), inline style parsing, and
+// compound matching.
+//
+//===----------------------------------------------------------------------===//
+
 #include <ctbrowser/style/engine.hpp>
 
 #include <ctbrowser/core/algorithms.hpp>
@@ -7,9 +16,6 @@
 #include <string>
 #include <vector>
 
-// engine: the method bodies.
-// The header says what these do; this says how.
-
 namespace ctbrowser::style {
 
 std::vector<node_id> engine::select(const read_txn & txn, node_id root,
@@ -18,12 +24,12 @@ std::vector<node_id> engine::select(const read_txn & txn, node_id root,
     std::vector<node_id> found;
     if (list.empty()) { return found; }
     // The cascade's traversal state, reset exactly as resolve_all resets it: the
-    // capacity is worth keeping across calls and the CONTENTS are the last walk's
+    // capacity is worth keeping across calls and the contents are the last walk's
     // elements, which would make `html ~ x` match across two documents.
     for (std::vector<visited_element> & level : levels_) { level.clear(); }
     ancestor_filter ancestors;
     // The top of the tree `root` is in. For a connected root that is the document
-    // element; for a DETACHED one - `box.innerHTML = ...; box.querySelector(s)` -
+    // element; for a detached one (`box.innerHTML = ...; box.querySelector(s)`)
     // it is the subtree's own top, which a walk from the document would never
     // reach.
     node_id top = root ? root : txn.root();
@@ -31,20 +37,18 @@ std::vector<node_id> engine::select(const read_txn & txn, node_id root,
     enter_level(txn, top, 0);
     scope_ = scope ? scope : root;
 
-    // ONLY THE PATH TO THE ROOT IS WALKED ABOVE IT. Every element on the way down
-    // is visited - a sibling combinator needs the earlier siblings at each level -
-    // but a subtree that does not contain the root holds nothing the query can
-    // answer with, and descending into it made `el.querySelectorAll` cost the
-    // whole document. `:has()` runs one of these per subject, and paid that
-    // per element.
+    // Above `root`, only the path down to it is walked. Every element on that
+    // path is visited, because sibling combinators need earlier siblings, but
+    // subtrees that do not contain `root` are skipped; otherwise
+    // el.querySelectorAll, and every :has() check, would cost the whole document.
     const auto toward_root = [&](node_id node) { return root && txn.is_ancestor_of(node, root); };
     // Returns false to unwind the whole walk, which is how first_only stops.
     const auto walk = [&](auto && self, node_id node, std::size_t depth, bool collect) -> bool {
         if (txn.kind(node).value_or(node_kind::text) != node_kind::element) {
-            // A non-element does not occupy a depth - see resolve_subtree, which has
-            // to agree with this or `+` would mean two different things. It can
-            // still BE the root - a ShadowRoot is a fragment - and its children
-            // are the descendants a subtree search collects.
+            // A non-element does not occupy a depth; resolve_subtree has to agree
+            // with this or `+` would mean two different things. It can still be
+            // the root (a ShadowRoot is a fragment), and its children are the
+            // descendants a subtree search collects.
             const bool below = collect || node == root;
             if (!below && !toward_root(node)) { return true; }
             for (const node_id child : txn.children(node)) {
@@ -73,7 +77,7 @@ std::vector<node_id> engine::select(const read_txn & txn, node_id root,
                 break;
             }
         }
-        // A subtree search collects from BELOW the root, never the root itself:
+        // A subtree search collects from below the root, never the root itself:
         // `element.querySelectorAll(s)` is over descendants.
         const bool below = collect || node == root;
         if (keep_going && (below || toward_root(node))) {
@@ -96,7 +100,7 @@ std::vector<node_id> engine::select(const read_txn & txn, node_id root,
         return keep_going;
     };
     // An empty root is the whole document, and the document's own root element is
-    // one of the answers - there is no Document node above <html> in this tree.
+    // one of the answers: there is no Document node above <html> in this tree.
     (void)walk(walk, top, 0, !root);
     return found;
 }
@@ -130,8 +134,8 @@ computed_style_ptr engine::resolve_pseudo(const read_txn & txn, node_id node, at
     ancestor_filter ancestors;
     const std::optional<std::size_t> at = cursor_to(txn, node, ancestors);
     if (!at) { return {}; }
-    // THE CHAIN'S STYLES, the element's own included, which the last
-    // traversal left for whichever branch it walked last.
+    // Record the chain's styles, the element's own included, because the last
+    // traversal left them for whichever branch it walked last.
     for (std::size_t d = 0; d <= *at; ++d) {
         const node_id on = levels_[d][path_[d]].node;
         computed_style_ptr style = d == *at ? element : computed_style_ptr{};
@@ -167,16 +171,16 @@ std::optional<std::size_t> engine::cursor_to(const read_txn & txn, node_id node,
         if (path_.size() <= depth) { path_.resize(depth + 1); }
         if (totals_.size() <= depth) { totals_.resize(depth + 1); }
         // The parent whose children occupy this level. Depth 0 is entered from
-        // `chain[0]`'s OWN parent - NOT `txn.root()`, because a DETACHED element
+        // `chain[0]`'s own parent, not `txn.root()`, because a detached element
         // is a different tree: `document.createElement("div").matches("div")`
         // must not be answered about <body>.
         const node_id parent = depth == 0 ? txn.parent(chain[0]) : chain[depth - 1];
         if (!parent) {
-            // A PARENTLESS SUBJECT IS AN ONLY CHILD. There is no level to walk,
+            // A parentless subject is an only child. There is no level to walk,
             // so it is built by hand: one element, index 1 of 1, which is what
             // `:only-child` and `:first-child` correctly answer for a node that
             // is in no tree at all.
-            if (depth != 0) { return std::nullopt; } // chain[depth-1] is always an element
+            if (depth != 0) { return std::nullopt; } // chain[depth-1] is always an element.
             levels_[depth].clear();
             totals_[depth] = level_totals{};
             element_facts facts = facts_of(txn, chain[0]);
@@ -193,8 +197,8 @@ std::optional<std::size_t> engine::cursor_to(const read_txn & txn, node_id node,
             continue;
         }
         enter_level(txn, parent, depth);
-        // EVERY EARLIER SIBLING, because `.a + .b` and `.a ~ .b` look backwards
-        // and there is no previous-sibling link to walk. Later ones are never
+        // Every earlier sibling is visited, because `.a + .b` and `.a ~ .b` look
+        // backwards and there is no previous-sibling link to walk. Later ones are never
         // read, so the loop stops at the chain element.
         for (const node_id child : txn.children(parent)) {
             if (txn.kind(child).value_or(node_kind::text) != node_kind::element) { continue; }
@@ -206,9 +210,9 @@ std::optional<std::size_t> engine::cursor_to(const read_txn & txn, node_id node,
             levels_[depth].push_back(visited_element{child, std::move(facts)});
             if (child == chain[depth]) { break; }
         }
-        if (levels_[depth].empty()) { return std::nullopt; } // the chain left the tree
+        if (levels_[depth].empty()) { return std::nullopt; } // The chain left the tree.
         path_[depth] = levels_[depth].size() - 1;
-        // The filter holds the SUBJECT's ancestors and not the subject itself.
+        // The filter holds the subject's ancestors and not the subject itself.
         if (depth + 1 < chain.size()) {
             const element_facts & mine = levels_[depth][path_[depth]].facts;
             ancestors.push(mine.tag, mine.id, mine.classes);
@@ -230,7 +234,8 @@ const engine::inline_block & engine::inline_style_of(const read_txn & txn, node_
     const css::stylesheet sheet = css::parse_declaration_list(text, *atoms_);
     for (const css::raw_declaration & d : sheet.declarations) {
         auto & into = d.important ? parsed.important : parsed.normal;
-        // Not expanded here either - the cascade does it, after substitution.
+        // Shorthands are not expanded here; the cascade does it, after
+        // substitution.
         into.push_back(declaration{d.property, std::string{sheet.text_of(d)}});
     }
     return inline_cache_.emplace(std::string{text}, std::move(parsed)).first->second;
@@ -258,21 +263,22 @@ void engine::split_classes(std::string_view list,
 
 namespace {
 
-// One `[name op value]` requirement against one element's attribute value.
-//
-// ORDERED CHEAPEST FIRST inside the compound below: the tag, the id and the classes
-// are interned atoms and compare as integers, so an attribute - which reads the
-// element's attribute list and then compares strings - is tested last.
+/// Tests one `[name op value]` requirement against one element's attribute
+/// value `have`, ASCII case-insensitively when `insensitive`.
+///
+/// compound_matches tests attributes last, after the tag, id and classes:
+/// those are interned atoms compared as integers, while an attribute reads the
+/// element's attribute list and then compares strings.
 [[nodiscard]] bool attribute_matches(std::string_view have, const attribute_match & want,
                                      bool insensitive) {
     const auto same = [&](std::string_view a, std::string_view b) {
         return insensitive ? ascii_iequals(a, b) : a == b;
     };
     switch (want.op) {
-    case attr_op::present: return true; // the caller has already established it exists
+    case attr_op::present: return true; // The caller has already established it exists.
     case attr_op::exact: return same(have, want.value);
     case attr_op::includes: {
-        // A whitespace-separated list. An EMPTY value can never be one of the
+        // A whitespace-separated list. An empty value can never be one of the
         // items, because the items are non-empty by construction.
         if (want.value.empty()) { return false; }
         std::size_t at = 0;
@@ -287,12 +293,12 @@ namespace {
         return false;
     }
     case attr_op::dash:
-        // `[lang|=en]` matches `en` and `en-GB` but not `english`. The hyphen form
-        // is the whole point - it is how a language subtag is selected.
+        // `[lang|=en]` matches `en` and `en-GB` but not `english`: the hyphen
+        // form is how a language subtag is selected.
         if (same(have, want.value)) { return true; }
         return have.size() > want.value.size() && have[want.value.size()] == '-' &&
                same(have.substr(0, want.value.size()), want.value);
-    // The three substring forms match NOTHING when the value is empty, per the
+    // The three substring forms match nothing when the value is empty, per the
     // spec. Without that, `[a^=""]` would match every element with the attribute,
     // since every string starts with the empty string.
     case attr_op::prefix:
@@ -314,9 +320,10 @@ namespace {
     return false;
 }
 
-// HTML §4.16.2's legacy list: in an HTML document the values of these
-// attributes on an HTML element compare ASCII case-insensitively - `[lang|=es]`
-// matches `lang="ES"` - unless the selector says `s`. Sorted, for the search.
+/// HTML §4.16.2's legacy list: in an HTML document the values of these
+/// attributes on an HTML element compare ASCII case-insensitively (`[lang|=es]`
+/// matches `lang="ES"`) unless the selector says `s`. The list is sorted for
+/// binary_search.
 [[nodiscard]] bool legacy_case_insensitive(std::string_view name) {
     static constexpr std::string_view names[] = {
         "accept",     "accept-charset", "align",     "alink",    "axis",     "bgcolor", "charset",
@@ -329,11 +336,12 @@ namespace {
     return std::ranges::binary_search(names, name);
 }
 
-// The structural pseudo-classes. Every one is arithmetic on four numbers the
-// traversal already counted, which is the point of counting them there.
-//
-// `:root` is the document element - the one with no ELEMENT parent - which is
-// <html> for every page this engine loads.
+/// Tests the structural and form-state pseudo-classes in the `want` bit set.
+/// The structural ones are arithmetic on four numbers the traversal already
+/// counted (sibling and type index and count), which is why it counts them.
+///
+/// `:root` is `is_root`: the tree's root element, which is <html> for every page
+/// this engine loads (see engine::facts_of).
 [[nodiscard]] bool structural_matches(const element_facts & f, std::uint32_t want) {
     if ((want & structural_root) != 0 && !f.is_root) { return false; }
     if ((want & structural_empty) != 0 && !f.is_empty) { return false; }
@@ -344,7 +352,7 @@ namespace {
     if ((want & structural_last_of_type) != 0 && f.type_index != f.type_count) { return false; }
     if ((want & structural_only_of_type) != 0 && f.type_count != 1) { return false; }
     if ((want & structural_disabled) != 0 && !f.is_disabled) { return false; }
-    // `:enabled` is NOT the negation of `:disabled`: it applies only to elements that
+    // `:enabled` is not the negation of `:disabled`: it applies only to elements that
     // could be disabled, so it is false of a <div> rather than true.
     if ((want & structural_enabled) != 0 && (!f.can_be_disabled || f.is_disabled)) { return false; }
     if ((want & structural_checked) != 0 && !f.is_checked) { return false; }
@@ -352,17 +360,20 @@ namespace {
     if ((want & structural_placeholder_shown) != 0 && !f.is_placeholder_shown) { return false; }
     if ((want & structural_valid) != 0 && !f.is_valid) { return false; }
     if ((want & structural_invalid) != 0 && !f.is_invalid) { return false; }
-    if ((want & structural_visited) != 0) { return false; } // always, on purpose
+    // `:visited` never matches, so a page cannot read browsing history through
+    // selectors (Selectors 4 §8.2 privacy note).
+    if ((want & structural_visited) != 0) { return false; }
     return true;
 }
 
-// A VALID CUSTOM ELEMENT NAME, HTML §4.13.2 (the ASCII subset). Contains a
-// hyphen, starts with an ASCII lowercase letter, holds only PCEN characters,
-// and is not one of the eight reserved SVG/MathML names. An element whose local
-// name is one - or a customized built-in whose `is=` value is one - has custom
-// element state "undefined" until it is defined, which is the only case `:defined`
-// can rule out from the tree alone. Bytes >= 0x80 pass so a Unicode name is not
-// mistaken for a built-in; uppercase ASCII does not, so `is="Foo"` is uncustomized.
+/// Whether `name` is a valid custom element name (HTML §4.13.2, the ASCII
+/// subset): it contains a hyphen, starts with an ASCII lowercase letter, holds
+/// only PCEN characters, and is not one of the eight reserved SVG/MathML names.
+/// An element whose local name is one, or a customized built-in whose `is=`
+/// value is one, has custom element state "undefined" until it is defined,
+/// which is the only case `:defined` can rule out from the tree alone. Bytes >=
+/// 0x80 pass so a Unicode name is not mistaken for a built-in; uppercase ASCII
+/// does not, so `is="Foo"` is uncustomized.
 [[nodiscard]] bool is_potential_custom_element_name(std::string_view name) {
     if (name.empty() || name[0] < 'a' || name[0] > 'z') { return false; }
     if (name.find('-') == std::string_view::npos) { return false; }
@@ -380,12 +391,12 @@ namespace {
     return true;
 }
 
-// `An+B`: does `index` appear in the series for some non-negative n?
-//
-// The spec's series is An+B for n = 0, 1, 2, ..., and only POSITIVE results count -
-// an index is one-based. The two degenerate cases are the ones to get right: a == 0
-// is a single index rather than a series, and a negative step counts DOWN from B, so
-// `:nth-child(-n+3)` is the first three.
+/// `An+B`: whether `index` appears in the series for some non-negative n.
+///
+/// The spec's series is An+B for n = 0, 1, 2, ..., and only positive results
+/// count, since an index is one-based. The two degenerate cases are the ones to
+/// get right: a == 0 is a single index rather than a series, and a negative
+/// step counts down from B, so `:nth-child(-n+3)` is the first three.
 [[nodiscard]] bool nth_matches(std::int32_t a, std::int32_t b, std::uint32_t index_u) {
     const auto index = static_cast<std::int32_t>(index_u);
     if (index <= 0) { return false; }
@@ -403,16 +414,15 @@ bool engine::compound_matches(const read_txn & txn, const ancestor_filter & ance
     const visited_element & subject = levels_[depth][index];
     const node_id node = subject.node;
     const element_facts & f = subject.facts;
-    // A NAME FOLDS ONLY AGAINST AN HTML ELEMENT. Selectors 4 §6.1: a type or
-    // attribute name is matched ASCII case-insensitively in an HTML document, and
-    // that rule is about the ELEMENT's namespace rather than the document's. This
-    // tokenizer preserves case inside foreign content - which is what makes the
-    // spec's ~95 adjustment tables unnecessary here - so folding unconditionally
-    // meant no selector could ever name `linearGradient` or `[viewBox]`.
+    // Names fold only against an HTML element. Selectors 4 §6.1 matches type and
+    // attribute names ASCII case-insensitively in an HTML document, but only for
+    // elements in the HTML namespace. SVG and MathML names keep the mixed case the
+    // tree builder's adjustment tables restored (`linearGradient`, `viewBox`), so
+    // they are compared exactly.
     const node_ns ns = txn.element_ns(node);
     const bool folds = ns == node_ns::html;
     if (c.tag && (folds ? c.tag : c.tag_exact) != f.tag) { return false; }
-    // THE NAMESPACE, when the selector names one: `svg|*` and, under a default
+    // The namespace, when the selector names one: `svg|*` and, under a default
     // `@namespace`, every unprefixed compound. The DOM keeps an element's
     // namespace as html, svg or other, so those are the two URIs that match.
     if (c.ns_uri) {
@@ -426,12 +436,12 @@ bool engine::compound_matches(const read_txn & txn, const ancestor_filter & ance
         if (std::ranges::find(f.classes, want) == f.classes.end()) { return false; }
     }
     if ((c.states & f.states) != c.states) { return false; }
-    // STRUCTURAL requirements, all answered from facts the traversal gathered.
+    // Structural requirements, all answered from facts the traversal gathered.
     if (c.structural != 0 && !structural_matches(f, c.structural)) { return false; }
     if ((c.structural & structural_scope) != 0 && (scope_ ? node != scope_ : !f.is_root)) {
         return false;
     }
-    // `:defined`. The honest subset the tree can answer: a non-HTML element is
+    // `:defined`, in the subset the tree can answer: a non-HTML element is
     // uncustomized and always defined; an HTML element is defined unless its own
     // name is a potential custom element name (an autonomous custom element,
     // undefined until upgraded) or it carries an `is=` that names one (a
@@ -450,8 +460,8 @@ bool engine::compound_matches(const read_txn & txn, const ancestor_filter & ance
         }
         if (!defined) { return false; }
     }
-    // ATTRIBUTES: everything above compares interned integers, and this reads the
-    // element's attribute list and then compares strings.
+    // Attributes come after everything above, which compares interned integers;
+    // this reads the element's attribute list and then compares strings.
     for (const attribute_match & want : c.attributes) {
         const atom name = folds ? want.name : want.name_exact;
         if (want.ns == ns_prefix::unset) {
@@ -465,7 +475,7 @@ bool engine::compound_matches(const read_txn & txn, const ancestor_filter & ance
             }
             continue;
         }
-        // A NAMESPACED attribute selector is a question about the LOCAL name and
+        // A namespaced attribute selector is a question about the local name and
         // the namespace the DOM stored, so it walks the element's attributes: an
         // element may hold `title` in no namespace and `title` in another, and
         // `[*|title]` is satisfied by whichever of them matches the value.
@@ -485,8 +495,8 @@ bool engine::compound_matches(const read_txn & txn, const ancestor_filter & ance
         }
         if (!held) { return false; }
     }
-    // AND THE ARGUMENT-CARRYING PSEUDO-CLASSES LAST OF ALL, because a nested
-    // selector list runs the matcher again - possibly with combinators of its own.
+    // The argument-carrying pseudo-classes come last of all, because a nested
+    // selector list runs the matcher again, possibly with combinators of its own.
     for (const pseudo_ref & want : c.pseudos) {
         switch (want.kind) {
         case pseudo_kind::nth_child:
@@ -507,12 +517,12 @@ bool engine::compound_matches(const read_txn & txn, const ancestor_filter & ance
         case pseudo_kind::is_:
         case pseudo_kind::where_: {
             if (want.relative) {
-                // `:has()`: does any argument - `:scope > .a`, `:scope ~ .b` -
+                // `:has()`: does any argument (`:scope > .a`, `:scope ~ .b`)
                 // match something with this element as the scope? A scoped query
                 // from the subject finds a descendant; a sibling argument needs
                 // the search to start one level up, and the argument's own
                 // combinator says which. The walker is a second engine because
-                // this one is mid-traversal - see has_walker_.
+                // this one is mid-traversal; see has_walker_.
                 if (!has_walker_) {
                     has_walker_ = std::make_unique<engine>(*atoms_);
                     has_walker_->states_source_ = states_source_ ? states_source_ : this;
@@ -537,7 +547,7 @@ bool engine::compound_matches(const read_txn & txn, const ancestor_filter & ance
                 if (!any) { return false; }
                 break;
             }
-            // A nested selector's SUBJECT is this element, so each argument is run
+            // A nested selector's subject is this element, so each argument is run
             // from the same cursor the outer selector is at. `:is()` and `:where()`
             // pass if any argument matches; `:not()` passes only if none does.
             bool any = false;
@@ -550,9 +560,9 @@ bool engine::compound_matches(const read_txn & txn, const ancestor_filter & ance
             if (want.kind == pseudo_kind::not_ ? any : !any) { return false; }
             break;
         }
-        // Both are answered from an ANCESTOR's attribute rather than from this
-        // element's facts, so both walk - see language_of and direction_is_rtl,
-        // which is where the whole of the rule lives.
+        // `:lang()` and `:dir()` are answered from an ancestor's attribute rather
+        // than from this element's facts, so both walk up the tree; the rules
+        // live in language_of and direction_is_rtl.
         case pseudo_kind::lang: {
             const std::string_view have = language_of(txn, node);
             bool any = false;
@@ -572,8 +582,8 @@ bool engine::compound_matches(const read_txn & txn, const ancestor_filter & ance
             break;
         }
         case pseudo_kind::heading: {
-            // An HTML h1-h6, its level the digit; the list, when there is
-            // one, has to name it.
+            // `:heading`: an HTML h1-h6, its level the digit; the level list,
+            // when there is one, has to name it.
             if (txn.element_ns(node) != node_ns::html) { return false; }
             const std::string_view local = txn.local_name(node);
             if (local.size() != 2 || local[0] != 'h' || local[1] < '1' || local[1] > '6') {

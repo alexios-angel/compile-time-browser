@@ -1,12 +1,13 @@
-// gl::device - the objects a page creates: shaders and programs and their
+//===- ctbrowser/lib/Raster/gl/objects.cpp - GL device: GL objects --------===//
+//
+// gl::device: the objects a page creates: shaders and programs and their
 // uniforms, buffers, vertex attributes and arrays, textures, framebuffers and
 // renderbuffers.
 //
-// One of four files carved out of a 1,162-line Raster/gl.cpp on 2026-09-08.
-// All are member functions of the one class declared in
-// include/ctbrowser/raster/gl.hpp; the pimpl both branches define is in
-// internal.hpp beside this, with the includes gl.cpp had. Nothing about the
-// public header changed.
+// Member functions of gl::device (include/ctbrowser/raster/gl.hpp). The
+// private state and GL includes are in internal.hpp.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -16,6 +17,7 @@ namespace ctbrowser::raster::gl {
 
 namespace {
 
+/// The info log of a shader, or of a program when `is_program`; empty if none.
 [[nodiscard]] std::string log_of(unsigned object, bool is_program) {
     GLint length = 0;
     if (is_program) {
@@ -35,9 +37,11 @@ namespace {
     return text;
 }
 
-// ASKED OF THE PROGRAM, one index at a time, which is the only source that can
-// answer correctly. `enumerate` is shared because glGetActiveAttrib and
-// glGetActiveUniform differ only in which pair of entry points they call.
+/// Lists a linked program's active attributes or uniforms by querying GL for
+/// each index; only the linked program knows which declarations survived
+/// optimisation. Names longer than 255 characters are truncated.
+/// glGetActiveAttrib and glGetActiveUniform share this because they differ
+/// only in their entry points.
 template <typename Count, typename Get>
 [[nodiscard]] std::vector<device::active> enumerate(unsigned program, Count count, Get get) {
     GLint total = 0;
@@ -156,7 +160,7 @@ void device::set_uniform(int location, const float * values, int count, int rows
                          bool integer) {
     if (!ok() || location < 0 || values == nullptr || count <= 0) { return; }
     if (cols > 1) {
-        // A MATRIX. Never transposed: WebGL requires the flag to be false and a
+        // A matrix. Never transposed: WebGL requires the flag to be false and a
         // page's data is already column-major.
         const GLsizei n = static_cast<GLsizei>(count);
         if (rows == 2) { glUniformMatrix2fv(location, n, GL_FALSE, values); }
@@ -209,8 +213,8 @@ void device::bind_buffer_base(int target, unsigned index, unsigned buffer) {
 
 unsigned device::bound_buffer(int target) const {
     if (!ok()) { return 0u; }
-    // A TARGET AND ITS BINDING QUERY ARE DIFFERENT NUMBERS, and there is no
-    // arithmetic between them - GL_ARRAY_BUFFER is 0x8892 and its query 0x8894,
+    // A target and its binding query are different numbers, and there is no
+    // arithmetic between them: GL_ARRAY_BUFFER is 0x8892 and its query 0x8894,
     // but GL_UNIFORM_BUFFER is 0x8A11 and its query 0x8A28. A table, not a
     // formula.
     GLenum query = 0;
@@ -232,7 +236,7 @@ unsigned device::bound_buffer(int target) const {
 void device::delete_object(object_kind kind, unsigned name) {
     if (!ok() || name == 0) { return; }
 
-    // SWITCH, DO NOT PROBE. The caller named the class; asking GL which classes
+    // Switch on the kind; do not probe. The caller named the class; asking GL which classes
     // the number happens to belong to answers a different question and deletes
     // whatever else it finds.
     switch (kind) {
@@ -290,9 +294,9 @@ unsigned device::create_vertex_array() {
     GLuint name = 0;
     glGenVertexArrays(1, &name);
 
-    // A NAME IS NOT AN OBJECT UNTIL IT IS BOUND. glGenVertexArrays only
-    // RESERVES the number; until the first glBindVertexArray, glIsVertexArray
-    // answers GL_FALSE for it. That is GL's rule and it is not WebGL's -
+    // A name is not an object until it is bound. glGenVertexArrays only
+    // reserves the number; until the first glBindVertexArray, glIsVertexArray
+    // answers GL_FALSE for it. That is GL's rule and it is not WebGL's:
     // `createVertexArray` creates the object, and a page that asks
     // `isVertexArray` about one it just made is told yes by every browser.
     //
@@ -373,12 +377,9 @@ std::uint32_t device::framebuffer_status() const {
     return ok() ? static_cast<std::uint32_t>(glCheckFramebufferStatus(GL_FRAMEBUFFER)) : 0u;
 }
 
-// RENDERBUFFERS, which a render target needs and which were three no-ops.
-//
-// A page attaching depth to an offscreen target got nothing attached, so the
-// target had colour and no depth - every draw into it passed the depth test in
-// whatever order it arrived. Babylon's post-processes render the scene into
-// exactly such a target.
+// Renderbuffers, for depth and stencil attachments of offscreen render
+// targets. Without them, draws into such a target (for example Babylon's
+// post-processing passes) have no depth test.
 unsigned device::create_renderbuffer() {
     if (!ok()) { return 0u; }
     GLuint name = 0;

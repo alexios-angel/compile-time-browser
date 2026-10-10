@@ -1,17 +1,21 @@
+//===- ctbrowser/lib/Layout/overflow.cpp - Scrollable overflow --*- C++ -*-===//
+//
+// Computes scrolling areas (CSS Overflow 3 §3.3): which fragments contribute
+// to a box's or the viewport's scrollable overflow, how far, and on which side
+// of the scroll origin. The header says what a scrolling area is.
+//
+//===----------------------------------------------------------------------===//
 #include <ctbrowser/layout/overflow.hpp>
 
 #include <algorithm>
 
-// overflow: the function bodies. The header says what a scrolling area is;
-// this says which fragments contribute to it and how far.
-
 namespace ctbrowser::layout {
 namespace {
 
-// A rectangle held as its four edges, because the union CSS Overflow 3 asks
-// for is a union of EDGES - the left and top are pinned to the padding edge
-// and only the right and bottom grow - and rect::united would drop a
-// zero-height padding box on the floor before anything had grown past it.
+/// A rectangle held as its four edges, so a union can start from a zero-size
+/// padding box: rect::united would drop that box before anything grew past it.
+/// Normally only the right and bottom grow; a reversed flex axis (see
+/// scroll_origin) grows the left or top instead.
 struct edges {
     float left = 0, top = 0, right = 0, bottom = 0;
 
@@ -26,25 +30,24 @@ struct edges {
     }
 };
 
-// A descendant's contribution to its parent's scrollable overflow: its border
-// box, a flex item's margin box, and - unless the descendant clips - its own
-// scrollable overflow. Zero-area border boxes contribute nothing themselves
-// (CSS Overflow 3 §3.3) but what they contain still does.
-//
-// `icb` says the initial containing block is the nearest containing block
-// above `f` for absolutely positioned boxes: true while measuring the
-// document's area and no positioned box has been passed on the way down. An
-// absolute box with no positioned ancestor is placed against the viewport
-// and belongs to the viewport's area rather than to any element's.
+/// The scrollable overflow of `f`, in `f`'s coordinates: its padding box grown
+/// by each child's contribution (see contribute) and, for a scroll container,
+/// by the end padding past its in-flow content.
+///
+/// `icb` says the initial containing block is the nearest containing block
+/// above `f` for absolutely positioned boxes: true while measuring the
+/// document's area and no positioned box has been passed on the way down. An
+/// absolute box with no positioned ancestor is placed against the viewport
+/// and belongs to the viewport's area rather than to any element's.
 [[nodiscard]] edges scrollable_overflow(const fragment & f, bool icb) noexcept;
 
-// WHERE A BOX'S SCROLLING STARTS, per axis: its right and its bottom padding
-// edge for a flex container whose main or cross axis runs backwards - a
-// `row-reverse` fills from the right, a `wrap-reverse` row stacks its lines
-// from the bottom - and its left and top otherwise (CSS Overflow 3 §2.2, the
-// scroll origin; CSS Flexbox 1 §5.1, §5.2). What spills past the origin is
-// unreachable, and what spills the other way is what there is to scroll to
-// (scrollWidthHeight-negative-margin-002).
+/// Where a box's scrolling starts, per axis: its right and its bottom padding
+/// edge for a flex container whose main or cross axis runs backwards (a
+/// `row-reverse` fills from the right, a `wrap-reverse` row stacks its lines
+/// from the bottom), and its left and top otherwise (CSS Overflow 3 §2.2, the
+/// scroll origin; CSS Flexbox 1 §5.1, §5.2). What spills past the origin is
+/// unreachable, and what spills the other way is what there is to scroll to
+/// (WPT scrollWidthHeight-negative-margin-002).
 struct scroll_origin {
     bool right = false, bottom = false;
 };
@@ -59,6 +62,10 @@ struct scroll_origin {
             !f.box->unmodelled_block && (row ? cross_reversed : main_reversed)};
 }
 
+/// Grows `into` by a child's contribution to its parent's scrollable overflow:
+/// its border box (a flex item's margin box) and, unless the child clips, its
+/// own scrollable overflow. Zero-area border boxes contribute nothing
+/// themselves (CSS Overflow 3 §3.3) but what they contain still does.
 void contribute(const fragment & child, const fragment & parent, bool icb, edges & into) noexcept {
     const box_node * box = child.box;
     const bool parent_positioned = parent.box != nullptr && parent.box->is_positioned();
@@ -75,11 +82,11 @@ void contribute(const fragment & child, const fragment & parent, bool icb, edges
                       border.width + child.margin_left + child.margin_right,
                       border.height + child.margin_top + child.margin_bottom};
     }
-    // A box with no extent on EITHER axis is nothing; one with an extent on
-    // one axis still reaches - a 0x2000 child makes its parent 2000 tall to
-    // scroll, with `overflow: visible` as with `hidden`, which is what
-    // scrollWidthHeight-contain-layout pins and stricter reading of "zero
-    // area" would break.
+    // A box with no extent on either axis is nothing; one with an extent on
+    // one axis still reaches: a 0x2000 child makes its parent 2000 tall to
+    // scroll, with `overflow: visible` as with `hidden`. WPT
+    // scrollWidthHeight-contain-layout checks this, and a stricter reading of
+    // "zero area" would break it.
     if (border.width > 0 || border.height > 0) { into.grow(border); }
     // A box that clips its overflow shows nothing past its padding edge, so
     // its contribution ends at its border box.
@@ -94,10 +101,10 @@ edges scrollable_overflow(const fragment & f, bool icb) noexcept {
     const resolved_edges e = edges_of(f);
     const rect padding = padding_box_of(f);
     edges out{padding.x, padding.y, padding.x + padding.width, padding.y + padding.height};
-    // THE IN-FLOW EXTENT, for the end padding a scroll container keeps past
+    // The in-flow extent, for the end padding a scroll container keeps past
     // its content: the content box, stretched down to the last in-flow
-    // child's bottom margin edge - a block container's content ends where its
-    // cursor stopped, whatever spilled sideways - or, in a flex container,
+    // child's bottom margin edge (a block container's content ends where its
+    // cursor stopped, whatever spilled sideways) or, in a flex container,
     // around every item's margin box.
     const bool flex = f.box != nullptr && f.box->kind == box_kind::flex;
     edges inflow{e.content_left(), e.content_top(),
@@ -116,7 +123,8 @@ edges scrollable_overflow(const fragment & f, bool icb) noexcept {
         }
     }
     if (f.box != nullptr && f.box->scroll_container) {
-        // ...on the END side, which a reversed axis puts at the start.
+        // The end padding goes on the end side, which a reversed axis puts at
+        // the start.
         const scroll_origin origin = origin_of(f);
         if (origin.right) {
             out.left = std::min(out.left, inflow.left - e.pad_left);

@@ -1,3 +1,20 @@
+//===- ctbrowser/lib/Style/css/media.cpp - Media and container queries ----===//
+//
+// Media Queries Level 4, over the token stream:
+//
+//   <media-query> = <media-condition>
+//                 | [ not | only ]? <media-type> [ and <media-condition-without-or> ]?
+//   <media-condition> = <boolean-expr[ <media-feature> ]>   (css/boolean.hpp)
+//   <media-feature> = ( <mf-plain> | <mf-boolean> | <mf-range> )
+//
+// A query's type and `not` are read here once; its condition is kept as text
+// and read by `evaluate` each time the environment is asked, so this file is
+// one grammar rather than a parser and a tree that must agree. The same
+// feature grammar answers `@container` conditions (CSS Conditional 5), with
+// their `scroll-state()` and `style()` functions.
+//
+//===----------------------------------------------------------------------===//
+
 #include <ctbrowser/style/css/media.hpp>
 
 #include <cstddef>
@@ -13,32 +30,20 @@
 #include <ctbrowser/style/css/properties.hpp>
 #include <ctbrowser/style/css/token.hpp>
 
-// Media Queries Level 4, over the token stream:
-//
-//   <media-query> = <media-condition>
-//                 | [ not | only ]? <media-type> [ and <media-condition-without-or> ]?
-//   <media-condition> = <boolean-expr[ <media-feature> ]>   (css/boolean.hpp)
-//   <media-feature> = ( <mf-plain> | <mf-boolean> | <mf-range> )
-//
-// The query's TYPE and `not` are read here once; its condition is kept as text
-// and read by `evaluate` each time the environment is asked, which is what
-// keeps this file one grammar rather than a parser and a tree that must agree.
-
 namespace ctbrowser::style::css {
 namespace {
 
-// THE FEATURES, Media Queries 4 and 5: the name, what it takes, and - for a
-// discrete one - the keywords it accepts and the one this window answers.
-// A window here is a browser tab on a colour screen with a mouse: the
-// preferences are unset and the features that are about hardware answer as
-// a desktop does. `min-width` is `width` with an operator, not a feature of
-// its own.
+/// One media feature of Media Queries 4 and 5: the name, what it takes, and,
+/// for a discrete one, the keywords it accepts and the one this window
+/// answers. A window here is a browser tab on a colour screen with a mouse:
+/// the preferences are unset and the hardware features answer as a desktop
+/// does. `min-width` is `width` with an operator, not a feature of its own.
 struct feature_entry {
     std::string_view name;
     media_feature::name which;
     media_feature::kind kind;
-    std::string_view keywords; // space-separated, discrete features only
-    std::string_view answer;   // the environment's, for the fixed ones
+    std::string_view keywords; ///< Space-separated; discrete features only.
+    std::string_view answer;   ///< The environment's value, for the fixed ones.
 };
 constexpr feature_entry feature_table[] = {
     {"width", media_feature::name::width, media_feature::kind::length, {}, {}},
@@ -77,7 +82,7 @@ constexpr feature_entry feature_table[] = {
      {}},
     {"monochrome", media_feature::name::monochrome, media_feature::kind::integer, {}, {}},
     {"color", media_feature::name::color, media_feature::kind::integer, {}, {}},
-    // A screen with no colour lookup table: `color-index` is 0 (§6.3).
+    // A screen with no colour lookup table: `color-index` is 0 (Media Queries 4 §6.3).
     {"color-index", media_feature::name::color_index, media_feature::kind::integer, {}, {}},
     {"prefers-contrast", media_feature::name::prefers_contrast, media_feature::kind::discrete,
      "no-preference more less custom", "no-preference"},
@@ -119,10 +124,10 @@ constexpr feature_entry feature_table[] = {
      "none"},
 };
 
-// A CONTAINER'S SIZE FEATURES, and only these (CSS Conditional 5 §3.2): the
-// physical and logical sizes - the logical read as width and height, since
-// nothing this engine lays out is vertical - the ratio and the orientation.
-// `(hover)` in an `@container` is a feature no container has, and unknown.
+/// A container's size features, and only these (CSS Conditional 5 §3.2): the
+/// physical and logical sizes, the ratio and the orientation. A logical size
+/// reads width/height, swapped for a vertical container (see swapped()).
+/// `(hover)` in an `@container` is a feature no container has, so unknown.
 constexpr feature_entry container_features[] = {
     {"width", media_feature::name::width, media_feature::kind::length, {}, {}},
     {"height", media_feature::name::height, media_feature::kind::length, {}, {}},
@@ -136,6 +141,7 @@ constexpr feature_entry container_features[] = {
      {}},
 };
 
+/// The feature named `text` in the media or the container table, or nullptr.
 [[nodiscard]] const feature_entry * entry_of(std::string_view text, bool container) {
     for (const feature_entry & e : container ? std::span<const feature_entry>{container_features}
                                              : std::span<const feature_entry>{feature_table}) {
@@ -144,12 +150,12 @@ constexpr feature_entry container_features[] = {
     return nullptr;
 }
 
-// A length in a media query is resolved against the ROOT font size, not an element's -
-// there is no element here (Media Queries 4 §1.3: the initial value). 16 is
-// the same figure layout uses, and both move together when the cascade folds
-// units. The viewport units are the environment's - `@media (width: 100vw)`
-// is true by definition - and every other length unit goes through calc/'s
-// evaluator, which knows them all; a resolution unit is dppx.
+/// A length in a media query is resolved against the initial font size, not
+/// an element's, because there is no element here (Media Queries 4 §1.3).
+/// length_context's default root_font_size (16px) is that value. Viewport
+/// units use the environment's viewport (`@media (width: 100vw)` is true by
+/// definition), every other length unit goes through calc/'s evaluator, and a
+/// resolution unit becomes dppx.
 [[nodiscard]] float length_in_px(const token_stream & s, const css_token & t,
                                  const media_environment & env,
                                  const container_box * box = nullptr) {
@@ -170,15 +176,15 @@ constexpr feature_entry container_features[] = {
     return static_cast<float>(t.number);
 }
 
-// A MATH FUNCTION AS A FEATURE VALUE - `(width: calc(200vh + 5em))` - with
-// the same bases: the root font size and the viewport. Media Queries 4 §2.4
-// makes it a value like any other; a function calc/ cannot resolve is the
-// `<general-enclosed>` the caller folds as unknown.
+/// A math function as a feature value (`(width: calc(200vh + 5em))`), with
+/// the same bases: the initial font size and the viewport. Media Queries 4
+/// §2.4 makes it a value like any other; a function calc/ cannot resolve is
+/// the `<general-enclosed>` the caller folds as unknown.
 [[nodiscard]] std::optional<float> math_in_px(std::string_view text, const media_environment & env,
                                               const container_box * box = nullptr) {
-    // NO random() IN A QUERY (CSS Values 5 §random, csswg-drafts#10982): a
+    // No random() in a query (CSS Values 5 §random, csswg-drafts#10982): a
     // condition that could answer differently each time it is asked is
-    // unknown, which is what a value that is not one makes it.
+    // unknown, which returning no value makes it.
     if (text.find("random(") != std::string_view::npos ||
         text.find("random-item(") != std::string_view::npos) {
         return std::nullopt;
@@ -193,6 +199,7 @@ constexpr feature_entry container_features[] = {
     return static_cast<float>(answer.value.px);
 }
 
+/// Applies a range or equality operator; equality allows a 1e-4 tolerance.
 [[nodiscard]] bool compare_number(media_feature::compare op, float have, float want) {
     switch (op) {
     case media_feature::compare::at_least: return have >= want;
@@ -200,31 +207,33 @@ constexpr feature_entry container_features[] = {
     case media_feature::compare::less: return have < want;
     case media_feature::compare::greater: return have > want;
     case media_feature::compare::equal: return have > want - 1e-4f && have < want + 1e-4f;
-    // The BOOLEAN context asks whether the value is anything other than zero.
+    // The boolean context asks whether the value is anything other than zero.
     case media_feature::compare::boolean: return have != 0;
     }
     return false;
 }
 
 [[nodiscard]] bool matches_keyword(const media_feature & f, std::string_view have) {
-    // A boolean-context test on a keyword feature - `(hover)` - is true when the value
-    // is anything but `none` or a keyword the feature itself defines as false
-    // there (Media Queries 5 §2.4.3): the preferences' `no-preference`, and
-    // `standard` for the dynamic ranges, which are what a plain screen has.
+    // A boolean-context test on a keyword feature (`(hover)`) is true when the
+    // value is anything but `none` or a keyword the feature itself defines as
+    // false there (Media Queries 5 §2.4.3): the preferences' `no-preference`,
+    // and `standard` for the dynamic ranges, which is what a plain screen has.
     if (f.op == media_feature::compare::boolean) {
         return !ascii_iequals_any(have, {"none", "no-preference", "standard"});
     }
     return ascii_iequals(f.keyword, have);
 }
 
-// The LOGICAL sizes of a vertical container read the other physical axis.
+/// Whether `e` is a logical size of a vertical container, which reads the
+/// other physical axis.
 [[nodiscard]] bool swapped(const feature_entry & e, const container_box * box) {
     return box != nullptr && box->vertical &&
            (e.name == std::string_view{"inline-size"} || e.name == std::string_view{"block-size"});
 }
 
-// `box` is the query container's, for a container condition: its sizes stand
-// where the window's would, and nothing else about the window changes.
+/// Whether feature `f` holds. `box` is the query container's, for a container
+/// condition: its sizes stand where the window's would, and nothing else about
+/// the window changes.
 [[nodiscard]] bool feature_holds(const media_feature & f, const feature_entry & e,
                                  const media_environment & env, const container_box * box) {
     using n = media_feature::name;
@@ -235,9 +244,10 @@ constexpr feature_entry container_features[] = {
     switch (f.which) {
     case n::width: return number(width);
     case n::height: return number(height);
-    // A RATIO IS EQUAL ONLY WHEN IT IS: the 1e-4 a length's equality allows
-    // makes 59/80 equal 5900/8001 (test_media_queries), so the equality is
-    // relative and to a float's precision.
+    // A ratio is equal only when it really is: the 1e-4 tolerance a length's
+    // equality allows would make 59/80 equal 5900/8001
+    // (unittests/unit/style/cascade.cpp test_media_queries), so this equality
+    // is relative and to a float's precision.
     case n::aspect_ratio:
         if (height <= 0) { return false; }
         if (f.op == media_feature::compare::equal) {
@@ -253,20 +263,20 @@ constexpr feature_entry container_features[] = {
     case n::any_hover: return matches_keyword(f, env.hover ? "hover" : "none");
     case n::pointer:
     case n::any_pointer: return matches_keyword(f, env.fine_pointer ? "fine" : "coarse");
-    // `(monochrome)` and `(color)` are BIT DEPTHS, not booleans: a colour screen is
-    // `monochrome: 0` and `color: 8`, which is why they go through the number path.
+    // `(monochrome)` and `(color)` are bit depths, not booleans: a colour screen
+    // is `monochrome: 0` and `color: 8`, which is why they take the number path.
     case n::monochrome: return number(env.monochrome ? 8.0f : 0.0f);
     case n::color: return number(env.monochrome ? 0.0f : 8.0f);
     case n::grid: return number(0.0f);
     case n::color_index: return number(0.0f);
     case n::unknown: return false;
-    default: return matches_keyword(f, e.answer); // the fixed discrete ones
+    default: return matches_keyword(f, e.answer); // The fixed discrete ones.
     }
 }
 
-// The tokens [from, to) as ONE feature - the inside of its parentheses - or
-// nothing if they are not one. A feature this engine does not model is a
-// `<general-enclosed>`: unknown, which the caller folds as the spec says.
+/// The tokens [from, to) as one feature (the inside of its parentheses), or
+/// nullopt if they are not one. A feature this engine does not model is a
+/// `<general-enclosed>`: unknown, which the caller folds as the spec says.
 //
 //   <mf-plain>   = <mf-name> : <mf-value>       (`min-`/`max-` are the operator)
 //   <mf-boolean> = <mf-name>
@@ -276,8 +286,8 @@ constexpr feature_entry container_features[] = {
                                            const media_environment & env,
                                            const container_box * box = nullptr) {
     const bool container = box != nullptr;
-    std::vector<std::size_t> at; // the significant tokens
-    // A FUNCTION IS ONE VALUE: its tokens up to the matching `)` are one
+    std::vector<std::size_t> at; // The significant tokens.
+    // A function is one value: its tokens up to the matching `)` are one
     // entry here, keyed on the function token, so `calc(200vh + 5em)` has
     // the shape of a dimension to the grammar below.
     std::vector<std::size_t> ends(s.tokens.size(), 0);
@@ -301,15 +311,15 @@ constexpr feature_entry container_features[] = {
     }
     if (at.empty()) { return std::nullopt; }
     const auto is_name = [&](std::size_t i) { return s.tokens[i].type == token_type::ident; };
-    // WHAT A VALUE WAS WRITTEN AS, which decides whether it is a value for the
+    // What a value was written as, which decides whether it is a value for the
     // feature at all: `(width: foo)` and `(orientation: 0)` parse, and are
-    // UNKNOWN rather than false (Media Queries 4 §2.4) - so `not all and
-    // (orientation: 0)` does not match either.
+    // unknown rather than false (Media Queries 4 §2.4), so
+    // `not all and (orientation: 0)` does not match either.
     enum class written : std::uint8_t {
         keyword,
-        zero,    // a unitless 0, a <length> by CSS Values 4 §6.1
-        integer, // any other unitless integer
-        number,  // any other unitless number
+        zero,    // A unitless 0, a <length> by CSS Values 4 §6.1.
+        integer, // Any other unitless integer.
+        number,  // Any other unitless number.
         length,
         resolution,
         ratio,
@@ -334,7 +344,7 @@ constexpr feature_entry container_features[] = {
                 s.tokens[at[i + 2]].type == token_type::number) {
                 const double d = s.tokens[at[i + 2]].number;
                 f.value = d == 0 ? 0.0f : static_cast<float>(t.number / d);
-                // A NEGATIVE TERM IS NO <ratio> (CSS Values 4 §7.2): `-1/1`
+                // A negative term is no <ratio> (CSS Values 4 §7.2): `-1/1`
                 // parses as a feature and is unknown.
                 w = t.number < 0 || d < 0 ? written::other : written::ratio;
                 return 3;
@@ -359,7 +369,7 @@ constexpr feature_entry container_features[] = {
             f.value = *px;
             // calc/ answers a resolution as dppx and a length as px alike;
             // the unit inside says which it was: `dpi`/`dpcm`/`dppx`, or an
-            // `x` that follows a number - the one in `px` does not.
+            // `x` that follows a number (the one in `px` does not).
             const auto digit = [](char c) { return c >= '0' && c <= '9'; };
             const auto word = [&](char c) {
                 return digit(c) || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '-';
@@ -429,10 +439,10 @@ constexpr feature_entry container_features[] = {
             case media_feature::kind::resolution:
                 fits = w == written::resolution && f.value >= 0;
                 break;
-            // AN <integer> IS AN INTEGER TOKEN, negative ones included:
+            // An <integer> is an integer token, negative ones included:
             // `(color: -1)` is known and false, `(color: 1.0)` is unknown
-            // (test_media_queries). `grid` is the <mq-boolean> 0 or 1, and
-            // takes no range at all.
+            // (unittests/unit/style/cascade.cpp test_media_queries). `grid` is
+            // the <mq-boolean> 0 or 1, and takes no range at all.
             case media_feature::kind::integer:
                 fits = w == written::integer || w == written::zero;
                 if (e->which == media_feature::name::grid) {
@@ -499,7 +509,7 @@ constexpr feature_entry container_features[] = {
     media_feature::compare op1 = media_feature::compare::equal;
     media_feature::compare op2 = media_feature::compare::equal;
     if (is_name(at[0])) {
-        // name op value
+        // name op value.
         const std::size_t took = operator_at(1, op1);
         if (took == 0) { return std::nullopt; }
         const feature_entry * e = entry_of(s.text_of(s.tokens[at[0]]), container);
@@ -512,7 +522,7 @@ constexpr feature_entry container_features[] = {
         if (e != nullptr && e->kind == media_feature::kind::discrete) { return truth::unknown; }
         return decide(e, f, w);
     }
-    // value op name [op value]
+    // value op name [op value].
     media_feature f;
     written w = written::other;
     const std::size_t vtook = value_at(0, f, w);
@@ -523,7 +533,7 @@ constexpr feature_entry container_features[] = {
     }
     const feature_entry * e = entry_of(s.text_of(s.tokens[at[vtook + took]]), container);
     f.which = e == nullptr ? media_feature::name::unknown : e->which;
-    f.op = flipped(op1); // `400px < width` is `width > 400px`
+    f.op = flipped(op1); // `400px < width` is `width > 400px`.
     if (at.size() == vtook + took + 1) {
         if (e != nullptr && e->kind == media_feature::kind::discrete) { return truth::unknown; }
         return decide(e, f, w);
@@ -549,10 +559,10 @@ constexpr feature_entry container_features[] = {
     return both(decide(e, f, w), decide(e, g, w2));
 }
 
-// A `<media-condition>` over [from, to): nullopt when it is not one.
+/// A `<media-condition>` over [from, to): nullopt when it is not one.
 [[nodiscard]] std::optional<truth> condition(const token_stream & s, std::size_t from,
                                              std::size_t to, const media_environment & env) {
-    // A function in a condition - `calc(...)`, or anything else - is a
+    // A function in a condition (`calc(...)`, or anything else) is a
     // `<general-enclosed>`.
     const auto test = [](std::string_view, std::size_t, std::size_t) { return truth::unknown; };
     const auto enclosed = [&](std::size_t a, std::size_t b) {
@@ -561,6 +571,7 @@ constexpr feature_entry container_features[] = {
     return boolean_expression(s, from, to, test, enclosed);
 }
 
+/// The source text of tokens [from, to).
 [[nodiscard]] std::string_view slice(const token_stream & s, std::size_t from, std::size_t to) {
     if (from >= to) { return {}; }
     const css_token & a = s.tokens[from];
@@ -568,25 +579,25 @@ constexpr feature_entry container_features[] = {
     return std::string_view{s.pool}.substr(a.text, b.text + b.length - a.text);
 }
 
-// One query's text, the type and `not` read off the front and the condition
-// kept as text. `media_query::malformed` is set for anything the grammar
-// refuses; a condition that parses but cannot be decided is not malformed, it
-// is a condition that is false today.
+/// One query's text, the type and `not` read off the front and the condition
+/// kept as text. `media_query::malformed` is set for anything the grammar
+/// refuses; a condition that parses but cannot be decided is not malformed,
+/// just false for now.
 [[nodiscard]] media_query parse_query(std::string_view text) {
     media_query q;
     const token_stream s = tokenize(text);
-    const std::size_t end = s.tokens.size() - 1; // the eof token
+    const std::size_t end = s.tokens.size() - 1; // The eof token.
     std::size_t i = 0;
     const auto skip_ws = [&] {
         while (i < end && s.tokens[i].type == token_type::whitespace) { ++i; }
     };
     skip_ws();
     if (i >= end) {
-        q.malformed = true; // an empty query in a list: `screen, , print`
+        q.malformed = true; // An empty query in a list: `screen, , print`.
         return q;
     }
     const css_token & first = s.tokens[i];
-    // The CONDITION form starts with a parenthesis, a function, or `not (`.
+    // The condition form starts with a parenthesis, a function, or `not (`.
     const bool condition_form = first.type == token_type::open_paren ||
                                 first.type == token_type::function ||
                                 (is_ident_named(s, i, "not") && i + 2 < end &&
@@ -605,7 +616,7 @@ constexpr feature_entry container_features[] = {
         ++i;
         skip_ws();
     } else if (is_ident_named(s, i, "only")) {
-        ++i; // `only` exists to hide a query from a pre-CSS2 parser
+        ++i; // `only` exists to hide a query from a pre-CSS2 parser.
         skip_ws();
     }
     if (i >= end || s.tokens[i].type != token_type::ident) {
@@ -639,7 +650,7 @@ constexpr feature_entry container_features[] = {
     q.condition = std::string{trim(slice(s, i, end), html_whitespace)};
     media_environment probe;
     if (q.condition.empty() || !condition(s, i, end, probe)) { q.malformed = true; }
-    // `or` is not allowed at the top level after a type - and a condition that
+    // `or` is not allowed at the top level after a type. A condition that
     // reads as an `or` here is refused by name, because the boolean parser
     // accepts either joiner and this is the one place the grammar does not.
     const token_stream body = tokenize(q.condition);
@@ -653,8 +664,9 @@ constexpr feature_entry container_features[] = {
     return q;
 }
 
+/// Whether one parsed query matches `env`.
 [[nodiscard]] bool query_holds(const media_query & q, const media_environment & env) {
-    if (q.malformed) { return false; } // `not all`, per spec
+    if (q.malformed) { return false; } // `not all`, per spec.
     truth holds = truth::yes;
     if (q.type == media_type::other || (q.type != media_type::all && q.type != env.type)) {
         holds = truth::no;
@@ -663,10 +675,11 @@ constexpr feature_entry container_features[] = {
         const token_stream s = tokenize(q.condition);
         holds = condition(s, 0, s.tokens.size() - 1, env).value_or(truth::unknown);
     }
-    // `not` applies to the WHOLE query, type and features together - which is why it
-    // is applied here and not per feature - and it leaves UNKNOWN unknown:
-    // `not all and (orientation: 0)` matches no more than the plain form does.
-    // Unknown is false only here, at the top of a query (Media Queries 4 §3).
+    // `not` applies to the whole query, type and features together, which is
+    // why it is applied here and not per feature, and it leaves unknown
+    // unknown: `not all and (orientation: 0)` matches no more than the plain
+    // form does. Unknown is false only here, at the top of a query (Media
+    // Queries 4 §3).
     return (q.negated ? negate(holds) : holds) == truth::yes;
 }
 
@@ -716,21 +729,21 @@ std::vector<media_query> parse_media_query_list(const stylesheet & sheet,
 }
 
 bool evaluate(std::span<const media_query> queries, const media_environment & env) {
-    if (queries.empty()) { return true; } // `@media { }` is `all`
+    if (queries.empty()) { return true; } // `@media { }` is `all`.
     for (const media_query & q : queries) {
-        if (query_holds(q, env)) { return true; } // a comma list is an OR
+        if (query_holds(q, env)) { return true; } // A comma list is an OR.
     }
     return false;
 }
 
 namespace {
 
-// ONE `scroll-state()` FEATURE over [from, to) (CSS Conditional 5 §3.4):
-// `scrollable`, `snapped`, `stuck` or `scrolled`, alone or with one of its
-// keywords. nullopt when the tokens are not one feature; unknown for a name
-// or a keyword the feature does not have. `scrollable` reads the box; the
-// other three ask `none` of it, since nothing here snaps, sticks or records
-// the last scroll's direction.
+/// One `scroll-state()` feature over [from, to) (CSS Conditional 5 §3.4):
+/// `scrollable`, `snapped`, `stuck` or `scrolled`, alone or with one of its
+/// keywords. nullopt when the tokens are not one feature; unknown for a name
+/// or a keyword the feature does not have. `scrollable` reads the box; the
+/// other three answer as `none`, since nothing here snaps, sticks or records
+/// the last scroll's direction.
 [[nodiscard]] std::optional<truth> scroll_feature(const token_stream & s, std::size_t from,
                                                   std::size_t to, std::uint8_t scrollable) {
     std::vector<std::size_t> at;
@@ -776,6 +789,7 @@ namespace {
     };
     if (ascii_iequals(name, "scrollable")) { return answer(scrollable, std::size(directions)); }
     if (ascii_iequals(name, "scrolled")) { return answer(0, std::size(directions)); }
+    // `stuck` takes only the first eight keywords (the sides), not the axes.
     if (ascii_iequals(name, "stuck")) { return answer(0, 8); }
     if (ascii_iequals(name, "snapped")) {
         if (!boolean && ascii_iequals(value, "both")) { return truth::no; }
@@ -786,9 +800,9 @@ namespace {
     return truth::unknown;
 }
 
-// A `scroll-state()` query: one feature, or `not`/`and`/`or` of them in
-// parentheses. nullopt when it is not one - which makes the call a
-// `<general-enclosed>`, unknown.
+/// A `scroll-state()` query: one feature, or `not`/`and`/`or` of them in
+/// parentheses. nullopt when it is not one, which makes the call a
+/// `<general-enclosed>`, unknown.
 [[nodiscard]] std::optional<truth> scroll_state_query(const token_stream & s, std::size_t from,
                                                       std::size_t to, std::uint8_t scrollable) {
     if (const std::optional<truth> one = scroll_feature(s, from, to, scrollable)) { return one; }
@@ -803,7 +817,7 @@ namespace {
 
 std::optional<std::vector<container_query>> parse_container_conditions(std::string_view text) {
     const token_stream s = tokenize(text);
-    const std::size_t end = s.tokens.size() - 1; // the eof token
+    const std::size_t end = s.tokens.size() - 1; // The eof token.
     const auto test = [](std::string_view, std::size_t, std::size_t) { return truth::unknown; };
     const auto enclosed = [](std::size_t, std::size_t) { return truth::unknown; };
     std::vector<container_query> out;
@@ -848,18 +862,18 @@ std::optional<std::vector<container_query>> parse_container_conditions(std::stri
 
 namespace {
 
-// --- a style() query, serialised (CSS Conditional 5 §3.3, CSSOM) ------------
+// --- A style() query, serialized (CSS Conditional 5 §3.3, CSSOM) -------------
 
-// [a, b) with the whitespace at either end left out.
+/// Narrows [a, b) to leave out the whitespace at either end.
 void trim_run(const token_stream & s, std::size_t & a, std::size_t & b) {
     while (a < b && s.tokens[a].type == token_type::whitespace) { ++a; }
     while (b > a && s.tokens[b - 1].type == token_type::whitespace) { --b; }
 }
 
-// One style FEATURE: `--name: value` with the value as written but for the
-// whitespace at its ends, `--name` alone, or a range with one space either
-// side of each comparison - a custom property's name escaped as an
-// identifier. nullopt for anything else, which is written as it came.
+/// One style feature, serialized: `--name: value` with the value as written
+/// but for the whitespace at its ends, `--name` alone, or a range with one
+/// space either side of each comparison, a custom property's name escaped as
+/// an identifier. nullopt for anything else, which is written as it came.
 [[nodiscard]] std::optional<std::string> style_feature_text(const token_stream & s, std::size_t a,
                                                             std::size_t b) {
     trim_run(s, a, b);
@@ -908,9 +922,9 @@ void trim_run(const token_stream & s, std::size_t & a, std::size_t & b) {
     return out + ": " + std::string{slice(s, v, end)};
 }
 
-// A style CONDITION or feature over [a, b): `not` a group, groups joined by
-// `and`/`or` (lowercased), each a nested condition, a feature in
-// parentheses, or a <general-enclosed> written exactly as it came.
+/// A style condition or feature over [a, b), serialized: `not` a group, groups
+/// joined by `and`/`or` (lowercased), each a nested condition, a feature in
+/// parentheses, or a <general-enclosed> written exactly as it came.
 [[nodiscard]] std::string style_query_text(const token_stream & s, std::size_t a, std::size_t b) {
     trim_run(s, a, b);
     const bool condition =
@@ -958,16 +972,16 @@ void trim_run(const token_stream & s, std::size_t & a, std::size_t & b) {
     return out;
 }
 
-// The tokens [from, to) of a container query, serialised: whitespace
-// collapsed, none just inside a parenthesis, `: ` after a feature, one space
-// either side of a comparison, and a feature's name - or, with `lower_all`,
-// every word, which is a `scroll-state()` query's case - lowercased. A
-// `scroll-state()` that is one is serialised the same way, lowercased; any
-// other function is copied as written, a `style()` with its name lowercased
-// and its whitespace collapsed, a `<general-enclosed>` exactly.
+/// Appends the tokens [from, to) of a container query to `out`, serialized:
+/// whitespace collapsed, none just inside a parenthesis, `: ` after a feature,
+/// one space either side of a comparison, and a feature's name lowercased (or,
+/// with `lower_all`, every word, as in a `scroll-state()` query). A valid
+/// `scroll-state()` is serialized the same way, lowercased; a `style()` has
+/// its name lowercased and its whitespace collapsed; any other function (a
+/// `<general-enclosed>`) is copied exactly as written.
 void serialize_query_run(const token_stream & s, std::size_t from, std::size_t to, bool lower_all,
                          std::string & out) {
-    bool space = false; // whitespace seen since the last piece
+    bool space = false; // Whitespace seen since the last piece.
     const auto emit = [&](std::string_view piece) {
         if (space && !out.empty() && out.back() != '(') { out += ' '; }
         space = false;
@@ -1068,8 +1082,8 @@ container_needs container_requirements(std::string_view condition) {
     if (trim(condition, html_whitespace).empty()) { return needs; }
     const token_stream s = tokenize(condition);
     // The first word of a group is the feature it asks about: `(width)`,
-    // `(min-width: 1px)`, `(100px < width)` - a value before the name is
-    // not a word.
+    // `(min-width: 1px)`, `(100px < width)`. A value before the name is not
+    // a word.
     const auto first_word = [&](std::size_t a, std::size_t b) -> std::string_view {
         for (std::size_t i = a; i < b; ++i) {
             if (s.tokens[i].type == token_type::ident) { return s.text_of(s.tokens[i]); }
@@ -1112,11 +1126,11 @@ container_needs container_requirements(std::string_view condition) {
         if (!range && !custom) { needs.unknown = true; }
         return truth::unknown;
     };
-    // IS THE FUNCTION WHOSE `)` IS AT `b` A WHOLE GROUP - followed by `and`,
-    // `or`, the group's `)` or the end? The parser tries a group's inside as
-    // a condition before it takes it as a feature, and `calc(1em) < width`
-    // meets `calc(` on that first try: a function followed by anything else
-    // is a value, and says nothing about the features.
+    // Whether the function whose `)` is at `b` is a whole group, followed by
+    // `and`, `or`, the group's `)` or the end. The parser tries a group's
+    // inside as a condition before it takes it as a feature, and
+    // `calc(1em) < width` meets `calc(` on that first try: a function followed
+    // by anything else is a value, and says nothing about the features.
     const auto whole_group = [&](std::size_t b) {
         std::size_t k = b + 1;
         while (k < s.tokens.size() && s.tokens[k].type == token_type::whitespace) { ++k; }
@@ -1142,7 +1156,7 @@ container_needs container_requirements(std::string_view condition) {
                 needs.unknown = true;
             }
         } else {
-            needs.unknown = true; // a <general-enclosed> function
+            needs.unknown = true; // A <general-enclosed> function.
         }
         return truth::unknown;
     };
@@ -1158,9 +1172,10 @@ std::optional<truth> evaluate_container_condition(std::string_view text,
                                                   const style_query & query) {
     const token_stream s = tokenize(text);
     const std::size_t end = s.tokens.size() - 1;
-    // `style(<query>)` is the one function a container condition has (CSS
-    // Containment 3 §5.3); the query is handed over as text, since only the
-    // engine holds the container's computed style.
+    // A container condition has two functions: `scroll-state()`, answered here
+    // from the box, and `style()` (CSS Conditional 5 §3.3), handed to `query`
+    // as text because only the style engine holds the container's computed
+    // style.
     const auto test = [&](std::string_view name, std::size_t a, std::size_t b) {
         if (ascii_iequals(name, "scroll-state")) {
             return scroll_state_query(s, a, b, box.scrollable).value_or(truth::unknown);

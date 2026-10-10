@@ -1,14 +1,21 @@
+//===- value_functions.cpp - attr(), ident(), custom functions ------------===//
+//
+// The substituter's value functions: attr(), ident(), calls to custom
+// @function rules, and random-item(). var(), if() and inherit() live inline in
+// internal.hpp.
+//
+//===----------------------------------------------------------------------===//
 #include "internal.hpp"
 
 namespace ctbrowser::style::css::substitute_detail {
 
 [[nodiscard]] bool substituter::attribute(const token_stream & outer, const call & found, int depth,
                                           std::string & expansion) {
-    // THE HEAD IS SUBSTITUTED ON ITS OWN, and may not grow a comma: a
+    // The head is substituted on its own, and may not grow a comma: a
     // `var()` in the name or type position that expands to `data-foo
     // type(<number>), 10` has not supplied a fallback, it has broken the
-    // argument list (attr-argument-grammar). The fallback keeps its own
-    // text and is substituted only if it is taken.
+    // argument list (WPT css/css-values/attr-argument-grammar). The fallback
+    // keeps its own text and is substituted only if it is taken.
     std::string inner;
     if (!run(text_between(outer, found.open + 1, found.comma_at), inner, depth + 1)) {
         return false;
@@ -69,7 +76,7 @@ namespace ctbrowser::style::css::substitute_detail {
         syntax
     };
     kind type = kind::raw;
-    bool typed = false; // any <attr-type> at all, `raw-string` included
+    bool typed = false; // Any <attr-type> at all, `raw-string` included.
     std::string unit;
     std::vector<syntax_alternative> syntax;
     if (head.size() == 2) {
@@ -95,8 +102,8 @@ namespace ctbrowser::style::css::substitute_detail {
         }
     }
 
-    // THE ATTRIBUTE. Absent: the fallback, else the empty string when no
-    // type was asked for, else invalid.
+    // An absent attribute takes the fallback, else the empty string when no
+    // type was asked for, else is invalid.
     const std::optional<std::string> held = (*attributes_)(name);
     if (!held) {
         if (args.comma_at < args.close) { return fallback(s, args, depth, expansion); }
@@ -104,12 +111,12 @@ namespace ctbrowser::style::css::substitute_detail {
         expansion = "\"\"";
         return true;
     }
-    // AN ATTRIBUTE ALREADY BEING SUBSTITUTED IS A CYCLE however it is read
+    // An attribute already being substituted is a cycle however it is read
     // again - through `type(*)`, or as the raw string a bare attr() makes
     // of it: `data-foo="attr(data-bar type(*))"` with `data-bar="attr(
-    // data-foo)"` is a ring, and every attr() in it is invalid, fallbacks
+    // data-foo)"` is a cycle, and every attr() in it is invalid, fallbacks
     // included; only the attr() the declaration itself wrote takes its
-    // fallback (attr-cycle 3, 28, 29).
+    // fallback (WPT css/css-values/attr-cycle.html).
     if (std::ranges::find(attrs_resolving_, name) != attrs_resolving_.end()) {
         attr_cycle_ = true;
         return false;
@@ -118,7 +125,7 @@ namespace ctbrowser::style::css::substitute_detail {
     switch (type) {
     case kind::raw: value = quoted(*held); break;
     case kind::unit: {
-        // A BARE NUMBER AND NOTHING ELSE - not a calc(), not a var() - which
+        // A bare number and nothing else - not a calc(), not a var() - which
         // then gains the unit. `number` is the unit that adds nothing.
         const token_stream v = tokenize(*held);
         const std::vector<item> parts = items_of(v, 0);
@@ -135,14 +142,9 @@ namespace ctbrowser::style::css::substitute_detail {
         break;
     }
     case kind::syntax: {
-        // The text is a <declaration-value> with substitutions of its own
-        // to perform before it is parsed - `attr(data-x type(*))` may hold
-        // a `var()` or another `attr()`, and a cycle through it is a cycle:
-        // an attribute already being substituted makes every attr() in the
-        // ring invalid, fallbacks included, and only the attr() the
-        // declaration itself wrote takes its fallback (attr-cycle 3, 8, 12,
-        // 17, 28, 29; attr-all-types 75-79 read one attribute through
-        // another without a cycle).
+        // The text is a <declaration-value> that may hold its own var() or
+        // attr(); substitute it before parsing, with `name` on the resolving
+        // stack so a cycle back to it is caught (see the cycle rule above).
         attrs_resolving_.push_back(name);
         std::string substituted;
         const bool ok = run(*held, substituted, depth + 1);
@@ -157,7 +159,7 @@ namespace ctbrowser::style::css::substitute_detail {
     }
     }
     if (value) {
-        // AN ATTRIBUTE IS NO URL (CSS Values 5 §attr security): substituted
+        // An attribute is no URL (CSS Values 5 §attr security): substituted
         // into a property's value as a <url> - a url token, or a url(),
         // src(), image() or image-set() it made - or into one, as the string
         // `src(attr(x))` hands it, the attr() makes the declaration invalid
@@ -189,7 +191,7 @@ constexpr std::array<std::string_view, 6> url_functions{
 } // namespace
 
 bool substituter::inside_url_function(const token_stream & s, std::size_t at) {
-    std::vector<bool> open; // per open block: is it a url-taking function
+    std::vector<bool> open; // Per open block: is it a url-taking function?
     for (std::size_t i = 0; i < at && i < s.tokens.size(); ++i) {
         const css_token & t = s.tokens[i];
         if (t.type == token_type::function || t.type == token_type::open_paren ||
@@ -248,9 +250,9 @@ bool substituter::makes_url(std::string_view value) {
         return false;
     }
     if (!any || made.empty()) { return false; }
-    // The result is an IDENTIFIER, and is spelled as one: `ident(3 "abc")`
+    // The result is an identifier, and is spelled as one: `ident(3 "abc")`
     // is `\33 abc`, because `3abc` would read back as a dimension
-    // (ident-function-computed).
+    // (WPT css/css-values/ident-function-computed).
     expansion = serialize_identifier(made);
     return true;
 }
@@ -275,7 +277,8 @@ bool substituter::makes_url(std::string_view value) {
     // The bases a typed slot computes against: the caller's, keyed on the
     // function's slot and on this invocation - which is the calling
     // element, the property the call sits in, and which call of that
-    // value this is.
+    // value this is. The multipliers are splitmix64's mixing constants, and
+    // the `| 1` keeps the key odd so it is never zero.
     std::string slot_name;
     const std::uint64_t call_key =
         (conditions_->lengths.element_key ^ (invocation * 0x9E3779B97F4A7C15ull) ^
@@ -340,11 +343,11 @@ bool substituter::makes_url(std::string_view value) {
             continue;
         }
         if (!ok) {
-            unset(declared); // guaranteed-invalid: the local is undefined
+            unset(declared); // Guaranteed-invalid: the local is undefined.
             continue;
         }
         // A typed parameter set again in the body is computed like the
-        // parameter (random-in-custom-function).
+        // parameter (WPT css/css-values/random-in-custom-function).
         for (const custom_function::parameter & param : fn->parameters) {
             if (param.name != declared || param.syntax == "*") { continue; }
             std::optional<std::string> typed =
@@ -370,7 +373,7 @@ bool substituter::makes_url(std::string_view value) {
 
 [[nodiscard]] bool substituter::random_item(const token_stream & outer, const call & found,
                                             int depth, std::string & expansion) {
-    if (found.comma_at >= found.close) { return false; } // no items at all
+    if (found.comma_at >= found.close) { return false; } // No items at all.
     std::string key;
     if (!run(text_between(outer, found.open + 1, found.comma_at), key, depth + 1)) { return false; }
     // The key: `fixed <number>`, or the sharing words `random_base` reads.
@@ -391,9 +394,10 @@ bool substituter::makes_url(std::string_view value) {
         if (conditions_ != nullptr) { ctx.property = conditions_->property; }
         // `auto` is scoped to the element like a bare `element-scoped`: the
         // base is keyed on the element either way, and a name alone is not.
-        // An auto random-item() does NOT share with an auto random() in the
+        // An auto random-item() does not share with an auto random() in the
         // same value, where a bare `element-scoped` one does
-        // (random-item-computed): its automatic key names the function.
+        // (WPT css/css-values/random-item-computed): its automatic key names
+        // the function.
         std::string options{trimmed};
         std::string keyed_property{ctx.property};
         if (ascii_iequals(trimmed, "auto") || trimmed.empty()) {

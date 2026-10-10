@@ -1,11 +1,21 @@
+//===- ctbrowser/lib/Style/easing/pairs.cpp - Pairwise blending -*- C++ -*-===//
+//
+// Pairwise interpolation (interpolate_pair) and addition (add_pair) of two
+// computed CSS values for transitions and animations, with the
+// property-specific rules: ratios, gap-rule lists, clip rect(), grid track
+// lists, calc-size() and the intrinsic size keywords.
+//
+//===----------------------------------------------------------------------===//
+
 #include "internal.hpp"
 
 namespace ctbrowser::style::easing_detail {
 
 // --- ratios ---
 
-// A `<ratio>` as one number: `1 / 2`, `0.5`, `2 / 0` is infinite. Nothing
-// for `auto` or a degenerate pair, which stay discrete.
+/// A `<ratio>` as one number (`1 / 2` and `0.5` are both 0.5), or nullopt for
+/// `auto` or a degenerate ratio with a zero on either side, which interpolates
+/// discretely.
 [[nodiscard]] std::optional<double> ratio_of(std::string_view text) {
     const std::vector<std::string_view> parts = split_top_level(text, "/");
     if (parts.empty() || parts.size() > 2) { return std::nullopt; }
@@ -19,8 +29,8 @@ namespace ctbrowser::style::easing_detail {
     return n[0] / n[1];
 }
 
-// CSS Sizing 4 §7.1: a ratio interpolates as the logarithm of its value,
-// and the answer is written as `<number> / 1`.
+/// CSS Sizing 4 §7.1: a ratio interpolates as the logarithm of its value,
+/// and the answer is written as `<number> / 1`.
 [[nodiscard]] std::optional<std::string> interpolate_ratio(std::string_view from,
                                                            std::string_view to, double p) {
     const std::optional<double> a = ratio_of(from);
@@ -32,19 +42,22 @@ namespace ctbrowser::style::easing_detail {
 
 // --- gap rule lists (CSS Gap Decorations 1) ---
 
+/// Whether `property` takes a gap-rule list (`column-rule-width` and friends).
 [[nodiscard]] bool gap_list_property(std::string_view property) {
     return property == "column-rule-width" || property == "row-rule-width" ||
            property == "column-rule-color" || property == "row-rule-color";
 }
 
-// A gap list in the shape it interpolates in: the integer repeats written
-// out, and the one `repeat(auto, ...)` - if any - kept apart with the values
-// before and after it.
+/// A gap list in the shape it interpolates in: the integer repeats written
+/// out, and the one `repeat(auto, ...)`, if any, kept apart from the values
+/// before and after it.
 struct gap_shape {
     std::vector<std::string> leading, repeated, trailing;
     bool has_auto = false;
 };
 
+/// Parses a gap list into a gap_shape, or nullopt for an empty item, a second
+/// auto repeat, or a repeat count outside 1 to 10000.
 [[nodiscard]] std::optional<gap_shape> gap_shape_of(std::string_view text) {
     gap_shape out;
     for (const std::string_view raw : split_top_level(text, ",")) {
@@ -73,20 +86,20 @@ struct gap_shape {
             for (std::size_t i = 1; i < args.size(); ++i) {
                 into.emplace_back(trim(args[i], html_whitespace));
             }
-            // Ten thousand repeats of a long argument list: the same cap as
-            // repeat_to_match puts on the paired lists.
+            // Ten thousand repeats of a long argument list could still be huge;
+            // apply the same cap repeat_to_match puts on the paired lists.
             if (into.size() > max_repeated_items) { return std::nullopt; }
         }
     }
     return out;
 }
 
-// CSS Gap Decorations 1 §animation: two lists interpolate item by item once
-// their integer repeats are written out, the shorter repeated to the least
-// common multiple of the two lengths. With a `repeat(auto, ...)` on both
-// sides the values before it must pair one to one, and so must those after
-// it, and the two auto repeats' values match by the same multiple; with one
-// on only one side, the lists do not interpolate.
+/// CSS Gap Decorations 1 §animation: two lists interpolate item by item once
+/// their integer repeats are written out, the shorter repeated to the least
+/// common multiple of the two lengths. With a `repeat(auto, ...)` on both
+/// sides the values before it must pair one to one, and so must those after
+/// it, and the two auto repeats' values match by the same multiple; with one
+/// on only one side, the lists do not interpolate.
 [[nodiscard]] std::optional<std::string> interpolate_gap_list(std::string_view property,
                                                               std::string_view from,
                                                               std::string_view to, double p,
@@ -125,8 +138,8 @@ struct gap_shape {
 
 // --- clip's rect() (CSS Masking 1 §7.1) ---
 
-// The four components of a `rect()`, comma- or space-separated as CSS 2.1
-// allowed; nullopt for anything else.
+/// The four components of a `rect()`, comma- or space-separated as CSS 2.1
+/// allowed; nullopt for anything else.
 [[nodiscard]] std::optional<std::vector<std::string_view>> rect_parts(std::string_view text) {
     text = trim(text, html_whitespace);
     if (!ascii_istarts_with(text, "rect(") || !text.ends_with(')')) { return std::nullopt; }
@@ -141,8 +154,8 @@ struct gap_shape {
     return out;
 }
 
-// Two rects, component by component - `wa * a + wb * b` - and nullopt when
-// an `auto` meets a length, which makes the pair discrete.
+/// Blends two rects component by component as `wa * a + wb * b`; nullopt when
+/// an `auto` meets a length, which makes the pair discrete.
 [[nodiscard]] std::optional<std::string> blend_rects(std::string_view from, std::string_view to,
                                                      double wa, double wb,
                                                      const css::length_context & ctx) {
@@ -171,8 +184,8 @@ struct gap_shape {
 
 // --- grid track lists (CSS Grid 2 §7.2.5) ---
 
-// The top-level words of a track list: a `[names]` block, a `repeat(...)` or
-// one track size, each whole.
+/// The top-level words of a track list: a `[names]` block, a `repeat(...)` or
+/// one track size, each whole.
 [[nodiscard]] std::vector<std::string_view> track_words(std::string_view text) {
     std::vector<std::string_view> out;
     int depth = 0;
@@ -192,10 +205,11 @@ struct gap_shape {
     return out;
 }
 
-// One track size of each list, blended as `wa * x + wb * y` - (1 - p, p) for an
-// interpolation, (1, 1) for an addition: the same function's arguments one by
-// one, two numbers of one type as numbers - never below zero - and anything
-// else discrete, track by track (the nearer end, or the added value).
+/// Blends one track size of each list as `wa * x + wb * y`, with weights
+/// (1 - p, p) for an interpolation and (1, 1) for an addition. Two calls of the
+/// same function blend argument by argument, two numbers of one type blend as
+/// numbers (never below zero), and anything else is discrete: the nearer end,
+/// or the added value.
 [[nodiscard]] std::string blend_track(std::string_view x, std::string_view y, double wa, double wb,
                                       const css::length_context & ctx) {
     if (x == y && !(wa == 1 && wb == 1)) { return std::string{x}; }
@@ -227,10 +241,10 @@ struct gap_shape {
     return std::string{wb < 0.5 ? x : y};
 }
 
-// Two track lists of one shape - the same number of tracks, the same
-// repeat()s with the same counts - blended track by track as blend_track
-// weighs them, with the line names of the nearer end (§7.2.5). nullopt for two
-// shapes, or an auto repeat, which is discrete.
+/// Blends two track lists of one shape (the same number of tracks, the same
+/// repeat()s with the same counts) track by track as blend_track weighs them,
+/// keeping the line names of the nearer end (§7.2.5). Returns nullopt for two
+/// different shapes or an auto repeat, which are discrete.
 [[nodiscard]] std::optional<std::string> interpolate_tracks(std::string_view from,
                                                             std::string_view to, double wa,
                                                             double wb,
@@ -299,9 +313,7 @@ struct gap_shape {
     return out;
 }
 
-// --- the pair ---
-
-// calc-size(A, B)'s basis and calculation, or nothing when `text` is not one.
+/// calc-size(A, B)'s basis and calculation, or nullopt when `text` is not one.
 [[nodiscard]] std::optional<std::pair<std::string_view, std::string_view>> calc_size_args(
     std::string_view text) {
     text = trim(text, html_whitespace);
@@ -326,28 +338,28 @@ struct gap_shape {
 
 // --- calc-size() and the intrinsic size keywords (CSS Values 5 §calc-size) ---
 
-// The properties calc-size() and interpolate-size apply to: the widths and
-// heights, their logical names, their minimums and maximums, and flex-basis.
+/// The properties calc-size() and interpolate-size apply to: the widths and
+/// heights, their logical names, their minimums and maximums, and flex-basis.
 [[nodiscard]] bool sizing_property(std::string_view property) {
     if (property.starts_with("min-") || property.starts_with("max-")) { property.remove_prefix(4); }
     return property == "width" || property == "height" || property == "inline-size" ||
            property == "block-size" || property == "flex-basis";
 }
 
-// An INTRINSIC SIZE KEYWORD: one a calc-size() may take as its basis, and one
-// interpolate-size lets interpolate.
+/// Whether `text` is an intrinsic size keyword: one a calc-size() may take as
+/// its basis, and one interpolate-size lets interpolate.
 [[nodiscard]] bool size_keyword(std::string_view text) {
     return ascii_iequals_any(
         text, {"auto", "min-content", "max-content", "fit-content", "stretch", "content"});
 }
 
-// `calc` with every `size` in it replaced by `(by)`: how a basis that is a
-// calc-size() or a length folds into the calculation over it. nullopt when the
-// result WOULD pass `limit` bytes, which is checked before anything is built -
-// a nest of calc-size()s doubles its text at every level, and CSS Values 5
-// ("substitute into a calc-size calculation", step 3) lets the UA refuse an
-// expansion past its limit, which makes the pair not interpolable
-// (csswg-drafts#10369).
+/// Returns `calc` with every `size` in it replaced by `(by)`: how a basis that
+/// is a calc-size() or a length folds into the calculation over it. Returns
+/// nullopt when the result would exceed `limit` bytes, checked before anything
+/// is built: a nest of calc-size()s doubles its text at every level, and CSS
+/// Values 5 ("substitute into a calc-size calculation", step 3) lets the UA
+/// refuse an expansion past its limit, which makes the pair not interpolable
+/// (csswg-drafts#10369).
 [[nodiscard]] std::optional<std::string> substitute_size(std::string_view calc, std::string_view by,
                                                          std::size_t limit) {
     const auto name = [](char c) {
@@ -376,33 +388,35 @@ struct gap_shape {
     return out;
 }
 
-// A SIZE AS calc-size() INTERPOLATES IT: a basis and a calculation over it.
+/// A size as calc-size() interpolates it: a basis and a calculation over it.
 struct size_form {
     std::string basis;
     std::string calc;
 };
 
-// The innermost basis of a nest of calc-size()s: the size it measures.
+/// The innermost basis of a nest of calc-size()s: the size it measures.
 [[nodiscard]] std::string_view innermost_basis(std::string_view text) {
     while (const auto args = calc_size_args(text)) { text = args->first; }
     return trim(text, html_whitespace);
 }
 
-// CANONICALIZED FOR INTERPOLATION (CSS Values 5 §calc-size): a basis that is
-// itself a calc-size() folds its calculation in for `size`; a basis that is a
-// length becomes `any`, the length standing for `size`; a basis with a
-// percentage in it becomes `100%`, its share of that standing for `size` - a
-// percentage the containing block cannot resolve makes the value `auto`, so it
-// may not become `any`. A keyword is calc-size(keyword, size), and any other
-// <length-percentage> calc-size(any, it). nullopt past the expansion limit.
+/// Canonicalizes a size for interpolation (CSS Values 5 §calc-size). A basis
+/// that is itself a calc-size() folds its calculation in for `size`; a basis
+/// that is a length becomes `any`, the length standing for `size`; a basis with
+/// a percentage in it becomes `100%`, its share of that standing for `size`
+/// (a percentage the containing block cannot resolve makes the value `auto`, so
+/// it may not become `any`). A keyword is calc-size(keyword, size), and any
+/// other <length-percentage> is calc-size(any, it). Returns nullopt past the
+/// expansion limit.
 [[nodiscard]] std::optional<size_form> canonical_size(std::string_view text,
                                                       const css::length_context & ctx,
                                                       int depth = 0) {
     // ponytail: a fixed text budget and a nesting depth are the UA's
     // expansion limit; the specification leaves its measure to the UA. The
-    // depth is the one that holds, because the cascade has already folded
-    // each level's `size / 2 + size / 2` to `size`: a twenty-deep nest of
-    // those would expand a million-fold as written (csswg-drafts#10369).
+    // depth limit is the one that matters in practice, because the cascade has
+    // already folded each level's `size / 2 + size / 2` to `size`, while a
+    // twenty-deep nest of those would expand a million-fold as written
+    // (csswg-drafts#10369).
     constexpr std::size_t expansion_limit = 4096;
     constexpr int depth_limit = 16;
     if (depth > depth_limit) { return std::nullopt; }
@@ -439,23 +453,25 @@ struct size_form {
     return size_form{n->a.has_percent ? "100%" : "any", std::move(*folded)};
 }
 
-// Is `text` a <length-percentage> - the plain side a calc-size() meets?
+/// Whether `text` is a <length-percentage>, the plain side a calc-size() meets.
 [[nodiscard]] bool length_like(std::string_view text, const css::length_context & ctx) {
     const std::optional<numeric_pair> n = numeric_of(text, text, ctx);
     return n && (!n->a.is_number || n->a.px == 0);
 }
 
-// TWO SIZES ON ONE BASIS, each with its calculation, or nullopt when
-// calc-size() cannot put them on one: a calc-size() pairs with another, or with
-// a <length-percentage>; an intrinsic keyword with a calc-size() over that
-// keyword or over `any` - and, under `interpolate-size: allow-keywords`, with a
-// <length-percentage>. Two keywords never interpolate. `sized` is false when
-// neither side is a calc-size() or a keyword, which leaves the pair to the
-// ordinary numeric rules.
+/// Two sizes on one basis, each with its calculation over it.
 struct size_pair_forms {
     std::string basis;
     std::string calc_a, calc_b;
 };
+
+/// Puts two sizes on one basis, or returns nullopt when calc-size() cannot: a
+/// calc-size() pairs with another or with a <length-percentage>; an intrinsic
+/// keyword pairs with a calc-size() over that keyword or over `any`, and, under
+/// `interpolate-size: allow-keywords`, with a <length-percentage>. Two keywords
+/// never interpolate. `sized` is set to false when neither side is a
+/// calc-size() or a keyword, which leaves the pair to the ordinary numeric
+/// rules.
 [[nodiscard]] std::optional<size_pair_forms> size_pair(std::string_view a, std::string_view b,
                                                        const css::length_context & ctx,
                                                        bool & sized) {
@@ -488,15 +504,16 @@ struct size_pair_forms {
     return size_pair_forms{std::move(basis), std::move(fa->calc), std::move(fb->calc)};
 }
 
-// A calc-size() CALCULATION READ AS `k * size + lengths`: the grammar of a
-// <calc-sum> with `size` a term, kept linear - a product has at most one side
-// that is not a number. nullopt for anything else (`sign(size) * size`), which
-// then blends as written.
+/// A calc-size() calculation read as `k * size + lengths`.
 struct size_sum {
     double size = 0;
     css::calc_result lengths;
     bool has_size = false, has_lengths = false, number = false;
 };
+/// Reads a calc-size() calculation into a size_sum: the grammar of a
+/// <calc-sum> with `size` as a term, kept linear (a product has at most one
+/// side that is not a number). Fails for anything else (`sign(size) * size`),
+/// which then blends as written.
 struct size_sum_reader : css::linear_sum<size_sum_reader, size_sum> {
     const css::length_context & ctx;
 
@@ -525,8 +542,8 @@ struct size_sum_reader : css::linear_sum<size_sum_reader, size_sum> {
             ++at;
             return inner;
         }
-        // One token - `size`, a number, a dimension, a percentage - or a
-        // whole function, which the evaluator answers or nothing does.
+        // One token (`size`, a number, a dimension, a percentage) or a whole
+        // function, which numeric_of either evaluates or rejects.
         const std::size_t start = at;
         int depth = 0;
         while (at < text.size()) {
@@ -562,6 +579,8 @@ struct size_sum_reader : css::linear_sum<size_sum_reader, size_sum> {
     }
 };
 
+/// Reads `calc` as a size_sum; nullopt unless it parses whole and is not a
+/// bare number.
 [[nodiscard]] std::optional<size_sum> size_sum_of(std::string_view calc,
                                                   const css::length_context & ctx) {
     size_sum_reader reader{{calc, " \t\n"}, ctx};
@@ -571,12 +590,12 @@ struct size_sum_reader : css::linear_sum<size_sum_reader, size_sum> {
     return out;
 }
 
-// TWO CALCULATIONS OVER ONE BASIS, BLENDED: `a * (1 - p) + b * p`, simplified
-// as calc() simplifies a sum (CSS Values 4 §10.10.1) - the lengths fold into
-// one, and `size` keeps a factor of its own: `auto` to `20px` at 0.3 is
-// `6px + size * 0.7` (interpolate-size-min-height-interpolation). A
-// calculation that is not linear in `size` is kept whole, each side times its
-// weight.
+/// Blends two calculations over one basis as `a * (1 - p) + b * p`, simplified
+/// as calc() simplifies a sum (CSS Values 4 §10.10.1): the lengths fold into
+/// one, and `size` keeps a factor of its own, so `auto` to `20px` at 0.3 is
+/// `6px + size * 0.7` (WPT interpolate-size-min-height-interpolation). A
+/// calculation that is not linear in `size` is kept whole, each side times its
+/// weight.
 [[nodiscard]] std::string blend_calcs(std::string_view a, std::string_view b, double p,
                                       const css::length_context & ctx) {
     const std::optional<size_sum> x = size_sum_of(a, ctx);
@@ -603,22 +622,22 @@ struct size_sum_reader : css::linear_sum<size_sum_reader, size_sum> {
     return out.empty() ? std::string{"0px"} : out;
 }
 
-// A calc-size() as the cascade writes the same declaration (calc_size_text),
-// so an animated size reads back as a declared one does: `size * 0.7` is
-// `(0.7 * size)` in both (interpolate-size-min-height-interpolation).
+/// Serializes a calc-size() the way the cascade writes the same declaration
+/// (calc_size_text), so an animated size reads back as a declared one does:
+/// `size * 0.7` is `(0.7 * size)` in both.
 [[nodiscard]] std::string sized_text(std::string_view basis, std::string_view calc) {
-    // Every keyword a basis can be here: the canonical forms only ever carry
-    // one the property took.
+    // Every keyword a basis can be here; the canonical forms only ever carry a
+    // keyword the property accepted.
     constexpr std::string_view sizes = "auto content min-content max-content fit-content stretch";
     std::string text = "calc-size(" + std::string{basis} + ", " + std::string{calc} + ")";
     std::optional<std::string> canonical = css::calc_size_text(text, sizes);
     return canonical ? std::move(*canonical) : text;
 }
 
-// TWO CALCULATIONS OVER ONE BASIS, ADDED - calc-size() is additive (CSS
-// Values 5 §calc-size): the lengths summed and `size`'s factors summed, so
-// `max-content` with `100px` added is `calc-size(max-content, 100px + size)`
-// (interpolate-size-*-composition).
+/// Adds two calculations over one basis; calc-size() is additive (CSS Values 5
+/// §calc-size). The lengths are summed and `size`'s factors are summed, so
+/// `max-content` with `100px` added is `calc-size(max-content, 100px + size)`
+/// (WPT interpolate-size-*-composition).
 [[nodiscard]] std::string sum_calcs(std::string_view a, std::string_view b,
                                     const css::length_context & ctx) {
     const std::optional<size_sum> x = size_sum_of(a, ctx);
@@ -640,13 +659,14 @@ struct size_sum_reader : css::linear_sum<size_sum_reader, size_sum> {
     return out.empty() ? std::string{"0px"} : out;
 }
 
-// CSS Values 4 §4.1: two values interpolate when they are one number, length
-// or percentage each; two colours; or LISTS of the same shape -
-// comma-separated, then space-separated - whose items pair off as one of
-// those or as identical text (`inset`, `/`, `auto`). `border-width: 20px
-// 40px`, `box-shadow: red 2px 2px`, `background-size: 10px 20%` are all that.
-// When the pair does not, `interpolable` is false and the answer flips at the
-// midpoint.
+/// Interpolates `from` to `to` at progress `p` for `property`. CSS Values 4
+/// §4.1: two values interpolate when they are one number, length or percentage
+/// each; two colours; or lists of the same shape (comma-separated, then
+/// space-separated) whose items pair off as one of those or as identical text
+/// (`inset`, `/`, `auto`). `border-width: 20px 40px`, `box-shadow: red 2px 2px`
+/// and `background-size: 10px 20%` are all lists. When the pair does not
+/// interpolate, `interpolable` is set to false and the answer flips at the
+/// midpoint.
 [[nodiscard]] std::string interpolate_pair(std::string_view property, std::string_view from,
                                            std::string_view to, double p,
                                            const css::length_context & ctx, bool & interpolable) {
@@ -661,10 +681,10 @@ struct size_sum_reader : css::linear_sum<size_sum_reader, size_sum> {
         if (ascii_iequals(from, "none")) { return std::string{p <= 0 ? from : to}; }
         return std::string{p >= 1 ? to : from};
     }
-    // A gap rule LIST, which a single value is not: that pairs as the lone
-    // length or colour it is, below. A comma at the TOP LEVEL makes a list -
-    // `rgb(170, 70, 70)` is one colour, and taking its inner commas for a list
-    // handed the one item straight back here, forever.
+    // A gap rule list. A single value is not one; it pairs below as the lone
+    // length or colour it is. Only a top-level comma makes a list:
+    // `rgb(170, 70, 70)` is one colour, and treating its inner commas as a list
+    // would hand the one item straight back here and recurse forever.
     const auto listed = [](std::string_view text) {
         return split_top_level(text, ",").size() > 1 || ascii_istarts_with(text, "repeat(");
     };
@@ -685,9 +705,9 @@ struct size_sum_reader : css::linear_sum<size_sum_reader, size_sum> {
             return std::string{p < 0.5 ? from : to};
         }
     }
-    // TWO PALETTES MIX (CSS Fonts 4 §9.1): between the ends the value is
+    // Two palettes mix (CSS Fonts 4 §9.1): between the ends the value is
     // `palette-mix(in oklab, from, to p%)`, the percentage left out at the
-    // even share, and each end is itself (font-palette-interpolation).
+    // even share, and each end is itself (WPT font-palette-interpolation).
     if (property == "font-palette") {
         if (p <= 0) { return std::string{from}; }
         if (p >= 1) { return std::string{to}; }
@@ -695,10 +715,10 @@ struct size_sum_reader : css::linear_sum<size_sum_reader, size_sum> {
         return "palette-mix(in oklab, " + std::string{from} + ", " + std::string{to} +
                (percent == 50 ? std::string{} : " " + css::serialize_number(percent) + "%") + ")";
     }
-    // `vertical-align` IS THREE VALUES IN ONE (CSS Inline 3 §4.4), written
-    // with its defaults left out: when the keywords agree the baseline shift
-    // interpolates as the length it is, an omitted one being zero -
-    // `baseline` to `100px` is 0px to 100px (vertical-align-interpolation).
+    // `vertical-align` is three values in one (CSS Inline 3 §4.4), written
+    // with its defaults left out: when the keywords agree, the baseline shift
+    // interpolates as a length, an omitted one being zero, so `baseline` to
+    // `100px` is 0px to 100px (WPT vertical-align-interpolation).
     if (property == "vertical-align") {
         const auto parts = [](std::string_view v) {
             std::string words;
@@ -730,8 +750,8 @@ struct size_sum_reader : css::linear_sum<size_sum_reader, size_sum> {
         return std::string{p < 0.5 ? from : to};
     }
     // Two basic shapes of one function blend (CSS Shapes 1 §3.3); anything
-    // else in clip-path or shape-outside - a url(), `none`, two functions -
-    // is discrete.
+    // else in clip-path, shape-outside, offset-path or object-view-box (a
+    // url(), `none`, two different functions) is discrete.
     if (property == "clip-path" || property == "shape-outside" || property == "offset-path" ||
         property == "object-view-box") {
         if (std::optional<std::string> s = css::blend_basic_shapes(property, from, to, 1 - p, p)) {
@@ -752,9 +772,9 @@ struct size_sum_reader : css::linear_sum<size_sum_reader, size_sum> {
                 return auto_a ? "auto " + *r : *r;
             }
         }
-        // ...and a DEGENERATE ratio - `1 / 0`, `0 / 1` - is discrete too
-        // (CSS Sizing 4 §7.1), not the quotient the numeric path below folds
-        // it to (aspect-ratio-interpolation).
+        // A degenerate ratio (`1 / 0`, `0 / 1`) is discrete too (CSS Sizing 4
+        // §7.1), not the quotient the numeric path below would fold it to
+        // (WPT aspect-ratio-interpolation).
         interpolable = false;
         return std::string{p < 0.5 ? from : to};
     }
@@ -763,7 +783,7 @@ struct size_sum_reader : css::linear_sum<size_sum_reader, size_sum> {
             return *r;
         }
     }
-    // TWO RECTS blend component by component (clip-interpolation).
+    // Two rects blend component by component (WPT clip-interpolation).
     if (property == "clip") {
         if (const std::optional<std::string> r = blend_rects(from, to, 1 - p, p, ctx)) {
             return *r;
@@ -771,8 +791,8 @@ struct size_sum_reader : css::linear_sum<size_sum_reader, size_sum> {
         interpolable = false;
         return std::string{p < 0.5 ? from : to};
     }
-    // TWO TRACK LISTS OF ONE SHAPE blend track by track (CSS Grid 2 §7.2.5);
-    // two shapes are discrete.
+    // Two track lists of one shape blend track by track (CSS Grid 2 §7.2.5);
+    // two different shapes are discrete.
     if (property == "grid-template-columns" || property == "grid-template-rows") {
         if (const std::optional<std::string> t = interpolate_tracks(from, to, 1 - p, p, ctx)) {
             return *t;
@@ -780,10 +800,11 @@ struct size_sum_reader : css::linear_sum<size_sum_reader, size_sum> {
         interpolable = false;
         return std::string{p < 0.5 ? from : to};
     }
-    // TWO FILTER LISTS INTERPOLATE AS FILTER LISTS OR NOT AT ALL (Filter
+    // Two filter lists interpolate as filter lists or not at all (Filter
     // Effects 1 §11.2): a url() in either, or two functions that do not pair,
-    // is discrete - not the item-by-item blend below, which kept the url()
-    // and blended the functions beside it (backdrop-filter-composition).
+    // is discrete. The generic item-by-item blend below must not see them, as
+    // it would keep the url() and blend the functions beside it (WPT
+    // backdrop-filter-composition).
     if (property == "filter" || property == "backdrop-filter") {
         if (const std::optional<std::string> f = interpolate_filter(from, to, p, ctx)) {
             return *f;
@@ -791,8 +812,8 @@ struct size_sum_reader : css::linear_sum<size_sum_reader, size_sum> {
         interpolable = false;
         return std::string{p < 0.5 ? from : to};
     }
-    // A COLOUR, which a comma LIST of colours is not - `rgb(1, 2, 3), red` is
-    // two items, each paired below, and not the first of them alone.
+    // A single colour. A comma list of colours is not one: `rgb(1, 2, 3), red`
+    // is two items, each paired below, not the first of them alone.
     const bool single = comma_items(from).size() == 1 && comma_items(to).size() == 1;
     if (const auto a = single ? css::resolve_color(from, {}) : std::nullopt,
         b = single ? css::resolve_color(to, {}) : std::nullopt;
@@ -800,9 +821,9 @@ struct size_sum_reader : css::linear_sum<size_sum_reader, size_sum> {
         return legacy_color(from) && legacy_color(to) ? lerp_color(*a, *b, p)
                                                       : lerp_oklab(*a, *b, p);
     }
-    // A calc-size() OR AN INTRINSIC KEYWORD interpolates as calc-size() does
-    // (CSS Values 5 §calc-size): both sides canonicalized onto one basis and
-    // their calculations blended - or not at all, which is discrete.
+    // A calc-size() or an intrinsic keyword interpolates as calc-size() does
+    // (CSS Values 5 §calc-size): both sides are canonicalized onto one basis
+    // and their calculations blended; if they cannot be, the pair is discrete.
     if (sizing_property(property)) {
         bool sized = false;
         if (const std::optional<size_pair_forms> pair = size_pair(from, to, ctx, sized)) {
@@ -858,8 +879,8 @@ struct size_sum_reader : css::linear_sum<size_sum_reader, size_sum> {
             bool item_ok = true;
             std::string piece = interpolate_pair(property, x, y, p, ctx, item_ok);
             if (!item_ok) { return discrete(); }
-            // A shadow's blur - the third length, in computed shape - cannot
-            // go negative (CSS Backgrounds 3 §7.2): the extrapolated one is zero.
+            // A shadow's blur (the third length, in computed shape) cannot go
+            // negative (CSS Backgrounds 3 §7.2), so an extrapolated one is zero.
             if (shadow && k_out == 4 && piece.starts_with('-')) { piece = "0px"; }
             out += piece;
         }
@@ -867,8 +888,9 @@ struct size_sum_reader : css::linear_sum<size_sum_reader, size_sum> {
     return out;
 }
 
-// Web Animations 1 §4.5.1 over one item: numerics sum, colours sum, identical
-// keywords keep, a list adds item by item, and anything else is `value`.
+/// Adds `value` to `underlying` (Web Animations 1 §4.5.1) for one item:
+/// numerics sum, colours sum, identical keywords keep, a list adds item by
+/// item, and anything else is `value`.
 [[nodiscard]] std::string add_pair(std::string_view property, std::string_view underlying,
                                    std::string_view value, const css::length_context & ctx) {
     underlying = trim(underlying, html_whitespace);
@@ -883,12 +905,13 @@ struct size_sum_reader : css::linear_sum<size_sum_reader, size_sum> {
         return blend_rects(underlying, value, 1, 1, ctx).value_or(std::string{value});
     }
     // Two track lists of one shape add track by track, inside their
-    // repeat()s too (grid-template-columns-composition).
+    // repeat()s too (WPT grid-template-columns-composition).
     if (property == "grid-template-columns" || property == "grid-template-rows") {
         return interpolate_tracks(underlying, value, 1, 1, ctx).value_or(std::string{value});
     }
     // Two sizes calc-size() puts on one basis add as calc-size()s; a keyword
-    // it cannot is not additive, and the added value replaces.
+    // pair it cannot put on one basis is not additive, so the added value
+    // replaces.
     if (sizing_property(property)) {
         bool sized = false;
         if (const std::optional<size_pair_forms> pair = size_pair(underlying, value, ctx, sized)) {
