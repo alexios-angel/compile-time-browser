@@ -142,15 +142,30 @@ void passElementArrays(lowering & lower, ctjs::FuncOp fn,
     llvm::SmallVector<ctjs::ReturnOp> returns;
     fn.getBody().walk([&](ctjs::CallDirectOp call) { calls.push_back(call); });
     fn.getBody().walk([&](ctjs::ReturnOp ret) { returns.push_back(ret); });
+    // A call result moved into a local below is that local from then on: a
+    // later call may lend it and a return may move it.
+    llvm::DenseMap<mlir::Value, mlir::Value> owners;
+    const auto owner = [&](mlir::Value v) {
+        const auto found = owners.find(v);
+        return found == owners.end() ? v : found->second;
+    };
+    const auto isArray = [&](mlir::Value v) {
+        return arrays.contains(v) || llvm::is_contained(llvm::make_second_range(owners), v);
+    };
     for (ctjs::CallDirectOp call : calls) {
         mlir::OpBuilder at(call);
         // Operands 0-2 are the implicit arguments; the rest are lent as spans.
         for (unsigned i = 3; i < call->getNumOperands(); ++i) {
             mlir::Value argument = call->getOperand(i);
-            if (!arrays.contains(argument) || isSpan(argument)) { continue; }
-            // The lattice still knows the source value's type: only operations
-            // are replaced after this, never values.
-            const std::string span = elementSpanSpelling(lower.typeOf(argument));
+            if (!isArray(argument) || isSpan(argument)) { continue; }
+            // The lattice still knows the source value's type (a local's comes
+            // from the call result it holds): only operations are replaced
+            // after this, never values.
+            mlir::Value source = argument;
+            for (const auto & [result, local] : owners) {
+                if (local == argument) { source = result; }
+            }
+            const std::string span = elementSpanSpelling(lower.typeOf(source));
             call->setOperand(i, callValue(at, call.getLoc(),
                                           ec::OpaqueType::get(fn.getContext(), span), span,
                                           lowering::cellPlace(at, call.getLoc(), argument)));
@@ -165,11 +180,12 @@ void passElementArrays(lowering & lower, ctjs::FuncOp fn,
                                        ec::OpaqueAttr::get(fn.getContext(), ""));
             auto assign = ec::AssignOp::create(at, call.getLoc(), local, result);
             result.replaceAllUsesExcept(local, assign);
+            owners[result] = local;
         }
     }
     for (ctjs::ReturnOp ret : returns) {
-        mlir::Value value = ret.getValue();
-        if (!arrays.contains(value) || isSpan(value)) { continue; }
+        mlir::Value value = owner(ret.getValue());
+        if (!isArray(value) || isSpan(value)) { continue; }
         mlir::OpBuilder at(ret);
         mlir::Value place = lowering::cellPlace(at, ret.getLoc(), value);
         auto vector = llvm::cast<ec::LValueType>(place.getType()).getValueType();
