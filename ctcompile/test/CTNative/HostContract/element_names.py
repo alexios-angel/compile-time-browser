@@ -7,7 +7,9 @@ over lib/Shell/bindings/element/, so the name set is enumerated from the VM
 itself: one element per tag of every interface in interface_table (parsed
 from interfaces.cpp), plus an unknown tag, a custom-element name and SVG,
 MathML and other-namespace elements, each walked from the element through
-its whole prototype chain with Object.getOwnPropertyNames. --write
+its whole prototype chain with Object.getOwnPropertyNames. A form's and a
+select's getters answer keys the document decides: the page checks they
+answer what HTML says and keeps those keys out of the set. --write
 regenerates ElementNames.inc.
 """
 
@@ -25,8 +27,9 @@ HEADER = """\
 """
 
 PAGE = """<!doctype html><html><head></head><body>
-<form id="form"><input name="probe"></form>
-<select id="select" name="probe"><option>a</option></select>
+<form id="form"></form>
+<select id="select" name="probe"></select>
+<input id="control" name="probe"><option id="probe">a</option>
 <script>
 const names = new Set();
 const add = (element) => {
@@ -41,12 +44,21 @@ add(document.createElement('x-y'));
 add(document.createElementNS('http://www.w3.org/2000/svg', 'rect'));
 add(document.createElementNS('http://www.w3.org/1998/Math/MathML', 'mi'));
 add(document.createElementNS('urn:other', 'other'));
-// A named or indexed getter would answer keys no enumeration lists.
-for (const id of ['form', 'select']) {
-  const element = document.getElementById(id);
-  if (element.probe !== undefined || element[0] !== undefined) {
-    throw new Error(id + ' answers a named or indexed property');
-  }
+// The two element interfaces HTML gives getters answer keys the document
+// decides: a form its listed elements by index and by name (4.10.3), a select
+// its options by index and by no name (4.10.7; namedItem is only a method).
+// Both owned nothing while the loops above ran, so the name set holds the
+// binding's keys alone. Element facts leave index keys unknown, and the
+// native entry refuses a form (ctnative::require_entry_element).
+const form = document.getElementById('form');
+const select = document.getElementById('select');
+const control = document.getElementById('control');
+const option = document.getElementById('probe');
+form.append(control);
+select.append(option);
+if (form.probe !== control || form[0] !== control || select[0] !== option ||
+    select.probe !== undefined || select.namedItem('probe') !== option) {
+  throw new Error('form or select answers other than HTML 4.10.3 and 4.10.7 say');
 }
 for (const name of names) console.log(name);
 </script></body></html>

@@ -746,7 +746,10 @@ std::optional<partial_eval::value> classInitialization::evaluateHelper(
     // element name set reads undefined: the census refuses prototype writes
     // and the typed DOM proof refuses unmodeled element writes, so no source
     // adds one. Keys spelled `__` stay unknown: the binding adds internal
-    // slots (`__selected`, `__cached_...`) to an element lazily.
+    // slots (`__selected`, `__cached_...`) to an element lazily. So do
+    // digit keys: a select answers its options by index (HTML 4.10.7). A
+    // form answers its controls by index and by any name ahead of every
+    // member (4.10.3), so require_entry_element refuses one at native entry.
     // ponytail: structured single-block bodies; loops, objects, other
     // property reads and host bindings need the full partial evaluator's heap.
     if (depth == 16 || !fn || !fn.getBody().hasOneBlock()) { return std::nullopt; }
@@ -836,7 +839,8 @@ std::optional<partial_eval::value> classInitialization::evaluateHelper(
             } else if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) {
                 const auto key = ctjs::constantKey(read.getKey());
                 if (values.lookup(read.getObject()).tag == value::kind::reference && !key.empty() &&
-                    !key.starts_with("__")) {
+                    !key.starts_with("__") &&
+                    key.find_first_not_of("0123456789") != llvm::StringRef::npos) {
                     if (key == "nodeType") {
                         data = partial_eval::numeric(context, 1);
                     } else if (!std::ranges::binary_search(elementNames, std::string_view{key})) {

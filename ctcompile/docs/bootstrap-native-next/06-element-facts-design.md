@@ -80,7 +80,10 @@ need the Data-session provider's Map support in the class path.
   out of `interfaces.cpp`, creates one element per tag plus unknown, custom,
   SVG, MathML and other-namespace elements, and unions
   `Object.getOwnPropertyNames` along each element's whole prototype chain; it
-  also fails when a `<form>` or `<select>` answers a named or indexed key.
+  also fails unless a `<form>` answers its control by index and by name and a
+  `<select>` its option by index and by no name (HTML 4.10.3 and 4.10.7, which
+  ctbrowser implements since 20335c207), and those document-dependent keys stay
+  out of the set.
   The result (588 names) is `HostContract/ClassInitialization/ElementNames.inc`;
   `element-names.test` re-enumerates and fails on any difference (`--write`
   regenerates).
@@ -89,7 +92,8 @@ need the Data-session provider's Map support in the class path.
   truthy, `typeof` "object", strictly unequal to primitives, `nodeType` 1, and a
   constant key outside the name set reads undefined. `__` keys stay unknown (the
   binding adds `__selected`, `__cached_...` slots lazily), as does any key in the
-  set, a numeric key, and a comparison of two different element parameters.
+  set, a numeric or all-digit key (a select's indices), and a comparison of two
+  different element parameters.
 - **`foldDecidedArms`** decides on those results; a call that returns the same
   argument's element in every construction is replaced by that argument and
   erased. In DOM entries the uncalled-helper rule now applies to a captured
@@ -99,8 +103,11 @@ need the Data-session provider's Map support in the class path.
 - **Soundness.** The typed DOM proof admits `set_property` only on fresh local
   objects, so no accepted program writes an element expando (pinned before and
   after construction and in an unused method), and the census refuses
-  `Object.prototype` (pinned with `Object` declared). A non-element actual
-  (`new Button({})`) stays undecided and keeps `a`'s census.
+  `Object.prototype` (pinned with `Object` declared). A form answers its
+  controls by any name ahead of every member (`[LegacyOverrideBuiltIns]`), so
+  no name set describes it: `ctnative::require_entry_element` refuses a form
+  at the native entry. A non-element actual (`new Button({})`) stays undecided
+  and keeps `a`'s census.
 - **Fixtures** (class-dom): `class_element_arm` (authentic `r`/`a`, lowers and
   runs natively), `element_arm_expando{,_after,_method}`, `_prototype`,
   `_object` with pinned refusals.
