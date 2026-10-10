@@ -1,5 +1,6 @@
-# ctbrowser.core - the foundation: slab allocation, generation-tagged handles,
-# atoms, the thread pool, geometry. Knows nothing about browsers.
+# ctbrowser-core: the foundation (slab allocation, generation-tagged handles,
+# atoms, the thread pool, geometry, small text algorithms). Knows nothing about
+# browsers.
 add_library(ctbrowser-core)
 target_sources(ctbrowser-core PUBLIC FILE_SET HEADERS BASE_DIRS "${CTBROWSER_INCLUDE_DIR}")
 target_sources(ctbrowser-core PRIVATE
@@ -21,7 +22,7 @@ target_link_libraries(ctbrowser-core PUBLIC Threads::Threads)
 
 # mimalloc backs operator new/delete and simdutf backs base64_decode's fast
 # path; both are found in cmake/dependencies.cmake, which says why each is
-# looked for the way it is. PUBLIC on purpose - an executable that linked the
+# looked for the way it is. PUBLIC on purpose: an executable that linked the
 # engine but not mimalloc would silently resolve operator new from libstdc++.
 target_link_libraries(ctbrowser-core PUBLIC "${CTBROWSER_SIMDUTF}")
 target_include_directories(ctbrowser-core SYSTEM PUBLIC "${CTBROWSER_SIMDUTF_INCLUDE}")
@@ -30,12 +31,11 @@ if(CTBROWSER_USE_MIMALLOC)
   target_compile_definitions(ctbrowser-core PRIVATE CTBROWSER_WITH_MIMALLOC=1)
   target_link_libraries(ctbrowser-core PUBLIC "${CTBROWSER_MIMALLOC}")
 endif()
-# SYSTEM, and this is not cosmetic. That path is a whole brew prefix's include
-# directory: adding it normally puts every header brew has installed - Boost's
-# among them - on the strict-warning path, and the build stops on
+# SYSTEM is required, not cosmetic. That path is a whole brew prefix's include
+# directory: adding it normally puts every header brew has installed (Boost's
+# among them) on the strict-warning path, and the build stops on
 # -Wunused-template inside boost/move/algo. Third-party headers are not this
-# project's warnings to answer, which is the same rule ctbrowser_target already
-# states about its own exported interface.
+# project's warnings to answer.
 if(CTBROWSER_USE_MIMALLOC)
   target_include_directories(ctbrowser-core SYSTEM PUBLIC "${CTBROWSER_MIMALLOC_INCLUDE}")
 endif()

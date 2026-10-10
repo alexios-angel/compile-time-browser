@@ -1,11 +1,15 @@
+//===- geometry.hpp - Points, rects, sides, colors ------------ -*- C++ -*-===//
+//
+// Layout geometry. Deliberately float, not int32 pixels: a fractional box model
+// is required for zoom, device pixel ratios and transforms, and rounding only
+// at raster time keeps sub-pixel text positioning possible.
+//
+//===----------------------------------------------------------------------===//
+
 #pragma once
 #include <algorithm>
 #include <compare>
 #include <cstdint>
-
-// Layout geometry. Deliberately float, not int32 pixels: a fractional box model
-// is required for zoom, device pixel ratios and transforms, and rounding only at
-// raster time is what keeps sub-pixel text positioning possible.
 
 namespace ctbrowser {
 
@@ -14,6 +18,7 @@ struct point {
     [[nodiscard]] friend constexpr bool operator==(point, point) = default;
 };
 
+/// An axis-aligned rectangle; right and bottom edges are exclusive.
 struct rect {
     float x = 0, y = 0, width = 0, height = 0;
 
@@ -45,7 +50,7 @@ struct rect {
     [[nodiscard]] friend constexpr bool operator==(const rect &, const rect &) = default;
 };
 
-// CSS box sides, in the order the shorthand expands
+/// CSS box sides, in the order the shorthand expands.
 struct sides {
     float top = 0, right = 0, bottom = 0, left = 0;
     [[nodiscard]] constexpr float horizontal() const noexcept { return left + right; }
@@ -53,7 +58,8 @@ struct sides {
     [[nodiscard]] friend constexpr bool operator==(const sides &, const sides &) = default;
 };
 
-// 0xAARRGGBB, the packing the canvas and the compositor already share
+/// A color packed as 0xAARRGGBB, the packing the canvas and the compositor
+/// share.
 struct color {
     std::uint32_t argb = 0;
 

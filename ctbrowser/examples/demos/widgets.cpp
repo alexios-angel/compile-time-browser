@@ -1,14 +1,16 @@
-// The form gallery: text and password fields, a textarea, checkboxes, radios,
-// a <select> with a real popup, submit/reset/disabled buttons, <details>, a
-// link, and a script that reacts to every one of them.
+//===- ctbrowser/examples/demos/widgets.cpp - Form widget gallery demo ----===//
 //
-// It is the interaction proof, the way `elements` is the rendering one. As of
-// stage 8 all of it works: typing and the caret, focus, checkbox and radio
-// groups, the select popup, submit and reset, the clipboard (Ctrl+C/X/V and
-// the right-click menu), and system cursors over links and fields.
+// The form gallery: text and password fields, a textarea, checkboxes, radios, a
+// <select> with a real popup, submit/reset/disabled buttons, <details>, a link,
+// and a script that reacts to every one of them.
 //
-// The page is the previous engine's, unchanged apart from being a file rather than an NTTP -
-// it was already written against the ordinary web APIs.
+// It is the interaction test page, as `elements` is the rendering one. All of
+// it works: typing and the caret, focus, checkbox and radio groups, the select
+// popup, submit and reset, the clipboard (Ctrl+C/X/V and the right-click menu),
+// and system cursors over links and fields. The page uses only ordinary web
+// APIs.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 

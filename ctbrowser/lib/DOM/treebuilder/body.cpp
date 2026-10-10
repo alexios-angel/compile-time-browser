@@ -1,10 +1,18 @@
+//===- ctbrowser/lib/DOM/treebuilder/body.cpp - In body and text ----------===//
+//
+// The tree builder's "in body" insertion mode (HTML 13.2.6.4.7), the mode most
+// of a document is parsed in, and the "text" mode (HTML 13.2.6.4.8) used inside
+// raw text and RCDATA elements such as <script>, <style> and <textarea>.
+//
+//===----------------------------------------------------------------------===//
+
 #include "internal.hpp"
 
 namespace ctbrowser::html {
 
 using namespace treebuilder_detail;
 
-// 13.2.6.4.7 "in body"
+/// The "in body" insertion mode, HTML 13.2.6.4.7.
 void tree_builder::mode_in_body(const token & t) {
     switch (t.kind) {
     case token_kind::character: {
@@ -33,6 +41,7 @@ void tree_builder::mode_in_body(const token & t) {
     }
 }
 
+/// "In body" for a start tag.
 void tree_builder::in_body_start(const token & t) {
     const std::string & tag = t.name;
     if (tag == "html") {
@@ -80,8 +89,8 @@ void tree_builder::in_body_start(const token & t) {
     if (one_of(tag, {"pre", "listing"})) {
         if (has_in_scope("p", scope::button)) { close_p_element(); }
         (void)insert_element(t);
-        // A newline immediately after the start tag is ignored - the next
-        // token's, whether it was written or came from `&#x0a;`.
+        // A newline immediately after the start tag is ignored (the next
+        // token's first character), whether it was written or came from `&#x0a;`.
         skip_newline_ = true;
         frameset_ok_ = false;
         return;
@@ -251,7 +260,7 @@ void tree_builder::in_body_start(const token & t) {
     }
     if (tag == "select") {
         if (context_ == "select") { return; } // fragment case
-        // A second <select> inside one CLOSES it and is itself ignored.
+        // A second <select> inside one closes it and is itself ignored.
         if (has_in_scope("select")) {
             pop_until("select");
             return;
@@ -317,6 +326,7 @@ void tree_builder::in_body_start(const token & t) {
     (void)insert_element(t);
 }
 
+/// "In body" for an end tag.
 void tree_builder::in_body_end(const token & t) {
     const std::string & tag = t.name;
     if (tag == "template") { return process(t, mode::in_head); }
@@ -401,6 +411,8 @@ void tree_builder::in_body_end(const token & t) {
     in_body_any_other_end_tag(tag);
 }
 
+/// "In body"'s "any other end tag" steps: close the nearest open HTML element
+/// with this tag, unless a special element is in the way.
 void tree_builder::in_body_any_other_end_tag(const std::string & tag) {
     for (std::size_t i = open_.size(); i-- > 0;) {
         const entry & node = open_[i];
@@ -413,13 +425,12 @@ void tree_builder::in_body_any_other_end_tag(const std::string & tag) {
     }
 }
 
-// 13.2.6.4.8 "text"
+/// The "text" insertion mode, HTML 13.2.6.4.8.
 void tree_builder::mode_text(const token & t) {
     switch (t.kind) {
     case token_kind::character: return insert_text(t.data);
     case token_kind::end_of_file:
-        // An unclosed <script> at EOF is popped and never run: its
-        // already-started flag is set and that is all.
+        // An unclosed <script> at EOF is popped and never run.
         pop();
         mode_ = original_mode_;
         return process(t, mode_);
@@ -428,9 +439,9 @@ void tree_builder::mode_text(const token & t) {
         const bool script = current_is("script");
         pop();
         mode_ = original_mode_;
-        // `</script>` RUNS THE SCRIPT, with the insertion point just past
-        // this tag so its writes land there. The whole reason a page's
-        // scripts see a half-built document.
+        // `</script>` runs the script, with the insertion point just past
+        // this tag so its writes land there. This is why a page's scripts
+        // see a half-built document.
         if (script) { run_script(closed); }
         return;
     }

@@ -1,22 +1,22 @@
-// The web-compat proof: the MDN breakout tutorial, with ONE line changed.
+//===- ctbrowser/examples/demos/pong.cpp - MDN breakout demo -- -*- C++ -*-===//
 //
-// examples/pages/pong.html is the tutorial's final source. Nothing in it was
+// Web compatibility check: the MDN breakout tutorial, with one change.
+//
+// examples/pages/pong.html is the tutorial's final source; nothing in it was
 // written for this engine. It uses canvas.getContext("2d"), paths and arcs,
-// requestAnimationFrame, document.addEventListener for keys and the mouse,
-// Math, and canvas.width - which is precisely why it is worth keeping around:
-// every one of those had to work before it would run at all.
+// requestAnimationFrame, document.addEventListener for keys and the mouse, Math
+// and canvas.width, all of which must work for it to run.
 //
-// THE ONE DEVIATION is the clamp in mouseMoveHandler. MDN's version gates on
-// the CURSOR being inside the canvas and then sets paddleX to
-// relativeX - paddleWidth/2 without clamping the resulting RECT, so the paddle
-// hangs up to half its width off either edge. Chrome and Firefox do the same
-// thing with the same source - it is MDN's bug, not the engine's - but an
-// example that visibly misbehaves is the wrong kind of evidence, so the paddle
-// is clamped to the canvas here. Recorded so the next reader does not "restore"
-// it and reintroduce the defect.
+// The one deviation is a clamp in mouseMoveHandler. MDN's version checks that
+// the cursor is inside the canvas, then sets paddleX to relativeX -
+// paddleWidth/2 without clamping the paddle itself, so it hangs up to half its
+// width off either edge (Chrome and Firefox do the same with that source). The
+// paddle is clamped to the canvas here; do not "restore" the original.
 //
-// The page path is relative to the repository root, the same convention the previous engine's
-// examples used for their assets.
+// The page path is relative to the ctbrowser root, so run the example from
+// there.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 

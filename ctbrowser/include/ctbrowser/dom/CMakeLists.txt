@@ -13,7 +13,7 @@ target_sources(ctbrowser-dom PUBLIC FILE_SET HEADERS FILES
   xml.hpp
 )
 
-# Keep the existing installed header set; these support files stay private.
+# Private sources: included by the headers above but not installed.
 target_sources(ctbrowser-dom PRIVATE
   encoding_tables.inc
 )

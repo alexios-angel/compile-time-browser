@@ -1,3 +1,38 @@
+//===- ctbrowser/lib/Core/allocator.cpp - Global allocator via mimalloc ---===//
+//
+// Routes the global C++ allocator (operator new and delete) through mimalloc
+// when CTBROWSER_WITH_MIMALLOC is set, and reports which allocator is linked.
+//
+// Allocator traffic is ~4.8% of a Phaser frame (`_int_malloc`, `_int_free`,
+// `malloc`, `free`, `malloc_consolidate` and `operator new` between them), and
+// it is the one hot item in this engine where a library is the whole answer. A
+// drop-in allocator is a link-line change that cannot alter results, only what
+// they cost. docs/performance.md has the measurement, including jemalloc, which
+// tied on wall clock and lost on the Windows cross-build.
+//
+// This overrides the C++ operators rather than using MI_OVERRIDE. mimalloc can
+// patch the platform's `malloc` instead, but on Windows that means redirecting
+// the CRT at load time, which is far more invasive than linking an allocator
+// and depends on load order. Overriding the C++ operators is explicit,
+// identical on both platforms, and covers what this engine actually allocates
+// (std::string, std::vector, the script heap), since the C libraries it links
+// (zlib, libpng, libjpeg-turbo) allocate a handful of buffers rather than a
+// stream of them.
+//
+// Every form of new and delete is replaced (8 news, 12 deletes). Replacing
+// `operator new(size_t)` but leaving a sized or aligned `delete` to libstdc++
+// hands a mimalloc pointer to the system `free`: undefined behaviour that
+// usually crashes somewhere far away.
+//
+// Whether this file is linked at all must be checked (see core/allocator.hpp).
+// A static archive member is pulled in only to satisfy an undefined symbol, so
+// an override that nothing references can be silently dropped and the build
+// will use the system allocator while looking exactly the same.
+// `ctbrowser::allocator_name()` exists to be asked, and
+// unittests/unit/core/basics asserts on it.
+//
+//===----------------------------------------------------------------------===//
+
 #include <ctbrowser/core/allocator.hpp>
 
 #include <cstddef>
@@ -6,35 +41,6 @@
 #if CTBROWSER_WITH_MIMALLOC
 #include <mimalloc.h>
 #endif
-
-// THE GLOBAL ALLOCATOR, ROUTED THROUGH mimalloc.
-//
-// Allocator traffic is ~4.8% of a Phaser frame - `_int_malloc`, `_int_free`,
-// `malloc`, `free`, `malloc_consolidate` and `operator new` between them - and
-// it is the one hot item in this engine where a LIBRARY is the whole answer. A
-// drop-in allocator is a link-line change that cannot alter results, only what
-// they cost. docs/performance.md has the measurement, including jemalloc, which
-// tied on wall clock and lost on the Windows cross-build.
-//
-// OPERATOR NEW, NOT MI_OVERRIDE. mimalloc can patch the platform's `malloc`
-// instead, but on Windows that means redirecting the CRT at load time, which is
-// a far more invasive thing than linking an allocator and depends on load
-// order. Overriding the C++ operators is explicit, identical on both platforms,
-// and covers what this engine actually allocates - std::string, std::vector,
-// the script heap - since the C libraries it links (zlib, libpng,
-// libjpeg-turbo) allocate a handful of buffers rather than a stream of them.
-//
-// ALL EIGHT FORMS, and that is not pedantry. Replacing `operator new(size_t)`
-// and leaving the sized or aligned `delete` to libstdc++ hands a mimalloc
-// pointer to the system `free`, which is undefined behaviour that usually
-// survives long enough to become a crash somewhere else entirely.
-//
-// WHETHER THIS FILE IS EVEN LINKED IS A REAL QUESTION - see
-// core/allocator.hpp. A static archive member is pulled in only to satisfy an
-// undefined symbol, so an override that nothing references can be silently
-// dropped and the build will simply use the system allocator while looking
-// exactly the same. `ctbrowser::allocator_name()` exists to be asked, and
-// unittests/unit/core/basics asserts on it.
 
 #if CTBROWSER_WITH_MIMALLOC
 
@@ -110,7 +116,7 @@ namespace ctbrowser {
 
 #if CTBROWSER_WITH_MIMALLOC
 const char * allocator_name() noexcept {
-    // ASKED, NOT ASSUMED. `mi_is_in_heap_region` answers whether a pointer came
+    // Asked, not assumed: `mi_is_in_heap_region` answers whether a pointer came
     // out of mimalloc's own regions, so this is the override reporting on
     // itself rather than a build flag reporting on what it intended.
     void * probe = ::operator new(64);

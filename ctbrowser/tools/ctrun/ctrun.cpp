@@ -1,16 +1,17 @@
-// ctrun - the launcher a packaged application is made of.
+//===- ctbrowser/tools/ctrun/ctrun.cpp - Packaged-application launcher ----===//
 //
-// `ctcompile` does not generate C++ and does not need a compiler on the machine
-// that runs the result. It takes THIS binary, appends the application bundle to
-// it, and writes the two out as one file - so the thing a user copies is an
-// ordinary executable that happens to have an application stuck on the end.
-// The master plan asks for exactly this: "the launcher is a fixed library, not
-// generated C++".
+// The launcher a packaged application is made of. Packaging does not generate
+// C++ or need a compiler on the target machine: `ctcompile` takes this binary,
+// appends the application bundle to it and writes the two out as one file, so
+// what a user copies is an ordinary executable with an application stuck on
+// the end. The launcher is a fixed program, never generated code.
 //
-// So there are two ways in, and they are the same code:
+// There are two ways in, and they are the same code:
 //   ./myapp            the bundle is appended to this executable
 //   ctrun app.ctapp    the bundle is a file, which is how one is debugged
 //                      without copying a launcher around
+//
+//===----------------------------------------------------------------------===//
 #include <ctbrowser.hpp>
 
 #include "options.hpp"
@@ -24,6 +25,7 @@
 
 namespace {
 
+/// The whole file as bytes; empty if it cannot be read.
 [[nodiscard]] std::vector<std::byte> read_file(const std::filesystem::path & path) {
     std::ifstream in{path, std::ios::binary};
     if (!in) { return {}; }
@@ -39,36 +41,26 @@ namespace {
 
 int main(int argc, char ** argv) {
     namespace po = boost::program_options;
-    // THE APPENDED BUNDLE FIRST, because that is what a packaged application is.
+    // Check for an appended bundle first, because that is what a packaged
+    // application is.
     // Reading our own bytes rather than argv[0] is what makes this work when the
     // application was found on the PATH or reached through a symlink.
     const std::vector<std::byte> self = ctbrowser::shell::this_executable_bytes();
     if (const std::span<const std::byte> found = ctbrowser::shell::find_appended_bundle(self);
         !found.empty()) {
-        // AND IT ANSWERS FOR ITSELF FIRST. A packaged application used to ignore
-        // its command line entirely, so `myapp --help` silently started the
-        // application - which is a wart on its own and a worse one for anybody
-        // trying to find out what a 15 MB executable they were handed actually
-        // is. It carries a manifest; it should be able to say so.
+        // A packaged application answers --help and --info before starting, so
+        // a user can find out what an executable they were handed is. These two
+        // names are taken from the application; packaged apps cannot receive
+        // arguments of their own yet, so nothing is shadowed. When they can,
+        // switch to a `--ctrun-` prefix and a `--` separator.
         //
-        // TWO NAMES ARE TAKEN FROM THE APPLICATION, which is a real cost and is
-        // worth stating: there is no way yet for a packaged application to
-        // receive arguments of its own, so nothing is being shadowed today.
-        // When there is one, this becomes a `--ctrun-` prefix and an explicit
-        // `--` separator.
+        // --info prints the manifest raw; it is already JSON.
         //
-        // `--info` prints the manifest RAW rather than summarising it. A
-        // summary would mean parsing JSON here to re-print it, and this is a
-        // launcher: the manifest is already the readable form, and anything
-        // that wants fields has a parser.
-        //
-        // EVERY OTHER ARGUMENT IS IGNORED, never refused, for the same reason:
-        // until an application can have arguments of its own, nothing here may
-        // stop it starting. So Boost reads only these two names, spelled
-        // exactly - allow_unregistered, no positional arguments declared, no
-        // `--inf` guessed as `--info` and no `-hx` read as `-h -x` - and what it
-        // read is walked in order rather than stored, so the first of the two
-        // still wins and a repeat is not an error.
+        // Every other argument is ignored, never refused, so nothing here can
+        // stop the application starting. Boost reads only these two exact names
+        // (allow_unregistered, no positional arguments, no guessing `--inf` as
+        // `--info`, no sticky `-hx`), and the parsed options are walked in order
+        // so the first one wins and a repeat is not an error.
         po::options_description options;
         auto add = options.add_options();
         add("help,h", "say what this is");
@@ -84,8 +76,8 @@ int main(int argc, char ** argv) {
                         .run()
                         .options;
         } catch (const po::error &) {
-            // `--info=x`, `--x=`: a command line Boost cannot read starts the
-            // application, which is what those arguments always did
+            // `--info=x`, `--x=`: a command line Boost cannot read just starts
+            // the application.
         }
         for (const po::option & flag : given) {
             if (flag.string_key == "help") {
@@ -126,7 +118,7 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "ctrun: cannot read %s\n", application.c_str());
         return 2;
     }
-    // A LOOSE BUNDLE IS A DEVELOPER'S, so it takes the CTBROWSER_* overrides
+    // A loose bundle is a developer's, so it takes the CTBROWSER_* overrides
     // whatever it was packaged with; an appended one (above) does not.
     return ctbrowser::run_bundle(bundle, {}, true);
 }

@@ -1,15 +1,22 @@
-#pragma once
-// The runtime document: a slab of nodes addressed by generation-tagged
-// handles, mutated in place on the one thread that owns it.
+//===- dom.hpp - DOM subsystem aggregate ---------------------- -*- C++ -*-===//
 //
-//   node      the node itself - and, deliberately, NOT its layout results.
-//             Those belong to the box tree.
+// The DOM: a slab of nodes addressed by generation-tagged handles, mutated in
+// place on the one thread that owns it. This header includes every DOM header.
+//
+//   node      the node itself, and deliberately not its layout results, which
+//             belong to the box tree
 //   document  creation, structural and per-node writes
-//   read_txn  the read view; what it hands out lasts until the next write
-//             to that node
-//   html      the WHATWG tokenizer and tree builder, behind document::builder
+//   read_txn  the read view; what it hands out lasts until the next write to
+//             that node
+//   html      the WHATWG tokenizer and tree builder, writing through
+//             document::builder
+//   xml       the XML parser
 //
-// See :document for what a write invalidates.
+// See document.hpp for what a write invalidates.
+//
+//===----------------------------------------------------------------------===//
+
+#pragma once
 
 #include <ctbrowser/dom/dataset.hpp>
 #include <ctbrowser/dom/document.hpp>

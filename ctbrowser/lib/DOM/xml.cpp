@@ -1,3 +1,11 @@
+//===- ctbrowser/lib/DOM/xml.cpp - XML parser -----------------------------===//
+//
+// A non-validating XML 1.0 parser with Namespaces in XML, building a ctbrowser
+// DOM document for DOMParser and `.xhtml`/`.xml` files. Any well-formedness
+// error is fatal: parsing stops and the error and its position are returned
+// with whatever tree was built. dom/xml.hpp lists what is and is not supported.
+//
+//===----------------------------------------------------------------------===//
 #include <ctbrowser/dom/xml.hpp>
 
 #include <algorithm>
@@ -12,12 +20,12 @@
 namespace ctbrowser {
 namespace {
 
-// NameStartChar and NameChar, the ASCII half exactly and everything above
-// 0x7F accepted. A non-validating parser gets nothing from rejecting a name
-// whose fourth byte is outside the XML 1.0 name ranges - the document either
-// came from a generator that got it right or from an author whose page a
-// browser also renders - and getting those ranges subtly wrong would refuse
-// documents that load everywhere else.
+/// NameStartChar and NameChar: the ASCII half exactly, and every byte above
+/// 0x7F accepted. A non-validating parser gains nothing from rejecting a name
+/// whose fourth byte is outside the XML 1.0 name ranges (the document came
+/// either from a generator that got it right or from an author whose page a
+/// browser also renders), and getting those ranges subtly wrong would refuse
+/// documents that load everywhere else.
 [[nodiscard]] bool is_name_start(unsigned char c) {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c == ':' || c >= 0x80;
 }
@@ -26,14 +34,11 @@ namespace {
     return is_name_start(c) || (c >= '0' && c <= '9') || c == '-' || c == '.';
 }
 
-// Namespaces in XML 1.0, section 3: an element or attribute name is a QName -
-// at most one colon, and neither half empty. `:a`, `a:` and `a::b` are
-// namespace-well-formedness violations, which a browser reports as it does
-// any other fatal error (DOMParser-parseFromString-xml-parsererror.html).
-// A lone surrogate is not an XML Char. The engine's strings carry one as the
-// three bytes ED A0-BF xx (a JS string's unpaired half, handed to DOMParser),
-// and a browser makes it U+FFFD in character data rather than a fatal error
-// (DOMParser-parseFromString-xml-parsererror.html, after crbug.com/40814739).
+/// Replaces each lone surrogate with U+FFFD. A lone surrogate is not an XML
+/// Char. The engine's strings carry one as the three bytes ED A0-BF xx (a JS
+/// string's unpaired half, handed to DOMParser), and browsers turn it into
+/// U+FFFD in character data rather than failing
+/// (DOMParser-parseFromString-xml-parsererror.html, after crbug.com/40814739).
 [[nodiscard]] std::string without_surrogates(std::string_view text) {
     std::string out;
     out.reserve(text.size());
@@ -50,6 +55,10 @@ namespace {
     return out;
 }
 
+/// Namespaces in XML 1.0, section 3: an element or attribute name is a QName,
+/// with at most one colon and neither half empty. `:a`, `a:` and `a::b` are
+/// namespace-well-formedness violations, which a browser reports as it does
+/// any other fatal error (DOMParser-parseFromString-xml-parsererror.html).
 [[nodiscard]] bool is_qname(std::string_view name) {
     const std::size_t colon = name.find(':');
     if (colon == std::string_view::npos) { return true; }
@@ -57,25 +66,30 @@ namespace {
            name.find(':', colon + 1) == std::string_view::npos;
 }
 
-// One element's namespace bindings. A vector rather than a map: an element
-// declares nought or one namespace in almost every document, and a linear
-// scan of a handful of entries beats hashing a prefix on every lookup.
+/// One namespace binding on the parser's scope stack. The stack is a vector
+/// rather than a map: an element declares zero or one namespace in almost every
+/// document, and a linear scan of a handful of entries beats hashing a prefix
+/// on every lookup.
 struct binding {
-    std::string prefix; // "" is the default namespace
+    std::string prefix; ///< "" is the default namespace.
     std::string uri;
 };
 
+/// An element whose end tag has not been seen yet.
 struct open_element {
     node_id id;
-    std::string qualified; // exactly as written, for the end-tag match
-    std::size_t bindings;  // how many entries this element pushed
+    std::string qualified; ///< Exactly as written, for the end-tag match.
+    std::size_t bindings;  ///< How many bindings this element pushed.
 };
 
+/// The parser for one document. Single-use: construct it, call run() once.
 class parser {
 public:
     parser(document & doc, std::string_view source)
         : doc_(doc), builder_(doc.build()), atoms_(doc.atoms()), src_(source) {}
 
+    /// Parses the whole source into the document and returns the root element
+    /// and the first error, if any, with its line and column.
     xml_parse_result run() {
         // The XML namespace is bound everywhere and cannot be redeclared;
         // `xml:lang` and `xml:space` work in a document that never says so.
@@ -96,7 +110,9 @@ public:
     }
 
 private:
-    // --- the cursor ---------------------------------------------------------
+    //===------------------------------------------------------------------===//
+    // The cursor
+    //===------------------------------------------------------------------===//
 
     [[nodiscard]] bool done() const { return at_ >= src_.size(); }
     [[nodiscard]] char peek(std::size_t ahead = 0) const {
@@ -119,27 +135,30 @@ private:
         while (!done() && xml_whitespace.contains(peek())) { advance(); }
     }
 
+    /// Records the first error; later ones are dropped.
     void fail(std::string message) {
         if (failed_) { return; }
         failed_ = true;
         error_ = std::move(message);
     }
 
-    // THE DEPTH CAP (max_dom_depth, dom/node.hpp): a node under the innermost
-    // open element sits open_.size() + 1 below the Document, and one that
-    // would reach the cap is a fatal error like any other (libxml2 has its
-    // own "Excessive depth in document") - the HTML tree builder flattens
-    // instead, but XML has no recovery to flatten with.
+    /// The depth cap (max_dom_depth, dom/node.hpp): a node under the innermost
+    /// open element sits open_.size() + 1 below the Document, and one that
+    /// would reach the cap is a fatal error like any other (libxml2 has its
+    /// own "Excessive depth in document"). The HTML tree builder flattens
+    /// instead, but XML has no recovery to flatten with.
     [[nodiscard]] bool too_deep() {
         if (open_.size() + 1 < max_dom_depth) { return false; }
         fail("elements nested too deeply");
         return true;
     }
 
-    // --- productions --------------------------------------------------------
+    //===------------------------------------------------------------------===//
+    // Productions
+    //===------------------------------------------------------------------===//
 
-    // Everything before the root element: the XML declaration, the doctype,
-    // comments and processing instructions, in any order.
+    /// Everything before the root element: the XML declaration, the doctype,
+    /// comments and processing instructions, in any order.
     void prolog() {
         for (;;) {
             skip_space();
@@ -160,15 +179,16 @@ private:
         }
     }
 
-    // WHERE A NODE GOES: under the open element, or - in the prolog and the
-    // epilogue, where nothing is open - under the Document node, beside the
-    // root element. That is what `document.childNodes` on an XML document is.
+    /// Appends a node where it belongs: under the open element or, in the
+    /// prolog and the epilogue where nothing is open, under the Document node
+    /// beside the root element. That is what `document.childNodes` on an XML
+    /// document shows.
     void emit(node_id id) {
         if (too_deep()) { return; }
         builder_.append(open_.empty() ? doc_.document_node() : open_.back().id, id);
     }
 
-    // A comment, wherever it is.
+    /// A comment, wherever it is.
     void comment() {
         advance(4); // <!--
         const std::size_t start = at_;
@@ -183,11 +203,11 @@ private:
         emit(doc_.create_comment(text));
     }
 
-    // `<?target data?>`. The XML DECLARATION is not a processing instruction -
-    // XML 1.0 reserves the target `xml` in any case for it - so `<?xml
-    // version="1.0"?>` is consumed and leaves nothing behind, and every other
-    // target becomes a ProcessingInstruction node: the target, then the data
-    // after the first run of white space, up to `?>`.
+    /// `<?target data?>`. The XML declaration is not a processing instruction
+    /// (XML 1.0 reserves the target `xml`, in any case, for it), so `<?xml
+    /// version="1.0"?>` is consumed and leaves nothing behind. Every other
+    /// target becomes a ProcessingInstruction node: the target, then the data
+    /// after the first run of white space, up to `?>`.
     void processing_instruction() {
         advance(2); // <?
         const std::string target = name();
@@ -208,15 +228,15 @@ private:
         emit(doc_.create_processing_instruction(atoms_.intern(target), data));
     }
 
-    // `<!DOCTYPE name PUBLIC "p" "s" [ ... ]>`: the name and the two
-    // identifiers become a DocumentType node under the Document, and the
-    // internal subset is read for the one thing a page can observe of it: a
-    // general entity declared with a literal value (XML 1.0 §4.2), which
-    // `&name;` in the content or an attribute value then expands to. Element,
-    // attribute-list and notation declarations, parameter entities and
-    // external entities are skipped - nothing downstream asks about them, and
-    // fetching is what every browser also refuses. An XML document is never
-    // in quirks mode whether or not a doctype is present.
+    /// `<!DOCTYPE name PUBLIC "p" "s" [ ... ]>`: the name and the two
+    /// identifiers become a DocumentType node under the Document, and the
+    /// internal subset is read for the one thing a page can observe of it: a
+    /// general entity declared with a literal value (XML 1.0 §4.2), which
+    /// `&name;` in the content or an attribute value then expands to. Element,
+    /// attribute-list and notation declarations, parameter entities and
+    /// external entities are skipped: nothing downstream asks about them, and
+    /// every browser also refuses to fetch external ones. An XML document is
+    /// never in quirks mode whether or not a doctype is present.
     void doctype() {
         advance(9); // <!DOCTYPE
         skip_space();
@@ -224,7 +244,7 @@ private:
         skip_space();
         std::string public_id;
         std::string system_id;
-        // XML 1.0 [75] ExternalID: after PUBLIC the system literal is NOT
+        // XML 1.0 [75] ExternalID: after PUBLIC the system literal is not
         // optional, and neither is SYSTEM's - `PUBLIC "p">` is ill-formed.
         if (looking_at("PUBLIC")) {
             advance(6);
@@ -261,9 +281,9 @@ private:
         emit(doc_.create_document_type(atoms_.intern(doctype_name), public_id, system_id));
     }
 
-    // The bracketed part of a doctype, up to its `]`. Each declaration is
-    // read far enough to find its end without being fooled by a `>` inside a
-    // quoted literal or a comment; only `<!ENTITY name "..."` is kept.
+    /// The bracketed part of a doctype, up to its `]`. Each declaration is
+    /// read far enough to find its end without being fooled by a `>` inside a
+    /// quoted literal or a comment; only `<!ENTITY name "..."` is kept.
     void internal_subset() {
         while (!done()) {
             skip_space();
@@ -316,16 +336,16 @@ private:
         fail("unterminated internal subset");
     }
 
-    // A comment inside the DTD leaves no node behind.
+    /// A comment inside the DTD leaves no node behind.
     void comment_skipped() {
         const std::size_t end = src_.find("-->", at_ + 4);
         advance((end == std::string_view::npos ? src_.size() : end + 3) - at_);
     }
 
-    // `<!ENTITY name "value">`. The value's character references are resolved
-    // now (XML 1.0 §4.4.2, "included in literal"); its general entity
-    // references stay for the reference that uses it. A parameter entity
-    // (`<!ENTITY % ...`) or an external one (SYSTEM/PUBLIC) is skipped.
+    /// `<!ENTITY name "value">`. The value's character references are resolved
+    /// now (XML 1.0 §4.4.2, "included in literal"); its general entity
+    /// references stay for the reference that uses it. A parameter entity
+    /// (`<!ENTITY % ...`) or an external one (SYSTEM/PUBLIC) is skipped.
     void entity_declaration() {
         advance(8); // <!ENTITY
         skip_space();
@@ -372,27 +392,27 @@ private:
                 break;
             }
         }
-        // THE FIRST DECLARATION WINS (XML 1.0 §4.2), and only a general
+        // The first declaration wins (XML 1.0 §4.2), and only a general
         // entity with a literal value is one this parser can expand.
         if (!parameter && internal && !entities_.contains(entity_name)) {
             entities_.emplace(entity_name, std::move(literal));
         }
     }
 
-    // "Included" (XML 1.0 §4.4.2): the entity's replacement text takes the
-    // place of the reference in the input and is parsed as whatever the
-    // reference sat in - content, so markup inside it makes elements, or an
-    // attribute value, where a `<` in it is then the error the spec says it
-    // is. The alternative is a second cursor through every production. A bound
-    // on expansions is what stops `<!ENTITY a "&a;">` from being a loop, and a
-    // bound on the BYTES expanded is what stops a 100 KB entity referenced ten
-    // thousand times from being a gigabyte.
-    //
-    // WRITTEN INTO THE CONSUMED PREFIX, not spliced: nothing reads behind the
-    // cursor, so the replacement goes in the bytes just before the reference's
-    // end and the cursor steps back over it. Copying the whole buffer per
-    // reference made N references to anything O(N * input). Only when the
-    // prefix is too short is the tail copied, once, behind fresh slack.
+    /// "Included" (XML 1.0 §4.4.2): the entity's replacement text takes the
+    /// place of the reference in the input and is parsed as whatever the
+    /// reference sat in: content, so markup inside it makes elements, or an
+    /// attribute value, where a `<` in it is then the error the spec says it
+    /// is. This avoids a second cursor through every production. A bound on
+    /// expansions stops `<!ENTITY a "&a;">` from looping, and a bound on the
+    /// bytes expanded stops a 100 KB entity referenced ten thousand times from
+    /// becoming a gigabyte.
+    ///
+    /// The replacement is written into the consumed prefix, not spliced in:
+    /// nothing reads behind the cursor, so it goes in the bytes just before
+    /// the reference's end and the cursor steps back over it. Copying the whole
+    /// buffer per reference would make N references O(N * input). Only when
+    /// the prefix is too short is the tail copied, once, behind fresh slack.
     bool include_entity(const std::string & replacement, std::size_t reference_end) {
         if (++expansions_ > max_entity_expansions) {
             fail("entity expansion too deep");
@@ -417,8 +437,8 @@ private:
         return true;
     }
 
-    // A quoted literal with NO references in it - a doctype's identifiers, XML
-    // 1.0's PubidLiteral and SystemLiteral - in either quote.
+    /// A quoted literal with no references in it (a doctype's identifiers, XML
+    /// 1.0's PubidLiteral and SystemLiteral), in either quote.
     bool quoted_literal(std::string & into) {
         const char quote = peek();
         if (quote != '"' && quote != '\'') { return false; }
@@ -435,9 +455,9 @@ private:
         return true;
     }
 
-    // An element, and everything under it. Iterative rather than recursive:
-    // an XML document nests as deeply as its author wrote it and a page is not
-    // allowed to overflow the C++ stack.
+    /// An element, and everything under it. Iterative rather than recursive:
+    /// an XML document nests as deeply as its author wrote it and a page is not
+    /// allowed to overflow the C++ stack.
     void element() {
         if (!looking_at("<") || !is_name_start(static_cast<unsigned char>(peek(1)))) {
             fail("expected an element");
@@ -478,7 +498,7 @@ private:
         }
     }
 
-    // After the root element closed: comments, PIs and white space only.
+    /// After the root element closed: comments, PIs and white space only.
     void epilogue() {
         for (;;) {
             skip_space();
@@ -496,6 +516,9 @@ private:
         }
     }
 
+    /// A start or empty-element tag: reads the attributes, pushes the namespace
+    /// declarations it makes, creates the element and, unless it is empty,
+    /// opens it.
     void start_tag() {
         advance(); // <
         const std::string qualified = name();
@@ -588,7 +611,7 @@ private:
         }
 
         for (const auto & [attr_name, attr_value] : attrs) {
-            // An UNPREFIXED attribute is in no namespace, always: the default
+            // An unprefixed attribute is always in no namespace: the default
             // namespace applies to elements and never to attributes. This is
             // the rule that decides whether `class` on an XHTML element is
             // `(null, class)` or `(xhtml, class)`, and every browser says the
@@ -617,6 +640,7 @@ private:
         open_.push_back({id, qualified, pushed});
     }
 
+    /// An end tag, which must match the innermost open element exactly.
     void end_tag() {
         advance(2); // </
         const std::string qualified = name();
@@ -638,9 +662,9 @@ private:
         open_.pop_back();
     }
 
-    // `<![CDATA[ ... ]]>`: a CDATASection node, which is a Text node that
-    // remembers its brackets - a `<script>` written the XML way reads its text
-    // through the same `text()` and runs, and `nodeType` answers 4.
+    /// `<![CDATA[ ... ]]>`: a CDATASection node, which is a Text node that
+    /// remembers its brackets. A `<script>` written the XML way reads its text
+    /// through the same `text()` and runs, and `nodeType` answers 4.
     void cdata() {
         advance(9); // <![CDATA[
         const std::size_t start = at_;
@@ -653,7 +677,7 @@ private:
         const std::string_view text = src_.substr(start, end - start);
         advance(end + 3 - at_);
         // A CDATA section is character data, which XML permits only inside the
-        // document element - `<r/><![CDATA[x]]>` and CDATA before the root are
+        // document element: `<r/><![CDATA[x]]>` and CDATA before the root are
         // both fatal. Without this guard `open_.back()` reads an empty vector.
         if (open_.empty()) {
             fail("CDATA section outside the document element");
@@ -663,9 +687,9 @@ private:
         builder_.append(open_.back().id, doc_.create_cdata_section(without_surrogates(text)));
     }
 
-    // Text up to the next `<`, with references resolved. A bare `&` or a
-    // reference this parser does not know is fatal, which is the difference
-    // between XML and HTML that authors notice first.
+    /// Text up to the next `<`, with references resolved. A bare `&` or a
+    /// reference this parser does not know is fatal, which is the difference
+    /// between XML and HTML that authors notice first.
     void character_data() {
         std::string text;
         while (!done() && peek() != '<') {
@@ -685,9 +709,11 @@ private:
         builder_.append(open_.back().id, id);
     }
 
-    // The five predefined entities and numeric character references. An
-    // internal subset may declare more; this parser skips internal subsets and
-    // says so in xml.hpp rather than pretending.
+    /// Resolves one `&...;` reference into `into`: a numeric character
+    /// reference, one of the five predefined entities, or a general entity
+    /// declared in the doctype's internal subset (expanded through
+    /// include_entity, so nothing is appended to `into` for it). Anything else
+    /// is fatal. Returns false on error.
     bool reference(std::string & into) {
         const std::size_t semicolon = src_.find(';', at_);
         if (semicolon == std::string_view::npos) {
@@ -737,6 +763,7 @@ private:
         return false;
     }
 
+    /// A Name at the cursor, or "" if none starts here.
     [[nodiscard]] std::string name() {
         if (done() || !is_name_start(static_cast<unsigned char>(peek()))) { return {}; }
         const std::size_t start = at_;
@@ -744,8 +771,8 @@ private:
         return std::string{src_.substr(start, at_ - start)};
     }
 
-    // An attribute value in either quote, references resolved. A literal `<`
-    // is fatal here too.
+    /// An attribute value in either quote, references resolved. A literal `<`
+    /// is fatal here too.
     bool quoted(std::string & into) {
         const char quote = peek();
         if (quote != '"' && quote != '\'') { return false; }
@@ -768,18 +795,23 @@ private:
             fail("unterminated attribute value");
             return false;
         }
-        advance(); // the closing quote
+        advance(); // The closing quote.
         return true;
     }
 
-    // --- namespaces ---------------------------------------------------------
+    //===------------------------------------------------------------------===//
+    // Namespaces
+    //===------------------------------------------------------------------===//
 
+    /// The part of a qualified name before its colon, or "".
     [[nodiscard]] static std::string_view prefix_of(std::string_view qualified) {
         const std::size_t colon = qualified.find(':');
         return colon == std::string_view::npos ? std::string_view{} : qualified.substr(0, colon);
     }
 
-    // The innermost binding wins, which is why this walks backwards.
+    /// The URI `prefix` is bound to, or "" if none. The innermost binding wins,
+    /// which is why this walks backwards. An unprefixed attribute
+    /// (`element_name` false) is in no namespace.
     [[nodiscard]] std::string_view resolve(std::string_view prefix, bool element_name) const {
         if (prefix.empty() && !element_name) { return {}; }
         for (std::size_t i = bindings_.size(); i-- > 0;) {
@@ -788,14 +820,12 @@ private:
         return {};
     }
 
-    // The two vocabularies `node` distinguishes. Everything else is `other`
-    // with its URI recorded on the document (document::element_namespace) -
-    // `node` has no room for one, see dom/node.hpp. THE NULL NAMESPACE IS
-    // `other` TOO: `<root>` in a document with no default namespace is in no
-    // namespace at all (Namespaces in XML 6.2), not an HTML element - it
-    // serialises without an `xmlns`, matches no HTML interface, runs no
-    // script. It used to come out as HTML, so every DOMParser-made XML
-    // document re-serialised with `xmlns="http://www.w3.org/1999/xhtml"`.
+    /// The two vocabularies `node` distinguishes. Everything else is `other`,
+    /// with its URI recorded on the document (document::element_namespace)
+    /// because `node` has no room for one (see dom/node.hpp). The null
+    /// namespace is `other` too: `<root>` with no default namespace is in no
+    /// namespace (Namespaces in XML 6.2), not an HTML element, so it serialises
+    /// without an `xmlns`, matches no HTML interface and runs no script.
     [[nodiscard]] static node_ns ns_of(std::string_view uri) {
         if (uri == svg_namespace) { return node_ns::svg; }
         if (uri == xhtml_namespace) { return node_ns::html; }
@@ -809,13 +839,13 @@ private:
     document::builder builder_;
     atom_table & atoms_;
     std::string_view src_;
-    // The input with entity references spliced out, once one has been - see
-    // include_entity. `src_` views this from then on.
+    /// The input with entity references expanded, once one has been (see
+    /// include_entity). `src_` views this from then on.
     std::string owned_;
     std::map<std::string, std::string> entities_;
     std::size_t expansions_ = 0;
     std::size_t expanded_bytes_ = 0;
-    bool spliced_ = false; // src_ views owned_
+    bool spliced_ = false; ///< src_ views owned_.
     std::size_t at_ = 0;
     std::size_t line_ = 1;
     std::size_t column_ = 1;
@@ -830,7 +860,7 @@ private:
 
 xml_parse_result parse_xml(document & doc, std::string_view source) {
     doc.set_xml(true);
-    // An XML document has no quirks mode to be in: `compatMode` is
+    // An XML document has no quirks mode: `compatMode` is
     // `CSS1Compat` whatever its doctype says, and `document-compatmode-06`
     // asserts exactly that.
     doc.set_quirks(false);

@@ -1,33 +1,30 @@
-// What the script VM costs, separated from what READING JavaScript costs.
+//===- ctbrowser/benchmarks/bench_script.cpp - Script VM benchmark --------===//
 //
-// WHY THIS DID NOT EXIST UNTIL NOW, and why that was a hole. Six benchmarks
-// cover core, style, layout, raster, interaction and the GPU; none covered the
-// VM. So the only number anyone had for `context::run_loop` came from
-// docs/performance.md's whole-page profile, where it was 1.4% - and 1.4% of a
-// PAGE LOAD says almost nothing about a game loop, because showing a page costs
-// an order of magnitude more in parsing JavaScript than in running it.
+// Measures what the script VM costs to run, separately from what compiling
+// JavaScript costs.
 //
-// The corpora in this tree no longer stop at load. Phaser Space Invaders runs a
-// game loop, Babylon renders per frame, p5's draw() runs for ever. This
-// measures the half that keeps running.
+// The other benchmarks measure page loads, where running JavaScript is only
+// about 1.4% of the time (docs/performance.md): a page load spends an order of
+// magnitude more parsing script than running it. Game loops and per-frame
+// rendering (Phaser Space Invaders, Babylon, p5's draw()) keep running the VM
+// long after load, so this benchmark measures it on its own.
 //
-// WHAT IS MEASURED, and the split is the point:
+// Two numbers per workload:
 //
-//   compile   source -> bytecode. The cost docs/performance.md found dominating
-//             a page load, here so the two can be compared honestly rather than
-//             argued about.
-//   run       bytecode -> answer, on a program compiled ONCE. This is dispatch
-//             plus the handlers, and it is the number docs/history/computed-goto.md
-//             needs.
+//   compile   source -> bytecode, the cost that dominates a page load, so the
+//             two can be compared.
+//   run       bytecode -> result, on a program compiled once: dispatch plus the
+//             opcode handlers (docs/history/computed-goto.md uses it).
 //
-// THE WORKLOADS AVOID THE ALLOCATOR ON PURPOSE. A loop that builds strings or
-// objects measures the garbage collector, which is a different question with a
-// different answer; these are arithmetic, locals, property reads on one fixed
-// shape, calls, and branches - the opcodes a frame-driven page actually
-// retires in bulk.
+// The workloads avoid allocation on purpose. A loop that builds strings or
+// objects measures the garbage collector instead; these use arithmetic, locals,
+// property reads on one fixed shape, calls and branches, the opcodes a
+// frame-driven page executes most.
 //
-// Not a ctest gate: the numbers move with the machine. Run it, read it, decide.
-// `--csv` prints one row per workload for scripting.
+// Not a ctest test, because the numbers vary with the machine. `--csv` prints
+// one row per workload for scripting.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/script/script.hpp>
 
@@ -46,7 +43,7 @@ namespace {
 
 struct workload {
     const char * name;
-    const char * what; // which opcodes this is meant to lean on
+    const char * what; // Which opcodes this workload is meant to exercise.
     const char * source;
 };
 
@@ -98,9 +95,10 @@ const workload workloads[] = {
     return std::chrono::duration<double>(d).count();
 }
 
-// MIN OF N, not mean. This machine was measured at +-10% run to run, which is
-// how a 5% "improvement" gets believed; the minimum is the run least disturbed
-// by everything else on the box and is what the rest of this tree reports.
+// Report the minimum of `repeats` runs, not the mean. Run-to-run noise was
+// measured at +-10%, enough to fake a 5% improvement; the minimum is the run
+// least disturbed by the rest of the machine, and is what the other benchmarks
+// report too.
 constexpr int repeats = 7;
 
 struct timing {
@@ -122,13 +120,12 @@ struct timing {
             return best;
         }
 
-        // A FRESH CONTEXT PER RUN, so no run inherits another's heap and the
-        // later ones do not measure a fuller collector.
+        // A fresh context per run, so no run inherits another's heap and later
+        // runs do not measure a fuller collector.
         //
-        // THE STANDARD LIBRARY IS INSTALLED BEFORE THE TIMER STARTS. It is
-        // setup, not dispatch - and leaving it out entirely is not an option:
-        // without it `[].push` does not exist, which is how the `index`
-        // workload first reported a TypeError instead of a time.
+        // The standard library is installed before the timer starts: it is
+        // setup, not dispatch, but it is required (without it `[].push` does
+        // not exist and the `index` workload throws a TypeError).
         script::context cx;
         script::install_builtins(cx);
         const auto run_start = clock_type::now();

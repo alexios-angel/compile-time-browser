@@ -1,3 +1,10 @@
+//===- ctbrowser/lib/DOM/element.cpp - Element attribute helpers ----------===//
+//
+// Validation and get/set/toggle helpers for an element's attributes, shared by
+// the Element bindings (getAttribute, setAttribute, toggleAttribute).
+//
+//===----------------------------------------------------------------------===//
+
 #include <ctbrowser/dom/element.hpp>
 
 namespace ctbrowser {
@@ -19,6 +26,9 @@ bool is_valid_attribute_name(std::string_view name) {
            name.find('\0') == std::string_view::npos;
 }
 
+// HTML elements in an HTML document match attribute names ASCII
+// case-insensitively, so their names are lowercased; XML documents and
+// foreign elements keep the case.
 atom attribute_key(document & doc, node_id id, std::string_view qualified) {
     const bool folds = doc.read().element_ns(id) == node_ns::html && !doc.xml();
     return folds ? doc.atoms().intern_lower(qualified) : doc.atoms().intern(qualified);

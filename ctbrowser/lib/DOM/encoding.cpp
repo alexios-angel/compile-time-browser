@@ -1,3 +1,12 @@
+//===- ctbrowser/lib/DOM/encoding.cpp - Encodings and the prescan ---------===//
+//
+// Character encodings for HTML documents: the Encoding Standard's
+// names-and-labels table, HTML's encoding prescan (BOM sniffing, <meta charset>
+// and the XML declaration), and decoding document bytes to UTF-8 from UTF-8,
+// UTF-16 and the single-byte encodings.
+//
+//===----------------------------------------------------------------------===//
+
 #include <ctbrowser/dom/encoding.hpp>
 
 #include <ctbrowser/core/algorithms.hpp>
@@ -5,14 +14,14 @@
 #include <cstdint>
 #include <utility>
 
-// encoding: the Encoding Standard's names-and-labels table, and HTML's prescan.
-
 namespace ctbrowser {
 
 namespace {
 
-// https://encoding.spec.whatwg.org/#names-and-labels, in the specification's
-// order. Every label is already lowercase there; the lookup folds the input.
+/// One row of https://encoding.spec.whatwg.org/#names-and-labels: a label and
+/// the canonical encoding name it maps to. The table below is in the
+/// specification's order; every label is already lowercase there, and the
+/// lookup folds the input.
 struct labelled {
     std::string_view label;
     std::string_view name;
@@ -256,20 +265,21 @@ constexpr labelled encoding_labels[] = {
     {"x-user-defined", "x-user-defined"},
 };
 
-// The prescan's own whitespace and the tag-name break set are the tokenizer's
-// five plus, for attribute names, `/`.
+/// The prescan's whitespace: the tokenizer's five ASCII whitespace characters.
+/// (Attribute-name scanning also stops at `/`, which callers check.)
 [[nodiscard]] bool prescan_space(char c) {
     return html_whitespace.contains(c);
 }
 
-// "Get an attribute" from a byte position, HTML 13.2.3.3: the (lowercased)
-// name and the value, and where the scan stopped. `false` means no attribute
-// was found (the tag ended).
+/// One attribute read by the prescan: the name and value, both lowercased.
 struct prescan_attribute {
     std::string name;
     std::string value;
 };
 
+/// "Get an attribute" (HTML 13.2.3.3) starting at byte `at`: fills `out` and
+/// advances `at` past the attribute. Returns false when no attribute was found
+/// (the tag ended or the bytes ran out).
 [[nodiscard]] bool get_attribute(std::string_view bytes, std::size_t & at,
                                  prescan_attribute & out) {
     out = {};
@@ -319,15 +329,17 @@ struct prescan_attribute {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
 }
 
+/// True when `bytes` holds `word` at `at`, compared ASCII case-insensitively.
 [[nodiscard]] bool starts_with_fold(std::string_view bytes, std::size_t at, std::string_view word) {
     if (at + word.size() > bytes.size()) { return false; }
     return ascii_iequals(bytes.substr(at, word.size()), word);
 }
 
-// "Get an XML encoding", HTML 13.2.3.2: `<?xml` at the very start of the
-// stream, then `encoding`, `=`, a quoted value with no whitespace or control
-// in it, all before the declaration's `>`. Case-sensitive throughout - `<?XML`
-// is not one. Applied to the same bytes the prescan saw, once it found nothing.
+/// "Get an XML encoding", HTML 13.2.3.2: `<?xml` at the very start of the
+/// stream, then `encoding`, `=`, a quoted value with no whitespace or control
+/// in it, all before the declaration's `>`. Case-sensitive throughout: `<?XML`
+/// is not one. Applied to the same bytes the prescan saw, once it found nothing.
+/// Returns the encoding name, or empty when there is none.
 [[nodiscard]] std::string xml_declaration_encoding(std::string_view bytes) {
     if (!bytes.starts_with("<?xml")) { return {}; }
     const std::size_t end = bytes.find('>');
@@ -362,8 +374,10 @@ struct prescan_attribute {
 
 #include <ctbrowser/dom/encoding_tables.inc>
 
-// The row of single_byte_indexes for a name, in the generator's order;
-// ISO-8859-8-I decodes as ISO-8859-8 (the difference is directionality).
+/// The row of single_byte_indexes for an encoding name, or null when it is not
+/// a single-byte encoding. `names` is in the order the table generator wrote
+/// the rows. ISO-8859-8-I decodes as ISO-8859-8 (the difference is only
+/// directionality).
 [[nodiscard]] const std::u16string_view * single_byte_index(std::string_view name) {
     constexpr std::string_view names[] = {
         "IBM866",       "ISO-8859-2",    "ISO-8859-3",   "ISO-8859-4",   "ISO-8859-5",
@@ -425,7 +439,7 @@ std::string_view encoding_from_meta_content(std::string_view content) {
 }
 
 std::string prescan_encoding(std::string_view bytes) {
-    // 13.2.3.1 "BOM sniffing" comes first and is decisive.
+    // HTML 13.2.3.1 "BOM sniffing" comes first and is decisive.
     if (bytes.starts_with("\xEF\xBB\xBF")) { return "UTF-8"; }
     if (bytes.starts_with("\xFE\xFF")) { return "UTF-16BE"; }
     if (bytes.starts_with("\xFF\xFE")) { return "UTF-16LE"; }
@@ -498,20 +512,21 @@ std::string prescan_encoding(std::string_view bytes) {
         ++at;
     }
     // Aborted without an encoding: the XML declaration, over the whole stream
-    // the loader has - a `>` past the 1024th byte still ends it (xmldecl-2).
+    // the loader has: a `>` past the 1024th byte still ends it (WPT
+    // html/syntax/xmldecl/xmldecl-2.html).
     return xml_declaration_encoding(bytes);
 }
 
 namespace {
 
-// THE ENCODING STANDARD'S UTF-8 DECODER (4.2), error mode "replacement". A
-// byte that cannot start a sequence, and a sequence cut short, are ONE U+FFFD
-// each: the longest prefix that could still have become a code point is used
-// up and the byte that broke it is read again as a lead. The bounds on the
-// second byte are the decoder's `lower` and `upper` - E0 A0, ED 9F, F0 90 and
-// F4 8F are what refuse overlongs, surrogates and anything past U+10FFFF - so
-// `ED A0 80` is three replacements and `E2 82 41` is one and an "A".
-// Well-formed input comes back byte for byte.
+/// The Encoding Standard's UTF-8 decoder (section 4.2) in error mode
+/// "replacement". A byte that cannot start a sequence, and a sequence cut
+/// short, are exactly one U+FFFD each: the longest prefix that could still have
+/// become a code point is used up and the byte that broke it is read again as a
+/// lead. The bounds on the second byte are the decoder's `lower` and `upper`:
+/// E0 A0, ED 9F, F0 90 and F4 8F are what refuse overlongs, surrogates and
+/// anything past U+10FFFF, so `ED A0 80` is three replacements and `E2 82 41`
+/// is one and an "A". Well-formed input comes back byte for byte.
 [[nodiscard]] std::string decode_utf8_replacing(std::string_view bytes) {
     std::string out;
     out.reserve(bytes.size());

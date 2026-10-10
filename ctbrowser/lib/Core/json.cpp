@@ -1,3 +1,11 @@
+//===- ctbrowser/lib/Core/json.cpp - Strict JSON reader -------------------===//
+//
+// parse_json: a strict recursive-descent reader for the JSON grammar of
+// ECMA-262 25.5.1 (what JSON.parse accepts), producing a json_value tree or
+// the byte offset of the first error.
+//
+//===----------------------------------------------------------------------===//
+
 #include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/core/json.hpp>
 
@@ -9,19 +17,21 @@
 namespace ctbrowser {
 namespace {
 
+/// The reader's state: the input, the cursor, and whether an error was seen.
+/// After the first failure `ok` stays false and the result is discarded.
 struct json_reader {
     std::string_view text;
     std::size_t at = 0;
     bool ok = true;
-    // Nesting depth, bounded so a deeply nested `[[[[...]]]]` fails as a
-    // SyntaxError rather than recursing until the native stack overflows. Well
-    // past any real document; browsers reject around here too.
+    /// Nesting depth, bounded so a deeply nested `[[[[...]]]]` fails as a
+    /// SyntaxError rather than recursing until the native stack overflows. Well
+    /// past any real document; browsers reject around here too.
     std::size_t depth = 0;
     static constexpr std::size_t max_depth = 1000;
 
-    // 25.5.1: JSON whitespace is these four characters and nothing else. A form
-    // feed or a vertical tab is a SyntaxError, which is what
-    // parse/invalid-whitespace.js asserts.
+    /// Skips JSON whitespace: exactly space, tab, LF and CR (ECMA-262 25.5.1).
+    /// A form feed or vertical tab is a SyntaxError (test262
+    /// built-ins/JSON/parse/invalid-whitespace.js).
     void skip() {
         while (at < text.size() &&
                (text[at] == ' ' || text[at] == '\t' || text[at] == '\n' || text[at] == '\r')) {
@@ -29,6 +39,7 @@ struct json_reader {
         }
     }
     void fail() { ok = false; }
+    /// Consumes `c` if it is next; otherwise records a failure.
     [[nodiscard]] bool eat(char c) {
         if (at < text.size() && text[at] == c) {
             ++at;
@@ -38,9 +49,9 @@ struct json_reader {
         return false;
     }
 
-    // The whole document: one value, whitespace either side, and NOTHING after
-    // it. The trailing check is the one this reader did not do at all, so
-    // `JSON.parse("[1,2]junk")` answered [1,2].
+    /// Parses a whole document: one value with optional whitespace on either
+    /// side and nothing after it, so `JSON.parse("[1,2]junk")` is a
+    /// SyntaxError. On failure, returns the offset where reading stopped.
     [[nodiscard]] std::expected<json_value, std::size_t> parse_text() {
         const json_value out = parse();
         skip();
@@ -49,6 +60,7 @@ struct json_reader {
         return out;
     }
 
+    /// Parses one value of any type, after leading whitespace.
     [[nodiscard]] json_value parse() {
         skip();
         if (at >= text.size()) {
@@ -85,9 +97,8 @@ struct json_reader {
         return parse_number();
     }
 
-    // \uXXXX, exactly four hex digits. False rather than reading past the end
-    // or treating a non-hex byte as a digit, which the old arithmetic did:
-    // `(h | 0x20) - 'a' + 10` turns ANY byte into a number.
+    /// Reads the four hex digits of a \uXXXX escape. Returns false, without
+    /// consuming input, on a short or non-hex sequence.
     [[nodiscard]] bool read_hex4(std::uint32_t & out) {
         if (at + 4 > text.size()) { return false; }
         out = 0;
@@ -100,13 +111,13 @@ struct json_reader {
         return true;
     }
 
+    /// Parses a quoted string at the cursor into `out` as WTF-8.
     [[nodiscard]] bool parse_string(std::string & out) {
         if (!eat('"')) { return false; }
         while (at < text.size() && text[at] != '"') {
             const auto byte = static_cast<unsigned char>(text[at]);
-            // A RAW CONTROL CHARACTER IS NOT A JSON STRING CHARACTER. A literal
-            // newline between quotes has to be spelled \n, and accepting it
-            // made this reader read documents no other one will.
+            // A raw control character (below U+0020) is not allowed inside a
+            // JSON string; it must be escaped, e.g. as \n.
             if (byte < 0x20) {
                 fail();
                 return false;
@@ -136,11 +147,11 @@ struct json_reader {
                     fail();
                     return false;
                 }
-                // A SURROGATE PAIR IS ONE CODE POINT. Encoding each half
-                // separately produces CESU-8, which is not UTF-8 and which no
-                // consumer of this engine's strings can read - so an astral
-                // character came out of JSON.parse as two replacement
-                // characters and went into the page's own data that way.
+                // A high surrogate followed by a \u low surrogate is one code
+                // point; combine them so the output is UTF-8, not CESU-8 (which
+                // nothing reading this engine's strings understands). An
+                // unpaired high surrogate is left for the lone-surrogate path
+                // below.
                 if (code >= 0xD800 && code <= 0xDBFF && at + 1 < text.size() && text[at] == '\\' &&
                     text[at + 1] == 'u') {
                     const std::size_t saved = at;
@@ -152,7 +163,7 @@ struct json_reader {
                         at = saved;
                     }
                 }
-                // A LONE SURROGATE stays one, as the three-byte WTF-8 form a
+                // A lone surrogate stays one, as the three-byte WTF-8 form a
                 // script's string holds it in (script/utf16.hpp): `JSON.parse
                 // ('"\ud800"').charCodeAt(0)` is 0xD800.
                 append_utf8(out, code);
@@ -165,10 +176,9 @@ struct json_reader {
         return true;
     }
 
-    // JSONNumber: an optional minus, an integer part with no leading zero, an
-    // optional fraction that must have a digit after the point, and an optional
-    // exponent that must have one after the marker. `+1`, `01`, `1.`, `.5` and
-    // `1e` are each a SyntaxError and each used to parse.
+    /// JSONNumber: an optional minus, an integer part with no leading zero, an
+    /// optional fraction with at least one digit, and an optional exponent with
+    /// at least one digit. `+1`, `01`, `1.`, `.5` and `1e` are SyntaxErrors.
     [[nodiscard]] json_value parse_number() {
         const std::size_t start = at;
         if (at < text.size() && text[at] == '-') { ++at; }
@@ -198,17 +208,16 @@ struct json_reader {
             }
             while (at < text.size() && text[at] >= '0' && text[at] <= '9') { ++at; }
         }
-        // from_chars, NOT strtod: strtod respects LC_NUMERIC, so on a host whose
-        // locale writes decimals with a comma `JSON.parse("{\"n\":1.5}")` would
-        // stop at the dot and read 1. Goldens are byte-compared across
-        // platforms, so a locale-sensitive parser is a portability bug waiting
-        // for the first machine that has one.
+        // Use from_chars, not strtod: strtod obeys LC_NUMERIC, so a
+        // comma-decimal locale would read "1.5" as 1 and break byte-compared
+        // goldens.
         const std::string_view digits = text.substr(start, at - start);
         double parsed = 0.0;
         std::from_chars(digits.data(), digits.data() + digits.size(), parsed);
         return {parsed};
     }
 
+    /// Parses an array; the cursor is on its `[`.
     [[nodiscard]] json_value parse_array() {
         json_value::array arr;
         ++at; // '['
@@ -234,6 +243,8 @@ struct json_reader {
         return {std::move(arr)};
     }
 
+    /// Parses an object; the cursor is on its `{`. A repeated key keeps its
+    /// first position and takes the last value, as JSON.parse does.
     [[nodiscard]] json_value parse_object() {
         json_value::object obj;
         std::unordered_map<std::string, std::size_t> positions;

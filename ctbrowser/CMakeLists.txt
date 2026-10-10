@@ -4,27 +4,16 @@ cmake_minimum_required(VERSION 3.20)
 # implementations are `lib/`; `test/`, `unittests/`, `benchmarks/`, `examples/`
 # and `tools/` are added from here.
 #
-# THIS DIRECTORY IS THE CONFIGURE ROOT - `cmake -S ctbrowser -B build` - and the
-# repository above it is a monorepo holding sibling projects, the LLVM model.
-# What lives one level up is what is genuinely shared: `third-party/` (the two
-# submodules and the fetched ANGLE release), `tools/` (the scripts, which drive
-# both projects), `cmake/` (toolchains and the LLVM pin) and the licence files.
+# This directory is the configure root (`cmake -S ctbrowser -B build`). The
+# repository above it is a monorepo of sibling projects, as LLVM's is. One level
+# up lives only what is shared: `third-party/` (the two submodules and the
+# fetched ANGLE release), `tools/` (scripts that drive both projects), `cmake/`
+# (toolchains and the LLVM pin) and the licence files.
 # CTBROWSER_ENABLE_PROJECTS names the siblings to build beside this one.
 #
-# The COMPILER is ordinary: stock clang or gcc with C++23, and the BUILD asks
-# nothing unusual of it. It used to: the engine was C++ named modules, which
-# meant CMake 3.28 as a hard floor and a compiler able to report its import
-# graph to the build system - a requirement that announced itself as "the
-# compiler does not provide a way to discover the import graph dependencies",
-# which says nothing about modules to anyone who has not met it before. This
-# file searched for a new-enough clang before project() to soften that. Plain
-# headers need none of it.
-#
-# The std::embed fork this project once required went with the compile-time
-# engine it existed for - the engine parses at runtime now - and losing that
-# requirement is what makes the sanitizer presets possible at all: the fork
-# ships no compiler-rt runtimes, and TSan is the primary evidence that the
-# lock-free read path is sound.
+# Any stock clang or gcc with C++23 builds this; there are no C++ modules and
+# no special compiler requirements. The compiler needs its compiler-rt
+# runtimes, because the sanitizer presets (asan, tsan) depend on them.
 
 project(ctbrowser
   HOMEPAGE_URL "https://github.com/alexios-angel/compile-time-browser"
@@ -32,16 +21,16 @@ project(ctbrowser
   LANGUAGES CXX)
 set(PROJECT_DESCRIPTION "A browser engine: HTML, CSS and JavaScript, rendered with SDL3.")
 
-# The monorepo root. Every reach OUT of this project goes through this variable
-# rather than through a bare `..`, so the handful of shared directories are
-# searchable by name and a standalone install of ctbrowser needs none of them.
+# The monorepo root. Every path outside this project goes through this variable
+# rather than a bare `..`, so the few shared directories are searchable by name
+# and a standalone install of ctbrowser needs none of them.
 get_filename_component(CTBROWSER_MONOREPO_ROOT "${PROJECT_SOURCE_DIR}" DIRECTORY)
 set(CTBROWSER_INCLUDE_DIR "${PROJECT_SOURCE_DIR}/include")
 
-# CCACHE IS NOT AUTOMATIC: CMake hands it a compile only as the compiler
-# launcher. Used whenever it is installed (the devbox's cloud-init installs it,
-# one cache shared by every project). Cache variables, so a configured tree
-# keeps them when a checkout without these lines is synced over it, and
+# ccache is not automatic: CMake uses it only as the compiler launcher. It is
+# used whenever it is installed (the devbox's cloud-init installs it, with one
+# cache shared by every project). These are cache variables, so a configured
+# tree keeps them when a checkout without these lines is synced over it;
 # -DCMAKE_CXX_COMPILER_LAUNCHER= turns it off.
 find_program(CTBROWSER_CCACHE ccache)
 if(CTBROWSER_CCACHE)
@@ -59,54 +48,44 @@ cmake_dependent_option(CTBROWSER_BUILD_TESTS "Build ctbrowser tests" ON
 cmake_dependent_option(CTBROWSER_BUILD_EXAMPLES "Build ctbrowser examples" ON
   "CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR" OFF)
 
-# A Windows exe is a CONSOLE application unless told otherwise, so double
-# clicking one opens a terminal beside its window. ON keeps that - it is where
-# a script error or a --shot path goes, and you want it while developing. OFF
-# gives the graphical examples the Windows subsystem and no terminal at all,
-# which is what shipping one looks like; ctbrowse and ctdrive keep their console
-# either way, being CLIs whose output is the whole point. Windows only.
+# A Windows exe is a console application unless told otherwise, so
+# double-clicking one opens a terminal beside its window. ON keeps that
+# terminal, which is where script errors and --shot paths are printed during
+# development. OFF builds the graphical examples for the Windows subsystem,
+# with no terminal, as a shipped application would be. ctbrowse and ctdrive
+# keep their console either way, because they are CLIs. Windows only.
 option(CTBROWSER_WINDOWS_CONSOLE "Keep the console window behind a Windows exe" ON)
 
-# COMPUTED-GOTO DISPATCH IN THE SCRIPT VM. Off, because it MEASURED SLOWER here:
-# +3.0% instructions and +3.3% wall against the switch on the dispatch-bound
-# benchmark (docs/performance.md has the table, benchmarks/bench_script is the
-# measurement). It is kept and switchable rather than deleted because that
-# result is a property of the branch predictor rather than of this code - the
-# technique still wins on some microarchitectures, and on those it is one flag
-# away. GNU compilers only; anything else silently keeps the switch.
-# THE ALLOCATOR. mimalloc backs operator new/delete, and it is ON because it
-# measured -4.2% instructions and -4.4% wall on a real Phaser frame - see
-# docs/performance.md. Switchable because a platform without it should still
-# build, and because turning it off is how the measurement is repeated.
-# WHERE BREW PUTS THINGS. Nothing adds its prefix to CMake's default search
-# path, so a box with brew's mimalloc, simdutf or cpptrace and no distribution
-# copy configures with "not found" while the library sits right there. Hoisted
-# to the top level because both lib/ and the test trees need it and a variable set in
-# one subdirectory is invisible to its sibling.
+# Homebrew's install prefixes. Nothing adds them to CMake's default search
+# path, so without these hints a machine with brew's mimalloc, simdutf or
+# cpptrace and no distribution copy reports "not found". Set at the top level
+# because both lib/ and the test trees need it, and a variable set in one
+# subdirectory is invisible to its siblings.
 set(CTBROWSER_BREW_HINTS "$ENV{HOMEBREW_PREFIX}" /home/linuxbrew/.linuxbrew /opt/homebrew
                          /usr/local)
 
+# mimalloc backs operator new/delete. It is ON because it measured -4.2%
+# instructions and -4.4% wall time on a real Phaser frame (docs/performance.md).
+# It is switchable so a platform without it still builds, and so the
+# measurement can be repeated.
 option(CTBROWSER_USE_MIMALLOC "Back operator new/delete with mimalloc" ON)
 
-# ANGLE: a real OpenGL ES device for the WebGL path. ON since 2026-08-09, and
-# ON *WHEN PRESENT* rather than ON unconditionally - the same contract plutosvg,
-# SDL3_ttf and SDL3_image already have here.
+# ANGLE: a real OpenGL ES device for the WebGL path. ON when present, not
+# unconditionally, like plutosvg, SDL3_ttf and SDL3_image.
 #
-# The distinction matters because ANGLE is FETCHED, not built:
-# tools/fetch-angle.sh downloads a pinned release into third-party/angle/, which
-# is gitignored, so a fresh checkout has none. It is a pinned release rather than
-# a build because ANGLE needs GN, depot_tools and, on Windows, clang-cl and the
-# Windows SDK - a second toolchain this repository does not otherwise require.
+# ANGLE is fetched, not built: tools/fetch-angle.sh downloads a pinned release
+# into third-party/angle/, which is gitignored, so a fresh checkout has none.
+# Building it would need GN, depot_tools and, on Windows, clang-cl and the
+# Windows SDK, a second toolchain this repository does not otherwise require.
 #
-# So a clone that has not fetched still configures, builds and passes: it gets
-# the build the OFF default used to give, unittests/unit/gl_basics skips itself
-# with a reason when no device comes up, and the configure WARNS - loudly enough
-# for someone who typed -DCTBROWSER_WITH_ANGLE=ON to see the downgrade rather
-# than find out from a golden.
+# A clone that has not fetched it still configures, builds and passes: WebGL
+# has no device, unittests/unit/gl_basics skips itself with a reason, and
+# configure prints a warning so someone who passed -DCTBROWSER_WITH_ANGLE=ON
+# sees the downgrade instead of discovering it from a failing golden.
 option(CTBROWSER_WITH_ANGLE "Use ANGLE for the WebGL back end (tools/fetch-angle.sh fetches it)" ON)
 
-# Resolved HERE, above add_subdirectory, so lib/Raster and examples/ - which
-# wires the four ANGLE goldens on this variable - both see the same answer.
+# Resolved here, before add_subdirectory, so lib/Raster and examples/ (which
+# registers the ANGLE goldens based on this variable) see the same answer.
 if(WIN32 OR CMAKE_SYSTEM_NAME STREQUAL Windows)
   set(CTBROWSER_ANGLE_DIR "${CTBROWSER_MONOREPO_ROOT}/third-party/angle/windows-x64")
 else()
@@ -118,41 +97,47 @@ if(CTBROWSER_WITH_ANGLE AND NOT EXISTS "${CTBROWSER_ANGLE_DIR}")
   set(CTBROWSER_WITH_ANGLE OFF)
 endif()
 
+# Computed-goto dispatch in the script VM. OFF because it measured slower here:
+# +3.0% instructions and +3.3% wall time against the switch on the
+# dispatch-bound benchmark (benchmarks/bench_script; table in
+# docs/performance.md). It is kept because the result depends on the branch
+# predictor, and the technique still wins on some microarchitectures. GNU
+# compilers only; any other compiler silently keeps the switch.
 option(CTBROWSER_COMPUTED_GOTO "Dispatch the script VM with computed gotos (GNU only)" OFF)
 
-# Local variable names and per-instruction source offsets, on every compiled
-# proto. They are what lets a stack trace and the AOT backend's C++ say
-# `_isEnabled` rather than `v18[4]`.
+# Local variable names and per-instruction source offsets on every compiled
+# proto. They let a stack trace and the AOT backend's C++ say `_isEnabled`
+# rather than `v18[4]`.
 #
-# ON, AND THE COST IS NOT SMALL - measured on the three corpora in vendor/ by
-# `CTBROWSER_DEBUG_TABLE_COST=1 ctbrowser-test-script_debug`, which retakes it:
+# ON, and the size cost is significant. Measured on the three corpora in vendor/
+# by `CTBROWSER_DEBUG_TABLE_COST=1 ctbrowser-test-script_debug`, which repeats
+# the measurement:
 #
 #     image, source kept     bootstrap +31.6%   p5 +20.0%   phaser +15.7%
 #     image, source dropped  bootstrap +12.7%   p5 +12.5%   phaser +14.0%
 #
 # The two rows differ because a source-dropped image also drops the
-# per-instruction offsets - an offset into text the image does not carry cannot
-# be turned into a line by anybody - so the shipped number is the names alone.
-# See image_option::drop_source.
+# per-instruction offsets (an offset into text the image does not carry cannot
+# be turned into a line), so the shipped cost is the names alone. See
+# image_option::drop_source.
 #
 # OFF leaves both vectors empty on every proto and stops the compiler moving
 # its source cursor. It is for a build that will never read them; the packaging
 # lever is `image_option`, which needs no rebuild.
 option(CTBROWSER_SCRIPT_DEBUG_NAMES "Compile local names and per-instruction source offsets" ON)
 
-# THE TYPE ORACLE'S HOOK IN THE DISPATCH LOOP (ctcompile Phase 54B) has no
-# option: what it costs when unused is NOTHING - run_loop is a template on one
-# bool and the instantiation a build without a recorder runs has no trace of
-# the hook in it - and the OFF build the option once offered was never built
-# by anything. The per-instruction `if (recorder_)` that came first was
-# measured at +0.53% on bench_script and +0.48% on phaser_invaders, which is
-# why it is not what is there.
+# The type-recording hook that ctcompile uses in the script VM's dispatch loop
+# has no build option because it costs nothing when unused: run_loop is a
+# template on one bool, and the instantiation used without a recorder contains
+# no trace of the hook. A per-instruction `if (recorder_)` measured +0.53% on
+# bench_script and +0.48% on phaser_invaders, which is why the template is
+# used instead.
 
-# Two compile-time bricks are still submodules, for different reasons: ctjs is
-# the script compiler's runtime parser; ctcss is only the comparison oracle for
-# benchmarks/bench_style.cpp. cthtml is NOT one - the DOM has its own WHATWG
-# tokenizer and tree builder. The full ctjs interpreter used by vm_operators also
-# needs ctc (compile-time-containers), resolved through ctjs's nested copy.
+# Two compile-time libraries are still submodules, for different reasons: ctjs
+# is the script compiler's runtime parser; ctcss is only the comparison oracle
+# for benchmarks/bench_style.cpp. cthtml is not one: the DOM has its own WHATWG
+# tokenizer and tree builder. The full ctjs interpreter used by vm_operators
+# also needs ctc (compile-time-containers), found through ctjs's nested copy.
 set(CTBROWSER_CTJS "${CTBROWSER_MONOREPO_ROOT}/third-party/compile-time-javascript")
 if(NOT EXISTS "${CTBROWSER_CTJS}/include/ctjs/vparse.hpp")
   message(FATAL_ERROR
@@ -167,20 +152,21 @@ if(CTBROWSER_BUILD_TESTS)
   endif()
 endif()
 
-# SDL3 and its satellites. The satellites are OPTIONAL and light up richer
-# paths - SDL3_image decodes more than BMP, SDL3_ttf draws outline text - and
-# the built-in fallbacks serve without them.
+# SDL3 and its satellite libraries. The satellites are optional and enable
+# richer paths (SDL3_image decodes more formats, SDL3_ttf draws outline text);
+# built-in fallbacks are used without them.
 find_package(SDL3 CONFIG QUIET)
 
-# STATIC or shared. SDL's package exports both `SDL3::SDL3-shared` and
-# `SDL3::SDL3-static` and names whichever exists `SDL3::SDL3`, so a build that
-# links the generic name gets whatever happens to be installed - and then
-# discovers at run time whether it needed a DLL beside the .exe. Deciding here
-# instead makes it a property of the build: with a static SDL3 in the sysroot
-# (llvm-mingw's build-sdl3.sh puts one there) an application is ONE FILE.
+# Static or shared. SDL's package exports both `SDL3::SDL3-shared` and
+# `SDL3::SDL3-static` and aliases whichever exists as `SDL3::SDL3`, so a build
+# that links the generic name gets whatever is installed and discovers only at
+# run time whether it needs a DLL beside the .exe. Choosing here makes it a
+# property of the build: with a static SDL3 in the sysroot (llvm-mingw's
+# build-sdl3.sh puts one there), an application is a single file.
 option(CTBROWSER_SDL3_STATIC "Link SDL3 statically when a static build is available" ON)
 
-# name -> the target to link, and whether that target needs its DLL shipped.
+# Maps an SDL package name to the target to link (`out_var`) and whether that
+# target is static (`out_static`; OFF means its DLL must be shipped).
 function(ctbrowser_pick_sdl_target out_var out_static name)
   set(static_target "${name}-static")
   set(shared_target "${name}-shared")
@@ -197,7 +183,7 @@ function(ctbrowser_pick_sdl_target out_var out_static name)
   endif()
 endfunction()
 
-# Picked ONCE, here; lib/Raster, lib/App and examples/ link and read these.
+# Chosen once, here; lib/Raster, lib/App and examples/ link and read these.
 set(CTBROWSER_SDL3_TARGET SDL3::SDL3)
 set(CTBROWSER_SDL3_IS_STATIC OFF)
 set(CTBROWSER_SDL3_TTF_TARGET SDL3_ttf::SDL3_ttf)
@@ -217,13 +203,13 @@ if(SDL3_FOUND)
   message(STATUS "ctbrowser: SDL3 found (${CTBROWSER_SDL3_TARGET})")
 endif()
 
-# SVG, through plutosvg (which brings plutovg with it). NOT an SDL satellite,
-# despite arriving beside them: it is a plain C rasteriser the engine calls
-# directly, and it is the SAME library SDL3_ttf already links for colour glyphs
-# on the Windows cross-build - so on that side it is already in the sysroot.
+# SVG, through plutosvg (which brings plutovg with it). It is not an SDL
+# satellite: it is a plain C rasteriser the engine calls directly. SDL3_ttf
+# already links the same library for colour glyphs on the Windows cross build,
+# so it is already in that sysroot.
 #
-# Optional like the rest. Without it `<img src=x.svg>` and inline `<svg>` lay
-# out identically and draw nothing; see include/ctbrowser/raster/svg.hpp.
+# Optional. Without it, `<img src=x.svg>` and inline `<svg>` lay out identically
+# and draw nothing; see include/ctbrowser/raster/svg.hpp.
 find_package(plutosvg CONFIG QUIET)
 if(plutosvg_FOUND)
   message(STATUS "ctbrowser: plutosvg found - SVG renders")
@@ -234,36 +220,31 @@ endif()
 add_subdirectory(lib)
 add_subdirectory(include)
 
-# examples/, tools/ and the test trees ARE PROJECT-LEVEL, and until 2026-08-09
-# they were not: the engine subtree reached out to the examples and test
-# directories, so it pulled in its own siblings. They only need
-# ctbrowser_target() and the targets, both of which exist by now.
+# examples/, tools/ and the test trees are added here, at project level, so the
+# engine under lib/ never reaches out to its siblings. They need only
+# ctbrowser_target() and the engine targets, which exist by now. tools/ holds
+# the two CLIs (ctbrowse and ctdrive); lib/ is reusable implementation only.
 #
-# tools/ is where the two CLIs live now: `lib/` is reusable implementation and
-# `tools/` is built executables, the split Phase -1 asks for, and the reason
-# ctbrowse and ctdrive are no longer examples of anything.
-#
-# tools/ BEFORE examples/, and the order is load-bearing: the Windows dist is
-# assembled in examples/CMakeLists.txt and ships the tools too, which it can
-# only do once their targets exist.
+# tools/ must come before examples/: the Windows dist is assembled in
+# examples/CMakeLists.txt and ships the tools, so their targets must exist.
 add_subdirectory(tools)
 add_subdirectory(examples)
 
 if(CTBROWSER_BUILD_TESTS)
   # One function, three trees. unittests/ is focused C++ per subsystem, test/ is
-  # system-level (corpus ratchets, lint, stress, the golden and baseline DATA),
-  # and benchmarks/ is measurement rather than pass/fail - so the probes and the
-  # function they configure live in a module both can include.
+  # system-level (corpus ratchets, lint, stress, the golden and baseline data),
+  # and benchmarks/ is measurement rather than pass/fail. The probes and the
+  # ctbrowser_test() function they configure live in a module all three include.
   include("${PROJECT_SOURCE_DIR}/cmake/modules/CTTest.cmake")
   add_subdirectory(test)
   add_subdirectory(unittests)
   add_subdirectory(benchmarks)
 endif()
 
-# --- SIBLING PROJECTS ----------------------------------------------------
-# The LLVM model: this project is the configure root and CTBROWSER_ENABLE_PROJECTS
+# --- Sibling projects ----------------------------------------------------
+# As in LLVM, this project is the configure root and CTBROWSER_ENABLE_PROJECTS
 # names the siblings to build beside it (the default preset passes `ctcompile`).
-# LAST, deliberately: a sibling consumes the engine's targets and cannot
+# Added last on purpose: a sibling consumes the engine's targets and cannot
 # influence how the engine is configured.
 set(CTBROWSER_ENABLE_PROJECTS "" CACHE STRING
     "Sibling projects to build beside ctbrowser (e.g. ctcompile)")
@@ -272,8 +253,8 @@ foreach(project IN LISTS CTBROWSER_ENABLE_PROJECTS)
   add_subdirectory("${CTBROWSER_MONOREPO_ROOT}/${project}" "${CMAKE_BINARY_DIR}/${project}")
 endforeach()
 
-# LLVM and MLIR are ctcompile's dependencies, not the engine's (Principle 8): a
-# find_package in the sibling's own scope does not define these targets here,
+# LLVM and MLIR are ctcompile's dependencies, not the engine's: the engine must
+# build without them. A find_package in the sibling's own scope does not define these targets here,
 # so a hit means one crept into the engine's build.
 foreach(forbidden LLVMCore MLIRIR MLIRSupport)
   if(TARGET ${forbidden})
@@ -283,40 +264,37 @@ foreach(forbidden LLVMCore MLIRIR MLIRSupport)
 endforeach()
 
 # === WPT ===================================================================
-# web-platform-tests, OPT-IN. `-DCTBROWSER_WPT=ON` registers two ctest entries;
-# without it this block registers nothing and costs one `if`.
+# web-platform-tests, opt-in. `-DCTBROWSER_WPT=ON` registers two ctest entries;
+# without it this block registers nothing.
 #
-# OFF BY DEFAULT because the corpus is not in this repository and must not be:
-# it is ~40 MB fetched to ~/.cache/wpt at a pinned commit by
-# tools/wpt/fetch-wpt.sh, and a test that silently passes when the corpus is
-# absent is worse than one that is not registered at all.
+# Off by default because the corpus is not in this repository: it is ~40 MB,
+# fetched to ~/.cache/wpt at a pinned commit by tools/wpt/fetch-wpt.sh, and a
+# test that silently passes when the corpus is absent is worse than none.
 #
-# TWO TESTS, and the first is the one that matters:
+# Two tests; the first must pass before the second means anything:
 #
-#   wpt-selftest  the NEGATIVE PROOFS - five fixtures whose outcomes are
-#                 asserted, including a test that must fail and a page with no
-#                 harness at all. Seconds to run, and nothing below it means
-#                 anything until it passes.
-#   wpt-gate      a fixed subset measured against tools/wpt/expectations.txt,
-#                 budgeted at two minutes. Fails on a difference in EITHER
-#                 direction: a regression, and an unexpected PASS, because an
-#                 expectations file that has quietly gone stale is a file that
-#                 lies about the engine.
+#   wpt-selftest  Negative proofs: five fixtures whose outcomes are asserted,
+#                 including a test that must fail and a page with no harness
+#                 at all. Runs in seconds.
+#   wpt-gate      A fixed subset compared against tools/wpt/expectations.txt,
+#                 budgeted at two minutes. Fails on a difference in either
+#                 direction, a regression or an unexpected pass, so the
+#                 expectations file cannot silently go stale.
 #
-# The FULL run is a documented command, not a build step - see
-# ctbrowser/docs/wpt.md. It takes tens of minutes and belongs to a person.
+# The full run is a documented command, not a build step (see
+# ctbrowser/docs/wpt.md); it takes tens of minutes.
 option(CTBROWSER_WPT "Register the web-platform-tests ctest entries" OFF)
 if(CTBROWSER_WPT AND CTBROWSER_BUILD_TESTS AND NOT CMAKE_CROSSCOMPILING)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
   set(wpt-runner "${CTBROWSER_MONOREPO_ROOT}/tools/wpt/run-wpt.py")
-  # THE DRIVER BY GENERATOR EXPRESSION, not by a guessed path. run-wpt.py's own
-  # default is build/tools/ctdrive, which is right for a person typing the
-  # command and wrong for any build tree that is not called `build`.
+  # The driver is passed by generator expression, not a guessed path:
+  # run-wpt.py's default is build/tools/ctdrive, which is wrong for any build
+  # tree not called `build`.
   add_test(NAME wpt-selftest COMMAND ${Python3_EXECUTABLE} "${wpt-runner}"
            --selftest --driver "$<TARGET_FILE:ctbrowser-tool-ctdrive>")
   add_test(NAME wpt-gate COMMAND ${Python3_EXECUTABLE} "${wpt-runner}"
            --gate --jobs 4 --driver "$<TARGET_FILE:ctbrowser-tool-ctdrive>")
-  # LABELLED, so `ctest -L wpt` runs exactly these two and `ctest -LE wpt` runs
+  # Labelled, so `ctest -L wpt` runs exactly these two and `ctest -LE wpt` runs
   # everything else. TIMEOUT is a backstop above the runner's own per-test one:
   # the runner kills a hung page itself, and this catches the runner hanging.
   set_tests_properties(wpt-selftest wpt-gate PROPERTIES LABELS wpt TIMEOUT 300)

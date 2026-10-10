@@ -1,3 +1,11 @@
+//===- ctbrowser/lib/DOM/treebuilder/foreign.cpp - Foreign content --------===//
+//
+// The rules for parsing tokens in foreign content (HTML 13.2.6.5): SVG and
+// MathML elements, the SVG tag and attribute name adjustment tables, and the
+// capture of each outermost <svg>'s source bytes for the SVG rasteriser.
+//
+//===----------------------------------------------------------------------===//
+
 #include "internal.hpp"
 
 namespace ctbrowser::html {
@@ -6,12 +14,14 @@ using namespace treebuilder_detail;
 
 namespace {
 
+/// One row of an SVG name adjustment table: the lowercase name the tokenizer
+/// produced and the mixed-case name SVG uses.
 struct adjustment {
     std::string_view lower;
     std::string_view adjusted;
 };
 
-// 13.2.6.5 "adjust SVG attributes": the table as the specification lists it.
+/// HTML 13.2.6.5 "adjust SVG attributes": the table as the specification lists it.
 constexpr adjustment svg_attributes[] = {
     {"attributename", "attributeName"},
     {"attributetype", "attributeType"},
@@ -73,7 +83,7 @@ constexpr adjustment svg_attributes[] = {
     {"zoomandpan", "zoomAndPan"},
 };
 
-// 13.2.6.5, the SVG start tag's tag-name table.
+/// HTML 13.2.6.5, the SVG start tag's tag-name table.
 constexpr adjustment svg_tags[] = {
     {"altglyph", "altGlyph"},
     {"altglyphdef", "altGlyphDef"},
@@ -114,6 +124,7 @@ constexpr adjustment svg_tags[] = {
     {"textpath", "textPath"},
 };
 
+/// The adjusted name for `lower` in `table`, or `lower` unchanged.
 [[nodiscard]] std::string_view adjust(std::span<const adjustment> table, std::string_view lower) {
     for (const adjustment & a : table) {
         if (a.lower == lower) { return a.adjusted; }
@@ -131,14 +142,14 @@ std::string_view adjust_svg_tag(std::string_view lower) {
     return adjust(svg_tags, lower);
 }
 
-// ============================================================================
-// FOREIGN CONTENT, 13.2.6.5
-// ============================================================================
+//===----------------------------------------------------------------------===//
+// Foreign content, HTML 13.2.6.5
+//===----------------------------------------------------------------------===//
 
 void tree_builder::process_foreign(const token & t) {
     switch (t.kind) {
     case token_kind::character: {
-        // NUL is U+FFFD here - by its own rule, which leaves frameset-ok
+        // NUL is U+FFFD here, by its own rule, which leaves frameset-ok
         // alone; any other non-whitespace character clears it.
         std::string data;
         bool other = false;
@@ -172,8 +183,8 @@ void tree_builder::process_foreign(const token & t) {
             return process(t, mode_);
         }
         // An ordinary foreign element, in the namespace of the adjusted
-        // current node - which is the context element for a fragment parsed
-        // on an SVG or MathML element - with its names adjusted in
+        // current node (which is the context element for a fragment parsed
+        // on an SVG or MathML element), with its names adjusted in
         // create_element.
         const node_ns ns = adjusted_current()->ns;
         const node_id element = insert_element(t, ns);
@@ -181,7 +192,7 @@ void tree_builder::process_foreign(const token & t) {
         if (t.self_closing) {
             if (ns == node_ns::svg && tag == "svg") { close_foreign(t.source_end); }
             pop();
-            // `<script/>` in SVG runs, as the end tag would (13.2.6.5).
+            // `<script/>` in SVG runs, as the end tag would (HTML 13.2.6.5).
             if (ns == node_ns::svg && tag == "script") { run_script(element); }
         }
         return;
@@ -189,15 +200,15 @@ void tree_builder::process_foreign(const token & t) {
     case token_kind::end_tag: {
         const std::string & tag = t.name;
         // `</br>` and `</p>`: out of the foreign elements, then the HTML
-        // rules - which make a <br> or a <p> beside the graphic.
+        // rules, which make a <br> or a <p> beside the graphic.
         if (tag == "br" || tag == "p") {
             pop_to_html_context(t.source_begin);
             return process(t, mode_);
         }
-        // An SVG <script> end tag runs the script (13.2.6.5 says so
-        // explicitly); everything else walks the stack for a matching
-        // foreign element, case-insensitively, and pops to it - or hands the
-        // tag to the HTML rules at the first HTML element. The root of a
+        // An SVG <script> end tag runs the script (HTML 13.2.6.5 says so
+        // explicitly). Every end tag walks the stack for a matching foreign
+        // element, case-insensitively, and pops to it, or hands the tag to
+        // the HTML rules at the first HTML element. The root of a
         // fragment parse is never popped (the "node is the topmost" step).
         for (std::size_t i = open_.size(); i-- > 0;) {
             const entry & node = open_[i];
@@ -217,6 +228,8 @@ void tree_builder::process_foreign(const token & t) {
     }
 }
 
+/// Pops foreign elements until the current node is HTML or an integration
+/// point, closing any outermost <svg>'s capture at `source_end` on the way.
 void tree_builder::pop_to_html_context(std::size_t source_end) {
     while (!open_.empty()) {
         const entry & top = open_.back();
@@ -230,7 +243,7 @@ void tree_builder::pop_to_html_context(std::size_t source_end) {
 }
 
 void tree_builder::open_foreign(const token & t) {
-    // Only the OUTERMOST <svg> is captured; an inner one is part of the same
+    // Only the outermost <svg> is captured; an inner one is part of the same
     // graphic and travels with it. The depth counter is what distinguishes
     // them, and it is why a nested <svg> does not truncate the capture at the
     // first close tag.
@@ -246,9 +259,9 @@ void tree_builder::close_foreign(std::size_t source_end) {
     if (!foreign_node_) { return; }
     if (source_end > foreign_begin_ && source_end <= input_.size()) {
         std::string source{input_.substr(foreign_begin_, source_end - foreign_begin_)};
-        // TERMINATE IT IF THE DOCUMENT DID NOT. This span can end at a breakout
+        // Terminate it if the document did not. This span can end at a breakout
         // tag or at EOF rather than at a </svg>, and plutosvg parses strictly:
-        // measured, an unclosed <svg> renders NOTHING AT ALL, not a partial
+        // measured, an unclosed <svg> renders nothing at all, not a partial
         // graphic. One synthetic close tag is the difference between a page
         // that forgot </svg> drawing what it has and drawing a blank box.
         if (!source.ends_with("</svg>")) { source += "</svg>"; }

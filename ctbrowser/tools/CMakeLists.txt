@@ -4,11 +4,11 @@
 # launcher that was not built is a compiler that cannot emit anything), and
 # ct262 runs one test262 file for tools/check/test262.py.
 #
-# THE BINARY NAMES ARE THE INTERFACE: `ctbrowse page.html` is what someone types
-# and tools/check/compare.py spawns ./build/tools/ctdrive by path. NO -mwindows,
-# ever, whatever CTBROWSER_WINDOWS_CONSOLE says: these are CLIs whose output is
-# the product - ctdrive prints the port it is listening on, which is the only
-# way its client ever learns it.
+# The binary names are the interface: `ctbrowse page.html` is what someone types
+# and tools/check/compare.py spawns ./build/tools/ctdrive by path. Never link
+# with -mwindows, whatever CTBROWSER_WINDOWS_CONSOLE says: these are CLIs whose
+# output is the product. ctdrive prints the port it is listening on, which is
+# the only way its client ever learns it.
 if(NOT DEFINED CMAKE_RUNTIME_OUTPUT_DIRECTORY)
   set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
 endif()
@@ -22,7 +22,8 @@ add_subdirectory(ctdrive ctdrive-build)
 add_subdirectory(ctrun ctrun-build)
 add_subdirectory(ct262 ct262-build)
 
-# The Windows dist ships what a user runs, so not the conformance harness. A
-# GLOBAL property because examples/CMakeLists.txt, a sibling scope, assembles it.
+# The Windows dist ships what a user runs, so not the conformance harness. It is
+# a GLOBAL property because examples/CMakeLists.txt, a sibling scope, assembles
+# it.
 set_property(GLOBAL APPEND PROPERTY CTBROWSER_DIST_TARGETS
              ctbrowser-tool-ctbrowse ctbrowser-tool-ctdrive ctbrowser-tool-ctrun)

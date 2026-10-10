@@ -1,22 +1,26 @@
+//===- ctbrowser/lib/DOM/tokenizer.cpp - HTML tokenizer ---------*- C++ -*-===//
+//
+// The HTML tokenizer's method bodies, following the states of HTML 13.2.5.
+//
+// The specification's machine consumes one character per state; this one runs
+// each token's states to completion in a loop over the view, which is the same
+// automaton with the transitions inlined. What it keeps of the specification is
+// what the fixtures measure: which bytes become what token, byte for byte.
+//
+// The one thing the specification's machine does that this cannot is stop
+// between two bytes of a token and pick up later. A truncated view
+// (document.write's insertion point, an open stream) is handled by `starve()`:
+// the state that ran out says so, next() rewinds to the token's first byte and
+// answers `incomplete`, and the whole token is read again once more has arrived.
+//
+//===----------------------------------------------------------------------===//
+
 #include <ctbrowser/dom/tokenizer.hpp>
 
 #include <ctbrowser/core/algorithms.hpp>
 
 #include <string>
 #include <unordered_set>
-
-// tokenizer: the method bodies, following the states of HTML 13.2.5.
-//
-// The spec's machine consumes one character per state; this one runs each
-// token's states to completion in a loop over the view, which is the same
-// automaton with the transitions inlined. What it keeps of the spec is what
-// the fixtures measure: which bytes become what token, byte for byte.
-//
-// THE ONE THING THE SPEC'S MACHINE DOES THAT THIS CANNOT is stop between two
-// bytes of a token and pick up later. A truncated view (document.write's
-// insertion point, an open stream) is handled by `starve()`: the state that
-// ran out says so, next() rewinds to the token's first byte and answers
-// `incomplete`, and the whole token is read again once more has arrived.
 
 namespace ctbrowser::html {
 
@@ -40,9 +44,9 @@ token tokenizer::next() {
     const int escape = script_escape_;
     starved_ = false;
     token out = next_token();
-    // THE REWIND: a token the truncated view cut in half goes back to its
-    // first byte - and to the state it began in - and is read again once the
-    // stream has grown.
+    // Rewind: a token the truncated view cut in half goes back to its first
+    // byte, and to the state it began in, and is read again once the stream
+    // has grown.
     if (starved_) {
         at_ = begin;
         model_ = model;
@@ -56,9 +60,9 @@ token tokenizer::next() {
 }
 
 token tokenizer::next_token() {
-    // `</>` is a parse error that emits nothing (13.2.5.7): skipped here in a
-    // loop, because producing the NEXT token by recursing once per `</>` was
-    // a stack overflow on a page of them.
+    // `</>` is a parse error that emits nothing (HTML 13.2.5.7): skipped here
+    // in a loop, because producing the next token by recursing once per `</>`
+    // overflows the stack on a page full of them.
     while (model_ == content_model::data && looking_at("</>")) { at_ += 3; }
     if (eof()) {
         starve();
@@ -111,13 +115,17 @@ void tokenizer::append_text(std::string & data) {
         data += c;
         return;
     }
-    // THE INPUT STREAM'S NEWLINE NORMALISATION (13.2.3.5): CR LF and a lone
-    // CR are both LF. Applied where a run is built rather than to the whole
+    // The input stream's newline normalisation (HTML 13.2.3.5): CR LF and a
+    // lone CR are both LF. Applied where a run is built rather than to the whole
     // input, so the source spans still cover the bytes as written.
     data += '\n';
     if (!eof() && input_[at_] == '\n') { ++at_; }
 }
 
+/// True when the view is truncated and the construct starting at `at` (a CR
+/// that may be the first half of CR LF, a `<`, or a character reference) might
+/// continue past the end of the view, so the caller must starve rather than
+/// decide now.
 bool tokenizer::cut_at(std::size_t at) const {
     if (!truncated_) { return false; }
     const char c = input_[at];
@@ -134,11 +142,12 @@ bool tokenizer::cut_at(std::size_t at) const {
     return i >= size;
 }
 
-// ============================================================================
-// THE TEXT STATES
-// ============================================================================
+//===----------------------------------------------------------------------===//
+// Text states
+//===----------------------------------------------------------------------===//
 
-// 13.2.5.1 Data state: a run of text up to the next markup, references decoded.
+/// HTML 13.2.5.1 Data state: a run of text up to the next markup, with
+/// character references decoded.
 token tokenizer::data_state() {
     token out;
     out.kind = token_kind::character;
@@ -164,8 +173,9 @@ token tokenizer::data_state() {
     return out;
 }
 
-// 13.2.5.2 RCDATA and 13.2.5.3 RAWTEXT, with their less-than-sign and end
-// tag states: everything is text until the appropriate end tag.
+/// HTML 13.2.5.2 RCDATA and 13.2.5.3 RAWTEXT, with their less-than-sign and
+/// end tag states: everything is text until the appropriate end tag. Only
+/// RCDATA (`decode_references`) decodes character references.
 token tokenizer::rcdata_or_rawtext_state(bool decode_references) {
     token out;
     out.kind = token_kind::character;
@@ -203,9 +213,9 @@ token tokenizer::rcdata_or_rawtext_state(bool decode_references) {
     return out;
 }
 
-// `</name` where name is the appropriate end tag, followed by whitespace, `/`
-// or `>`. `after` is where that byte is. Starves when the view ends inside
-// what could still become the end tag.
+/// True when `</name` follows, where name is the appropriate end tag, and then
+/// whitespace, `/` or `>`. `after` is set to where that byte is. Starves when
+/// the view ends inside what could still become the end tag.
 bool tokenizer::appropriate_end_tag_ahead(std::size_t & after) const {
     // No start tag emitted (a fragment parse): no end tag is appropriate.
     if (close_tag_.empty()) { return false; }
@@ -230,10 +240,12 @@ bool tokenizer::appropriate_end_tag_ahead(std::size_t & after) const {
     return is_space(follows) || follows == '/' || follows == '>';
 }
 
-// 13.2.5.4 Script data, with the escaped and double-escaped states
-// (13.2.5.20-29): `<!--` inside a script starts a region in which
-// `</script>` is NOT the end unless a `<script>` opened inside it was closed
-// - which is how a script can write "<script>...</script>" into a string.
+/// HTML 13.2.5.4 Script data, with the escaped and double-escaped states
+/// (HTML 13.2.5.20-29): `<!--` inside a script starts a region in which a
+/// `<script>` opened inside it makes the next `</script>` close that one rather
+/// than the script, which is how a script can write "<script>...</script>"
+/// into a string. `script_escape_` is 0 outside the region, 1 escaped and 2
+/// double-escaped.
 token tokenizer::script_data_state() {
     token out;
     out.kind = token_kind::character;
@@ -335,7 +347,7 @@ token tokenizer::script_data_state() {
     return out;
 }
 
-// 13.2.5.5 PLAINTEXT: everything to the end is text.
+/// HTML 13.2.5.5 PLAINTEXT: everything to the end is text.
 token tokenizer::plaintext_state() {
     token out;
     out.kind = token_kind::character;
@@ -349,12 +361,12 @@ token tokenizer::plaintext_state() {
     return out;
 }
 
-// ============================================================================
-// TAGS
-// ============================================================================
+//===----------------------------------------------------------------------===//
+// Tags
+//===----------------------------------------------------------------------===//
 
-// 13.2.5.6 Tag open state. Entered at a `<` that data_state decided begins
-// markup, or from a text state at an appropriate end tag.
+/// HTML 13.2.5.6 Tag open state. Entered at a `<` that data_state decided
+/// begins markup, or from a text state at an appropriate end tag.
 token tokenizer::tag_open_state() {
     ++at_; // '<'
     if (eof()) {
@@ -384,7 +396,7 @@ token tokenizer::tag_open_state() {
     return text;
 }
 
-// 13.2.5.7 End tag open state, at the `/`.
+/// HTML 13.2.5.7 End tag open state, at the `/`.
 token tokenizer::end_tag_open_state() {
     ++at_; // '/'
     if (eof()) {
@@ -407,7 +419,7 @@ token tokenizer::end_tag_open_state() {
     return bogus_comment_state();
 }
 
-// 13.2.5.8 Tag name state and the attribute states after it.
+/// HTML 13.2.5.8 Tag name state and the attribute states after it.
 token tokenizer::tag_name_state(token & out) {
     while (!eof()) {
         const char c = input_[at_];
@@ -429,8 +441,8 @@ token tokenizer::tag_name_state(token & out) {
     return attributes(out);
 }
 
-// 13.2.5.32-40: before attribute name through after attribute value, and
-// the self-closing start tag state.
+/// HTML 13.2.5.32-40: before attribute name through after attribute value,
+/// and the self-closing start tag state. Returns `out` once the tag closes.
 token tokenizer::attributes(token & out) {
     std::unordered_set<std::string> names; // past scan_limit attributes
     while (true) {
@@ -492,8 +504,8 @@ token tokenizer::attributes(token & out) {
             }
         }
         (void)has_value;
-        // FIRST wins, per the spec. A duplicate attribute is dropped, not
-        // overwritten - and pages do contain them. A linear scan, until a tag
+        // The first one wins, per the specification: a duplicate attribute is
+        // dropped, not overwritten, and pages do contain them. A linear scan, until a tag
         // has enough attributes for that to be quadratic.
         constexpr std::size_t scan_limit = 64;
         bool seen = false;
@@ -516,8 +528,8 @@ token tokenizer::attributes(token & out) {
     return end;
 }
 
-// 13.2.5.36-38 Attribute value states. `quote` is `"` or `'`, or NUL for the
-// unquoted state, which ends at whitespace or `>`.
+/// HTML 13.2.5.36-38 Attribute value states. `quote` is `"` or `'`, or NUL for the
+/// unquoted state, which ends at whitespace or `>`.
 void tokenizer::attribute_value(std::string & out, char quote) {
     while (!eof()) {
         const char c = input_[at_];
@@ -544,13 +556,14 @@ void tokenizer::attribute_value(std::string & out, char quote) {
     // The value ran to the end of the view: eof-in-tag, or more to come.
 }
 
-// ============================================================================
-// MARKUP DECLARATIONS: COMMENTS, DOCTYPE, CDATA
-// ============================================================================
+//===----------------------------------------------------------------------===//
+// Markup declarations: comments, DOCTYPE, CDATA
+//===----------------------------------------------------------------------===//
 
-// 13.2.5.42 Markup declaration open state, at the `!`.
+/// HTML 13.2.5.42 Markup declaration open state, at the `!`.
 token tokenizer::markup_declaration_open_state() {
-    // `<!--`, `<!DOCTYPE` and `<![CDATA[` need up to nine bytes to decide.
+    // `<!--`, `<!DOCTYPE` and `<![CDATA[` need up to eight bytes from the `!`
+    // to decide, so a truncated view shorter than that may still become one.
     if (truncated_ && input_.size() - at_ < 8) {
         const std::string_view have = input_.substr(at_);
         for (const std::string_view want : {std::string_view{"!--"}, std::string_view{"!doctype"},
@@ -569,8 +582,8 @@ token tokenizer::markup_declaration_open_state() {
         at_ += 8;
         return doctype_state();
     }
-    // CDATA is legal in foreign content and nowhere else - in HTML the same
-    // bytes are a bogus comment. `<![CDATA[<b>]]>` inside an SVG is the TEXT
+    // CDATA is legal in foreign content and nowhere else; in HTML the same
+    // bytes are a bogus comment. `<![CDATA[<b>]]>` inside an SVG is the text
     // "<b>", not markup.
     if (looking_at("![CDATA[")) {
         if (cdata_allowed_) {
@@ -584,7 +597,7 @@ token tokenizer::markup_declaration_open_state() {
     return bogus_comment_state();
 }
 
-// 13.2.5.43-52 The comment states, entered just after `<!--`.
+/// HTML 13.2.5.43-52 The comment states, entered just after `<!--`.
 token tokenizer::comment_state() {
     token out;
     out.kind = token_kind::comment;
@@ -759,7 +772,7 @@ token tokenizer::comment_state() {
     return out;
 }
 
-// 13.2.5.41 Bogus comment state: everything to `>` is the comment's data.
+/// HTML 13.2.5.41 Bogus comment state: everything to `>` is the comment's data.
 token tokenizer::bogus_comment_state() {
     token out;
     out.kind = token_kind::comment;
@@ -781,12 +794,12 @@ token tokenizer::bogus_comment_state() {
     return out;
 }
 
-// 13.2.5.69-71 CDATA section: text, undecoded, to `]]>`.
+/// HTML 13.2.5.69-71 CDATA section: text, undecoded, to `]]>`.
 token tokenizer::cdata_section_state() {
     token out;
     out.kind = token_kind::character;
     const std::size_t end = input_.find("]]>", at_);
-    // NOT decoded: inside CDATA an `&amp;` is five characters, which is the
+    // Not decoded: inside CDATA an `&amp;` is five characters, which is the
     // entire point of writing one.
     const std::size_t stop = end == std::string_view::npos ? input_.size() : end;
     // Through append_text for the newline normalisation (the model is data
@@ -800,7 +813,7 @@ token tokenizer::cdata_section_state() {
     return out;
 }
 
-// 13.2.5.53-68 The DOCTYPE states, entered just after `<!DOCTYPE`.
+/// HTML 13.2.5.53-68 The DOCTYPE states, entered just after `<!DOCTYPE`.
 token tokenizer::doctype_state() {
     token out;
     out.kind = token_kind::doctype;
@@ -925,15 +938,15 @@ token tokenizer::doctype_state() {
     return bogus(false);
 }
 
-// `<?target data?>`, HTML 13.2.5.72-76: the processing instruction states,
-// which HTML gained in 2025 for the declarative partial-update work - before
-// them a `<?` was a bogus comment and nothing else. The target is
-// `[A-Za-z_][A-Za-z0-9_-]*` and may not be `xml` or `xml-stylesheet` in any
-// case; anything else falls to the bogus comment state exactly as it always
-// did, so `<?xml version="1.0"?>` is still the comment `?xml version="1.0"?`.
-// The data runs to the first `>`, and a `?` directly before it belongs to the
-// delimiter rather than the data. EOF inside one emits an end-of-file token
-// and nothing else, which is the spec's "eof-in-processing-instruction".
+/// `<?target data?>`, HTML 13.2.5.72-76: the processing instruction states,
+/// which HTML gained in 2025 for the declarative partial-update work (before
+/// them a `<?` was a bogus comment and nothing else). The target is
+/// `[A-Za-z_][A-Za-z0-9_-]*` and may not be `xml` or `xml-stylesheet` in any
+/// case; anything else falls to the bogus comment state exactly as it always
+/// did, so `<?xml version="1.0"?>` is still the comment `?xml version="1.0"?`.
+/// The data runs to the first `>`, and a `?` directly before it belongs to the
+/// delimiter rather than the data. EOF inside one emits an end-of-file token
+/// and nothing else, which is the spec's "eof-in-processing-instruction".
 token tokenizer::processing_instruction_state() {
     const auto target_char = [](char c) { return is_alnum(c) || c == '-' || c == '_'; };
     std::size_t at = at_ + 1;

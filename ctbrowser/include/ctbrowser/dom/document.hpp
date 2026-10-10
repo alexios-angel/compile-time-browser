@@ -1,3 +1,20 @@
+//===- document.hpp - The live document ----------------------- -*- C++ -*-===//
+//
+// The live document: node storage, creation, structural and per-node writes,
+// and read_txn, the read view.
+//
+// Single-threaded, with this contract: a write may invalidate every span and
+// string_view a read_txn handed out over the node it wrote. children(),
+// attributes(), text() and find_attribute() point into the node's own
+// containers, which a write mutates in place. A caller that walks a child or
+// attribute list and writes in the loop body copies the list first; a write to
+// a different node touches nothing the reader holds.
+//
+// read_txn is a plain view; the name is kept from an earlier multi-threaded
+// design.
+//
+//===----------------------------------------------------------------------===//
+
 #pragma once
 #include <algorithm>
 #include <cstddef>
@@ -14,40 +31,25 @@
 
 #include <ctbrowser/dom/node.hpp>
 
-// The live document.
-//
-// SINGLE-THREADED, and the contract that follows from it: a write MAY
-// INVALIDATE every span and string_view a read_txn handed out over the node
-// it wrote. children(), attributes(), text() and find_attribute() point into
-// the node's own containers, which a write mutates in place. A caller that
-// walks a child or attribute list and writes in the body copies the list to
-// a vector first; a write to a DIFFERENT node touches nothing the reader
-// holds.
-//
-// It was built for lock-free readers under epoch reclamation (git history,
-// audit CTB-01): copy-on-write payload blocks behind atomics, a stripe lock
-// per node and a document-wide mutex on shape changes. No engine thread ever
-// read the DOM off the frame thread, so all of that is gone; read_txn stays
-// as the name every reader already uses.
-
 namespace ctbrowser {
 
+/// Why a DOM read or write failed.
 enum class dom_error : std::uint8_t {
-    no_such_node,           // the handle is stale or was never valid
-    not_an_element,         // attributes and children need an element
-    would_cycle,            // reparenting a node beneath its own descendant
-    is_root,                // the root has no parent to detach from
-    invalid_attribute_name, // the qualified name cannot round-trip through HTML
-    invalid_shadow_host,    // only supported HTML names may host a shadow tree
-    shadow_root_exists,     // an element can host only one shadow tree
-    too_deep,               // the tree would reach max_dom_depth (node.hpp)
+    no_such_node,           ///< The handle is stale or was never valid.
+    not_an_element,         ///< Attributes and children need an element.
+    would_cycle,            ///< Reparenting a node beneath its own descendant.
+    is_root,                ///< The root has no parent to detach from.
+    invalid_attribute_name, ///< The qualified name cannot round-trip through HTML.
+    invalid_shadow_host,    ///< Only supported HTML names may host a shadow tree.
+    shadow_root_exists,     ///< An element can host only one shadow tree.
+    too_deep,               ///< The tree would reach max_dom_depth (node.hpp).
 };
 
 class document;
 
-// A read view. Free to make; it holds nothing alive. What it hands out is
-// valid until the next write to the node it came from - see the contract
-// above.
+/// A read view of a document. Free to make; it holds nothing alive. What it
+/// hands out is valid until the next write to the node it came from (see the
+/// file comment).
 class read_txn {
 public:
     explicit read_txn(const document & doc) noexcept;
@@ -58,79 +60,80 @@ public:
     [[nodiscard]] bool contains(node_id id) const noexcept;
     [[nodiscard]] std::expected<node_kind, dom_error> kind(node_id) const noexcept;
     [[nodiscard]] std::expected<atom, dom_error> tag(node_id) const noexcept;
-    // THE NAME OF A NODE THAT HAS ONE: an element's tag, a doctype's name, a
-    // processing instruction's target; the empty atom for the rest. Separate
-    // from `tag()` because "tag().has_value()" is how half the engine asks "is
-    // this an element", and a doctype answering it would be counted as one.
+    /// The name of a node that has one: an element's tag, a doctype's name, a
+    /// processing instruction's target; the empty atom for the rest. Separate
+    /// from `tag()` because much of the engine uses "tag().has_value()" to ask
+    /// "is this an element", and a doctype must not answer yes.
     [[nodiscard]] atom name(node_id) const noexcept;
-    // A DocumentType's two identifiers; empty for anything else.
+    /// A DocumentType's two identifiers; empty for anything else.
     [[nodiscard]] std::string_view public_id(node_id) const noexcept;
     [[nodiscard]] std::string_view system_id(node_id) const noexcept;
-    // Which vocabulary the tag belongs to. An SVG <title> and an HTML <title>
-    // intern to the SAME atom, so this is the only way to tell a tooltip from
-    // the window title.
+    /// Which vocabulary the tag belongs to. An SVG <title> and an HTML <title>
+    /// intern to the same atom, so this is the only way to tell a tooltip from
+    /// the window title.
     [[nodiscard]] node_ns element_ns(node_id) const noexcept;
-    // Does a colon in the tag introduce a prefix? See node::prefixed. The two
-    // halves of the qualified name follow from it: a prefixed `a:b` is (`a`,
-    // `b`) and anything else is (none, the whole tag).
+    /// Whether a colon in the tag introduces a prefix (see node::prefixed).
+    /// local_name() and prefix() follow from it: a prefixed `a:b` is (`b`,
+    /// `a`); anything else is (the whole tag, empty).
     [[nodiscard]] bool prefixed(node_id) const noexcept;
     [[nodiscard]] std::string_view local_name(node_id) const noexcept;
     [[nodiscard]] std::string_view prefix(node_id) const noexcept;
     [[nodiscard]] node_id parent(node_id) const noexcept;
 
-    // The returned span points into the node's own list, valid until the next
-    // write to THAT node - copy it before a loop that writes.
+    /// The returned span points into the node's own list and is valid until the
+    /// next write to that node; copy it before a loop that writes.
     [[nodiscard]] std::span<const node_id> children(node_id) const noexcept;
     [[nodiscard]] std::span<const attribute> attributes(node_id) const noexcept;
     [[nodiscard]] std::string_view text(node_id) const noexcept;
 
-    // THE TWO LOOKUPS ARE NOT THE SAME QUESTION, and DOM §4.9 means them not to
-    // be. `getAttribute(qualifiedName)` matches on the QUALIFIED name
-    // irrespective of namespace and answers the FIRST such attribute in order;
-    // `getAttributeNS(ns, localName)` matches on the PAIR, in which the prefix
-    // takes no part. An element may hold `x` in no namespace and `x` in two
-    // others at once, and each of the three lookups has a different right
-    // answer - which is what `dom/nodes/Element-removeAttribute.html`'s two
-    // subtests are about.
+    /// The two lookups answer different questions, as DOM §4.9 intends.
+    /// `getAttribute(qualifiedName)` matches the qualified name irrespective of
+    /// namespace and answers the first such attribute in order;
+    /// `getAttributeNS(ns, localName)` matches the (namespace, local name) pair,
+    /// ignoring the prefix. An element may hold `x` in no namespace and `x` in
+    /// two others at once, and each lookup has a different right answer (see
+    /// WPT dom/nodes/Element-removeAttribute.html).
     [[nodiscard]] std::string_view attribute_value(node_id, atom name) const noexcept;
     [[nodiscard]] bool has_attribute(node_id, atom name) const noexcept;
-    // The attribute itself, so a caller that wants its namespace or its value
-    // AND its presence does not pay for the walk twice. The pointer is into the
-    // same list `attributes` returns a span over, and is valid for exactly as
-    // long: until the next write to that node.
+    /// The attribute itself, so a caller that wants its namespace or value and
+    /// its presence walks the list once. The pointer is into the same list
+    /// `attributes` returns and is valid until the next write to that node.
     [[nodiscard]] const attribute * find_attribute(node_id, atom name) const noexcept;
-    // `ns` and `local` are TEXT rather than atoms on purpose: a read must not be
-    // able to grow the atom table, and `getAttributeNS` is handed whatever URI a
-    // page can spell. The empty string is the null namespace.
+    /// `ns` and `local` are text rather than atoms on purpose: a read must not
+    /// grow the atom table, and `getAttributeNS` is given whatever URI a page
+    /// can spell. The empty string is the null namespace.
     [[nodiscard]] const attribute * find_attribute_ns(node_id, std::string_view ns,
                                                       std::string_view local) const noexcept;
     [[nodiscard]] bool has_attribute_ns(node_id, std::string_view ns,
                                         std::string_view local) const noexcept;
-    // An `other` element's recorded namespace URI - see document::element_namespace.
+    /// An `other` element's recorded namespace URI; see document::element_namespace.
     [[nodiscard]] atom element_namespace(node_id) const noexcept;
-    // A <template>'s contents fragment - see document::template_content.
+    /// A <template>'s contents fragment; see document::template_content.
     [[nodiscard]] node_id template_content(node_id) const noexcept;
-    // See document::null_custom_element_registry.
+    /// See document::null_custom_element_registry.
     [[nodiscard]] bool null_custom_element_registry(node_id) const noexcept;
-    // See document::custom_element_defined - for `:defined`.
+    /// See document::custom_element_defined; used by `:defined`.
     [[nodiscard]] std::optional<bool> custom_element_defined(node_id) const;
-    // See document::parser_form.
+    /// See document::parser_form.
     [[nodiscard]] node_id parser_form(node_id) const noexcept;
 
     [[nodiscard]] node_id root() const noexcept;
     [[nodiscard]] node_id document_node() const noexcept;
     [[nodiscard]] std::uint64_t version() const noexcept;
 
-    // self first, then ancestors
+    /// True when `ancestor` is `descendant` itself or one of its ancestors.
     [[nodiscard]] bool is_ancestor_of(node_id ancestor, node_id descendant) const noexcept;
-    // Top of the ordinary tree, or through shadow hosts when composed. Like
-    // parent(), this returns the root element rather than its Document node.
+    /// The top of `from`'s tree, continuing through shadow hosts when
+    /// `composed`. Like parent(), this stops at the root element rather than
+    /// the Document node.
     [[nodiscard]] node_id root_of_tree(node_id from, bool composed = false) const;
 
 private:
     const document * doc_;
 };
 
+/// A DOM document: owns every node (in a slab, addressed by node_id) and all
+/// per-document state the parsers and the shell record.
 class document {
 public:
     explicit document(atom_table & atoms);
@@ -140,82 +143,83 @@ public:
     document & operator=(const document &) = delete;
 
     [[nodiscard]] read_txn read() const { return read_txn{*this}; }
-    // THE DOCUMENT ELEMENT - `<html>` on a parsed page - and not the Document
-    // node above it: every walk in the style, layout and paint engines starts
-    // here, and every one of them expects an element. On a document that has
-    // no element yet (`new Document()`) it is the Document node itself.
+    /// The document element (`<html>` on a parsed page), not the Document node
+    /// above it: every walk in the style, layout and paint engines starts here
+    /// and expects an element. On a document with no element yet
+    /// (`new Document()`) it is the Document node itself.
     [[nodiscard]] node_id root() const noexcept { return root_; }
-    // THE DOCUMENT NODE, whose children are what `document.childNodes` is: the
-    // doctype, the document element, and any comment or processing instruction
-    // beside them, in document order. THE DOCUMENT ELEMENT IS IN THAT LIST BUT
-    // ITS PARENT IS EMPTY - deliberately. `parent()` is the walk every engine
-    // takes to the top of the tree, and each of them stops at "no parent" and
-    // reads the node it stopped on as the root element; a Document node at the
-    // top would be one more node for every such walk to learn about, for no
-    // pixel drawn differently. The other children DO carry the Document node
-    // as their parent: nothing lays them out, and a doctype has to know it is
-    // connected. So "is this a child of the Document" is asked of the child
-    // LIST, never of a parent pointer - see is_document_child.
+    /// The Document node, whose children are `document.childNodes`: the
+    /// doctype, the document element, and any comment or processing
+    /// instruction beside them, in document order.
+    ///
+    /// The document element is in that list but its parent is empty, on
+    /// purpose: every engine walks `parent()` to the top and treats the node
+    /// with no parent as the root element. The other children do carry the
+    /// Document node as their parent (nothing lays them out, and a doctype must
+    /// know it is connected). So "is this a child of the Document" is asked of
+    /// the child list, never of a parent pointer; see is_document_child.
     [[nodiscard]] node_id document_node() const noexcept { return document_node_; }
     [[nodiscard]] atom_table & atoms() const noexcept { return *atoms_; }
     [[nodiscard]] std::uint64_t version() const noexcept { return version_; }
-    // A CHANGE THE VERSION DID NOT SEE. The parse path bumps none (`builder`,
-    // below), which is right for a parse nothing watches - and wrong for one a
-    // script reads back in the same turn: a parser-blocking script,
-    // `document.write`. Nor does a custom element's upgrade, which can make an
-    // element a form control. Whoever made such a change says so, and a live
-    // collection cached by version sees it.
+    /// Records a change that did not bump the version. The parse path
+    /// (`builder`, below) bumps none, which is right for a parse nothing
+    /// watches but wrong for one a script reads back in the same turn (a
+    /// parser-blocking script, `document.write`). A custom element upgrade,
+    /// which can make an element a form control, does not bump it either. The
+    /// code making such a change calls this so live collections cached by
+    /// version see it.
     void note_unversioned_change() noexcept { bump_version(); }
     [[nodiscard]] std::size_t node_count() const noexcept { return nodes_.size(); }
 
-    // --- creation: the new node is DETACHED until it is appended ----------
-    // `prefixed`: whether a colon in `tag` is a prefix - see node::prefixed.
+    // --- Creation: the new node is detached until it is appended ----------
+
+    /// `prefixed`: whether a colon in `tag` is a prefix (see node::prefixed).
     [[nodiscard]] node_id create_element(atom tag, node_ns ns = node_ns::html,
                                          bool prefixed = false);
-    // DOM 4.9 "create an element" step 6.1.3.9: a custom element's namespace
-    // prefix is set AFTER its constructor returned, so `this.prefix` is null
-    // inside it. `qualified` is the prefixed tag the element takes on.
+    /// DOM 4.9 "create an element" step 6.1.3.9: a custom element's namespace
+    /// prefix is set after its constructor returns, so `this.prefix` is null
+    /// inside it. `qualified` is the prefixed tag the element takes on.
     void set_element_prefix(node_id element, atom qualified);
     [[nodiscard]] node_id create_text(std::string_view value);
     [[nodiscard]] node_id create_comment(std::string_view value);
-    // A DocumentFragment. Detached like everything else here, and it stays
-    // detached: inserting one moves its children, never the fragment.
+    /// A DocumentFragment. It stays detached: inserting one moves its
+    /// children, never the fragment.
     [[nodiscard]] node_id create_fragment();
-    // A DocumentType. The name is an atom because `nodeName` compares it and
-    // the HTML parser lowercases it; the two identifiers ride in the node's
-    // text block, read back through read_txn::public_id and system_id.
+    /// A DocumentType. The name is an atom because `nodeName` compares it and
+    /// the HTML parser lowercases it; the two identifiers are stored in the
+    /// node's text and read back through read_txn::public_id and system_id.
     [[nodiscard]] node_id create_document_type(atom name, std::string_view public_id,
                                                std::string_view system_id);
-    // A ProcessingInstruction: the target is the name, the data is the text.
+    /// A ProcessingInstruction: the target is the name, the data is the text.
     [[nodiscard]] node_id create_processing_instruction(atom target, std::string_view data);
-    // A CDATASection: a text node that remembers it was one.
+    /// A CDATASection: a text node that remembers it was one.
     [[nodiscard]] node_id create_cdata_section(std::string_view value);
 
-    // --- structural writes ---------------------------------------------------
+    // --- Structural writes ---------------------------------------------------
+
     std::expected<void, dom_error> append_child(node_id parent, node_id child);
-    // MAKE `id` THE DOCUMENT ELEMENT. `root()` becomes it, and the Document
-    // node's child list takes it in the previous element's slot, or - when
-    // there was none - ahead of `before`, or at the end. It is the one way an
-    // element becomes a child of the Document: `append_child(document_node(),
-    // el)` would give it a parent pointer, which the engine's walks must not
-    // see (document_node says why). `root()` stays the Document node itself
-    // while there is no element, which is what `new Document()` is.
+    /// Makes `id` the document element. `root()` becomes it, and the Document
+    /// node's child list takes it in the previous element's slot or, when there
+    /// was none, before `before` or at the end. This is the only way an element
+    /// becomes a child of the Document: `append_child(document_node(), el)`
+    /// would give it a parent pointer, which the engine's walks must not see
+    /// (see document_node).
     void set_document_element(node_id id, node_id before = node_id{});
-    // THE OTHER DIRECTION: the document element leaves the Document node's
-    // child list and `root()` is the Document node again, as on a document
-    // that never had one. `remove_child` refuses the root because the
-    // engine's walks start there; a document nothing lays out - one a page
-    // made - may do this, and DOM says it may. No-op without an element.
+    /// The reverse of set_document_element: the document element leaves the
+    /// Document node's child list and `root()` is the Document node again.
+    /// `remove_child` refuses the root because the engine's walks start there;
+    /// this is for documents nothing lays out (ones a page made), which DOM
+    /// allows. No-op without an element.
     void remove_document_element();
     std::expected<void, dom_error> insert_before(node_id parent, node_id child, node_id before);
     std::expected<void, dom_error> remove_child(node_id child);
 
-    // THE DEPTH CAP (max_dom_depth). `up` is the parent, or for a parentless
-    // shadow root or template contents its host element. `depth` counts `up`
-    // steps to the top and `height` the longest path below `id` (0 for a
-    // leaf, crossing into shadow roots and template contents); both stop
-    // counting at max_dom_depth, which also bounds a cycle through a template.
-    // `too_deep` is what append_child and insert_before refuse.
+    /// The depth cap (max_dom_depth). `up` is the parent, or for a parentless
+    /// shadow root or template contents, its host element. `depth` counts `up`
+    /// steps to the top and `height` the longest path below `id` (0 for a
+    /// leaf, crossing into shadow roots and template contents); both stop at
+    /// max_dom_depth, which also bounds a cycle through a template.
+    /// append_child and insert_before refuse when `too_deep` holds.
     [[nodiscard]] node_id up(node_id id) const;
     [[nodiscard]] std::size_t depth(node_id id) const;
     [[nodiscard]] std::size_t height(node_id id) const;
@@ -223,33 +227,34 @@ public:
         return depth(parent) + 1 + height(child) >= max_dom_depth;
     }
 
-    // --- per-node writes -----------------------------------------------------
-    //
-    // "SET AN ATTRIBUTE VALUE", DOM §4.9.1, in its two spellings. Both CHANGE
-    // an existing attribute rather than adding a second one, and which existing
-    // attribute they find is the whole difference between them: the qualified
-    // form takes the first attribute with that name whatever its namespace, the
-    // namespaced form takes the one with that (namespace, local name) whatever
-    // its prefix. Neither ever rewrites a prefix - "Setting the same attribute
-    // with another prefix should not change the prefix" is a subtest by name.
+    // --- Per-node writes -----------------------------------------------------
+
+    /// "Set an attribute value", DOM §4.9.1, in its two forms. Both change an
+    /// existing attribute rather than adding a second one; they differ in which
+    /// one they find. The qualified form takes the first attribute with that
+    /// name whatever its namespace; the namespaced form takes the one with that
+    /// (namespace, local name) whatever its prefix. Neither rewrites a prefix
+    /// (WPT: "Setting the same attribute with another prefix should not change
+    /// the prefix").
     std::expected<void, dom_error> set_attribute(node_id, atom name, std::string_view value);
-    // `name` is the QUALIFIED name and `ns` the interned namespace URI; the
-    // local name is derived from the pair - see attribute_local_name.
+    /// `name` is the qualified name and `ns` the interned namespace URI; the
+    /// local name is derived from the pair (see attribute_local_name).
     std::expected<void, dom_error> set_attribute_ns(node_id, atom ns, atom name,
                                                     std::string_view value);
-    // One WHOLE attribute, namespace and all, which is what copying an element
-    // needs: a clone whose `xlink:href` came back in no namespace is a different
-    // attribute from the one it was cloned from.
+    /// One whole attribute, namespace included, as copying an element needs: a
+    /// clone whose `xlink:href` lost its namespace would be a different
+    /// attribute.
     std::expected<void, dom_error> set_attribute(node_id, const attribute & held);
-    // The FIRST attribute with this qualified name, irrespective of namespace -
-    // and only the first, which is what `removeAttribute` means.
+    /// Removes the first attribute with this qualified name, irrespective of
+    /// namespace, and only the first, as `removeAttribute` specifies.
     std::expected<void, dom_error> remove_attribute(node_id, atom name);
     std::expected<void, dom_error> remove_attribute_ns(node_id, std::string_view ns,
                                                        std::string_view local);
-    // `edit`, when given, is the "replace data" (DOM 4.10.2) this write is -
-    // offset, count and the replacement's length, in UTF-16 code units - which
-    // the live ranges read (the write log below). Without it the write is a
-    // replacement of the whole data.
+    /// `edit`, when given, describes this write as a "replace data" (DOM 4.10.2):
+    /// offset, count and the replacement's length, in UTF-16 code units, which
+    /// live ranges read through the write log below. Without it the write
+    /// replaces the whole data.
+    /// A "replace data" edit, in UTF-16 code units.
     struct data_edit {
         std::uint32_t offset = 0;
         std::uint32_t count = 0;
@@ -258,132 +263,126 @@ public:
     std::expected<void, dom_error> set_text(node_id, std::string_view value,
                                             std::optional<data_edit> edit = std::nullopt);
 
-    // A <template>'s CONTENTS, HTML 4.12.3: the DocumentFragment its children
-    // are parsed into, which is NOT a child of the element - a document query
-    // must not see them, a script inside one must not run, and nothing lays
-    // them out. The pairing lives here rather than on `node` because a fourth
-    // field on the most replicated object in the engine is not free and there
-    // are a handful of templates in a page. Empty when the element has none.
+    /// A <template>'s contents (HTML 4.12.3): the DocumentFragment its children
+    /// are parsed into, which is not a child of the element, so document
+    /// queries do not see them, scripts inside do not run, and nothing lays
+    /// them out. Stored here rather than on `node`, the most replicated object
+    /// in the engine, because a page has only a few templates. Empty when the
+    /// element has none.
     [[nodiscard]] node_id template_content(node_id element) const;
     void set_template_content(node_id element, node_id fragment);
-    // ...and the other way: the <template> whose contents `fragment` is -
-    // the fragment's HOST, which is what an insertion into it takes as its
-    // context element. Empty for any other fragment.
+    /// The reverse: the <template> whose contents `fragment` is (its host,
+    /// which an insertion into it uses as the context element). Empty for any
+    /// other fragment.
     [[nodiscard]] node_id template_of(node_id fragment) const;
 
-    // THE NAMESPACE URI OF AN ELEMENT `node_ns` DOES NOT NAME - an `other`
-    // element's. `node` has no room for a URI (node_ns says why), and a page
-    // holds a handful of these: the HTML parser's MathML, an XML document's
-    // own vocabulary. Kept beside the template contents, by element, so the
-    // parsers can record what they know and `namespaceURI` can answer it.
-    // The empty atom for an element nothing recorded; an HTML or SVG
-    // element's URI follows from its `element_ns` and is not kept here.
+    /// The namespace URI of an `other` element, one `node_ns` does not name.
+    /// `node` has no room for a URI (see node_ns), and a page holds few of
+    /// these (the HTML parser's MathML, an XML document's own vocabulary), so
+    /// they are kept here by element for the parsers to record and
+    /// `namespaceURI` to read. The empty atom when nothing was recorded; an
+    /// HTML or SVG element's URI follows from its `element_ns`.
     [[nodiscard]] atom element_namespace(node_id element) const;
     void set_element_namespace(node_id element, atom uri);
 
-    // AN ELEMENT THE PARSER CREATED WITH A NULL CUSTOM ELEMENT REGISTRY (DOM
-    // 4.9, HTML 13.2.6.1 "create an element for a token": the registry is the
-    // intended parent's). Two things make it null: a `customelementregistry`
-    // attribute on the element's own start tag, and an intended parent whose
-    // registry is null - a declarative shadow root written with
-    // `shadowrootcustomelementregistry`, or an element already in this set.
-    // Everything else the parser makes has the document's registry, which is
-    // the shell's to know; kept beside the namespaces for the same reason
-    // they are - a handful per page, and nothing on `node` is free.
+    /// Elements the parser created with a null custom element registry (DOM
+    /// 4.9; HTML 13.2.6.1 "create an element for a token" uses the intended
+    /// parent's registry). It is null when the element's own start tag has a
+    /// `customelementregistry` attribute, or when the intended parent's
+    /// registry is null (a declarative shadow root written with
+    /// `shadowrootcustomelementregistry`, or an element already in this set).
+    /// Everything else the parser makes has the document's registry, which the
+    /// shell tracks. Kept here, like the namespaces, because a page has few.
     void set_null_custom_element_registry(node_id element);
     [[nodiscard]] bool null_custom_element_registry(node_id element) const;
     [[nodiscard]] bool has_null_custom_element_registries() const noexcept {
         return !null_registries_.empty();
     }
 
-    // THE FORM THE PARSER ASSOCIATED A CONTROL WITH (HTML 13.2.6.1 "create an
-    // element for a token", and 4.10.17.3's "parser inserted flag"): a
-    // form-associated element the tree builder made while its form element
-    // pointer was set belongs to that form even when it is not inside it -
-    // which is what `<table><form><tr><td><input>` builds, since a form in a
-    // table is popped the moment it is inserted. Only those are kept; a
-    // control whose nearest form ancestor is that form answers the question
-    // by its ancestors. The association ends when a removal leaves the two in
-    // different trees and when the element's `form` attribute changes, as the
-    // form owner is reset then; an insertion never ends it, which is the
-    // flag's whole point. Empty for every element nothing recorded. A form
-    // owner is this, when set, BEFORE the walk up to the nearest <form>.
-    // ponytail: a control parsed INSIDE its form and then moved out of it
-    // within the same tree keeps that form per the specification, and here
-    // falls back to its ancestors; recording every control fixes it, at the
-    // cost of a pair per control for every detach to look at.
+    /// The form the parser associated a control with (HTML 13.2.6.1 "create an
+    /// element for a token", and 4.10.17.3's "parser inserted flag"). A
+    /// form-associated element the tree builder made while its form element
+    /// pointer was set belongs to that form even when it is not inside it, as
+    /// `<table><form><tr><td><input>` builds (a form in a table is popped as
+    /// soon as it is inserted). Only those are recorded; a control inside its
+    /// form finds it through its ancestors. The association ends when a
+    /// removal leaves the two in different trees or the element's `form`
+    /// attribute changes (the form owner is reset then); an insertion never
+    /// ends it. Empty when nothing was recorded. The form owner is this, when
+    /// set, before the walk up to the nearest <form>.
+    /// ponytail: a control parsed inside its form and then moved out of it
+    /// within the same tree should keep that form per the specification, but
+    /// here falls back to its ancestors; recording every control would fix it,
+    /// at the cost of a pair per control for every detach to check.
     void set_parser_form(node_id element, node_id form);
     [[nodiscard]] node_id parser_form(node_id element) const noexcept;
 
-    // Shadow roots are detached fragments with sparse host/mode metadata.
-    // Closed mode affects exposure to script, not these native tree queries.
+    /// A shadow root's metadata. Shadow roots are detached fragments; closed
+    /// mode affects exposure to script, not these native tree queries.
     struct shadow_tree {
         node_id host;
         bool open = true;
-        // THE REST OF `attachShadow(init)`, which the tree REMEMBERS because
-        // every one of them is readable back off the ShadowRoot and two of
-        // them decide what a clone and a serialisation contain. `manual_slots`
-        // is `slotAssignment: "manual"`: nothing is assigned to a slot by name
-        // and the page calls `slot.assign()` itself.
+        /// The rest of `attachShadow(init)`. All are readable back from the
+        /// ShadowRoot, and clonable/serializable decide what a clone and a
+        /// serialisation contain. `manual_slots` is `slotAssignment: "manual"`:
+        /// nothing is assigned to a slot by name and the page calls
+        /// `slot.assign()` itself.
         bool delegates_focus = false;
         bool manual_slots = false;
         bool clonable = false;
         bool serializable = false;
-        // THE PARSER ATTACHED THIS ONE, from `<template shadowrootmode>`, and
-        // nothing has claimed it yet. `attachShadow` on such a root hands it
-        // back emptied instead of refusing - exactly once, which is what
-        // clearing the flag is for.
+        /// The parser attached this root from `<template shadowrootmode>` and
+        /// nothing has claimed it yet. `attachShadow` on such a host returns
+        /// it emptied instead of refusing, exactly once (the flag is then
+        /// cleared).
         bool declarative = false;
-        // `<template shadowrootcustomelementregistry>`: the root's custom
-        // element registry is null and KEPT null (DOM 4.8 "keep custom element
-        // registry null") - an adoption does not give it the new document's,
-        // only CustomElementRegistry.initialize() gives it one.
+        /// `<template shadowrootcustomelementregistry>`: the root's custom
+        /// element registry is null and stays null (DOM 4.8 "keep custom
+        /// element registry null"); adoption does not give it the new
+        /// document's, only CustomElementRegistry.initialize() does.
         bool null_registry = false;
     };
-    // `how.host` is ignored: the host is the argument.
+    /// Attaches a shadow root to `host`. `how.host` is ignored.
     [[nodiscard]] std::expected<node_id, dom_error> attach_shadow(node_id host, shadow_tree how);
     [[nodiscard]] std::expected<node_id, dom_error> attach_shadow(node_id host, bool open) {
         return attach_shadow(host, shadow_tree{.host = host, .open = open});
     }
     [[nodiscard]] node_id shadow_root_of(node_id host) const;
-    // Borrowed until the next attach_shadow; the document owns the metadata.
+    /// Borrowed until the next attach_shadow; the document owns the metadata.
     [[nodiscard]] const shadow_tree * shadow_tree_of(node_id root) const;
-    // A declarative root, claimed: see shadow_tree::declarative.
+    /// Sets shadow_tree::declarative for `root`.
     void set_shadow_declarative(node_id root, bool declarative);
-    // Snapshot for callers that walk trees and may attach another root.
+    /// A snapshot, for callers that walk trees and may attach another root.
     [[nodiscard]] std::vector<node_id> shadow_roots() const;
     [[nodiscard]] bool has_shadow_roots() const noexcept { return !shadow_roots_.empty(); }
 
-    // --- the parse path -----------------------------------------------------
-    // The parsers' append: no detach, no cycle check, no version bump, because
-    // every node a parser appends is fresh and nothing observes the document
-    // until it returns. It was also the only O(1) append while the published
-    // path copied the child list; that reason is gone, the contract is not -
-    // ctcompile's comparator tests build torn trees through it on purpose.
+    // --- The parse path -----------------------------------------------------
+
+    /// The parsers' append: no detach, no cycle check, no version bump, because
+    /// every node a parser appends is fresh and nothing observes the document
+    /// until it returns. ctcompile's comparator tests also use it to build
+    /// deliberately malformed trees, so do not add checks here.
     class builder {
     public:
         explicit builder(document & doc) noexcept : doc_(&doc) {}
-        // Nodes are made by the document's own create_* - detached nodes need
-        // no in-place path - and set_document_element roots them.
+        /// Appends `child` to `parent`. Nodes are made by the document's own
+        /// create_*, and set_document_element roots them.
         void append(node_id parent, node_id child);
-        // Appends, without looking for a duplicate: a start tag's attribute list
-        // has already been deduplicated by the tokenizer and this runs once per
-        // attribute of every element in the document.
-        //
-        // IT IS ALSO WHERE "ADJUST FOREIGN ATTRIBUTES" HAPPENS - see
-        // foreign_namespace_of. The tree builder hands over a qualified name and
-        // the element it belongs to, which is exactly what that step needs, and
-        // this is the one place every parsed attribute passes through.
+        /// Appends an attribute without looking for a duplicate: the tokenizer
+        /// has already deduplicated a start tag's attributes, and this runs
+        /// once per attribute of every element.
+        ///
+        /// This is also where "adjust foreign attributes" happens (see
+        /// foreign_namespace_of): it gets the qualified name and its element,
+        /// which that step needs, and every parsed attribute passes through.
         void set_attribute(node_id, atom name, std::string_view value);
-        // Move a node to a new parent, keeping its own subtree. The HTML tree
-        // builder needs it for the adoption agency algorithm - the one that
-        // turns `<b>1<p>2</b>3` into what a browser shows - and that algorithm
-        // genuinely MOVES already-inserted nodes.
+        /// Moves a node to a new parent, keeping its subtree. The HTML tree
+        /// builder's adoption agency algorithm (which turns `<b>1<p>2</b>3`
+        /// into what a browser shows) moves already-inserted nodes.
         void reparent(node_id child, node_id new_parent);
-        // Insert BEFORE a sibling. Foster parenting needs it: content that turns
-        // up inside a <table> but outside a cell goes immediately before the
-        // table, not after it, and "after" puts it below the whole table on
-        // screen.
+        /// Inserts `child` before the sibling `before`. Foster parenting needs
+        /// it: content inside a <table> but outside a cell goes immediately
+        /// before the table.
         void insert_before(node_id parent, node_id child, node_id before);
 
     private:
@@ -391,69 +390,63 @@ public:
     };
     [[nodiscard]] builder build() noexcept { return builder{*this}; }
 
-    // QUIRKS MODE, THE ONE BIT OF THE DOCTYPE THAT RENDERS. Nothing here
-    // renders differently for the doctype's name or its identifiers - the tree
-    // builder keeps them on a DocumentType node for `document.doctype` and that
-    // is all - but `<!DOCTYPE html>` is what puts the document in STANDARDS
-    // mode, and `document.compatMode` is the answer to that and nothing else.
-    //
-    // TRUE by default, because a document with no doctype at all never reaches
-    // the tree builder's doctype case and is in quirks mode by definition.
-    //
-    // Deliberately NOT wired into the selector engine's case folding: whether
-    // quirks mode changes MATCHING is a separate, render-visible decision and
-    // this is a reporting one.
+    /// Quirks mode. `<!DOCTYPE html>` puts the document in standards mode,
+    /// and `document.compatMode` reports this flag. True by default, because a
+    /// document with no doctype never reaches the tree builder's doctype case
+    /// and is in quirks mode by definition.
+    ///
+    /// Deliberately not wired into the selector engine's case folding: whether
+    /// quirks mode changes matching is a separate, render-visible decision;
+    /// this flag only reports.
     [[nodiscard]] bool quirks() const noexcept { return quirks_; }
     void set_quirks(bool on) noexcept { quirks_ = on; }
 
-    // WHICH LANGUAGE THIS DOCUMENT WAS WRITTEN IN, which is not the same
-    // question as which vocabulary an element belongs to. `node_ns` says an
-    // element is XHTML; this says the BYTES were XML, and the two differ in
-    // every place the HTML parser is permissive and XML is not.
-    //
-    // What reads it: `nodeName` uppercases an HTML element's tag only in an
-    // HTML document, `document.contentType` is `application/xhtml+xml` rather
-    // than `text/html`, `compatMode` is always `CSS1Compat` because an XML
-    // document has no quirks mode to be in, and `createCDATASection` is only
-    // allowed here. See dom/xml.hpp for the parser that sets it.
+    /// Whether the document was parsed as XML. This is not the same as an
+    /// element's vocabulary: `node_ns` says an element is XHTML; this says the
+    /// bytes were XML.
+    ///
+    /// Read by: `nodeName` (uppercases an HTML element's tag only in an HTML
+    /// document), `document.contentType` (`application/xhtml+xml` rather than
+    /// `text/html`), `compatMode` (always `CSS1Compat`, since XML has no quirks
+    /// mode) and `createCDATASection` (allowed only here). dom/xml.hpp's parser
+    /// sets it.
     [[nodiscard]] bool xml() const noexcept { return xml_; }
     void set_xml(bool on) noexcept { xml_ = on; }
 
-    // THE SCRIPTING FLAG (HTML 13.2.6.4.4), which is the document's: on for a
-    // document with a browsing context, off for one nothing will ever run a
-    // script in - DOMParser's, createHTMLDocument's. The parser reads it for
-    // `<noscript>` (raw text when on, elements when off), and so must every
-    // fragment parse on the document afterwards, which is why it is kept
-    // rather than passed. `parse_html` records the flag it was given.
+    /// The document's scripting flag (HTML 13.2.6.4.4): on for a document with
+    /// a browsing context, off for one no script will run in (DOMParser's,
+    /// createHTMLDocument's). The parser reads it for `<noscript>` (raw text
+    /// when on, elements when off), and so must every later fragment parse on
+    /// the document, which is why it is stored. `parse_html` records the flag
+    /// it was given.
     [[nodiscard]] bool scripting() const noexcept { return scripting_; }
     void set_scripting(bool on) noexcept { scripting_ = on; }
 
-    // "ALLOW DECLARATIVE SHADOW ROOTS" (HTML 3.1.1): whether the parser makes
-    // a `<template shadowrootmode>` its parent's shadow root. On for a
-    // document a navigation made and for `parseHTMLUnsafe`'s; off - the
-    // specification's default - for DOMParser's, createHTMLDocument's and the
-    // scratch document an `innerHTML` is parsed into, which is the whole
-    // difference between `innerHTML` and `setHTMLUnsafe`.
+    /// "Allow declarative shadow roots" (HTML 3.1.1): whether the parser makes
+    /// a `<template shadowrootmode>` its parent's shadow root. On for a
+    /// document a navigation made and for `parseHTMLUnsafe`'s; off (the
+    /// specification's default) for DOMParser's, createHTMLDocument's and the
+    /// scratch document `innerHTML` parses into. This is the difference between
+    /// `innerHTML` and `setHTMLUnsafe`.
     [[nodiscard]] bool allow_declarative_shadow_roots() const noexcept {
         return declarative_shadow_roots_;
     }
     void set_allow_declarative_shadow_roots(bool on) noexcept { declarative_shadow_roots_ = on; }
-    // WHAT THE DOM CANNOT KNOW BY ITSELF: whether a custom element definition
-    // disables shadow roots for `host` (DOM 4.8 "attach a shadow root" step
-    // 3). The shell that owns the registry answers; the parser asks before it
-    // attaches a declarative shadow root, and on a refusal inserts the
-    // template as an ordinary one.
+    /// Answers whether a custom element definition disables shadow roots for
+    /// `host` (DOM 4.8 "attach a shadow root" step 3), which the DOM cannot
+    /// know itself. The shell that owns the registry installs it; the parser
+    /// asks before attaching a declarative shadow root and, on a refusal,
+    /// inserts the template as an ordinary one.
     void set_shadow_disabled_hook(std::function<bool(node_id)> hook) {
         shadow_disabled_ = std::move(hook);
     }
     [[nodiscard]] bool shadow_disabled(node_id host) const {
         return shadow_disabled_ && shadow_disabled_(host);
     }
-    // ...and what `:defined` cannot know from the tree: an element's custom
-    // element state (HTML 4.13.1, "defined" is uncustomized or custom). The
-    // shell answers for an element it tracks - true once custom, false while
-    // an upgrade is pending or after one failed - and nothing for the rest,
-    // whose name and `is` decide as they always did.
+    /// Answers an element's custom element state for `:defined` (HTML 4.13.1:
+    /// "defined" means uncustomized or custom). The shell answers for elements
+    /// it tracks (true once custom, false while an upgrade is pending or after
+    /// one failed) and nullopt for the rest, whose name and `is` decide.
     void set_custom_state_hook(std::function<std::optional<bool>(node_id)> hook) {
         custom_state_ = std::move(hook);
     }
@@ -461,12 +454,11 @@ public:
         return custom_state_ ? custom_state_(element) : std::nullopt;
     }
 
-    // THE NAME OF THE DECLARED ENCODING - `document.characterSet`. The bytes
-    // are decoded as UTF-8 whatever it says (dom/encoding.hpp explains why
-    // that is what a page observes anyway); the loader that has the bytes sets
-    // it from the BOM or the `<meta charset>` prescan, and a document nothing
-    // loaded from bytes - made, parsed from a string - is "UTF-8", as the
-    // specifications give those. Set before the tree is built, read after.
+    /// The name of the document's encoding, `document.characterSet`. The
+    /// loader that has the bytes sets it from the BOM or the `<meta charset>`
+    /// prescan and decodes by it (dom/encoding.hpp). A document not loaded from
+    /// bytes (created, or parsed from a string) is "UTF-8", as the
+    /// specifications say. Set before the tree is built, read after.
     [[nodiscard]] const std::string & encoding() const noexcept { return encoding_; }
     void set_encoding(std::string name) { encoding_ = std::move(name); }
 
@@ -474,57 +466,55 @@ private:
     friend class read_txn;
 
     bool quirks_ = true;
-    // FALSE by default: every document this engine has ever built came from the
-    // HTML tree builder, and `parse_xml` is the only thing that sets it.
+    // False by default; only `parse_xml` sets it.
     bool xml_ = false;
     bool scripting_ = true;
     bool declarative_shadow_roots_ = false;
-    std::function<bool(node_id)> shadow_disabled_;             // see set_shadow_disabled_hook
-    std::function<std::optional<bool>(node_id)> custom_state_; // see set_custom_state_hook
+    std::function<bool(node_id)> shadow_disabled_;             // See set_shadow_disabled_hook.
+    std::function<std::optional<bool>(node_id)> custom_state_; // See set_custom_state_hook.
     std::string encoding_ = "UTF-8";
 
     [[nodiscard]] node * find(node_id id) const noexcept { return nodes_.get(id); }
     void bump_version() noexcept { ++version_; }
 
-    // detach `child` from whatever parent it has
+    // Detaches `child` from whatever parent it has.
     void detach(node * child_node, node_id child);
     // The parser associations a detach or a `form` attribute write ends.
     void sever_parser_forms();
     void forget_parser_form(node_id element, atom attribute_name);
 
     // A ProcessingInstruction's attribute map and its data, kept in step both
-    // ways (DOM §4.13) - see the parser above them in document.cpp.
+    // ways (DOM §4.13); see the parser above them in document.cpp.
     void update_pi_attributes(node & n, std::string_view data);
     void update_pi_data(node_id id, node & n);
 
-    // "ADJUST FOREIGN ATTRIBUTES", the HTML parser's own step, and the reason
-    // an SVG `xlink:href` is in the XLink namespace while an HTML `xml:lang` is
-    // in none. It applies to FOREIGN CONTENT ONLY, which is why it takes the
-    // element's namespace: the same qualified name written on a `<div>` stays
-    // unprefixed and unnamespaced, and `dom/nodes/Attr-prefix.html` asserts
-    // both halves against each other.
+    // The HTML parser's "adjust foreign attributes" step: why an SVG
+    // `xlink:href` is in the XLink namespace while an HTML `xml:lang` is in
+    // none. It applies to foreign content only, hence the element namespace
+    // parameter: the same qualified name on a `<div>` stays unprefixed and
+    // unnamespaced (WPT dom/nodes/Attr-prefix.html checks both).
     //
-    // The specification's ten names, exactly - `xml:base` is not one of them
-    // and stays an attribute in no namespace, as webkit02.dat asserts. Costs
-    // one enum compare on every attribute of an HTML document, which is where
-    // it returns.
+    // Exactly the specification's ten names; `xml:base` is not one of them and
+    // stays in no namespace (html5lib webkit02.dat). On an HTML element it
+    // costs one enum compare and returns.
     [[nodiscard]] atom foreign_namespace_of(node_ns element_ns, atom name) const;
 
-    // --- the write log, for the MutationObserver diff ---------------------
+    // --- The write log, for the MutationObserver diff ---------------------
     //
-    // A write that changes nothing - `setAttribute("x", theSameValue)`,
-    // `appendData("")`, `classList.remove(aMissingToken)` - still queues a
-    // mutation record, and a diff of before against after cannot see it. So
-    // while a reader has asked (`log_writes(true)`), every set_attribute* and
-    // set_text notes what it wrote, and `take_writes` drains the notes. Off,
-    // it costs one load per write. An attribute that is actually removed is
-    // noted too - the attribute change steps run for a removal.
+    // A write that changes nothing (`setAttribute("x", theSameValue)`,
+    // `appendData("")`, `classList.remove(aMissingToken)`) still queues a
+    // mutation record, which a before/after diff cannot see. So while logging
+    // is on (`log_writes(true)`), every set_attribute* and set_text notes what
+    // it wrote, and `take_writes` drains the notes. Off, it costs one load per
+    // write. An attribute that is actually removed is noted too, because the
+    // attribute change steps run for a removal.
     //
-    // AND THE TREE EDITS, for the live ranges (DOM 5.5): every child inserted
-    // or removed is noted with its parent and its index at that moment, in
-    // order - a node moved by insert_before is one `removed` and one
-    // `inserted` - and a data write carries its "replace data" arguments.
+    // Tree edits are logged for live ranges (DOM 5.5): every child inserted or
+    // removed is noted with its parent and its index at that moment, in order
+    // (a node moved by insert_before is one `removed` and one `inserted`), and
+    // a data write carries its "replace data" arguments.
 public:
+    /// One logged write; see the write log above.
     struct write_note {
         enum class edit : std::uint8_t {
             attribute,
@@ -532,19 +522,22 @@ public:
             inserted,
             removed
         };
-        node_id node;      // the element or character data written; the PARENT of a child
-        atom name;         // the attribute's qualified name; unused otherwise
-        bool text = false; // `kind == data`
-        // attribute: whether it was there before, and whether this REMOVED it
-        // - what HTML's attribute change steps are given as oldValue and value.
+        node_id node;      ///< The element or character data written; for a child edit, the parent.
+        atom name;         ///< The attribute's qualified name; unused otherwise.
+        bool text = false; ///< `kind == data`.
+        /// For an attribute: whether it existed before and whether this write
+        /// removed it, which HTML's attribute change steps receive as oldValue
+        /// and value.
         bool existed = false;
         bool removal = false;
         edit kind = edit::attribute;
-        node_id child;           // inserted/removed: which
-        std::uint32_t index = 0; // ...and where in `node`'s children it was
-        data_edit data;          // data: the replacement, in code units
+        node_id child;           ///< For inserted/removed: which child.
+        std::uint32_t index = 0; ///< For inserted/removed: its index in `node`'s children.
+        data_edit data;          ///< For data: the replacement, in code units.
     };
+    /// Turns the write log on or off.
     void log_writes(bool on);
+    /// Returns and clears the logged writes.
     [[nodiscard]] std::vector<write_note> take_writes();
 
 private:
@@ -555,12 +548,11 @@ private:
 
     atom_table * atoms_;
     mutable slab<node, node_tag> nodes_;
-    // (element, contents fragment) pairs - see template_content. A vector
-    // because a page holds a few and a lookup happens once per `.content`
-    // read.
+    // (element, contents fragment) pairs; see template_content. A vector
+    // because a page holds few and a lookup happens once per `.content` read.
     std::vector<std::pair<node_id, node_id>> template_contents_;
-    // (control, form) - see parser_form. A vector for the same reason: most
-    // pages have none, which is what every detach asks first.
+    // (control, form) pairs; see parser_form. A vector for the same reason:
+    // most pages have none, which every detach checks first.
     std::vector<std::pair<node_id, node_id>> parser_forms_;
     flat_map<std::uint64_t, atom> element_namespaces_;
     flat_map<std::uint64_t, bool> null_registries_;
@@ -571,19 +563,19 @@ private:
     std::uint64_t version_ = 1;
 };
 
-// IS THIS NODE A CHILD OF THE DOCUMENT? Asked of the child list rather than a
-// parent pointer, because the document element sits in the list with no
-// parent - see document::document_node for why.
+/// Whether `id` is a child of the Document node. Asked of the child list rather
+/// than a parent pointer, because the document element is in the list with no
+/// parent (see document::document_node).
 [[nodiscard]] inline bool is_document_child(const read_txn & txn, node_id id) noexcept {
     if (!id) { return false; }
     if (txn.parent(id) == txn.document_node()) { return true; }
     return id == txn.root() && txn.kind(id).value_or(node_kind::document) == node_kind::element;
 }
 
-// THE PARENT AS THE DOM SEES IT: the Document node for every child of the
-// document, the document element included - whose own pointer is empty, see
-// above. `parentNode`, the sibling walks and anything else a page observes
-// asks this; the engine's walks keep asking `parent()`.
+/// The parent as the DOM sees it: the Document node for every child of the
+/// document, including the document element (whose own parent is empty).
+/// `parentNode`, the sibling walks and anything else a page observes use this;
+/// the engine's internal walks use `parent()`.
 [[nodiscard]] inline node_id dom_parent(const read_txn & txn, node_id id) noexcept {
     return is_document_child(txn, id) ? txn.document_node() : txn.parent(id);
 }

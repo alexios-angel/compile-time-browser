@@ -1,23 +1,25 @@
-// run_app itself: the audio device, the SDL3_image decoder, the event loop, and
-// the file and bundle entry points.
+//===- ctbrowser/lib/App/app/run.cpp - The application event loop ---------===//
 //
-// One of two files carved out of a 1,034-line App/app.cpp on 2026-09-08. The
-// `host` interface they share is in internal.hpp beside this, with the
-// includes app.cpp had; nothing about include/ctbrowser/app/app.hpp changed.
+// run_app, run_app_file and run_bundle: the audio device, the optional
+// SDL3_image decoder, the event loop, and the file and bundle entry points.
+// The `host` (window) interface is declared in internal.hpp.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
 namespace ctbrowser::detail {
 
-// --- audio ----------------------------------------------------------------
-//
-// WAV only, mixed by SDL3 itself - no SDL3_mixer, because a game firing a blip
-// on every shot needs exactly one thing: play these samples now, overlapping.
-// An audio stream per sound, fed once and left to drain, is that.
-//
-// Sound is NOT part of the engine: `ctbrowser.shell` is deliberately SDL-free,
-// so this lives here with the window and reaches the page through
-// `browser::define_native`.
+// --- Audio ----------------------------------------------------------------
+
+/// Plays WAV samples, mixed by SDL3 itself. There is no SDL3_mixer, because a
+/// game firing a blip on every shot needs exactly one thing: play these
+/// samples now, overlapping. An audio stream per sound, fed once and left to
+/// drain, is that.
+///
+/// Sound is not part of the engine: the shell library is deliberately
+/// SDL-free, so this lives here with the window and reaches the page through
+/// `browser::define_native`.
 class audio_device {
 public:
     ~audio_device() { shutdown(); }
@@ -25,9 +27,9 @@ public:
     audio_device(const audio_device &) = delete;
     audio_device & operator=(const audio_device &) = delete;
 
-    // Play `name`, resolved through the same registry images use. Returns
-    // whether it started - a page can tell "no sound in this build" from "that
-    // file does not exist".
+    /// Plays `name`, resolved through the same registry images use. Returns
+    /// whether it started, so a page can tell "no sound in this build" from "that
+    /// file does not exist".
     bool play(shell::asset_registry & assets, const std::string & name, float volume) {
 #if CTBROWSER_WITH_SDL3
         const decoded * sample = decode(assets, name);
@@ -55,6 +57,7 @@ public:
 #endif
     }
 
+    /// Stops every playing sound and closes the device.
     void shutdown() {
 #if CTBROWSER_WITH_SDL3
         for (SDL_AudioStream * stream : playing_) { SDL_DestroyAudioStream(stream); }
@@ -68,15 +71,16 @@ public:
 
 private:
 #if CTBROWSER_WITH_SDL3
+    /// One WAV file decoded to PCM; `bytes` is empty when decoding failed.
     struct decoded {
         std::string name;
         SDL_AudioSpec spec{};
         std::vector<std::uint8_t> bytes;
     };
 
-    // Decoded ONCE per name: a shot fires the same blip a hundred times and
-    // re-parsing the file each time is the difference between a game and a
-    // stutter.
+    /// Decodes `name`, once per name (failures included): a shot fires the same
+    /// blip a hundred times and re-parsing the file each time is the
+    /// difference between a game and a stutter. Null when it does not decode.
     [[nodiscard]] const decoded * decode(shell::asset_registry & assets, const std::string & name) {
         for (const decoded & cached : samples_) {
             if (cached.name == name) { return cached.bytes.empty() ? nullptr : &cached; }
@@ -98,6 +102,7 @@ private:
         return stored.bytes.empty() ? nullptr : &stored;
     }
 
+    /// Opens the default playback device on first use.
     [[nodiscard]] bool open(const SDL_AudioSpec & spec) {
         if (device_ != 0) { return true; }
         if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) { return false; }
@@ -105,6 +110,7 @@ private:
         return device_ != 0;
     }
 
+    /// Destroys the streams that have finished playing.
     void reap() {
         std::erase_if(playing_, [](SDL_AudioStream * stream) {
             if (SDL_GetAudioStreamAvailable(stream) > 0) { return false; }
@@ -119,9 +125,10 @@ private:
 #endif
 };
 
-// Formats past BMP. SDL3_image is optional: without it a page still shows BMPs,
-// which is what the engine decodes on its own. This is the only place in the
-// tree where SDL and image decoding meet - the shell must not learn about SDL.
+/// Installs SDL3_image as the decoder for formats the engine does not decode
+/// itself (it handles BMP, PNG and JPEG). SDL3_image is optional; without it
+/// this does nothing. This is the only place in the tree where SDL and image
+/// decoding meet: the shell must not learn about SDL.
 inline void install_image_decoder(shell::image_store & images) {
 #if CTBROWSER_WITH_SDL3 && CTBROWSER_WITH_IMAGE
     images.set_decoder([](std::span<const std::byte> bytes, std::string_view) {
@@ -151,7 +158,7 @@ inline void install_image_decoder(shell::image_store & images) {
 } // namespace ctbrowser::detail
 namespace ctbrowser {
 
-// Run a page. Returns a process exit code.
+// Runs a page. Returns a process exit code.
 //
 // This is the whole application API: it owns the window, the event loop, the
 // clock, the frame pacing and the teardown.
@@ -167,14 +174,15 @@ int run_app(std::string_view html, app_options options) {
     browser_options.on_request = options.on_request;
     shell::browser page{browser_options};
 
-    // Resources BEFORE the page: an <img src> is resolved while the document
+    // Resources before the page: an <img src> is resolved while the document
     // loads, so a registry seeded afterwards would be seeded too late.
     for (const asset & item : options.assets) { page.assets().add(item.name, item.bytes); }
-    // AND THE COMPILED SCRIPTS, before the page for the same reason: they are
-    // consulted while it loads. A refusal here is a PACKAGING fault - bytes that
-    // are not an image this build would load, usually because they were built by
-    // another one - and it is reported rather than swallowed, because the
-    // application would otherwise run correctly and slowly with nothing said.
+    // The compiled script images too, before the page for the same reason:
+    // they are consulted while it loads. A refusal here is a packaging fault
+    // (bytes that are not an image this build would load, usually because
+    // another build made them), and it is reported rather than swallowed,
+    // because the application would otherwise run correctly and slowly with
+    // nothing said.
     std::size_t images_refused = 0;
     for (const std::vector<std::byte> & image : options.script_images) {
         if (!page.add_script_image(image)) { ++images_refused; }
@@ -186,9 +194,9 @@ int run_app(std::string_view html, app_options options) {
                      images_refused, options.script_images.size());
     }
     page.assets().set_base_path(options.asset_path);
-    // AND WHERE A LEADING `/` POINTS. Empty for every application in this
-    // tree, which leaves it meaning what it always did - the root of the
-    // filesystem. tools/wpt/run-wpt.py is the one caller: a web-platform-test
+    // Where a URL path with a leading `/` resolves. Empty for every application
+    // in this tree, which leaves it meaning the root of the filesystem.
+    // tools/wpt/run-wpt.py is the one caller that sets it: a web-platform-test
     // names its harness `/resources/testharness.js`, and this is the document
     // root a server would have resolved that against.
     page.assets().set_document_root(options.document_root);
@@ -199,10 +207,10 @@ int run_app(std::string_view html, app_options options) {
     if (options.download_directory) { page.set_download_directory(*options.download_directory); }
     page.set_download_limit(options.max_download_bytes);
     detail::install_image_decoder(page.images());
-    // THE REAL WALL CLOCK, because this is an application and a page showing the
-    // wrong date is a bug. The engine's own default is deterministic - a fixed
-    // base plus the page's elapsed time - so a headless golden run is unaffected
-    // by this line, which is the whole reason the clock is a hook. Pinned by
+    // The real wall clock, because this is an application and a page showing
+    // the wrong date is a bug. The engine's own default is deterministic (a
+    // fixed base plus the page's elapsed time), so a headless golden run is
+    // unaffected by this line, which is the whole reason the clock is a hook. Pinned by
     // fixed_clock (CTBROWSER_CLOCK) when a golden does need to draw a date.
     if (options.fixed_clock) {
         page.set_clock([fixed = *options.fixed_clock] { return fixed; });
@@ -214,7 +222,7 @@ int run_app(std::string_view html, app_options options) {
         });
     }
     // The system clipboard. The engine keeps its own when this is absent, so
-    // copy and paste work headlessly - they just do not leave the process.
+    // copy and paste work headlessly; they just do not leave the process.
 #if CTBROWSER_WITH_SDL3
     page.set_clipboard_hooks(
         [](const std::string & text) { (void)SDL_SetClipboardText(text.c_str()); },
@@ -232,8 +240,8 @@ int run_app(std::string_view html, app_options options) {
                                        static_cast<SDL_Window *>(host->native_window()));
     });
 #endif
-    // A LINK THAT LEAVES THE PAGE. The application gets first refusal - that is
-    // how `ctbrowse` follows a link to another local file - and only what the
+    // A link that leaves the page. The application gets first refusal (that is
+    // how `ctbrowse` follows a link to another local file), and only what the
     // policy (navigate_verdict_for) lets out reaches the system browser.
     page.set_navigate_hook(
         [&options](const std::string & url, const std::string & href, bool activated) {
@@ -262,20 +270,17 @@ int run_app(std::string_view html, app_options options) {
 
     page.load_document(html, options.xml ? shell::browser::source_kind::xml
                                          : shell::browser::source_kind::html);
-    // DID THE PACKAGING ACTUALLY WORK? An image that matches no script on this
-    // page is not refused by anything - it is simply never looked up, and the
+    // Check that the packaging worked. An image that matches no script on this
+    // page is not refused by anything: it is simply never looked up, and the
     // page compiles from source and runs correctly. That is the silent failure
     // worth catching, and the counter is the only thing that can see it.
     //
-    // AND THE CONDITION IS NOT "SOME IMAGES ARRIVED". It was, and that deleted
-    // the sharpest case: an application packaged with NO images at all - every
-    // script a module, say, which nothing here can compile ahead of time - has
-    // an empty image list, so the check was skipped and the guard whose entire
-    // job is "did the packaging work" never ran. A caller that says its images
-    // are meant to be complete is asking to be checked either way.
+    // Check whenever the caller requires complete images, even if it supplied
+    // none: an application whose scripts are all modules has an empty image
+    // list and must still be checked.
     if (!options.script_images.empty() || options.require_script_images) {
-        // MODULE SCRIPTS ARE NOT PACKAGEABLE YET and they are counted by
-        // nothing above: there is no image path into load_module, so a page of
+        // Module scripts cannot be packaged as images and are not counted by
+        // the check below: there is no image path into load_module, so a page of
         // modules compiles all of its JavaScript at every start while
         // scripts_compiled_from_source() reads a truthful, useless zero.
         if (options.require_script_images && !page.module_sources().empty()) {
@@ -307,7 +312,7 @@ int run_app(std::string_view html, app_options options) {
     bool needs_frame = true;
     bool running = true;
     // The last message reported, so a fault that repeats every frame is said
-    // once. `script_error()` keeps the FIRST callback fault rather than the
+    // once. `script_error()` keeps the first callback fault rather than the
     // latest, so this settles rather than churning.
     std::string last_script_error;
 
@@ -315,12 +320,12 @@ int run_app(std::string_view html, app_options options) {
         bool rendered = false;
 
         if (!host->pump(page, needs_frame)) { break; }
-        // THE EMBEDDER'S TURN, right after the window's. An application that
-        // drives the page itself - replaying a script, taking commands off a
-        // socket - has nowhere else to stand: on_ready is called once and the
-        // loop is otherwise closed, which is why `ctbrowse` cannot be scripted.
+        // The embedder's turn, right after the window's. An application that
+        // drives the page itself (replaying a script, taking commands off a
+        // socket) has nowhere else to stand: on_ready is called once and the
+        // loop is otherwise closed.
         //
-        // HERE, on the main thread, rather than from a thread of the
+        // It runs here, on the main thread, rather than from a thread of the
         // embedder's own: the page is ticked and drawn from this one, and a
         // browser mutated from another while that happens is a data race the
         // suite would find under TSan.
@@ -337,21 +342,12 @@ int run_app(std::string_view html, app_options options) {
                 : std::chrono::duration<double, std::milli>(now - previous).count();
         previous = now;
 
-        // THE CLOCK. Timers and requestAnimationFrame fire from here. The
-        // previous reference loop never called it, so every animated page was
-        // frozen and nothing said so.
+        // Advance the page clock: timers and requestAnimationFrame callbacks run
+        // here.
         if (page.tick(elapsed_ms) > 0) { needs_frame = true; }
-        // AND SAY SO WHEN THE PAGE BREAKS. The loop ticked the clock and never
-        // once looked at what came back: a page whose callbacks throw keeps
-        // rendering whatever it last drew, so it looks frozen and reports
-        // nothing at all. That is how the Phaser invaders page hid an undefined
-        // method for an afternoon - update() threw on every frame and the
-        // window showed create()'s output forever.
-        //
-        // ONCE PER DISTINCT MESSAGE, not once per frame: a callback that faults
-        // every frame at 60 Hz would otherwise bury the first and only useful
-        // line under thousands of copies of itself, which is the same as saying
-        // nothing at all.
+        // Report script errors, or a page whose callbacks throw looks frozen with
+        // no explanation. Each distinct message is reported once, so an error
+        // thrown every frame does not flood the output.
         if (const std::string & failure = page.script_error();
             !failure.empty() && failure != last_script_error) {
             last_script_error = failure;
@@ -362,11 +358,11 @@ int run_app(std::string_view html, app_options options) {
                 std::fprintf(stderr, "ctbrowser: script error: %s\n", failure.c_str());
             }
         }
-        // ASK THE PAGE. Not everything that changes what should be on screen
-        // comes from an event or a callback: a caret blinks, and a scrollbar
-        // appears when a relayout makes the page taller. A loop that redraws
-        // only when IT did something shows neither until the user happens to
-        // move the mouse - which is exactly how both of those looked.
+        // Ask the page too. Not everything that changes what should be on
+        // screen comes from an event or a callback: a caret blinks, and a
+        // scrollbar appears when a relayout makes the page taller. A loop that
+        // redraws only when it did something shows neither until the user
+        // happens to move the mouse.
         if (page.needs_frame()) { needs_frame = true; }
 
         if (needs_frame) {
@@ -381,15 +377,10 @@ int run_app(std::string_view html, app_options options) {
         if (last && !options.screenshot_path.empty()) {
             (void)write_ppm(options.screenshot_path, page.read_pixels());
         }
-        // WHAT THE PAGE ASKED FOR AND THE BACKEND DID NOT DO.
-        //
-        // `webgl_context` records every call it declined to forward to ANGLE
-        // instead of ignoring it, and that ledger has been right every time it
-        // was read and wrong none - while reasoning about which missing call
-        // mattered has now picked wrong three times on the same page. This
-        // makes it readable from a RUN rather than from a grep: the grep lists
-        // what COULD go unforwarded, and only a run says what a given page
-        // actually called.
+        // With CTBROWSER_GL_LEDGER set, print on the last frame every WebGL
+        // call the page made that `webgl_context` did not forward to ANGLE.
+        // Unlike grepping the source, this lists only what this page actually
+        // called.
         if (last && std::getenv("CTBROWSER_GL_LEDGER") != nullptr) {
             const auto missing = page.bindings().unforwarded_gl_calls();
             std::fprintf(stderr, "[gl] %zu unforwarded call(s)\n", missing.size());
@@ -399,7 +390,7 @@ int run_app(std::string_view html, app_options options) {
         }
         if (last) { running = false; }
 
-        // PACING, and the difference between a browser and a spin loop.
+        // Pacing: the difference between a browser and a spin loop.
         //
         // A bounded run sprints: nobody is watching it, and a 30-frame test
         // should not take half a second of wall clock to say so.
@@ -408,22 +399,20 @@ int run_app(std::string_view html, app_options options) {
             const auto spent = clock::now() - now;
             const auto left = budget > spent ? budget - spent : std::chrono::nanoseconds{0};
 
-            // DID WE DRAW? That is the question, not "is there more to draw" -
-            // which is false the instant a frame finishes, so asking it took
-            // the wait branch after every single frame and max_fps threw its
-            // cap away. An animating page ran at whatever rate vsync allowed
-            // however low the cap was set.
+            // Pace on whether a frame was drawn, not on page.needs_frame(),
+            // which is false as soon as a frame finishes and would skip the
+            // sleep, so max_fps would have no effect.
             if (rendered) {
                 if (left.count() > 0) { std::this_thread::sleep_for(left); }
             } else if (!page.needs_frame()) {
-                // Nothing to draw: WAIT FOR AN EVENT rather than sleeping out
+                // Nothing to draw: wait for an event rather than sleeping out
                 // the budget and looking again. An idle page costs nothing at
                 // all this way, and an event is acted on the moment it arrives
                 // instead of up to a frame later.
                 //
                 // The timeout is however long until the page next has
-                // something to do on its own - a timer, an animation frame,
-                // the caret's next blink - so a blinking caret still blinks on
+                // something to do on its own (a timer, an animation frame,
+                // the caret's next blink), so a blinking caret still blinks on
                 // time and a page with neither sleeps until the user acts.
                 const double due = page.next_wakeup_ms();
                 const std::int32_t timeout = due >= static_cast<double>(options.idle_wait_ms)
@@ -435,14 +424,14 @@ int run_app(std::string_view html, app_options options) {
     }
 
 #if CTBROWSER_WITH_SDL3
-    host.reset(); // the window and the renderer go before SDL_Quit
+    host.reset(); // The window and the renderer go before SDL_Quit.
     if (SDL_WasInit(SDL_INIT_VIDEO) != 0) { SDL_Quit(); }
 #endif
     return 0;
 }
 
 // A page loaded from a file resolves its images and page-local fetches next to
-// ITSELF, which is what a `<img src="cat.bmp">` beside the html means.
+// itself, which is what a `<img src="cat.bmp">` beside the html means.
 int run_app_file(const std::filesystem::path & path, app_options options) {
     std::ifstream in{path, std::ios::binary};
     if (!in) {
@@ -453,14 +442,15 @@ int run_app_file(const std::filesystem::path & path, app_options options) {
     buffer << in.rdbuf();
     if (options.title == "ctbrowser") { options.title = path.filename().string(); }
     if (options.asset_path.empty()) { options.asset_path = path.parent_path(); }
-    // The extension, and only the extension. A caller that already knows -
-    // because it fetched the bytes and has a content type - sets `options.xml`
+    // The extension, and only the extension. A caller that already knows
+    // (because it fetched the bytes and has a content type) sets `options.xml`
     // itself and this leaves it alone.
     if (!options.xml) { options.xml = is_xml_extension(path.filename().string()); }
     return run_app(buffer.str(), std::move(options));
 }
 
-// A PACKAGED APPLICATION, unpacked into the options `run_app` already takes.
+// Runs a packaged application, unpacked into the options `run_app` already
+// takes.
 //
 // The unpacking is the whole of it, and every line is a place a launcher could
 // get it subtly wrong: an image put in `assets` instead of `script_images` is
@@ -489,25 +479,25 @@ int run_bundle(std::span<const std::byte> bytes, app_options overrides, bool tru
         case shell::bundle_kind::meta: break;
         }
     }
-    // A PACKAGED APPLICATION CARRIES EVERYTHING IT NEEDS, so a script that
-    // still compiles from source means the packaging is wrong - not that the
+    // A packaged application carries everything it needs, so a script that
+    // still compiles from source means the packaging is wrong, not that the
     // application should start anyway and be slow. This is the one caller that
     // can say that, because it is the one that knows the images were meant to
     // be complete.
     options.require_script_images = true;
-    // AND IT LOOKS NOWHERE ELSE FOR THEM. Without this the registry falls back
-    // to the filesystem, probing the WORKING DIRECTORY first - so a packaged
+    // It looks nowhere else for its assets. Without this the registry falls
+    // back to the filesystem, probing the working directory first, so a packaged
     // application missing a resource reads whatever happens to sit next to the
     // user, under the name its own document asked for. A miss has to be a miss.
     options.sealed_assets = true;
-    // AND THE PLAYER'S ENVIRONMENT DOES NOT RETUNE IT: CTBROWSER_TEST_FRAMES
-    // would be a fixed-step speedhack, CTBROWSER_MAX_FPS=0 an uncapped loop.
-    // Only a bundle packaged with `--allow-env-overrides`, or a loose one ctrun
-    // was handed, reads them.
+    // Ignore CTBROWSER_* environment overrides (CTBROWSER_TEST_FRAMES would give
+    // a fixed-step speedhack, CTBROWSER_MAX_FPS=0 an uncapped loop) unless the
+    // bundle was packaged with --allow-env-overrides or the caller trusts them
+    // (`trust_environment`, e.g. ctrun given a loose bundle file).
     options.environment_overrides = trust_environment || bundle.meta("env_overrides") == "1";
-    // AND THE FACES IT WAS PACKAGED WITH. The registry key for a face is
+    // Use the font faces it was packaged with. The registry key for a face is
     // "<directory>/Tinos-Regular.ttf", so the directory is part of the name and
-    // the bundle's answer has to win over this machine's - a run that resolved
+    // the bundle's answer has to win over this machine's: a run that resolved
     // CTBROWSER_FONT_PATH to somewhere else would ask a sealed registry for a
     // name nothing in it carries, and drop to the bitmap font without a word.
     if (const std::string packaged_fonts = bundle.meta("font_path"); !packaged_fonts.empty()) {

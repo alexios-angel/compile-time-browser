@@ -1,3 +1,13 @@
+//===- ctbrowser/lib/DOM/document.cpp - The DOM document store ------------===//
+//
+// The function bodies of document, read_txn and document::builder. The header
+// (dom/document.hpp) says what these compute; this file says how: node
+// creation, tree edits with their mutation log, attributes (including a
+// ProcessingInstruction's pseudo-attributes), shadow roots, template contents,
+// and the parser's form associations.
+//
+//===----------------------------------------------------------------------===//
+
 #include <ctbrowser/dom/document.hpp>
 #include <ctbrowser/dom/xml.hpp>
 
@@ -6,33 +16,35 @@
 #include <cassert>
 #include <optional>
 
-// document: the function bodies.
-// The header says what these compute; this says how.
-
 namespace ctbrowser {
 
 namespace {
 
-// The three namespaces "adjust foreign attributes" can put an attribute in:
-// XLink here, XML and XMLNS from dom/xml.hpp. Spelled out rather than
-// derived, for the reason bindings/document/internal.hpp spells its four out:
-// one wrong character makes the lookup miss on the valid case and nothing
-// about the failure says so.
+// The three namespaces "adjust foreign attributes" (HTML 13.2.6.1) can put an
+// attribute in: XLink here, XML and XMLNS from dom/xml.hpp. Spelled out in
+// full: one wrong character would make the lookup miss on the valid case with
+// nothing to say so.
 constexpr std::string_view xlink_namespace = "http://www.w3.org/1999/xlink";
 
-// Keep the existing shadow-map key order: custom-element reactions enumerate
-// these maps, so changing the hash input would change their visitation order.
+// The key for the per-node maps (shadow roots, namespaces, registries): the
+// node id's generation and slot packed into 64 bits. Custom-element reactions
+// enumerate these maps, so changing the key would change their visitation
+// order.
 [[nodiscard]] constexpr std::uint64_t shadow_key(node_id id) {
     return (static_cast<std::uint64_t>(id.generation) << 32) | id.slot;
 }
 
+// Whether an HTML element with this local name may host a shadow root (DOM
+// "attach a shadow root" step 2): one of the listed ordinary elements, or a
+// valid custom element name.
 [[nodiscard]] bool valid_shadow_host_name(std::string_view name) {
     constexpr std::string_view ordinary[] = {
         "article", "aside", "blockquote", "body",   "div",  "footer", "h1", "h2",      "h3",
         "h4",      "h5",    "h6",         "header", "main", "nav",    "p",  "section", "span"};
     if (std::ranges::find(ordinary, name) != std::end(ordinary)) { return true; }
-    // Preserve the binding's custom-name validation, including its reserved
-    // names. Full CustomElementRegistry name validation is a separate policy.
+    // A custom element name: a lowercase ASCII letter first, a hyphen, no ASCII
+    // uppercase, and not one of the reserved names. This is a subset of the
+    // full CustomElementRegistry name rule.
     if (name.size() < 2 || name.front() < 'a' || name.front() > 'z' ||
         name.find('-') == std::string_view::npos) {
         return false;
@@ -48,41 +60,44 @@ constexpr std::string_view xlink_namespace = "http://www.w3.org/1999/xlink";
     return true;
 }
 
-// Does this attribute answer to (namespace, local name)? THAT PAIR IS AN
-// ATTRIBUTE'S IDENTITY in the DOM, and the prefix is deliberately no part of
-// it: `foo:bar` and `quux:bar` in the same namespace are ONE attribute.
+// Whether this attribute answers to (namespace, local name). That pair is an
+// attribute's identity in the DOM, and the prefix is deliberately no part of
+// it: `foo:bar` and `quux:bar` in the same namespace are one attribute.
 [[nodiscard]] bool attribute_is(const atom_table & atoms, const attribute & a, std::string_view ns,
                                 std::string_view local) {
     return atoms.text(a.ns) == ns && attribute_local_name(atoms, a) == local;
 }
 
-// --- A PROCESSING INSTRUCTION'S ATTRIBUTES ---------------------------------
+// --- A processing instruction's attributes ---------------------------------
 //
 // DOM §4.13 gives a ProcessingInstruction an attribute map beside its data, and
-// the two are kept in step in BOTH directions: writing `data` re-parses it into
+// the two are kept in step in both directions: writing `data` re-parses it into
 // the map ("update attributes from data"), and the attribute operations
 // re-serialise the map into `data` ("update data from attributes"). The map is
-// STORED - on the node's ordinary attribute list, which every kind carries -
+// stored (on the node's ordinary attribute list, which every kind carries)
 // rather than derived on each read, because the two directions are not
 // inverses: `setAttribute("$", v)` is legal (a valid attribute local name) and
-// writes `$="v"`, which the parser then REFUSES (`$` is no XML Name) - so a map
+// writes `$="v"`, which the parser then refuses (`$` is no XML Name), so a map
 // derived from the data would lose the attribute the page just set.
 //
-// THE PARSE is xml-stylesheet §3, "rules for parsing pseudo-attributes from a
+// The parse is xml-stylesheet §3, "rules for parsing pseudo-attributes from a
 // string": `Name S? '=' S? quoted`, separated by S, with the five predefined
 // entities and character references decoded and nothing else allowed after an
 // `&`; an unquoted value, a `<`, a duplicate name or a stray character is an
-// ERROR and the whole result is empty - the spec's "if result is an error,
+// error and the whole result is empty: the spec's "if result is an error,
 // return" after clearing the map. Name is checked the way lib/DOM/xml.cpp
 // checks it: the ASCII half exactly, everything above 0x7F accepted.
 
+// XML NameStartChar, exact for ASCII and accepting every byte above 0x7F.
 [[nodiscard]] bool pi_name_start(unsigned char c) {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c == ':' || c >= 0x80;
 }
+// XML NameChar, with the same treatment of non-ASCII bytes.
 [[nodiscard]] bool pi_name_char(unsigned char c) {
     return pi_name_start(c) || (c >= '0' && c <= '9') || c == '-' || c == '.';
 }
 
+// Parses `data` as pseudo-attributes; nullopt when it is not well-formed.
 [[nodiscard]] std::optional<std::vector<attribute>> parse_pseudo_attributes(atom_table & atoms,
                                                                             std::string_view data) {
     std::vector<attribute> out;
@@ -116,7 +131,7 @@ constexpr std::string_view xlink_namespace = "http://www.w3.org/1999/xlink";
             if (v < 0 || code > 0x10FFFF) { return false; }
             code = code * (hex ? 16u : 10u) + static_cast<std::uint32_t>(v);
         }
-        // XML's Char production - the well-formedness constraint on a CharRef.
+        // XML's Char production: the well-formedness constraint on a CharRef.
         const bool legal = code == 0x9 || code == 0xA || code == 0xD ||
                            (code >= 0x20 && code <= 0xD7FF) || (code >= 0xE000 && code <= 0xFFFD) ||
                            (code >= 0x10000 && code <= 0x10FFFF);
@@ -127,7 +142,7 @@ constexpr std::string_view xlink_namespace = "http://www.w3.org/1999/xlink";
     while (true) {
         const bool spaced = skip_space();
         if (at == data.size()) { return out; }
-        // PseudoAtts ::= PseudoAtt? (S PseudoAtt)* S? - one S between two.
+        // PseudoAtts ::= PseudoAtt? (S PseudoAtt)* S?, so two need an S between.
         if (!out.empty() && !spaced) { return std::nullopt; }
         const std::size_t name_begin = at;
         if (!pi_name_start(static_cast<unsigned char>(data[at]))) { return std::nullopt; }
@@ -164,7 +179,7 @@ constexpr std::string_view xlink_namespace = "http://www.w3.org/1999/xlink";
 }
 
 // "Update data from attributes": `name="value"` pairs one space apart, the
-// value with `&`, `<`, `>` and `"` as their entities - which is what makes
+// value with `&`, `<`, `>` and `"` as their entities, which is what makes
 // every serialisation parse back to the map it came from.
 [[nodiscard]] std::string serialize_pseudo_attributes(const atom_table & atoms,
                                                       std::span<const attribute> attributes) {
@@ -224,7 +239,7 @@ atom read_txn::name(node_id id) const noexcept {
     return atom{};
 }
 
-// The two identifiers share the doctype's text block, NUL between them - the
+// The two identifiers share the doctype's text block, NUL between them: the
 // one byte neither can carry, because the tokenizer never emits it and
 // `createDocumentType` is handed DOMStrings that a page has no reason to put
 // one in. ponytail: two strings in one block; a second text slot on `node`
@@ -247,7 +262,7 @@ std::string_view read_txn::system_id(node_id id) const noexcept {
 node_ns read_txn::element_ns(node_id id) const noexcept {
     const node * n = doc_->find(id);
     // A missing node and a text node are both HTML as far as anyone asking
-    // this can tell - there is no third answer that a caller could use.
+    // this can tell; there is no third answer that a caller could use.
     return n != nullptr ? n->ns : node_ns::html;
 }
 
@@ -294,7 +309,7 @@ std::string_view read_txn::text(node_id id) const noexcept {
 }
 
 const attribute * read_txn::find_attribute(node_id id, atom name) const noexcept {
-    // THE FIRST, not any: an element may hold two attributes with this
+    // The first, not any: an element may hold two attributes with this
     // qualified name in different namespaces, and every one of getAttribute,
     // setAttribute and removeAttribute is defined on the first of them.
     for (const attribute & a : attributes(id)) {
@@ -347,7 +362,7 @@ bool read_txn::is_ancestor_of(node_id ancestor, node_id descendant) const noexce
 
 node_id read_txn::root_of_tree(node_id from, bool composed) const {
     node_id at = from;
-    // Preserve the bounded walk even if a caller creates a shadow/host cycle.
+    // Bounded at 4096 steps so a shadow/host cycle cannot loop forever.
     for (std::size_t step = 0; at && step < 4096; ++step) {
         if (const node_id up = parent(at)) {
             at = up;
@@ -414,8 +429,8 @@ node_id document::create_processing_instruction(atom target, std::string_view da
     return id;
 }
 
-// "Update attributes from data" - the map is cleared first, so a data string
-// the parser refuses leaves NO attributes rather than the previous ones.
+// "Update attributes from data": the map is cleared first, so a data string
+// the parser refuses leaves no attributes rather than the previous ones.
 void document::update_pi_attributes(node & n, std::string_view data) {
     n.attributes.clear();
     if (std::optional<std::vector<attribute>> parsed = parse_pseudo_attributes(*atoms_, data)) {
@@ -423,9 +438,9 @@ void document::update_pi_attributes(node & n, std::string_view data) {
     }
 }
 
-// "Update data from attributes", after an attribute write on a PI. Straight
-// into the text - NOT through set_text, which would re-parse the data and
-// drop an attribute whose name the parser refuses - and noted as a text
+// "Update data from attributes", after an attribute write on a PI. Written
+// straight into the text, not through set_text (which would re-parse the data
+// and drop an attribute whose name the parser refuses), and noted as a text
 // write, because the record a MutationObserver gets for it is characterData.
 void document::update_pi_data(node_id id, node & n) {
     if (n.kind != node_kind::processing_instruction) { return; }
@@ -444,14 +459,14 @@ void document::set_document_element(node_id id, node_id before) {
     root_ = id;
     node * doc_node = find(document_node_);
     if (doc_node == nullptr || id == document_node_ || id == previous) { return; }
-    // Wherever it was before, it is a child of the Document now - and one with
-    // NO parent pointer, see document_node.
+    // Wherever it was before, it is a child of the Document now, and one with
+    // no parent pointer (see document_node).
     if (node * fresh_node = find(id); fresh_node != nullptr) { detach(fresh_node, id); }
     auto & items = doc_node->children;
     const auto gone = std::ranges::remove(items, id);
     items.erase(gone.begin(), gone.end());
     // The old element's slot if it had one; otherwise ahead of `before`, or at
-    // the end. NOTED LIKE ANY OTHER CHILD OF A PARENT - the Document is one -
+    // the end. Noted like any other child of a parent (the Document is one),
     // so a live range or a NodeIterator on the Document moves with it.
     if (const auto slot = std::ranges::find(items, previous); slot != items.end()) {
         const auto index = static_cast<std::size_t>(slot - items.begin());
@@ -470,7 +485,7 @@ void document::remove_document_element() {
     if (root_ == document_node_) { return; }
     node * doc_node = find(document_node_);
     if (doc_node == nullptr) { return; }
-    // Its index BEFORE it goes, as detach notes any other child's.
+    // Its index before it goes, as detach notes any other child's.
     if (const auto at = std::ranges::find(doc_node->children, root_);
         at != doc_node->children.end()) {
         note_edit(write_note::edit::removed, document_node_, root_,
@@ -488,14 +503,14 @@ void document::detach(node * child_node, node_id child) {
     node * parent_node = find(old_parent);
     if (parent_node == nullptr) { return; }
     if (log_writes_) {
-        // Its index BEFORE it goes: what the live ranges on the parent move
+        // Its index before it goes: what the live ranges on the parent move
         // against (std::ranges::remove's subrange begins at the new end, not
         // at the removed element).
         const auto at = std::ranges::find(parent_node->children, child);
         note_edit(write_note::edit::removed, old_parent, child,
                   static_cast<std::size_t>(at - parent_node->children.begin()));
     }
-    // std::erase/erase_if only overload for std containers, not Boost's
+    // std::erase only has overloads for std containers, not Boost's.
     const auto gone = std::ranges::remove(parent_node->children, child);
     parent_node->children.erase(gone.begin(), gone.end());
     child_node->parent = node_id{};
@@ -505,10 +520,10 @@ void document::detach(node * child_node, node_id child) {
 // "When a form-associated element or one of its ancestors is removed": a
 // control and the form the parser gave it that are no longer in the same
 // tree part company, whichever of the two moved. Asked right after the
-// removal, before any insertion - `appendChild` of the control elsewhere in
-// the SAME document still ends it (form_owner_and_table_3.html).
+// removal, before any insertion: `appendChild` of the control elsewhere in
+// the same document still ends it (form_owner_and_table_3.html).
 // ponytail: every detach walks every pair to its root, O(pairs * depth). Only
-// a control OUTSIDE its form is recorded (tree_builder::associate_with_form),
+// a control outside its form is recorded (tree_builder::associate_with_form),
 // so a page has none or a table's worth; if that ever measures, look only at
 // the pairs with an end under the detached child.
 void document::sever_parser_forms() {
@@ -520,8 +535,8 @@ void document::sever_parser_forms() {
                   [&](const auto & entry) { return top(entry.first) != top(entry.second); });
 }
 
-// The null-namespace `form` content attribute of a LISTED element: set,
-// changed or removed, it resets the form owner (4.10.17.3), which ends the
+// The null-namespace `form` content attribute of a listed element: set,
+// changed or removed, it resets the form owner (HTML 4.10.17.3), which ends the
 // parser's association. An <img> has no such attribute; the callers pass only
 // null-namespace writes.
 void document::forget_parser_form(node_id element, atom attribute_name) {
@@ -575,10 +590,10 @@ std::expected<void, dom_error> document::insert_before(node_id parent, node_id c
         if (at == child) { return std::unexpected{dom_error::would_cycle}; }
     }
     if (too_deep(parent, child)) { return std::unexpected{dom_error::too_deep}; }
-    // "If child is node, set child to node's next sibling" - DOM 4.2.3. A node
-    // inserted before ITSELF stays where it is; detaching first and then
-    // looking for a reference that is no longer in the list appended it to the
-    // end instead, which `Node-insertBefore.html` asserts by name.
+    // "If child is node, set child to node's next sibling" (DOM 4.2.3). A node
+    // inserted before itself stays where it is; detaching first and then
+    // looking for a reference no longer in the list would append it to the
+    // end instead, which `Node-insertBefore.html` checks.
     auto & items = parent_node->children;
     if (before == child) {
         const auto self = std::ranges::find(items, child);
@@ -586,7 +601,7 @@ std::expected<void, dom_error> document::insert_before(node_id parent, node_id c
     }
     detach(child_node, child);
     const auto at =
-        items.insert(std::ranges::find(items, before), child); // end() when absent: append
+        items.insert(std::ranges::find(items, before), child); // end() when absent: append.
     child_node->parent = parent;
     note_edit(write_note::edit::inserted, parent, child,
               static_cast<std::size_t>(at - items.begin()));
@@ -644,7 +659,7 @@ std::expected<void, dom_error> document::set_attribute(node_id id, atom name,
                                                        std::string_view value) {
     node * n = find(id);
     if (n == nullptr) { return std::unexpected{dom_error::no_such_node}; }
-    // An element, or a ProcessingInstruction - whose attribute map lives on
+    // An element, or a ProcessingInstruction, whose attribute map lives on
     // the same list and is written back into its data below.
     if (n->kind != node_kind::element && n->kind != node_kind::processing_instruction) {
         return std::unexpected{dom_error::not_an_element};
@@ -656,7 +671,7 @@ std::expected<void, dom_error> document::set_attribute(node_id id, atom name,
         std::ranges::find_if(n->attributes, [name](const attribute & a) { return a.name == name; });
     const bool existed = at != n->attributes.end();
     if (existed) {
-        // ONLY THE VALUE. The attribute found may be in a namespace and may
+        // Only the value: the attribute found may be in a namespace and may
         // carry a prefix; neither is what a `setAttribute` was asked to change.
         at->value = std::string{value};
     } else {
@@ -702,14 +717,14 @@ std::expected<void, dom_error> document::remove_attribute(node_id id, atom name)
     if (n == nullptr) { return std::unexpected{dom_error::no_such_node}; }
     const auto gone =
         std::ranges::find_if(n->attributes, [name](const attribute & a) { return a.name == name; });
-    // NOTHING TO DO, and saying so rather than bumping the version: a
+    // Nothing to do, and returning rather than bumping the version: a
     // `removeAttribute` for an attribute that is not there must not dirty the
     // document, or every one of them costs a restyle.
     if (gone == n->attributes.end()) { return {}; }
-    // THE FIRST ONE ONLY. `removeAttribute("x")` on an element holding `x` in
-    // two namespaces removes one of them and the OTHER becomes the answer to
-    // `getAttribute("x")` - which is what Element-removeAttribute.html's two
-    // subtests check, in both orders.
+    // The first one only: `removeAttribute("x")` on an element holding `x` in
+    // two namespaces removes one of them and the other becomes the answer to
+    // `getAttribute("x")`, which Element-removeAttribute.html's two subtests
+    // check, in both orders.
     n->attributes.erase(gone);
     update_pi_data(id, *n);
     forget_parser_form(id, name);
@@ -857,7 +872,7 @@ std::optional<bool> read_txn::custom_element_defined(node_id id) const {
 std::expected<node_id, dom_error> document::attach_shadow(node_id host, shadow_tree how) {
     const auto txn = read();
     if (!txn.contains(host)) { return std::unexpected{dom_error::no_such_node}; }
-    // The LOCAL name (DOM 4.2.14 "attach a shadow root" step 2): a prefixed
+    // The local name (DOM 4.2.14 "attach a shadow root" step 2): a prefixed
     // `<xhtml:div>` in the HTML namespace is a div (host-with-namespace.xhtml).
     if (txn.kind(host).value_or(node_kind::text) != node_kind::element ||
         txn.element_ns(host) != node_ns::html || !valid_shadow_host_name(txn.local_name(host))) {
@@ -904,14 +919,13 @@ std::vector<node_id> document::shadow_roots() const {
     return roots;
 }
 
-// THE PARSER'S EDITS ARE LOGGED like any other while a reader asked for the
-// log (log_writes): its insertions are DOM "insert"s, which move live ranges
-// and assign slottables (DOM 4.2.3) - a custom element the parser constructs
-// attaches its shadow tree before its children arrive, and those children are
-// what its slots then show (shadow-dom/slotchange-customelements.html). Off,
-// which is every parse nothing observes, it is the one load it always was.
+// The parser's insertions are logged like any other edit while a reader asked
+// for the log (log_writes): they move live ranges and assign slottables
+// (DOM 4.2.3), and a parser-created custom element attaches its shadow tree
+// before its children arrive (shadow-dom/slotchange-customelements.html).
+// With logging off this costs one flag check.
 void document::builder::append(node_id parent, node_id child) {
-    assert(doc_->depth(parent) + 1 < max_dom_depth); // the parser fits its places
+    assert(doc_->depth(parent) + 1 < max_dom_depth); // The parser fits its places.
     node * parent_node = doc_->find(parent);
     node * child_node = doc_->find(child);
     if (parent_node == nullptr || child_node == nullptr) { return; }
@@ -940,7 +954,7 @@ void document::builder::insert_before(node_id parent, node_id child, node_id bef
     node * child_node = doc_->find(child);
     if (parent_node == nullptr || child_node == nullptr) { return; }
     auto & items = parent_node->children;
-    const auto at = items.insert(std::ranges::find(items, before), child); // end(): append
+    const auto at = items.insert(std::ranges::find(items, before), child); // end(): append.
     child_node->parent = parent;
     doc_->note_edit(write_note::edit::inserted, parent, child,
                     static_cast<std::size_t>(at - items.begin()));
@@ -949,14 +963,14 @@ void document::builder::insert_before(node_id parent, node_id child, node_id bef
 atom document::foreign_namespace_of(node_ns element_ns, atom name) const {
     if (element_ns == node_ns::html) { return atom{}; }
     const std::string_view text = atoms_->text(name);
-    // `xmlns` ALONE is the one unprefixed name in the table, and the colon test
-    // is what keeps every ordinary SVG attribute - `d`, `viewBox`, `fill` - to
+    // `xmlns` alone is the one unprefixed name in the table, and the colon test
+    // is what keeps every ordinary SVG attribute (`d`, `viewBox`, `fill`) to
     // a single find() before it returns.
     const std::size_t colon = text.find(':');
     if (colon == std::string_view::npos) {
         return text == "xmlns" ? atoms_->intern(xmlns_namespace) : atom{};
     }
-    // THE TEN NAMES, EXACTLY: `xml:base` and `xlink:foo` are not in the table
+    // Exactly the ten names of the table: `xml:base` and `xlink:foo` are not in it
     // and stay unprefixed attributes in no namespace (webkit02.dat).
     const std::string_view prefix = text.substr(0, colon);
     const std::string_view local = text.substr(colon + 1);

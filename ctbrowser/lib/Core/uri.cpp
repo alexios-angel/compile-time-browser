@@ -1,3 +1,10 @@
+//===- ctbrowser/lib/Core/uri.cpp - decodeURI and decodeURIComponent ------===//
+//
+// The percent-decoding behind JavaScript's decodeURI and decodeURIComponent
+// (ECMA-262 Decode), including the UTF-8 validation the spec requires.
+//
+//===----------------------------------------------------------------------===//
+
 #include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/core/uri.hpp>
 
@@ -7,6 +14,9 @@
 namespace ctbrowser {
 namespace {
 
+// ECMA-262 Decode, shared by decodeURI and decodeURIComponent: percent-decodes
+// `in`, leaving encoded any ASCII byte listed in `keep_encoded`. Returns nullopt
+// for a malformed escape or invalid UTF-8, where the spec throws URIError.
 std::optional<std::string> decode(std::string_view in, std::string_view keep_encoded) {
     std::string out;
     out.reserve(in.size());
@@ -30,7 +40,8 @@ std::optional<std::string> decode(std::string_view in, std::string_view keep_enc
             continue;
         }
         // A multi-byte sequence: the lead says how many continuation
-        // escapes follow, and each must be one (steps 4.d.vii-x).
+        // escapes follow, and each must be one (ECMA-262 Decode, steps
+        // 4.d.vii-x).
         const int n = (byte & 0xE0) == 0xC0   ? 2
                       : (byte & 0xF0) == 0xE0 ? 3
                       : (byte & 0xF8) == 0xF0 ? 4

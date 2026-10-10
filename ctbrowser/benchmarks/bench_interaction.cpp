@@ -1,18 +1,22 @@
-// What a mouse move COSTS, on a real page.
+//===- bench_interaction.cpp - Pointer interaction cost ------- -*- C++ -*-===//
 //
-// The question this exists to answer is "why does an idle-looking application
-// use most of a core", and the answer is not in any of the other benches:
-// nothing here is a big document or a hot loop. It is that moving the pointer
-// from one element to another re-resolves the cascade, re-lays-out, re-records
-// and re-rasterises the whole page - and an event loop capped at 60 fps will
-// happily do that sixty times a second for as long as the mouse keeps moving.
+// Measures what a mouse move costs on a real page.
+//
+// It answers "why does an idle-looking application use most of a core". The
+// cause is not a big document or a hot loop: moving the pointer from one
+// element to another can re-resolve the cascade, re-lay-out, re-record and
+// re-rasterise the whole page, and an event loop capped at 60 fps does that
+// sixty times a second while the mouse moves.
 //
 // So the number to look at is `hover change` in milliseconds. Multiply it by
 // the frame rate to get the CPU the application burns while the pointer is in
-// motion: 10 ms is 60% of a core, which is what was reported.
+// motion: 10 ms per frame at 60 fps is 60% of a core.
 //
-// Measured against the same page from the widget gallery, headlessly, so the
-// figure is about the ENGINE and not about a compositor or a driver.
+// Runs headless on examples/pages/widgets.html (read relative to the current
+// directory, so run it from the ctbrowser root), so the figure measures the
+// engine and not a compositor or a driver.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 
@@ -56,7 +60,8 @@ struct sample {
     return out;
 }
 
-// One measured operation: do the thing, then draw the frame it made necessary.
+/// Times `repeats` runs of `operation(i)`, each followed by the frame it made
+/// necessary, and summarises the per-run milliseconds.
 template <typename F> [[nodiscard]] sample measure(browser & page, int repeats, F && operation) {
     std::vector<double> times;
     times.reserve(static_cast<std::size_t>(repeats));
@@ -84,8 +89,8 @@ int main() {
     page.load_html(html);
     page.frame();
 
-    // Two points that are certainly in DIFFERENT elements, so every other move
-    // is a real hover change - which is the case that costs.
+    // Two points in different elements. The hover loop alternates between them,
+    // so every move changes the hovered element, which is the expensive case.
     const float x1 = 40;
     const float y1 = 40;
     const float x2 = 60;

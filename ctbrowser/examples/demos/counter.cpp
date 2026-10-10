@@ -1,9 +1,10 @@
-// The hero demo: one HTML string is the whole application.
+//===- ctbrowser/examples/demos/counter.cpp - Click counter demo ----------===//
 //
-// Compare with the previous engine's counter.cpp: two includes, a platform main shim, a `page<>`
-// NTTP and two static_asserts. This is one import and one call - and the page is
-// an ordinary runtime string, so it can come from a file, a socket or a text box
-// just as easily.
+// The smallest demo: one HTML string is the whole application, passed to
+// run_app with one include and one call. The page is an ordinary runtime
+// string, so it could just as well come from a file, a socket or a text box.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 

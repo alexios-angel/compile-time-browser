@@ -1,3 +1,11 @@
+//===- ctbrowser/lib/DOM/dataset.cpp - HTMLElement.dataset name mapping ---===//
+//
+// The two name conversions behind HTMLElement.dataset (`data-foo-bar` <->
+// `fooBar`, HTML's data-* attributes) and the lookups a DOMStringMap makes
+// over an element's attributes.
+//
+//===----------------------------------------------------------------------===//
+
 #include <ctbrowser/dom/dataset.hpp>
 #include <ctbrowser/dom/element.hpp>
 
@@ -6,16 +14,16 @@
 namespace ctbrowser {
 
 // `data-foo-bar` -> `fooBar`. HTML's dataset mangling in the direction that
-// decides which properties EXIST: the supported property names of a
+// decides which properties exist: the supported property names of a
 // DOMStringMap are computed from the attributes, never from the key a page
 // asks about, which is why `el.dataset['-foo']` is undefined on an element
-// carrying `data--foo` - that attribute's name is `Foo`.
+// carrying `data--foo`: that attribute's name is `Foo`.
 //
-// A `-` followed by an ASCII LOWERCASE letter becomes that letter uppercased;
+// A `-` followed by an ASCII lowercase letter becomes that letter uppercased;
 // everything else is carried across untouched, including a `-` at the end and a
 // `-` in front of anything that is not a lowercase letter. False for a name
 // that is not a dataset attribute at all: one without the prefix, or one
-// carrying an ASCII uppercase letter - which no attribute of an HTML element
+// carrying an ASCII uppercase letter, which no attribute of an HTML element
 // can have and one of an SVG element can.
 bool dataset_name_of(std::string_view attribute_name, std::string & out) {
     if (!attribute_name.starts_with("data-")) { return false; }
@@ -33,7 +41,7 @@ bool dataset_name_of(std::string_view attribute_name, std::string & out) {
     return true;
 }
 
-// ...and `fooBar` -> `data-foo-bar`, which is the other direction and NOT the
+// `fooBar` -> `data-foo-bar`, the other direction, which is not the
 // inverse. That is the whole reason both exist: `data--foo` reads back as
 // `Foo`, so `-foo` names nothing on the way in, and letting it name
 // `data--foo` on the way out would make one attribute answer to two keys.
@@ -53,6 +61,8 @@ dataset_fault dataset_attribute_of(std::string_view idl, std::string & out) {
     return is_valid_attribute_name(out) ? dataset_fault::none : dataset_fault::character;
 }
 
+// The value of the dataset key `key`: the first non-namespaced `data-*`
+// attribute whose converted name equals it.
 std::optional<std::string> dataset_value(document & doc, node_id element, std::string_view key) {
     const auto txn = doc.read();
     std::string name;
@@ -65,6 +75,7 @@ std::optional<std::string> dataset_value(document & doc, node_id element, std::s
     return std::nullopt;
 }
 
+// Every (dataset key, value) pair of the element, in attribute order.
 std::vector<std::pair<std::string, std::string>> dataset_entries(document & doc, node_id element) {
     const auto txn = doc.read();
     std::vector<std::pair<std::string, std::string>> entries;

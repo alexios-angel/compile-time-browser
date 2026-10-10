@@ -1,3 +1,14 @@
+//===- ctbrowser/lib/Core/number_format.cpp - JS number <-> string --------===//
+//
+// The ECMAScript number conversions: Number::toString, toFixed, toExponential,
+// toPrecision, and ToNumber / parseFloat on strings. core/number_format.hpp
+// says which specification clause each function implements and why C's
+// conversions are not it; this file says how. Everything goes through
+// std::to_chars / std::from_chars, which are locale-independent and correctly
+// rounded, with the spec's tie-breaking and notation rules applied on top.
+//
+//===----------------------------------------------------------------------===//
+
 #include <ctbrowser/core/number_format.hpp>
 
 #include <algorithm>
@@ -12,9 +23,6 @@
 
 #include <ctbrowser/core/algorithms.hpp>
 
-// The header says which specification clause each function is and why C's
-// conversions are not it. This says how.
-
 namespace ctbrowser {
 
 namespace {
@@ -23,21 +31,21 @@ namespace {
 // talks about it: `digits` are the significant digits with no point, and `n` is
 // the position of the decimal point, so the value is 0.<digits> x 10^n.
 //
-// `chars_format::scientific` rather than `general` on purpose - general applies
+// `chars_format::scientific` rather than `general` on purpose: general applies
 // C's rule for when to go exponential, which is the rule that is wrong here.
-// Asked with no precision it produces the SHORTEST form that round-trips, which
-// is exactly the digit string 6.1.6.1.20 wants; the exponent is then read back
+// Asked with no precision it produces the shortest form that round-trips, which
+// is exactly the digit string ECMA-262 6.1.6.1.20 wants; the exponent is then read back
 // out and every notation decision is made below rather than by the library.
 struct decimal {
     std::array<char, 32> digits{};
-    int count = 0; // significant digits in `digits`
-    int n = 0;     // value == 0.<digits> * 10^n
+    int count = 0; ///< Significant digits in `digits`.
+    int n = 0;     ///< value == 0.<digits> * 10^n.
 };
 
-// The exponent out of a to_chars scientific result, which is written with a
-// SIGN ALWAYS - "1e+20". `std::from_chars` for an integer does not accept a
-// leading '+', so reading it directly returns 0 and leaves the position of the
-// decimal point silently wrong for every value with a non-zero exponent.
+// The exponent out of a to_chars scientific result, which always carries a
+// sign ("1e+20"). `std::from_chars` for an integer does not accept a leading
+// '+', so reading it directly would return 0 and leave the position of the
+// decimal point silently wrong for every value with a positive exponent.
 [[nodiscard]] int read_exponent(const char * at, const char * stop) {
     if (at != stop && *at == '+') { ++at; }
     int exponent = 0;
@@ -45,7 +53,7 @@ struct decimal {
     return exponent;
 }
 
-// Split "d.ddde[+-]XX" into its digits and its exponent. Shared by the three
+// Splits "d.ddde[+-]XX" into its digits and its exponent. Shared by the three
 // paths that ask to_chars for a scientific form.
 void split_scientific(const char * first, const char * stop, std::string & digits, int & exponent) {
     const char * at = first;
@@ -55,13 +63,14 @@ void split_scientific(const char * first, const char * stop, std::string & digit
     exponent = at == stop ? 0 : read_exponent(at + 1, stop);
 }
 
+// The shortest round-tripping digits of a non-negative finite `magnitude`.
 [[nodiscard]] decimal shortest(double magnitude) {
     std::array<char, 64> buffer{};
     const auto [stop, err] = std::to_chars(buffer.data(), buffer.data() + buffer.size(), magnitude,
                                            std::chars_format::scientific);
     decimal out;
     if (err != std::errc{}) { return out; }
-    // "d.dddde[+-]XX" - or "de[+-]XX" when one digit suffices.
+    // "d.dddde[+-]XX", or "de[+-]XX" when one digit suffices.
     std::string digits;
     int exponent = 0;
     split_scientific(buffer.data(), stop, digits, exponent);
@@ -73,8 +82,8 @@ void split_scientific(const char * first, const char * stop, std::string & digit
     return out;
 }
 
-// "e+21", "e-7" - a sign always, and the fewest digits that say it. C writes at
-// least two, which is where "1e+021" came from.
+// Appends "e+21", "e-7": a sign always, and the fewest digits that say it. C's
+// printf writes at least two exponent digits ("1e+21" would be "1e+021").
 void append_exponent(std::string & text, int exponent) {
     text += 'e';
     text += exponent < 0 ? '-' : '+';
@@ -98,9 +107,9 @@ void append_exponent(std::string & text, int exponent) {
     return false;
 }
 
-// IS `magnitude * 10^places` EXACTLY A HALF-INTEGER? `toFixed` rounds a tie
-// away from zero (21.1.3.3 picks the LARGER n); `std::to_chars` rounds it to
-// even. Decidable exactly: with magnitude = m * 2^e and m ODD,
+// Whether `magnitude * 10^places` is exactly a half-integer. `toFixed` rounds a
+// tie away from zero (ECMA-262 21.1.3.3 picks the larger n); `std::to_chars`
+// rounds it to even. Decidable exactly: with magnitude = m * 2^e and m odd,
 // magnitude * 10^places == m * 5^places * 2^(e + places), and 5^places is odd,
 // so the product is a half-integer precisely when e + places == -1.
 [[nodiscard]] bool halfway_exactly(double magnitude, int places) {
@@ -113,9 +122,10 @@ void append_exponent(std::string & text, int exponent) {
     return e + places == -1;
 }
 
-// A decimal digit string, rounded up one place. "1249" -> "125", and "999" ->
-// "100" with a carry the caller has to account for by bumping the exponent.
-// Returns whether it overflowed into a new leading digit.
+// Adds one unit in the last place of a decimal digit string: "1249" -> "1250",
+// and "999" -> "1000" with a carry the caller has to account for (by dropping a
+// digit or bumping the exponent). Returns whether it overflowed into a new
+// leading digit.
 [[nodiscard]] bool round_up_in_place(std::string & digits) {
     for (std::size_t at = digits.size(); at-- > 0;) {
         if (digits[at] != '9') {
@@ -130,20 +140,20 @@ void append_exponent(std::string & text, int exponent) {
 
 // The magnitude to `places` decimals, as a plain digit string with a point.
 // Correctly rounded by to_chars, then nudged when the value sits exactly
-// halfway - see halfway_exactly.
+// halfway (see halfway_exactly).
 [[nodiscard]] std::string fixed_digits(double magnitude, int places) {
     std::array<char, 1200> buffer{}; // 1e308 with 100 decimals still fits
     char * const end = buffer.data() + buffer.size();
 
     if (halfway_exactly(magnitude, places)) {
-        // EXACTLY HALFWAY, so the specification's answer is the larger one and
-        // to_chars cannot give it: correct rounding takes a tie to EVEN, which
+        // Exactly halfway, so the specification's answer is the larger one and
+        // to_chars cannot give it: correct rounding takes a tie to even, which
         // is the right answer only half the time and cannot be recovered from
         // the rounded digits (after rounding to even the last digit is always
         // even, whichever way it went).
         //
-        // At places+1 digits the value is exact - that is what halfway_exactly
-        // established - and ends in '5'. So drop that digit and carry, which is
+        // At places+1 digits the value is exact (that is what halfway_exactly
+        // established) and ends in '5'. So drop that digit and carry, which is
         // "away from zero" by construction.
         const auto [stop, err] =
             std::to_chars(buffer.data(), end, magnitude, std::chars_format::fixed, places + 1);
@@ -151,7 +161,7 @@ void append_exponent(std::string & text, int exponent) {
             std::string body{buffer.data(), stop};
             const std::size_t point = body.find('.');
             if (point != std::string::npos) { body.erase(point, 1); }
-            body.pop_back(); // the exact trailing '5'
+            body.pop_back(); // The exact trailing '5'.
             if (body.empty()) { body = "0"; }
             (void)round_up_in_place(body);
             if (places > 0) {
@@ -176,20 +186,20 @@ void append_exponent(std::string & text, int exponent) {
 
 // --- Number::toString ------------------------------------------------------
 //
-// 6.1.6.1.20 steps 5-10, which are a rule about the decimal exponent n and
+// ECMA-262 6.1.6.1.20 steps 5-10, which are a rule about the decimal exponent n and
 // nothing else: plain digits while -6 < n <= 21, exponential outside it. That
 // is why 1e20 prints as twenty-one digits and 1e21 does not, and why 0.000001
 // is written out while 1e-7 is not.
 std::string number_to_string(double value) {
     std::string out;
     if (non_finite(value, out)) { return out; }
-    if (value == 0) { return "0"; } // -0 prints as "0"; Object.is tells them apart
+    if (value == 0) { return "0"; } // -0 prints as "0"; Object.is tells them apart.
 
-    // THE INTEGER FAST PATH, and it is not a shortcut past the specification -
-    // it is the same answer arrived at cheaply. For an integral value below
+    // Integer fast path. It is not a shortcut past the specification but the
+    // same answer arrived at cheaply. For an integral value below
     // 1e15 the shortest digits are the integer's own and k <= n <= 21 holds, so
     // the rule below reduces to "print the digits". Pages print far more small
-    // integers than anything else - a score, a frame count, an array index -
+    // integers than anything else (a score, a frame count, an array index),
     // and this is measurably the common case.
     if (std::fabs(value) < 1e15 && value == static_cast<double>(static_cast<std::int64_t>(value))) {
         std::array<char, 24> whole{};
@@ -243,13 +253,15 @@ std::string number_to_fixed(double value, int digits) {
     return text;
 }
 
-// `sig` SIGNIFICANT DIGITS OF A MAGNITUDE, with a tie rounded UP - 21.1.3.2
-// step 10.b and 21.1.3.5 step 10.b.i pick the larger n where two are equally
-// near, and to_chars picks the even one. Whether the value sits exactly on a
-// tie is decided from its EXACT decimal expansion (a double has at most 767
+// The first `sig` significant digits of `magnitude` and its decimal exponent,
+// with a tie rounded up: ECMA-262 21.1.3.2 step 10.b and 21.1.3.5 step 10.b.i
+// pick the larger n where two are equally near, and to_chars picks the even
+// one. Whether the value sits exactly on a tie is decided from its exact
+// decimal expansion (a double has at most 767
 // significant digits, and to_chars writes them all when asked): a '5' at the
-// first dropped place followed by nothing but zeros. Answers false when
-// to_chars refuses, which the callers turn into their own fallback.
+// first dropped place followed by nothing but zeros. The 1200-byte buffer holds
+// that expansion (780 requested digits plus sign and exponent). Returns false
+// when to_chars refuses, which the callers turn into their own fallback.
 [[nodiscard]] bool scientific_digits(double magnitude, int sig, std::string & digits,
                                      int & exponent) {
     std::array<char, 1200> buffer{};
@@ -269,11 +281,11 @@ std::string number_to_fixed(double value, int digits) {
     const auto at = static_cast<std::size_t>(sig);
     if (exact.size() <= at || exact[at] != '5' ||
         exact.find_first_not_of('0', at + 1) != std::string::npos) {
-        return true; // not a tie: the correctly rounded answer stands
+        return true; // Not a tie: the correctly rounded answer stands.
     }
     digits.assign(exact, 0, at);
     if (round_up_in_place(digits)) {
-        digits.pop_back(); // "999" -> "1000": one digit too many
+        digits.pop_back(); // "999" -> "1000": one digit too many.
         exact_exponent += 1;
     }
     exponent = exact_exponent;
@@ -301,10 +313,9 @@ std::string number_to_exponential(double value, int places) {
             n = 1;
         }
     } else {
-        // 128, NOT 64. `places` reaches 100 (21.1.3.2 step 5), which is a
-        // leading digit, a point, 100 more digits and "e+308" - 108 characters,
-        // and to_chars answers value_too_large rather than truncating. That
-        // made `(3).toExponential(100)` the string "0".
+        // `places` can be 100 (ECMA-262 21.1.3.2 step 5); scientific_digits
+        // sizes its buffer for that and for the exact expansion it uses to
+        // detect ties.
         int exponent = 0;
         if (!scientific_digits(magnitude, places + 1, digits, exponent)) { return "0"; }
         n = exponent + 1;
@@ -322,9 +333,9 @@ std::string number_to_exponential(double value, int places) {
 
 // --- toPrecision -----------------------------------------------------------
 //
-// 21.1.3.5: `digits` counts SIGNIFICANT digits, and the choice between notations
-// is made on e - exponential when e < -6 or e >= digits, positional otherwise.
-// Trailing zeros are KEPT here, unlike everywhere else: `(1.5).toPrecision(3)`
+// ECMA-262 21.1.3.5: `digits` counts significant digits, and the choice between
+// notations is made on e: exponential when e < -6 or e >= digits, positional
+// otherwise. Trailing zeros are kept here, unlike everywhere else: `(1.5).toPrecision(3)`
 // is "1.50" precisely because the caller asked for three digits.
 std::string number_to_precision(double value, int digits) {
     std::string out;
@@ -341,13 +352,9 @@ std::string number_to_precision(double value, int digits) {
         return negative ? "-" + zero : zero;
     }
 
-    // The exponent of the value rounded to `digits` significant digits - taken
+    // The exponent of the value rounded to `digits` significant digits, taken
     // from to_chars rather than from log10, which is off by one near a power of
     // ten and would put the decimal point in the wrong place there.
-    //
-    // 128 for the same reason as toExponential above: `digits` reaches 100 and
-    // 64 characters is not enough for the widest answer, so to_chars refused
-    // and `(3).toPrecision(100)` fell back to "3".
     std::string significant;
     int e = 0;
     if (!scientific_digits(magnitude, digits, significant, e)) { return number_to_string(value); }
@@ -374,10 +381,12 @@ std::string number_to_precision(double value, int digits) {
     return negative ? "-" + text : text;
 }
 
-// --- what "out of range" meant ---------------------------------------------
+// --- Out-of-range literals -------------------------------------------------
 //
-// Decided from the literal's ORDER OF MAGNITUDE, because from_chars will not
-// say. The estimate need only get the SIGN right: from_chars accepts everything
+// When from_chars reports result_out_of_range, returns +Infinity for an
+// overflow and +0 for an underflow. Which one is decided from the literal's
+// order of magnitude, because from_chars will not say. The estimate need only
+// get the sign of the exponent right: from_chars accepts everything
 // between 5e-324 and 1.8e308, so anything reaching here is past 10^308 or below
 // 10^-323 and the margin is enormous. Off-by-one in the exponent cannot flip it.
 double out_of_range_value(std::string_view text) {
@@ -394,7 +403,7 @@ double out_of_range_value(std::string_view text) {
     if (integer_digits > 0) {
         order = static_cast<int>(integer_digits) - 1;
     } else if (at < text.size() && text[at] == '.') {
-        // 0.000...ddd - count the zeros the first significant digit sits behind.
+        // 0.000...ddd: count the zeros the first significant digit sits behind.
         std::size_t zeros = 0;
         while (at + 1 + zeros < text.size() && text[at + 1 + zeros] == '0') { ++zeros; }
         order = -static_cast<int>(zeros) - 1;
@@ -416,12 +425,12 @@ double out_of_range_value(std::string_view text) {
 
 // --- StrWhiteSpaceChar, over UTF-8 ------------------------------------------
 //
-// StringToNumber (7.1.4.1.1) and StringToBigInt strip 12.2 WhiteSpace and 12.3
-// LineTerminator, and fourteen of those code points are not ASCII: U+00A0,
-// U+1680, U+2000-U+200A, U+2028, U+2029, U+202F, U+205F, U+3000 and U+FEFF.
-// `core::js_whitespace` is the ASCII six, so `Number("\u00A0 1")` was NaN.
-// The bytes are fixed and no locale enters into it, so the width of a space
-// at `at` - or 0 - is answerable from the encoding alone.
+// StringToNumber (ECMA-262 7.1.4.1.1) and StringToBigInt strip 12.2 WhiteSpace
+// and 12.3 LineTerminator, and fourteen of those code points are not ASCII:
+// U+00A0, U+1680, U+2000-U+200A, U+2028, U+2029, U+202F, U+205F, U+3000 and
+// U+FEFF. `js_whitespace` holds only the ASCII six, so this also matches the
+// UTF-8 encodings of the others. Returns the byte width of the space at `at`,
+// or 0.
 [[nodiscard]] std::size_t js_space_width(std::string_view s, std::size_t at) {
     const auto b = [&](std::size_t i) {
         return at + i < s.size() ? static_cast<unsigned char>(s[at + i]) : 0u;
@@ -461,16 +470,16 @@ std::string_view trim_js_space(std::string_view text, bool start, bool end) {
 
 // --- ToNumber on a string --------------------------------------------------
 //
-// from_chars, never strtod: strtod reads LC_NUMERIC for the decimal separator,
+// Uses from_chars, never strtod: strtod reads LC_NUMERIC for the decimal separator,
 // and it reports failure by returning zero with errno, which is the same answer
 // it gives for the string "0". from_chars says where it stopped, which is the
-// check this needs - ToNumber is all-or-NaN, so anything left over is a
+// check this needs: ToNumber is all-or-NaN, so anything left over is a
 // failure rather than a prefix.
 double string_to_number(std::string_view text) {
     const std::string_view body = trim_js_space(text);
-    if (body.empty()) { return 0; } // "" and "   " are both 0, per StringToNumber
+    if (body.empty()) { return 0; } // "" and "   " are both 0, per StringToNumber.
 
-    // THE RADIX PREFIXES TAKE NO SIGN. `Number("0x10")` is 16 and
+    // The radix prefixes take no sign: `Number("0x10")` is 16 and
     // `Number("-0x10")` is NaN, so this is checked before the sign is stripped.
     if (body.size() > 2 && body.front() == '0') {
         int radix = 0;
@@ -490,8 +499,8 @@ double string_to_number(std::string_view text) {
         }
     }
 
-    // The sign is stripped HERE rather than left to from_chars, which accepts
-    // '-' and rejects '+' - where JavaScript takes both.
+    // The sign is stripped here rather than left to from_chars, which accepts
+    // '-' and rejects '+', where JavaScript takes both.
     std::string_view rest = body;
     double sign = 1;
     if (rest.front() == '+' || rest.front() == '-') {
@@ -501,15 +510,15 @@ double string_to_number(std::string_view text) {
     if (rest.empty()) { return std::nan(""); }
 
     if (rest == "Infinity") { return sign * std::numeric_limits<double>::infinity(); }
-    // from_chars ALSO accepts "inf", "infinity" and "nan", case-insensitively,
-    // and JavaScript accepts none of them - `Number("inf")` is NaN and only the
+    // from_chars also accepts "inf", "infinity" and "nan", case-insensitively,
+    // and JavaScript accepts none of them: `Number("inf")` is NaN and only the
     // exact spelling "Infinity" above is a number. A numeric literal never
     // starts with a letter, so refusing one here is the whole guard.
     if (ascii_lower(rest.front()) >= 'a' && ascii_lower(rest.front()) <= 'z') {
         return std::nan("");
     }
 
-    // A TRAILING POINT IS LEGAL: `Number("5.")` is 5 and `Number("5.e3")` is
+    // A trailing point is legal: `Number("5.")` is 5 and `Number("5.e3")` is
     // 5000, both of which from_chars stops short of. Dropping the point is
     // sound because nothing else in the grammar can follow the digits it ends.
     std::string without_point;
@@ -526,11 +535,11 @@ double string_to_number(std::string_view text) {
     const char * const first = rest.data();
     const char * const last = rest.data() + rest.size();
     const auto [stopped, failed] = std::from_chars(first, last, parsed);
-    // Too big is Infinity and too small is zero, both of them SIGNED - and
+    // Too big is Infinity and too small is zero, both of them signed, and
     // neither is NaN. `Number("1e400")` is Infinity, which is what a page
     // comparing against Infinity expects to see.
     if (failed == std::errc::result_out_of_range) { return sign * out_of_range_value(rest); }
-    // NOT a prefix: ToNumber requires the WHOLE string. "12abc" is NaN where
+    // Not a prefix: ToNumber requires the whole string. "12abc" is NaN where
     // parseFloat("12abc") is 12, and conflating the two is what lets a page do
     // arithmetic on something that was never a number.
     if (failed != std::errc{} || stopped != last) { return std::nan(""); }
@@ -542,7 +551,7 @@ double string_to_number_prefix(std::string_view text) {
     while (const std::size_t w = rest.empty() ? 0 : js_space_width(rest, 0)) {
         rest.remove_prefix(w);
     }
-    if (rest.empty()) { return std::nan(""); } // parseFloat("") is NaN, unlike Number("")
+    if (rest.empty()) { return std::nan(""); } // parseFloat("") is NaN, unlike Number("").
 
     double sign = 1;
     if (rest.front() == '+' || rest.front() == '-') {
@@ -553,7 +562,7 @@ double string_to_number_prefix(std::string_view text) {
 
     if (rest.starts_with("Infinity")) { return sign * std::numeric_limits<double>::infinity(); }
     // Same guard as string_to_number: from_chars would take "inf" and "nan",
-    // and parseFloat takes neither. NO radix prefixes either - parseFloat("0x10")
+    // and parseFloat takes neither. No radix prefixes either: parseFloat("0x10")
     // is 0, because it reads the leading "0" and stops at the 'x'.
     if (ascii_lower(rest.front()) >= 'a' && ascii_lower(rest.front()) <= 'z') {
         return std::nan("");
@@ -564,7 +573,7 @@ double string_to_number_prefix(std::string_view text) {
     const char * const last = rest.data() + rest.size();
     const auto [stopped, failed] = std::from_chars(first, last, parsed);
     if (failed == std::errc::result_out_of_range) { return sign * out_of_range_value(rest); }
-    // A PREFIX, so `stopped` is not required to reach `last` - only to have
+    // A prefix, so `stopped` is not required to reach `last`, only to have
     // moved at all.
     if (failed != std::errc{} || stopped == first) { return std::nan(""); }
     return sign * parsed;

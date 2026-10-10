@@ -1,15 +1,14 @@
-// Style resolution: the engine against the previous engine, on the same document and the same
-// sheet.
+//===- ctbrowser/benchmarks/bench_style.cpp - Style resolution benchmark --===//
 //
-// This is the first stage where the plan's "high-performance" claim can be
-// checked rather than asserted, so it is measured against the thing being
-// replaced rather than against nothing.
+// Benchmark: style::engine (resolve each element once, then read every
+// property) against ctcss::query (match the sheet once per property per
+// element), on the same document and the same sheet.
 //
-// The two engines are asked to do the SAME WORK, which needs care to be fair:
-// layout does not want one property, it wants all of them, so the previous engine is charged
-// for the query() calls it would really make (one per property per element)
-// and the engine for resolving each element once. Charging the previous engine for a single
-// property would flatter it and measure nothing anybody runs.
+// Both sides do the work a layout pass really needs: every property in `wanted`
+// for every element. Charging ctcss::query for a single property would flatter
+// it and measure nothing anybody runs.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
@@ -28,15 +27,15 @@ using clock_type = std::chrono::steady_clock;
 
 namespace {
 
-// The properties a layout pass actually asks for. the previous engine pays query() per element
-// per entry in this list; the engine resolves the element once and reads them out.
+// The properties a layout pass actually asks for. ctcss pays one query() per
+// element per entry; style::engine resolves each element once and reads them.
 constexpr std::string_view wanted[] = {
     "display",          "width",     "height",      "margin",      "padding",    "color",
     "background-color", "font-size", "font-family", "font-weight", "text-align",
 };
 
-// A document with realistic shape: nested structure, classes, ids - not a flat
-// list, because depth is what the ancestor filter exists for.
+/// Builds a document with a realistic shape (nesting, classes, ids) rather than
+/// a flat list, because depth is what the engine's ancestor filter speeds up.
 [[nodiscard]] std::string build_html(int sections, int rows) {
     std::string out = "<body class=page><div id=root class=wrap>";
     for (int s = 0; s < sections; ++s) {
@@ -52,6 +51,8 @@ constexpr std::string_view wanted[] = {
     return out;
 }
 
+/// Builds a sheet of ten matching rules plus 2 * `extra_rules` rules that match
+/// nothing.
 [[nodiscard]] std::string build_css(int extra_rules) {
     std::string out = "body { font-family: serif; color: black }"
                       ".wrap { display: block; padding: 8px }"
@@ -63,8 +64,9 @@ constexpr std::string_view wanted[] = {
                       "#root .panel .row .link { font-weight: bold }"
                       "section header h2 { font-size: 18px }"
                       "ul li span { background-color: white }";
-    // Bulk rules that match nothing. the previous engine rescans them for every lookup; the engine
-    // files them in buckets it never consults. That difference IS the point.
+    // Bulk rules that match nothing. ctcss rescans them on every lookup;
+    // style::engine files them in buckets it never consults, which is the
+    // difference being measured.
     for (int i = 0; i < extra_rules; ++i) {
         out += ".unused" + std::to_string(i) + " { color: red }";
         out += "#none" + std::to_string(i) + " div { width: 1px }";
@@ -72,20 +74,22 @@ constexpr std::string_view wanted[] = {
     return out;
 }
 
-// Collect every element with its ancestor chain in the previous engine's element_ref form,
-// root-first and self-last, which is the order the previous engine documents.
+// Collect every element with its ancestor chain as ctcss::element_ref,
+// root-first and self-last (the order ctcss::query expects).
 //
-// element_ref holds STRING_VIEWS, so the strings behind them have to outlive
-// the chain. The obvious version of this function - constructing element_ref
-// from `std::string{...}` temporaries - dangles every view immediately, and
-// the previous engine then matches against freed memory. It looked like it worked and produced
-// a flatteringly wrong benchmark; the declaration-count cross-check below is
-// what exposed it. Hence the owned strings.
+// element_ref holds string_views, so the strings behind them must outlive the
+// chain: they live in `owned`, and build_chain() is called only after every
+// vector has stopped growing. Building element_ref from `std::string{...}`
+// temporaries would dangle every view and silently produce wrong timings.
+
+/// One element's tag, id and class attribute, owned.
 struct owned_element {
     std::string tag, id, classes;
 };
+/// An element as ctcss sees it: its ancestor chain, owned, plus the views
+/// into it that ctcss::query takes.
 struct v1_element {
-    std::vector<owned_element> owned; // root-first
+    std::vector<owned_element> owned; // Root-first.
     std::vector<ctcss::element_ref> chain;
 
     void build_chain() {
@@ -97,6 +101,8 @@ struct v1_element {
     }
 };
 
+/// Appends a v1_element for every element at or below `at`; `path` holds the
+/// ancestors of `at` and is restored before returning.
 void collect_v1(const read_txn & txn, atom_table & atoms, node_id at,
                 std::vector<owned_element> & path, std::vector<v1_element> & out) {
     const bool is_element = txn.kind(at).value_or(node_kind::text) == node_kind::element;
@@ -130,7 +136,7 @@ int main() {
     std::vector<owned_element> path;
     std::vector<v1_element> v1_elements;
     collect_v1(txn, atoms, txn.root(), path, v1_elements);
-    // views are built only once every owning vector has stopped growing
+    // Views are built only once every owning vector has stopped growing.
     for (v1_element & e : v1_elements) { e.build_chain(); }
 
     const ctcss::value_sheet v1_sheet = ctcss::parse_value(css);
@@ -138,7 +144,7 @@ int main() {
     std::printf("style resolution: %zu elements, %zu rules, %zu properties each\n\n",
                 v1_elements.size(), styles.rule_count(), std::size(wanted));
 
-    // --- the previous engine: query() per property per element -----------------------------
+    // --- ctcss: query() per property per element -----------------------
     std::size_t query_hits = 0;
     const auto t0 = clock_type::now();
     for (const v1_element & e : v1_elements) {
@@ -150,7 +156,7 @@ int main() {
     }
     const auto query_time = clock_type::now() - t0;
 
-    // --- resolve each element once ------------------------------------
+    // --- style::engine: resolve each element once -----------------------
     std::size_t resolve_hits = 0;
     const auto t1 = clock_type::now();
     const style::style_map resolved = styles.resolve_all(txn);
@@ -160,14 +166,12 @@ int main() {
                 ++resolve_hits;
                 continue;
             }
-            // A SHORTHAND IS GONE BY NOW, and that is correct: the engine
-            // expands `margin: 4px` into four longhands at parse time so the
-            // cascade orders them properly (style/engine.hpp says why). Asking
-            // for `margin` back therefore finds nothing, while ctcss::query -
-            // which matches selectors and never expands - does find it.
-            //
-            // So the count is taken through the engine's OWN expansion rather
-            // than a second copy of that knowledge here.
+            // Shorthands are gone by now, correctly: the engine expands
+            // `margin: 4px` into four longhands at parse time so the cascade
+            // orders them properly (style/engine.hpp says why). Asking for
+            // `margin` therefore finds nothing, while ctcss::query, which never
+            // expands, does find it. So count through the engine's own
+            // expansion rather than a second copy of that knowledge here.
             for (const auto & [longhand, ignored] :
                  style::engine::expand_shorthand(property, "0")) {
                 (void)ignored;
@@ -186,16 +190,9 @@ int main() {
     std::printf("  ctcss query() per property  %8.2f ms\n", query_ms);
     std::printf("  resolve once + read        %8.2f ms   %.1fx faster\n", resolve_ms,
                 query_ms / resolve_ms);
-    // A CROSS-CHECK THAT ALWAYS FAILS IS NOT A CROSS-CHECK. This printed
-    // DISAGREE on every run for as long as it existed, because the two sides
-    // counted shorthands differently - so a REAL divergence appearing later
-    // would have been indistinguishable from the standing noise. It is the same
-    // failure the p5 harness had: a signal nobody can act on.
-    //
-    // The gap was exactly 61 - `margin` on 60 sections and `padding` on one div
-    // - and it was benign every time. Now the two sides count the same thing and
-    // DISAGREE means something again. This check earned its keep once already,
-    // by catching the dangling element_ref views described above.
+    // Both sides count the same declarations (shorthands counted through the
+    // engine's own expansion), so DISAGREE means a real difference, such as the
+    // dangling element_ref views described above collect_v1().
     std::printf("\n  declarations found: query=%zu resolve=%zu %s\n", query_hits, resolve_hits,
                 query_hits == resolve_hits
                     ? "(agree)"

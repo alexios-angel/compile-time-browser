@@ -1,17 +1,21 @@
-#pragma once
-
-// ONE LEVEL OF A RECURSION THAT COUNTS ITS OWN DEPTH. A parser or a walk that
-// recurses once per level of an author's nesting overflows the C++ stack on
-// `((((...` long before it runs out of anything else, so each such recursion
-// keeps a counter, refuses past its own limit, and holds one of these for
-// every level it enters: the count is back where it was on every way out,
-// exceptions included.
+//===- depth.hpp - RAII recursion depth counter --------------- -*- C++ -*-===//
 //
-//     if (depth_ >= max_depth) { return refused(); }
-//     const depth_guard level{depth_};
+// depth_guard, one level of a recursion that counts its own depth.
+//
+//===----------------------------------------------------------------------===//
+
+#pragma once
 
 namespace ctbrowser {
 
+/// One level of a recursion that counts its own depth. A parser or walk that
+/// recurses once per level of an author's nesting overflows the C++ stack on
+/// `((((...`, so each such recursion keeps a counter, refuses past its own
+/// limit, and holds one of these per level: the count is restored on every
+/// exit, exceptions included.
+///
+///     if (depth_ >= max_depth) { return refused(); }
+///     const depth_guard level{depth_};
 class depth_guard {
 public:
     explicit depth_guard(int & at) : at_(at) { ++at_; }

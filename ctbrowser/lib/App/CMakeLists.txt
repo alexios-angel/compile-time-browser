@@ -1,8 +1,9 @@
-# ctbrowser.app - the window and the event loop; the only place that knows SDL exists.
+# ctbrowser-app: the window and the event loop, the only library that knows SDL
+# exists.
 #
-# ALWAYS built. SDL3 is a compile definition, not a gate: without it the module
+# Always built. SDL3 is a compile definition, not a gate: without it the library
 # still provides run_app() over the headless backend, which is what makes "SDL3
-# is optional" true of the BUILD and not just of the engine.
+# is optional" true of the build and not just of the engine.
 add_library(ctbrowser-app)
 target_sources(ctbrowser-app PUBLIC FILE_SET HEADERS BASE_DIRS "${CTBROWSER_INCLUDE_DIR}")
 add_subdirectory(app)
@@ -13,9 +14,8 @@ target_link_libraries(ctbrowser-app PUBLIC ctbrowser-core ctbrowser-paint ctbrow
 if(SDL3_FOUND)
   target_compile_definitions(ctbrowser-app PRIVATE CTBROWSER_WITH_SDL3=1)
   target_link_libraries(ctbrowser-app PUBLIC ${CTBROWSER_SDL3_TARGET})
-  # PNG/JPEG/WebP, if the satellite library is there (found by the root
-  # CMakeLists). BMP is decoded by the engine itself, so a build without this
-  # still shows images.
+  # Image formats beyond what the engine decodes itself (BMP, PNG and JPEG),
+  # if the satellite library was found by ctbrowser/CMakeLists.txt.
   if(SDL3_image_FOUND)
     target_compile_definitions(ctbrowser-app PRIVATE CTBROWSER_WITH_IMAGE=1)
     target_link_libraries(ctbrowser-app PUBLIC ${CTBROWSER_SDL3_IMAGE_TARGET})
