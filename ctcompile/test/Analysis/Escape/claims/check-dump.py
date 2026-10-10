@@ -13,8 +13,9 @@ def rows(text):
 
 
 checker, dump, expected = map(Path, sys.argv[1:])
-want, got = rows("".join(p.read_text() for p in sorted(expected.glob("*.txt")))), rows(
-    dump.read_text()
+want, got = (
+    rows("".join(p.read_text() for p in sorted(expected.glob("*.txt")))),
+    rows(dump.read_text()),
 )
 if want != got:
     sys.stderr.writelines(difflib.unified_diff(want, got, str(expected), str(dump)))

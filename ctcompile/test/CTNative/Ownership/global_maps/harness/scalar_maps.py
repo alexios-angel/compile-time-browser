@@ -447,16 +447,18 @@ def forge_map_presence(text, payload="bool"):
     scalar = "string" if payload == "nullable_string" else payload
     marked, count = re.subn(
         r"(^\s*%[-\w.$]+ = ctjs\.call [^\n{]+)(\{)?",
-        lambda match: match[1].rstrip()
-        + ' {ctnative.map_present = true, ctnative.map_read_type = "'
-        + payload
-        + '", ctnative.map_write_type = "'
-        + scalar
-        + '"'
-        + ', ctnative.map_key_type = "'
-        + scalar
-        + '"'
-        + (", " if match[2] else "}"),
+        lambda match: (
+            match[1].rstrip()
+            + ' {ctnative.map_present = true, ctnative.map_read_type = "'
+            + payload
+            + '", ctnative.map_write_type = "'
+            + scalar
+            + '"'
+            + ', ctnative.map_key_type = "'
+            + scalar
+            + '"'
+            + (", " if match[2] else "}")
+        ),
         methods.forge_reports(text),
         flags=re.M,
     )
@@ -476,9 +478,11 @@ def forge_leaf_evidence(text, payload="bool"):
         raise RuntimeError("forged leaf evidence lost every allocation")
     marked, count = re.subn(
         r"(^\s*(?:%[-\w.$]+ = )?ctjs\.(?:get|set)_property [^\n{]+)(\{)?",
-        lambda match: match[1].rstrip()
-        + " {ctnative.object_field_group = 99 : i64"
-        + (", " if match[2] else "}"),
+        lambda match: (
+            match[1].rstrip()
+            + " {ctnative.object_field_group = 99 : i64"
+            + (", " if match[2] else "}")
+        ),
         marked,
         flags=re.M,
     )

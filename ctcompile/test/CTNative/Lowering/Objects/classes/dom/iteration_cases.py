@@ -67,18 +67,27 @@ BOOTSTRAP_H = """    const H = {
         getDataAttribute: (t, e) => M(t.getAttribute(`data-bs-${F(e)}`))
     };
 """
-FULL_H = BOOTSTRAP_M + strings.BOOTSTRAP_F + BOOTSTRAP_H + """class Shape {
+FULL_H = (
+    BOOTSTRAP_M
+    + strings.BOOTSTRAP_F
+    + BOOTSTRAP_H
+    + """class Shape {
     constructor(element) { this.element = element; }
     read() { return H.getDataAttribute(this.element, 'config'); }
   }
   return typeof new Shape(element).read() === 'object';
 """
+)
 FILTER_REFUSALS["class_filter_full_h"] = FULL_H
 # Original H slot and M/F bodies, with a class result supplying the source observation.
-H_CAPTURE_CLASS = ATTRIBUTE_HELPERS + CLASS + """  element.setAttribute('data-bs-config',
+H_CAPTURE_CLASS = (
+    ATTRIBUTE_HELPERS
+    + CLASS
+    + """  element.setAttribute('data-bs-config',
     element.getAttribute(shape.read()) === null ? '%7B%7D' : '%');
   return typeof H.getDataAttribute(element, 'config') === 'object';
 """
+)
 H_CAPTURE_CASES = {
     "class_h_captures": (H_CAPTURE_CLASS, "1000"),
     "class_h_captures_multiple": (
@@ -124,7 +133,9 @@ H_CAPTURE_CASES["class_h_capture_later_key"] = (
     "1000",
 )
 # The class method is the original H slot's only caller.
-H_OBJECT_CLASS = ATTRIBUTE_HELPERS + """class Shape {
+H_OBJECT_CLASS = (
+    ATTRIBUTE_HELPERS
+    + """class Shape {
     constructor(element) { this.element = element; }
     read(key) { return H.getDataAttribute(this.element, key); }
   }
@@ -133,6 +144,7 @@ H_OBJECT_CLASS = ATTRIBUTE_HELPERS + """class Shape {
     element.getAttribute('x') === null ? '%7B%7D' : '%');
   return typeof shape.read('config') === 'object';
 """
+)
 H_OBJECT_CASES = {
     "class_h_object": (H_OBJECT_CLASS, "1000"),
     "class_h_object_order": (
@@ -341,7 +353,10 @@ for cases in (FILTER_CASES, M_CASES, NUMBER_CASES):
     cases.update(H_COMBINED_CASES)
 for refusals in (FILTER_REFUSALS, M_REFUSALS, NUMBER_REFUSALS):
     refusals.update(H_COMBINED_REFUSALS)
-DYNAMIC_BODY = "const keys = Object.keys(t.dataset).filter(" + FILTER_PREDICATE + """);
+DYNAMIC_BODY = (
+    "const keys = Object.keys(t.dataset).filter("
+    + FILTER_PREDICATE
+    + """);
       let joined = '';
       for (let i = 0; i < keys.length; i = i + 1) {
         const n = keys[i];
@@ -349,6 +364,7 @@ DYNAMIC_BODY = "const keys = Object.keys(t.dataset).filter(" + FILTER_PREDICATE 
       }
       return joined;
 """
+)
 DYNAMIC_INDEXED_BODY = DYNAMIC_BODY
 DYNAMIC_BODY = DYNAMIC_BODY.replace(
     "for (let i = 0; i < keys.length; i = i + 1) {\n        const n = keys[i];",
@@ -756,8 +772,7 @@ F_DATASET_CASES = {
     "class_f_dataset_saved": (
         F_DATASET.replace(
             "joined = joined + F(n) + '|';",
-            "const saved = F(n); t.setAttribute('marker', saved); "
-            "joined = joined + saved + '|';",
+            "const saved = F(n); t.setAttribute('marker', saved); joined = joined + saved + '|';",
         ).replace(
             "return H.read(element) === 'bs-toggle|'",
             "return H.read(element) === 'bs-toggle|' && "

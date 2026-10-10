@@ -124,7 +124,7 @@ def check_string_field_refusals(args, positives):
                     args, input_ir, current, current_config, options=options, cleanup=False
                 )
                 text = methods.census(failed, 5, current, admitted=0)
-                if f'ctnative.host_owner_proved = {str(row["owner"]).lower()}' not in text:
+                if f"ctnative.host_owner_proved = {str(row['owner']).lower()}" not in text:
                     raise RuntimeError(
                         f"{current}: field refusal lost its independent ownership boundary"
                     )

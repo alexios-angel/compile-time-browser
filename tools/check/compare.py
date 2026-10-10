@@ -188,11 +188,14 @@ def font_conf(path: Path) -> Path:
         ("Courier New", "Cousine"),
         ("Courier", "Cousine"),
     ]
-    rules = "".join(f"""  <match target="pattern">
+    rules = "".join(
+        f"""  <match target="pattern">
     <test qual="any" name="family"><string>{asked}</string></test>
     <edit name="family" mode="assign" binding="strong"><string>{real}</string></edit>
   </match>
-""" for asked, real in families)
+"""
+        for asked, real in families
+    )
     path.write_text(
         '<?xml version="1.0"?>\n'
         '<!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">\n'

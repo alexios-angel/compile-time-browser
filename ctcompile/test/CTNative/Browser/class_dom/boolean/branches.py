@@ -98,11 +98,15 @@ def scenarios(name):
         for alias in (False, True):
             first_events, first_result = observations(name, *first)
             second_events, second_result = observations(name, *second)
-            yield first, second, alias, first_result and (
-                first_result if alias else second_result
-            ), (
-                first_events * (3 if alias else 2),
-                second_events * (0 if alias else 1),
+            yield (
+                first,
+                second,
+                alias,
+                first_result and (first_result if alias else second_result),
+                (
+                    first_events * (3 if alias else 2),
+                    second_events * (0 if alias else 1),
+                ),
             )
 
 
@@ -195,9 +199,10 @@ def mutations(text):
     nested = call[0]
     for _ in range(64):
         nested = f"      scf.if {predicate} {{\n{nested}\n      }}"
-    yield "too-deep", text[: owner.start() + call.start()] + nested + text[
-        owner.start() + call.end() :
-    ]
+    yield (
+        "too-deep",
+        text[: owner.start() + call.start()] + nested + text[owner.start() + call.end() :],
+    )
     # A state-bearing branch before the unconditional store must not gain
     # authorization from the later store or the later callback creators.
     store = re.search(rf"^    ctjs\.cell_set {re.escape(cell)}, (%\w+)", owner[0], re.M)
@@ -207,8 +212,9 @@ def mutations(text):
     )
     yield "branch-before-initialization", captures.insert(text, owner, store.start(), earlier)
     # Exact operand roles remain mandatory inside a newly admitted arm.
-    yield "conditional-cell-escape", captures.insert(
-        text, owner, call.end(), f'      ctjs.store_global "escaped", {cell}'
+    yield (
+        "conditional-cell-escape",
+        captures.insert(text, owner, call.end(), f'      ctjs.store_global "escaped", {cell}'),
     )
 
 

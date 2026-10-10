@@ -34,8 +34,10 @@ def instrument_maps(cpp, *, declarations=""):
     )
     changed, count = re.subn(
         r"return std::make_shared<(map_storage<K, V>|number_map<K>)>\(\);",
-        lambda match: "auto made = std::make_shared<" + match[1] + ">(); "
-        "ctn_test_maps.emplace_back(made); return made;",
+        lambda match: (
+            "auto made = std::make_shared<" + match[1] + ">(); "
+            "ctn_test_maps.emplace_back(made); return made;"
+        ),
         changed,
     )
     if count != 2:
@@ -408,8 +410,10 @@ def lifetime(args, cpp, name, mode, value, compiler):
     )
     changed, count = re.subn(
         r"return std::make_shared<(map_storage<K, V>|number_map<K>)>\(\);",
-        lambda match: "auto made = std::make_shared<" + match[1] + ">(); "
-        "ctn_test_maps.emplace_back(made); return made;",
+        lambda match: (
+            "auto made = std::make_shared<" + match[1] + ">(); "
+            "ctn_test_maps.emplace_back(made); return made;"
+        ),
         changed,
     )
     if count != 2:

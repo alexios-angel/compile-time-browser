@@ -149,8 +149,7 @@ FULL_H_REFUSALS.update(
         ),
         "class_h_full_method_instance_replaced": FULL_H_METHOD.replace(
             "return new Shape().read(element);",
-            "const shape = new Shape(); shape.read = element => true; "
-            "return shape.read(element);",
+            "const shape = new Shape(); shape.read = element => true; return shape.read(element);",
         ),
         "class_h_full_method_prototype_deleted": FULL_H_METHOD.replace(
             "return new Shape().read(element);",

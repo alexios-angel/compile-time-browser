@@ -39,7 +39,8 @@ var Map = function() {
 # Object-valued exception tokens test identity, not engine-specific error text.
 SCENARIOS = {
     "commonjs-precedence": (
-        BROWSER + """var module = {exports: {}};
+        BROWSER
+        + """var module = {exports: {}};
 var exports = module.exports;
 var originalExports = exports;
 var traceDefineReads = 0;
@@ -49,7 +50,8 @@ Object.defineProperty(define, "amd", {get: function() {
     traceDefineReads = traceDefineReads + 1;
     return 1;
 }});
-""" + MAP_COUNTER,
+"""
+        + MAP_COUNTER,
         """var tracePublished = typeof module.exports.set === "function" ? 1 : 0;
 var traceOldExports = exports === originalExports && exports !== module.exports ? 1 : 0;
 var traceNoBrowser = globalThis.bootstrap === undefined ? 1 : 0;
@@ -81,7 +83,9 @@ var traceNoSelf = self.bootstrap === undefined ? 1 : 0;
         False,
     ),
     "amd-retained-factory": (
-        BROWSER + MAP_COUNTER + """var pending;
+        BROWSER
+        + MAP_COUNTER
+        + """var pending;
 var traceDefineCalls = 0;
 var traceDefineReceiver = 0;
 function define(factory) {
@@ -196,7 +200,8 @@ var traceOldRemoved = data.get(element, "bs.alert") === null ? 1 : 0;
         False,
     ),
     "callee-read-order": (
-        BROWSER + """var traceOrder = 0;
+        BROWSER
+        + """var traceOrder = 0;
 var oldFrom = Array.from;
 Object.defineProperty(Array, "from", {get: function() {
     traceOrder = traceOrder * 10 + 2;
@@ -221,7 +226,8 @@ globalThis.bootstrap.set(element, "bs.collapse", 99);
         False,
     ),
     "publication-setter-throw": (
-        BROWSER + """var marker = {}; var retained; var traceCaught = 0; var traceSetterCalls = 0;
+        BROWSER
+        + """var marker = {}; var retained; var traceCaught = 0; var traceSetterCalls = 0;
 Object.defineProperty(globalThis, "bootstrap", {set: function(value) {
     traceSetterCalls = traceSetterCalls + 1;
     retained = value;
@@ -235,7 +241,8 @@ var traceRetained = retained.get(element, "bs.alert");
         True,
     ),
     "factory-throw-before-publication": (
-        BROWSER + """var marker = {}; var traceCaught = 0; var traceSetterCalls = 0;
+        BROWSER
+        + """var marker = {}; var traceCaught = 0; var traceSetterCalls = 0;
 Object.defineProperty(globalThis, "bootstrap", {set: function(value) {
     traceSetterCalls = traceSetterCalls + 1;
 }});
@@ -246,7 +253,9 @@ var Map = function() { throw marker; };
         True,
     ),
     "amd-registration-throw": (
-        BROWSER + MAP_COUNTER + """var marker = {}; var pending; var traceCaught = 0;
+        BROWSER
+        + MAP_COUNTER
+        + """var marker = {}; var pending; var traceCaught = 0;
 function define(factory) { pending = factory; throw marker; }
 define.amd = 1;
 """,

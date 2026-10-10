@@ -146,7 +146,9 @@ def mixed_child_observer(source, row):
         "identity": "true",
         "returned": "true",
     }[kind]
-    observed = source + """
+    observed = (
+        source
+        + """
 (function() {
     const set = host.slot.set, get = host.slot.get;
     const read = value => GET;
@@ -192,6 +194,7 @@ def mixed_child_observer(source, row):
     trace = ok ? 1 : 0;
 })();
 """
+    )
     if row.get("entry_fields"):
         initial = " && ".join(
             f"{name} === {json.dumps(value)}" for name, value in row["observations"].items()
@@ -214,7 +217,9 @@ def mixed_child_observer(source, row):
             (
                 "get(value)"
                 if kind == "identity"
-                else "get() === (value || null)" if kind == "returned" else "get()"
+                else "get() === (value || null)"
+                if kind == "returned"
+                else "get()"
             ),
         )
         .replace("EXPECTED", expected)
@@ -254,7 +259,9 @@ def mixed_child_observer(source, row):
 
 def mixed_child_lifetime_cpp(cpp, row):
     kind = row.get("mixed_child_kind", "number")
-    changed = instrument_leaf_objects(cpp) + r"""
+    changed = (
+        instrument_leaf_objects(cpp)
+        + r"""
 int main() {
     using Value = ctnative::object_value;
     using Scalar = ctnative::nullable_scalar;
@@ -347,6 +354,7 @@ int main() {
     return 0;
 }
 """
+    )
     if kind == "returned":
         changed = (
             changed.replace(
@@ -398,7 +406,9 @@ int main() {
                 else (
                     "(number != 0)"
                     if kind == "truthy"
-                    else "(number == 64)" if kind == "number" else "false"
+                    else "(number == 64)"
+                    if kind == "number"
+                    else "false"
                 )
             ),
         )

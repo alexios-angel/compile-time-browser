@@ -84,9 +84,7 @@ ROOTED = "%frame = ctjs.frame_enter 8\n" + owner().replace(
     "%seen = ctjs.create_cell %u", "%seen = ctjs.create_cell %u\nctjs.root %seen in %frame"
 ).replace(NEUTRAL, "ctjs.root %seen in %frame\n" + NEUTRAL).replace(
     "%key =", "ctjs.root %seen in %frame\n%key ="
-).replace(
-    "ctjs.return", "ctjs.frame_exit %frame\nctjs.return"
-)
+).replace("ctjs.return", "ctjs.frame_exit %frame\nctjs.return")
 CASES = {
     "then-results": (cells.program(owner()), JS, {}),
     "else-results": (

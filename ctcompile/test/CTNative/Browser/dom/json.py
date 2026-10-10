@@ -141,8 +141,7 @@ SPREAD_INPUTS = INPUTS + (
     '{"a\\u0000b":{"saved":"a\\u0000b"}}',
 )
 LATER_INPUT = (
-    '{"z":"last","0":"zero","2":"second","tail":{"kept":[true,null]},'
-    '"__proto__":{"safe":"later"}}'
+    '{"z":"last","0":"zero","2":"second","tail":{"kept":[true,null]},"__proto__":{"safe":"later"}}'
 )
 OBSERVE = """
 function observe(result) {

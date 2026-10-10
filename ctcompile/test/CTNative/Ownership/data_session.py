@@ -112,7 +112,9 @@ static_assert(sizeof(session_type) ==
             lifetime = native.with_suffix(".lifetime.cpp")
             changed, count = re.subn(r"\bmain\(\)", "session_entry()", cpp)
             assert count == 1
-            lifetime.write_text(changed + """
+            lifetime.write_text(
+                changed
+                + """
 int main() {
     if (session_entry() != 0) { return 1; }
     auto table = g_globalThis->bootstrap;
@@ -150,7 +152,8 @@ int main() {
     if (!payload_lifetime.expired()) { return 12; }
     return 0;
 }
-""")
+"""
+            )
             binary = lifetime.with_suffix(".sanitized").resolve()
             result = run_sanitized(compilers[1], lifetime, binary, owned.FLAGS)
             if result.returncode or result.stdout != expected * 2 or result.stderr:

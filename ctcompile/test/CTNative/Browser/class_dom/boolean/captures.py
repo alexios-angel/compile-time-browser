@@ -282,40 +282,62 @@ def roots(text):
 def mutations(text):
     owner, cell, captures, writer, reader = shape(text)
     closure = captures[0]
-    yield "duplicate-creator", insert(
-        text, owner, closure.end(), closure[0].replace(closure[1], "%duplicate", 1)
+    yield (
+        "duplicate-creator",
+        insert(text, owner, closure.end(), closure[0].replace(closure[1], "%duplicate", 1)),
     )
     initial = re.search(rf"^    {re.escape(cell)} = ctjs\.create_cell (%\w+)", owner[0], re.M)[1]
     name = re.search(r"@([^ (]+)", writer[0])[1]
     exited = re.search(r"^    ctjs\.frame_exit %\w+", owner[0], re.M)
-    yield "unselected-symbolic-caller", insert(
-        text,
-        owner,
-        exited.start(),
-        f"    %unselected = ctjs.call_direct @{name}({initial}, {initial}, {initial})",
+    yield (
+        "unselected-symbolic-caller",
+        insert(
+            text,
+            owner,
+            exited.start(),
+            f"    %unselected = ctjs.call_direct @{name}({initial}, {initial}, {initial})",
+        ),
     )
-    yield "symbol-observer", text.replace(
-        "module attributes {", f"module attributes {{test.boolean_observer = @{name}, ", 1
+    yield (
+        "symbol-observer",
+        text.replace(
+            "module attributes {", f"module attributes {{test.boolean_observer = @{name}, ", 1
+        ),
     )
     store = re.search(rf"^    ctjs\.cell_set {re.escape(cell)}, (%\w+)", owner[0], re.M)
-    yield "cell-stored-as-value", text[: owner.start() + store.start()] + store[0].replace(
-        store[1], cell
-    ) + text[owner.start() + store.end() :]
+    yield (
+        "cell-stored-as-value",
+        text[: owner.start() + store.start()]
+        + store[0].replace(store[1], cell)
+        + text[owner.start() + store.end() :],
+    )
     callee = re.search(r"ctjs\.store_upvalue (%\w+)\[0\], (%\w+)", writer[0])
-    yield "callee-stored-as-value", text[: writer.start() + callee.start()] + callee[0].replace(
-        callee[2], callee[1]
-    ) + text[writer.start() + callee.end() :]
+    yield (
+        "callee-stored-as-value",
+        text[: writer.start() + callee.start()]
+        + callee[0].replace(callee[2], callee[1])
+        + text[writer.start() + callee.end() :],
+    )
     loaded = re.search(r"ctjs\.load_upvalue %\w+\[0\]", reader[0])
-    yield "wrong-slot", text[: reader.start() + loaded.start()] + loaded[0].replace(
-        "[0]", "[1]"
-    ) + text[reader.start() + loaded.end() :]
-    yield "wrong-enclosing", text[: owner.start() + closure.start()] + closure[0].replace(
-        closure[2] + "[", initial + "[", 1
-    ) + text[owner.start() + closure.end() :]
+    yield (
+        "wrong-slot",
+        text[: reader.start() + loaded.start()]
+        + loaded[0].replace("[0]", "[1]")
+        + text[reader.start() + loaded.end() :],
+    )
+    yield (
+        "wrong-enclosing",
+        text[: owner.start() + closure.start()]
+        + closure[0].replace(closure[2] + "[", initial + "[", 1)
+        + text[owner.start() + closure.end() :],
+    )
     returned = re.search(r"^    ctjs\.return (%\w+)", owner[0], re.M)
-    yield "returned-cell", text[
-        : owner.start() + returned.start()
-    ] + f"    ctjs.return {cell}" + text[owner.start() + returned.end() :]
+    yield (
+        "returned-cell",
+        text[: owner.start() + returned.start()]
+        + f"    ctjs.return {cell}"
+        + text[owner.start() + returned.end() :],
+    )
     # Keep the defining literal in place, but move the only initialization
     # after the original callbacks and reads. SSA remains verifier-valid.
     missing = text[: owner.start() + store.start()] + text[owner.start() + store.end() :]
@@ -427,9 +449,9 @@ def main():
             if original is not None:
                 assert source_operations(args, diagnostic) == original, diagnostic
             if name == "completion-loop":
-                assert (
-                    "DOM completion arithmetic must be a Boolean constant" in diagnostic
-                ), diagnostic
+                assert "DOM completion arithmetic must be a Boolean constant" in diagnostic, (
+                    diagnostic
+                )
             refusals += 1
     print(
         f"DOM class Boolean captures: {len(CASES)} Node/VM sources, {executions} native executions, {refusals} refusals"

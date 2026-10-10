@@ -111,8 +111,10 @@ def result_roots(text):
     frame = re.search(r"(%\w+) = ctjs\.frame_enter \d+", writer[0])[1]
     exit_op = re.search(rf"^    ctjs\.frame_exit {re.escape(frame)}\b", writer[0], re.M)
     root = f"    ctjs.root {branch[1]} in {frame}"
-    yield "branch-result", captures.insert(text, writer, branch.end(), root), captures.insert(
-        text, writer, exit_op.end(), root
+    yield (
+        "branch-result",
+        captures.insert(text, writer, branch.end(), root),
+        captures.insert(text, writer, exit_op.end(), root),
     )
 
 
@@ -145,14 +147,18 @@ def mutations(text):
             f"      %bad_yield = ctjs.constant {attr}\n      scf.yield %bad_yield : !ctjs.value",
             1,
         )
-        yield label, text[: writer.start() + branch.start()] + changed + text[
-            writer.start() + branch.end() :
-        ]
+        yield (
+            label,
+            text[: writer.start() + branch.start()]
+            + changed
+            + text[writer.start() + branch.end() :],
+        )
     callee = re.findall(r"(%\w+): !ctjs.value", writer[0].split("\n")[0])[2]
     changed = branch[0].replace(first_yield[0], f"      scf.yield {callee} : !ctjs.value", 1)
-    yield "callee-yield", text[: writer.start() + branch.start()] + changed + text[
-        writer.start() + branch.end() :
-    ]
+    yield (
+        "callee-yield",
+        text[: writer.start() + branch.start()] + changed + text[writer.start() + branch.end() :],
+    )
     # A verifier-valid non-value result must not acquire Boolean authority
     # merely because its producer is a Truthy operation.
     changed = branch[0].replace("-> (!ctjs.value)", "-> (i1)")
@@ -172,17 +178,19 @@ def verifier_mutations(text):
     writer, branch = shape(text)
     first_yield = re.search(r"^      scf\.yield (%\w+) : !ctjs.value", branch[0], re.M)
     changed = branch[0].replace(first_yield[0], "      scf.yield", 1)
-    yield "missing-arm-result", text[: writer.start() + branch.start()] + changed + text[
-        writer.start() + branch.end() :
-    ]
+    yield (
+        "missing-arm-result",
+        text[: writer.start() + branch.start()] + changed + text[writer.start() + branch.end() :],
+    )
     changed = branch[0].replace(
         first_yield[0],
         f"      scf.yield {first_yield[1]}, {first_yield[1]} : !ctjs.value, !ctjs.value",
         1,
     )
-    yield "extra-arm-result", text[: writer.start() + branch.start()] + changed + text[
-        writer.start() + branch.end() :
-    ]
+    yield (
+        "extra-arm-result",
+        text[: writer.start() + branch.start()] + changed + text[writer.start() + branch.end() :],
+    )
 
 
 def main():

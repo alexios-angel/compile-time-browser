@@ -344,7 +344,9 @@ def main():
             result_type=(
                 "ctnative::js_string"
                 if string_result
-                else "ctnative::js_boolean_t" if boolean_result else "ctnative::js_num"
+                else "ctnative::js_boolean_t"
+                if boolean_result
+                else "ctnative::js_num"
             ),
         )
         if boolean_result or string_result:
@@ -495,8 +497,7 @@ def main():
             forged = args.work / "forged-fresh.mlir"
             text = forge_reports(rejected.read_text())
             marker = (
-                ' {ctnative.owned_method_table_slot = "forged", '
-                'ctnative.method_table = "forged"}'
+                ' {ctnative.owned_method_table_slot = "forged", ctnative.method_table = "forged"}'
             )
             text, count = re.subn(
                 r"\bctjs\.create_object(?!\s*\{)", "ctjs.create_object" + marker, text

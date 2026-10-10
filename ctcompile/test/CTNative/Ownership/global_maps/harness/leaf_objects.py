@@ -4,7 +4,9 @@ from .scalar_maps import *
 def leaf_object_observer_source(source, name):
     # Only this independent reference observer replaces Map.set. The compiled
     # source and its standard intrinsic contract retain their original bytes.
-    observed = source + """
+    observed = (
+        source
+        + """
 (function() {
     const seen = [];
     const original = Map.prototype.set;
@@ -18,6 +20,7 @@ def leaf_object_observer_source(source, name):
     const first = seen[0], second = seen[1];
     trace = 0;
 """
+    )
     checks = ["seen.length === 2", "first !== second", "host.slot.size() === before + 1"]
     style = LEAF_OBJECT_FIELDS.get(name)
     if style:
@@ -100,7 +103,9 @@ int main() {
     checks += leaf_field_failures("second", style, "before + 1" if style == "scalar" else "1")
     if checks:
         changed += "    if (" + " ||\n        ".join(checks) + ") { return 93; }\n"
-    return changed + r"""
+    return (
+        changed
+        + r"""
     first.reset();
     second.reset();
     for (const auto & object : ctn_test_objects) {
@@ -109,6 +114,7 @@ int main() {
     return 0;
 }
 """
+    )
 
 
 def check_leaf_object_calls(cpp, name, mode):
@@ -215,7 +221,9 @@ def comparison_identity_observer_source(source, name):
     historical = name.startswith("historical_")
     writes = 2 if historical else 1
     result = leaf_readback_sources()[name][2]
-    observed = source + """
+    observed = (
+        source
+        + """
 (function() {
     const seen = [], results = [];
     const original = Map.prototype.set;
@@ -231,6 +239,7 @@ def comparison_identity_observer_source(source, name):
     Map.prototype.set = original;
     trace = 0;
 """
+    )
     checks = [
         f"seen.length === {4 * writes}",
         f"results.length === 4 && results.every(value => value === {result})",

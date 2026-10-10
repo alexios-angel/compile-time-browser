@@ -271,8 +271,7 @@ def cases():
             methods={
                 "bad": (
                     "",
-                    "const keys = resource.keys(); Array.from(keys); "
-                    "return Array.from(keys)[0];",
+                    "const keys = resource.keys(); Array.from(keys); return Array.from(keys)[0];",
                 )
             },
             completed=1,
@@ -628,8 +627,9 @@ def controls(args, prepared):
         CALLBACKS,
         "budget",
         no_facts,
-        lambda report: report["summarized_provider_calls"] == 4
-        and report["runtime_provider_callbacks"] == 2,
+        lambda report: (
+            report["summarized_provider_calls"] == 4 and report["runtime_provider_callbacks"] == 2
+        ),
     )
 
 

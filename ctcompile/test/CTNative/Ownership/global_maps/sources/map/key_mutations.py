@@ -70,7 +70,7 @@ host.slot.size(); var trace = host.slot.set(7, FLAG);
 
     prefix = "const item = {value: 1}; state.set(key, item); state.clear(); "
     start = prefix + "state.set(1, item); state.set(2, item); "
-    branches = "if (flag) { state.delete(1); } " "else { state.delete(2); state.has(key); } "
+    branches = "if (flag) { state.delete(1); } else { state.delete(2); state.has(key); } "
     snapshot = "const saved = state.size; "
     field = (
         "state.clear(); state.set(1, item); state.set(3, item); "
@@ -89,9 +89,7 @@ host.slot.size(); var trace = host.slot.set(7, FLAG);
             1,
             15,
         )
-        setters = (
-            "if (flag) { state.set(7, item); } " "else { state.set(9, item); state.has(key); } "
-        )
+        setters = "if (flag) { state.set(7, item); } else { state.set(9, item); state.has(key); } "
         body = prefix + setters + snapshot + field
         add("joined_set_disjoint_" + flag, source(body, flag), 1, 13)
         add(
@@ -239,7 +237,7 @@ def mutation_size_cases():
     add = case_adder(rows, MUTATION_SIZE_HISTORY)
 
     snapshot = "const saved = state.size; "
-    branches = "if (flag) { state.delete(1); } " "else { state.delete(2); state.has(key); } "
+    branches = "if (flag) { state.delete(1); } else { state.delete(2); state.has(key); } "
     field = (
         "state.clear(); state.set(1, item); state.set(3, item); "
         "return state.get(saved).value === 1 ? 1 : 0;"

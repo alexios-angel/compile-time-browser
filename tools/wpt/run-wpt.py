@@ -523,8 +523,7 @@ def run_one(plan: Plan, driver: Path, wpt: Path, memory_mb: int) -> DriverResult
             return DriverResult(
                 Outcome.HARNESS_ERROR,
                 script_error
-                or "testharness.js never defined add_completion_callback "
-                f"(probe {last_probe!r})",
+                or f"testharness.js never defined add_completion_callback (probe {last_probe!r})",
                 log=output(),
                 seconds=time.monotonic() - started,
             )
@@ -607,7 +606,7 @@ def expectation_lines(results):
         for one in result.subtests:
             if one.get("status") != "PASS":
                 lines.append(
-                    f"{result.rel}\tSUBTEST\t{one['status']}\t" f"{json.dumps(one.get('name', ''))}"
+                    f"{result.rel}\tSUBTEST\t{one['status']}\t{json.dumps(one.get('name', ''))}"
                 )
     return lines
 
@@ -779,7 +778,7 @@ def main():
     parser.add_argument(
         "--gate",
         action="store_true",
-        help="run the fixed ctest subset and check it against " "the expectations",
+        help="run the fixed ctest subset and check it against the expectations",
     )
     parser.add_argument(
         "--selftest",
@@ -792,7 +791,7 @@ def main():
         "--jobs",
         type=int,
         default=4,
-        help="parallel drivers (default 4: the box has 8 vCPUs " "and shares them)",
+        help="parallel drivers (default 4: the box has 8 vCPUs and shares them)",
     )
     parser.add_argument(
         "--memory-mb",

@@ -146,8 +146,10 @@ def roots(text):
         frame = re.search(r"(%\w+) = ctjs\.frame_enter \d+", body[0])[1]
         exited = re.search(rf"^    ctjs\.frame_exit {re.escape(frame)}\b", body[0], re.M)
         root = f"    ctjs.root {value} in {frame}"
-        yield label, captures.insert(text, body, after.end(), root), captures.insert(
-            text, body, exited.end(), root
+        yield (
+            label,
+            captures.insert(text, body, after.end(), root),
+            captures.insert(text, body, exited.end(), root),
         )
 
 
@@ -156,20 +158,25 @@ def mutations(text):
     closure, reader, writer = closures[0], leaves[0], leaves[1]
     parent, creator = parent_capture(text, owner)
     for label, body, made in (("leaf", owner, closure), ("parent", parent, creator)):
-        yield f"duplicate-{label}-creator", captures.insert(
-            text, body, made.end(), made[0].replace(made[1], "%duplicate", 1)
+        yield (
+            f"duplicate-{label}-creator",
+            captures.insert(text, body, made.end(), made[0].replace(made[1], "%duplicate", 1)),
         )
         initial = re.search(r"(%\w+) = ctjs\.constant #ctjs.undefined", body[0])[1]
-        yield f"wrong-{label}-enclosing", replace(
-            text, body, made, made[0].replace(made[2] + "[", initial + "[", 1)
+        yield (
+            f"wrong-{label}-enclosing",
+            replace(text, body, made, made[0].replace(made[2] + "[", initial + "[", 1)),
         )
     fixed_slot = next(index for index, outer in enumerate(enclosing[0]) if outer >= 0)
     count = len(slots[0])
     for label, outer in (("out-of-range-forward", 1000), ("missing-forward", -1)):
         changed = list(enclosing[0])
         changed[fixed_slot] = outer
-        yield label, replace(
-            text, owner, closure, closure[0].replace(closure[6], ", ".join(map(str, changed)))
+        yield (
+            label,
+            replace(
+                text, owner, closure, closure[0].replace(closure[6], ", ".join(map(str, changed)))
+            ),
         )
     duplicate = list(slots[0])
     duplicate[fixed_slot] = cell
@@ -181,36 +188,57 @@ def mutations(text):
     )
     yield "duplicate-mutable-slot", replace(text, owner, closure, changed)
     for label, body, original_count in (("leaf", reader, count), ("parent", owner, 1)):
-        yield f"{label}-upvalue-count", text[: body.start()] + body[0].replace(
-            f"upvalue_count = {original_count} : i32",
-            f"upvalue_count = {original_count + 1} : i32",
-        ) + text[body.end() :]
+        yield (
+            f"{label}-upvalue-count",
+            text[: body.start()]
+            + body[0].replace(
+                f"upvalue_count = {original_count} : i32",
+                f"upvalue_count = {original_count + 1} : i32",
+            )
+            + text[body.end() :],
+        )
     loaded = re.search(r"^    (%\w+) = ctjs\.load_upvalue (%\w+)\[(\d+)\]", reader[0], re.M)
     exited = re.search(r"^    ctjs\.frame_exit %\w+", reader[0], re.M)
     for label, index in (("unused-negative-load", -1), ("unused-invalid-load", count)):
-        yield label, captures.insert(
-            text, reader, exited.start(), f"    %unused = ctjs.load_upvalue {loaded[2]}[{index}]"
+        yield (
+            label,
+            captures.insert(
+                text,
+                reader,
+                exited.start(),
+                f"    %unused = ctjs.load_upvalue {loaded[2]}[{index}]",
+            ),
         )
-    yield "wrong-read-callee", replace(
-        text, reader, loaded, loaded[0].replace(loaded[2] + "[", "%arg0[", 1)
+    yield (
+        "wrong-read-callee",
+        replace(text, reader, loaded, loaded[0].replace(loaded[2] + "[", "%arg0[", 1)),
     )
-    yield "hidden-fixed-store", captures.insert(
-        text,
-        reader,
-        exited.start(),
-        f"    ctjs.store_upvalue {loaded[2]}[{fixed_slot}], {loaded[1]}",
+    yield (
+        "hidden-fixed-store",
+        captures.insert(
+            text,
+            reader,
+            exited.start(),
+            f"    ctjs.store_upvalue {loaded[2]}[{fixed_slot}], {loaded[1]}",
+        ),
     )
     name = re.search(r"@([^ (]+)", writer[0])[1]
     initial = re.search(rf"^    {re.escape(cell)} = ctjs\.create_cell (%\w+)", owner[0], re.M)[1]
     owner_exit = re.search(r"^    ctjs\.frame_exit %\w+", owner[0], re.M)
-    yield "unselected-caller", captures.insert(
-        text,
-        owner,
-        owner_exit.start(),
-        f"    %unselected = ctjs.call_direct @{name}({initial}, {initial}, {initial})",
+    yield (
+        "unselected-caller",
+        captures.insert(
+            text,
+            owner,
+            owner_exit.start(),
+            f"    %unselected = ctjs.call_direct @{name}({initial}, {initial}, {initial})",
+        ),
     )
-    yield "symbol-observer", text.replace(
-        "module attributes {", f"module attributes {{test.forwarded_observer = @{name}, ", 1
+    yield (
+        "symbol-observer",
+        text.replace(
+            "module attributes {", f"module attributes {{test.forwarded_observer = @{name}, ", 1
+        ),
     )
 
 
@@ -227,8 +255,9 @@ def verifier_mutations(text):
     for label, value in (("cell-placeholder", cell), ("argument-placeholder", "%arg3")):
         operands = re.findall(r"%\w+", closure[5])
         operands[0] = value
-        yield label, replace(
-            text, owner, closure, closure[0].replace(closure[5], ", ".join(operands))
+        yield (
+            label,
+            replace(text, owner, closure, closure[0].replace(closure[5], ", ".join(operands))),
         )
 
 

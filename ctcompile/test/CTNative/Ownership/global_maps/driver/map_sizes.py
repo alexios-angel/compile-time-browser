@@ -30,7 +30,7 @@ def check_zero_size_observations(args, node, reference):
         ),
     ):
         row = cases[name]
-        distinguish(args, name, row["source"], old, replacement, f'trace={row["expected_trace"]}\n')
+        distinguish(args, name, row["source"], old, replacement, f"trace={row['expected_trace']}\n")
     name = "zero_size_saved_lifetime"
     source = cases[name]["source"]
     observed, value = zero_size_observer_source(source)
@@ -101,7 +101,7 @@ def check_exact_size_refusals(args, positives, cases, census):
                         args,
                         failed,
                         current,
-                        f'trace={row["expected_trace"]}\n',
+                        f"trace={row['expected_trace']}\n",
                         find_compilers(),
                         shutil.which("nm"),
                     )
@@ -185,7 +185,7 @@ def check_one_size_observations(args, node, reference):
         ("size_one_joined_equal_false", "flag ? state.size : 1;", "flag ? state.size : 2;"),
     ):
         row = cases[name]
-        distinguish(args, name, row["source"], old, replacement, f'trace={row["expected_trace"]}\n')
+        distinguish(args, name, row["source"], old, replacement, f"trace={row['expected_trace']}\n")
     for name, value, old, replacement in (
         (
             "size_one_repeated_key",
@@ -233,7 +233,9 @@ def check_one_size_observations(args, node, reference):
         ("startup_empty_before_write", (1, 0, 0)),
         ("size_one_possible_formal_key", (1, 0, 1)),
     ):
-        source = cases[name]["source"] + f"""
+        source = (
+            cases[name]["source"]
+            + f"""
 (function() {{
     const startup = trace;
     const setter = host.slot.set;
@@ -244,6 +246,7 @@ def check_one_size_observations(args, node, reference):
             (typeof b === 'number' && b === {values[2]} ? 4 : 0);
 }})();
 """
+        )
         observe(args, name + "-future", source, {"trace": 7})
 
 
@@ -282,7 +285,7 @@ def check_delete_size_observations(args, node, reference):
         ),
     ):
         row = cases[name]
-        distinguish(args, name, row["source"], old, replacement, f'trace={row["expected_trace"]}\n')
+        distinguish(args, name, row["source"], old, replacement, f"trace={row['expected_trace']}\n")
 
     # Future invocations expose possible aliasing that the startup key seven
     # alone cannot establish. Each branch's startup literal remains irrelevant
@@ -291,7 +294,9 @@ def check_delete_size_observations(args, node, reference):
         ("size_deleted_possible_alias", (0, 1, 0)),
         ("size_deleted_possible_remaining_key", (0, 1, 0)),
     ):
-        source = cases[name]["source"] + f"""
+        source = (
+            cases[name]["source"]
+            + f"""
 (function() {{
     const startup = trace;
     const setter = host.slot.set;
@@ -302,6 +307,7 @@ def check_delete_size_observations(args, node, reference):
             (typeof b === 'number' && b === {values[2]} ? 4 : 0);
 }})();
 """
+        )
         observe(args, name + "-future", source, {"trace": 7})
 
     name = "size_deleted_saved_lifetime"
@@ -378,7 +384,9 @@ def check_join_size_observations(args, node, reference):
         ("joined_missing_common_key_false", (1, 2)),
         ("joined_mutated_size_false", (1, 2)),
     ):
-        source = cases[name]["source"] + f"""
+        source = (
+            cases[name]["source"]
+            + f"""
 (function() {{
     const setter = host.slot.set;
     const a = setter(99, false);
@@ -387,6 +395,7 @@ def check_join_size_observations(args, node, reference):
             (typeof b === 'number' && b === {values[1]} ? 2 : 0);
 }})();
 """
+        )
         expected = observe(args, name + "-future", source, {"trace": 3})
         if values[0] != values[1]:
             distinguish(
@@ -472,7 +481,9 @@ def check_mutation_size_observations(args, node, reference):
         ("joined_formal_insert_false", (1, 2, 1)),
         ("joined_formal_delete_false", (1, 2, 1)),
     ):
-        source = cases[name]["source"] + f"""
+        source = (
+            cases[name]["source"]
+            + f"""
 (function() {{
     const setter = host.slot.set;
     const a = setter(99, false);
@@ -483,6 +494,7 @@ def check_mutation_size_observations(args, node, reference):
             (typeof c === 'number' && c === {values[2]} ? 4 : 0);
 }})();
 """
+        )
         expected = observe(args, name + "-future", source, {"trace": 7})
         if values[0] != values[1]:
             distinguish(

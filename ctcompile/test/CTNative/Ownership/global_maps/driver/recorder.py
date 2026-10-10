@@ -86,7 +86,9 @@ int main() {{
     if child:
         changed += "    element.reset();\n    g_element.reset();\n"
     changed = re.sub(r"\b(get|m_get)\((element|g_element)?\)(?= !=)", r"\1(\2).value()", changed)
-    return typed_lifetime_arguments(changed + """    for (const auto & map : ctn_test_maps) {
+    return typed_lifetime_arguments(
+        changed
+        + """    for (const auto & map : ctn_test_maps) {
         if (!map.expired()) { return 110; }
     }
     for (const auto & object : ctn_test_objects) {
@@ -94,7 +96,8 @@ int main() {{
     }
     return 0;
 }
-""")
+"""
+    )
 
 
 def recorder_future_body(entry_objects=False):
@@ -164,17 +167,21 @@ def recorder_lifetime_cpp(cpp, values, entry_objects=False):
     equal = "object_strict_equal" if entry_objects else "scalar_strict_equal"
     body = re.sub(
         r"(get\((?:element|other|absent), [^)]+\)) !== (null|[0-9]+|payload)",
-        lambda match: "!ctnative::"
-        + equal
-        + "("
-        + match[1]
-        + ", "
-        + (
-            "ctnative::nullable_scalar::null()"
-            if match[2] == "null"
-            else match[2] if match[2] == "payload" else match[2] + ".0"
-        )
-        + ")",
+        lambda match: (
+            "!ctnative::"
+            + equal
+            + "("
+            + match[1]
+            + ", "
+            + (
+                "ctnative::nullable_scalar::null()"
+                if match[2] == "null"
+                else match[2]
+                if match[2] == "payload"
+                else match[2] + ".0"
+            )
+            + ")"
+        ),
         recorder_future_body(entry_objects),
     )
     if entry_objects:
@@ -402,7 +409,7 @@ for (let i = 0; i < 1024; ++i) {
         for policy, options in (("default", ""), ("disabled", "optimize=false")):
             label = name + "-" + policy
             if row.get("recorder") and row["admitted"]:
-                for steps in ((0, 32, 100_000) if row.get("fixed_undefined") else (0, 32)):
+                for steps in (0, 32, 100_000) if row.get("fixed_undefined") else (0, 32):
                     refused = methods.refused(
                         args,
                         ir,
@@ -506,9 +513,7 @@ for (let i = 0; i < 1024; ++i) {
                         r"host\.slot\.(set|get|remove)\(", row["source"]
                     ) or len(
                         re.findall(r"ctnative::object_get_field_76616c7565\(", cpp)
-                    ) != row.get(
-                        "field_reads", 5
-                    ):
+                    ) != row.get("field_reads", 5):
                         raise RuntimeError(
                             f"{name}/{mode}: changed live entry calls or field reads"
                         )

@@ -173,7 +173,7 @@ def main():
         [
             args.opt,
             str(ir),
-            "--ctnative-specialize-host-prefix=" f"manifest={args.work / 'dom-data.json'}",
+            f"--ctnative-specialize-host-prefix=manifest={args.work / 'dom-data.json'}",
             "-o",
             "/dev/null",
         ],

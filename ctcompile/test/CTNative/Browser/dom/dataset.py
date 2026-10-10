@@ -529,7 +529,9 @@ def client(symbol, owned, name):
     saved_type = (
         "double"
         if number
-        else "std::string" if name in LOOP_SOURCES else "std::vector<std::string>"
+        else "std::string"
+        if name in LOOP_SOURCES
+        else "std::vector<std::string>"
     )
     observe = (
         "std::cout << saved << '~' << updated;"
@@ -567,7 +569,7 @@ def client(symbol, owned, name):
     for (const auto & attributes : std::vector<std::vector<std::pair<const char *, const char *>>>{{{fixtures}}}) {{
     for (node_ns ns : {{node_ns::html, node_ns::svg}}) {{
         {saved_type} saved{{}};
-        {'std::string updated;' if name in VALUE_SOURCES else ''}
+        {"std::string updated;" if name in VALUE_SOURCES else ""}
         {{
             {setup}
             const auto node = doc.create_element(doc.atoms().intern("test"), ns);

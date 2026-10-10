@@ -429,7 +429,9 @@ def primitive(value):
         text = (
             "NaN"
             if math.isnan(value)
-            else "-0" if value == 0 and math.copysign(1, value) < 0 else str(value)
+            else "-0"
+            if value == 0 and math.copysign(1, value) < 0
+            else str(value)
         )
         if text.endswith(".0"):
             text = text[:-2]

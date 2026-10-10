@@ -5,7 +5,9 @@ LEAF_ABSENCE_LIFETIMES = ("local_absence_saved_undefined", "local_absence_distin
 
 def leaf_absence_observer_source(source, name):
     reseeded = name == "local_absence_saved_undefined"
-    observed = source + """
+    observed = (
+        source
+        + """
 (function() {
     const seen = [], results = [];
     const original = Map.prototype.set;
@@ -21,6 +23,7 @@ def leaf_absence_observer_source(source, name):
     Map.prototype.set = original;
     trace = 0;
 """
+    )
     writes = 2 if reseeded else 1
     checks = [
         f"seen.length === {4 * writes}",
@@ -156,7 +159,9 @@ def check_leaf_absence_calls(cpp, name, mode):
 
 
 def primitive_absence_observer_source(source):
-    return source + """
+    return (
+        source
+        + """
 (function() {
     const get = host.slot.get, set = host.slot.set, size = host.slot.size;
     let observed = trace === 2 ? 1 : 0;
@@ -170,13 +175,16 @@ def primitive_absence_observer_source(source):
     trace = observed;
 })();
 """
+    )
 
 
 def primitive_absence_cpp(cpp):
     changed, count = re.subn(r"\bmain\(\)", "ctnative_test_entry()", cpp)
     if count != 1:
         raise RuntimeError("primitive absence observer needs exactly one entry")
-    return changed + r"""
+    return (
+        changed
+        + r"""
 int main() {
     if (ctnative_test_entry() != 0) { return 160; }
     const auto get = g_host->slot->m_get;
@@ -190,6 +198,7 @@ int main() {
     return 0;
 }
 """
+    )
 
 
 LEAF_CLEAR_LIFETIMES = (
@@ -201,7 +210,9 @@ LEAF_CLEAR_LIFETIMES = (
 
 def leaf_clear_observer_source(source, name):
     reseeded = name == "local_clear_saved_undefined"
-    observed = source + """
+    observed = (
+        source
+        + """
 (function() {
     const seen = [], results = [], sizes = [];
     const originalSet = Map.prototype.set, originalClear = Map.prototype.clear;
@@ -223,6 +234,7 @@ def leaf_clear_observer_source(source, name):
     Map.prototype.clear = originalClear;
     trace = 0;
 """
+    )
     writes = 2 if reseeded else 1
     checks = [
         f"seen.length === {4 * writes}",
@@ -425,7 +437,9 @@ def numeric_entry_observer_source(source, name):
         "constant_boolean_branch_lifetime",
         "constant_string_branch_lifetime",
     }
-    observed = source + """
+    observed = (
+        source
+        + """
 (function() {
     const seen = [], results = [], sizes = [];
     const originalSet = Map.prototype.set;
@@ -442,6 +456,7 @@ def numeric_entry_observer_source(source, name):
     Map.prototype.set = originalSet;
     trace = 0;
 """.replace(" CTN_FLAG", ", call % 2 !== 0" if branch else "")
+    )
     checks = [
         "seen.length === 4",
         "sizes.every(value => value === 0)",
@@ -719,7 +734,8 @@ int main() {
 """
         changed = changed.replace(
             "    ctn_test_keep_leaf = false;",
-            checks + """
+            checks
+            + """
     g_owned_text.value.assign(2048, 'm');
     g_text_alias = {};
     g_saved_text = {};

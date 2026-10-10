@@ -62,7 +62,9 @@ var traceOldKeyAfterReinsert = host.slot.get(element, "bs.alert") === null ? 1 :
 var traceOtherAfterReinsert = host.slot.get(other, "bs.alert");
 """
 DATA_PREFIX = EXACT_DATA[:975]
-SINGLE_CONFLICT = DATA_PREFIX + """var element = {};
+SINGLE_CONFLICT = (
+    DATA_PREFIX
+    + """var element = {};
 host.slot.set(element, "bs.alert", 42);
 host.slot.set(element, "bs.collapse", 99);
 var traceKept = host.slot.get(element, "bs.alert") === 42 ? 1 : 0;
@@ -70,7 +72,10 @@ var traceRejected = host.slot.get(element, "bs.collapse") === null ? 1 : 0;
 host.slot.remove(element, "bs.alert");
 var traceGone = host.slot.get(element, "bs.alert") === null ? 1 : 0;
 """
-REPEAT_CONFLICT = SINGLE_CONFLICT + """var traceFirstErrorCount = traceErrorCount;
+)
+REPEAT_CONFLICT = (
+    SINGLE_CONFLICT
+    + """var traceFirstErrorCount = traceErrorCount;
 var traceFirstErrorMessage = traceErrorMessage;
 host.slot.set(element, "bs.collapse", 21);
 var traceReinserted = host.slot.get(element, "bs.collapse") === 21 ? 1 : 0;
@@ -78,9 +83,11 @@ host.slot.set(element, "bs.alert", 64);
 var traceSecondKept = host.slot.get(element, "bs.collapse") === 21 ? 1 : 0;
 var traceSecondRejected = host.slot.get(element, "bs.alert") === null ? 1 : 0;
 """
+)
 # Separate invocation-proof probe; EXACT_DATA keeps its original source and host contract.
 ENTRY_OBJECTS = (
-    DATA_PREFIX + """var element = {}; var other = {}; var absent = {}; var alias = element;
+    DATA_PREFIX
+    + """var element = {}; var other = {}; var absent = {}; var alias = element;
 var instance = {value: 64};
 host.slot.set(element, "bs.alert", instance);
 host.slot.set(other, "bs.alert", 21);
@@ -232,7 +239,7 @@ def recorder_refusals():
             "unsafe_sibling",
             SINGLE_CONFLICT.replace(
                 "        e = {\n",
-                "        e = {\n" f"            poison() {{ console.error = {replacement}; }},\n",
+                f"        e = {{\n            poison() {{ console.error = {replacement}; }},\n",
             ),
             9,
         ),

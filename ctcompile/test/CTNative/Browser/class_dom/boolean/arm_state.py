@@ -94,9 +94,14 @@ def scenarios(name):
         first = (bool(flags & 1), bool(flags & 2))
         second = (not first[0], not first[1])
         for alias in (False, True):
-            yield first, second, alias, (
-                events(name, *first) * (3 if alias else 2),
-                events(name, *second) * (0 if alias else 1),
+            yield (
+                first,
+                second,
+                alias,
+                (
+                    events(name, *first) * (3 if alias else 2),
+                    events(name, *second) * (0 if alias else 1),
+                ),
             )
 
 
@@ -195,38 +200,56 @@ def mutations(text):
     closure = closures[0]
     writer = next(body for body in leaves if "ctjs.store_upvalue" in body[0])
     name = re.search(r"@([^ (]+)", writer[0])[1]
-    yield "duplicate-creator", captures.insert(
-        text, owner, closure.end(), closure[0].replace(closure[1], "%duplicate", 1)
+    yield (
+        "duplicate-creator",
+        captures.insert(
+            text, owner, closure.end(), closure[0].replace(closure[1], "%duplicate", 1)
+        ),
     )
     exit_op = re.search(r"^    ctjs\.frame_exit %\w+", owner[0], re.M)
-    yield "unselected-caller-after-join", captures.insert(
-        text,
-        owner,
-        exit_op.start(),
-        f"    %extra = ctjs.call_direct @{name}({made[1]}, {made[1]}, {made[1]})",
+    yield (
+        "unselected-caller-after-join",
+        captures.insert(
+            text,
+            owner,
+            exit_op.start(),
+            f"    %extra = ctjs.call_direct @{name}({made[1]}, {made[1]}, {made[1]})",
+        ),
     )
-    yield "symbol-observer", text.replace(
-        "module attributes {", f"module attributes {{test.boolean_observer = @{name}, ", 1
+    yield (
+        "symbol-observer",
+        text.replace(
+            "module attributes {", f"module attributes {{test.boolean_observer = @{name}, ", 1
+        ),
     )
-    yield "stored-cell-identity", text[: owner.start() + store.start()] + store[0].replace(
-        store[1], cell
-    ) + text[owner.start() + store.end() :]
-    yield "read-before-initialization", captures.insert(
-        text, owner, store.start(), f"      %early = ctjs.cell_get {cell}"
+    yield (
+        "stored-cell-identity",
+        text[: owner.start() + store.start()]
+        + store[0].replace(store[1], cell)
+        + text[owner.start() + store.end() :],
     )
-    yield "read-after-join", captures.insert(
-        text, owner, exit_op.start(), f"    %late = ctjs.cell_get {cell}"
+    yield (
+        "read-before-initialization",
+        captures.insert(text, owner, store.start(), f"      %early = ctjs.cell_get {cell}"),
+    )
+    yield (
+        "read-after-join",
+        captures.insert(text, owner, exit_op.start(), f"    %late = ctjs.cell_get {cell}"),
     )
     branch_else = re.search(r"^    \} else \{", owner[0], re.M)
-    yield "write-in-sibling", captures.insert(
-        text, owner, branch_else.end(), f"      ctjs.cell_set {cell}, {made[1]}"
+    yield (
+        "write-in-sibling",
+        captures.insert(text, owner, branch_else.end(), f"      ctjs.cell_set {cell}, {made[1]}"),
     )
     # Keep the value producer, but move initialization after both captures.
     body = owner[0][: store.start()] + owner[0][store.end() :]
     body = body.replace(closures[-1][0], closures[-1][0] + "\n" + store[0])
     yield "capture-before-initialization", text[: owner.start()] + body + text[owner.end() :]
-    yield "escaped-callback", captures.insert(
-        text, owner, closure.end(), f'      ctjs.store_global "escaped", {closure[1]}'
+    yield (
+        "escaped-callback",
+        captures.insert(
+            text, owner, closure.end(), f'      ctjs.store_global "escaped", {closure[1]}'
+        ),
     )
 
 
@@ -235,21 +258,27 @@ def roots(text):
     frame = re.search(r"(%\w+) = ctjs\.frame_enter \d+", owner[0])[1]
     exited = re.search(rf"^    ctjs\.frame_exit {re.escape(frame)}\b", owner[0], re.M)
     root = f"    ctjs.root {cell} in {frame}"
-    yield "cell-before-scope", captures.insert(text, owner, made.end(), root), captures.insert(
-        text, owner, exited.end(), root
+    yield (
+        "cell-before-scope",
+        captures.insert(text, owner, made.end(), root),
+        captures.insert(text, owner, exited.end(), root),
     )
     yield "cell-after-join", captures.insert(text, owner, exited.start(), root), None
     for closure, leaf in zip(closures, leaves):
-        yield "callback-" + closure[3], captures.insert(
-            text, owner, closure.end(), f"      ctjs.root {closure[1]} in {frame}"
-        ), None
+        yield (
+            "callback-" + closure[3],
+            captures.insert(text, owner, closure.end(), f"      ctjs.root {closure[1]} in {frame}"),
+            None,
+        )
         entered = re.search(r"(%\w+) = ctjs\.frame_enter \d+", leaf[0])
         exited = re.search(rf"^    ctjs\.frame_exit {re.escape(entered[1])}\b", leaf[0], re.M)
         callee = re.findall(r"(%\w+): !ctjs.value", leaf[0].split("\n")[0])[2]
         root = f"    ctjs.root {callee} in {entered[1]}"
-        yield "callee-" + closure[3], captures.insert(
-            text, leaf, entered.end(), root
-        ), captures.insert(text, leaf, exited.end(), root)
+        yield (
+            "callee-" + closure[3],
+            captures.insert(text, leaf, entered.end(), root),
+            captures.insert(text, leaf, exited.end(), root),
+        )
 
 
 def main():

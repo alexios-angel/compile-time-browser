@@ -49,7 +49,9 @@ def source(kind):
     return text + body.replace("@OUTER@", outer).replace("@INNER@", inner) + "}\n"
 
 
-CHECKS = dom.SELECTOR_CHECKS_PREAMBLE.replace("@ARGUMENTS@", "anchor, expected") + r"""
+CHECKS = (
+    dom.SELECTOR_CHECKS_PREAMBLE.replace("@ARGUMENTS@", "anchor, expected")
+    + r"""
         const auto position = atoms.intern("data-index");
         const auto hovered = atoms.intern("data-hovered");
         const auto same = atoms.intern("data-same");
@@ -149,6 +151,7 @@ CHECKS = dom.SELECTOR_CHECKS_PREAMBLE.replace("@ARGUMENTS@", "anchor, expected")
         writes = doc.take_writes();
         assert(writes.size() == 6 && writes.back().name == atoms.intern("data-before"));
 """
+)
 
 OWNED_CHECKS = r"""
         @ENTRY@_session session;

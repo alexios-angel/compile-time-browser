@@ -57,7 +57,8 @@ ctjs.func @literal${index}(%receiver: !ctjs.value, %new_target: !ctjs.value,
         checks.append(
             f"  if (!same_bytes(literal_{index}().value(), {{{array}}})) return {index + 1};"
         )
-    cpp += """
+    cpp += (
+        """
 #include <initializer_list>
 bool same_bytes(const std::string& actual, std::initializer_list<unsigned char> expected) {
   if (actual.size() != expected.size()) return false;
@@ -68,7 +69,10 @@ bool same_bytes(const std::string& actual, std::initializer_list<unsigned char> 
   return true;
 }
 int main() {
-""" + "\n".join(checks) + "\n  return 0;\n}\n"
+"""
+        + "\n".join(checks)
+        + "\n  return 0;\n}\n"
+    )
     source = args.work / "literals.cpp"
     source.write_text(cpp)
     for name in ("g++", "clang++"):

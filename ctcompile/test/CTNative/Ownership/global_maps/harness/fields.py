@@ -70,7 +70,9 @@ def check_string_field_calls(cpp, name, mode):
 
 
 def string_field_observer_source(source, name):
-    observed = source + r"""
+    observed = (
+        source
+        + r"""
 (function() {
     const seen = [];
     const original = Map.prototype.set;
@@ -79,6 +81,7 @@ def string_field_observer_source(source, name):
     };
     const before = host.slot.size();
 """
+    )
     if name == "field_string_lifetime":
         observed += (
             '    const first = host.slot.set("future", '
@@ -137,7 +140,9 @@ def string_field_observer_source(source, name):
 
 def string_field_identity_cpp(cpp):
     changed = instrument_leaf_objects(cpp)
-    return changed + r"""
+    return (
+        changed
+        + r"""
 int main() {
     ctnative::identity_object empty;
     if (empty.field_76616c7565.tag != ctnative::nullable_string::kind::undefined) { return 120; }
@@ -165,6 +170,7 @@ int main() {
     return 0;
 }
 """
+    )
 
 
 def string_field_lifetime_cpp(cpp):
@@ -323,7 +329,9 @@ def check_exact_size_calls(cpp, name, mode, row):
 
 
 def zero_size_observer_source(source):
-    observed = source + r"""
+    observed = (
+        source
+        + r"""
 (function() {
     const setter = host.slot.set;
     const size = host.slot.size;
@@ -342,6 +350,7 @@ def zero_size_observer_source(source):
             (aSize === 1 && bSize === 1 && size() === 1 ? 32 : 0);
 })();
 """
+    )
     return observed, 63
 
 
@@ -358,7 +367,9 @@ def zero_size_lifetime_cpp(cpp):
         "ctn_test_objects.emplace_back(made);\n"
         "    if (ctn_test_keep_leaf) { ctn_test_retained = made; }\n    return made;",
     )
-    return changed + r"""
+    return (
+        changed
+        + r"""
 int main() {
     if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 1 ||
         ctn_test_objects.size() != 1 || ctn_test_objects[0].expired()) { return 180; }
@@ -412,6 +423,7 @@ int main() {
     return 0;
 }
 """
+    )
 
 
 def zero_size_lifetime(args, cpp, name, mode, compiler):

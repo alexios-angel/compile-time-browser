@@ -333,11 +333,9 @@ def main() -> int:
         f"   programs {len(rec.programs)}  functions "
         f"{sum(len(p.functions) for p in rec.programs.values())}"
     )
-    print(
-        f"   defs recorded {rec.recorded}  dropped {rec.dropped}  " f"orphan-frames {rec.orphans}"
-    )
+    print(f"   defs recorded {rec.recorded}  dropped {rec.dropped}  orphan-frames {rec.orphans}")
     print(f"   observed registers   {observed}")
-    print(f"   unobserved registers {unobserved}   " "(never executed - NOT `any type`)")
+    print(f"   unobserved registers {unobserved}   (never executed - NOT `any type`)")
     if unclaimed:
         print(f"   observed but unclaimed {unclaimed}")
     if unverifiable:

@@ -30,8 +30,7 @@ METHODS = {
 NESTED = {
     "nest": (
         "key, value",
-        "const inner = new Map; inner.set('payload', value); "
-        "resource.set(key, inner); return 0;",
+        "const inner = new Map; inner.set('payload', value); resource.set(key, inner); return 0;",
     ),
     "peek": ("key", "return resource.get(key).get('payload').value;"),
     "payload": ("key", "return resource.get(key).get('payload');"),
@@ -461,7 +460,7 @@ def cases():
             "TypeError",
         ),
         "throw_after_writes": (
-            "resource.set('tentative', value); resource.get(key).value = 43; " "throw 7;",
+            "resource.set('tentative', value); resource.get(key).value = 43; throw 7;",
             0,
             "number:7",
         ),

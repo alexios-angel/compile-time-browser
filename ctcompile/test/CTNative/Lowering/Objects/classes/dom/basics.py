@@ -96,8 +96,7 @@ def direct_receiver(args, name, ir, contract):
         ):
             raise RuntimeError(f"{name}: source helper invocation changed")
         direct = (
-            f"ctjs.call_direct @{symbol}"
-            f"({arguments[3]}, {undefined}, {undefined}, {arguments[4]})"
+            f"ctjs.call_direct @{symbol}({arguments[3]}, {undefined}, {undefined}, {arguments[4]})"
         )
         calls.append(direct)
         return direct

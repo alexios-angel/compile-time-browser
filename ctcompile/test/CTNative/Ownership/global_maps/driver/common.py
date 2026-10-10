@@ -45,7 +45,9 @@ def observe(args, name, source, values):
         (
             "boolean"
             if isinstance(value, bool)
-            else value if value in ("null", "undefined") else "number"
+            else value
+            if value in ("null", "undefined")
+            else "number"
         )
         for value in values.values()
     ]

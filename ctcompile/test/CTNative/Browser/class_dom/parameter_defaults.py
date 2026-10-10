@@ -203,18 +203,25 @@ def mutations(text):
     for name, replacement in changes.items():
         assert replacement != prefix, name
         yield name, text[:start] + replacement + text[branch.start() :]
-    yield "second-write", text[: branch.end()] + f"\n    ctjs.cell_set {store[1]}, {formal}" + text[
-        branch.end() :
-    ]
-    yield "read-in-default", text[
-        : branch.start("then")
-    ] + f"      %during_default = ctjs.cell_get {store[1]}\n" + text[branch.start("then") :]
-    yield "wrong-arm", (
+    yield (
+        "second-write",
+        text[: branch.end()] + f"\n    ctjs.cell_set {store[1]}, {formal}" + text[branch.end() :],
+    )
+    yield (
+        "read-in-default",
         text[: branch.start("then")]
-        + branch["else"]
-        + text[branch.end("then") : branch.start("else")]
-        + branch["then"]
-        + text[branch.end("else") :]
+        + f"      %during_default = ctjs.cell_get {store[1]}\n"
+        + text[branch.start("then") :],
+    )
+    yield (
+        "wrong-arm",
+        (
+            text[: branch.start("then")]
+            + branch["else"]
+            + text[branch.end("then") : branch.start("else")]
+            + branch["then"]
+            + text[branch.end("else") :]
+        ),
     )
     for name, changed in root_variants(text, store[1], start).items():
         if name != "valid":

@@ -6,7 +6,9 @@ from .leaf_objects import *
 def object_argument_observer_source(source, global_key=False, global_alias=False, global_chain=()):
     # Capture the actual Map in a separate interpreter observer. The native
     # source and its standard intrinsic contract remain untouched.
-    observed = source + """
+    observed = (
+        source
+        + """
 (function() {
     const get = host.slot.get;
     const original = Map.prototype.has;
@@ -41,6 +43,7 @@ def object_argument_observer_source(source, global_key=False, global_alias=False
             (typeof g === 'number' && g === 0 ? 64 : 0) | (future ? 128 : 0);
 })();
 """
+    )
     if not global_key and not global_alias:
         return observed, 255
     observed = (
@@ -210,7 +213,9 @@ def check_object_argument_calls(cpp, name, mode):
 
 
 def object_argument_lifetime_cpp(cpp, global_key=False, global_alias=False, global_chain=()):
-    changed = instrument_leaf_objects(cpp) + r"""
+    changed = (
+        instrument_leaf_objects(cpp)
+        + r"""
 int main() {
     using Key = std::shared_ptr<ctnative::identity_object>;
     using Map = ctnative::number_map<Key>;
@@ -256,6 +261,7 @@ int main() {
     return 0;
 }
 """
+    )
     if not global_key and not global_alias:
         return changed
     changed = (
@@ -437,13 +443,14 @@ def leak_checked_lifetime(args, name, mode, compiler, text, expected, label):
     )
     if result.returncode or result.stdout != f"trace={expected}\n" * 2 or result.stderr:
         raise RuntimeError(
-            f"{name}/{mode}: {label} failed\n"
-            f"{result.returncode}: {result.stdout}{result.stderr}"
+            f"{name}/{mode}: {label} failed\n{result.returncode}: {result.stdout}{result.stderr}"
         )
 
 
 def retained_key_observer_source(source, global_alias=False, global_chain=()):
-    observed = source + """
+    observed = (
+        source
+        + """
 (function() {
     const get = host.slot.get, set = host.slot.set;
     const erase = host.slot.erase, clear = host.slot.clear;
@@ -469,6 +476,7 @@ def retained_key_observer_source(source, global_alias=False, global_chain=()):
             (d ? 8 : 0) | (e ? 16 : 0) | (future ? 32 : 0);
 })();
 """
+    )
     if not global_alias:
         return observed, 63
     observed = (
@@ -501,7 +509,10 @@ def retained_key_observer_source(source, global_alias=False, global_chain=()):
 
 
 def retained_key_lifetime_cpp(cpp, allocations=6, retained=4, global_alias=False, global_chain=()):
-    changed = (instrument_leaf_objects(cpp, allocations=allocations) + r"""
+    changed = (
+        (
+            instrument_leaf_objects(cpp, allocations=allocations)
+            + r"""
 int main() {
     using Key = std::shared_ptr<ctnative::identity_object>;
     if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 1 ||
@@ -565,7 +576,11 @@ int main() {
     }
     return 0;
 }
-""").replace("CTN_ALLOCATIONS", str(allocations)).replace("CTN_RETAINED", str(retained))
+"""
+        )
+        .replace("CTN_ALLOCATIONS", str(allocations))
+        .replace("CTN_RETAINED", str(retained))
+    )
     if not global_alias:
         return changed
     assert (allocations, retained) == (2, 0)
@@ -602,7 +617,9 @@ int main() {
 
 
 def parameter_object_lifetime_cpp(cpp):
-    return instrument_leaf_objects(cpp) + r"""
+    return (
+        instrument_leaf_objects(cpp)
+        + r"""
 int main() {
     using Key = std::shared_ptr<ctnative::identity_object>;
     if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 1 ||
@@ -647,12 +664,15 @@ int main() {
     return 0;
 }
 """
+    )
 
 
 def object_payload_observer_source(source, name):
     row = object_argument_cases()[name]
     scalar = row.get("payload_only")
-    observed = source + """
+    observed = (
+        source
+        + """
 (function() {
     const get = host.slot.get;
     SAVED_CALLABLES
@@ -686,6 +706,7 @@ def object_payload_observer_source(source, name):
             (distinct ? 8 : 0) | (deleted ? 16 : 0) | (cleared ? 32 : 0) | (future ? 64 : 0);
 })();
 """
+    )
     replacements = dict(
         SAVED_CALLABLES="const erase = host.slot.erase, clear = host.slot.clear;" if scalar else "",
         GLOBAL_IDENTITY="first === key" if row.get("global_key") else "true",
@@ -710,7 +731,9 @@ def object_payload_observer_source(source, name):
 def object_payload_lifetime_cpp(cpp, name):
     row = object_argument_cases()[name]
     scalar = row.get("payload_only")
-    changed = instrument_leaf_objects(cpp) + r"""
+    changed = (
+        instrument_leaf_objects(cpp)
+        + r"""
 int main() {
     using Object = std::shared_ptr<ctnative::identity_object>;
     using Map = ctnative::map_storage<KEY_TYPE, ctnative::object_value>;
@@ -770,6 +793,7 @@ int main() {
     return 0;
 }
 """
+    )
     replacements = dict(
         KEY_TYPE="js_num" if scalar else "Object",
         FIRST_KEY="js_num{1}" if scalar else "first",

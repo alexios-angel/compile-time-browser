@@ -37,7 +37,9 @@ def source(negated):
     )
 
 
-CHECKS = dom.SELECTOR_CHECKS_PREAMBLE + r"""
+CHECKS = (
+    dom.SELECTOR_CHECKS_PREAMBLE
+    + r"""
         assert(doc.remove_child(button));
         assert(doc.set_attribute(button, classes, "selected"));
         assert(doc.set_attribute(child, classes, "selected"));
@@ -112,6 +114,7 @@ CHECKS = dom.SELECTOR_CHECKS_PREAMBLE + r"""
         style::engine foreign_selectors{foreign_atoms};
         assert(invoke(foreign, alias, foreign_selectors).value() == 1);
 """
+)
 
 OWNED_CHECKS = r"""
     {

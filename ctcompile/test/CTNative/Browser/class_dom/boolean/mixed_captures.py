@@ -148,63 +148,88 @@ def roots(text):
         frame = re.search(r"(%\w+) = ctjs\.frame_enter \d+", body[0])[1]
         exited = re.search(rf"^    ctjs\.frame_exit {re.escape(frame)}\b", body[0], re.M)
         root = f"    ctjs.root {value} in {frame}"
-        yield label, captures.insert(text, body, after.end(), root), captures.insert(
-            text, body, exited.end(), root
+        yield (
+            label,
+            captures.insert(text, body, after.end(), root),
+            captures.insert(text, body, exited.end(), root),
         )
 
 
 def mutations(text):
     owner, cell, closures, leaves, slots, indices = shape(text)
     closure, reader, writer = closures[0], leaves[0], leaves[1]
-    yield "duplicate-creator", captures.insert(
-        text, owner, closure.end(), closure[0].replace(closure[1], "%duplicate", 1)
+    yield (
+        "duplicate-creator",
+        captures.insert(
+            text, owner, closure.end(), closure[0].replace(closure[1], "%duplicate", 1)
+        ),
     )
     initial = re.search(rf"^    {re.escape(cell)} = ctjs\.create_cell (%\w+)", owner[0], re.M)[1]
     name = re.search(r"@([^ (]+)", writer[0])[1]
     exited = re.search(r"^    ctjs\.frame_exit %\w+", owner[0], re.M)
-    yield "unselected-caller", captures.insert(
-        text,
-        owner,
-        exited.start(),
-        f"    %unselected = ctjs.call_direct @{name}({initial}, {initial}, {initial})",
+    yield (
+        "unselected-caller",
+        captures.insert(
+            text,
+            owner,
+            exited.start(),
+            f"    %unselected = ctjs.call_direct @{name}({initial}, {initial}, {initial})",
+        ),
     )
-    yield "symbol-observer", text.replace(
-        "module attributes {", f"module attributes {{test.mixed_observer = @{name}, ", 1
+    yield (
+        "symbol-observer",
+        text.replace(
+            "module attributes {", f"module attributes {{test.mixed_observer = @{name}, ", 1
+        ),
     )
     fixed_slot = next(index for index, value in enumerate(slots[0]) if value != cell)
     duplicate = list(slots[0])
     duplicate[fixed_slot] = cell
     changed = closure[0].replace("captures " + closure[5], "captures " + ", ".join(duplicate))
-    yield "duplicate-mutable-slot", text[: owner.start() + closure.start()] + changed + text[
-        owner.start() + closure.end() :
-    ]
+    yield (
+        "duplicate-mutable-slot",
+        text[: owner.start() + closure.start()] + changed + text[owner.start() + closure.end() :],
+    )
     load = re.search(r"ctjs\.load_upvalue (%\w+)\[(\d+)\]", reader[0])
     for label, index in (("out-of-range-slot", len(slots[0])), ("negative-slot", -1)):
         changed = load[0].replace(f"[{load[2]}]", f"[{index}]")
-        yield label, text[: reader.start() + load.start()] + changed + text[
-            reader.start() + load.end() :
-        ]
+        yield (
+            label,
+            text[: reader.start() + load.start()] + changed + text[reader.start() + load.end() :],
+        )
     store = re.search(r"ctjs\.store_upvalue (%\w+)\[(\d+)\], (%\w+)", writer[0])
-    yield "callee-as-value", text[: writer.start() + store.start()] + store[0].replace(
-        ", " + store[3], ", " + store[1]
-    ) + text[writer.start() + store.end() :]
-    yield "wrong-enclosing", text[: owner.start() + closure.start()] + closure[0].replace(
-        closure[2] + "[", initial + "[", 1
-    ) + text[owner.start() + closure.end() :]
+    yield (
+        "callee-as-value",
+        text[: writer.start() + store.start()]
+        + store[0].replace(", " + store[3], ", " + store[1])
+        + text[writer.start() + store.end() :],
+    )
+    yield (
+        "wrong-enclosing",
+        text[: owner.start() + closure.start()]
+        + closure[0].replace(closure[2] + "[", initial + "[", 1)
+        + text[owner.start() + closure.end() :],
+    )
     # This writer is dormant and addresses the nominally fixed slot in the
     # same original body. A read replacement cannot conceal it.
     extra = f"    ctjs.store_upvalue {store[1]}[1], {store[3]}"
     writer_exit = re.search(r"^    ctjs\.frame_exit %\w+", writer[0], re.M)
     yield "additional-fixed-writer", captures.insert(text, writer, writer_exit.start(), extra)
-    yield "upvalue-count", text[: reader.start()] + reader[0].replace(
-        "upvalue_count = 2 : i32", "upvalue_count = 3 : i32"
-    ) + text[reader.end() :]
+    yield (
+        "upvalue-count",
+        text[: reader.start()]
+        + reader[0].replace("upvalue_count = 2 : i32", "upvalue_count = 3 : i32")
+        + text[reader.end() :],
+    )
     # Parameter normalization runs during fixed-cell discovery. A changing
     # captured formal must refuse before that normalization can retire it.
     made = re.search(rf"^    {re.escape(cell)} = ctjs\.create_cell %\w+", owner[0], re.M)
-    yield "formal-initial", text[
-        : owner.start() + made.start()
-    ] + f"    {cell} = ctjs.create_cell %arg3" + text[owner.start() + made.end() :]
+    yield (
+        "formal-initial",
+        text[: owner.start() + made.start()]
+        + f"    {cell} = ctjs.create_cell %arg3"
+        + text[owner.start() + made.end() :],
+    )
 
 
 def verifier_mutations(text):
@@ -216,9 +241,12 @@ def verifier_mutations(text):
         ("swapped-enclosing", "-1, 0"),
     ):
         changed = closure[0] + " {enclosing_indices = array<i32: " + indices + ">}"
-        yield label, text[: owner.start() + closure.start()] + changed + text[
-            owner.start() + closure.end() :
-        ]
+        yield (
+            label,
+            text[: owner.start() + closure.start()]
+            + changed
+            + text[owner.start() + closure.end() :],
+        )
 
 
 def main():

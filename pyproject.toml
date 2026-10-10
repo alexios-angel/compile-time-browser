@@ -1,13 +1,8 @@
-# tools/format.sh runs black over every tracked .py with this file as its whole
-# configuration. 100 columns is what .clang-format already says for the C++;
-# the exclusions are the same as the formatter's other half - nothing vendored
-# and nothing built.
-[tool.black]
+# tools/format.sh runs `ruff format` over every tracked .py with this file as its
+# whole configuration (black until 2026-10-10; ruff's formatter is its drop-in).
+# 100 columns is what .clang-format already says for the C++; the exclusions are
+# the same as the formatter's other half - nothing vendored and nothing built.
+[tool.ruff]
 line-length = 100
-target-version = ["py312"]
-extend-exclude = '''
-/(
-    third-party
-  | build[^/]*
-)/
-'''
+target-version = "py312"
+extend-exclude = ["third-party", "build*"]

@@ -246,7 +246,7 @@ def leaf_clear_cases():
     )
     add(
         "fluent_alias",
-        "const item = {value: 1}; const alias = state.set(key, item); " "alias.clear(); " + absent,
+        "const item = {value: 1}; const alias = state.set(key, item); alias.clear(); " + absent,
         1,
         "clear on fluent set return mutates the same captured Map",
     )

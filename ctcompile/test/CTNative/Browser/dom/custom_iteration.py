@@ -307,8 +307,7 @@ SIBLING_ORDERED_CAPTURE_SOURCE = (
     .replace("    count += emitted + closed;", "    count += read();")
     .replace(
         "    closed += emitted;\n    if (anchor.hasAttribute('stop')) break;",
-        "    closed += emitted;\n    count += read();\n"
-        "    if (anchor.hasAttribute('stop')) break;",
+        "    closed += emitted;\n    count += read();\n    if (anchor.hasAttribute('stop')) break;",
     )
     .replace(
         "  closed += emitted;\n  emitted += closed;",
@@ -464,7 +463,7 @@ SIBLING_CALLABLE_SHARED_SOURCE = (
 )
 SIBLING_RETURNED_CALLABLE_SOURCE = SIBLING_CALLABLE_ARGUMENT_SOURCE.replace(
     "  const relay = (writer) => writer();",
-    "  const identity = (writer) => writer;\n" "  const relay = (writer) => identity(writer)();",
+    "  const identity = (writer) => writer;\n  const relay = (writer) => identity(writer)();",
 )
 SIBLING_RETURNED_SNAPSHOTS_SOURCE = SIBLING_CALLABLE_SNAPSHOTS_SOURCE.replace(
     "  const relay = (amount, writer, prior) => writer(amount, prior);",
@@ -474,8 +473,7 @@ SIBLING_RETURNED_SNAPSHOTS_SOURCE = SIBLING_CALLABLE_SNAPSHOTS_SOURCE.replace(
 SIBLING_RETURNED_FORWARDED_SOURCE = (
     SIBLING_CALLABLE_SHARED_SOURCE.replace(
         "  const forward = (writer) => writer();",
-        "  const identity = (writer) => writer;\n"
-        "  const forward = (writer) => identity(writer);",
+        "  const identity = (writer) => writer;\n  const forward = (writer) => identity(writer);",
     )
     .replace("forward(writer) + 1", "forward(writer)() + 1")
     .replace("rounds += forward(advance);", "rounds += forward(advance)();")
@@ -494,7 +492,7 @@ SIBLING_RETURNED_DIFFERENT_TARGETS_SOURCE = (
     )
     .replace(
         "      rounds += relay(advance);",
-        "      if (emitted === 0) rounds += relay(advance);\n" "      else rounds += alternate();",
+        "      if (emitted === 0) rounds += relay(advance);\n      else rounds += alternate();",
     )
 )
 SIBLING_RETURNED_DIFFERENT_SNAPSHOTS_SOURCE = SIBLING_RETURNED_SNAPSHOTS_SOURCE.replace(
@@ -585,7 +583,7 @@ SIBLING_RETURNED_LOOP_CALL_SOURCE = SIBLING_RETURNED_LOOP_JOIN_SOURCE.replace(
 ).replace("      rounds++;", "      selected = keep(selected);\n      rounds++;", 1)
 SIBLING_RETURNED_LOOP_CALL_SNAPSHOTS_SOURCE = SIBLING_RETURNED_LOOP_SNAPSHOTS_SOURCE.replace(
     "  const identity =",
-    "  const keep = (writer, prior) => { closed += prior; return writer; };\n" "  const identity =",
+    "  const keep = (writer, prior) => { closed += prior; return writer; };\n  const identity =",
     1,
 ).replace("      rounds++;", "      selected = keep(selected, emitted);\n      rounds++;", 1)
 SIBLING_RETURNED_LOOP_CALL_ZERO_SOURCE = SIBLING_RETURNED_LOOP_CALL_SOURCE.replace(
@@ -595,7 +593,7 @@ SIBLING_RETURNED_LOOP_CALL_ZERO_SOURCE = SIBLING_RETURNED_LOOP_CALL_SOURCE.repla
 ).replace("while (rounds < 2)", "while (rounds < 0)", 1)
 SIBLING_RETURNED_LOOP_FORWARDED_SOURCE = SIBLING_RETURNED_LOOP_CALL_SOURCE.replace(
     "const keep = (writer) => writer;",
-    "const forward = (writer) => writer;\n" "  const keep = (writer) => forward(writer);",
+    "const forward = (writer) => writer;\n  const keep = (writer) => forward(writer);",
     1,
 )
 SIBLING_RETURNED_LOOP_FORWARDED_SNAPSHOTS_SOURCE = (
@@ -2089,9 +2087,7 @@ def refusals():
             ),
             "entry-captured-sibling-callable-argument-recursive": SIBLING_CALLABLE_ARGUMENT_SOURCE.replace(
                 "(writer) => writer();", "(writer) => writer(writer);"
-            ).replace(
-                "rounds += relay(advance);", "rounds += relay(relay);", 1
-            ),
+            ).replace("rounds += relay(advance);", "rounds += relay(relay);", 1),
             "entry-captured-sibling-callable-argument-nonnumber": SIBLING_CALLABLE_ARGUMENT_SOURCE.replace(
                 "emitted += closed; return before;", "emitted = true; return before;", 1
             ),
@@ -2415,7 +2411,9 @@ def normal_throws(args, compilers, includes, libraries, cases):
         cleanup_number = (
             13
             if mutable and (mixed or "effectful" in label)
-            else 11 if mutable and "nonliteral" in label else 2
+            else 11
+            if mutable and "nonliteral" in label
+            else 2
         )
         unconditional_return = mutable or label in (
             "return-getter-close",
@@ -2443,7 +2441,7 @@ def normal_throws(args, compilers, includes, libraries, cases):
             argument = "" if null_throw else " error"
             extra_catch = f"""
                 catch (const ctnative::js_exception<ctnative::{throw_kind}> &{argument}) {{
-                    caught = mode == 2 && {'true' if branch_throw else 'false'} && {throw_payload};
+                    caught = mode == 2 && {"true" if branch_throw else "false"} && {throw_payload};
                 }}"""
             attribute_getter = """    getAttribute(name) {
       const value = name in saved ? saved[name] : null;
@@ -2716,7 +2714,9 @@ var {name} = (function() {{
                 (
                     "mode == 1 || mode == 2 || mode >= 5"
                     if mixed
-                    else "mode < 3" if unconditional_return else "mode == 1 || mode == 2"
+                    else "mode < 3"
+                    if unconditional_return
+                    else "mode == 1 || mode == 2"
                 ),
             )
         )
@@ -2786,8 +2786,7 @@ def saved_throws(args, compilers, includes, libraries):
     )
     third_postselector_throwing_source = selector_throwing_source.replace(
         "throw anchor.matches('[data-closed]');",
-        "anchor.matches('[data-closed]'); "
-        "anchor.setAttribute('data-closed', false); throw false;",
+        "anchor.matches('[data-closed]'); anchor.setAttribute('data-closed', false); throw false;",
     )
     selector_result_throwing_source = third_postselector_throwing_source.replace(
         "anchor.matches('[data-closed]'); anchor.setAttribute('data-closed', false);",
@@ -4489,7 +4488,9 @@ def saved_throws(args, compilers, includes, libraries):
         js_kind = (
             "number" if numeric_snapshot else "boolean" if conditional else label.partition("-")[0]
         )
-        script = text + """
+        script = (
+            text
+            + """
 var savedThrow, savedExhausted;
 (function() {
   const saved = {};
@@ -4507,6 +4508,7 @@ var savedThrow, savedExhausted;
   savedExhausted = '' + customElements(anchor) + ':' + writes;
 })();
 """
+        )
         if branch_throw_read:
             script = script.replace(
                 "    hasAttribute(name) { return name in saved; },",
@@ -5039,7 +5041,9 @@ var savedThrow, savedExhausted;
                                 (
                                     "matches"
                                     if selector_call in line
-                                    else "read" if "ctnative::has_attribute(" in line else "write"
+                                    else "read"
+                                    if "ctnative::has_attribute(" in line
+                                    else "write"
                                 )
                                 for line in first_selector.splitlines()
                                 if selector_call in line
@@ -5406,7 +5410,11 @@ var savedThrow, savedExhausted;
                             else (
                                 "6"
                                 if third_close
-                                else "5" if second_close else "4" if snapshot else "3"
+                                else "5"
+                                if second_close
+                                else "4"
+                                if snapshot
+                                else "3"
                             )
                         ),
                     )
@@ -5421,7 +5429,9 @@ var savedThrow, savedExhausted;
                                 for index, (name, _, _) in enumerate(following_writes, 5)
                             )
                             if following_writes
-                            else "assert(writes[5].name == closed);" if third_close else ""
+                            else "assert(writes[5].name == closed);"
+                            if third_close
+                            else ""
                         )
                         + (
                             "assert(writes.back().name == after_terminal);"

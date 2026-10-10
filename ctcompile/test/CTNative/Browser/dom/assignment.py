@@ -345,7 +345,7 @@ var {label} = (function() {{
         hasAttribute(key) {{ trace.push('has:' + key); return attributes.some(pair => pair[0] === key); }},
         getAttribute(key) {{ trace.push('get:' + key); const pair = attributes.find(pair => pair[0] === key); return pair ? pair[1] : null; }}
     }});
-    if (trace.join('|') !== {json.dumps('|'.join(trace))}) throw new Error('assignment source order: ' + trace.join('|'));
+    if (trace.join('|') !== {json.dumps("|".join(trace))}) throw new Error('assignment source order: ' + trace.join('|'));
     return observe(result);
 }})();
 """

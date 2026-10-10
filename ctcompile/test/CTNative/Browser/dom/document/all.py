@@ -27,7 +27,9 @@ SOURCE = """function queryAll(anchor, expected) {
 }
 """
 
-CHECKS = dom.SELECTOR_CHECKS_PREAMBLE + r"""
+CHECKS = (
+    dom.SELECTOR_CHECKS_PREAMBLE
+    + r"""
         const auto position = atoms.intern("data-index");
         const auto hovered = atoms.intern("data-hovered");
         assert(doc.set_attribute(button, classes, "selected"));
@@ -118,6 +120,7 @@ CHECKS = dom.SELECTOR_CHECKS_PREAMBLE + r"""
         assert(writes.size() == 1 && writes[0].name == atoms.intern("data-before"));
         assert(doc.remove_attribute(button, atoms.intern("data-before")));
 """
+)
 
 OWNED_CHECKS = r"""
         @ENTRY@_session session;

@@ -88,7 +88,7 @@ global `operator new` in a static archive can be silently dropped by link order.
 
 Flags: `-O2 -pedantic -Wall -Wextra -Werror -Wconversion`. Tests are
 EXECUTABLES, SDL-free, headless. `tools/format.sh --check` is the formatting
-gate - clang-format for the C++, black (`brew install black`, `pyproject.toml`)
+gate - clang-format for the C++, ruff (`brew install ruff`, `pyproject.toml`)
 for every tracked `.py`, and js-beautify (`npm install -g js-beautify`,
 `.jsbeautifyrc`) for the hand-written JS/HTML/CSS, test data excluded -
 **run it yourself before committing**. There is NO CI: the GitHub

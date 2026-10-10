@@ -29,8 +29,7 @@ def helper(name, body, *, attributes=""):
 def thrown(kind="f64"):
     value = "true" if kind == "i1" else "42.0"
     return (
-        f'    %value = emitc.literal "{value}" : {kind}\n'
-        f"    ctnative.cpp_throw %value : {kind}\n"
+        f'    %value = emitc.literal "{value}" : {kind}\n    ctnative.cpp_throw %value : {kind}\n'
     )
 
 

@@ -85,12 +85,15 @@ def mutations(text):
     fixed = re.search(r"^    (%\w+) = ctjs\.load_upvalue (%\w+)\[0\]", reader[0], re.M)
     exited = re.search(r"^    ctjs\.frame_exit %\w+", reader[0], re.M)
     # A discarded comparison still needs two values of the same proved type.
-    yield "unused-mixed-comparison", captures.insert(
-        text,
-        reader,
-        exited.start(),
-        f"    %mixed_state = ctjs.load_upvalue {fixed[2]}[{indices[0]}]\n"
-        f"    %unused_compare = ctjs.compare strict_eq {fixed[1]}, %mixed_state",
+    yield (
+        "unused-mixed-comparison",
+        captures.insert(
+            text,
+            reader,
+            exited.start(),
+            f"    %mixed_state = ctjs.load_upvalue {fixed[2]}[{indices[0]}]\n"
+            f"    %unused_compare = ctjs.compare strict_eq {fixed[1]}, %mixed_state",
+        ),
     )
 
 

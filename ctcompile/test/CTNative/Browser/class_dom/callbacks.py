@@ -168,7 +168,7 @@ def call_variants(args, ir, contract):
     def spelling(operation, values, properties=""):
         return (
             f'{call[1]} = "{operation}"({", ".join(values)}){properties} : '
-            f'({", ".join(["!ctjs.value"] * len(values))}) -> !ctjs.value'
+            f"({', '.join(['!ctjs.value'] * len(values))}) -> !ctjs.value"
         )
 
     ordinary = [operands[2], operands[0], operands[3]]

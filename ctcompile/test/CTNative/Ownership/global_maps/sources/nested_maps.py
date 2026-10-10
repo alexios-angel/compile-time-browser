@@ -616,7 +616,7 @@ host.slot.poison(); trace = host.slot.get();
     # independently from the Boolean-result child-content programs above.
     returned = (
         mixed_child.replace(
-            "if (!t.has(1)) { return false; }\n" "            return t.get(1).get('value') === 64;",
+            "if (!t.has(1)) { return false; }\n            return t.get(1).get('value') === 64;",
             "return t.has(1) && t.get(1).get('value') || null;",
         )
         .replace(
@@ -673,7 +673,7 @@ host.slot.poison(); trace = host.slot.get();
         ):
             source = source.replace(
                 f"var {observation} = host.slot.get() === {comparison};",
-                "{ const saved = host.slot.get(); " f"var {observation} = {expression}; }}",
+                f"{{ const saved = host.slot.get(); var {observation} = {expression}; }}",
             )
         add("returned_fields_" + name, source, 16, functions=5, admitted=True)
         row = rows["nested_map_returned_fields_" + name]
@@ -714,8 +714,7 @@ host.slot.poison(); trace = host.slot.get();
             "other_receiver",
             source.replace(
                 object_read,
-                "const other = host.slot.get(); "
-                "var traceObject = saved === key ? other.value : 0;",
+                "const other = host.slot.get(); var traceObject = saved === key ? other.value : 0;",
             ),
             17,
             {"traceMissing": 0, "traceNumber": 0, "traceObject": 64},

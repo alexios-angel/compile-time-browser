@@ -19,7 +19,9 @@ for (const name of Object.keys(context).sort()) {
 def check_zero_keys(cpp):
     renamed, count = re.subn(r"\bmain\(\)", "ctnative_test_entry()", cpp)
     assert count == 1
-    return renamed + r"""
+    return (
+        renamed
+        + r"""
 template <class K> bool check_zero_keys(K negative) {
     const K positive{0.0};
     auto map = ctnative::make_number_map<K>();
@@ -49,6 +51,7 @@ int main() {
     return 0;
 }
 """
+    )
 
 
 def main():

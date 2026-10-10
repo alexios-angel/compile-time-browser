@@ -33,7 +33,7 @@ def lower(args, source, name, count, passes, *, admitted=0):
             after = len(re.findall(pattern, text, re.M))
             if before != after:
                 raise RuntimeError(
-                    f"{name}: refusal changed {operation} count " f"{before} -> {after}\n{text}"
+                    f"{name}: refusal changed {operation} count {before} -> {after}\n{text}"
                 )
     return output
 
@@ -46,17 +46,17 @@ def main():
         "raw_length": ("const it = map.keys(); return +(it.length === undefined);", 1),
         "raw_index": ("const it = map.values(); return +(it[0] === undefined);", 1),
         "raw_next": ("const it = map.keys(); return it.next().value;", 1),
-        "iterator_write": ("const it = map.keys(); it[0] = 99; " "return Array.from(it)[0];", 1),
+        "iterator_write": ("const it = map.keys(); it[0] = 99; return Array.from(it)[0];", 1),
         "delayed_set": (
-            "const it = map.keys(); map.set(2, 20); " "return Array.from(it).length;",
+            "const it = map.keys(); map.set(2, 20); return Array.from(it).length;",
             2,
         ),
         "delayed_delete": (
-            "const it = map.values(); map.delete(1); " "return Array.from(it).length;",
+            "const it = map.values(); map.delete(1); return Array.from(it).length;",
             0,
         ),
         "delayed_clear": (
-            "const it = map.keys(); map.clear(); " "return Array.from(it).length;",
+            "const it = map.keys(); map.clear(); return Array.from(it).length;",
             0,
         ),
         "twice": (
@@ -65,7 +65,7 @@ def main():
             10,
         ),
         "conditional": (
-            "const it = map.keys(); if (map.size) { " "return Array.from(it).length; } return 0;",
+            "const it = map.keys(); if (map.size) { return Array.from(it).length; } return 0;",
             1,
         ),
         "published": ("return map.keys();", 1),

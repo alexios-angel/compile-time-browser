@@ -334,8 +334,7 @@ def main():
     forged = args.work / "forged.mlir"
     text, count = re.subn(
         r"\bmodule attributes \{",
-        "module attributes {"
-        'ctnative.host_owner_proved = true, ctnative.host_owner_reason = "", ',
+        'module attributes {ctnative.host_owner_proved = true, ctnative.host_owner_reason = "", ',
         ir.read_text(),
         count=1,
     )

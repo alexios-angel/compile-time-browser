@@ -66,7 +66,7 @@ def main():
             raise RuntimeError(f"{name}: Node/interpreter source observations changed")
         raw = args.work / f"{name}.raw.mlir"
         run([args.translate, "--ctbrowser-js-to-ctjs", str(source), "-o", str(raw)])
-        for optimize in ((True,) if name == "region" else (False, True)):
+        for optimize in (True,) if name == "region" else (False, True):
             prefix = f"{name}.{optimize}"
             native = args.work / f"{prefix}.native.mlir"
             run(
@@ -109,7 +109,9 @@ def main():
                 owners = (
                     4
                     if name == "selected-counted"
-                    else 3 if name == "nested" or name.startswith("counted-") else 2
+                    else 3
+                    if name == "nested" or name.startswith("counted-")
+                    else 2
                 )
                 if len(re.findall(r"std::vector<double>\s+[A-Za-z_]\w*\s*;", body)) != owners:
                     raise RuntimeError(
@@ -195,7 +197,7 @@ def main():
     for source in sources:
         raw = args.work / f"{source.stem}.raw.mlir"
         run([args.translate, "--ctbrowser-js-to-ctjs", str(source), "-o", str(raw)])
-        for optimize in ((False,) if source.stem == "region" else (False, True)):
+        for optimize in (False,) if source.stem == "region" else (False, True):
             result = run(
                 [
                     args.opt,

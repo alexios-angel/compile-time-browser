@@ -156,9 +156,10 @@ def mutations(text):
         "      %other_result = ctjs.constant #ctjs.undefined\n"
         "      scf.yield %other_result : !ctjs.value\n    }"
     )
-    yield "resultful-helper-if", text[: writer.start() + branch.start()] + result_if + text[
-        writer.start() + branch.end() :
-    ]
+    yield (
+        "resultful-helper-if",
+        text[: writer.start() + branch.start()] + result_if + text[writer.start() + branch.end() :],
+    )
     condition = re.search(r"^    (%\w+) = ctjs\.truthy %\w+", writer[0], re.M)
     changed = (
         writer[0][: condition.start()]
@@ -171,9 +172,10 @@ def mutations(text):
     nested = branch[0]
     for _ in range(64):
         nested = f"    scf.if {branch[1]} {{\n{nested}\n    }}"
-    yield "conditional-depth", text[: writer.start() + branch.start()] + nested + text[
-        writer.start() + branch.end() :
-    ]
+    yield (
+        "conditional-depth",
+        text[: writer.start() + branch.start()] + nested + text[writer.start() + branch.end() :],
+    )
 
 
 def nested_root(text):

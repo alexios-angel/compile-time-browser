@@ -3374,7 +3374,7 @@ def main():
         ir, contract = prepare(
             args,
             "global-local-" + name,
-            "function bad(key) { return helper(key); }\n" f"function helper(value) {{ {body} }}\n",
+            f"function bad(key) {{ return helper(key); }}\nfunction helper(value) {{ {body} }}\n",
             entry_name="bad",
             parameter_types=["symbol"],
         )

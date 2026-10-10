@@ -360,8 +360,7 @@ def size_result_sources():
         "seeded_size_two_entries": hosted(
             SEEDED_RESULT.replace(
                 "state.set(0, 1); return state.get(0);",
-                "state.set(0, 1); state.set(1, 2); state.delete(state.size); "
-                "return state.get(1);",
+                "state.set(0, 1); state.set(1, 2); state.delete(state.size); return state.get(1);",
             ),
             2,
         ),
@@ -474,8 +473,7 @@ def size_result_refusals():
         "seeded_size_equal_bound": (
             observed_size.replace(
                 "state.set(0, 1); return state.get(0);",
-                "state.set(0, 1); state.set(2, 2); state.delete(state.size); "
-                "return state.get(2);",
+                "state.set(0, 1); state.set(2, 2); state.delete(state.size); return state.get(2);",
             ),
             3,
         ),

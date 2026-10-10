@@ -199,28 +199,38 @@ def oracle(args, name, text):
 def mutations(text):
     cell, store, start, end = shape(text)
     yield "second-write", text[: store.end()] + "\n" + store[0] + text[store.end() :]
-    yield "stored-cell-identity", (
-        text[: store.start()] + f"{store[1]}ctjs.cell_set {cell}, {cell}" + text[store.end() :]
+    yield (
+        "stored-cell-identity",
+        (text[: store.start()] + f"{store[1]}ctjs.cell_set {cell}, {cell}" + text[store.end() :]),
     )
-    yield "before-read", (
-        text[: store.start()]
-        + f"{store[1]}%before_store = ctjs.cell_get {cell}\n"
-        + f"{store[1]}ctjs.cell_set {cell}, %before_store"
-        + text[store.end() :]
+    yield (
+        "before-read",
+        (
+            text[: store.start()]
+            + f"{store[1]}%before_store = ctjs.cell_get {cell}\n"
+            + f"{store[1]}ctjs.cell_set {cell}, %before_store"
+            + text[store.end() :]
+        ),
     )
     made = re.search(rf"^    {re.escape(cell)} = ctjs\.create_cell (%\w+)", text[start:end], re.M)
-    yield "non-undefined-initial", (
-        text[: start + made.start()]
-        + "    %conditional_initial = ctjs.constant #ctjs.boolean<false>\n"
-        + f"    {cell} = ctjs.create_cell %conditional_initial"
-        + text[start + made.end() :]
+    yield (
+        "non-undefined-initial",
+        (
+            text[: start + made.start()]
+            + "    %conditional_initial = ctjs.constant #ctjs.boolean<false>\n"
+            + f"    {cell} = ctjs.create_cell %conditional_initial"
+            + text[start + made.end() :]
+        ),
     )
     returned = re.search(r"^    ctjs\.return (%\w+)", text[start:end], re.M)
     at = start + returned.start()
-    yield "after-join-read", (
-        text[:at]
-        + f"    %after_join = ctjs.cell_get {cell}\n    ctjs.return %after_join"
-        + text[start + returned.end() :]
+    yield (
+        "after-join-read",
+        (
+            text[:at]
+            + f"    %after_join = ctjs.cell_get {cell}\n    ctjs.return %after_join"
+            + text[start + returned.end() :]
+        ),
     )
     for name, changed in root_variants(text, cell, start).items():
         if name != "valid":

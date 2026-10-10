@@ -288,8 +288,7 @@ def run_mode(test, mode, args):
         if want_type not in (error["ctor"], error["name"]):
             return (
                 FAIL,
-                f"negative {want_phase}/{want_type}: got "
-                f"{error['ctor'] or error['name'] or '?'}",
+                f"negative {want_phase}/{want_type}: got {error['ctor'] or error['name'] or '?'}",
             )
         return PASS, None
 
@@ -451,8 +450,7 @@ def gate(rows, args):
         )
     if regressions or unexpected:
         print(
-            f"\ntest262 gate FAILED: {len(regressions)} regressed, "
-            f"{len(unexpected)} newly passing"
+            f"\ntest262 gate FAILED: {len(regressions)} regressed, {len(unexpected)} newly passing"
         )
         return 1
     print(f"test262 gate ok: {len(rows)} tests match ctbrowser/test/test262/expectations.txt")
@@ -653,7 +651,7 @@ def main():
         # something it does not run.
         if not args.gate:
             sys.exit(
-                "test262.py: --update-expectations records the GATE's subset, " "so it needs --gate"
+                "test262.py: --update-expectations records the GATE's subset, so it needs --gate"
             )
         write_expectations(rows)
         return 0

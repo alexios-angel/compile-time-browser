@@ -44,7 +44,8 @@ CLASS_CASES = {
     "class_error_unused": (ERROR_CLASS, "1000"),
     "class_key": (CLASS + READ, "1000"),
     "class_order": (
-        CLASS + """  const saved = element.getAttribute(shape.read());
+        CLASS
+        + """  const saved = element.getAttribute(shape.read());
   element.setAttribute(shape.read(), 'after');
   shape.key = 'marker';
   element.setAttribute(shape.read(), 'done');
@@ -588,12 +589,16 @@ CLASS_REFUSALS.update(
 # helpers lose their last call.
 BOOTSTRAP_ELEMENT = """r = t => !(!t || "object" != typeof t) && (void 0 !== t.jquery && (t = t[0]), void 0 !== t.nodeType),
         a = t => r(t) ? t.jquery ? t[0] : t : "string" == typeof t && t.length > 0 ? document.querySelector(n(t)) : null"""
-ELEMENT_ARM = "const " + BOOTSTRAP_ELEMENT + """;
+ELEMENT_ARM = (
+    "const "
+    + BOOTSTRAP_ELEMENT
+    + """;
   class Button {
     constructor(t) { (t = a(t)) && (this.element = t); }
     read() { return this.element.getAttribute('x') === null; }
   }
 """
+)
 ELEMENT_ARM_CASES = {
     "class_element_arm": (ELEMENT_ARM + "  return new Button(element).read();\n", "1000")
 }
@@ -640,7 +645,8 @@ SNAPSHOT_CLASS = """class Shape {
 SNAPSHOT_CASES = {
     "class_own_keys": (SNAPSHOT_CLASS + "  return shape.read();\n", "1000"),
     "class_own_keys_entry": (
-        CLASS + """  const keys = Object.getOwnPropertyNames(shape);
+        CLASS
+        + """  const keys = Object.getOwnPropertyNames(shape);
   shape.key = 'marker';
   return keys.length === 1 && keys[0] === 'key' && shape.read() === 'marker'
       && element.getAttribute('x') === null;
@@ -760,13 +766,16 @@ NUMBER_REFUSALS = {
     ),
 }
 # Keep the complete original helper, including both exception-producing calls.
-M_CLASS = BOOTSTRAP_M + """
+M_CLASS = (
+    BOOTSTRAP_M
+    + """
   class Shape {
     constructor(element) { this.element = element; }
     read() { return this.element.getAttribute('x'); }
   }
   const shape = new Shape(element);
 """
+)
 M_CASES = {
     "class_m": (M_CLASS + "  return typeof M(shape.read()) === 'object';\n", "1100"),
     "class_m_json": (
@@ -887,12 +896,15 @@ NUMBER_CASES.update(M_CASES)
 NUMBER_REFUSALS.update(M_REFUSALS)
 CLASS_CASES.update(NUMBER_CASES)
 CLASS_REFUSALS.update(NUMBER_REFUSALS)
-F_CLASS = strings.BOOTSTRAP_F + """class Shape {
+F_CLASS = (
+    strings.BOOTSTRAP_F
+    + """class Shape {
     read(key) { return F(key); }
   }
   const shape = new Shape();
   return shape.read('config') === 'config' && element.getAttribute('x') === null;
 """
+)
 F_CASES = {
     "class_f_captured": (
         F_CLASS.replace("read(key) { return F(key); }", "read() { return F('config'); }").replace(

@@ -43,7 +43,11 @@ def check_positive(args, node, reference, compilers, nm, name, spec):
                 else (
                     RESULT_SIGNATURES[name][2]
                     if name in RESULT_SIGNATURES
-                    else 6 if name == "shared_three" else 5 if name.startswith("shared") else 4
+                    else 6
+                    if name == "shared_three"
+                    else 5
+                    if name.startswith("shared")
+                    else 4
                 )
             )
         )

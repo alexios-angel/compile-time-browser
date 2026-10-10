@@ -151,7 +151,9 @@ def check_leaf_clear_observations(args, node, reference):
 
 
 def nullable_foreign_observer(source):
-    return source + """
+    return (
+        source
+        + """
 (function() {
     const get = host.slot.get, set = host.slot.set, size = host.slot.size;
     host = {};
@@ -169,10 +171,13 @@ def nullable_foreign_observer(source):
     trace = ok && size() === 134 ? 1 : 0;
 })();
 """
+    )
 
 
 def nullable_foreign_lifetime_cpp(cpp):
-    return instrument_leaf_objects(cpp, allocations=0) + r"""
+    return (
+        instrument_leaf_objects(cpp, allocations=0)
+        + r"""
 int main() {
     using Key = ctnative::nullable_string;
     using Result = ctnative::nullable_scalar;
@@ -236,6 +241,7 @@ int main() {
     return 0;
 }
 """
+    )
 
 
 def check_nullable_foreign_empty(args, output, source, node, reference, compilers, nm):

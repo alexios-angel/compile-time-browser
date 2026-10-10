@@ -616,7 +616,8 @@ REGEXP_CASES = {
         "1111",
     ),
     "helper_regex_original": (
-        BOOTSTRAP_F + """
+        BOOTSTRAP_F
+        + """
   element.setAttribute('data-bs-' + F('config'), 'value');
   return element.getAttribute('data-bs-' + F('config')) === 'value';""",
         "1111",
@@ -634,7 +635,9 @@ REGEXP_CASES = {
         "1111",
     ),
     "helper_regex_forwarded_names": (
-        "function read(target, name) {\n" + BOOTSTRAP_F + """
+        "function read(target, name) {\n"
+        + BOOTSTRAP_F
+        + """
     return target.getAttribute('data-bs-' + F(name));
   }
   element.setAttribute('data-bs-config', 'first');
@@ -647,7 +650,8 @@ REGEXP_CASES = {
         "1111",
     ),
     "helper_regex_captured_names": (
-        BOOTSTRAP_F + """
+        BOOTSTRAP_F
+        + """
   function read(target, name) { return target.getAttribute('data-bs-' + F(name)); }
   element.setAttribute('data-bs-config', 'first');
   element.setAttribute('data-bs-toggle', 'second');
@@ -655,7 +659,8 @@ REGEXP_CASES = {
         "1111",
     ),
     "helper_regex_captured_consumers": (
-        BOOTSTRAP_F + """
+        BOOTSTRAP_F
+        + """
   function first(target) { return target.getAttribute('data-bs-' + F('config')); }
   function second(target) { return target.getAttribute('data-bs-' + F('toggle')); }
   element.setAttribute('data-bs-' + F('direct'), 'third');
@@ -665,7 +670,8 @@ REGEXP_CASES = {
         "1111",
     ),
     "helper_regex_captured_chain": (
-        BOOTSTRAP_F + """
+        BOOTSTRAP_F
+        + """
   function key(name) { return F(name); }
   function read(target, name) { return target.getAttribute('data-bs-' + key(name)); }
   element.setAttribute('data-bs-config', 'first');
@@ -690,7 +696,8 @@ REGEXP_CASES = {
         "1111",
     ),
     "helper_regex_bytes": (
-        BOOTSTRAP_F + r"""
+        BOOTSTRAP_F
+        + r"""
   element.setAttribute('data-bs-config', F('a\0\u00e9'));
   return element.getAttribute('data-bs-config') === F('a\0\u00e9');""",
         "1111",

@@ -16,7 +16,10 @@ def sources():
         .removesuffix(",")
         + ";\n"
     )
-    source = "function probe() {\n" + data + """
+    source = (
+        "function probe() {\n"
+        + data
+        + """
   const add = n => n + 1;
   const twice = n => n * 2;
   class Item {
@@ -33,6 +36,7 @@ def sources():
 }
 var a = probe();
 """
+    )
     single = source.replace("  const twice = n => n * 2;\n", "")
     programs = {
         "holder": (single, 381),

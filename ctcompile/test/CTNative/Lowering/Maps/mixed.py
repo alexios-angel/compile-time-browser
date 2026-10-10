@@ -310,9 +310,9 @@ def main():
                     "short-truthy-bool-refused",
                     "short-wrong-condition-refused",
                 }:
-                    assert (
-                        "mixed native Map write needs one proved scalar alternative" in result
-                    ), name
+                    assert "mixed native Map write needs one proved scalar alternative" in result, (
+                        name
+                    )
                 elif name == "scalar-payload-snapshot-refused":
                     assert (
                         "nullable scalar Map value snapshot needs a tagged element carrier"

@@ -212,7 +212,7 @@ process.stdout.write('trace=undefined\n');
         ):
             raise RuntimeError(f"{name}: changed the exact source function/call census")
         observer = undefined_node if case["value"] == "undefined" else boundary.NODE
-        expected = f'trace={case["value"]}\n'
+        expected = f"trace={case['value']}\n"
         if (
             host.run([node, "-e", observer, str(js)]).stdout != expected
             or host.run([str(reference), str(js)]).stdout != expected
@@ -221,7 +221,7 @@ process.stdout.write('trace=undefined\n');
         repaired_js, repaired_ir, repaired_count = boundary.prepare(
             args, name + "-restored", case["repair"]
         )
-        repaired_expected = f'trace={case["repaired_value"]}\n'
+        repaired_expected = f"trace={case['repaired_value']}\n"
         if (
             repaired_count != count
             or repaired_expected == expected
@@ -572,9 +572,7 @@ def check_leaf_object_refusals(args, positives, node, reference, controls=None):
             [node, "-e", numeric_node_observer(value), str(js)]
         ).stdout != f"trace={value}\n" or host.run(
             [str(reference), str(js)]
-        ).stdout != numeric_reference_output(
-            name, value
-        ):
+        ).stdout != numeric_reference_output(name, value):
             raise RuntimeError(f"{name}: Node/interpreter leaf-object refusal mismatch")
         if (
             source.count(old) != 1

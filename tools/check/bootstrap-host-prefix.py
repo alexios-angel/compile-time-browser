@@ -588,7 +588,9 @@ var traceDistinct = first !== host.slot ? 1 : 0;
         api = (
             "module.exports"
             if args.mode == "commonjs"
-            else "scriptThis.bootstrap" if realm_fallback else "globalThis.bootstrap"
+            else "scriptThis.bootstrap"
+            if realm_fallback
+            else "globalThis.bootstrap"
         )
         program = replace_publication(program, fragment, api, args.replace)
     function_count = 2 if adversarial else 5 if instances else 8 if args.replace else 7

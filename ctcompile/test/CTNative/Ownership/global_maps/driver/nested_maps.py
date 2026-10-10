@@ -8,7 +8,9 @@ from ..harness.nested_payloads import *
 def nested_map_observer(source, row):
     if row.get("mixed_child"):
         return mixed_child_observer(source, row)
-    observed = source + """
+    observed = (
+        source
+        + """
 (function() {
     const get = host.slot.get;
     host = {};
@@ -35,6 +37,7 @@ def nested_map_observer(source, row):
     trace = ok ? 1 : 0;
 })();
 """
+    )
     distinct = (
         ""
         if row["children"] == 1
@@ -77,13 +80,16 @@ def nested_map_observer(source, row):
             "const set = host.slot.set, get = host.slot.get;",
             "const set = host.slot.set, get = host.slot.get, poison = host.slot.poison;",
         )
-        recreate = """const poisoned = seen[0][0].get(1);
+        recreate = (
+            """const poisoned = seen[0][0].get(1);
     poison();
     ok = ok && get() === undefined && seen[0][0].size === 1 &&
          (seen[0][0].get(1) !== poisoned) === REPLACEMENT &&
          poisoned.get('value') === POISONED_VALUE;
     set(29);
-    """ + recreate
+    """
+            + recreate
+        )
         recreate = recreate.replace("REPLACEMENT", str(row["replacement"]).lower()).replace(
             "POISONED_VALUE", "127.5" if row["replacement"] else "undefined"
         )
@@ -96,7 +102,7 @@ def nested_map_observer(source, row):
             )
             .replace(
                 "answer !== value) { ok = false; }",
-                "answer !== previous) { ok = false; }\n" "        previous = value;",
+                "answer !== previous) { ok = false; }\n        previous = value;",
             )
         )
         recreate = recreate.replace(
@@ -141,7 +147,9 @@ def nested_map_observer(source, row):
     stride = (
         2
         if row["repeated"] or row["dynamic"] or row.get("alias")
-        else 1 if row["children"] == 1 else 3
+        else 1
+        if row["children"] == 1
+        else 3
     )
     return (
         observed.replace("STRIDE", str(stride))
@@ -167,7 +175,9 @@ def nested_map_lifetime_cpp(cpp, row):
         return mixed_child_lifetime_cpp(cpp, row)
     if row.get("nullable"):
         return nested_map_mutation_lifetime_cpp(cpp, row)
-    changed = instrument_leaf_objects(cpp, allocations=0) + r"""
+    changed = (
+        instrument_leaf_objects(cpp, allocations=0)
+        + r"""
 int main() {
     using Child = ctnative::number_map<std::string>;
     using Outer = ctnative::map_storage<js_num, std::shared_ptr<Child>>;
@@ -234,6 +244,7 @@ int main() {
     return 0;
 }
 """
+    )
     if row["separate"]:
         changed = (
             changed.replace(
@@ -376,12 +387,14 @@ int main() {
     numeric_get = not (row["previous"] or row.get("alias") or row["dynamic"])
     observer = re.sub(
         r"\b(get|set)\((value|[0-9]+)([^()\n]*)\)",
-        lambda match: f"{match[1]}(ctnative::js_num{{"
-        + (match[2] if match[2] == "value" else match[2] + ".0")
-        + "}"
-        + match[3]
-        + ")"
-        + (".value()" if match[1] == "set" or numeric_get else ""),
+        lambda match: (
+            f"{match[1]}(ctnative::js_num{{"
+            + (match[2] if match[2] == "value" else match[2] + ".0")
+            + "}"
+            + match[3]
+            + ")"
+            + (".value()" if match[1] == "set" or numeric_get else "")
+        ),
         observer,
     )
     if numeric_get:
@@ -407,7 +420,9 @@ int main() {
 def nested_map_mutation_lifetime_cpp(cpp, row):
     # Call the real sibling after publication; neither its tag nor its child
     # lifetime can be inferred from the initial Number observation.
-    changed = instrument_leaf_objects(cpp, allocations=0) + r"""
+    changed = (
+        instrument_leaf_objects(cpp, allocations=0)
+        + r"""
 int main() {
     using Child = ctnative::number_map<std::string>;
     using Outer = ctnative::map_storage<js_num, std::shared_ptr<Child>>;
@@ -478,6 +493,7 @@ int main() {
     return 0;
 }
 """
+    )
     initial_maps = 2 + row["replacement"] * (1 + (row["expected_trace"] == "undefined"))
     return (
         changed.replace("REPLACEMENT", str(row["replacement"]).lower())

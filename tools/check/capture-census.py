@@ -143,7 +143,9 @@ def census(lines, scoped=True):
             kind[matched.group(1)] = (
                 "placeholder"
                 if UNDEF.match(line)
-                else "cells" if matched.group(2) == "ctjs.create_cell" else "other"
+                else "cells"
+                if matched.group(2) == "ctjs.create_cell"
+                else "other"
             )
     return counts, disagreements
 
@@ -182,7 +184,7 @@ def main():
     # print zeros and satisfy any floor written as ">=".
     if counts["closures"] == 0:
         print(
-            "capture-census: no ctjs.create_closure in the module - " "nothing was measured",
+            "capture-census: no ctjs.create_closure in the module - nothing was measured",
             file=sys.stderr,
         )
         return 2

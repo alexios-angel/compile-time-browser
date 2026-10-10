@@ -94,7 +94,9 @@ function makeElement(value) {
                 entry_name=(
                     ("host_refusal" if name == "host_local_function_copy" else "invalid")
                     if name in CAPTURE_RETURNS
-                    else name if name in HELPER_CASES or name in HOST_CASES else None
+                    else name
+                    if name in HELPER_CASES or name in HOST_CASES
+                    else None
                 ),
             ),
         )

@@ -56,14 +56,15 @@ if [[ ${#files[@]} -eq 0 ]]; then
     exit 1
 fi
 
-# THE PYTHON HALF: black (tools/Brewfile pins it, pyproject.toml configures it)
-# over the same tracked-or-untracked list, for the same reason there is one
-# script - a second gate is a second one to forget. Missing black is an error
-# rather than a skip: a formatter that silently does nothing when it is not
-# installed is the tracked-only hole above in a different coat.
-black=$(command -v black || true)
-if [[ -z $black ]]; then
-    echo "format.sh: no black found - brew install black (tools/Brewfile)" >&2
+# THE PYTHON HALF: `ruff format` (tools/Brewfile pins it, pyproject.toml
+# configures it; black until 2026-10-10) over the same tracked-or-untracked
+# list, for the same reason there is one script - a second gate is a second one
+# to forget. Missing ruff is an error rather than a skip: a formatter that
+# silently does nothing when it is not installed is the tracked-only hole above
+# in a different coat.
+ruff=$(command -v ruff || true)
+if [[ -z $ruff ]]; then
+    echo "format.sh: no ruff found - brew install ruff (tools/Brewfile)" >&2
     exit 127
 fi
 mapfile -t pyfiles < <({ git ls-files '*.py'
@@ -108,7 +109,7 @@ if [[ ${1:-} == "--check" ]]; then
         echo "format.sh: the files above are not formatted. Run tools/format.sh" >&2
         exit 1
     fi
-    if ! "$black" --check --quiet "${pyfiles[@]}"; then
+    if ! "$ruff" format --check --quiet "${pyfiles[@]}"; then
         echo >&2
         echo "format.sh: the python files above are not formatted. Run tools/format.sh" >&2
         exit 1
@@ -123,6 +124,6 @@ if [[ ${1:-} == "--check" ]]; then
 fi
 
 "$format" -i "${files[@]}"
-"$black" --quiet "${pyfiles[@]}"
+"$ruff" format --quiet "${pyfiles[@]}"
 beautify replace "${webfiles[@]}"
 echo "format.sh: formatted ${#files[@]} files, ${#pyfiles[@]} python and ${#webfiles[@]} web files"

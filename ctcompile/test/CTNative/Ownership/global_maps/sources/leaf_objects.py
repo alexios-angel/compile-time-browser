@@ -22,7 +22,7 @@ def leaf_object_sources():
     )
     lifetime = fields.replace(
         "size() { return state.size; },",
-        "size() { return state.size; }, " "erase(key) { state.delete(key); return state.size; },",
+        "size() { return state.size; }, erase(key) { state.delete(key); return state.size; },",
     )
     lifetime = lifetime.replace("var trace =", "host.slot.erase('y'); var trace =")
     return {
@@ -171,7 +171,7 @@ def leaf_readback_sources():
             0,
         ),
         "local_identity_saved_overwrite": (
-            field + "state.set(key, {value: 1}); " "return saved === item ? 1 : 0;",
+            field + "state.set(key, {value: 1}); return saved === item ? 1 : 0;",
             1,
         ),
         "local_identity_saved_delete": (
@@ -179,15 +179,15 @@ def leaf_readback_sources():
             1,
         ),
         "local_field_saved_overwrite": (
-            field + "state.set(key, {value: 2}); " "return saved === item ? saved.value : 0;",
+            field + "state.set(key, {value: 2}); return saved === item ? saved.value : 0;",
             1,
         ),
         "local_field_saved_delete": (
-            field + "state.delete(key); " "return saved === item ? saved.value : 0;",
+            field + "state.delete(key); return saved === item ? saved.value : 0;",
             1,
         ),
         "local_field_saved_alias_write": (
-            field + "item.value = 2; " "return saved === item ? saved.value : 0;",
+            field + "item.value = 2; return saved === item ? saved.value : 0;",
             2,
         ),
     }
@@ -699,14 +699,13 @@ def leaf_absence_cases():
     )
     add(
         "clear_saved_identity",
-        prefix + "const saved = state.get(key); " "state.clear(); return saved === item ? 1 : 0;",
+        prefix + "const saved = state.get(key); state.clear(); return saved === item ? 1 : 0;",
         1,
         "saved identity isolates unsupported clear from fresh absent read",
     )
     add(
         "clear_delete_repair",
-        prefix + "const saved = state.get(key); "
-        "state.delete(key); return saved === item ? 1 : 0;",
+        prefix + "const saved = state.get(key); state.delete(key); return saved === item ? 1 : 0;",
         1,
         "one exact clear-to-delete edit restores historical saved identity",
     )
@@ -732,7 +731,7 @@ def leaf_absence_cases():
         )
         add(
             "maybe_overwrite_" + alias,
-            prefix + "state.delete(key); " "state.set(other, {value: 2}); " + absent,
+            prefix + "state.delete(key); state.set(other, {value: 2}); " + absent,
             1 - missing,
             "a possibly equal later write destroys definite absence",
             params="key, other",

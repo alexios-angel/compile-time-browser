@@ -92,9 +92,7 @@ BAD["default-parameter"] = METHOD.replace("run(target)", "run(target, enabled = 
     "target.hasAttribute('ready')", "enabled"
 ).replace(
     "return node.getAttribute", "return enabled && node.getAttribute"
-) + callbacks.CALLS.replace(
-    "item.run(element)", "item.run(element, false)"
-)
+) + callbacks.CALLS.replace("item.run(element)", "item.run(element, false)")
 
 
 def main():

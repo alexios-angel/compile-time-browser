@@ -397,7 +397,9 @@ def check_scalar_global_emission(args, ir, name):
                 tag = (
                     "string"
                     if isinstance(value, StringValue) or value == "owned scalar"
-                    else "boolean" if isinstance(value, bool) else "number"
+                    else "boolean"
+                    if isinstance(value, bool)
+                    else "number"
                 )
                 carrier = "nullable_string" if tag == "string" else "nullable_scalar"
                 if not re.search(rf"\bctnative::{carrier}\s+g_{binding}\s*;", cpp):

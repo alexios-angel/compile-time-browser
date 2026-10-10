@@ -56,7 +56,9 @@ def published_source(constructor=False):
     )
     body = source(constructor).replace("function probe(element) {\n", prefix, 1)
     body = body.replace("a = savedFirst.n", "const result = savedFirst.n", 1)
-    return body.rstrip().removesuffix("}") + """
+    return (
+        body.rstrip().removesuffix("}")
+        + """
   traceEntered = 1;
   traceBefore = host.slot.get(element);
   host.slot.remove(element);
@@ -65,6 +67,7 @@ def published_source(constructor=False):
   traceAfter = host.slot.get(element);
 }
 """
+    )
 
 
 def record_source():

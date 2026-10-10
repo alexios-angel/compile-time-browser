@@ -155,7 +155,7 @@ def numeric_entry_cases():
     )
 
     source = leaf_clear_cases()["local_clear_reseed_disjoint"]["source"]
-    old = "state.clear(); state.set('other', item); " "return state.get('gone') === void 0 ? 1 : 0;"
+    old = "state.clear(); state.set('other', item); return state.get('gone') === void 0 ? 1 : 0;"
     new = (
         "state.clear(); const zero = state.size; state.set(1, item); "
         "return state.get(zero) === void 0 ? 1 : 0;"
@@ -344,8 +344,9 @@ def numeric_entry_cases():
         "const third = host.slot.set('y'); var trace = first + second + third;"
     )
     replacement = "var trace = host.slot.set('x') + host.slot.set('x') + host.slot.set('y');"
-    assert rows["local_add_saved_results"]["source"].replace(old, replacement) == (
-        rows["local_identity_repeated_keys"]["source"]
+    assert (
+        rows["local_add_saved_results"]["source"].replace(old, replacement)
+        == (rows["local_identity_repeated_keys"]["source"])
     )
     rows["local_add_saved_results"].update(
         repair="local_identity_repeated_keys", removed_text=old, replacement_text=replacement

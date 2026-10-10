@@ -136,8 +136,7 @@ def saved_join_sources():
     )
     number = number.replace(
         "state.set(false, true); state.set(false, saved);",
-        "state.set(0, true); state.set(1, true); "
-        "state.set(false, true); state.set(false, saved);",
+        "state.set(0, true); state.set(1, true); state.set(false, true); state.set(false, saved);",
     )
     owning = saved.replace(
         "state.set('', ''); state.set('other', 'future');",
@@ -225,8 +224,7 @@ def guarded_saved_sources():
     )
     number = conditional["saved_join_number"][0].replace(
         "const saved = flag ? state.get(1) : state.get(0);",
-        "if (flag) { state.delete(1); } "
-        "const saved = state.has(1) ? state.get(1) : state.get(0);",
+        "if (flag) { state.delete(1); } const saved = state.has(1) ? state.get(1) : state.get(0);",
     )
     owning = conditional["saved_join_string_saved"][0].replace(
         f"state.set('', '{STRING_RESULT}'); state.set('other', '{OTHER_STRING_RESULT}');",

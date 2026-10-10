@@ -1293,8 +1293,9 @@ def main():
     )
     refusals.update(
         {
-            "write-string-read-conditional-prefix-"
-            + name: conditional_string_body.replace(before, after)
+            "write-string-read-conditional-prefix-" + name: conditional_string_body.replace(
+                before, after
+            )
             for name, before, after in (
                 ("unknown-condition", "anchor.hasAttribute('flag')", "anchor.unknown"),
                 (
@@ -1340,8 +1341,9 @@ def main():
     )
     refusals.update(
         {
-            "write-boolean-read-conditional-prefix-"
-            + name: conditional_boolean_body.replace(before, after)
+            "write-boolean-read-conditional-prefix-" + name: conditional_boolean_body.replace(
+                before, after
+            )
             for name, before, after in (
                 ("unknown-condition", "anchor.hasAttribute('flag')", "anchor.unknown"),
                 (
@@ -1396,8 +1398,9 @@ def main():
     )
     refusals.update(
         {
-            "write-nullable-number-conditional-prefix-"
-            + name: nullable_number_body.replace(before, after)
+            "write-nullable-number-conditional-prefix-" + name: nullable_number_body.replace(
+                before, after
+            )
             for name, before, after in (
                 ("unknown-condition", "anchor.hasAttribute('flag')", "anchor.unknown"),
                 (
@@ -1499,8 +1502,7 @@ RAW_HELPER_SOURCES |= {
     for name, source in OUTER_SOURCES.items()
 }
 RAW_HELPER_SOURCES |= {
-    name
-    + "-helper-results": source.replace("return this;", "return true ? this : null;")
+    name + "-helper-results": source.replace("return this;", "return true ? this : null;")
     .replace(
         "return {done: done, value: anchor};",
         "return false ? null : {done: done, value: anchor};",
@@ -1509,8 +1511,7 @@ RAW_HELPER_SOURCES |= {
     for name, source in OUTER_SOURCES.items()
 }
 RAW_HELPER_SOURCES |= {
-    name
-    + "-helper-primitives": source.replace(
+    name + "-helper-primitives": source.replace(
         "() {", "() { if (0) { unknown(); } if (null) { unknown(); }"
     )
     .replace("return this;", "return 1 ? this : null;")
@@ -1695,7 +1696,9 @@ def check_outer_catches(args):
         (void)pressed;
     """
     for name, source in (OUTER_SOURCES | RAW_HELPER_SOURCES).items():
-        script = source + """
+        script = (
+            source
+            + """
 function observe(exhausted) {
   const saved = {};
   if (exhausted) saved['data-yielded'] = 'yes';
@@ -1716,6 +1719,7 @@ function observe(exhausted) {
 }
 var outcome0 = observe(false), outcome1 = observe(true);
 """
+        )
         oracle = args.work / f"{name}.oracle.js"
         oracle.write_text(script)
         node = args.work / f"{name}.node.js"

@@ -112,39 +112,61 @@ def writer_call(owner, closure, leaf):
 def mutations(text):
     owner, cell, closure, leaf = shape(text)
     call, name = writer_call(owner, closure, leaf)
-    yield "duplicate-creator", captures.insert(
-        text, owner, closure.end(), closure[0].replace(closure[1], "%duplicate", 1)
+    yield (
+        "duplicate-creator",
+        captures.insert(
+            text, owner, closure.end(), closure[0].replace(closure[1], "%duplicate", 1)
+        ),
     )
-    yield "escaped-creator", captures.insert(
-        text, owner, closure.end(), f'      ctjs.store_global "escaped", {closure[1]}'
+    yield (
+        "escaped-creator",
+        captures.insert(
+            text, owner, closure.end(), f'      ctjs.store_global "escaped", {closure[1]}'
+        ),
     )
     initial = re.search(rf"^    {re.escape(cell)} = ctjs\.create_cell (%\w+)", owner[0], re.M)[1]
     exited = re.search(r"^    ctjs\.frame_exit %\w+", owner[0], re.M)
-    yield "unselected-caller-after-join", captures.insert(
-        text,
-        owner,
-        exited.start(),
-        f"    %extra = ctjs.call_direct @{name}({initial}, {initial}, {initial})",
+    yield (
+        "unselected-caller-after-join",
+        captures.insert(
+            text,
+            owner,
+            exited.start(),
+            f"    %extra = ctjs.call_direct @{name}({initial}, {initial}, {initial})",
+        ),
     )
-    yield "symbol-observer", text.replace(
-        "module attributes {", f"module attributes {{test.boolean_observer = @{name}, ", 1
+    yield (
+        "symbol-observer",
+        text.replace(
+            "module attributes {", f"module attributes {{test.boolean_observer = @{name}, ", 1
+        ),
     )
-    yield "wrong-enclosing", text[: owner.start() + closure.start()] + closure[0].replace(
-        closure[2] + "[", initial + "[", 1
-    ) + text[owner.start() + closure.end() :]
+    yield (
+        "wrong-enclosing",
+        text[: owner.start() + closure.start()]
+        + closure[0].replace(closure[2] + "[", initial + "[", 1)
+        + text[owner.start() + closure.end() :],
+    )
     store = re.search(rf"^    ctjs\.cell_set {re.escape(cell)}, %\w+", owner[0], re.M)
     body = owner[0][: store.start()] + owner[0][store.end() :]
     body = body.replace(exited[0], store[0] + "\n" + exited[0])
     yield "initialization-after-arm", text[: owner.start()] + body + text[owner.end() :]
     loaded = re.search(r"ctjs\.store_upvalue (%\w+)\[0\], (%\w+)", leaf[0])
-    yield "callee-as-value", text[: leaf.start() + loaded.start()] + loaded[0].replace(
-        loaded[2], loaded[1]
-    ) + text[leaf.start() + loaded.end() :]
-    yield "rooted-local-creator", captures.insert(
-        text,
-        owner,
-        closure.end(),
-        f"      ctjs.root {closure[1]} in " + re.search(r"(%\w+) = ctjs\.frame_enter", owner[0])[1],
+    yield (
+        "callee-as-value",
+        text[: leaf.start() + loaded.start()]
+        + loaded[0].replace(loaded[2], loaded[1])
+        + text[leaf.start() + loaded.end() :],
+    )
+    yield (
+        "rooted-local-creator",
+        captures.insert(
+            text,
+            owner,
+            closure.end(),
+            f"      ctjs.root {closure[1]} in "
+            + re.search(r"(%\w+) = ctjs\.frame_enter", owner[0])[1],
+        ),
     )
     frame = re.search(r"(%\w+) = ctjs\.frame_enter \d+", leaf[0])
     exited = re.search(rf"^    ctjs\.frame_exit {re.escape(frame[1])}\b", leaf[0], re.M)

@@ -65,7 +65,9 @@ def check_oracles(args):
         queries = (
             "skip"
             if name == "uri_prefix" and choice & 2
-            else "skip|good" if name == "uri_prefix" else "good"
+            else "skip|good"
+            if name == "uri_prefix"
+            else "good"
         )
         source += f"""
 var uriObservation{index:03} = (function() {{
@@ -88,7 +90,7 @@ var uriObservation{index:03} = (function() {{
     vm = args.work / "uri-vm.js"
     vm.write_text(source)
     expected = "".join(
-        f'uriObservation{i:03}="{quote_from_bytes(value.encode(), safe='')}"\n'
+        f'uriObservation{i:03}="{quote_from_bytes(value.encode(), safe="")}"\n'
         for i, value in enumerate(RESULTS)
     )
     if run([args.reference, str(vm)]).stdout != expected:

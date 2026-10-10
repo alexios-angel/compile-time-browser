@@ -188,13 +188,11 @@ def imported_program(args, source, name, denominator, *, skipped=False):
             or "function 1 is not compiled: " + IMPORT_REASON not in imported.stderr
         ):
             raise RuntimeError(
-                f"{name}: missing explicit unsupported source function\n"
-                f"{text}\n{imported.stderr}"
+                f"{name}: missing explicit unsupported source function\n{text}\n{imported.stderr}"
             )
     elif count != denominator or "ctjs.skipped" in text or "is not compiled:" in imported.stderr:
         raise RuntimeError(
-            f"{name}: expected {denominator} complete source functions\n"
-            f"{text}\n{imported.stderr}"
+            f"{name}: expected {denominator} complete source functions\n{text}\n{imported.stderr}"
         )
     return raw, count
 
@@ -290,7 +288,7 @@ def budget_controls(args, prepared):
             ]
         )
         refused(prepared, output, 2, name)
-        reason = "ctnative.exception_refusal = " '"native exception recovery work budget exhausted"'
+        reason = 'ctnative.exception_refusal = "native exception recovery work budget exhausted"'
         if reason not in output.read_text():
             raise RuntimeError(f"{name}: refusal did not exercise the exception work budget")
 
