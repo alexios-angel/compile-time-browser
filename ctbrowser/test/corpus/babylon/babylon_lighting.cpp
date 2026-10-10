@@ -19,18 +19,22 @@
 // flat surface whose normal is exactly (0, 0, -1) makes the expected value a
 // calculation rather than an estimate, and puts the whole face at one colour so
 // the centre pixel is representative of it.
+//
+// THE SCENE IS babylon_lighting_scene in babylon_lighting.js, which the page
+// babylon_lighting.html lists beside the bundle.
 
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <filesystem>
 #include <memory>
 #include <string>
-#include <vector>
 
 #include <ctbrowser.hpp>
 
 #include "check.hpp"
+#include "engine.hpp"
 
 namespace {
 
@@ -65,50 +69,23 @@ struct sample {
 //
 // `light` is the direction the light TRAVELS, which is what Babylon's
 // DirectionalLight takes - so a surface facing (0, 0, -1) is lit head-on by a
-// light travelling (0, 0, 1).
-[[nodiscard]] sample lit_by(const std::string & bundle, const std::string & light,
+// light travelling (0, 0, 1). The scene gets it as that text, "x, y, z", and
+// `grey` as the text std::to_string makes of it.
+[[nodiscard]] sample lit_by(const std::string & html, const std::string & light,
                             double grey = 0.8) {
     auto page =
         std::make_unique<ctbrowser::shell::browser>(ctbrowser::shell::browser_options{200, 200});
-    page->assets().add(
-        "babylon.js",
-        std::vector<std::byte>{reinterpret_cast<const std::byte *>(bundle.data()),
-                               reinterpret_cast<const std::byte *>(bundle.data() + bundle.size())});
-    page->load_html(R"(<html><head><meta charset="utf-8">
-      <script src="babylon.js"></script></head>
-      <body><canvas id=c width=64 height=64></canvas></body></html>)");
-    (void)page->run_script(std::string{R"JS((function () {
-        var engine = new BABYLON.Engine(document.getElementById('c'), true);
-        var scene = new BABYLON.Scene(engine);
-        // BLACK, so nothing the light does not account for can reach the pixel.
-        scene.clearColor = new BABYLON.Color4(0, 0, 0, 1);
-        // AND NO AMBIENT. Babylon adds scene.ambientColor * material.ambientColor
-        // to every surface; leaving it at its default would put a constant into
-        // an equation this test is checking exactly.
-        scene.ambientColor = new BABYLON.Color3(0, 0, 0);
-        var camera = new BABYLON.FreeCamera('cam', new BABYLON.Vector3(0, 0, -5), scene);
-        camera.setTarget(BABYLON.Vector3.Zero());
-        // A PLANE FACING THE CAMERA: its normal is exactly (0, 0, -1), so the
-        // Lambert term is a number this test can compute rather than estimate.
-        // Big enough to cover the middle of the canvas at this distance.
-        var plane = BABYLON.MeshBuilder.CreatePlane('p', {size: 6}, scene);
-        var m = new BABYLON.StandardMaterial('m', scene);
-        m.diffuseColor = new BABYLON.Color3()JS"} +
-                           std::to_string(grey) + ", " + std::to_string(grey) + ", " +
-                           std::to_string(grey) + R"JS();
-        // NO SPECULAR AND NO EMISSIVE, so `diffuse * dot` is the whole answer.
-        m.specularColor = new BABYLON.Color3(0, 0, 0);
-        m.emissiveColor = new BABYLON.Color3(0, 0, 0);
-        m.ambientColor = new BABYLON.Color3(0, 0, 0);
-        plane.material = m;
-        var sun = new BABYLON.DirectionalLight('sun', new BABYLON.Vector3()JS" +
-                           light + R"JS(), scene);
-        sun.intensity = 1;
-        sun.diffuse = new BABYLON.Color3(1, 1, 1);
-        sun.specular = new BABYLON.Color3(0, 0, 0);
-        engine.runRenderLoop(function () { scene.render(); });
-        return 'ok';
-      })())JS");
+    // WHERE THE PAGE'S SCRIPTS RESOLVE FROM: its own directory, so
+    // `../../../vendor/babylon/babylon.js` is the bundle and babylon_lighting.js
+    // the file beside the page.
+    page->assets().set_base_path("test/corpus/babylon");
+    // UNCONFINED, explicitly: `../../../vendor/` climbs out of the base path,
+    // which a confined registry refuses. Trusted in-tree fixture - never do
+    // this for a page from the network.
+    page->assets().set_confine(false);
+    page->load_html(html);
+    (void)ctbrowser_test::make_engine(*page)->call("babylon_lighting_scene",
+                                                   {light, std::to_string(grey)});
     for (int i = 0; i < 90; ++i) { page->tick(16); }
     return centre_of(*page);
 }
@@ -133,17 +110,22 @@ void check_close(const char * what, int got, int wanted, int tolerance) {
 } // namespace
 
 int main() {
-    const std::string bundle = read_file("vendor/babylon/babylon.js");
-    if (bundle.empty()) {
+    if (!std::filesystem::exists("vendor/babylon/babylon.js")) {
         std::printf("SKIP babylon_lighting: vendor/babylon/babylon.js is missing\n");
         return 0;
+    }
+    const std::string html = read_file("test/corpus/babylon/babylon_lighting.html");
+    if (html.empty()) {
+        std::printf("FAIL test/corpus/babylon/babylon_lighting.html is missing\n");
+        ++ctbrowser_test_failures;
+        REPORT("babylon_lighting");
     }
 
     const double grey = 0.8;
 
     // --- head on: dot(N, -L) is 1 -------------------------------------------
     {
-        const sample head_on = lit_by(bundle, "0, 0, 1", grey);
+        const sample head_on = lit_by(html, "0, 0, 1", grey);
         check_close("a surface facing the light", head_on.red, expected_byte(grey, 1.0), 3);
         // GREY MEANS GREY. A channel that drifted would say the light's colour
         // or the material's is being applied per-channel differently, which a
@@ -159,13 +141,13 @@ int main() {
     // brightness, and a Lambert term that was squared, halved twice or applied
     // to the wrong vector misses it.
     {
-        const sample angled = lit_by(bundle, "0.8660254, 0, 0.5", grey);
+        const sample angled = lit_by(html, "0.8660254, 0, 0.5", grey);
         check_close("a surface at 60 degrees", angled.red, expected_byte(grey, 0.5), 4);
     }
 
     // --- 45 degrees: dot is sqrt(2)/2 ---------------------------------------
     {
-        const sample angled = lit_by(bundle, "0.7071068, 0, 0.7071068", grey);
+        const sample angled = lit_by(html, "0.7071068, 0, 0.7071068", grey);
         check_close("a surface at 45 degrees", angled.red, expected_byte(grey, 0.7071068), 4);
     }
 
@@ -176,13 +158,13 @@ int main() {
     // instead would light the back of everything - which looks plausible until
     // a scene has a light behind it.
     {
-        const sample behind = lit_by(bundle, "0, 0, -1", grey);
+        const sample behind = lit_by(html, "0, 0, -1", grey);
         check_close("a surface facing away", behind.red, 0, 2);
     }
 
     // --- and the material's colour is respected ------------------------------
     {
-        const sample dim = lit_by(bundle, "0, 0, 1", 0.4);
+        const sample dim = lit_by(html, "0, 0, 1", 0.4);
         check_close("half the diffuse colour", dim.red, expected_byte(0.4, 1.0), 3);
     }
 

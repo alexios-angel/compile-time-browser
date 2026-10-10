@@ -15,20 +15,26 @@
 // clear colour, for weeks. A Babylon feature that fails here fails SILENTLY from
 // JavaScript; that is the whole character of this corpus and the reason the
 // rungs are written against pixels.
+//
+// THE SCENES ARE IN babylon_ratchet.js, one function per rung, which the page
+// babylon_ratchet.html lists beside the bundle. This file runs the frames and
+// reads the canvas.
 
 #include <algorithm>
 #include <cstdint>
 #include <cstdlib>
+#include <filesystem>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <ctbrowser.hpp>
 
 #include "check.hpp"
+#include "engine.hpp"
 #include "ratchet.hpp"
 
-using ctbrowser_test::ask;
 using ctbrowser_test::measurement;
 using ctbrowser_test::recorded;
 
@@ -141,55 +147,34 @@ struct picture {
 
 // A PAGE WITH BABYLON ON IT, one per rung. Sharing a page would let a rung that
 // leaves the scene in a strange state decide the verdict for the next one.
-[[nodiscard]] std::unique_ptr<ctbrowser::shell::browser> babylon_page(const std::string & bundle) {
+[[nodiscard]] std::unique_ptr<ctbrowser::shell::browser> babylon_page(const std::string & html) {
     auto page =
         std::make_unique<ctbrowser::shell::browser>(ctbrowser::shell::browser_options{200, 200});
-    page->assets().add(
-        "babylon.js",
-        std::vector<std::byte>{reinterpret_cast<const std::byte *>(bundle.data()),
-                               reinterpret_cast<const std::byte *>(bundle.data() + bundle.size())});
-    page->load_html(R"(<html><head><meta charset="utf-8">
-      <script src="babylon.js"></script></head>
-      <body><canvas id=c width=64 height=64></canvas></body></html>)");
+    // WHERE THE PAGE'S SCRIPTS RESOLVE FROM: its own directory, so
+    // `../../../vendor/babylon/babylon.js` is the bundle and babylon_ratchet.js
+    // the file beside the page.
+    page->assets().set_base_path("test/corpus/babylon");
+    // UNCONFINED, explicitly: `../../../vendor/` climbs out of the base path,
+    // which a confined registry refuses. Trusted in-tree fixture - never do
+    // this for a page from the network.
+    page->assets().set_confine(false);
+    page->load_html(html);
     return page;
 }
 
-// BUILD A SCENE, RUN FRAMES, READ THE CANVAS. `setup` is the JavaScript that
-// makes the scene; it runs with `engine`, `scene`, `camera` and `box` already
-// in scope and may return a string, which is reported when the rung fails.
+// BUILD A SCENE, RUN FRAMES, READ THE CANVAS. `setup` names the function in
+// babylon_ratchet.js that makes the scene; its answer is reported when the rung
+// fails.
 struct render_result {
     std::string said;
     picture image;
     std::string error;
 };
 
-[[nodiscard]] render_result render(ctbrowser::shell::browser & page, const std::string & setup,
+[[nodiscard]] render_result render(ctbrowser::shell::browser & page, std::string_view setup,
                                    int frames = 60) {
     render_result out;
-    out.said = ask(page, std::string{R"JS((function () {
-        try {
-            var canvas = document.getElementById('c');
-            var engine = new BABYLON.Engine(canvas, true);
-            var scene = new BABYLON.Scene(engine);
-            // NOT BLACK, and not a colour any material below uses: every rung
-            // tells "painted nothing" from "painted the wrong thing" by
-            // comparing against this.
-            scene.clearColor = new BABYLON.Color4(0, 0, 1, 1);
-            var camera = new BABYLON.FreeCamera('cam', new BABYLON.Vector3(0, 0, -5), scene);
-            camera.setTarget(BABYLON.Vector3.Zero());
-            var box = BABYLON.MeshBuilder.CreateBox('box', {size: 2}, scene);
-            box.material = new BABYLON.StandardMaterial('mat', scene);
-            window.__engine = engine; window.__scene = scene;
-            window.__camera = camera; window.__box = box;
-            var said = (function () { )JS"} +
-                             setup + R"JS( })();
-            window.__frames = 0;
-            engine.runRenderLoop(function () { window.__frames++; scene.render(); });
-            return said === undefined ? 'ok' : String(said);
-        } catch (e) {
-            return 'threw: ' + (e && e.message ? e.message : e);
-        }
-      })())JS");
+    out.said = ctbrowser_test::make_engine(page)->call(setup);
     for (int i = 0; i < frames; ++i) { page.tick(16); }
     out.image = canvas_of(page);
     out.error = page.script_error();
@@ -198,7 +183,7 @@ struct render_result {
 
 const std::uint32_t clear_blue = 0x0000ff;
 
-[[nodiscard]] measurement measure(const std::string & bundle) {
+[[nodiscard]] measurement measure(const std::string & html) {
     measurement m;
 
     // --- 1: a scene renders -------------------------------------------------
@@ -207,11 +192,8 @@ const std::uint32_t clear_blue = 0x0000ff;
     // tell a broken engine from a broken harness, and this one was written
     // after test/corpus/webgl2/webgl2_ratchet.cpp already proved the same scene lands.
     {
-        auto page = babylon_page(bundle);
-        const render_result r = render(*page, R"JS(
-            box.material.emissiveColor = new BABYLON.Color3(1, 0, 0);
-            new BABYLON.HemisphericLight('light', new BABYLON.Vector3(0, 1, 0), scene);
-        )JS");
+        auto page = babylon_page(html);
+        const render_result r = render(*page, "babylon_ratchet_scene");
         if (r.said != "ok") {
             m.fail_at(rung_scene, "the scene did not build: " + r.said);
             return m;
@@ -232,29 +214,12 @@ const std::uint32_t clear_blue = 0x0000ff;
     // it no material carrying an image works at all - which is most of what
     // anybody uses Babylon for.
     //
-    // THROUGH emissiveTexture WITH A BLACK emissiveColor, so the answer does not
-    // depend on the lighting being right as well and the texture is the ONLY
-    // thing that can colour the box.
-    //
-    // BLACK, NOT WHITE, and the difference cost a measurement. Babylon's shader
-    // says `emissiveColor += texture(emissiveSampler, uv).rgb * vEmissiveInfos.y`
-    // - it ADDS - so a white emissiveColor saturates to white whether the
-    // texture sampled or not, and the rung reads the same either way. It was
-    // written with white and reported "0 green pixels" while the sampler was
-    // broken AND after it was fixed.
+    // The texture is the ONLY thing that can colour the box green; how the
+    // scene makes it so, and why its emissiveColor is black, is beside
+    // babylon_ratchet_texture in babylon_ratchet.js.
     {
-        auto page = babylon_page(bundle);
-        const render_result r = render(*page, R"JS(
-            var t = new BABYLON.DynamicTexture('dt', {width: 16, height: 16}, scene, false);
-            var ctx = t.getContext();
-            ctx.fillStyle = '#00ff00';
-            ctx.fillRect(0, 0, 16, 16);
-            t.update();
-            box.material.emissiveTexture = t;
-            box.material.emissiveColor = new BABYLON.Color3(0, 0, 0);
-            box.material.disableLighting = true;
-            return 'ready=' + t.isReady();
-        )JS");
+        auto page = babylon_page(html);
+        const render_result r = render(*page, "babylon_ratchet_texture");
         const int green = r.image.count_of(0x00ff00);
         if (green < 400) {
             const int black = r.image.count_of(0x000000);
@@ -273,18 +238,8 @@ const std::uint32_t clear_blue = 0x0000ff;
 
     // --- 3: two meshes, two materials ---------------------------------------
     {
-        auto page = babylon_page(bundle);
-        const render_result r = render(*page, R"JS(
-            box.position.x = -1.5;
-            box.material.emissiveColor = new BABYLON.Color3(1, 0, 0);
-            box.material.disableLighting = true;
-            var sphere = BABYLON.MeshBuilder.CreateSphere('s', {diameter: 1.8}, scene);
-            sphere.position.x = 1.5;
-            var second = new BABYLON.StandardMaterial('m2', scene);
-            second.emissiveColor = new BABYLON.Color3(0, 1, 0);
-            second.disableLighting = true;
-            sphere.material = second;
-        )JS");
+        auto page = babylon_page(html);
+        const render_result r = render(*page, "babylon_ratchet_two");
         const int red = r.image.count_of(0xff0000);
         const int green = r.image.count_of(0x00ff00);
         if (red < 200 || green < 200) {
@@ -304,15 +259,8 @@ const std::uint32_t clear_blue = 0x0000ff;
     // shader, and those were separate bugs in the WebGL 2 work. So this rotates
     // a NON-square amount and asks the canvas to change.
     {
-        auto page = babylon_page(bundle);
-        const render_result before = render(*page, R"JS(
-            box.material.emissiveColor = new BABYLON.Color3(1, 0, 0);
-            box.material.disableLighting = true;
-            box.scaling = new BABYLON.Vector3(1, 0.4, 1);
-            BABYLON.Animation.CreateAndStartAnimation(
-                'spin', box, 'rotation.z', 30, 120, 0, Math.PI / 2, 0);
-        )JS",
-                                            2);
+        auto page = babylon_page(html);
+        const render_result before = render(*page, "babylon_ratchet_animate", 2);
         for (int i = 0; i < 60; ++i) { page->tick(16); }
         const picture later = canvas_of(*page);
         // THE PIXELS, NOT THE COUNT. See picture::digest: a rotation PRESERVES
@@ -324,8 +272,8 @@ const std::uint32_t clear_blue = 0x0000ff;
             m.fail_at(rung_animate,
                       "an animation did not change the picture (identical pixels at frame 2 and "
                       "frame 62; rotation.z=" +
-                          ask(*page, "String(window.__box.rotation.z)") + ", " + later.describe() +
-                          ")");
+                          ctbrowser_test::make_engine(*page)->call("babylon_ratchet_rotation_z") +
+                          ", " + later.describe() + ")");
             return m;
         }
     }
@@ -336,14 +284,8 @@ const std::uint32_t clear_blue = 0x0000ff;
     // TWO FACES, LIT DIFFERENTLY. A light that is ignored gives one flat colour
     // over the whole mesh, which is what a missing normal matrix looks like.
     {
-        auto page = babylon_page(bundle);
-        const render_result r = render(*page, R"JS(
-            box.rotation.y = 0.7;
-            box.rotation.x = 0.4;
-            box.material.diffuseColor = new BABYLON.Color3(1, 1, 1);
-            box.material.specularColor = new BABYLON.Color3(0, 0, 0);
-            new BABYLON.DirectionalLight('d', new BABYLON.Vector3(-1, -1, 1), scene);
-        )JS");
+        auto page = babylon_page(html);
+        const render_result r = render(*page, "babylon_ratchet_light");
         // How many DISTINCT non-background colours the mesh has. One face lit
         // and another not is at least two.
         int shades = 0;
@@ -362,17 +304,8 @@ const std::uint32_t clear_blue = 0x0000ff;
 
     // --- 6: specular ---------------------------------------------------------
     {
-        auto page = babylon_page(bundle);
-        const render_result r = render(*page, R"JS(
-            var sphere = BABYLON.MeshBuilder.CreateSphere('s', {diameter: 3}, scene);
-            box.dispose();
-            var m = new BABYLON.StandardMaterial('spec', scene);
-            m.diffuseColor = new BABYLON.Color3(0.2, 0.2, 0.2);
-            m.specularColor = new BABYLON.Color3(1, 1, 1);
-            m.specularPower = 32;
-            sphere.material = m;
-            new BABYLON.PointLight('p', new BABYLON.Vector3(-3, 3, -3), scene);
-        )JS");
+        auto page = babylon_page(html);
+        const render_result r = render(*page, "babylon_ratchet_specular");
         // A HIGHLIGHT IS A FEW BRIGHT PIXELS, so this asks for a colour that is
         // much brighter than the diffuse term and covers a small area.
         int bright = 0;
@@ -392,19 +325,8 @@ const std::uint32_t clear_blue = 0x0000ff;
 
     // --- 7: alpha blending ---------------------------------------------------
     {
-        auto page = babylon_page(bundle);
-        const render_result r = render(*page, R"JS(
-            box.position.z = 2;
-            box.material.emissiveColor = new BABYLON.Color3(1, 0, 0);
-            box.material.disableLighting = true;
-            box.material.alpha = 0.5;
-            var behind = BABYLON.MeshBuilder.CreateBox('b2', {size: 2}, scene);
-            behind.position.z = 4;
-            var m = new BABYLON.StandardMaterial('m2', scene);
-            m.emissiveColor = new BABYLON.Color3(0, 1, 0);
-            m.disableLighting = true;
-            behind.material = m;
-        )JS");
+        auto page = babylon_page(html);
+        const render_result r = render(*page, "babylon_ratchet_alpha");
         // A BLEND OF RED OVER GREEN is neither: the rung is that a colour with
         // BOTH channels exists, which no opaque draw can produce here.
         int blended = 0;
@@ -428,12 +350,8 @@ const std::uint32_t clear_blue = 0x0000ff;
     // - so "the picture survives" is the entire assertion, and a post-process
     // that blanks the canvas fails it loudly.
     {
-        auto page = babylon_page(bundle);
-        const render_result r = render(*page, R"JS(
-            box.material.emissiveColor = new BABYLON.Color3(1, 0, 0);
-            box.material.disableLighting = true;
-            new BABYLON.PassPostProcess('pass', 1.0, camera);
-        )JS");
+        auto page = babylon_page(html);
+        const render_result r = render(*page, "babylon_ratchet_post");
         const int red = r.image.count_of(0xff0000);
         const int black = r.image.count_of(0x000000);
         if (red < 300) {
@@ -451,23 +369,8 @@ const std::uint32_t clear_blue = 0x0000ff;
 
     // --- 9: a shadow lands ---------------------------------------------------
     {
-        auto page = babylon_page(bundle);
-        const render_result r = render(*page, R"JS(
-            camera.position = new BABYLON.Vector3(0, 4, -6);
-            camera.setTarget(BABYLON.Vector3.Zero());
-            box.position.y = 1.5;
-            box.material.diffuseColor = new BABYLON.Color3(1, 0, 0);
-            var ground = BABYLON.MeshBuilder.CreateGround('g', {width: 8, height: 8}, scene);
-            var gm = new BABYLON.StandardMaterial('gm', scene);
-            gm.diffuseColor = new BABYLON.Color3(1, 1, 1);
-            gm.specularColor = new BABYLON.Color3(0, 0, 0);
-            ground.material = gm;
-            ground.receiveShadows = true;
-            var light = new BABYLON.DirectionalLight('d', new BABYLON.Vector3(0, -1, 0.2), scene);
-            light.position = new BABYLON.Vector3(0, 8, 0);
-            var shadows = new BABYLON.ShadowGenerator(256, light);
-            shadows.addShadowCaster(box);
-        )JS");
+        auto page = babylon_page(html);
+        const render_result r = render(*page, "babylon_ratchet_shadow");
         // THE GROUND IN TWO BRIGHTNESSES. A shadow is a darker version of the
         // same surface, so this asks for at least two greys with real area.
         int greys = 0;
@@ -491,16 +394,8 @@ const std::uint32_t clear_blue = 0x0000ff;
 
     // --- 10: a PBR material renders ------------------------------------------
     {
-        auto page = babylon_page(bundle);
-        const render_result r = render(*page, R"JS(
-            var m = new BABYLON.PBRMaterial('pbr', scene);
-            m.albedoColor = new BABYLON.Color3(1, 0, 0);
-            m.metallic = 0;
-            m.roughness = 1;
-            m.emissiveColor = new BABYLON.Color3(0.3, 0, 0);
-            box.material = m;
-            new BABYLON.HemisphericLight('light', new BABYLON.Vector3(0, 1, 0), scene);
-        )JS");
+        auto page = babylon_page(html);
+        const render_result r = render(*page, "babylon_ratchet_pbr");
         const int painted = 4096 - r.image.count_of(clear_blue);
         if (painted < 400) {
             m.fail_at(rung_pbr, "a PBR material painted " + std::to_string(painted) + " pixels (" +
@@ -519,13 +414,17 @@ const std::uint32_t clear_blue = 0x0000ff;
 } // namespace
 
 int main() {
-    const std::string bundle = read_file("vendor/babylon/babylon.js");
-    if (bundle.empty()) {
+    if (!std::filesystem::exists("vendor/babylon/babylon.js")) {
         std::printf("SKIP babylon_ratchet: vendor/babylon/babylon.js is missing\n");
         return 0;
     }
+    const std::string html = read_file("test/corpus/babylon/babylon_ratchet.html");
+    if (html.empty()) {
+        std::printf("FAIL test/corpus/babylon/babylon_ratchet.html is missing\n");
+        return 1;
+    }
 
-    const measurement now = measure(bundle);
+    const measurement now = measure(html);
     const std::string record = read_file("test/corpus/babylon/babylon-ratchet.txt");
     const std::string recorded_level = recorded(record, "level");
     const std::string recorded_blocker = recorded(record, "blocker");

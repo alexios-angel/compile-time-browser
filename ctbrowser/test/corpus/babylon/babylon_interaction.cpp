@@ -17,24 +17,25 @@
 // producing - the world matrix reaching the shader and the animation system
 // advancing a property were two different bugs in the WebGL 2 work, a week
 // apart.
+//
+// WHAT IS ASKED OF THE PAGE is babylon_interaction.js, loaded into it once it
+// is up; the events are dispatched from here.
 
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <memory>
 #include <string>
-#include <vector>
 
 #include <ctbrowser.hpp>
 
 #include "check.hpp"
-#include "ratchet.hpp"
+#include "engine.hpp"
 
 using ctbrowser::shell::input_event;
-
-using ctbrowser_test::ask;
 
 namespace {
 
@@ -64,14 +65,16 @@ namespace {
     return digest;
 }
 
-[[nodiscard]] std::unique_ptr<ctbrowser::shell::browser> orbit_page(const std::string & bundle,
-                                                                    const std::string & page_html) {
+[[nodiscard]] std::unique_ptr<ctbrowser::shell::browser> orbit_page(const std::string & page_html) {
     auto page =
         std::make_unique<ctbrowser::shell::browser>(ctbrowser::shell::browser_options{420, 360});
-    page->assets().add(
-        "../../vendor/babylon/babylon.js",
-        std::vector<std::byte>{reinterpret_cast<const std::byte *>(bundle.data()),
-                               reinterpret_cast<const std::byte *>(bundle.data() + bundle.size())});
+    // WHERE `../../vendor/babylon/babylon.js` RESOLVES FROM: the page's own
+    // directory.
+    page->assets().set_base_path("examples/pages");
+    // UNCONFINED, explicitly: `../../vendor/` climbs out of the base path, which
+    // a confined registry refuses. Trusted in-tree fixture - never do this for
+    // a page from the network.
+    page->assets().set_confine(false);
     page->load_html(page_html);
     // A FRAME FIRST, AND IT IS LOAD-BEARING. Hit testing reads the LAYOUT, and
     // without one every event lands on the body: the canvas is not there to be
@@ -81,6 +84,15 @@ namespace {
     (void)page->frame();
     for (int i = 0; i < 90; ++i) { page->tick(16); }
     return page;
+}
+
+// THE TEST'S OWN JAVASCRIPT, run in the page once it is up: the page is shared
+// with the example program and a golden, so it does not list the file itself.
+[[nodiscard]] std::unique_ptr<ctbrowser_test::engine> test_js(ctbrowser::shell::browser & page) {
+    auto js = ctbrowser_test::make_engine(page);
+    const std::string failed = js->load("test/corpus/babylon/babylon_interaction.js");
+    check(failed.empty(), "babylon_interaction.js did not load: " + failed);
+    return js;
 }
 
 // Press, move in steps, release - which is what a drag is, and what Babylon's
@@ -135,37 +147,31 @@ int main() {
         return 0;
     }
 
-    const std::string bundle = read_file("vendor/babylon/babylon.js");
     const std::string page_html = read_file("examples/pages/babylon-orbit.html");
-    if (bundle.empty() || page_html.empty()) {
+    if (!std::filesystem::exists("vendor/babylon/babylon.js") || page_html.empty()) {
         std::printf("SKIP babylon_interaction: the babylon corpus or the page is missing\n");
         return 0;
     }
 
     // --- the page comes up at all -------------------------------------------
     {
-        auto page = orbit_page(bundle, page_html);
+        auto page = orbit_page(page_html);
         expect(page->script_error().empty(), "the orbit page ran: " + page->script_error());
-        const std::string ready =
-            ask(*page, "String(typeof BABYLON !== 'undefined' && "
-                       "document.getElementById('scene') !== null && "
-                       "BABYLON.Engine.LastCreatedScene.activeCamera !== null)");
+        const std::string ready = test_js(*page)->call("babylon_interaction_ready");
         expect(ready == "true", "the bundle, the canvas and a camera are all there: " + ready);
     }
 
     // --- a horizontal drag orbits -------------------------------------------
     {
-        auto page = orbit_page(bundle, page_html);
-        // THE CAMERA IS REACHED THROUGH THE SCENE, not through a global the page
-        // exports for the test's benefit. A page written to be testable is a
-        // page that proves less: this one is exactly what a human runs.
-        (void)page->run_script("window.__cam = BABYLON.Engine.LastCreatedScene.activeCamera;");
-        const std::string before = ask(*page, "window.__cam.alpha.toFixed(4)");
+        auto page = orbit_page(page_html);
+        const auto js = test_js(*page);
+        (void)js->call("babylon_interaction_grab_camera");
+        const std::string before = js->call("babylon_interaction_alpha");
         const std::uint64_t picture_before = canvas_digest(*page);
 
         drag(*page, 210, 150, 310, 150);
 
-        const std::string after = ask(*page, "window.__cam.alpha.toFixed(4)");
+        const std::string after = js->call("babylon_interaction_alpha");
         const std::uint64_t picture_after = canvas_digest(*page);
 
         expect(before != after,
@@ -181,16 +187,17 @@ int main() {
     // A SEPARATE AXIS, because one accumulator wired to both would pass the test
     // above and produce a camera that cannot look up or down.
     {
-        auto page = orbit_page(bundle, page_html);
-        (void)page->run_script("window.__cam = BABYLON.Engine.LastCreatedScene.activeCamera;");
-        const std::string before = ask(*page, "window.__cam.beta.toFixed(4)");
-        const std::string alpha_before = ask(*page, "window.__cam.alpha.toFixed(4)");
+        auto page = orbit_page(page_html);
+        const auto js = test_js(*page);
+        (void)js->call("babylon_interaction_grab_camera");
+        const std::string before = js->call("babylon_interaction_beta");
+        const std::string alpha_before = js->call("babylon_interaction_alpha");
         const std::uint64_t picture_before = canvas_digest(*page);
 
         drag(*page, 210, 120, 210, 200);
 
-        const std::string after = ask(*page, "window.__cam.beta.toFixed(4)");
-        const std::string alpha_after = ask(*page, "window.__cam.alpha.toFixed(4)");
+        const std::string after = js->call("babylon_interaction_beta");
+        const std::string alpha_after = js->call("babylon_interaction_alpha");
         expect(before != after,
                "a vertical drag changed the elevation: beta " + before + " -> " + after);
         expect(alpha_before == alpha_after,
@@ -201,9 +208,10 @@ int main() {
 
     // --- the wheel zooms -----------------------------------------------------
     {
-        auto page = orbit_page(bundle, page_html);
-        (void)page->run_script("window.__cam = BABYLON.Engine.LastCreatedScene.activeCamera;");
-        const std::string before = ask(*page, "window.__cam.radius.toFixed(3)");
+        auto page = orbit_page(page_html);
+        const auto js = test_js(*page);
+        (void)js->call("babylon_interaction_grab_camera");
+        const std::string before = js->call("babylon_interaction_radius");
         const std::uint64_t picture_before = canvas_digest(*page);
 
         // NOTCHES AWAY FROM THE USER, which is the direction that zooms IN -
@@ -218,7 +226,7 @@ int main() {
         }
         for (int i = 0; i < 6; ++i) { page->tick(16); }
 
-        const std::string after = ask(*page, "window.__cam.radius.toFixed(3)");
+        const std::string after = js->call("babylon_interaction_radius");
         expect(std::stod(after) < std::stod(before),
                "the wheel zoomed IN: radius " + before + " -> " + after);
         expect(picture_before != canvas_digest(*page), "and the picture followed the zoom");
@@ -230,16 +238,15 @@ int main() {
     // to the wrong event: a camera that jumps on every press would pass all
     // three tests above and be unusable.
     {
-        auto page = orbit_page(bundle, page_html);
-        (void)page->run_script("window.__cam = BABYLON.Engine.LastCreatedScene.activeCamera;");
-        const std::string before = ask(*page, "window.__cam.alpha.toFixed(4) + ',' + "
-                                              "window.__cam.beta.toFixed(4)");
+        auto page = orbit_page(page_html);
+        const auto js = test_js(*page);
+        (void)js->call("babylon_interaction_grab_camera");
+        const std::string before = js->call("babylon_interaction_alpha_beta");
         (void)page->handle(input_event::mouse_move_to(210, 150));
         (void)page->handle(input_event::mouse_down_at(210, 150));
         (void)page->handle(input_event::mouse_up_at(210, 150));
         for (int i = 0; i < 6; ++i) { page->tick(16); }
-        const std::string after = ask(*page, "window.__cam.alpha.toFixed(4) + ',' + "
-                                             "window.__cam.beta.toFixed(4)");
+        const std::string after = js->call("babylon_interaction_alpha_beta");
         expect(before == after, "a click that did not move left the camera where it was: " +
                                     before + " -> " + after);
     }
