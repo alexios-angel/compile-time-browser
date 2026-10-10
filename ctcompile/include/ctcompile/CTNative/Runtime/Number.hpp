@@ -1,7 +1,8 @@
 //===- Number.hpp - The native JavaScript Number ----------------*- C++ -*-===//
 //
 // js_num, the C++ type generated native code uses for a JavaScript Number,
-// with JavaScript's arithmetic, bitwise and shift semantics.
+// with JavaScript's arithmetic, bitwise and shift semantics, and the Number
+// constructor native code calls.
 //
 //===----------------------------------------------------------------------===//
 
@@ -81,5 +82,15 @@ public:
 };
 
 using js_num = js_basic_num<double>;
+
+/// The Number constructor's members native code calls: generated code reads
+/// `ctnative::Number(s)`. `Number(value)` (ECMA-262 21.1.1.1) is ToNumber for
+/// every value a native carrier holds (none is a BigInt), so the call
+/// operator forwards to the to_number overload set, which ADL finds for each
+/// carrier at the call. No prototype method or static is lowered yet.
+struct number_constructor {
+    template <class T> js_num operator()(const T & value) const { return to_number(value); }
+};
+inline constexpr number_constructor Number{};
 
 } // namespace ctnative

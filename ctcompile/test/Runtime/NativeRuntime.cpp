@@ -951,17 +951,32 @@ int main() {
         std::is_empty_v<ctnative::to_lower_case_method> && std::is_empty_v<ctnative::trim_method> &&
         std::is_empty_v<ctnative::split_method> && std::is_empty_v<ctnative::push_method> &&
         std::is_empty_v<ctnative::join_method> && std::is_empty_v<ctnative::sort_method> &&
-        std::is_empty_v<ctnative::min_method> && std::is_empty_v<ctnative::stringify_method>);
+        std::is_empty_v<ctnative::min_method> && std::is_empty_v<ctnative::stringify_method> &&
+        std::is_empty_v<ctnative::number_constructor>);
     {
         constexpr ctnative::string_constructor string = ctnative::String;
         constexpr ctnative::array_constructor array = ctnative::Array;
         constexpr ctnative::math_object math = ctnative::Math;
         constexpr ctnative::json_object json = ctnative::JSON;
+        constexpr ctnative::number_constructor number = ctnative::Number;
+        (void)number;
         (void)string;
         (void)array;
         (void)math;
         (void)json;
     }
+
+    // Number(value) is ToNumber for each carrier: whitespace and radix
+    // prefixes, the empty string as 0, trailing junk as NaN, booleans, and
+    // undefined as NaN but null as 0.
+    CHECK(ctnative::Number(js_string{"  0x10\n"}) == ctnative::js_num{16.0});
+    CHECK(ctnative::Number(js_string{}) == ctnative::js_num{0.0});
+    CHECK(std::isnan(ctnative::Number(js_string{"1px"}).value()));
+    CHECK(std::signbit(ctnative::Number(js_string{"-0"}).value()));
+    CHECK(ctnative::Number(js_boolean_t{true}) == ctnative::js_num{1.0});
+    CHECK(std::isnan(ctnative::Number(nullable_scalar{}).value()));
+    CHECK(ctnative::Number(nullable_scalar{js_null_t{}}) == ctnative::js_num{0.0});
+    CHECK(ctnative::Number(ctnative::js_num{2.5}) == ctnative::js_num{2.5});
 
     // String.prototype.toLowerCase: ASCII, Latin-1, the U+0130 expansion, a
     // final sigma against a lone capital one, ß unchanged, a lone surrogate
