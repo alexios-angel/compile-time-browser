@@ -184,10 +184,11 @@ same fence in the VM.
 `[[nodiscard]] value spread_values(value v);`
 
 op::iterable - a SPREAD's source (`[...x]`, `f(...x)`), which is
-iterable_values with the one thing a spread adds: null, undefined and a
-primitive that is not a string are the TypeError of 13.2.5.1's
-GetIterator, where a library constructor given null (`new Map(null)`)
-is content with nothing. Both tiers call this one.
+iterable_values with the one thing a spread adds: null, undefined, a
+primitive that is not a string, and an object with nothing to iterate
+(no library slot, no @@iterator, no `length`) are the TypeError of
+13.2.5.1's GetIterator, where a library constructor given null
+(`new Map(null)`) is content with nothing. Both tiers call this one.
 
 <a id="contract-14"></a>
 

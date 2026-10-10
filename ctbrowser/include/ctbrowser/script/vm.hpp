@@ -340,8 +340,9 @@ public:
 
     // WHATEVER A PAGE CAN ITERATE, AS AN ARRAY OF VALUES - the one answer
     // for-of, spread and Array.from share. See the definition for what it
-    // covers.
-    [[nodiscard]] value iterable_values(value v);
+    // covers. An object with nothing to iterate is an empty list, or with
+    // `spread` (spread_values) the TypeError.
+    [[nodiscard]] value iterable_values(value v, bool spread = false);
     [[nodiscard]] value spread_values(value v);
     // GetIterator(v, sync) (7.4.3): `v[Symbol.iterator]()`, checked to be an
     // object. A TypeError (thrown, catchable) and undefined when it is not
