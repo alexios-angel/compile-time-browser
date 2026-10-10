@@ -63,18 +63,20 @@ def umd_contract(args, ir, name, observations):
     return config
 
 
-def prepare_umd(args):
-    """Prepare the UMD source and run the host-prefix pass on it.
+def prepare_umd(args, name="umd-browser", source=None):
+    """Prepare the UMD source, or `source` when given, and run the host-prefix
+    pass on it.
 
     Returns (js, prepared IR, specialized IR, expected observations).
     """
-    source, values, prefix = umd_source()
-    js, prepared, functions = boundary.prepare(args, "umd-browser", source.removesuffix("\n"))
+    pinned, values, prefix = umd_source()
+    source = source or pinned
+    js, prepared, functions = boundary.prepare(args, name, source.removesuffix("\n"))
     if js.read_bytes() != source.encode() or functions != 7:
-        raise RuntimeError("browser UMD preparation changed its source or seven functions")
-    config = umd_contract(args, prepared, "umd-browser", values)
-    report_file = args.work / "umd-browser.prefix.json"
-    specialized = args.work / "umd-browser.specialized.mlir"
+        raise RuntimeError(f"{name}: preparation changed its source or seven functions")
+    config = umd_contract(args, prepared, name, values)
+    report_file = args.work / f"{name}.prefix.json"
+    specialized = args.work / f"{name}.specialized.mlir"
     host.run(
         [
             args.opt,
@@ -321,6 +323,69 @@ def check_umd(args, node, reference, compilers, nm):
             raise RuntimeError(f"{name}: original UMD lost complete ownership")
         return output
 
+    def without(manifest, field, name):
+        missing = args.work / f"{name}.json"
+        value = json.loads(manifest.read_text())
+        value[field] = []
+        missing.write_text(json.dumps(value, indent=2) + "\n")
+        return missing
+
+    def expect(subject, name, manifest, options, admitted, reason=None):
+        """Return None when `name` lowers as expected, else what was observed."""
+        try:
+            if admitted:
+                native(subject, name, manifest, options)
+            else:
+                refused(subject, name, manifest, options, reason)
+            return None
+        except Exception as error:
+            output = args.work / f"{name}.native.mlir"
+            count = len(boundary.NATIVE.findall(output.read_text())) if output.exists() else "no"
+            first = str(error).splitlines()[0] if str(error) else type(error).__name__
+            return f"{name}: expected {7 if admitted else 0}/7 native, observed {count}: {first}"
+
+    # ResolveGlobals derives absence itself (NativeRealm.h): `define`,
+    # `exports` and `module` are never stored, never declared and not
+    # provided by the native realm, so their `typeof` reads fold to
+    # "undefined" before the host contract is read, and an empty
+    # absent_bindings list leaves no read unproved. `undefined` is provided
+    # by every realm and is never derived, so its contract entry is still
+    # required. A `var define;` declaration keeps `define` a binding of the
+    # realm; absence is then not derived and the contract entry is required
+    # again, while the full contract still proves the program.
+    mismatches = []
+    try:
+        declared = prepare_umd(args, "umd-declared-define", "var define;\n" + source)[2]
+        declared_config = umd_contract(args, declared, "umd-declared-define", values)
+    except Exception as error:
+        declared = None
+        mismatches.append(f"umd-declared-define: preparation failed: {error}")
+    for policy, options in (("default", ""), ("disabled", "optimize=false")):
+        flags = options + " host-max-steps=1000000"
+        for field, admitted in (("absent_bindings", True), ("undefined_bindings", False)):
+            name = f"umd-{policy}-missing-{field}"
+            mismatches.append(
+                expect(specialized, name, without(config, field, name), flags, admitted)
+            )
+        if not declared:
+            continue
+        name = f"umd-{policy}-declared-define"
+        mismatches.append(expect(declared, name, declared_config, flags, True))
+        mismatches.append(
+            expect(
+                declared,
+                name + "-missing-absent_bindings",
+                without(declared_config, "absent_bindings", name + "-missing-absent_bindings"),
+                flags,
+                False,
+                "unproved host binding `define`",
+            )
+        )
+    # Every variant runs before any fails, so one run reports all of them.
+    mismatches = [mismatch for mismatch in mismatches if mismatch]
+    if mismatches:
+        raise RuntimeError("umd contract variants:\n" + "\n".join(mismatches))
+
     for policy, options in (("default", ""), ("disabled", "optimize=false")):
         flags = options + " host-max-steps=1000000"
         refused(prepared, "umd-raw-" + policy, raw_config, flags)
@@ -335,12 +400,6 @@ def check_umd(args, node, reference, compilers, nm):
                 options + f" host-max-steps={steps}",
                 "budget" if steps < 100_000 else None,
             )
-        for field in ("absent_bindings", "undefined_bindings"):
-            missing = args.work / f"umd-{policy}-missing-{field}.json"
-            value = json.loads(config.read_text())
-            value[field] = []
-            missing.write_text(json.dumps(value, indent=2) + "\n")
-            refused(specialized, f"umd-{policy}-missing-{field}", missing, flags)
         forged = args.work / f"umd-{policy}-forged.mlir"
         forged.write_text(forge_leaf_evidence(specialized.read_text()))
         refused(forged, f"umd-{policy}-forged-stale", config, flags, "fingerprint mismatch")
