@@ -1,3 +1,11 @@
+//===- GlobalRoots.cpp - Owned global root tests ----------------*- C++ -*-===//
+//
+// Tests OwnedGlobalRoots on the simplest owned global: one object stored in
+// global `host` with one scalar field. The analysis must prove one owner,
+// withhold it under every smaller step budget, and refuse each mutation.
+//
+//===----------------------------------------------------------------------===//
+
 #include "../../../lib/CTNative/Analysis/OwnedGlobalRoots.h"
 #include "../../CTNative/HostContract/Fixtures.h"
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
@@ -22,6 +30,11 @@ using ctcompile::ctnative::OwnedGlobalRoots;
 using ctcompile::test::host_contract::parsed;
 using ctcompile::test::host_contract::replaced;
 
+// One global `host` holding an object with one field `slot` (initialised to
+// 42.0, written below as its IEEE-754 bits 4631107791820423168), read through
+// a global alias and through the local. OwnedGlobalRoots must prove one owner
+// for it, withhold it under every smaller budget, and refuse each mutation in
+// main().
 constexpr const char * fixture = R"MLIR(
 module {
   ctjs.func @_script_(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
@@ -42,6 +55,8 @@ module {
 }
 )MLIR";
 
+/// The host contract for \p module: entry `_script_`, root `host`.slot and
+/// observed global `trace`.
 HostContract contractFor(mlir::ModuleOp module) {
     HostContract contract;
     contract.moduleSha256 = hostContractFingerprint(module);
@@ -51,12 +66,15 @@ HostContract contractFor(mlir::ModuleOp module) {
     return contract;
 }
 
+/// True when \p query proved no roots and maps no operation of \p module.
 bool empty(mlir::ModuleOp module, const OwnedGlobalRoots & query) {
     bool clean = query.roots().empty();
     module.walk([&](mlir::Operation * operation) { clean &= !query.lookup(operation); });
     return clean;
 }
 
+/// True when \p query proved exactly the fixture's root: `host`.slot with two
+/// loads and two reads, all mapped back to it, and no other global's store.
 bool complete(mlir::ModuleOp module, const OwnedGlobalRoots & query) {
     if (!query.proved() || query.exhausted() || query.roots().size() != 1) { return false; }
     const auto & root = query.roots().front();

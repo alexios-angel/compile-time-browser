@@ -1,8 +1,11 @@
-"""What every Target/Cpp python driver needs: the two compilers, the gate's flags, a
-checked subprocess run and a brace-matched function body extractor.
+"""Shared helpers for the Target/Cpp Python drivers.
 
-Both compilers are required, not whichever is found: a gate that silently drops
-one passes vacuously (test/cmake/Native.cmake says the same for the CMake half).
+Provides the two C++ compilers, the compile flags for generated programs, a
+checked subprocess runner and a brace-matched function body extractor.
+
+Both compilers are required, not whichever is found: a check that silently
+skipped one would pass without testing it (test/cmake/Native.cmake does the
+same for the CMake-driven tests).
 """
 
 from pathlib import Path
@@ -10,9 +13,9 @@ import re
 import shutil
 import subprocess
 
-# THE RUNTIME HEADER'S INCLUDE DIRECTORY. Every generated program includes
-# ctcompile/CTNative/Runtime/ctnative.hpp, so every compile of one needs
-# ctcompile/include on its path - and nothing else of the compiler's.
+# Include directories for generated programs: ctcompile/include for
+# ctcompile/CTNative/Runtime/ctnative.hpp, and ctbrowser/include for the core
+# headers that runtime includes.
 CORE_INCLUDE = "-I" + str(Path(__file__).resolve().parents[4] / "ctbrowser/include")
 RUNTIME_INCLUDE = "-I" + str(Path(__file__).resolve().parents[3] / "include")
 
@@ -31,6 +34,7 @@ FLAGS = [
 
 
 def find_compilers():
+    """Return paths to a GCC and a Clang C++ compiler, or raise if either is missing."""
     found = []
     for candidates in [("g++-13", "g++"), ("clang++-18", "clang++")]:
         compiler = next((shutil.which(name) for name in candidates if shutil.which(name)), None)
@@ -53,6 +57,7 @@ def run(command, *, failure_site=None):
 
 
 def function_body(text, name):
+    """Return the text between the braces of C++ function `name`'s definition."""
     match = re.search(r"\b" + re.escape(name) + r"\([^;{}]*\)\s*\{", text)
     if not match:
         raise RuntimeError(f"missing definition of {name}\n{text}")

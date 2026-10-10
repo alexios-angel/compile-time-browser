@@ -1,3 +1,11 @@
+//===- RetainedObjectKeyFamily.cpp - Retained object-key family tests -----===//
+//
+// Tests a two-method family (sibling methods sharing one captured Map) where a
+// local empty object reaches both siblings as a Map key: both must prove the
+// object's identity, and an unsafe sibling must expose no partial owner.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Tests.h"
 
 namespace ctcompile::test::owned_global_shared_map {

@@ -3,8 +3,8 @@
 // RUN: python3 %S/../check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name invariant-unary-latch
 // RUN: FileCheck %s --check-prefix=CLAIM < %t/escape-claims-invariant-unary-latch.claims
 
-// A unary latch uses the exact saved operand, including a primitive loaded
-// before its source changes. Recomputed and changing operands remain unproved.
+// Strides `+x`, `-x`, `~x` use x as saved before the loop, even if its source array changes
+// later. A stride recomputed each trip, a changing x or an unknown argument is not proved.
 // IMPORT-LABEL: ctjs.func @savedPlus$
 // IMPORT: ctjs.unary plus
 // IMPORT: ctjs.binary add

@@ -1,6 +1,11 @@
-// Compiled frames are outside the escape oracle's source-site proof. Exercise
-// real AOT entries so neither a catch-pad id nor the VM's shared unwinder can
-// turn their allocations into bytecode observations that look adjudicated.
+//===- AOTOracle.cpp - Compiled frames vs. the escape oracle ----*- C++ -*-===//
+//
+// Compiled frames are outside the escape oracle's source-site proof. This test
+// runs hand-written AOT entries mixed with interpreted functions and checks
+// that neither a catch-pad id nor the VM's shared unwinder can turn their
+// allocations into bytecode observations that look adjudicated.
+//
+//===----------------------------------------------------------------------===//
 #include <ctbrowser/aot/aot.hpp>
 #include <ctbrowser/script/builtins.hpp>
 #include <ctbrowser/script/compile.hpp>
@@ -21,16 +26,22 @@ namespace {
 namespace aot = ctbrowser::aot;
 using namespace ctbrowser::script;
 
+/// Bytecode PC just after nativeLanding's new_object; compiled_landing uses it
+/// as its catch-pad id so the pad collides with a real allocation PC.
 std::uint32_t landing_pad = 0;
+/// Call counts per compiled entry; run() checks that every entry actually ran.
 std::size_t returned_calls = 0;
 std::size_t thrown_calls = 0;
 std::size_t landed_calls = 0;
 
+/// Leaves \p frame unless it was already unwound, and returns \p status as the
+/// entry's int32 result.
 std::int32_t finish(aot::ct_aot_frame * frame, aot::ct_aot_status status) {
     if (status != aot::ct_aot_status::unwound) { aot::ct_aot_leave(frame); }
     return static_cast<std::int32_t>(status);
 }
 
+/// Compiled nativeReturn: allocates one object and returns it.
 extern "C" std::int32_t compiled_return(aot::ct_aot_ctx * ctx, const aot::ct_aot_site * site,
                                         const std::uint64_t *, std::uint32_t,
                                         std::uint64_t receiver, std::uint32_t constructing,
@@ -45,6 +56,8 @@ extern "C" std::int32_t compiled_return(aot::ct_aot_ctx * ctx, const aot::ct_aot
     return finish(frame, aot::ct_aot_status::ok);
 }
 
+/// Compiled nativeThrow: allocates a local and a thrown object, then throws to
+/// the VM caller.
 extern "C" std::int32_t compiled_throw(aot::ct_aot_ctx * ctx, const aot::ct_aot_site * site,
                                        const std::uint64_t *, std::uint32_t, std::uint64_t receiver,
                                        std::uint32_t, std::uint64_t *) {
@@ -60,10 +73,13 @@ extern "C" std::int32_t compiled_throw(aot::ct_aot_ctx * ctx, const aot::ct_aot_
     return finish(frame, status);
 }
 
+/// Compiled nativeLanding(f): catches its own throw at landing_pad, allocates
+/// around the landing, then calls the VM function f, whose throw unwinds
+/// through this frame.
 extern "C" std::int32_t compiled_landing(aot::ct_aot_ctx * ctx, const aot::ct_aot_site * site,
                                          const std::uint64_t * argv, std::uint32_t argc,
                                          std::uint64_t receiver, std::uint32_t, std::uint64_t *) {
-    // ct_aot_enter may move the arriving window.
+    // Read argv before ct_aot_enter, which may move the argument window.
     const std::uint64_t callee = argc == 0 ? value::undefined().bits() : argv[0];
     alignas(std::max_align_t) unsigned char storage[CT_AOT_FRAME_BYTES];
     auto * frame = aot::ct_aot_enter(ctx, site, 4, receiver, storage);
@@ -76,18 +92,18 @@ extern "C" std::int32_t compiled_landing(aot::ct_aot_ctx * ctx, const aot::ct_ao
     if (caught != aot::ct_aot_status::caught) { return finish(frame, caught); }
 
     // Deliberately allocate before consuming the pending pad. It is a legal
-    // runtime allocation, but the low 32 bits of ip - 1 now collide with this
+    // runtime allocation, but the low 32 bits of ip - 1 collide with this
     // function's real new_object PC. Neither value is a source coordinate.
     aot::ct_aot_slots(frame)[1] = aot::ct_aot_new_object(frame);
     std::uint64_t ignored = value::undefined().bits();
     check(aot::ct_aot_catch_land(frame, &ignored) == landing_pad, "the colliding pad was taken");
     ++landed_calls;
-    // An allocation after consuming the pad used to be called `prologue`,
-    // even though the frame has already executed a catch.
+    // An allocation after the catch landing must not be labelled `prologue`:
+    // the frame has already executed a catch.
     aot::ct_aot_slots(frame)[2] = aot::ct_aot_new_array(frame, 0);
 
     // The VM child and this compiled parent unwind together. The child's
-    // thrown object remains an ordinary, checked bytecode observation.
+    // thrown object is still an ordinary, checked bytecode observation.
     const auto status = static_cast<aot::ct_aot_status>(
         aot::ct_aot_call(frame, aot::ct_aot_slots(frame)[0], value::undefined().bits(), nullptr, 0,
                          0, site, &ignored));
@@ -113,6 +129,9 @@ struct run_counts {
     std::size_t live = 0;
 };
 
+/// Runs the fixture with the hand-written AOT entries installed, recording into
+/// \p recorder (or not recording when null), and returns heap counts so a
+/// recorded run can be compared with an unrecorded one.
 run_counts run(type_recorder * recorder) {
     program prog = compiler::compile(fixture);
     check(prog.ok, "the AOT oracle fixture compiles");
@@ -164,6 +183,9 @@ std::size_t find_function(const type_recorder & recorder, std::string_view name)
     return functions.size();
 }
 
+/// Checks that compiled function \p name recorded its \p kind allocations as
+/// one site at compiled_pc: all \p made unchecked, with no escape verdict and
+/// no overlap with a bytecode allocation claim.
 void check_compiled(const type_recorder & recorder, std::string_view name, heap_kind kind,
                     std::uint64_t made) {
     const std::size_t index = find_function(recorder, name);
@@ -186,6 +208,9 @@ void check_compiled(const type_recorder & recorder, std::string_view name, heap_
     check(found == 1, "one non-bytecode site groups each compiled allocation kind");
 }
 
+/// Checks that interpreted function \p name kept one checked bytecode object
+/// site whose escape verdict is \p escapes, even with compiled frames on the
+/// stack.
 void check_interpreted(const type_recorder & recorder, std::string_view name, bool escapes) {
     const std::size_t index = find_function(recorder, name);
     const auto all = recorder.all_sites();

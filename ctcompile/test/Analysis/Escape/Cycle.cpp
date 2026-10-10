@@ -1,36 +1,41 @@
-// WHAT A CYCLE MEANS, PINNED AGAINST THE INTERPRETER - Phase 55C, gate 4 of
-// ctcompile-plan/25-escape-analysis.md §5.
+//===- Cycle.cpp - What a reference cycle means, against the VM -----------===//
 //
-// The spec's escape analysis asked for "back-references or circular properties
-// replaced with weak links". Part 24 Stage 55C refuses that as stated, and this
-// file is the evidence, in one executable, for why:
+// Pins down what a reference cycle means, using the interpreter as the oracle.
 //
-//   THE REFERENCE SEMANTICS ARE THE VM's TRACING COLLECTOR. A reachable cycle
+// An early escape-analysis design proposed replacing "back-references or
+// circular properties with weak links". The native backend rejects that, and
+// this test is the executable evidence for why:
+//
+//   The reference semantics are the VM's tracing collector. A reachable cycle
 //   survives every collection; an unreachable one is freed whole. Whatever the
-//   native tier emits for an object graph has to reproduce exactly that, and
-//   section A asks the interpreter what "that" is with the collector made
+//   native backend emits for an object graph has to reproduce exactly that,
+//   and section A asks the interpreter what "that" is with the collector made
 //   hostile, rather than writing the answer down.
 //
-//   THE NATIVE TIER HAS NO COLLECTOR. Ownership there is RAII, so a cycle it
-//   cannot give an RAII lifetime is a COMPILE-TIME DIAGNOSTIC naming the sites
-//   - never a silent choice of edge. Section C is the two ways the silent
-//   choice fails, as counters: `shared_ptr` both ways destroys NOTHING, and a
-//   compiler-chosen `weak_ptr` destroys a node JavaScript can still see.
+//   The native backend has no collector. Ownership there is RAII, so a cycle
+//   it cannot give an RAII lifetime is a compile-time diagnostic naming the
+//   sites, never a silent choice of edge. Section C shows the two ways the
+//   silent choice fails, as counters: `shared_ptr` both ways destroys nothing,
+//   and a compiler-chosen `weak_ptr` destroys a node JavaScript can still see.
 //
-//   THE ONE RAII-SOUND ANSWER FOR A CONFINED CYCLE is a frame-owned region
-//   whose members die together at scope exit - 55C option 2, the shape a
-//   lowering of `ringLocal` will emit. Section C models it and counts every
-//   destructor exactly once.
+//   The only RAII-sound answer for a cycle confined to one function is a
+//   region owned by that function's frame, whose members all die together at
+//   scope exit. That is the shape a lowering of `ringLocal` will emit; section
+//   C models it and counts every destructor exactly once.
 //
-// EVERY VALUE THE HARNESS HOLDS LIVES IN A JAVASCRIPT GLOBAL, as GCRoots.cpp
-// insists: the collector walks exactly GCRoots.def, a C++ local is in none of
-// its roots, and section B uses precisely that to show the collector is not
-// merely inert - the same ring, held only by a C++ local, is freed.
+// Every value the harness holds lives in a JavaScript global, as
+// ctcompile/test/Runtime/GC/Roots.cpp explains: the collector is precise and
+// marks only the VM's own roots, and a C++ local is not one of them. Section B
+// relies on this to show the collector is not merely inert: the same ring,
+// held only by a C++ local, is freed.
 //
-// EVERY CLAIM IS A COUNTER. `collections()` must have GROWN before a stressed
-// answer means anything (a stress mode that stops collecting looks exactly like
-// one that works), and `live_objects()` is asserted around every forced
+// Every claim is a counter. `collections()` must have grown before a stressed
+// answer means anything (a stress mode that stops collecting looks exactly
+// like one that works), and `live_objects()` is asserted around every forced
 // collection rather than trusted from output.
+//
+//===----------------------------------------------------------------------===//
+
 #include <ctbrowser/script/builtins.hpp>
 #include <ctbrowser/script/compile.hpp>
 #include <ctbrowser/script/vm.hpp>
@@ -56,15 +61,16 @@ constexpr std::string_view fixture =
     ;
 
 #if defined(CTCOMPILE_ESCAPE_CYCLE_MODULE)
-// THE CTJS MODULE OF THE SAME FILE, printed by ctjs-translate at build time.
-// Gate 4(f) reads it as text: it needs no MLIR to link, and a `ctnative.weak`
-// appearing in it would be the miscompile CTNativeTypes.td forbids.
+/// The CTJS module of the same fixture, printed by ctjs-translate at build
+/// time. Section F reads it as text, so this test needs no MLIR to link. A
+/// `ctnative.weak` in it would be the miscompile CTNativeTypes.td forbids.
 constexpr std::string_view printed_module =
 #include "escape-cycle.ctjs.inc"
 
     ;
 #endif
 
+/// Prints one check's result and counts a failure.
 void report(const char * what, bool ok) {
     std::printf("%-58s %s\n", what, ok ? "ok" : "FAILED");
     if (!ok) { ++ctbrowser_test_failures; }
@@ -75,16 +81,14 @@ void report(const char * what, bool ok, const std::string & got, const std::stri
     if (!ok) { std::printf("    expected: %s\n    got:      %s\n", want.c_str(), got.c_str()); }
 }
 
-// A DRIVER IS A SECOND CLASSIC SCRIPT IN THE SAME CONTEXT. Its top-level `var`s
-// are globals, so it can read `keep` and leave its answers where the collector
-// can see them and this file can read them back by name.
-//
-// THE PROGRAM IS THE CALLER'S AND OUTLIVES EVERY CLOSURE IT MADE.
-// closure_object::proto points into program::functions and the constant pool
-// every property name comes from, so a program compiled inside a helper and
-// dropped on return leaves each function it declared dangling - which is how
-// the first version of this file segfaulted, two checks after it had read
-// "undefined" out of a freed pool.
+/// Runs `prog` as a second classic script in `cx`. Its top-level `var`s are
+/// globals, so it can read `keep` and leave its answers where the collector
+/// can see them and this file can read them back by name.
+///
+/// The caller owns `prog`, and it must outlive every closure it made:
+/// closure_object::proto points into program::functions and the constant
+/// pool, so a program compiled inside a helper and dropped on return leaves
+/// each function it declared dangling.
 bool run_kept(context & cx, const program & prog, const char * what) {
     if (!prog.ok) {
         std::printf("%s did not compile: %s\n", what, prog.error.c_str());
@@ -99,10 +103,10 @@ std::string global_text(context & cx, const char * name) {
     return cx.to_string(cx.global(name));
 }
 
-// ONE EXPRESSION IN A FRESH CONTEXT, rendered the way JavaScript prints it -
-// ctbrowser/test/support/js_expect.hpp's shape, local so this test carries no
-// dependency on the engine's own unit-test support tree. A parse or runtime
-// fault is "THREW", flattened deliberately.
+/// Evaluates one expression in a fresh context and renders the result the way
+/// JavaScript prints it, like ctbrowser/test/support/js_expect.hpp but local so
+/// this test does not depend on the engine's unit-test support tree. A parse
+/// or runtime fault is flattened to "THREW" on purpose.
 std::string probe(std::string_view expression) {
     const program prog =
         ctbrowser::script::compiler::compile("return (" + std::string{expression} + ");");
@@ -119,12 +123,12 @@ void probe_expect(const char * what, std::string_view expression, std::string_vi
 }
 
 // ---------------------------------------------------------------------------
-// SECTION C's MODELS. Three node types, three counters, so the failure modes
+// Section C's models. Three node types, three counters, so the failure modes
 // cannot mask one another.
 // ---------------------------------------------------------------------------
 namespace model {
 
-// (c1) THE SPEC'S DEFAULT, TAKEN LITERALLY: every JavaScript reference is a
+// (c1) The naive default, taken literally: every JavaScript reference is a
 // `std::shared_ptr`. Reference counting cannot see a cycle, so a ring whose
 // every handle is gone still holds itself.
 int strong_destroyed = 0;
@@ -136,8 +140,8 @@ struct strong_node {
     ~strong_node() { ++strong_destroyed; }
 };
 
-// Builds `ring(n)` and DROPS EVERY HANDLE - only raw, non-owning pointers to
-// the nodes come back, which is exactly the state a leaked ring is in.
+/// Builds `ring(n)` and drops every handle: only raw, non-owning pointers to
+/// the nodes come back, which is exactly the state a leaked ring is in.
 std::vector<strong_node *> strong_ring_dropped(int n) {
     std::vector<std::shared_ptr<strong_node>> handles;
     for (int i = 0; i < n; ++i) { handles.push_back(std::make_shared<strong_node>(i)); }
@@ -151,7 +155,7 @@ std::vector<strong_node *> strong_ring_dropped(int n) {
     return raw; // `handles` dies here: every strong handle is gone
 }
 
-// (c2) THE SPEC'S PROPOSED FIX: the "back-reference" made weak. The compiler
+// (c2) The proposed fix: the "back-reference" made weak. The compiler
 // has picked `prev`, which in a doubly-linked pair is the only candidate.
 int weak_destroyed = 0;
 struct weak_node {
@@ -162,8 +166,8 @@ struct weak_node {
     ~weak_node() { ++weak_destroyed; }
 };
 
-// (c3) 55C OPTION 2, THE RAII-SOUND ANSWER FOR A CONFINED CYCLE: a region the
-// FRAME owns. Members point at each other with plain pointers into it, nothing
+// (c3) The RAII-sound answer for a confined cycle: a region the frame
+// owns. Members point at each other with plain pointers into it, nothing
 // counts anything, and the whole graph dies when the frame does - which is
 // also what the interpreter does to `ringLocal`'s ring at that frame's end.
 int arena_destroyed = 0;
@@ -179,13 +183,13 @@ struct arena_outcome {
     int destroyed_before_exit;
 };
 
-// `ringLocal(n)` as the lowering will spell it. A `std::vector` with a reserve
-// is the frame-owned region; when `n` is the literal it is in `churn`, a
-// `std::array<arena_node, 4>` on the stack is the same thing with no heap.
+/// `ringLocal(n)` as the lowering will spell it. A `std::vector` with a reserve
+/// is the frame-owned region; when `n` is the literal it is in `churn`, a
+/// `std::array<arena_node, 4>` on the stack is the same thing with no heap.
 arena_outcome ring_local_arena(int n) {
     std::vector<arena_node> region;
     region.reserve(static_cast<std::size_t>(n)); // pointers into it stay valid
-    // emplace, never push a temporary: a copied temporary would run the
+    // Emplace, never push a temporary: a copied temporary would run the
     // destructor during construction and the "nothing dies early" count
     // below is exactly what would catch it.
     for (int i = 0; i < n; ++i) { region.emplace_back().v = i; }
@@ -205,20 +209,19 @@ arena_outcome ring_local_arena(int n) {
 
 } // namespace model
 
-// THE DRIVER: every helper the harness needs, declared ONCE, before any count is
+// The driver: every helper the harness needs, declared once, before any count is
 // taken, so its closures are part of the baseline and no later step runs a
 // program. A program run leaves its top-level register window behind - the
 // collector marks `registers_` in full - so a value that was live at the end of
 // a driver stays rooted until the next `run` reassigns the file. Calling these
 // from C++ instead has `context::invoke` resize the window away on return.
 //
-// `.call` IS THE SAFEPOINT. This interpreter collects under stress at exactly
-// one place, `context::invoke`'s entry (vm/call/invoke.cpp, the `safepoint()`
-// below
-// the argument copy) - every C++ entry into JavaScript, which
-// `Function.prototype.call` is (builtins/objects/function.cpp: `c.call(self, rest,
-// ...)`). An interpreted JS-to-JS call pushes its frame in the run loop and is
-// NOT one. So `walk(keep, 9)` from inside a driver never collects, and
+// `.call` is the safepoint. Under stress this interpreter collects at exactly
+// one place, the `safepoint()` call after the argument copy in
+// `context::invoke` (ctbrowser/lib/Script/vm/call/invoke.cpp). Every C++
+// entry into JavaScript goes through it, including `Function.prototype.call`
+// (builtins/objects/function.cpp); an interpreted JS-to-JS call pushes its
+// frame in the run loop and does not. So `walk(keep, 9)` from inside a driver never collects, and
 // `walk.call(null, keep, 9)` collects once, at entry, with the ring reachable
 // only through the global and the argument window it was just copied into.
 constexpr std::string_view driver = R"(
@@ -258,10 +261,10 @@ value call1(context & cx, const char * name, double arg) {
     return cx.call(cx.global(name), std::span<const value>{args}, value::undefined());
 }
 
-// ONE COLLECTION WITH NOTHING STALE: the register file is reassigned by an
-// empty program, the dead entry closure that run leaves is then swept with
-// everything else, and the count that comes back is the count of what the
-// GLOBALS reach.
+/// Collects once with nothing stale: the register file is reassigned by an
+/// empty program, the dead entry closure that run leaves is then swept with
+/// everything else, and the count that comes back is the count of what the
+/// globals reach. Returns SIZE_MAX if the scrub program fails to run.
 std::size_t settled_live(context & cx, const program & scrub) {
     if (!run_kept(cx, scrub, "the scrub")) { return static_cast<std::size_t>(-1); }
     (void)cx.collect();
@@ -288,8 +291,8 @@ int main() {
     if (!scrub.ok) { return 1; }
 
     // =======================================================================
-    // A. THE REFERENCE SEMANTICS: a reachable cycle survives a tracing
-    //    collection. Gate 4(a).
+    // A. The reference semantics: a reachable cycle survives a tracing
+    //    collection.
     // =======================================================================
     //
     // The unstressed interpreter defines every answer. The fixture is a
@@ -306,12 +309,12 @@ int main() {
     report("unstressed: a 3-ring answers 0/1/2 and closes",
            a9 == "0" && a4 == "1" && a5 == "2" && ai == "true" && ab == "true" && as == "0",
            a9 + " " + a4 + " " + a5 + " " + ai + " " + ab + " " + as, "0 1 2 true true 0");
-    // CLEARED, so the stressed run cannot pass on a stale answer.
+    // Cleared, so the stressed run cannot pass on a stale answer.
     for (const char * name : {"A9", "A4", "A5", "AI", "AB", "AS"}) {
         cx.define_global(name, value::undefined());
     }
 
-    // NOW WITH THE COLLECTOR HOSTILE. probeWalksVia's entry is one collection,
+    // Now with the collector hostile. probeWalksVia's entry is one collection,
     // its four `.call`s are four more, and the nine single steps are nine -
     // each with the current node reachable only through `keep`'s ring and the
     // window the argument was copied into. The count is asserted before any
@@ -334,7 +337,7 @@ int main() {
            global_text(cx, "AB"), ab);
     report("(a) nine single steps, a collection before each", global_text(cx, "AS") == as,
            global_text(cx, "AS"), as);
-    // WHAT THIS ASSERTION WOULD DO IF A COLLECTION FREED A MEMBER: `walk`
+    // What these assertions would do if a collection freed a member: `walk`
     // dereferences `c.next` through freed storage - a heap-use-after-free
     // under ASan, garbage or a crash without it - and `AI` compares a dangling
     // `prev` against `keep`. Section B shows the same collector freeing the
@@ -342,13 +345,12 @@ int main() {
     // and not an inert collector.
 
     // =======================================================================
-    // B. THE COUNTS: a reachable ring is exactly its nodes, an unreachable
+    // B. The counts: a reachable ring is exactly its nodes, an unreachable
     //    one is freed whole, and churn is what the safepoints make it.
-    //    Gate 4(b).
     // =======================================================================
     //
-    // THE NATIVE TIER'S ANSWER FOR THIS RING IS A DIAGNOSTIC. `ring` escapes
-    // (returned, then stored into a global); with no collector on that tier
+    // The native backend's answer for this ring is a diagnostic. `ring` escapes
+    // (returned, then stored into a global); with no collector in that backend
     // there is nothing to fall back to, so a cycle the analysis cannot prove
     // confined is refused at compile time with the sites named. What is pinned
     // here is what any lowering must reproduce: the ring is alive while any
@@ -357,21 +359,21 @@ int main() {
     cx.define_global("keep", value::null());
     const std::size_t baseline = settled_live(cx, scrub);
     std::printf("    live objects: %zu with the ring, %zu without\n", with_ring, baseline);
-    // THREE, and not "three plus something": the nodes are the only heap
+    // Exactly three, not "three plus something": the nodes are the only heap
     // objects `ring(3)` leaves to a settled count. Its literal keys are heap
-    // strings (LITERAL KEYS, below), but the cache that holds them is emptied
+    // strings (see "Literal keys" below), but the cache that holds them is emptied
     // by the scrub's program run; numbers and null are immediates, and the
     // frame's registers are resized away on return. A hidden allocation would
     // show up here as a fourth.
     report("(b) a reachable ring is baseline + 3", with_ring == baseline + 3);
 
-    // REBUILT FROM C++, held through the global, and the same count again - so
+    // Rebuilt from C++, held through the global, and the same count again - so
     // the number is a property of the ring and not of what the fixture's top
     // level left behind.
     cx.define_global("keep", call1(cx, "ring", 3));
     report("(b) rebuilt ring: baseline + 3 again", settled_live(cx, scrub) == baseline + 3);
 
-    // REACHABLE THROUGH A MIDDLE MEMBER ONLY. This is the exact case a weak
+    // Reachable through a middle member only. This is the exact case a weak
     // `prev` gets wrong (section C2): the head is reachable from nothing but
     // the ring itself, and a tracing collector keeps all three.
     (void)call0(cx, "holdMiddle");
@@ -383,8 +385,8 @@ int main() {
     report("(b) restored through prev: still baseline + 3",
            settled_live(cx, scrub) == baseline + 3);
 
-    // THE FALSIFICATION OF (a): the same ring, built by the same function, held
-    // ONLY by a C++ local this collector cannot see - and it is freed. The
+    // The falsification of (a): the same ring, built by the same function, held
+    // only by a C++ local this collector cannot see - and it is freed. The
     // survival above is reachability, and only reachability.
     {
         const value stray = call1(cx, "ring", 3);
@@ -393,29 +395,30 @@ int main() {
                settled_live(cx, scrub) == baseline + 3);
     }
 
-    // AND WHEN NOTHING REACHES IT, THE WHOLE RING GOES - not one node, not
+    // And when nothing reaches it, the whole ring goes, not one node or
     // two: the count returns to the baseline exactly, which is what neither
     // C++ model in section C can do on its own.
     cx.define_global("keep", value::null());
     report("(b) keep = null; collect() returns to baseline", settled_live(cx, scrub) == baseline);
 
-    // CHURN. `churn(1000)` builds a thousand confined 4-rings and drops each.
+    // Churn: `churn(1000)` builds a thousand confined 4-rings and drops each.
     //
-    // THE DESIGN'S SKETCH ASSUMED A COLLECTION PER CALL and this interpreter
-    // has none: `ringLocal(4)` inside `churn` is a JS-to-JS call, which is not
-    // a safepoint, so under stress the whole of `churn(1000)` collects exactly
-    // ONCE - at its own entry from C++ - and returns with 4,000 dead nodes on
-    // the heap. That is pinned as it is. The boxed AOT tier is different:
-    // ct_aot_call IS a safepoint (aot_helpers.def), and the driver's `churnVia`
+    // The escape-analysis design assumed a collection on every call; this
+    // interpreter has none: `ringLocal(4)` inside `churn` is a JS-to-JS call,
+    // which is not a safepoint, so under stress the whole of `churn(1000)`
+    // collects exactly once, at its own entry from C++, and returns with 4,000
+    // dead nodes on the heap. That is pinned as it is. The boxed AOT backend is
+    // different: ct_aot_call is a safepoint (aot_helpers.def), and the driver's
+    // `churnVia`
     // below reproduces that cadence through `Function.prototype.call`, where
     // the bound is one dead ring.
     //
-    // LITERAL KEYS: every unsettled count below also holds `ringLocal`'s three
-    // keys, "v", "next" and "prev", and they are LIVE. Since 7c32df8e9 a
-    // literal defines its members (13.2.5.5 CreateDataPropertyOrThrow, by
-    // op::define_data since 80c455fa4) with the key in a register that
-    // op::load_string fills: one heap string per key per function, interned
-    // in string_cache_, which is a GC root until the next top-level program
+    // Literal keys: every unsettled count below also holds `ringLocal`'s three
+    // keys, "v", "next" and "prev", and they are live. An object literal
+    // defines its members with op::define_data (ECMA-262 13.2.5.5,
+    // CreateDataPropertyOrThrow), taking the key from a register that
+    // op::load_string fills: one heap string per key per function, interned in
+    // string_cache_, which stays a GC root until the next top-level program
     // empties it. The first `ringLocal` after a scrub allocates the three,
     // every collection churnVia makes keeps them, and settled_live's scrub
     // run is what lets them go.
@@ -446,9 +449,9 @@ int main() {
            after_churn == baseline + 4000 + literal_keys);
     report("(b) and back to baseline after one collection", settled_live(cx, scrub) == baseline);
 
-    // THE SAME CHURN AT THE AOT TIER'S CADENCE: a collection at every
+    // The same churn at the AOT backend's cadence: a collection at every
     // `ringLocal` entry. The previous ring is dead and swept before the next
-    // is built, so the bound is the LAST ring - dead at churnVia's return but
+    // is built, so the bound is the last ring - dead at churnVia's return but
     // not yet swept - beside the three live keys, and exactly baseline once
     // settled.
     const std::size_t via_before = cx.collections();
@@ -467,11 +470,11 @@ int main() {
     report("(b) and back to baseline after one collection", settled_live(cx, scrub) == baseline);
 
     // =======================================================================
-    // C. THE C++ MODELS: what "replace back-references with weak links" does,
-    //    and the one RAII answer that is sound. Gate 4(c).
+    // C. The C++ models: what "replace back-references with weak links" does,
+    //    and the one RAII answer that is sound.
     // =======================================================================
 
-    // C1. `shared_ptr` BOTH WAYS: every handle dropped, nothing destroyed.
+    // C1. `shared_ptr` both ways: every handle dropped, nothing destroyed.
     // This is the leak - three nodes the program can no longer reach and no
     // destructor will ever run for.
     {
@@ -482,7 +485,7 @@ int main() {
         report("(c1) ... and every node still holds its neighbours",
                leaked[0]->next.get() == leaked[1] && leaked[1]->prev.get() == leaked[0] &&
                    leaked[2]->next.get() == leaked[0]);
-        // FREEING IT NEEDS THE WHOLE GRAPH: cut every `prev`, then one `next`,
+        // Freeing it needs the whole graph: cut every `prev`, then one `next`,
         // in that order, from raw pointers gathered while building. That is
         // knowledge of the graph's shape and of which node is the head -
         // neither of which the JavaScript states - and it is the reasoning
@@ -497,7 +500,7 @@ int main() {
                model::strong_destroyed == 3);
     }
 
-    // C2. THE COMPILER-CHOSEN WEAK EDGE. `a.next = b; b.prev = a`, `prev`
+    // C2. The compiler-chosen weak edge. `a.next = b; b.prev = a`, `prev`
     // made weak; JavaScript holds `b` and lets go of `a`. Under the tracing
     // collector (section B, "held by a middle member") `a` is alive and
     // `b.prev.next === b` is true. Here `a` is destroyed while `b` is still
@@ -518,8 +521,8 @@ int main() {
         report("(c2) weak prev: b.prev has expired - JS would still see it", b->prev.expired());
     }
 
-    // C3. THE FRAME-OWNED REGION - 55C option 2, the shape `ringLocal` lowers
-    // to. Nothing dies before the frame ends; everything dies when it does,
+    // C3. The frame-owned region, the shape `ringLocal` lowers to. Nothing
+    // dies before the frame ends; everything dies when it does,
     // each node exactly once; and the sum is the interpreter's.
     {
         model::arena_destroyed = 0;
@@ -536,7 +539,9 @@ int main() {
     }
 
     // =======================================================================
-    // E. ND-2: WeakMap class identity and lookup. Gate 4(e).
+    // E. WeakMap class identity and lookup (native divergence ND-2 in
+    //    ctcompile/docs/native-divergences.md: native weak edges stay
+    //    unsupported).
     // =======================================================================
     //
     // This probe does not force GC or establish key retention. Runtime weak
@@ -548,12 +553,14 @@ int main() {
                  "1");
 
     // =======================================================================
-    // ND-3: inherited accessors also receive a plain literal as `this`.
+    // Inherited accessors receive a plain object literal as `this`
+    // (divergence ND-3 in ctcompile/docs/native-divergences.md, now closed:
+    // the runtime no longer skips Object.prototype for literals).
     // =======================================================================
     //
-    // Runtime 552a4ba0 closed the implicit-prototype shortcut. The escape oracle
-    // in escape-claims/ separately compares the retained receivers and setter
-    // argument with the compiler's claims, including iteration's numeric read.
+    // The escape oracle fixtures in claims/inherited/ separately compare the
+    // retained receivers and setter argument with the compiler's claims,
+    // including iteration's numeric read.
     probe_expect("ND-3: Object.prototype getter on a literal returns a number",
                  "(function () { Object.defineProperty(Object.prototype, \"nd3\", "
                  "{get: function () { return 42; }}); return typeof ({}).nd3; })()",
@@ -592,7 +599,7 @@ int main() {
                  "true");
 
     // =======================================================================
-    // F. THE PRINTED MODULE CONTAINS NO `ctnative.weak`. Gate 4(f).
+    // F. The printed module contains no `ctnative.weak`.
     // =======================================================================
 #if defined(CTCOMPILE_ESCAPE_CYCLE_MODULE)
     report("(f) ctjs-translate printed a module for the fixture", !printed_module.empty());
@@ -601,7 +608,7 @@ int main() {
                printed_module.find("ringLocal") != std::string_view::npos &&
                printed_module.find("walk") != std::string_view::npos &&
                printed_module.find("churn") != std::string_view::npos);
-    // AND NOTHING WAS SKIPPED: ctjs-translate records a function it could not
+    // And nothing was skipped: ctjs-translate records a function it could not
     // import under `ctjs.skipped`, and a module missing a body is a module the
     // absence below says nothing about.
     report("(f) the importer skipped nothing in the fixture",

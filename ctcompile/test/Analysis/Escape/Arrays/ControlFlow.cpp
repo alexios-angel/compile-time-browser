@@ -1,9 +1,21 @@
+//===- ControlFlow.cpp - Array contents across control flow -----*- C++ -*-===//
+//
+// Escape-analysis tests for array contents across control flow: frame
+// enter/exit and roots (checkArrayFrames), cf.cond_br paths
+// (checkArrayConditionals) and cf.switch paths (checkContainerSwitches).
+// Each group runs fixed IR rows, then edits live IR and checks that every
+// proof is rebuilt, and checks that the per-path work budget refuses rather
+// than publishing partial evidence.
+//
+//===----------------------------------------------------------------------===//
 #include "Harness.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 
 namespace ctcompile::test::escape::arrays {
 
+/// Checks array contents across frame_enter/frame_exit and roots, then the
+/// same proofs after live edits of the frame, root and exit.
 void checkArrayFrames(mlir::MLIRContext & context) {
     context.getOrLoadDialect<mlir::arith::ArithDialect>();
     const std::string enter = "  %frame = ctjs.frame_enter 4\n";
@@ -172,8 +184,10 @@ void checkArrayFrames(mlir::MLIRContext & context) {
         }
     }
 
-    // Rebuild both solver and queries after each live edit. Forged completion
-    // markers never supply a missing frame, root origin or retention proof.
+    // Edit the IR in place and rebuild the solver and queries after each edit.
+    // The completion attributes (ctnative.array_contents_complete,
+    // ctnative.confined) are set by hand first; they must never stand in for a
+    // missing frame, root origin or retention proof.
     contents_row mutation = rows.front();
     mutation.what = "live imported frame, root and exit mutations rebuild every proof";
     mutation.body += "^dead:\n  ctjs.store_global \"held\", %a\n" + done;
@@ -211,7 +225,8 @@ void checkArrayFrames(mlir::MLIRContext & context) {
         check(*module, mutation);
 
         // Make the previously dead publication reachable in the same IR.
-        // Even with forged markers, the new edge must invalidate refinement.
+        // Even with forged completion attributes, the new edge must invalidate
+        // refinement.
         mlir::Operation * returned = function.getBody().front().getTerminator();
         const mlir::Value result = returned->getOperand(0);
         mlir::Block & dead = function.getBody().back();
@@ -228,8 +243,8 @@ void checkArrayFrames(mlir::MLIRContext & context) {
         mutation.failure = ArrayContentsFailure::None;
         check(*module, mutation);
         edge->setOperand(0, function.getBody().front().getArgument(3));
-        // The successor no longer uses this forwarded value after its old
-        // publication was erased. It remains opaque, never a known root.
+        // The successor no longer uses the forwarded value now that its
+        // publication was erased. The value stays opaque, never a known root.
         mutation.failure = ArrayContentsFailure::None;
         check(*module, mutation);
         edge->setOperand(0, value);
@@ -253,6 +268,8 @@ void checkArrayFrames(mlir::MLIRContext & context) {
                 rows.size(), budgets);
 }
 
+/// Checks array contents across cf.cond_br paths, including live edits of
+/// one path and a path-explosion budget.
 void checkArrayConditionals(mlir::MLIRContext & context) {
     const std::string values =
         "  %zero = ctjs.constant #ctjs.number<0> {storage_test_id = \"zero\"}\n"
@@ -494,7 +511,7 @@ void checkArrayConditionals(mlir::MLIRContext & context) {
     }
 
     // Rebuild from live IR after changing only the second path. The first path
-    // still returns the overwritten array; stale completion markers cannot
+    // still returns the overwritten array; forged completion attributes must not
     // erase the unchanged child's alternate retention or a later publication.
     conditional_row mutation = rows[1];
     mutation.contents.what = "live alternate-path mutations invalidate and restore every proof";
@@ -531,9 +548,9 @@ void checkArrayConditionals(mlir::MLIRContext & context) {
              "the live conditional fixture did not parse");
     }
 
-    // A short CFG may contain exponentially many paths. Work includes the
-    // snapshots themselves; exhaustion after completed earlier exits must
-    // return no proof and cannot refine even one original Stored verdict.
+    // A short CFG can contain exponentially many paths. Work includes the
+    // snapshots themselves; running out after some exits completed must return
+    // no proof and must not refine a single original Stored verdict.
     std::string expanding = array + "  cf.br ^b0\n";
     for (unsigned i = 0; i < 16; ++i) {
         const std::string next = "^b" + std::to_string(i + 1);
@@ -591,6 +608,8 @@ void checkArrayConditionals(mlir::MLIRContext & context) {
                 rows.size(), budgets);
 }
 
+/// Checks array contents across cf.switch paths, including live edits of the
+/// case operands, malformed edges, and a path-explosion budget.
 void checkContainerSwitches(mlir::MLIRContext & context) {
     const std::string values =
         "  %zero = ctjs.constant #ctjs.number<0> {storage_test_id = \"zero\"}\n"
@@ -834,8 +853,9 @@ void checkContainerSwitches(mlir::MLIRContext & context) {
         }
     }
 
-    // Change only the last case's successor operands, retaining forged markers
-    // while its target, value and use sites invalidate earlier complete proofs.
+    // Change only the last case's successor operands, keeping the forged
+    // completion attributes; changing its target, value or uses must invalidate
+    // the earlier complete proofs.
     switch_row mutation = rows[1];
     mutation.contents.what = "live switch edges invalidate and restore complete retention";
     auto module = mlir::parseSourceString<mlir::ModuleOp>(
@@ -873,10 +893,11 @@ void checkContainerSwitches(mlir::MLIRContext & context) {
         mutation = rows[1];
         check(*module, mutation);
 
-        // These temporarily malformed edge layouts are checked directly,
-        // without feeding invalid IR to the legacy sparse solver. Every
-        // incomplete prefix still discards all records, and restoring the
-        // valid operation restores the complete query and its refinement.
+        // Malformed switch edges (missing operands, an empty target block, an
+        // unknown flag) are passed straight to computeArrayContents; the MLIR
+        // dataflow solver assumes valid IR and is not run on them. Every budget
+        // must refuse with no partial records, and restoring the edge must
+        // restore the complete result.
         const auto malformed = [&](ArrayContentsFailure failure) {
             const row r{.what = "malformed switch edges cannot publish partial proof",
                         .body = mutation.contents.body,
@@ -933,8 +954,10 @@ void checkContainerSwitches(mlir::MLIRContext & context) {
              "the live switch fixture did not parse");
     }
 
-    // Preserve the 3^10-path source. Its initial ordinary-object assignment
-    // now refuses before any switch snapshot can establish own properties.
+    // A chain of ten three-way switches (3^10 paths). Its first statement stores
+    // the array into an ordinary object, which the analysis refuses, so every
+    // budget must end in WorkLimit (before the refusal is reached) or
+    // UnsupportedOperation, with no evidence published and verdicts unchanged.
     std::string expanding = array + "  %o = ctjs.create_object {storage_test_id = \"o\"}\n"
                                     "  ctjs.set_property %o[%key], %a\n  cf.br ^b0\n";
     for (unsigned i = 0; i < 10; ++i) {

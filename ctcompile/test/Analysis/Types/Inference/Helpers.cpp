@@ -1,3 +1,10 @@
+//===- Helpers.cpp - Shared helpers for the type inference tests ----------===//
+//
+// The solver driver behind check(), and the text builders for invoke and
+// throwing-helper fixtures declared in Tests.h.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Tests.h"
 
 #include "check.hpp"
@@ -10,19 +17,16 @@ std::string prologue() {
 
 void check(mlir::ModuleOp module, const char * what, const char * expected,
            const ctcompile::ctnative::OwnedGlobalRoots * owner) {
-    // DeadCodeAnalysis IS NOT OPTIONAL. The sparse framework gets its
-    // predecessor information from it; without it a block argument never
-    // receives what was branched into it and every answer is uninitialized.
+    // DeadCodeAnalysis is required. The sparse framework gets its predecessor
+    // information from it; without it a block argument never receives what was
+    // branched into it and every answer is uninitialized.
     mlir::DataFlowSolver solver;
     solver.load<mlir::dataflow::DeadCodeAnalysis>();
-    // AND SparseConstantPropagation, WHICH IS NOT OPTIONAL EITHER, and the
-    // reason is a trap worth naming. DeadCodeAnalysis decides which successor
-    // of a branch is live by asking for every branch operand's ConstantValue
-    // lattice; if nothing provides one, those lattices stay uninitialized, it
-    // bails out, and NO successor is ever marked live. The sparse analysis
-    // then skips every op in every non-entry block - measured: 109 unvisited
-    // values and zero registers beating `boxed` on the fixture, while the
-    // single-block unit rows all passed.
+    // SparseConstantPropagation is required too: DeadCodeAnalysis marks a
+    // branch successor live only after reading the branch operands'
+    // ConstantValue lattices. With no provider those stay uninitialized, no
+    // successor is marked live, and every non-entry block is silently skipped
+    // (single-block tests still pass).
     solver.load<mlir::dataflow::SparseConstantPropagation>();
     solver.load<TypeInference>(owner);
     if (failed(solver.initializeAndRun(module))) {
@@ -74,6 +78,7 @@ void check(mlir::MLIRContext & context, const row & r) {
 
 std::string invokeModule(const std::string & helpers, llvm::StringRef observed,
                          bool observeNormal) {
+    // %argument below is the IEEE-754 bit pattern of 5.0.
     const std::string observation = "    %observed = scf.execute_region -> !ctjs.value {\n"
                                     "      scf.yield " +
                                     observed.str() + " : !ctjs.value\n    } {check}\n";

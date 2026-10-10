@@ -3,7 +3,7 @@
 // RUN: python3 %S/../check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name signed-subtraction
 // RUN: FileCheck %s --check-prefix=CLAIM < %t/escape-claims-signed-subtraction.claims
 
-// Either subtraction operand accepts the existing bounded canonical String proof.
+// `-` loop steps where either operand is a copied length, a constant or a numeric string.
 // IMPORT-LABEL: ctjs.func @snapshotReleased$
 // IMPORT: ctjs.binary sub
 // IMPORT: ctjs.set_property

@@ -1,3 +1,11 @@
+//===- LeafObjects.cpp - Leaf object owners ---------------------*- C++ -*-===//
+//
+// Tests that a captured Map's owner also owns the plain objects ("leaf
+// objects") its methods allocate and store, with an empty, Number or String
+// field.
+//
+//===----------------------------------------------------------------------===//
+
 #include "LeafObjects/Helpers.hpp"
 
 namespace ctcompile::test::owned_global_shared_map {
@@ -7,6 +15,8 @@ void checkLeafOwner(mlir::MLIRContext & context, const std::string & source, boo
     checkChildMapOwner(context, source, lifted);
     using Alternatives = ctcompile::ctnative::PrimitiveAlternatives;
     const std::string write = "    %written = ctjs.call %setter(%state, %entryKey, %value)";
+    // Give the stored leaf a `value` field of 1.0 (4607182418800017408 is
+    // 0x3FF0000000000000, the IEEE-754 bits of 1.0), or of a String.
     const auto numeric =
         replaced(source, write,
                  "    %fieldKey = ctjs.constant #ctjs.string<\"value\">\n"
@@ -59,6 +69,10 @@ void checkLeafOwner(mlir::MLIRContext & context, const std::string & source, boo
             complete &= edge.arguments.size() == 1;
             if (edge.arguments.size() != 1) { continue; }
             const auto & argument = edge.arguments.front();
+            // The prepared put$4 takes (this, new.target, callee, environment, key),
+            // so the key is parameter 4 and its call_direct passes it as operand 4.
+            // The source form has parameter 3, and its ctjs.call passes it as
+            // operand 2, after the callee and the receiver.
             complete &=
                 argument.alternatives == expected &&
                 argument.parameter == setter.getBody().front().getArgument(lifted ? 4 : 3) &&

@@ -1,18 +1,18 @@
-// AN OBJECT LITERAL'S MEMBERS ARE DEFINED, NOT ASSIGNED.
+// An object literal's members are defined, not assigned.
 //
 // `{k: v}` is CreateDataPropertyOrThrow (13.2.5.5): a setter or read-only `k`
 // up the chain does not intercept it, and `["__proto__"]: v` is an ordinary own
 // key. The browser compiler emits op::define_data for it and the importer makes
 // it the ctjs.set_property every native proof already reads, marked
-// `ctjs.define_own`; the boxed tier lowers the mark to ct_aot_define_data, not
-// to the assignment ct_aot_set_index.
+// `ctjs.define_own`; the boxed backend lowers the mark to ct_aot_define_data,
+// not to the assignment ct_aot_set_index.
 //
-// AN OPCODE, NOT A CALL. b67016d91 first routed these through the global
-// __ctbrowser_define_own. A call of a global a page can replace is an escape,
-// so every literal-bearing native proof refused, and where the global object
+// It is an opcode, not a call to the global __ctbrowser_define_own: a page can
+// replace a global, so calling one counts as an escape and would make every
+// native proof over an object literal refuse, and where the global object
 // escapes (the HostContract controls that call `globalThis.foreign()`) no
-// closed-world proof can say the global was not replaced. Class fields and
-// `__home` still call the helper, as they did before b67016d91.
+// closed-world proof could say the global was not replaced. Class fields and
+// `__home` still call the helper.
 
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/keys.js 2>/dev/null | ctjs-opt | FileCheck %s --check-prefix=KEYS
@@ -40,12 +40,12 @@
 // PROTO: %[[KEY:[0-9]+]] = ctjs.constant #ctjs.string<"__proto__">
 // PROTO: ctjs.set_property %{{[0-9]+}}[%[[KEY]]], %{{[0-9]+}} {ctjs.define_own}
 
-// A class field is defined on `this` by the helper, unmarked, as before.
+// A class field is defined on `this` by the helper, unmarked.
 // CLASS-NOT: ctjs.define_own
 // CLASS: ctjs.load_global "__ctbrowser_define_own"
 // CLASS-NOT: ctjs.define_own
 
-// Codex's probe of the regression: a literal read back lowers natively again.
+// A literal read back through its own field still lowers natively.
 // NATIVE: emitc.func @literal_1
 
 // BOXED: ct_aot_define_data(

@@ -1,20 +1,20 @@
-// EVERY VERIFIER DIAGNOSTIC, WATCHED FIRING.
+// Every verifier diagnostic, watched firing.
 //
-// The Phase 8 gate: "invalid.mlir covers every verifier diagnostic and passes
-// under -verify-diagnostics". Four operations have a hand-written verifier -
-// the plan names exactly those four - and each of their messages appears below.
-// More have been added since, the newest being ctjs.create_closure's parallel
-// `enclosing_indices` (Phase 59 slice 1b); their messages are here too.
+// This file must contain every message produced by a hand-written CTJS
+// verifier and must pass under -verify-diagnostics. When you add a verifier
+// diagnostic, add a case here; the newest cases are ctjs.create_closure's
+// checks of its parallel `enclosing_indices` attribute, which must agree with
+// its capture operands slot for slot.
 //
-// A VERIFIER WITH NO TEST IS A VERIFIER THAT MIGHT NOT RUN. That is the same
-// discipline the runtime side of this project uses everywhere: the negative
+// A verifier with no test is a verifier that might not run: the negative
 // cases are the point of the file, and a guard nobody watches fail is a guard
 // nobody knows is connected.
+
 
 // RUN: ctjs-opt %s -split-input-file -verify-diagnostics
 
 // ---- ctjs.constant ---------------------------------------------------------
-// A BUILTIN ATTRIBUTE IS REFUSED, which is the whole reason this dialect
+// A builtin attribute is refused, which is the whole reason this dialect
 // defines its own: a builtin FloatAttr compares -0.0 equal to 0.0, and
 // JavaScript does not.
 ctjs.func @builtin_attribute() -> !ctjs.value attributes {upvalue_count = 0 : i32} {
@@ -53,9 +53,9 @@ ctjs.func @wrong_parameter(%n: i32) -> !ctjs.value attributes {upvalue_count = 0
 // -----
 
 // ---- ctjs.pop_handler ------------------------------------------------------
-// TWO POPS AND NO PUSH BETWEEN THEM. The runtime's ct_aot_handler_pop takes the
-// GLOBALLY innermost handler without consulting the frame, so a body that pops
-// one it never pushed silently takes its CALLER's catch - and nothing at run
+// Two pops and no push between them. The runtime's ct_aot_handler_pop takes the
+// globally innermost handler without consulting the frame, so a body that pops
+// one it never pushed silently takes its caller's catch, and nothing at run
 // time reports it. This verifier is what makes it a build error instead.
 ctjs.func @unbalanced() -> !ctjs.value attributes {upvalue_count = 0 : i32} {
   ctjs.pop_handler
@@ -68,12 +68,12 @@ ctjs.func @unbalanced() -> !ctjs.value attributes {upvalue_count = 0 : i32} {
 // -----
 
 // ---- ctjs.resume_point: uniqueness ----------------------------------------
-// Phase 14 turns these into a switch over a saved state, so a duplicate index
-// is two states that cannot be told apart.
-// THE DIAGNOSTIC LANDS ON THE FIRST resume_point, not the offending one: the
+// Each resume point is meant to become one arm of a switch over a saved state
+// index when generators are lowered, so two with the same index would clash.
+// The diagnostic lands on the first resume_point, not the offending one: the
 // verifier walks the whole function, so whichever of them is verified first is
-// the one that reports. That is worth knowing rather than working around - a
-// message about the set is not a message about one member of it.
+// the one that reports, because the message is about the set, not one member.
+
 ctjs.func @duplicate_resume() -> !ctjs.value attributes {upvalue_count = 0 : i32} {
   // expected-error @+1 {{resume point indices must be unique}}
   ctjs.resume_point 0
@@ -96,12 +96,12 @@ ctjs.func @sparse_resume() -> !ctjs.value attributes {upvalue_count = 0 : i32} {
 
 // -----
 
-// ---- ctjs.create_closure: enclosing_indices is PARALLEL, not packed --------
+// ---- ctjs.create_closure: enclosing_indices is parallel, not packed --------
 // Two captures and one index. A reader who wrote only the slots the enclosing
-// closure fills would get exactly this, and it is wrong SILENTLY: index 0 would
+// closure fills would get exactly this, and it is wrong silently: index 0 would
 // then name slot 1's descriptor, and the native lift would pass a different
 // binding into a function that compiles clean and prints a wrong number. That
-// is the same trap $upvalues itself carries, said again where it can fail.
+// is the same trap $upvalues itself carries, checked again where it can fail.
 ctjs.func @packed_indices(%a: !ctjs.value, %b: !ctjs.value)
     -> !ctjs.value attributes {upvalue_count = 0 : i32} {
   // expected-error @+1 {{`enclosing_indices` has 1 entries for 2 capture operand(s)}}
@@ -113,7 +113,7 @@ ctjs.func @packed_indices(%a: !ctjs.value, %b: !ctjs.value)
 // -----
 
 // ---- ctjs.create_closure: -1 is the only sentinel --------------------------
-// A second negative number would be a second meaning nobody has defined - and
+// A second negative number would be a second meaning nobody has defined, and
 // the lift reads `k >= 0` to decide whether the slot is filled at all, so -2
 // would read as "not filled" while looking deliberate.
 ctjs.func @other_sentinel(%a: !ctjs.value, %b: !ctjs.value)
@@ -129,8 +129,8 @@ ctjs.func @other_sentinel(%a: !ctjs.value, %b: !ctjs.value)
 // ---- ctjs.create_closure: an index and a cell describe the same slot -------
 // The one invariant the native lift depends on and the length check does not
 // reach: a slot the enclosing closure fills carries the importer's placeholder,
-// because there is no binding of THIS frame to point at. Here slot 1 says both
-// - `enclosing_indices[1] = 0` and a real ctjs.create_cell beside it - and the
+// because there is no binding of this frame to point at. Here slot 1 says both
+// (`enclosing_indices[1] = 0` and a real ctjs.create_cell beside it), and the
 // lift asks the operand first, so the index would be silently discarded and the
 // wrong binding passed if the index was the truth. The IR would verify, lower,
 // compile under -Werror and print a wrong number; this is where it stops.
@@ -146,12 +146,12 @@ ctjs.func @index_over_a_cell(%a: !ctjs.value, %b: !ctjs.value)
 // -----
 
 // ---- ctjs.create_closure: an index over a block argument -------------------
-// The same disagreement in its commoner shape. 388 of bootstrap's 1,021 capture
-// operands are block arguments rather than ctjs.create_cell - a from_parent_local
-// binding that lives in a register - so a slot that names an enclosing upvalue
-// AND holds one of those is the same two answers for one slot. Here the lift
-// would take the INDEX and drop the operand, which is the mirror image of the
-// case above and just as silent.
+// The same disagreement in a more common shape: a capture operand that is a
+// block argument (a from_parent_local binding held in a register) rather than
+// a ctjs.create_cell. A slot that names an enclosing upvalue and holds one of
+// those gives two answers for one slot. Here the lift would take the index
+// and drop the operand, which is the mirror image of the case above and just
+// as silent.
 ctjs.func @index_over_a_register(%a: !ctjs.value, %b: !ctjs.value)
     -> !ctjs.value attributes {upvalue_count = 0 : i32} {
   // expected-error @+1 {{`enclosing_indices[0]` is 1, so slot 0 is filled from the enclosing closure and its capture operand has to be the importer's `ctjs.constant #ctjs.undefined` placeholder}}

@@ -1,21 +1,21 @@
-// THE FIX FOR THE MISCOMPILE, AND THE TEST RUNS IT.
+// Checks the workaround for the C++ emitter's block-argument miscompile by
+// compiling and running the output.
 //
-// block-argument-hazard.mlir in this directory pins the defect: the C++ emitter
-// serialises a branch edge's parallel copy one assignment at a time, so an edge
-// that swaps two of a block's own arguments reads a destination it has already
-// written. That test asserts the BAD output, because the bug is in the pinned
-// LLVM and the backend has to route around it.
+// block-argument-hazard.mlir pins the defect: the emitter serialises a branch
+// edge's parallel copy one assignment at a time, so an edge that swaps two of a
+// block's own arguments reads a destination it has already written. That test
+// asserts the bad output, because the bug is in the pinned LLVM.
 //
-// This is the routing. --emitc-eliminate-block-arguments gives every non-entry
-// block argument an emitc.variable, reads it at the top of its block, and writes
-// it on each incoming edge - so every read is issued before any write, which is
-// what a parallel copy means.
+// --emitc-eliminate-block-arguments is the workaround: it gives every non-entry
+// block argument an emitc.variable, reads it at the top of its block, and
+// writes it on each incoming edge, so every read is issued before any write,
+// which is what a parallel copy means.
 //
-// THE SECOND RUN LINE IS THE WHOLE TEST. Reading the emitted C++ and agreeing
+// The second RUN line is the real test. Reading the emitted C++ and agreeing
 // that it looks right is what would have accepted the original bug: that code
 // compiles, and `v8 = v9; v9 = v8;` looks like a swap. So this compiles the
-// output, RUNS it, and lets the program's own exit status be the assertion.
-// Before the pass it prints 20 where 10 is correct and exits 1; after it, 0.
+// output, runs it, and lets the program's own exit status be the assertion.
+// Without the pass it prints 20 where 10 is correct and exits 1; with it, 0.
 //
 // The loop swaps (10, 20) once per iteration, so the answer is 10 for even n
 // and 20 for odd - a fact about the IR, not about the emitter.
@@ -28,8 +28,8 @@
 // RUN:   | mlir-translate --mlir-to-cpp --declare-variables-at-top > %t.cpp \
 // RUN:   && %cxx_exe %t.cpp -o %t.exe && %t.exe
 
-// THE INCLUDES GO FIRST, and emitc.include is how - a trailing emitc.verbatim
-// lands after the function that needs the declarations.
+// The includes go first, so they use emitc.include; a trailing emitc.verbatim
+// would land after the function that needs the declarations.
 emitc.include <"cstdint">
 emitc.include <"cstdio">
 
@@ -49,31 +49,31 @@ emitc.func @swaploop(%n: i32) -> i32 {
   emitc.return %a : i32
 }
 
-// THE READS, AT THE TOP OF THE BLOCK THAT READS THEM. Both loads are issued
+// The reads, at the top of the block that reads them. Both loads are issued
 // before control reaches any edge, which is what makes the writes below safe in
 // either order.
 // CHECK:      [[LOOP:label[0-9]+]]:
 // CHECK-NEXT: [[A:v[0-9]+]] = [[VA:v[0-9]+]];
 // CHECK-NEXT: [[B:v[0-9]+]] = [[VB:v[0-9]+]];
 
-// AND THE WRITES, ON AN EDGE OF THEIR OWN. Each names a variable as its
-// destination and a value LOADED EARLIER as its source - never a variable this
-// same edge has just assigned, which is exactly the difference from the
-// hazard test.
+// The writes, on an edge of their own. Each names a variable as its
+// destination and a value loaded earlier as its source, never a variable this
+// same edge has just assigned; that is the difference from the hazard test.
+//
 // CHECK:      [[VA]] = [[B]];
 // CHECK-NEXT: [[VB]] = [[A]];
 
-// --- THE SAME SUCCESSOR TWICE, WHICH IS WHY EDGES ARE SPLIT ----------------
+// --- The same successor twice, which is why edges are split -----------------
 //
 // `cf.cond_br %c, ^join(%x), ^join(%y)` is legal, and the two edges carry
-// DIFFERENT values into the same block. Assigning both sets before the branch -
-// the obvious placement, and correct for every single-successor terminator -
+// different values into the same block. Assigning both sets before the branch
+// (the obvious placement, and correct for every single-successor terminator)
 // performs both assignments on whichever path is taken, so the second wins
 // unconditionally and `pick` returns %y for every input.
 //
-// Nothing about the swap above catches this: it has one successor carrying
-// operands, so in-place assignment works there. The case needs its own
-// function, and the program below calls it with both values of the condition.
+// The swap above does not catch this: it has one successor carrying operands,
+// so in-place assignment works there. The case needs its own function, and the
+// program below calls it with both values of the condition.
 // CHECK-LABEL: int32_t pick(
 emitc.func @pick(%c: i1, %x: i32, %y: i32) -> i32 {
   cf.cond_br %c, ^join(%x : i32), ^join(%y : i32)
@@ -81,7 +81,7 @@ emitc.func @pick(%c: i1, %x: i32, %y: i32) -> i32 {
   emitc.return %v : i32
 }
 
-// The program that settles it. An answer of 20 for an even n is the bug.
+// The program that checks both. An answer of 20 for an even n is the bug.
 emitc.verbatim "int main() {"
 emitc.verbatim "  int bad = 0;"
 emitc.verbatim "  for (int32_t n = 0; n <= 6; ++n) {"

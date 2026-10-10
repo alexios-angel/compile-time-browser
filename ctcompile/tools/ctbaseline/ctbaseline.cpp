@@ -1,21 +1,22 @@
-// WHAT A PACKAGED APPLICATION PAYS BEFORE IT DRAWS ANYTHING, per stage, as JSON.
+//===- ctcompile/tools/ctbaseline/ctbaseline.cpp - Startup-cost baseline --===//
 //
-// Phase 0's performance baseline. ctcompile's entire claim is that the work
-// below happens at BUILD time instead of at startup, so this is the number that
-// claim will be measured against - and a claim with no before is not a claim.
+// Measures what a packaged application pays before it draws anything, per
+// stage, as JSON. ctcompile moves this work from startup to build time, so
+// these numbers are what the compiler is compared against.
 //
-// IT MEASURES THE STARTUP STAGES AND SAYS SO. HTML parsing, CSS parsing,
-// filing a stylesheet into the engine, JavaScript parsing and bytecode
-// compilation, and executing a program's top level. It does NOT measure style
-// resolution, layout, paint, raster or a first frame: those are what the
-// runtime keeps doing after startup and what Principle 6 says a compiler must
-// not freeze, and the engine already has benchmarks for them
-// (ctbrowser/benchmarks/). Measuring them here would produce a number nobody
-// should try to improve by compiling.
+// It measures the startup stages: HTML parsing, CSS parsing, filing a
+// stylesheet into the engine, JavaScript parsing and bytecode compilation,
+// loading the same program from an image, and executing a program's top
+// level. It does not measure style resolution, layout, paint, raster or a
+// first frame: those depend on the window and on runtime state, so they stay
+// runtime work that ctcompile does not precompute, and ctbrowser/benchmarks/
+// already measures them.
 //
-// A BASELINE WITHOUT ITS CONFIGURATION IS UNUSABLE SIX MONTHS LATER, so the
-// compiler, its flags, the CPU and the corpus sizes are recorded beside every
-// timing. The output is JSON on stdout; tools/check/baseline.py stores it.
+// The output is JSON on stdout with timings only. tools/check/baseline.py runs
+// this tool and adds the compiler, build commands, machine and corpus hashes,
+// because a baseline without its configuration cannot be compared later.
+//
+//===----------------------------------------------------------------------===//
 #include <ctcompile/Support/Manifest.hpp>
 #include <ctcompile/Support/Measure.hpp>
 
@@ -41,20 +42,23 @@ namespace {
 using ctcompile::median_ms;
 using ctcompile::read_file;
 
+/// One measured startup stage, as printed in the JSON output.
 struct stage {
     std::string name;
     double ms;
     std::size_t bytes;
-    std::size_t produced; // nodes, rules, functions - whatever the stage makes
-    // WHETHER THE STAGE ACTUALLY DID THE WORK. A timing for a stage that
-    // stopped at its first error is not a fast stage, it is a missing
-    // measurement that LOOKS like a fast one - running p5's top level
-    // "in 0.036 ms" means the program raised immediately, not that a 4.5 MB
-    // bundle installed itself in microseconds. Recorded rather than inferred.
+    std::size_t produced; // nodes, rules, functions: whatever the stage makes
+    /// Whether the stage actually did the work. A stage that stopped at its
+    /// first error is a missing measurement that looks like a fast one: p5's
+    /// top level "running in 0.036 ms" means the program threw immediately,
+    /// not that a 4.5 MB bundle installed itself in microseconds. Recorded
+    /// rather than inferred.
     bool completed = true;
+    /// The error that stopped the stage when `completed` is false.
     std::string stopped_because;
 };
 
+/// Prints one corpus's stages as a JSON object (part of the "runs" array).
 void print_json(std::string_view corpus, const std::vector<stage> & stages) {
     std::printf("    {\n      \"corpus\": \"%.*s\",\n      \"stages\": [\n",
                 static_cast<int>(corpus.size()), corpus.data());
@@ -77,8 +81,8 @@ void print_json(std::string_view corpus, const std::vector<stage> & stages) {
 } // namespace
 
 int main(int argc, char ** argv) {
-    // Paths are given by the caller so this tool has no opinion about where the
-    // tree is - it is run from the repository root by tools/check/baseline.py.
+    // Paths are given by the caller so this tool assumes nothing about where
+    // the tree is; tools/check/baseline.py runs it from the repository root.
     llvm::cl::OptionCategory category("ctbaseline options");
     llvm::cl::list<std::string> inputs(llvm::cl::Positional, llvm::cl::OneOrMore,
                                        llvm::cl::desc("<name=path> ..."), llvm::cl::cat(category));
@@ -121,9 +125,9 @@ int main(int argc, char ** argv) {
             });
             stages.push_back(stage{"css_parse", parse, source.size(), rules, true, {}});
 
-            // add_sheet PARSES AND THEN FILES, so this is the parse above plus
-            // the selector compilation and bucketing - which is the half a
-            // compiled style program would replace.
+            // add_sheet parses and then files, so this is the parse above plus
+            // selector compilation and bucketing, the half a compiled style
+            // program would replace.
             std::size_t filed = 0;
             const double file_it = median_ms(5, [&] {
                 ctbrowser::atom_table atoms;
@@ -141,17 +145,16 @@ int main(int argc, char ** argv) {
             stages.push_back(
                 stage{"js_parse_and_compile", compile, source.size(), functions, true, {}});
 
-            // ONE UNTIMED COMPILE serves the image stage and the top-level run.
+            // One untimed compile serves the image stage and the top-level run.
             const auto program = ctbrowser::script::compiler::compile(source);
 
-            // AND THE WHOLE POINT: loading the same program from an image
-            // instead of compiling it.
+            // Loading the same program from an image instead of compiling it.
             //
-            // TIMED AT THE SAME BOUNDARY as the compile above - the program is
-            // constructed AND DESTROYED inside the lambda either way. That is
-            // not a detail: tearing down babylon's ~255,000 containers is part
-            // of the 264 ms being compared against, and an image stage that
-            // skipped it would be measured against a padded baseline.
+            // Timed at the same boundary as the compile above: the program is
+            // constructed and destroyed inside the lambda either way. Teardown
+            // is part of both timings; freeing a large bundle's containers is
+            // a real share of the compile number, and an image stage that
+            // skipped it would look faster than it is.
             {
                 const auto image = ctbrowser::script::write_image(program);
                 if (!image.empty()) {
@@ -165,9 +168,9 @@ int main(int argc, char ** argv) {
                     stages.push_back(
                         stage{"js_image_load", load, image.size(), loaded, ok,
                               ok ? std::string{} : std::string{"the image did not load"}});
-                    // A GUARD, NOT A STATISTIC: an image that quietly loads
-                    // fewer functions than the compile produced would read as a
-                    // win. The count has to match or the number means nothing.
+                    // A guard, not a statistic: an image that silently loads
+                    // fewer functions than the compile produced would look
+                    // like a win, so the counts must match.
                     if (loaded != program.functions.size()) {
                         stages.back().completed = false;
                         stages.back().stopped_because = "the image loaded " +
@@ -179,9 +182,13 @@ int main(int argc, char ** argv) {
                 }
             }
 
-            // AND RUNNING THE TOP LEVEL, which for a UMD bundle is where the
-            // library installs itself - the work a packaged application still
-            // has to do even once its code is native.
+            // Running the top level, which for a UMD bundle is where the
+            // library installs itself: work a packaged application still does
+            // even once its code is native.
+            //
+            // A program that failed to compile has no top level to run, so the
+            // compile stage is recorded again, this time as incomplete with the
+            // compile error.
             if (!program.ok) {
                 stages.push_back(stage{"js_parse_and_compile", compile, source.size(), functions,
                                        false, program.error});

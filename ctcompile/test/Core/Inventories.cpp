@@ -1,25 +1,25 @@
-// Phase 0's inventories, checked against themselves and against the engine.
+//===- ctcompile/test/Core/Inventories.cpp - Opcode and ABI tables --------===//
 //
-// Phase 0 asks for a test asserting that the table's entry count equals the
-// VM's opcode count. bytecode.hpp already makes that a static_assert - a build
-// error, which is stronger and is what this project prefers - so this test
-// covers what a static_assert cannot: the internal consistency of the columns,
-// and the fact that the table is READABLE as data rather than only expandable
-// as a macro. An AOT backend consumes it as data, and a table nobody has ever
-// walked is a table whose shape is only a guess.
+// Checks the bytecode opcode table (bytecode_opcodes.def) and the AOT helper
+// ABI table (aot_helpers.def) against themselves and against the engine.
+//
+// bytecode.hpp already static_asserts that the opcode table has one row per
+// opcode. This test covers what a static_assert cannot: that the columns are
+// internally consistent, and that the table can be read as data, which is how
+// an AOT backend consumes it.
+//
+//===----------------------------------------------------------------------===//
 #include <ctbrowser/script/bytecode.hpp>
 
-// INCLUDED FOR ITS STATIC_ASSERTS. EngineContract.hpp is the program
-// representation inventory - the layout facts Phase 15's serializer will
-// depend on, written as build errors rather than as prose. It has no runtime
-// surface, so this is the translation unit that makes it fire.
+// EngineContract.hpp holds static_asserts on the engine's program layout that
+// the program image serializer depends on. It has no runtime surface, so
+// including it in this translation unit is what makes those asserts compile.
 #include <ctcompile/CTJS/Lowering/RuntimeHelpers.hpp>
 #include <ctcompile/JavaScript/EngineContract.hpp>
 
-// AND THE AOT ABI, expanded HERE the way ctcompile will expand it - which is
-// the mechanism Principle 11 is about: the runtime declares the helpers from
-// aot_helpers.def and the compiler builds its descriptor table from the SAME
-// file, so the two cannot disagree without failing to build.
+// The AOT ABI, expanded here the way ctcompile expands it. The runtime declares
+// its helpers from aot_helpers.def and the compiler builds its descriptor table
+// from the same file, so the two cannot disagree and still build.
 #include <ctbrowser/aot/aot.hpp>
 
 #include <cstdio>
@@ -30,19 +30,19 @@
 
 namespace {
 
+/// One row of bytecode_opcodes.def, read as data.
 struct row {
     std::string_view name;
-    // How each operand SLOT is encoded. Not what it means: `a` is the
-    // destination for get_prop and the target for set_prop, so there is no
-    // uniform role to name these after - see the .def's header.
+    /// How each operand slot is encoded, not what it means: `a` is the
+    /// destination for get_prop and the target for set_prop, so there is no
+    /// uniform role to name these after (see the .def's header).
     std::string_view a_kind, b_kind, c_kind;
     bool writes_a, allocates, may_throw, may_reenter, is_safepoint, may_suspend, resumable;
     std::string_view impl;
 };
 
 // The operand kind tokens are bare identifiers in the .def, so they are
-// stringised here rather than named - which also checks that every one of them
-// is a token this file recognises.
+// stringised here; known_kind() then checks that each is a recognised token.
 #define CT_OPCODE(name_, a_kind_, b_kind_, c_kind_, writes_a_, allocates_, may_throw_,             \
                   may_reenter_, is_safepoint_, may_suspend_, resumable_, impl_)                    \
     row{#name_,                                                                                    \
@@ -66,11 +66,11 @@ void check(bool ok, const char * what, std::string_view who) {
     ::check(ok, std::format("{}: {}", who, what));
 }
 
+/// Whether `k` is one of the operand kinds the opcode table may use.
 bool known_kind(std::string_view k) {
-    // kidx, sidx, nidx and fidx are FOUR DIFFERENT TABLES - constants, strings,
-    // names and the program's function list. They were two until the rows were
-    // checked against the handlers; anything generating a bounds check from
-    // these columns has to know which table it is checking.
+    // kidx, sidx, nidx and fidx index four different tables: constants,
+    // strings, names and the program's function list. Anything generating a
+    // bounds check from these columns has to know which table it is checking.
     static const std::unordered_set<std::string_view> kinds{
         "reg", "kidx", "sidx", "nidx", "fidx", "jump", "count", "bx_hi", "unused"};
     return kinds.contains(k);
@@ -78,8 +78,8 @@ bool known_kind(std::string_view k) {
 
 } // namespace
 
-// THE HELPER DESCRIPTORS, as the compiler needs them: a name to emit, and the
-// three obligations a call site has to honour.
+/// A helper descriptor as the compiler needs it: a name to emit, and the three
+/// obligations a call site has to honour.
 struct helper {
     std::string_view name;
     bool may_throw, may_reenter, is_safepoint;
@@ -90,11 +90,10 @@ constexpr helper helpers[] = {
 #include <ctbrowser/aot/aot_helpers.def>
 };
 
-// WHICH OPCODE EACH HELPER SERVES, and this is where drift becomes a BUILD
-// ERROR rather than a test failure: the opcode is spelled as a real
-// `ctbrowser::script::op::` enumerator, so renaming or deleting an opcode
-// without updating the ABI table stops the compiler's build at this line.
-// A test that ran later would be a weaker guarantee for the same information.
+/// Which opcode each helper serves. The opcode is spelled as a real
+/// `ctbrowser::script::op::` enumerator, so renaming or deleting an opcode
+/// without updating the ABI table is a build error here rather than a test
+/// failure.
 struct coverage {
     std::string_view helper;
     ctbrowser::script::op opcode;
@@ -105,10 +104,9 @@ constexpr coverage covers[] = {
 
 };
 
-// The ten opcodes no helper serves, each because it needs no runtime call. Kept
-// here as well as in the .def's closing comment so that the TEST fails when the
-// two disagree - a list in a comment is not checkable, and this one is the
-// difference between "deliberately uncovered" and "quietly forgotten".
+/// The ten opcodes no helper serves, each because it needs no runtime call.
+/// The .def's closing comment lists them too, but only this copy is checked;
+/// it separates "deliberately uncovered" from "quietly forgotten".
 constexpr ctbrowser::script::op uncovered[] = {
     ctbrowser::script::op::load_const,
     ctbrowser::script::op::load_undef,
@@ -134,11 +132,10 @@ int main() {
               "reg/kidx/sidx/nidx/fidx/jump/count/bx_hi/unused",
               r.name);
 
-        // A SAFEPOINT IS NOT AN OPINION. It is exactly "can a collection happen
-        // here", and a collection happens where something allocates or where
-        // user JavaScript runs. A row that claims otherwise is a
-        // classification mistake, and it is the kind that makes an AOT backend
-        // omit a root exactly where one is needed.
+        // A safepoint means exactly "a collection can happen here", and a
+        // collection happens where something allocates or where user
+        // JavaScript runs. A row that claims otherwise would make an AOT
+        // backend omit a root exactly where one is needed.
         check(r.is_safepoint == (r.allocates || r.may_reenter),
               "is_safepoint must equal allocates || may_reenter", r.name);
 
@@ -146,7 +143,7 @@ int main() {
         // can never be continued.
         check(!r.may_suspend || r.resumable, "may_suspend without resumable", r.name);
 
-        // bx_hi is the HIGH HALF of the preceding field, so it can only follow
+        // bx_hi is the high half of the preceding field, so it can only follow
         // an operand that is read through bx(): an index or a jump.
         if (r.c_kind == "bx_hi") {
             static const std::unordered_set<std::string_view> wideKinds{"kidx", "sidx", "nidx",
@@ -159,18 +156,13 @@ int main() {
         check(!r.impl.empty(), "impl must say where the semantics live", r.name);
     }
 
-    // --- EVERY PARAMETER OF EVERY HELPER, CLASSIFIED ----------------------
+    // --- Every parameter of every helper is classified ---------------------
     //
-    // THE EXPERIMENT PHASE 10'S DESIGN RESTS ON. The lowering supplies each
-    // helper parameter from somewhere - an operand, the frame, an immediate in
-    // an attribute, or nothing in the IR at all - and doing that with one
-    // pattern instead of fifty means DERIVING which from the ABI rather than
-    // writing a second copy of it beside the first.
-    //
-    // The derivation reads the .def's own parameter text. It is only sound if
-    // every parameter classifies; one that does not would mean a hand-kept
-    // table, which is the thing being avoided. So this asserts the whole table
-    // and prints what it found.
+    // The lowering supplies each helper parameter from an operand, the frame,
+    // an attribute immediate, or nothing in the IR, and it derives which from
+    // the .def's parameter text rather than from a hand-kept second copy of the
+    // ABI (see RuntimeHelpers.hpp). That derivation is only sound if every
+    // parameter classifies, so this checks the whole table.
     for (const helper & h : helpers) {
         const ctcompile::ctjs::runtime_helper & row =
             ctcompile::ctjs::runtime_helpers[&h - helpers];
@@ -183,12 +175,11 @@ int main() {
         check(row.role_count == row.arity, "a helper's role count must equal its arity", h.name);
     }
 
-    // AND THE ONE THE SIGNATURE CANNOT SHOW. `uint32_t op_kind` is a
-    // ctbrowser::script::op - aot_bridge/operators.cpp does static_cast<op>(op_kind) and
-    // dispatches the interpreter's own switch on it - so a lowering that passed
-    // a CTJS enum ordinal would compile one operator into another. Pinning the
-    // classification is what makes that a build failure rather than an answer
-    // nobody checks.
+    // The role the C signature cannot show: ct_aot_binary_op's `uint32_t
+    // op_kind` is a ctbrowser::script::op (aot_bridge/operators.cpp casts it
+    // and runs the interpreter's own switch on it), so a lowering that passed a
+    // CTJS enum ordinal would compile one operator as another. Checking that
+    // the parameter classifies as `opcode` makes that a test failure.
     {
         const ctcompile::ctjs::runtime_helper & binary =
             ctcompile::ctjs::helper_for(ctbrowser::aot::helper_id::ct_aot_binary_op);
@@ -204,13 +195,13 @@ int main() {
               "and the result comes back through a pointer", "ct_aot_binary_op");
     }
 
-    // --- THE AOT ABI ------------------------------------------------------
+    // --- The AOT ABI -------------------------------------------------------
     check(std::size(helpers) == ctbrowser::aot::helper_count,
           "the descriptor table and the runtime's helper_id enum disagree", "aot_helpers.def");
 
     for (const helper & h : helpers) {
         check(h.name.starts_with("ct_aot_"), "a helper must be ct_aot_ prefixed", h.name);
-        // A HELPER THAT CAN RUN USER JAVASCRIPT IS A SAFEPOINT, always. The
+        // A helper that can run user JavaScript is always a safepoint. The
         // collector is precise and a value living only in a native frame is
         // reachable from none of its roots, so a re-entering helper that did
         // not declare itself a safepoint would tell every call site it is safe
@@ -218,26 +209,22 @@ int main() {
         check(!h.may_reenter || h.is_safepoint, "may_reenter implies is_safepoint", h.name);
     }
 
-    // THE HELPERS SERVING AN OPCODE MAY NOT UNDERSTATE WHAT IT DOES. Phase 5
-    // asks for this in as many words: "add a unit test asserting that every
-    // helper's flags match its opcode's flags in bytecode_opcodes.def".
+    // The helpers serving an opcode may not understate what it does. Two
+    // subtleties:
     //
-    // TWO THINGS "MATCH" DOES NOT MEAN, and the table already knew both.
+    // The check is against the union of all helpers serving the opcode, not
+    // per helper. `type_of` is served by two rows on purpose:
+    // ct_aot_type_of_name classifies without allocating, and ct_aot_new_string
+    // materialises the string only when the result escapes. A code generator
+    // emitting the pair faces the union.
     //
-    // It is not per-helper. `type_of` is served by TWO rows on purpose -
-    // ct_aot_type_of_name classifies without allocating, ct_aot_new_string
-    // materialises the string only when the result escapes - and that row says
-    // so: "(0,0,0,0) here OR ct_aot_new_string's (1,1,0,1) is exactly type_of's
-    // inventory row". So the test is against the UNION, which is what a code
-    // generator emitting the pair actually faces.
-    //
-    // And it is not equality. A helper serving four call opcodes carries the
-    // union of what they can do, so equality would be wrong wherever one of
-    // them throws and another does not. Overstating is merely conservative - a
-    // call site roots a value it did not have to. UNDERSTATING tells a code
-    // generator it is safe to keep a value in a register across a collection,
-    // or to skip the status test after a call that can throw, and that is a
-    // miscompilation no verifier catches.
+    // It is one-sided, not equality. A helper serving four call opcodes carries
+    // the union of what they can do, so equality would be wrong wherever one
+    // of them throws and another does not. Overstating is merely conservative
+    // (a call site roots a value it did not have to). Understating lets a code
+    // generator keep a value in a register across a collection, or skip the
+    // status test after a call that can throw: a miscompilation no verifier
+    // catches.
     for (const row & r : table) {
         const auto opcode = static_cast<ctbrowser::script::op>(&r - table);
         bool any = false;
@@ -254,21 +241,19 @@ int main() {
                 is_safepoint = is_safepoint || h.is_safepoint;
             }
         }
-        if (!any) { continue; } // the ten that need no helper are checked below
+        if (!any) { continue; } // The ten that need no helper are checked below.
 
-        // ONE OPCODE IS ALLOWED TO UNDERSTATE, and it is named here so that a
-        // SECOND one cannot appear quietly.
+        // One opcode is allowed to understate, and it is named here so that a
+        // second one cannot appear quietly.
         //
-        // `await_value` is is_safepoint because the inventory derives that
-        // mechanically as allocates||may_reenter - its own row says "the
-        // mandated derivation, not an observed collection point". The helper
-        // covers the READ half only: no allocate<> and no call(), with the
-        // suspend half left to Phase 14. That split is legitimate only while
-        // the DECISION stays allocation-free, which its row states as an ABI
-        // contract rather than an observation - if promise creation is ever
-        // hoisted above the three-way test, this becomes a real safepoint and
-        // every caller's spill disappears. Then this exception has to go, and
-        // this line is where somebody finds that out.
+        // `await_value`'s row is a safepoint only because is_safepoint is
+        // derived mechanically as allocates||may_reenter. Its helper,
+        // ct_aot_await_settled, implements only the non-suspending read path,
+        // which neither allocates nor calls; suspension in AOT code is not
+        // implemented. That split holds only while the settled-or-not decision
+        // stays allocation-free, which the helper's row states as an ABI
+        // contract. If promise creation ever moves before that test, this
+        // becomes a real safepoint and the exemption must go.
         const bool await_split = r.name == "await_value";
         check(may_throw || !r.may_throw, "the opcode may throw and no helper serving it says so",
               r.name);
@@ -278,16 +263,15 @@ int main() {
               "the opcode is a safepoint and no helper serving it says so - a call site would "
               "keep live values where the collector cannot see them",
               r.name);
-        // AND THE EXCEPTION IS ITSELF CHECKED: if the helper ever declares the
-        // safepoint, the exemption is dead, and saying so is better than
-        // leaving a permanent hole shaped like one opcode.
+        // The exemption is itself checked: if the helper ever declares the
+        // safepoint, the exemption is stale and this fails.
         check(!await_split || !is_safepoint,
               "await_value's helper now declares the safepoint, so the exemption above is stale "
               "and should be deleted",
               r.name);
     }
 
-    // AND EVERY COVERAGE ROW NAMES A REAL HELPER, which the loop above would
+    // Every coverage row must name a real helper, which the loop above would
     // otherwise pass over in silence: an opcode served only by a misspelled
     // helper looks exactly like one served by nothing.
     for (const coverage & c : covers) {
@@ -298,8 +282,8 @@ int main() {
         check(named, "a coverage row names a helper that is not in the table", c.helper);
     }
 
-    // EVERY OPCODE IS ACCOUNTED FOR: served by a helper, or on the list of ten
-    // that need no runtime call. Neither silently.
+    // Every opcode is accounted for exactly once: served by a helper, or on the
+    // list of ten that need no runtime call.
     for (const row & r : table) {
         const auto op = static_cast<ctbrowser::script::op>(&r - table);
         bool served = false;
@@ -315,17 +299,15 @@ int main() {
                      : "no helper serves it and it is not on the exempt list",
               r.name);
 
-        // AND A SAFEPOINT OPCODE NEEDS A SAFEPOINT HELPER. If an opcode can
-        // collect but every helper serving it claims it cannot, the call sites
-        // will not keep their live values rooted across it.
+        // A safepoint opcode needs a safepoint helper. If an opcode can collect
+        // but every helper serving it claims it cannot, the call sites will not
+        // keep their live values rooted across it.
+        //
         // await_value and yield_value are safepoints only on the path that
-        // SUSPENDS - allocating a coroutine and a promise - and that path is
-        // deliberately unimplemented: Phase 14 has not decided how an AOT frame
-        // suspends when it has no register window to save, so the ABI offers
-        // ct_aot_suspend_unsupported and a diagnosable fault instead of a
-        // guess. Named here rather than weakening the rule, so that whoever
-        // implements suspension is told by a failing test that this exemption
-        // has to go.
+        // suspends (allocating a coroutine and a promise). AOT frames cannot
+        // suspend yet: they have no register window to save, so the ABI offers
+        // ct_aot_suspend_unsupported, a diagnosable fault, instead of a guess.
+        // Whoever implements suspension must remove this exemption.
         const bool suspension_pending =
             op == ctbrowser::script::op::await_value || op == ctbrowser::script::op::yield_value;
         if (served && r.is_safepoint && !suspension_pending) {

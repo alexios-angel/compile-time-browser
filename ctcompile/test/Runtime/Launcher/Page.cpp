@@ -1,4 +1,6 @@
-// A REAL PAGE, RUNNING COMPILED BODIES.
+//===- ctcompile/test/Runtime/Launcher/Page.cpp - AOT page launcher -------===//
+//
+// A real page, running compiled bodies.
 //
 // Application.cpp runs a JavaScript program against a bare `script::context`,
 // which is the smallest thing that can be called an application. This runs
@@ -7,27 +9,27 @@
 // with every one of its four functions compiled ahead of time and installed by
 // `browser::set_script_prepared_hook`.
 //
-// WHY THAT HOOK HAD TO EXIST. A page's classic scripts are compiled inside
-// `run_scripts` and never leave it: `classic_programs_` is private and only its
-// size is published. So until this, a backend emitting perfect bodies had
-// nowhere to put them for a PAGE, and every generated application would have
-// interpreted its own JavaScript while every count on the way in read a
-// truthful zero.
+// `set_script_prepared_hook` is the only way to reach a page's compiled
+// programs: classic scripts are compiled inside `run_scripts` and
+// `classic_programs_` is private, so the hook is where compiled bodies get
+// installed.
 //
-// ONE SOURCE, TWO EXECUTABLES, as in Application.cpp: this file is compiled
+// One source, two executables, as in Application.cpp: this file is compiled
 // once alone and once with the generated bodies and their entry table, and
-// check-page.cmake compares what the two draw.
+// page.test runs both and byte-compares the canvases they write.
 //
-// THE CANVAS IS THE OUTPUT, and it is the right one for this page. `invaders`
+// The canvas is the output, and it is the right one for this page. `invaders`
 // draws nothing into the document - the whole game is `ctx.drawImage` and
-// `ctx.fillRect` into a 320x240 canvas - so the pixels are what a difference
-// between the two tiers would show up in. A DOM comparison would compare two
-// identical documents.
+// `ctx.fillRect` into a 320x240 canvas - so the pixels are where a difference
+// between interpreted and compiled execution would show up. A DOM comparison
+// would compare two identical documents.
 //
-// THE CLOCK IS FIXED. `frame(now)` computes `now - previous` and moves
-// everything by it, so a wall clock would make the two arms disagree for
+// The clock is fixed. `frame(now)` computes `now - previous` and moves
+// everything by it, so a wall clock would make the two builds disagree for
 // reasons that have nothing to do with the compiler. Ticking a constant
 // millisecond count is what `run_app`'s `fixed_dt` does for the same reason.
+//
+//===----------------------------------------------------------------------===//
 #include <ctbrowser.hpp>
 
 #include <ctbrowser/script/dispatch.hpp>
@@ -53,9 +55,8 @@ using ctbrowser::script::transition;
 
 namespace {
 
-// The first element with this id, in document order. Six lines, kept here: this
-// file takes nothing from ctbrowser/test/support, though every ctcompile test has
-// shared that shelf's check.hpp since 2026-09-15.
+/// The first element with this id, in document order. Kept local so this file
+/// does not depend on ctbrowser/test/support.
 [[nodiscard]] ctbrowser::node_id find_id(ctbrowser::browser & page, std::string_view want) {
     const auto txn = page.doc().read();
     const ctbrowser::atom key = page.atoms().intern("id");
@@ -68,6 +69,7 @@ namespace {
     return found;
 }
 
+/// Prints every dispatch transition counter to stderr for page.test to check.
 void report_transitions() {
     for (unsigned which = 0; which < static_cast<unsigned>(transition::count); ++which) {
         const auto one = static_cast<transition>(which);
@@ -78,10 +80,10 @@ void report_transitions() {
 
 } // namespace
 
-// The one option is <canvas-output>, a required bare argument: where the canvas
-// is written. Everything else is a build parameter: CTCOMPILE_LAUNCHER_PAGE is
-// the .html and CTCOMPILE_LAUNCHER_ASSET_ROOT the directory its
-// `examples/assets/sprites.bmp` resolves against.
+/// The one option is <canvas-output>, a required bare argument: where the
+/// canvas is written. Everything else is a build parameter:
+/// CTCOMPILE_LAUNCHER_PAGE is the .html and CTCOMPILE_LAUNCHER_ASSET_ROOT the
+/// directory its `examples/assets/sprites.bmp` resolves against.
 int main(int argc, char ** argv) {
     namespace po = boost::program_options;
     std::string canvas_output;
@@ -106,16 +108,16 @@ int main(int argc, char ** argv) {
     ctbrowser::browser page{ctbrowser::browser_options{320, 240}};
     page.assets().set_base_path(CTCOMPILE_LAUNCHER_ASSET_ROOT);
 
-    // HOW MANY SCRIPTS WERE SEEN AND HOW MANY WERE STAMPED, counted here rather
-    // than inferred, because a hook that never fires and a hook that fires and
-    // installs nothing are the same thing from outside.
+    // How many scripts were seen and how many were installed, counted here
+    // rather than inferred, because a hook that never fires and a hook that
+    // fires and installs nothing look the same from outside.
     unsigned scripts_seen = 0;
 #ifdef CTCOMPILE_LAUNCHER_AOT
     unsigned installed_total = 0;
     std::string refusal;
     page.set_script_prepared_hook([&](ctbrowser::script::program & compiled, std::string_view) {
         ++scripts_seen;
-        // STRICT: a page whose program still holds an uncompiled function is
+        // Strict: a page whose program still holds an uncompiled function is
         // not an AOT-only page, and this records the refusal rather than
         // installing part of it. The load carries on so that the failure is
         // reported here with a reason instead of as a blank canvas.
@@ -132,7 +134,7 @@ int main(int argc, char ** argv) {
         [&](ctbrowser::script::program &, std::string_view) { ++scripts_seen; });
 #endif
 
-    // AFTER THE HOOK IS SET AND BEFORE ANYTHING RUNS. `install_builtins` and
+    // After the hook is set and before anything runs. `install_builtins` and
     // the document's own bootstrap are not this application, and counting them
     // would make the numbers depend on what the engine does before a page.
     ctbrowser::script::reset_transitions();
@@ -158,7 +160,7 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
-    // TWENTY FRAMES OF A FIXED SIXTEEN MILLISECONDS. Enough that the formation
+    // Twenty frames of a fixed sixteen milliseconds. Enough that the formation
     // has moved and the animation frame has flipped - the page's own
     // `Math.floor(clock * 4) % 2` changes at 0.25 s - and few enough that this
     // stays a test rather than a benchmark.
@@ -176,10 +178,10 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
-    // HOW MANY COLOURS ARE ON IT, because two blank canvases compare equal.
-    // The page fills its background every frame, so a run in which the game
-    // drew nothing at all is one uniform colour - and a byte comparison of two
-    // of those is the vacuous pass this project keeps finding.
+    // Count the colours, because two blank canvases compare equal. The page
+    // fills its background every frame, so a run in which the game drew nothing
+    // at all is one uniform colour, and a byte comparison of two of those would
+    // pass without testing anything.
     {
         std::set<std::uint32_t> colours;
         for (int y = 0; y < pixels->height; ++y) {

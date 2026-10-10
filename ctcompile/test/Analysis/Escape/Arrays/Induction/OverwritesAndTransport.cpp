@@ -1,8 +1,24 @@
+//===- OverwritesAndTransport.cpp - Computed-index array overwrites -------===//
+//
+// Defines InductionCases::overwritesAndTransport, the largest group of
+// array-induction escape cases: loops that overwrite elements at computed
+// indices and carry or return children across iterations.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Cases.hpp"
 
 namespace ctcompile::test::escape::arrays::induction_detail {
 
+/// Array-contents cases for counted loops over `a` whose loop stores at a
+/// computed index of the induction variable (power, division, shift, mask,
+/// remainder, product). Each `run` row gives the exact reads, array contents
+/// and returned escape set the analysis must prove; a second argument such as
+/// "x" names the child that the retention check must then discharge. Each
+/// `reject` row is a variant the analysis must refuse. Fixtures are built by
+/// textual `replace` edits on `original` (see Setup.cpp).
 void InductionCases::overwritesAndTransport() {
+    // Plain i < a.length induction: every element read, children carried or confined.
     run({.what = "zero/+1 induction records every distinct element under strict own length",
          .body = original,
          .arrays = "a:[one,two,three]",
@@ -35,6 +51,10 @@ void InductionCases::overwritesAndTransport() {
          .reads = "a[0]=one; a[1]=x",
          .exit = "zero -> {}"},
         "x");
+    // Base fixtures reused below, all edits of `savedChild` (a = [one, x]):
+    // `overwritten` stores zero at a[i] each iteration, `masked` stores zero at
+    // a[i & 1] and returns the array, and `unitPower` replaces that index with
+    // i ** 1. Most later fixtures are edits of these.
     const std::string overwritten =
         replace(savedChild, "  %step =", "  ctjs.set_property %base[%i], %zero\n  %step =");
     const auto masked =
@@ -43,7 +63,9 @@ void InductionCases::overwritesAndTransport() {
                 "  ctjs.set_property %base[%position], %zero\n  %read =");
     const auto unitPower =
         replace(masked, "ctjs.binary_static bitand %i, %one", "ctjs.binary pow %i, %one");
+    // Index = i ** k and k ** i (powers), including primitive exponents and reloads.
     for (const std::string literal :
+         // Numbers on the next line: 1.
          {"#ctjs.number<4607182418800017408>", "#ctjs.boolean<true>", "#ctjs.string<\"1\">"}) {
         run({.what = "unit power indices preserve exact Number writes after primitive conversion",
              .body = replace(replace(unitPower, "  %a =",
@@ -142,8 +164,8 @@ void InductionCases::overwritesAndTransport() {
                    "%powerBase = ctjs.get_property %base[%zero]",
                    "%powerBase = ctjs.get_property %base[%one]"));
     for (const std::string literal :
-         {"#ctjs.number<0>", "#ctjs.number<4611686018427387904>",
-          "#ctjs.number<13830554455654793216>", "#ctjs.null", "#ctjs.undefined",
+         {"#ctjs.number<0>", "#ctjs.number<4611686018427387904>",                // = 2
+          "#ctjs.number<13830554455654793216>", "#ctjs.null", "#ctjs.undefined", // = -1
           "#ctjs.string<\"01\">", "#ctjs.bigint<\"1\">"}) {
         const auto body = replace(
             replace(unitBase, "  %a =", "  %powerBase = ctjs.constant " + literal + "\n  %a ="),
@@ -171,6 +193,7 @@ void InductionCases::overwritesAndTransport() {
     }
     const auto zeroBase = replace(unitBase, "pow %one, %i", "pow %zero, %i");
     for (const std::string literal :
+         // Numbers on the next line: -0.
          {"#ctjs.number<9223372036854775808>", "#ctjs.boolean<false>", "#ctjs.string<\"0\">"}) {
         run({.what = "zero bases preserve exact primitive conversion and signed zero keys",
              .body = replace(replace(zeroBase, "  %a =",
@@ -273,13 +296,13 @@ void InductionCases::overwritesAndTransport() {
     reject("power exponents cannot borrow an object conversion",
            replace(unitPower, "pow %i, %one", "pow %i, %x"));
     for (const std::string literal :
-         {"#ctjs.number<4611686018427387904>", "#ctjs.number<13830554455654793216>",
-          "#ctjs.number<4602678819172646912>", "#ctjs.number<9221120237041090560>",
+         {"#ctjs.number<4611686018427387904>", "#ctjs.number<13830554455654793216>", // = 2, -1
+          "#ctjs.number<4602678819172646912>", "#ctjs.number<9221120237041090560>",  // = 0.5, NaN
           "#ctjs.undefined", "#ctjs.string<\"01\">", "#ctjs.bigint<\"1\">"}) {
         const auto body = replace(
             replace(unitPower, "  %a =", "  %exponent = ctjs.constant " + literal + "\n  %a ="),
             "pow %i, %one", "pow %i, %exponent");
-        if (literal == "#ctjs.number<4611686018427387904>") {
+        if (literal == "#ctjs.number<4611686018427387904>") { // = 2
             run({.what = "two bounded base values retain exact scalar power identities",
                  .body = body,
                  .arrays = "a:[zero,zero]",
@@ -779,6 +802,7 @@ void InductionCases::overwritesAndTransport() {
                    "%exponent = ctjs.binary div %i, %two"));
     reject("zero/unit powers still require every output to be an own element",
            replace(zeroUnitExponent, "add %part, %two", "add %part, %three"));
+    // Index derived from a power by division: (k ** i - 1) / 2 and bounded variants.
     const auto dividedPower = replace(replace(singletonBasePower,
                                               "%part = ctjs.binary mod %i, %one\n"
                                               "  %powerBase = ctjs.binary add %part, %two",
@@ -987,6 +1011,7 @@ void InductionCases::overwritesAndTransport() {
          .arrays = "a:[zero,x,zero]",
          .reads = "a[0]=zero; a[1]=x; a[2]=zero",
          .exit = "a -> {a,x}"});
+    // Index = i % d and i / d with a computed divisor, and ordered differences.
     const auto singletonRemainder = replace(replace(masked, "[%one, %x]", "[%x, %one]"),
                                             "%position = ctjs.binary_static bitand %i, %one",
                                             "%divisor = ctjs.binary pow %one, %i\n"
@@ -1084,6 +1109,7 @@ void InductionCases::overwritesAndTransport() {
     reject("varying subtraction cannot cancel an unproved fractional intermediate",
            replace(replace(varyingDifference, "add %i, %one", "div %i, %two"), "sub %numerator, %i",
                    "sub %numerator, %numerator"));
+    // Index = i >> c and i >>> c with a computed shift count.
     const auto singletonShift = replace(replace(masked, "[%one, %x]", "[%x, %x, %zero]"),
                                         "%position = ctjs.binary_static bitand %i, %one",
                                         "%count = ctjs.binary pow %one, %i\n"
@@ -1209,6 +1235,7 @@ void InductionCases::overwritesAndTransport() {
            replace(varyingShift, "%position = ctjs.binary_static shr %i, %count",
                    "%negative = ctjs.unary neg %i\n"
                    "  %position = ctjs.binary_static shr %negative, %count"));
+    // Index = i & m, i | m, i ^ m with a computed mask.
     const auto singletonMask = replace(singletonShift, "shr %i, %count", "bitand %i, %count");
     for (const std::string kind : {"bitand", "bitor", "bitxor"}) {
         const bool isAnd = kind == "bitand", isOr = kind == "bitor";
@@ -1326,6 +1353,7 @@ void InductionCases::overwritesAndTransport() {
     reject("varying mask endpoint refinement cannot extend the guard array",
            replace(replace(varyingMask, "sub %two, %i", "sub %three, %i"), "bitand %i, %count",
                    "bitxor %i, %count"));
+    // Index = i % d (Number remainder), including sign, wrap and string operands.
     const auto remainder =
         replace(masked, "ctjs.binary_static bitand %i, %one", "ctjs.binary mod %i, %two");
     for (const auto & expression :
@@ -1340,6 +1368,7 @@ void InductionCases::overwritesAndTransport() {
             "x");
     }
     run({.what = "negative zero retains the own zero key through remainder",
+         // Numbers on the next line: -0.
          .body = replace(remainder, "#ctjs.number<0>", "#ctjs.number<9223372036854775808>"),
          .arrays = "a:[zero,zero]",
          .reads = "a[0]=zero; a[1]=zero",
@@ -1468,7 +1497,7 @@ void InductionCases::overwritesAndTransport() {
     const auto remainderBandReload =
         replace(replace(replace(replace(replace(remainder, "  %a =",
                                                 "  %eight = ctjs.constant "
-                                                "#ctjs.number<4620693217682128896> "
+                                                "#ctjs.number<4620693217682128896> " // = 8
                                                 "{storage_test_id = \"eight\"}\n  %a ="),
                                         "[%one, %x]", "[%one, %x, %eight, %x, %one]"),
                                 "^header(%a, %zero", "^header(%a, %one"),
@@ -1569,7 +1598,7 @@ void InductionCases::overwritesAndTransport() {
          .exit = "x -> {x}"});
     reject("a remainder divisor cannot hide an unproved large dividend",
            replace(remainder, "%position = ctjs.binary mod %i, %two",
-                   "%maximum = ctjs.constant #ctjs.number<4751297606873776128>\n"
+                   "%maximum = ctjs.constant #ctjs.number<4751297606873776128>\n" // = 2^32 - 1
                    "  %large = ctjs.binary add %maximum, %i\n"
                    "  %position = ctjs.binary mod %large, %two"));
     reject("a composed remainder still requires every final key inside its allocation",
@@ -1577,14 +1606,14 @@ void InductionCases::overwritesAndTransport() {
                    "%part = ctjs.binary mod %i, %two\n"
                    "  %position = ctjs.binary add %part, %one"));
     for (const auto & value :
-         {"#ctjs.number<13835058055282163712>", "#ctjs.number<4609434218613702656>",
+         {"#ctjs.number<13835058055282163712>", "#ctjs.number<4609434218613702656>", // = -2, 1.5
           "#ctjs.string<\"2\">", "#ctjs.boolean<true>", "#ctjs.bigint<\"2\">",
-          "#ctjs.number<9223372036854775808>"}) {
+          "#ctjs.number<9223372036854775808>"}) { // = -0
         const auto body = replace(
             replace(remainder,
                     "  %a =", "  %divisor = ctjs.constant " + std::string(value) + "\n  %a ="),
             "mod %i, %two", "mod %i, %divisor");
-        if (std::string(value) == "#ctjs.number<13835058055282163712>" ||
+        if (std::string(value) == "#ctjs.number<13835058055282163712>" || // = -2
             std::string(value) == "#ctjs.string<\"2\">") {
             run({.what = "bounded literal divisors preserve historical remainder constructions",
                  .body = body,
@@ -1611,6 +1640,7 @@ void InductionCases::overwritesAndTransport() {
          .exit = "a -> {a}"},
         "x");
     const auto stringRemainderReload =
+        // Numbers on the next line: 4.
         replace(remainderWrapReload, "#ctjs.number<4616189618054758400>", "#ctjs.string<\"4\">");
     run({.what = "String remainder reloads retain primitive identity across wraps",
          .body = stringRemainderReload,
@@ -1683,6 +1713,7 @@ void InductionCases::overwritesAndTransport() {
          .arrays = "a:[zero,x,zero,x]",
          .reads = "a[0]=zero; a[1]=x; a[2]=zero; a[3]=x",
          .exit = "a -> {a,x}"});
+    // Index = i & m with a mask reloaded from the array or fixed by a constant.
     const auto maskedReload = replace(replace(masked, "[%one, %x]", "[%x, %x, %one, %zero]"),
                                       "%position = ctjs.binary_static bitand %i, %one",
                                       "%mask = ctjs.get_property %base[%two]\n"
@@ -1711,7 +1742,7 @@ void InductionCases::overwritesAndTransport() {
     const auto fixedAnd =
         replace(replace(masked, "  %a =",
                         "  %eight = ctjs.constant #ctjs.number<4620693217682128896>\n"
-                        "  %fixedMask = ctjs.constant #ctjs.number<4624633867356078080> "
+                        "  %fixedMask = ctjs.constant #ctjs.number<4624633867356078080> " // = 15
                         "{storage_test_id = \"mask\"}\n  %a ="),
                 "%position = ctjs.binary_static bitand %i, %one",
                 "%biased = ctjs.binary add %i, %eight\n"
@@ -1757,7 +1788,7 @@ void InductionCases::overwritesAndTransport() {
         "later stores invalidate fixed-bit AND reload evidence",
         replace(fixedAndReload, "  %step =", "  ctjs.set_property %base[%zero], %zero\n  %step ="));
     reject("clearing the fixed upper AND bit cannot preserve the translated own bound",
-           replace(fixedAnd, "4624633867356078080", "4619567317775286272"));
+           replace(fixedAnd, "4624633867356078080", "4619567317775286272")); // = 15, 7
     run({.what = "correlated varying AND operands preserve every actual overwrite",
          .body = replace(masked, "bitand %i, %one", "bitand %i, %i"),
          .arrays = "a:[zero,zero]",
@@ -1765,15 +1796,17 @@ void InductionCases::overwritesAndTransport() {
          .exit = "a -> {a}"},
         "x");
     for (const std::string value :
-         {"#ctjs.number<13830554455654793216>", "#ctjs.number<4746794007248502784>",
+         {"#ctjs.number<13830554455654793216>",
+          "#ctjs.number<4746794007248502784>", // = -1, 2^31
+                                               // Numbers on the next line: 1.5.
           "#ctjs.number<4609434218613702656>", "#ctjs.string<\"1\">", "#ctjs.boolean<true>",
           "#ctjs.bigint<\"1\">"}) {
         const auto source =
             replace(replace(masked, "  %a =", "  %mask = ctjs.constant " + value + "\n  %a ="),
                     "bitand %i, %one", "bitand %i, %mask");
-        if (value == "#ctjs.number<13830554455654793216>" ||
-            value == "#ctjs.number<4746794007248502784>") {
-            const bool negativeOne = value == "#ctjs.number<13830554455654793216>";
+        if (value == "#ctjs.number<13830554455654793216>" ||                        // = -1
+            value == "#ctjs.number<4746794007248502784>") {                         // = 2^31
+            const bool negativeOne = value == "#ctjs.number<13830554455654793216>"; // = -1
             run({.what = "signed mask literals retain only the children their exact writes miss",
                  .body = source,
                  .arrays = negativeOne ? "a:[zero,zero]" : "a:[zero,x]",
@@ -1781,7 +1814,7 @@ void InductionCases::overwritesAndTransport() {
                  .exit = negativeOne ? "a -> {a}" : "a -> {a,x}"},
                 negativeOne ? "x" : "");
         } else if (value == "#ctjs.string<\"1\">" || value == "#ctjs.boolean<true>" ||
-                   value == "#ctjs.number<4609434218613702656>") {
+                   value == "#ctjs.number<4609434218613702656>") { // = 1.5
             run({.what = "primitive AND masks preserve the historical exact own writes",
                  .body = source,
                  .arrays = "a:[zero,zero]",
@@ -1835,7 +1868,7 @@ void InductionCases::overwritesAndTransport() {
                    replace(stringAndReload, "#ctjs.string<\"1\">", literal));
         }
     }
-    for (const auto & bits : {"4613937818241073152", "13830554455654793216"}) {
+    for (const auto & bits : {"4613937818241073152", "13830554455654793216"}) { // = 3, -1
         auto inputGap =
             replace(replace(maskedReload, "  %a =",
                             "  %latticeMask = ctjs.constant #ctjs.number<" + std::string(bits) +
@@ -1977,19 +2010,21 @@ void InductionCases::overwritesAndTransport() {
                            kind + " %negative, %one"));
         reject("OR/XOR refuse varying inputs crossing a signed conversion boundary",
                replace(bitwise, "%position = ctjs.binary_static " + kind + " %i, %one",
-                       "%maximum = ctjs.constant #ctjs.number<4746794007244308480>\n"
+                       "%maximum = ctjs.constant #ctjs.number<4746794007244308480>\n" // = 2^31 - 1
                        "  %large = ctjs.binary add %maximum, %i\n"
                        "  %position = ctjs.binary_static " +
                            kind + " %large, %one"));
         for (const std::string value :
+             // Numbers on the next line: -1, 2^31.
              {"#ctjs.number<13830554455654793216>", "#ctjs.number<4746794007248502784>",
+              // Numbers on the next line: 1.5.
               "#ctjs.number<4609434218613702656>", "#ctjs.string<\"1\">", "#ctjs.boolean<true>",
               "#ctjs.bigint<\"1\">"}) {
             const auto source =
                 replace(replace(bitwise, "  %a =", "  %mask = ctjs.constant " + value + "\n  %a ="),
                         "%i, %one", "%i, %mask");
             if (value == "#ctjs.string<\"1\">" || value == "#ctjs.boolean<true>" ||
-                value == "#ctjs.number<4609434218613702656>") {
+                value == "#ctjs.number<4609434218613702656>") { // = 1.5
                 run({.what = "primitive OR/XOR masks preserve the historical exact own writes",
                      .body = source,
                      .arrays = isOr ? "a:[one,zero]" : "a:[zero,zero]",
@@ -2033,6 +2068,7 @@ void InductionCases::overwritesAndTransport() {
             }
         }
     }
+    // Combined mask periods: the index repeats with a period set by the mask bits.
     for (const std::string kind : {"bitand", "bitor"}) {
         const bool isAnd = kind == "bitand";
         const std::string contents =
@@ -2051,8 +2087,10 @@ void InductionCases::overwritesAndTransport() {
                             "  %periodFour = ctjs.constant #ctjs.number<4616189618054758400>\n"
                             "  %periodSix = ctjs.constant #ctjs.number<4618441417868443648>\n"
                             "  %periodEight = ctjs.constant #ctjs.number<4620693217682128896>\n"
+                            // Numbers on the next line: 2^31.
                             "  %periodSign = ctjs.constant #ctjs.number<4746794007248502784>\n"
                             "  %periodMask = ctjs.constant #ctjs.number<" +
+                                // Numbers on the next line: 5 or 2.
                                 std::string(isAnd ? "4617315517961601024" : "4611686018427387904") +
                                 "> {storage_test_id = \"mask\"}\n  %a ="),
                     "add %i, %one", "add %i, %periodTwo"),
@@ -2164,11 +2202,13 @@ void InductionCases::overwritesAndTransport() {
         reject("changing a required mask bit invalidates the combined period",
                replace(combinedBits,
                        "#ctjs.number<" +
+                           // Numbers on the next line: 5 or 2.
                            std::string(isAnd ? "4617315517961601024" : "4611686018427387904") +
                            "> {storage_test_id = \"mask\"}",
-                       "#ctjs.number<" + std::string(isAnd ? "4619567317775286272" : "0") +
+                       "#ctjs.number<" + std::string(isAnd ? "4619567317775286272" : "0") + // = 7
                            "> {storage_test_id = \"mask\"}"));
     }
+    // Low-bit rounding: the mask clears or sets low bits of i near int32 boundaries.
     for (const std::string kind : {"bitand", "bitor"}) {
         const bool isAnd = kind == "bitand";
         const std::string contents = isAnd ? "[%x, %zero, %x, %zero, %x, %roundMask]"
@@ -2181,6 +2221,9 @@ void InductionCases::overwritesAndTransport() {
                     "a[5]=mask; a[3]=zero; a[5]=mask; a[4]=zero; a[5]=mask; a[5]=mask"
                   : "a[0]=mask; a[0]=mask; a[0]=mask; a[1]=zero; a[0]=mask; a[2]=zero; "
                     "a[0]=mask; a[3]=zero; a[0]=mask; a[4]=zero; a[0]=mask; a[5]=zero";
+        // Number constants (IEEE-754 bit patterns): roundTwo = 2, roundThree = 3,
+        // roundFive = 5, roundSign = 2^31, roundMaximum = 2^31 - 1 (INT32_MAX),
+        // roundLow = -(2^32 - 2), roundMask = -2 for bitand and 1 for bitor.
         const auto rounded = replace(
             replace(replace(masked, "[%one, %x]", contents), "  %a =",
                     "  %roundTwo = ctjs.constant #ctjs.number<4611686018427387904>\n"
@@ -2278,8 +2321,10 @@ void InductionCases::overwritesAndTransport() {
         auto interior = replace(
             replace(replace(rounded, contents, "[%roundMask, %x, %zero, %zero, %x]"),
                     "^header(%a, %zero", "^header(%a, %one"),
+            // Numbers on the next line: -2 or 1.
             "#ctjs.number<" + std::string(isAnd ? "13835058055282163712" : "4607182418800017408") +
                 "> {storage_test_id = \"mask\"}",
+            // Numbers on the next line: -3 or 2.
             "#ctjs.number<" + std::string(isAnd ? "13837309855095848960" : "4611686018427387904") +
                 "> {storage_test_id = \"mask\"}");
         if (isAnd) {
@@ -2296,8 +2341,8 @@ void InductionCases::overwritesAndTransport() {
                                         "\n"
                                         "  %bits = ctjs.binary_static " +
                                         kind + " %part, %mask");
-            // The second input starts in the signed band; move it one below
-            // INT32_MIN so the original source crosses the lower discontinuity.
+            // i - 2^31 starts exactly at INT32_MIN. Subtract 2^31 + 1 instead so the
+            // first index is one below INT32_MIN and the int32 conversion wraps.
             if (std::string(input) == "ctjs.binary sub %i, %roundSign") {
                 crossing = replace(crossing, "ctjs.binary sub %i, %roundSign",
                                    "ctjs.binary sub %i, %roundBeyond");
@@ -2322,9 +2367,11 @@ void InductionCases::overwritesAndTransport() {
                             "  %roundEight = ctjs.constant #ctjs.number<4620693217682128896>\n"
                             "  %a ="),
                     "#ctjs.number<" +
+                        // Numbers on the next line: -2 or 1.
                         std::string(isAnd ? "13835058055282163712" : "4607182418800017408") +
                         "> {storage_test_id = \"mask\"}",
                     "#ctjs.number<" +
+                        // Numbers on the next line: 6 or 9.
                         std::string(isAnd ? "4618441417868443648" : "4621256167635550208") +
                         "> {storage_test_id = \"mask\"}"),
             "%bits = ctjs.binary_static " + kind +
@@ -2374,9 +2421,11 @@ void InductionCases::overwritesAndTransport() {
                                   : "[%roundMask, %zero, %x, %zero, %zero, %zero, %x, %zero, "
                                     "%zero, %zero, %x, %zero]"),
                     "#ctjs.number<" +
+                        // Numbers on the next line: -2 or 1.
                         std::string(isAnd ? "13835058055282163712" : "4607182418800017408") +
                         "> {storage_test_id = \"mask\"}",
                     "#ctjs.number<" +
+                        // Numbers on the next line: -3 or 2.
                         std::string(isAnd ? "13837309855095848960" : "4611686018427387904") +
                         "> {storage_test_id = \"mask\"}"),
             "add %i, %one", "add %i, %roundTwo");
@@ -2415,12 +2464,15 @@ void InductionCases::overwritesAndTransport() {
         reject("a varying interior gap cannot borrow fixed-bit rounding endpoints",
                replace(fixedRounding,
                        "#ctjs.number<" +
+                           // Numbers on the next line: 6 or 9.
                            std::string(isAnd ? "4618441417868443648" : "4621256167635550208") +
                            "> {storage_test_id = \"mask\"}",
                        "#ctjs.number<" +
+                           // Numbers on the next line: 5 or 10.
                            std::string(isAnd ? "4617315517961601024" : "4621819117588971520") +
                            "> {storage_test_id = \"mask\"}"));
     }
+    // Pair masks: two mask constants combine to pick pairs of elements.
     for (const std::string kind : {"bitand", "bitor", "bitxor"}) {
         const bool isAnd = kind == "bitand";
         const bool isOr = kind == "bitor";
@@ -2440,9 +2492,12 @@ void InductionCases::overwritesAndTransport() {
                             "  %pairFive = ctjs.constant #ctjs.number<4617315517961601024>\n"
                             "  %pairSeven = ctjs.constant #ctjs.number<4619567317775286272>\n"
                             "  %pairEight = ctjs.constant #ctjs.number<4620693217682128896>\n"
+                            // Numbers on the next line: 2^31 - 2.
                             "  %pairHigh = ctjs.constant #ctjs.number<4746794007240114176>\n"
+                            // Numbers on the next line: -(2^31 + 1).
                             "  %pairLow = ctjs.constant #ctjs.number<13970166044105375744>\n"
                             "  %pairMask = ctjs.constant #ctjs.number<" +
+                                // Numbers on the next line: 3 or 2.
                                 std::string(isAnd ? "4613937818241073152" : "4611686018427387904") +
                                 "> {storage_test_id = \"mask\"}\n  %a ="),
                     "%position = ctjs.binary_static bitand %i, %one",
@@ -2547,23 +2602,27 @@ void InductionCases::overwritesAndTransport() {
             run({.what = "coincident two-point images keep a positive enclosing stride",
                  .body = replace(
                      replace(twoPoints, contents, "[%x, %zero, %pairMask, %zero, %zero, %zero]"),
-                     "#ctjs.number<4613937818241073152> {storage_test_id = \"mask\"}",
-                     "#ctjs.number<4611686018427387904> {storage_test_id = \"mask\"}"),
+                     "#ctjs.number<4613937818241073152> {storage_test_id = \"mask\"}",  // = 3
+                     "#ctjs.number<4611686018427387904> {storage_test_id = \"mask\"}"), // = 2
                  .arrays = values,
                  .reads = reads,
                  .exit = "a -> {a}"},
                 "x");
         }
     }
+    // Bitwise indices on signed inputs and complements (~x) around INT32_MIN/MAX.
     const auto signedBits = replace(masked, "  %a =",
+                                    // Numbers on the next line: 2^31 - 1.
                                     "  %maximum = ctjs.constant #ctjs.number<4746794007244308480>\n"
+                                    // Numbers on the next line: 2^31.
                                     "  %sign = ctjs.constant #ctjs.number<4746794007248502784>\n"
                                     "  %negativeSign = ctjs.unary neg %sign\n"
                                     "  %negativeOne = ctjs.unary neg %one\n"
+                                    // Numbers on the next line: -(2^32 - 2).
                                     "  %low = ctjs.constant #ctjs.number<13974669643726454784>\n"
                                     "  %a =");
     for (const std::string kind : {"bitor", "bitxor", "bitand"}) {
-        const auto literal = kind == "bitand" ? "13830554455654793216" : "0";
+        const auto literal = kind == "bitand" ? "13830554455654793216" : "0"; // = -1
         const auto identity =
             replace(replace(replace(replace(signedBits, "[%one, %x]", "[%x, %identity, %zero, %x]"),
                                     "add %i, %one", "add %i, %three"),
@@ -2621,8 +2680,8 @@ void InductionCases::overwritesAndTransport() {
                replace(identity,
                        "#ctjs.number<" + std::string(literal) + "> {storage_test_id = \"mask\"}",
                        "#ctjs.number<" +
-                           std::string(kind == "bitand" ? "13837309855095848960"
-                                                        : "4607182418800017408") +
+                           std::string(kind == "bitand" ? "13837309855095848960"   // = -3
+                                                        : "4607182418800017408") + // = 1
                            "> {storage_test_id = \"mask\"}"));
         for (const auto & input :
              {"ctjs.binary add %maximum, %i", "ctjs.binary sub %negativeSign, %i"}) {
@@ -2642,8 +2701,8 @@ void InductionCases::overwritesAndTransport() {
                                 "[%x, %identity, %zero, %x, %zero, %zero, %x]"),
                         "#ctjs.number<" + std::string(literal) + "> {storage_test_id = \"mask\"}",
                         "#ctjs.number<" +
-                            std::string(kind == "bitand" ? "4619567317775286272"
-                                                         : "4620693217682128896") +
+                            std::string(kind == "bitand" ? "4619567317775286272"    // = 7
+                                                         : "4620693217682128896") + // = 8
                             "> {storage_test_id = \"mask\"}"),
                 "  %a =",
                 "  %eight = ctjs.constant #ctjs.number<4620693217682128896>\n"
@@ -2691,9 +2750,11 @@ void InductionCases::overwritesAndTransport() {
             replace(
                 fixedBits,
                 "#ctjs.number<" +
+                    // Numbers on the next line: 7 or 8.
                     std::string(kind == "bitand" ? "4619567317775286272" : "4620693217682128896") +
                     "> {storage_test_id = \"mask\"}",
                 "#ctjs.number<" +
+                    // Numbers on the next line: 5 or 9.
                     std::string(kind == "bitand" ? "4617315517961601024" : "4621256167635550208") +
                     "> {storage_test_id = \"mask\"}"));
     }
@@ -2736,6 +2797,7 @@ void InductionCases::overwritesAndTransport() {
             "x");
     }
     run({.what = "a fixed sign bit may flip alongside all varying XOR bits",
+         // Numbers on the next line: 7, 2^31 + 7.
          .body = replace(replace(varyingComplement, "4619567317775286272", "4746794007263182848"),
                          "sub %bits, %one", "add %bits, %maximum"),
          .arrays = "a:[zero,mask,zero,zero,zero,zero,zero]",
@@ -2746,11 +2808,12 @@ void InductionCases::overwritesAndTransport() {
         replace(
             replace(replace(replace(varyingComplement, "[%x, %seven, %zero, %x, %zero, %zero, %x]",
                                     "[%x, %zero, %seven, %zero, %zero, %zero, %x]"),
-                            "4619567317775286272", "4618441417868443648"),
+                            "4619567317775286272", "4618441417868443648"), // = 7, 6
                     "add %i, %three", "add %i, %six"),
             "%mask = ctjs.get_property %base[%one]", "%mask = ctjs.get_property %base[%two]"),
         "sub %bits, %one", "add %bits, %zero");
     const auto crossZeroComplement = replace(
+        // Numbers on the next line: 6.
         replace(fixedLowComplement, "%seven = ctjs.constant #ctjs.number<4618441417868443648>",
                 "%seven = ctjs.unary neg %two"),
         "%bits = ctjs.binary_static bitxor %i, %mask\n"
@@ -2784,7 +2847,7 @@ void InductionCases::overwritesAndTransport() {
            replace(replace(replace(replace(varyingComplement,
                                            "[%x, %seven, %zero, %x, %zero, %zero, %x]",
                                            "[%x, %zero, %zero, %zero, %zero, %seven, %x, %zero]"),
-                                   "4619567317775286272", "4618441417868443648"),
+                                   "4619567317775286272", "4618441417868443648"), // = 7, 6
                            "%mask = ctjs.get_property %base[%one]",
                            "%five = ctjs.binary add %three, %two\n"
                            "  %mask = ctjs.get_property %base[%five]"),
@@ -2828,6 +2891,7 @@ void InductionCases::overwritesAndTransport() {
     }
     run({.what = "unsigned all-one XOR retains the same complement lattice",
          .body = replace(xorComplement, "%negativeOne = ctjs.unary neg %one",
+                         // Numbers on the next line: 2^32 - 1.
                          "%negativeOne = ctjs.constant #ctjs.number<4751297606873776128>"),
          .arrays = "a:[zero,negativeOne,zero,zero]",
          .reads = "a[1]=negativeOne; a[0]=x; a[1]=negativeOne; a[3]=zero",
@@ -2947,6 +3011,7 @@ void InductionCases::overwritesAndTransport() {
                    "  %position = ctjs.binary_static bitand %negative, %negativeOne"));
     const auto andReload =
         replace(replace(maskedReload, "  %a =",
+                        // Numbers on the next line: -(2^31 - 1).
                         "  %negativeMask = ctjs.constant #ctjs.number<13970166044099084288> "
                         "{storage_test_id = \"mask\"}\n  %a ="),
                 "[%x, %x, %one, %zero]", "[%x, %x, %negativeMask, %zero]");
@@ -2964,9 +3029,9 @@ void InductionCases::overwritesAndTransport() {
                    "%mask = ctjs.get_property %base[%zero]"));
     reject("later stores invalidate earlier signed AND mask reloads",
            replace(andReload, "  %step =", "  ctjs.set_property %base[%two], %zero\n  %step ="));
-    for (const auto & bits : {"4611686018427387904", "13835058055282163712"}) {
+    for (const auto & bits : {"4611686018427387904", "13835058055282163712"}) { // = 2, -2
         const auto gapReload = replace(
-            replace(replace(andReload, "13970166044099084288", bits),
+            replace(replace(andReload, "13970166044099084288", bits), // = -(2^31 - 1)
                     "[%x, %x, %negativeMask, %zero]", "[%x, %negativeMask, %x, %zero]"),
             "%mask = ctjs.get_property %base[%two]", "%mask = ctjs.get_property %base[%one]");
         for (const auto & operands : {"%i, %mask", "%mask, %i"}) {
@@ -3061,7 +3126,8 @@ void InductionCases::overwritesAndTransport() {
            replace(orReload, "  %step =", "  ctjs.set_property %base[%zero], %zero\n  %step ="));
     const auto signedReload = replace(
         replace(replace(orReload, "  %a =",
-                        "  %sign = ctjs.constant #ctjs.number<4746794007248502784>\n"
+                        "  %sign = ctjs.constant #ctjs.number<4746794007248502784>\n" // = 2^31
+                        // Numbers on the next line: -(2^31 - 1).
                         "  %negativeMask = ctjs.constant #ctjs.number<13970166044099084288> "
                         "{storage_test_id = \"mask\"}\n  %a ="),
                 "[%one, %x, %zero, %zero]", "[%negativeMask, %x, %zero, %zero]"),
@@ -3088,6 +3154,7 @@ void InductionCases::overwritesAndTransport() {
          .exit = "a -> {a}"},
         "x");
     const auto allOneReload = replace(
+        // Numbers on the next line: -(2^31 - 1), -1.
         replace(replace(replace(signedReload, "13970166044099084288", "13830554455654793216"),
                         "[%negativeMask, %x, %zero, %zero]", "[%x, %negativeMask]"),
                 "%mask = ctjs.get_property %base[%zero]", "%mask = ctjs.get_property %base[%one]"),
@@ -3113,10 +3180,11 @@ void InductionCases::overwritesAndTransport() {
              .exit = "a -> {a}"},
             "x");
         reject("a near-all-one OR mask cannot borrow a constant output across conversion bands",
-               replace(crossing, "13830554455654793216", "13835058055282163712"));
+               replace(crossing, "13830554455654793216", "13835058055282163712")); // = -1, -2
         reject("later stores invalidate an all-one mask even when its output is constant",
                replace(crossing, "  %step =", "  ctjs.set_property %base[%one], %zero\n  %step ="));
         const auto signedCrossing = replace(
+            // Numbers on the next line: -1, -2.
             replace(replace(replace(crossing, "13830554455654793216", "13835058055282163712"),
                             "[%x, %negativeMask]", "[%x, %x, %negativeMask, %zero]"),
                     "%mask = ctjs.get_property %base[%one]",
@@ -3182,6 +3250,7 @@ void InductionCases::overwritesAndTransport() {
                      "ctjs.return %result", "ctjs.return %a"),
          .arrays = "a:[one,x]",
          .exit = "a -> {a,x}"});
+    // Fixed overwrites, offset indices (i + 1, ~~i) and int32 boundary bands.
     const std::string fixedOverwrite =
         replace(savedChild, "  %read =", "  ctjs.set_property %base[%one], %zero\n  %read =");
     run({.what = "invariant own-index overwrites release the replaced child",
@@ -3317,6 +3386,7 @@ void InductionCases::overwritesAndTransport() {
         "x");
     const auto signedBoundary =
         replace(replace(complementIndex, "  %a =",
+                        // Numbers on the next line: 2^31 - 1.
                         "  %maximum = ctjs.constant #ctjs.number<4746794007244308480>\n"
                         "  %minimumMagnitude = ctjs.binary add %maximum, %one\n  %a ="),
                 "%negative = ctjs.unary bitnot %i\n  %position = ctjs.unary bitnot %negative",
@@ -3347,6 +3417,7 @@ void InductionCases::overwritesAndTransport() {
             "x");
     }
     const auto unsignedBoundary =
+        // Numbers on the next line: 2^31 - 1, 2^32 - 1.
         replace(replace(replace(signedBoundary, "4746794007244308480", "4751297606873776128"),
                         "  %minimumMagnitude = ctjs.binary add %maximum, %one\n", ""),
                 "%negative = ctjs.unary bitnot %part\n"
@@ -3366,7 +3437,7 @@ void InductionCases::overwritesAndTransport() {
              .exit = "a -> {a}"},
             "x");
         reject("complement bands cannot borrow an intermediate outside the bounded Number range",
-               replace(body, "4751297606873776128", "4751297606875873280"));
+               replace(body, "4751297606873776128", "4751297606875873280")); // = 2^32 - 1, 2^32
     }
     for (const auto & body : {replace(signedBoundary, "sub %maximum, %i", "add %maximum, %i"),
                               replace(negativeBand, "sub %below, %i", "add %below, %i"),
@@ -3585,6 +3656,7 @@ void InductionCases::overwritesAndTransport() {
               replace(offsetIndex, "  %a =", "  %text = ctjs.constant #ctjs.string<\"1\">\n  %a ="),
               "ctjs.binary add %i, %one", "ctjs.binary add %i, %text"),
           replace(replace(offsetIndex, "  %a =",
+                          // Numbers on the next line: 2^32 - 1.
                           "  %maximum = ctjs.constant #ctjs.number<4751297606873776128>\n  %a ="),
                   "ctjs.binary add %i, %one", "ctjs.binary add %i, %maximum")}) {
         run({.what =
@@ -3592,6 +3664,7 @@ void InductionCases::overwritesAndTransport() {
              .body = body,
              .failure = ArrayContentsFailure::UnsupportedControlFlow});
     }
+    // Index = (i / 2) << k (left shifts), including int32 overflow bands.
     const auto quotientIndex =
         replace(replace(offsetIndex, "[%one, %x, %one, %x]", "[%x, %x, %one, %one]"),
                 "ctjs.binary add %i, %one", "ctjs.binary div %i, %two");
@@ -3606,12 +3679,12 @@ void InductionCases::overwritesAndTransport() {
          .reads = "a[0]=zero; a[2]=zero",
          .exit = "a -> {a}"},
         "x");
-    for (const auto & count : {"4629700416936869888", "13852790978814935040"}) {
+    for (const auto & count : {"4629700416936869888", "13852790978814935040"}) { // = 32, -31
         auto body = replace(
             leftShiftIndex,
             "  %a =", std::string{"  %count = ctjs.constant #ctjs.number<"} + count + ">\n  %a =");
         body = replace(body, "shl %part, %one",
-                       std::string{count} == "4629700416936869888" ? "shl %i, %count"
+                       std::string{count} == "4629700416936869888" ? "shl %i, %count" // = 32
                                                                    : "shl %part, %count");
         run({.what = "left-shift counts preserve modulo32 and negative Number semantics",
              .body = body,
@@ -3642,7 +3715,7 @@ void InductionCases::overwritesAndTransport() {
         "x");
     const auto leftShiftBoundary =
         replace(replace(leftShiftIndex, "  %a =",
-                        "  %half = ctjs.constant #ctjs.number<4742290407612743680>\n"
+                        "  %half = ctjs.constant #ctjs.number<4742290407612743680>\n" // = 2^30 - 1
                         "  %maximum = ctjs.binary mul %half, %two\n  %a ="),
                 "%position = ctjs.binary_static shl %part, %one",
                 "%input = ctjs.binary sub %half, %part\n"
@@ -3655,6 +3728,7 @@ void InductionCases::overwritesAndTransport() {
          .exit = "a -> {a}"},
         "x");
     reject("left shifts refuse the signed-output discontinuity",
+           // Numbers on the next line: 2^30 - 1, 2^30.
            replace(leftShiftBoundary, "4742290407612743680", "4742290407621132288"));
     const auto negativeLeftShift = replace(
         leftShiftIndex,
@@ -3664,6 +3738,7 @@ void InductionCases::overwritesAndTransport() {
         "  %part = ctjs.binary div %shifted, %two\n"
         "  %position = ctjs.binary add %part, %two");
     const auto minimumLeftShift =
+        // Numbers on the next line: 2^30 - 1, 2^30.
         replace(replace(replace(leftShiftBoundary, "4742290407612743680", "4742290407621132288"),
                         "sub %half, %part", "sub %part, %half"),
                 "sub %maximum, %shifted", "add %shifted, %maximum");
@@ -3690,8 +3765,10 @@ void InductionCases::overwritesAndTransport() {
          .exit = "a -> {a}"},
         "x");
     reject("signed left shifts refuse output underflow below INT32_MIN",
+           // Numbers on the next line: 2^30, 2^30 + 1.
            replace(minimumLeftShift, "4742290407621132288", "4742290407625326592"));
     reject("signed left shifts refuse crossing an input conversion boundary with count zero",
+           // Numbers on the next line: 2^30, 2^31 + 1.
            replace(replace(replace(minimumLeftShift, "4742290407621132288", "4746794007250599936"),
                            "ctjs.binary mul %half, %two", "ctjs.unary plus %half"),
                    "shl %input, %one", "shl %input, %zero"));
@@ -3703,6 +3780,7 @@ void InductionCases::overwritesAndTransport() {
         "sub %part, %half", "add %part, %upper");
     const auto negativeLeftBand = replace(
         replace(leftShiftIndex,
+                // Numbers on the next line: 2^32 - 1.
                 "  %a =", "  %maximum = ctjs.constant #ctjs.number<4751297606873776128>\n  %a ="),
         "%position = ctjs.binary_static shl %part, %one",
         "%input = ctjs.binary sub %part, %maximum\n"
@@ -3746,6 +3824,7 @@ void InductionCases::overwritesAndTransport() {
     reject("positive left-shift input bands still refuse signed output underflow",
            replace(positiveLeftBand, "add %part, %upper", "sub %upper, %part"));
     reject("negative left-shift input bands still refuse signed output overflow",
+           // Numbers on the next line: 2^32 - 1, 3 * 2^30 + 1.
            replace(negativeLeftBand, "4751297606873776128", "4749045807064285184"));
     reject("left-shift count zero still requires a single positive ToInt32 band",
            replace(zeroLeftBand, "%upper = ctjs.unary plus %maximum",
@@ -3769,6 +3848,7 @@ void InductionCases::overwritesAndTransport() {
     }
     const auto hugeLeftShift = replace(
         replace(replace(leftShiftIndex, "  %a =",
+                        // Numbers on the next line: 31.
                         "  %count = ctjs.constant #ctjs.number<4629418941960159232>\n  %a ="),
                 "[%x, %one, %x, %one]", "[%x]"),
         "shl %part, %one", "shl %i, %count");
@@ -3824,7 +3904,9 @@ void InductionCases::overwritesAndTransport() {
          .exit = "a -> {a,x}"});
     auto wideOutputBand =
         replace(replace(positiveOutputBand, "  %a =",
+                        // Numbers on the next line: 2^31 - 3.
                         "  %start = ctjs.constant #ctjs.number<4746794007235919872>\n"
+                        // Numbers on the next line: 31.
                         "  %count = ctjs.constant #ctjs.number<4629418941960159232>\n  %a ="),
                 "add %part, %half", "add %part, %start");
     wideOutputBand = replace(replace(wideOutputBand, "shl %input, %one", "shl %input, %count"),
@@ -3832,8 +3914,9 @@ void InductionCases::overwritesAndTransport() {
                              "%quotient = ctjs.binary div %shifted, %maximum\n"
                              "  %position = ctjs.binary add %quotient, %one");
     wideOutputBand = replace(wideOutputBand, "[%x, %one, %x, %one]", "[%x, %x, %one, %one]");
+    // Numbers on the next line: 2^31 - 3.
     for (const auto & body : {wideOutputBand, replace(replace(wideOutputBand, "4746794007235919872",
-                                                              "4746794007244308480"),
+                                                              "4746794007244308480"), // = 2^31 - 1
                                                       "add %part, %start", "sub %part, %start")}) {
         run({.what = "left-shift output bands use exact wide positive and negative products",
              .body = body,
@@ -3855,6 +3938,7 @@ void InductionCases::overwritesAndTransport() {
          .reads = "a[0]=x; a[1]=zero; a[2]=one; a[3]=one",
          .exit = "a -> {a}"},
         "x");
+    // Index = i >> k and i >>> k (right shifts): rounded, partitioned, converted, jump.
     const auto rightShiftIndex =
         replace(quotientIndex, "ctjs.binary div %i, %two", "ctjs.binary_static shr %i, %one");
     for (const std::string kind : {"shl", "shr", "ushr"}) {
@@ -3965,6 +4049,7 @@ void InductionCases::overwritesAndTransport() {
     run({.what = "a masked zero shift preserves each original own index",
          .body =
              replace(replace(complementIndex, "  %a =",
+                             // Numbers on the next line: 32.
                              "  %count = ctjs.constant #ctjs.number<4629700416936869888>\n  %a ="),
                      "%negative = ctjs.unary bitnot %i\n  %position = ctjs.unary bitnot %negative",
                      "%position = ctjs.binary_static shr %i, %count"),
@@ -3975,6 +4060,7 @@ void InductionCases::overwritesAndTransport() {
     run({.what = "negative Number counts use their exact modulo32 shift",
          .body =
              replace(replace(rightShiftIndex, "  %a =",
+                             // Numbers on the next line: -31.
                              "  %count = ctjs.constant #ctjs.number<13852790978814935040>\n  %a ="),
                      "shr %i, %one", "shr %i, %count"),
          .arrays = "a:[zero,zero,one,one]",
@@ -4003,12 +4089,12 @@ void InductionCases::overwritesAndTransport() {
         reject("rounded sparse shifts retain the complete later-store census",
                replace(body, "  %step =", "  ctjs.set_property %base[%one], %two\n  %step ="));
         run({.what = "mixed rounded increments retain children outside actual writes",
-             .body = replace(body, "4621256167635550208", "4621819117588971520"),
+             .body = replace(body, "4621256167635550208", "4621819117588971520"), // = 9, 10
              .arrays = "a:[zero,three,zero,one,x,zero]",
              .reads = "a[1]=three; a[0]=zero; a[1]=three; a[2]=zero; a[1]=three; a[4]=x",
              .exit = "a -> {a,x}"});
         const auto mixed =
-            replace(replace(body, "4621256167635550208", "4621819117588971520"),
+            replace(replace(body, "4621256167635550208", "4621819117588971520"), // = 9, 10
                     "[%x, %three, %x, %one, %x, %one]", "[%x, %three, %x, %one, %one, %x]");
         run({.what = "mixed rounded shift gaps preserve disjoint count reloads",
              .body = mixed,
@@ -4032,7 +4118,7 @@ void InductionCases::overwritesAndTransport() {
                replace(mixed, "  %step =", "  ctjs.set_property %base[%one], %two\n  %step ="));
     }
     const auto composedShift =
-        replace(replace(roundedShift, "4621256167635550208", "4621819117588971520"),
+        replace(replace(roundedShift, "4621256167635550208", "4621819117588971520"), // = 9, 10
                 "[%x, %three, %x, %one, %x, %one]", "[%x, %three, %x, %one, %one, %x]");
     for (const std::string operation : {"binary mod", "binary_static bitand"}) {
         const bool modulo = operation == "binary mod";
@@ -4086,7 +4172,7 @@ void InductionCases::overwritesAndTransport() {
                         "add %i, %two", "add %i, %three"),
                 "%position = ctjs.binary_static shr %scaled, %count",
                 "%rounded = ctjs.binary_static shr %scaled, %count\n"
-                "  %mask = ctjs.constant #ctjs.number<4622382067542392832>\n"
+                "  %mask = ctjs.constant #ctjs.number<4622382067542392832>\n" // = 11
                 "  %position = ctjs.binary_static bitand %rounded, %mask");
     for (const auto & kind : {"shr", "ushr"}) {
         const auto body =
@@ -4130,6 +4216,9 @@ void InductionCases::overwritesAndTransport() {
         reject("partitioned mixed shifts retain the complete later-store census",
                replace(body, "  %step =", "  ctjs.set_property %base[%one], %one\n  %step ="));
     }
+    // Scale the partitioned-shift fixture to a 360-element array and widen the
+    // index mask from 11 to 255, so a full proof needs far more work than the
+    // 128-unit budget used below.
     std::string manyShiftElements = "[%x, %two";
     for (unsigned i = 2; i < 360; ++i) { manyShiftElements += i == 2 ? ", %x" : ", %one"; }
     manyShiftElements += "]";
@@ -4155,7 +4244,8 @@ void InductionCases::overwritesAndTransport() {
             computeArrayContents(function, reload ? constantShiftWork + 1024 : 100000);
         if (!reload) { constantShiftWork = complete.work; }
         const auto partial = computeArrayContents(function, 128);
-        // Record all 360 initializer writes as well as the 120 loop stores.
+        // A full run must record all 360 initializer writes plus the 120 loop stores;
+        // a run capped at 128 work units must stop with WorkLimit and report nothing.
         if (!complete.complete || complete.writes.size() != 480 ||
             complete.reads.size() != (reload ? 240U : 120U) || partial.complete ||
             partial.failure != ArrayContentsFailure::WorkLimit || partial.work != 128 ||
@@ -4166,17 +4256,19 @@ void InductionCases::overwritesAndTransport() {
         }
     }
     const auto convertedMixedShift = replace(
+        // Numbers on the next line: 9, 10.
         replace(replace(replace(roundedShift, "4621256167635550208", "4621819117588971520"),
                         "[%x, %three, %x, %one, %x, %one]", "[%one, %x, %three, %one, %x, %x]"),
                 "%base[%one]", "%base[%two]"),
         "%position = ctjs.binary_static shr %scaled, %count",
         "%rounded = ctjs.binary_static shr %scaled, %count\n"
-        "  %bias = ctjs.constant #ctjs.number<4746794007240114176>\n"
-        "  %mask = ctjs.constant #ctjs.number<4617315517961601024>\n"
+        "  %bias = ctjs.constant #ctjs.number<4746794007240114176>\n" // = 2^31 - 2
+        "  %mask = ctjs.constant #ctjs.number<4617315517961601024>\n" // = 5
         "  %part = ctjs.binary add %rounded, %bias\n"
         "  %converted = ctjs.unary bitnot %part\n"
         "  %position = ctjs.binary_static bitand %converted, %mask");
     const auto convertedLeftShift =
+        // Numbers on the next line: 2^31 - 2, 2^31 - 1.
         replace(replace(convertedMixedShift, "4746794007240114176", "4746794007244308480"),
                 "%converted = ctjs.unary bitnot %part",
                 "%shifted = ctjs.binary_static shl %part, %one\n"
@@ -4194,6 +4286,7 @@ void InductionCases::overwritesAndTransport() {
                         "[%x, %x, %three, %one, %x, %one]"),
                 "ctjs.unary bitnot %part", "ctjs.binary_static shr %part, %zero");
     const auto convertedUnsignedShift =
+        // Numbers on the next line: 2^31 - 2, 2.
         replace(replace(replace(convertedSignedShift, "4746794007240114176", "4611686018427387904"),
                         "binary add %rounded, %bias", "binary sub %rounded, %bias"),
                 "shr %part, %zero", "ushr %part, %zero");
@@ -4233,7 +4326,7 @@ void InductionCases::overwritesAndTransport() {
                 "binary_static ushr");
     const auto outputCrossingShift =
         replace(replace(crossingShift, "%part = ctjs.binary add %maximum, %i",
-                        "%half = ctjs.constant #ctjs.number<4742290407612743680>\n"
+                        "%half = ctjs.constant #ctjs.number<4742290407612743680>\n" // = 2^30 - 1
                         "  %quotient = ctjs.binary div %i, %two\n"
                         "  %part = ctjs.binary add %half, %quotient"),
                 "shr %part, %zero", "shl %part, %one");
@@ -4267,7 +4360,7 @@ void InductionCases::overwritesAndTransport() {
         replace(replace(replace(crossingShift, "[%x, %one, %x, %one]",
                                 "[%x, %x, %wideCount, %one, %one, %one]"),
                         "  %a =",
-                        "  %wideCount = ctjs.constant #ctjs.number<4629418941960159232> "
+                        "  %wideCount = ctjs.constant #ctjs.number<4629418941960159232> " // = 31
                         "{storage_test_id = \"count\"}\n  %a ="),
                 "%negative = ctjs.binary_static shr %part, %zero\n  %position = ctjs.binary_static "
                 "bitand %negative, %two",
@@ -4275,6 +4368,7 @@ void InductionCases::overwritesAndTransport() {
                 "  %negative = ctjs.binary_static shr %part, %count\n"
                 "  %position = ctjs.binary add %negative, %one");
     const auto lowerJumpShift =
+        // Numbers on the next line: 2^31 - 1, 2^31 + 1.
         replace(replace(jumpShift, "4746794007244308480", "4746794007250599936"),
                 "add %maximum, %i", "sub %i, %maximum");
     const auto unsignedJumpShift =
@@ -4282,7 +4376,9 @@ void InductionCases::overwritesAndTransport() {
                         "binary_static ushr"),
                 "ctjs.binary add %negative, %one", "ctjs.unary plus %negative");
     for (const auto & body : {jumpShift, lowerJumpShift, unsignedJumpShift,
+                              // Numbers on the next line: 31, 63.
                               replace(jumpShift, "4629418941960159232", "4634063279075885056"),
+                              // Numbers on the next line: 31, -1.
                               replace(jumpShift, "4629418941960159232", "13830554455654793216")}) {
         run({.what = "larger conversion jumps use count-specific full right-shift bounds",
              .body = body,
@@ -4299,11 +4395,13 @@ void InductionCases::overwritesAndTransport() {
     }
     const auto interiorSignedShift = replace(
         replace(lowerJumpShift,
+                // Numbers on the next line: 2^30 - 1.
                 "  %a =", "  %scale = ctjs.constant #ctjs.number<4742290407612743680>\n  %a ="),
         "%part = ctjs.binary sub %i, %maximum",
         "%scaled = ctjs.binary mul %i, %scale\n  %part = ctjs.binary sub %scaled, %maximum");
     const auto interiorUnsignedShift = replace(
         replace(unsignedJumpShift,
+                // Numbers on the next line: 2^30 - 1.
                 "  %a =", "  %scale = ctjs.constant #ctjs.number<4742290407612743680>\n  %a ="),
         "%part = ctjs.binary sub %i, %one",
         "%scaled = ctjs.binary mul %i, %scale\n  %part = ctjs.binary sub %scaled, %one");
@@ -4331,8 +4429,9 @@ void InductionCases::overwritesAndTransport() {
     reject("full signed right-shift bounds still require nonnegative own positions",
            replace(jumpShift, "ctjs.binary add %negative, %one", "ctjs.unary plus %negative"));
     auto sparseJumpShift = replace(
+        // Numbers on the next line: 2^31 - 1, 2^31 - 2.
         replace(replace(jumpShift, "4746794007244308480", "4746794007240114176"),
-                "4629418941960159232", "4607182418800017408"),
+                "4629418941960159232", "4607182418800017408"), // = 31, 1
         "[%x, %x, %wideCount, %one, %one, %one]", "[%wideCount, %x, %zero, %x, %zero, %zero]");
     sparseJumpShift = replace(replace(sparseJumpShift, "%part = ctjs.binary add %maximum, %i",
                                       "%scaled = ctjs.binary mul %i, %two\n"
@@ -4344,16 +4443,17 @@ void InductionCases::overwritesAndTransport() {
                               "  %negative = ctjs.binary_static shr %part, %count\n"
                               "  %position = ctjs.binary_static bitand %negative, %three");
     const auto lowerSparseJumpShift =
+        // Numbers on the next line: 2^31 - 2, 2^31 + 2.
         replace(replace(sparseJumpShift, "4746794007240114176", "4746794007252697088"),
                 "add %maximum, %scaled", "sub %scaled, %maximum");
     for (const auto & body :
          {sparseJumpShift, lowerSparseJumpShift,
           replace(sparseJumpShift,
-                  "#ctjs.number<4607182418800017408> {storage_test_id = \"count\"}",
-                  "#ctjs.number<4629841154425225216> {storage_test_id = \"count\"}"),
+                  "#ctjs.number<4607182418800017408> {storage_test_id = \"count\"}",  // = 1
+                  "#ctjs.number<4629841154425225216> {storage_test_id = \"count\"}"), // = 33
           replace(sparseJumpShift,
-                  "#ctjs.number<4607182418800017408> {storage_test_id = \"count\"}",
-                  "#ctjs.number<13852790978814935040> {storage_test_id = \"count\"}")}) {
+                  "#ctjs.number<4607182418800017408> {storage_test_id = \"count\"}",      // = 1
+                  "#ctjs.number<13852790978814935040> {storage_test_id = \"count\"}")}) { // = -31
         run({.what = "signed conversion-jump right shifts preserve nonzero residue reload gaps",
              .body = body,
              .arrays = "a:[count,zero,zero,zero,zero,zero]",
@@ -4389,11 +4489,11 @@ void InductionCases::overwritesAndTransport() {
          {sparseUnsignedJumpShift,
           replace(sparseUnsignedJumpShift, "sub %scaled, %two", "sub %two, %scaled"),
           replace(sparseUnsignedJumpShift,
-                  "#ctjs.number<4607182418800017408> {storage_test_id = \"count\"}",
-                  "#ctjs.number<4629841154425225216> {storage_test_id = \"count\"}"),
+                  "#ctjs.number<4607182418800017408> {storage_test_id = \"count\"}",  // = 1
+                  "#ctjs.number<4629841154425225216> {storage_test_id = \"count\"}"), // = 33
           replace(sparseUnsignedJumpShift,
-                  "#ctjs.number<4607182418800017408> {storage_test_id = \"count\"}",
-                  "#ctjs.number<13852790978814935040> {storage_test_id = \"count\"}")}) {
+                  "#ctjs.number<4607182418800017408> {storage_test_id = \"count\"}",      // = 1
+                  "#ctjs.number<13852790978814935040> {storage_test_id = \"count\"}")}) { // = -31
         run({.what = "unsigned conversion-jump right shifts preserve nonzero residue reload gaps",
              .body = body,
              .arrays = "a:[count,zero,zero,zero,zero,zero]",
@@ -4423,10 +4523,11 @@ void InductionCases::overwritesAndTransport() {
          .exit = "x -> {x}"});
     reject("unsigned right shifts cannot retain low-bit gaps erased by their count",
            replace(sparseUnsignedJumpShift,
-                   "#ctjs.number<4607182418800017408> {storage_test_id = \"count\"}",
-                   "#ctjs.number<4611686018427387904> {storage_test_id = \"count\"}"));
+                   "#ctjs.number<4607182418800017408> {storage_test_id = \"count\"}",   // = 1
+                   "#ctjs.number<4611686018427387904> {storage_test_id = \"count\"}")); // = 2
     const auto leftJumpShift = replace(
         replace(replace(jumpShift, "  %a =",
+                        // Numbers on the next line: 2^31.
                         "  %divisor = ctjs.constant #ctjs.number<4746794007248502784>\n  %a ="),
                 "%part = ctjs.binary add %maximum, %i",
                 "%halfIndex = ctjs.binary div %i, %two\n  %part = ctjs.binary add %maximum, "
@@ -4437,12 +4538,13 @@ void InductionCases::overwritesAndTransport() {
         "  %quotient = ctjs.binary div %negative, %divisor\n"
         "  %position = ctjs.binary add %quotient, %one");
     const auto lowerLeftJumpShift =
+        // Numbers on the next line: 2^31 - 1, 2^31 + 1.
         replace(replace(leftJumpShift, "4746794007244308480", "4746794007250599936"),
                 "add %maximum, %halfIndex", "sub %halfIndex, %maximum");
     for (const auto & body :
          {leftJumpShift, lowerLeftJumpShift,
-          replace(leftJumpShift, "4629418941960159232", "4634063279075885056"),
-          replace(leftJumpShift, "4629418941960159232", "13830554455654793216")}) {
+          replace(leftJumpShift, "4629418941960159232", "4634063279075885056"),     // = 31, 63
+          replace(leftJumpShift, "4629418941960159232", "13830554455654793216")}) { // = 31, -1
         run({.what =
                  "left-shift conversion jumps retain scaled residues and disjoint count reloads",
              .body = body,
@@ -4468,7 +4570,7 @@ void InductionCases::overwritesAndTransport() {
     run({.what = "left-shift output periods retain fixed low input bits",
          .body =
              replace(replace(outputJumpShift, "ctjs.unary plus %halfIndex", "ctjs.unary plus %i"),
-                     "4629418941960159232", "4629137466983448576"),
+                     "4629418941960159232", "4629137466983448576"), // = 31, 30
          .arrays = "a:[zero,zero,count,one,one,one]",
          .reads = "a[2]=count; a[0]=x; a[2]=count; a[2]=count; a[2]=count; a[4]=one",
          .exit = "a -> {a}"},
@@ -4585,15 +4687,18 @@ void InductionCases::overwritesAndTransport() {
         "x");
     const auto signedShiftBoundary =
         replace(replace(rightShiftIndex, "  %a =",
+                        // Numbers on the next line: 2^31 - 1.
                         "  %maximum = ctjs.constant #ctjs.number<4746794007244308480>\n"
+                        // Numbers on the next line: 2^30 - 1.
                         "  %half = ctjs.constant #ctjs.number<4742290407612743680>\n  %a ="),
                 "%position = ctjs.binary_static shr %i, %one",
                 "%part = ctjs.binary sub %maximum, %i\n"
                 "  %shifted = ctjs.binary_static shr %part, %one\n"
                 "  %position = ctjs.binary sub %half, %shifted");
     const auto unsignedShiftBoundary =
+        // Numbers on the next line: 2^31 - 1, 2^32 - 1.
         replace(replace(replace(signedShiftBoundary, "4746794007244308480", "4751297606873776128"),
-                        "4742290407612743680", "4746794007244308480"),
+                        "4742290407612743680", "4746794007244308480"), // = 2^30 - 1, 2^31 - 1
                 "binary_static shr", "binary_static ushr");
     for (const auto & body : {signedShiftBoundary, unsignedShiftBoundary}) {
         run({.what = "right-shift ranges include exact signed and unsigned upper endpoints",
@@ -4604,8 +4709,10 @@ void InductionCases::overwritesAndTransport() {
             "x");
     }
     reject("signed right shifts cannot cross the ToInt32 sign boundary",
+           // Numbers on the next line: 2^31 - 1, 2^31.
            replace(signedShiftBoundary, "4746794007244308480", "4746794007248502784"));
     reject("unsigned right shifts cannot borrow an input above the bounded u32 range",
+           // Numbers on the next line: 2^32 - 1, 2^32.
            replace(unsignedShiftBoundary, "4751297606873776128", "4751297606875873280"));
     const auto negativeShiftBoundary =
         replace(replace(unsignedShiftBoundary, "sub %maximum, %i", "sub %i, %maximum"),
@@ -4617,12 +4724,14 @@ void InductionCases::overwritesAndTransport() {
          .exit = "a -> {a}"},
         "x");
     const auto negativeShift = replace(
+        // Numbers on the next line: 2^32 - 1, 4.
         replace(replace(negativeShiftBoundary, "4751297606873776128", "4616189618054758400"),
-                "4746794007244308480", "4746794007240114176"),
+                "4746794007244308480", "4746794007240114176"), // = 2^31 - 1, 2^31 - 2
         "sub %shifted, %zero", "sub %shifted, %half");
     const auto negativeSignBoundary =
+        // Numbers on the next line: 4, 2^31 + 1.
         replace(replace(negativeShift, "4616189618054758400", "4746794007250599936"),
-                "4746794007240114176", "4742290407612743680");
+                "4746794007240114176", "4742290407612743680"); // = 2^31 - 2, 2^30 - 1
     for (const auto & body : {negativeShift, negativeSignBoundary}) {
         run({.what = "negative unsigned shifts keep one ToUint32 band across the signed boundary",
              .body = body,
@@ -4639,6 +4748,7 @@ void InductionCases::overwritesAndTransport() {
         "x");
     run({.what = "negative unsigned shifts retain exact masked negative counts",
          .body = replace(replace(negativeShift, "  %a =",
+                                 // Numbers on the next line: -31.
                                  "  %count = ctjs.constant #ctjs.number<13852790978814935040>\n"
                                  "  %a ="),
                          "ushr %part, %one", "ushr %part, %count"),
@@ -4658,6 +4768,7 @@ void InductionCases::overwritesAndTransport() {
         "x");
     for (const auto & body :
          {replace(negativeShift, "sub %i, %maximum", "sub %i, %two"),
+          // Numbers on the next line: 2^32 - 1, 2^32.
           replace(negativeShiftBoundary, "4751297606873776128", "4751297606875873280"),
           replace(negativeSignBoundary, "binary_static ushr", "binary_static shr"),
           replace(negativeShiftReload, "%base[%three]", "%base[%one]"),
@@ -4669,8 +4780,9 @@ void InductionCases::overwritesAndTransport() {
         replace(replace(negativeShift, "binary_static ushr", "binary_static shr"),
                 "sub %shifted, %half", "add %shifted, %two");
     const auto signedMinimum =
+        // Numbers on the next line: 4, 2^31.
         replace(replace(replace(signedNegative, "4616189618054758400", "4746794007248502784"),
-                        "4746794007240114176", "4742290407621132288"),
+                        "4746794007240114176", "4742290407621132288"), // = 2^31 - 2, 2^30
                 "add %shifted, %two", "add %shifted, %half");
     const auto signedPositiveWrapped =
         replace(signedMinimum, "sub %i, %maximum", "add %i, %maximum");
@@ -4702,6 +4814,7 @@ void InductionCases::overwritesAndTransport() {
          .reads = "a[3]=one; a[0]=zero; a[3]=one; a[2]=one",
          .exit = "a -> {a}"},
         "x");
+    // Numbers on the next line: 2^31, 2^31 + 1.
     for (const auto & body : {replace(signedMinimum, "4746794007248502784", "4746794007250599936"),
                               replace(signedNegativeReload, "%base[%three]", "%base[%one]"),
                               replace(signedNegativeReload, "  %step =",
@@ -4717,6 +4830,7 @@ void InductionCases::overwritesAndTransport() {
              .exit = "a -> {a}"},
             "x");
     }
+    // Uneven right-shift footprints with strides that skip elements.
     const auto unevenShift = replace(
         replace(rightShiftIndex, "[%x, %x, %one, %one]", "[%x, %x, %x, %x, %one, %one, %one]"),
         "add %i, %two\n  cf.br", "add %i, %three\n  cf.br");
@@ -4794,6 +4908,7 @@ void InductionCases::overwritesAndTransport() {
          .reads = "a[2]=x; a[4]=one",
          .exit = "a -> {a}"},
         "x");
+    // Index = i / d with a reloaded or primitive divisor, and quotient gaps.
     const auto reloadedDivisor =
         replace(replace(quotientIndex, "[%x, %x, %one, %one]", "[%x, %x, %one, %two]"),
                 "  %position = ctjs.binary div %i, %two",
@@ -4976,6 +5091,7 @@ void InductionCases::overwritesAndTransport() {
                   "  %step =", "  ctjs.set_property %base[%two], %zero\n  %step =")}) {
         reject("negative quotient stores retain integrality, bounds and reload exclusions", body);
     }
+    // Index = i * k and other scaled products.
     const auto scaledIndex =
         replace(replace(savedChild, "  %read =",
                         "  %position = ctjs.binary mul %i, %one\n"
@@ -4997,6 +5113,7 @@ void InductionCases::overwritesAndTransport() {
         replace(replace(replace(replace(scaledIndex, "[%one, %x]", "[%x, %x, %zero]"),
                                 "add %i, %one\n  cf.br", "add %i, %two\n  cf.br"),
                         "  %a =",
+                        // %factor = 2^32 - 1, %shiftCount = 31.
                         "  %factor = ctjs.constant #ctjs.number<4751297606873776128> "
                         "{storage_test_id = \"factor\"}\n"
                         "  %shiftCount = ctjs.constant #ctjs.number<4629418941960159232>\n  %a ="),
@@ -5055,6 +5172,7 @@ void InductionCases::overwritesAndTransport() {
            replace(twoPointProduct, "4751297606873776128", "4746794007246405632"));
     reject("two-point product proof cannot skip a third scalar value",
            replace(twoPointProduct, "[%x, %x, %zero]", "[%x, %x, %zero, %zero, %zero]"));
+    // %large = 2^32 - 4 (4294967292).
     const auto boundedRemainder =
         replace(replace(replace(replace(scaledIndex, "[%one, %x]",
                                         "[%x, %x, %zero, %zero, %zero, %zero, %zero]"),
@@ -5307,6 +5425,7 @@ void InductionCases::overwritesAndTransport() {
                    "%part = ctjs.binary div %i, %two\n"
                    "  %factor = ctjs.binary sub %two, %part\n"
                    "  %position = ctjs.binary mul %part, %factor"));
+    // %huge = 2^32 - 1 (4294967295).
     reject("varying products retain intermediate bounds before a final zero factor",
            replace(replace(varyingProduct, "  %a =",
                            "  %huge = ctjs.constant #ctjs.number<4751297606873776128>\n  %a ="),
@@ -5323,6 +5442,7 @@ void InductionCases::overwritesAndTransport() {
          .reads = "a[0]=zero",
          .exit = "a -> {a}"},
         "x");
+    // %huge = 2^32 - 1 (4294967295).
     const auto wideVisit = replace(
         replace(scaledVisit,
                 "  %a =", "  %huge = ctjs.constant #ctjs.number<4751297606873776128>\n  %a ="),
@@ -6110,6 +6230,7 @@ void InductionCases::overwritesAndTransport() {
          .arrays = "a:[one,two,three,zero,zero]",
          .reads = "a[0]=one; a[2]=three; a[4]=zero",
          .exit = "zero -> {}"});
+    // %max = 2^32 - 1 (4294967295).
     maxStride = "  %max = ctjs.constant #ctjs.number<4751297606873776128>\n" +
                 replace(original, "add %i, %one", "add %i, %max");
     run({.what = "the maximum bounded stride remains an exact Number at loop exit",
@@ -6330,6 +6451,7 @@ void InductionCases::overwritesAndTransport() {
     reject(
         "direct remainder refinement retains the complete later-store census",
         replace(directRemainder, "  %step =", "  ctjs.set_property %base[%one], %one\n  %step ="));
+    // Constants: big = 2^29, twiceBig = 2^30, shiftCount = 29, thirty = 30.
     const auto directConverted =
         replace(replace(replace(directMask, "[%x, %x, %five, %one, %x, %one, %one, %one]",
                                 "[%one, %shiftCount, %x, %one, %x, %one, %one, %x]"),
@@ -6581,12 +6703,14 @@ void InductionCases::overwritesAndTransport() {
            replace(invariantNumeratorRemainder, "mod %two, %divisor", "mod %two, %i"));
     reject("invariant numerator division still refuses a visited fractional quotient",
            replace(invariantNumeratorRemainder, "mod %two, %divisor", "div %two, %divisor"));
+    // %unbounded = 2^32 (4294967296).
     reject("invariant numerator refinement retains each intermediate arithmetic bound",
            replace(replace(invariantNumeratorRemainder, "  %a =",
                            "  %unbounded = ctjs.constant "
                            "#ctjs.number<4751297606875873280>\n  %a ="),
                    "mod %two, %divisor", "mod %unbounded, %divisor"));
 
+    // The invariant-numerator remainder rewritten as an scf.while loop.
     const auto structuredNumerator =
         invariantNumeratorRemainder.substr(0, invariantNumeratorRemainder.find("  cf.br ^header")) +
         "  %finalIndex = scf.while (%index = %zero) : (!ctjs.value) -> !ctjs.value {\n"
@@ -6624,8 +6748,8 @@ void InductionCases::overwritesAndTransport() {
             continue;
         }
         checkArrayContents(*module, expected);
-        // The retention-local region census now supports these SCF inputs;
-        // legacy storage evidence and fractional quotient refusals stay intact.
+        // Retention must discharge `x` for the integer-modulo row; the fractional-
+        // quotient (div) row must still be refused.
         budgets += checkArrayRetention(
             *module, {.what = expected.what,
                       .body = expected.body,
@@ -6634,6 +6758,7 @@ void InductionCases::overwritesAndTransport() {
         ++rows;
     }
 
+    // Index = 1 << (i % k): shifts whose base is loop-invariant and count varies.
     const auto invariantShiftBase = replace(replace(masked, "[%one, %x]", "[%zero, %x, %x]"),
                                             "%position = ctjs.binary_static bitand %i, %one",
                                             "%count = ctjs.binary mod %i, %two\n"

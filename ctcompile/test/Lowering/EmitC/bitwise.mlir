@@ -1,4 +1,4 @@
-// A BITWISE OPERATOR CAN RUN USER CODE, SO IT IS ctjs.binary AND ct_aot_binary_op.
+// A bitwise operator can run user code, so it lowers to ctjs.binary and ct_aot_binary_op.
 //
 // The VM's six bitwise handlers ToNumeric both operands, left first: an
 // object's valueOf runs and a Symbol is a TypeError. context::binary_op runs

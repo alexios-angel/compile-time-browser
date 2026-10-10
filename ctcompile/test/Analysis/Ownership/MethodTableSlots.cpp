@@ -1,3 +1,11 @@
+//===- MethodTableSlots.cpp - OwnedMethodTableSlots tests -------*- C++ -*-===//
+//
+// Tests the OwnedMethodTableSlots structural query: complete slot edges for
+// two owners, refusal at every incomplete budget, and invalidation after
+// semantic IR edits.
+//
+//===----------------------------------------------------------------------===//
+
 #include "../../../lib/CTNative/Analysis/OwnedMethodTableSlots.h"
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
 
@@ -13,7 +21,8 @@ namespace {
 namespace ctjs = ctcompile::ctjs;
 using ctcompile::ctnative::OwnedMethodTableSlots;
 
-// Two independently valid owners ensure a late budget cutoff has an earlier
+// The value 4631107791820423168 is the IEEE-754 bit pattern of 42.0. Two
+// independently valid owners ensure a late budget cutoff has an earlier
 // candidate to discard. The scalar payloads are intentional: this structural
 // query supplies slot edges, while its consumers must prove method-table types.
 constexpr const char * fixture = R"MLIR(

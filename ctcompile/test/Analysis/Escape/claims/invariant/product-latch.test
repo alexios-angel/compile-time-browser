@@ -3,8 +3,8 @@
 // RUN: python3 %S/../check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name invariant-product-latch
 // RUN: FileCheck %s --check-prefix=CLAIM < %t/escape-claims-invariant-product-latch.claims
 
-// Nested products keep both original primitive snapshots. Changing operands,
-// replacement, unknown conversion and final-index overflow refuse.
+// Strides built from nested `*` over primitives saved before the loop are folded. A changing
+// or replaced operand, an unknown conversion or an overflowing final index is refused.
 // IMPORT-LABEL: ctjs.func @savedProduct$
 // IMPORT: ctjs.binary mul
 // IMPORT: ctjs.binary add

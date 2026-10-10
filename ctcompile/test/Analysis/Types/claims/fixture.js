@@ -1,18 +1,18 @@
-// PHASE 54A'S FIXTURE: every row of the transfer function, EXECUTED, so the
-// oracle has an observation to hold each claim against.
+// Type-oracle fixture: runs every row of the type-inference transfer function
+// in the interpreter, so tools/check/type-oracle.py can compare each
+// register's inferred type with the values it actually held.
+// The unit tests in ctcompile/test/Analysis/Types/Inference/ check what the
+// analysis claims; this file lets the interpreter check whether the claims
+// are true. It is written to make the analysis wrong if it can: every
+// operator the analysis guards against BigInt is called with BigInts here, so
+// an inference that claimed `i32` for `a | b` would meet an observed `bigint`
+// and the checker would name the register.
 //
-// The unit test in TypeInference.cpp asserts what the analysis SAYS. This file
-// exists so the interpreter can say whether that was TRUE. It is written to
-// make the analysis wrong if it can be: every operator the analysis guards
-// against BigInt is called with BigInts here, so an inference that claimed
-// `i32` for `a | b` would meet an observed `bigint` and the checker would name
-// the register.
-//
-// EVERY FUNCTION IS CALLED, because an unobserved register proves nothing -
+// Every function is called, because an unobserved register proves nothing;
 // the checker keeps "unobserved" as its own count precisely so it cannot be
 // mistaken for "sound".
 
-// --- the operand-sensitive rows, called BOTH ways ---------------------------
+// --- The operand-sensitive rows, called both ways ---------------------------
 function bitwise(a, b) {
     var or = a | b;
     var and = a & b;
@@ -43,7 +43,7 @@ arithmetic(7n, 2n);
 negate(5);
 negate(5n);
 
-// --- the rows that hold regardless of operands -----------------------------
+// --- The rows that hold regardless of operands -----------------------------
 function unconditional(a, b) {
     var ushr = a >>> b; // a BigInt throws here, so a value is always a Number
     var ty = typeof a;
@@ -62,7 +62,7 @@ unconditional("3", "4");
 unconditional(1.5, true);
 unconditional(null, undefined);
 
-// --- generic `+` is a string OR a number OR a BigInt -----------------------
+// --- Generic `+` is a string, a number or a BigInt --------------------------
 function plus(a, b) {
     return a + b;
 }
@@ -70,7 +70,7 @@ plus(1, 2);
 plus("a", "b");
 plus(1n, 2n);
 
-// --- literals, and the numbers that are NOT int32 despite looking like one --
+// --- Literals, and numbers that are not int32 despite looking like one -----
 function literals() {
     var five = 5;
     var half = 1.5;
@@ -84,7 +84,7 @@ function literals() {
 }
 literals();
 
-// --- `++` reaches the STATIC family, and its operand can still be a BigInt --
+// --- `++` reaches the static family, and its operand can still be a BigInt --
 function counter(x) {
     var i = x;
     i++;
@@ -92,14 +92,14 @@ function counter(x) {
     return i;
 }
 counter(1);
-// `i++` on a BigInt throws "Cannot mix BigInt and other types" - the compiler
+// `i++` on a BigInt throws "Cannot mix BigInt and other types": the compiler
 // loads `1` as a Number and emits op::add, so the static family's BigInt arm
-// sees one of each - and an uncaught throw would end the whole corpus here.
-// Caught. The throwing instruction's def is dropped by the recorder's
+// sees one of each, and an uncaught throw would end the whole corpus here.
+// So it is caught. The throwing instruction's def is dropped by the recorder's
 // expect_pc guard, so nothing is observed for it; the point is that the rest
 // of this file still runs.
-// ONE PROTECTED REGION IN THE WHOLE FILE, inside `guard`: the importer
-// refuses a function with more than one, and a top level with several
+// There is exactly one protected region in the file, inside `guard`: the
+// importer refuses a function with more than one, and a top level with several
 // try statements would leave every top-level register unclaimed.
 function guard(f, a, b) {
     try {
@@ -110,7 +110,7 @@ function guard(f, a, b) {
 }
 guard(counter, 1n);
 
-// --- one register holding several types across calls: the per-register JOIN -
+// --- One register holding several types across calls: the per-register join -
 function mixed(x) {
     var r = x;
     if (typeof x === "number") {
@@ -122,15 +122,15 @@ mixed(3);
 mixed("s");
 mixed(2n);
 
-// --- SURPLUS ARGUMENTS, which land in the callee's LOCAL slots at entry -----
+// --- Surplus arguments, which land in the callee's local slots at entry -----
 //
 // context::call copies every argument into the callee's window, declared or
 // not, so `callback(value, index, array)` from map puts the index in slot 1
-// and the array in slot 2 of a one-parameter function - on top of `y`. The
+// and the array in slot 2 of a one-parameter function, on top of `y`. The
 // recorder must not report those as observations of `y`: the compiler
 // initialises `y` explicitly before any read, and the surplus is reachable
 // only through `arguments` and rest parameters, which read the raw window.
-// Six one-parameter callbacks in p5 and phaser found this.
+// One-parameter callbacks in p5 and Phaser depend on this.
 function surplus(x) {
     var y;
     var seen = arguments.length;
@@ -139,7 +139,7 @@ function surplus(x) {
 [10, 20].map(surplus);
 surplus(1, "two", [3]);
 
-// --- a loop, so block arguments and back edges carry types -----------------
+// --- A loop, so block arguments and back edges carry types -----------------
 function loop(n, start) {
     var i = 0;
     var acc = start;
@@ -150,21 +150,21 @@ function loop(n, start) {
     return acc;
 }
 loop(10, 0);
-// THE ACCUMULATOR LEAVES INT32 IN TEN STEPS, not in two billion: this file
-// once called loop(2147483648) to make the same point and the recorder wrote
-// down twenty-three billion defs over six and a half minutes.
+// Starts near INT32_MAX so the accumulator leaves int32 within ten
+// iterations; a loop count of 2**31 instead would make the recorder log
+// billions of values.
 loop(10, 2147483640);
 
 // ============================================================================
-// THE POSITIVE NUMERIC ROWS, WHICH EVERYTHING ABOVE LEAVES UNOBSERVED.
+// The positive numeric rows, which everything above leaves unobserved.
 //
-// Every operand-sensitive row fires only when both operands are PROVED not to
-// be BigInts, and a parameter is never proved anything - so `bitwise(a, b)`
+// Every operand-sensitive row fires only when both operands are proved not to
+// be BigInts, and a parameter is never proved anything, so `bitwise(a, b)`
 // and `arithmetic(a, b)` above only ever observe the boxed fall-back. The
 // functions below launder their parameters through `+a` (ToNumber throws on a
 // BigInt, so its result is a proved f64) and through literals, so the i32 and
-// f64 claims are actually MADE and the interpreter can hold them to account.
-// Found by the adversarial review's fixture critic.
+// f64 claims are actually made and the interpreter can hold them to
+// account.
 function provenBits(a, b) {
     var x = +a,
         y = +b;
@@ -205,7 +205,7 @@ provenArith(1, 1e400); // 1**Infinity is NaN
 provenArith(-8, 1 / 3); // a NaN pow
 provenArith(2147483647, -1); // sub leaves int32
 
-// THE STATIC FAMILY'S `+`, which only `++` and the internal counters reach.
+// The static family's `+`, which only `++` and the internal counters reach.
 function counters() {
     var k = 0;
     k++;
@@ -238,7 +238,7 @@ function internalCounters() {
 }
 internalCounters();
 
-// NON-NUMBER LITERALS ARE PROVED NON-BIGINT TOO: a string, a boolean, null and
+// Non-number literals are proved non-BigInt too: a string, a boolean, null and
 // undefined all accept the numeric rows, and the interpreter converts.
 function literalOperands() {
     var s = "3" * "4",
@@ -254,7 +254,7 @@ function literalOperands() {
 }
 literalOperands();
 
-// CONCAT is emitted only for template literals; `"" + a` is add_generic.
+// Concat is emitted only for template literals; `"" + a` is add_generic.
 function tmpl(a, b) {
     return `${a}${b}`;
 }
@@ -268,7 +268,7 @@ tmpl({
 }, [1, [2]]);
 tmpl(void 0, true);
 
-// THE UNCONDITIONAL ROWS, fed the operands their justification names.
+// The unconditional rows, fed the operands their justification names.
 function plusKinds(a) {
     return +a;
 }
@@ -363,7 +363,7 @@ bang({});
 bang(Symbol("s"));
 bang([]);
 
-// LITERAL EDGES: the int32 bounds, a hex literal, an integral wide literal, an
+// Literal edges: the int32 bounds, a hex literal, an integral wide literal, an
 // Infinity literal (which the parser reads as out-of-range) and a NaN.
 function literalEdges() {
     var max = 2147483647,
@@ -378,10 +378,10 @@ function literalEdges() {
 }
 literalEdges();
 
-// THE NaN THAT WAS A BOOLEAN. 0x7FF4000000000003 read out of a Float64Array is
-// a number whose first subtraction used to quiet it into tag_true, so the
-// interpreter observed `bool` where the inference had proved f64. view_get now
-// canonicalises; this is the observation that keeps it that way.
+// Signalling-NaN payloads (0x7FF4000000000003 and neighbours) read from a
+// Float64Array must stay numbers: the interpreter's NaN-boxing once turned one
+// into a boolean after arithmetic, where the inference had proved f64.
+// view_get canonicalises NaNs; this keeps the recorder checking that.
 function poke(v) {
     var x = +v;
     var y = x - 1;
@@ -400,12 +400,12 @@ for (var payload = 0; payload < 4; payload++) {
     poke(nanF64[0]);
 }
 
-// DENSE ARRAYS - part 24 Phase 57A, checked against the interpreter rather
-// than against a lit. The inference claims a `vec<T>` for an array literal
-// whose every use is an append or a read, and claims the join of the appends
-// FROM UNDEFINED for every index read - so `a[7]` on a three-element array,
-// which the interpreter observes as `undefined`, is covered by the claim
-// rather than violating it. The recording is what settles that.
+// Dense arrays, checked against the interpreter rather than a lit test. The
+// inference claims a `vec<T>` for an array literal whose every use is an
+// append or a read, and claims the join of the appends with `undefined` for
+// every index read, so `a[7]` on a three-element array (observed as
+// `undefined`) is covered by the claim rather than violating it. The
+// recording is what settles that.
 function denseInts() {
     var a = [1, 2, 3];
     return a[0] + a[2] + a.length;
@@ -424,19 +424,19 @@ function denseHole() {
 }
 denseHole();
 
-// AND A READ THROUGH A KEY NOTHING PROVED A NUMBER. This array is still a
-// dense site - a read through a computed key is a read - but `a["push"]` is a
-// FUNCTION, not an element, so the inference answers `boxed` unless the key
+// A read through a key nothing proved a number. This array is still a
+// dense site (a read through a computed key is a read), but `a["push"]` is a
+// function, not an element, so the inference answers `boxed` unless the key
 // itself is proved numeric.
 //
-// THE ORACLE CANNOT SEE THAT GUARD, AND IT WAS MEASURED RATHER THAN ASSUMED.
-// A claim is per REGISTER and is the join over every value that ever occupied
-// it; the bytecode puts the array literal and the result of the read in the
-// SAME slot, so the claim is `boxed` from the array alone and stays sound with
-// the guard deleted. Measured on this function and on two rewrites of it. The
-// row in ctcompile/test/TypeInference.cpp is what bites: with the guard gone
-// it reports `!ctnative.opt<!ctnative.num<i32>>` where `!ctnative.boxed` is
-// the only sound answer. This stays for the coverage it does give - the dense
+// The oracle cannot see that guard (this was measured, not assumed). A claim
+// is per register and is the join over every value that ever occupied it; the
+// bytecode puts the array literal and the result of the read in the same
+// slot, so the claim is `boxed` from the array alone and stays sound with the
+// guard deleted. The dense-array row in ctcompile/test/Analysis/Types/Inference/
+// Main.cpp is what catches it: with the guard gone it reports
+// `!ctnative.opt<!ctnative.num<i32>>` where `!ctnative.boxed` is the only
+// sound answer. This function stays for the dense-path coverage it gives.
 // path, run against the interpreter.
 function denseNamed(k) {
     var a = [1, 2];

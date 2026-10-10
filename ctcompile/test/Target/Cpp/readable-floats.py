@@ -9,8 +9,13 @@ from harness import FLAGS, find_compilers, run
 
 
 def patterns(width):
-    # Zero signs, subnormal/normal boundaries, decimal rounding boundaries,
-    # adjacent values around one, the integer precision boundary and maxima.
+    """Return the sorted IEEE-754 bit patterns to test for a 64- or 32-bit float.
+
+    The fixed anchors cover both zero signs, the subnormal/normal boundary,
+    decimal rounding boundaries (around 0.1 and 1/3), the neighbours of 1.0, 100.0, the
+    first integer the format cannot step by one (2^53 or 2^24) and the largest
+    finite values; 64 random finite patterns are added.
+    """
     anchors = {
         64: [
             0x0000000000000000,
@@ -58,6 +63,8 @@ def patterns(width):
         ],
     }[width]
     values = set(anchors)
+    # Random patterns skip an all-ones exponent (Inf and NaN), which have no
+    # decimal literal; the seed is fixed so a failure reproduces.
     generator = random.Random(0xC7C0 + width)
     exponent = {64: 0x7FF0000000000000, 32: 0x7F800000}[width]
     while len(values) < len(anchors) + 64:

@@ -1,8 +1,8 @@
-// A LOOP AND A PROPERTY READ, which is where the register model earns itself.
+// A loop and a property read, which is where the register model earns itself.
 //
 // Every non-entry block takes the whole register file as arguments and every
-// branch passes it. That is not SSA construction - no dominance frontiers, no
-// phi minimisation, no backpatching - because blocks are created with their
+// branch passes it. That is not SSA construction (no dominance frontiers, no
+// phi minimisation, no backpatching): blocks are created with their
 // full argument list before anything is emitted, so a back edge's operands are
 // known when it is written.
 
@@ -18,10 +18,10 @@ function total(items) {
 
 // CHECK-LABEL: ctjs.func @total$1(
 
-// THE ENTRY BLOCK BRANCHES INTO THE LOOP HEADER. Bytecode runs off the end of
+// The entry block branches into the loop header. Bytecode runs off the end of
 // one instruction into the next; an MLIR block does not. Without that branch
-// the header was reachable only from its own back edge, and the function
-// verified, printed plausibly and returned undefined.
+// the header would be reachable only from its own back edge, and the function
+// would verify, print plausibly and return undefined.
 // CHECK: cf.br ^[[HEADER:.*]](
 
 // CHECK: ^[[HEADER]]({{.*}}):
@@ -29,7 +29,7 @@ function total(items) {
 // CHECK: ctjs.constant #ctjs.string<"length">
 // CHECK: ctjs.get_property
 // CHECK: ctjs.compare lt
-// THE ONLY BRIDGE FROM A VALUE TO A BRANCH: cf.cond_br takes an i1, and
+// The only bridge from a value to a branch: cf.cond_br takes an i1, and
 // ctjs.convert to_boolean would produce a JavaScript boolean instead.
 // CHECK: %[[BIT:.*]] = ctjs.truthy
 // CHECK: cf.cond_br %[[BIT]]

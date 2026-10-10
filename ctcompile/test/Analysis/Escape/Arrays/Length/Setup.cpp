@@ -1,7 +1,15 @@
+//===- Setup.cpp - Dense array length base fragments ----------------------===//
+//
+// Initialises the IR fragments shared by every dense array `length` row:
+// an array %a holding one object %x, a `length` read and a return.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Cases.hpp"
 
 namespace ctcompile::test::escape::arrays::length_detail {
 
+/// Builds the base fragments every later group uses and resets the counters.
 void LengthCases::setup() {
     values = "  %zero = ctjs.constant #ctjs.number<0> {storage_test_id = \"zero\"}\n"
              "  %key = ctjs.constant #ctjs.string<\"length\"> {storage_test_id = \"key\"}\n"

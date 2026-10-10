@@ -2,8 +2,8 @@
 // RUN: python3 %S/../../check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name invariant-string-index
 // RUN: FileCheck %s < %t/escape-claims-invariant-string-index.claims
 
-// Only original bounded ASCII Strings and Number keys agree with Script lookup.
-// Conversion snapshots never replace the original String's property-key identity.
+// A string index is proved only for an unmodified ASCII literal and a Number key (where it
+// matches the interpreter); a converted copy never stands in for the original string's key.
 // CHECK: escape {{[0-9a-f]+}} 1 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 2 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 3 {{[0-9]+}} obj confined

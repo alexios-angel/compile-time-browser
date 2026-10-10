@@ -1,12 +1,14 @@
-// The style-program comparator, and the mutations it must never miss.
+//===- ctcompile/test/Comparison/Css.cpp - Style comparator tests ---------===//
 //
-// Same discipline as the document comparator: the positive case is one line
-// and the negative cases are the file, because a comparator that is too
-// lenient does not fail to catch a bad compiled stylesheet - it certifies one.
+// Tests ctcompile::css::compare, the style-program comparator, against the
+// mutations it must never miss. As with the document comparator, the positive
+// case is short and the negative cases are most of the file: a comparator that
+// is too lenient does not just miss a bad compiled stylesheet, it approves one.
 //
-// The cases here are chosen for one property: each is a difference that
-// SILENTLY CHANGES WHAT THE PAGE LOOKS LIKE while leaving the counts alone.
-// `selector_count()` and `rule_count()` agree across every one of them.
+// Each negative case is a difference that silently changes what the page looks
+// like while leaving `selector_count()` and `rule_count()` unchanged.
+//
+//===----------------------------------------------------------------------===//
 #include <ctcompile/CSS/StyleProgramComparator.hpp>
 
 #include <ctbrowser/core/atom.hpp>
@@ -29,9 +31,9 @@ constexpr std::string_view sheet = "p { color: red; margin: 0 }"
                                    "@media (min-width: 100px) { p { color: green } }"
                                    "@font-face { font-family: \"Fira\"; src: url(\"f.ttf\") }";
 
-// Each engine owns its own atom table, which is the point: ids are handed out
-// in first-interning order, so two engines spell `color` with different
-// numbers unless something interned in a different order first.
+/// A style engine with its own atom table, loaded with one sheet. Atom ids are
+/// handed out in first-interning order, so two engines can give `color`
+/// different ids; the comparator must compare atom text, not ids.
 struct program {
     atom_table atoms;
     engine e{atoms};
@@ -68,7 +70,7 @@ int main() {
         }
     }
 
-    // ATOM IDS SHIFTED, so a comparator reading ids rather than text fails here.
+    // Shifted atom ids: a comparator that reads ids rather than text fails here.
     {
         program a{sheet};
         atom_table shifted;
@@ -79,12 +81,12 @@ int main() {
               "atom ids differ between engines and must not affect the comparison");
     }
 
-    // THE ORIGIN, which decides the cascade BEFORE specificity does and is set
-    // by the caller rather than by the sheet. File author rules as user-agent
-    // and every tie they should win is lost - with no other field differing.
+    // The origin decides the cascade before specificity does, and is set by the
+    // caller rather than by the sheet. Filing author rules as user-agent loses
+    // every tie they should win, with no other field differing.
     must_notice("a sheet filed under the wrong origin", sheet, 0);
 
-    // A CHANGED VALUE, with the rule and selector structure identical.
+    // A changed value, with the rule and selector structure identical.
     must_notice("a changed declaration value",
                 "p { color: crimson; margin: 0 }"
                 ".lead { font-size: 20px !important }"
@@ -101,9 +103,9 @@ int main() {
                                      "@media (min-width: 100px) { p { color: green } }"
                                      "@font-face { font-family: \"Fira\"; src: url(\"f.ttf\") }");
 
-    // THE BUCKET. `#main p` files under the rightmost compound, which is the
-    // TAG p - change the rightmost to a class and it files elsewhere, matching
-    // a different set of elements while every count stays put.
+    // The bucket. `#main p` files under its rightmost compound, the tag `p`.
+    // Changing the rightmost compound to a class files it elsewhere, matching a
+    // different set of elements while every count stays the same.
     must_notice("a rule filed into a different bucket",
                 "p { color: red; margin: 0 }"
                 ".lead { font-size: 20px !important }"
@@ -112,7 +114,7 @@ int main() {
                 "@media (min-width: 100px) { p { color: green } }"
                 "@font-face { font-family: \"Fira\"; src: url(\"f.ttf\") }");
 
-    // SPECIFICITY, with the same bucket and the same declaration.
+    // Specificity, with the same bucket and the same declaration.
     must_notice("a changed specificity",
                 "p { color: red; margin: 0 }"
                 ".lead { font-size: 20px !important }"
@@ -121,8 +123,8 @@ int main() {
                 "@media (min-width: 100px) { p { color: green } }"
                 "@font-face { font-family: \"Fira\"; src: url(\"f.ttf\") }");
 
-    // THE MEDIA GATE. Drop the condition and the rule applies unconditionally -
-    // one rule, one declaration, one selector either way.
+    // The @media condition. Without it the rule applies unconditionally, yet
+    // there is one rule, one declaration and one selector either way.
     must_notice("a rule that lost its @media gate",
                 "p { color: red; margin: 0 }"
                 ".lead { font-size: 20px !important }"
@@ -131,16 +133,11 @@ int main() {
                 "p { color: green }"
                 "@font-face { font-family: \"Fira\"; src: url(\"f.ttf\") }");
 
-    // @font-face is engine state too, and it is not a rule - so nothing in the
-    // rule walk would catch a page font that changed.
+    // @font-face is engine state but not a rule, so nothing in the rule walk
+    // would catch a page font that changed.
     //
-    // Quoted here only because the rest of the fixture is: BOTH spellings work
-    // now. They did not when this case was written - the engine searched a
-    // declaration's reassembled text for a literal `url(`, which an unquoted
-    // url does not contain, so `src: url(f.ttf)` registered no font at all and
-    // this case compared no fonts against no fonts and passed while proving
-    // nothing. That is the failure the negative-case discipline exists to
-    // catch; the engine fix and its regression cases are in style_cascade.
+    // The URL is quoted to match the rest of the fixture; an unquoted
+    // `url(f.ttf)` also registers a font (covered in style_cascade).
     must_notice("a changed @font-face source",
                 "p { color: red; margin: 0 }"
                 ".lead { font-size: 20px !important }"

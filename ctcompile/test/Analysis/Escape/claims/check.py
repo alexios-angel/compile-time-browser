@@ -1,36 +1,41 @@
 #!/usr/bin/env python3
-"""THE ESCAPE ORACLE, CLOSED - Phase 55A checked by Phase 55O.
+"""Checks the compiler's escape-analysis claims against what the interpreter observes.
 
-Three steps over ONE corpus, and steps 1 and 2 never meet until step 3:
+Three steps over one corpus; steps 1 and 2 are independent and meet only in
+step 3:
 
-  1. the INTERPRETER runs the corpus with the recorder installed and, at every
+  1. The interpreter runs the corpus with the recorder installed and, at every
      frame pop, asks its own collector whether each object the frame allocated
-     is still reachable            (ctcompile-test-type-oracle --script)
-  2. the COMPILER imports the same corpus, runs EscapeAnalysis, and writes one
-     claim per allocation site     (ctcompile-test-escape-claims)
+     is still reachable (ctcompile-test-type-oracle --script).
+  2. The compiler imports the same corpus, runs EscapeAnalysis, and writes one
+     claim per allocation site (ctcompile-test-escape-claims).
   3. tools/check/escape-oracle.py compares the two.
 
-ZERO SOUNDNESS VIOLATIONS IS THE GATE: a site claimed `confined` that the
-collector found reachable after its frame returned is a defect, and the
-checker names it. Precision is printed, never gated. The vacuous passes are
-guarded: something must have been observed, and - on the fixture, which calls
-every one of its confined sites - at least one confined claim must have been
-proved SOUND, since an analysis that says `escapes` everywhere is right the way
-a stopped clock is. On a corpus under --script an eighth of the bundle runs and
-none of its confined sites is in a function that ever runs, so "sound > 0"
-would gate on execution coverage rather than the analysis.
+Each claim line reads `escape <program hash> <function index> <pc> obj|arr
+<verdict>`: the function index is the function's position in the source, the
+pc is the allocation's bytecode offset, and the verdict is `confined` or
+`escapes:<reason>`.
+
+The test fails on any soundness violation: a site claimed `confined` that the
+collector found reachable after its frame returned is a defect, and the checker
+names it. Precision is printed but never checked. Two vacuous passes are ruled
+out: something must have been observed, and on the fixture, which calls every
+one of its confined sites, at least one confined claim must be proved sound,
+because an analysis that says `escapes` everywhere is trivially sound. That
+second check is not applied to a bundle corpus: under --script only part of the
+bundle runs and none of its confined sites is in a function that ever runs, so
+it would measure execution coverage rather than the analysis.
 
 The claims emitter's own census lines are cross-checked for completeness
 (every Stored claim has a classified first-witness target, every live read a
-provenance record, every function a classification); these are coverage and
-link-integrity gates, never precision counts or new confinement claims.
+provenance record, every function a classification). These check coverage and
+link integrity only; they are never precision counts or new confinement claims.
 
---strict (the fixture) adds: partial and pending both zero; the checker's dump
-against the expected/ snapshot parts through check-dump.py; the inherited-accessor programs
-(inherited-*.js, each in a fresh runtime context) whose child argument must
-stay Stored after deletion; and the SHA-256 pins on the fixture functions whose
-measured bytecode coordinates the snapshot names - a pinned body that changed
-must have its evidence remeasured, not blessed.
+--strict (used only by the fixture) adds: partial and pending counts must both
+be zero; the checker's dump is compared with the expected/ snapshot parts
+through check-dump.py; the inherited-accessor programs (inherited/*.js, each in
+a fresh runtime context) must keep their child argument Stored after deletion;
+and the SHA-256 pins on fixture functions must match (see PINS).
 """
 
 import argparse
@@ -42,11 +47,12 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 
-# Every String/BigInt producer, mixed comparison and promoted historical body,
-# pinned independently; retention never authorizes a comparison value. The
-# five exception bodies are VM-allocated errors (signed shift, Div and Mod zero
-# divisors, exact negative and VM-capped Pow exponents) whose bytecode
-# coordinate is measured separately from every literal site's compiler claim.
+# SHA-256 of each fixture function whose bytecode coordinates the expected/
+# snapshot names (see check_pins). If a pinned body changes, remeasure its
+# evidence in the snapshot rather than only updating the hash. The five *Early
+# BigInt bodies throw VM-allocated errors (signed shift, Div and Mod by zero,
+# negative and VM-capped Pow exponents) whose bytecode coordinate is measured
+# separately from the compiler's claims for literal sites.
 PINS = {
     "objectFrameBigIntShiftEarly": "ad0d55f50570016466a7d91649e25508e777398c8d4e4255592acd1472fcb9eb",
     "objectFrameBigIntDivModDivEarly": "6c68903dc496b7644562597929ae68c21e34728e9b17c4229aac42eafab23f48",
@@ -125,6 +131,7 @@ PINS = {
     "objectFrameBigIntPowMixed": "62f6b50fc5fb2588c6e0d4bb98e051e5737cb5cba28df1a93cc36cc427277054",
 }
 
+# Expected `<function> pc<N> <verdict>` rows for each inherited/<case>.js program.
 INHERITED = {
     "getter": ["readInherited pc1 escapes:passed"],
     "setter": ["writeInherited pc2 escapes:stored", "writeInherited pc4 escapes:passed"],
@@ -137,6 +144,7 @@ def run(command):
 
 
 def numbers(pattern, text, what):
+    """Returns the integer groups of `pattern` in `text`; exits naming `what` if absent."""
     found = re.search(pattern, text)
     if not found:
         sys.exit(f"the claims emitter did not report {what}:\n{text}")
@@ -144,10 +152,14 @@ def numbers(pattern, text, what):
 
 
 def check_inherited_accessors(args):
-    """Each prototype mutation gets a fresh runtime context. Rows are joined by
-    the program/function/pc coordinate, not by allocation order: the child
-    argument must stay Stored after deletion, and receiver sinks alone do not
-    prevent an unsound contents proof from clearing that claim."""
+    """Runs each inherited/<case>.js program and compares its claims with INHERITED.
+
+    Each prototype mutation gets a fresh runtime context. Rows are joined by the
+    program/function/pc coordinate, not by allocation order. The child argument
+    must stay Stored after the inherited accessor is deleted: the receiver's own
+    escape does not stop an unsound proof about the receiver's contents from
+    clearing the child's claim, so the child's claim is checked directly.
+    """
     for case, expected in INHERITED.items():
         source = HERE / "inherited" / f"{case}.js"
         rec = args.work / f"escape-inherited-{case}.rec"
@@ -194,6 +206,7 @@ def check_inherited_accessors(args):
 
 
 def check_pins(corpus):
+    """Exits if any PINS function body in the corpus no longer has its pinned hash."""
     source = Path(corpus).read_text()
     for name, pinned in PINS.items():
         body = re.search(rf"function {name}\([^\n]*\) \{{[^\n]*\n(    [^\n]*\n)*\}}", source)
@@ -236,8 +249,8 @@ def main():
     if claimed.returncode != 0:
         sys.exit(f"claiming {name} failed (exit {claimed.returncode})")
 
-    # A TRACKED SITE OR A SINK OPERAND IN A LIVE BLOCK THE SOLVER NEVER VISITED
-    # is an analysis gap hidden behind `escapes` - sound, and asserted at zero.
+    # A tracked site or sink operand in a live block the solver never visited is
+    # an analysis gap hidden behind `escapes`. It is sound, but must be zero.
     sites, operands = numbers(
         r"([0-9]+) unvisited live sites, ([0-9]+) unvisited operands", said, "its unvisited counts"
     )
@@ -247,8 +260,9 @@ def main():
             "a reachability gap in the analysis"
         )
 
-    # The Stored backlog reports the direct target of each first witness: a
-    # complete partition of the unchanged Stored claims, without gating precision.
+    # The emitter classifies the direct target of each Stored claim's first
+    # witness (the first write that stored it). The classes must partition the
+    # Stored claims exactly; how many land in each class is not checked.
     targets, *classes = numbers(
         r"stored first-witness targets: ([0-9]+) sites, ([0-9]+) local-confined, ([0-9]+) "
         r"local-escaping, ([0-9]+) local-mixed, ([0-9]+) external-or-mixed, ([0-9]+) primitive, "
@@ -296,8 +310,8 @@ def main():
             "every function"
         )
 
-    # Property reads and shared-local-site write links are diagnostic evidence:
-    # coverage and link integrity are gated, never a precision count.
+    # Property reads and their links to the writes of shared local sites are
+    # diagnostic evidence: coverage and link integrity are checked, never counts.
     *_, unresolved_bases, invalid_links = numbers(
         r"direct-load candidates: ([0-9]+) links across ([0-9]+) reads, ([0-9]+) stored-site "
         r"edges, ([0-9]+) external-or-mixed bases, ([0-9]+) unresolved bases, ([0-9]+) invalid links",
@@ -318,8 +332,9 @@ def main():
             "every function"
         )
 
-    # The separately bounded closure must preserve all original candidates and
-    # cover every direct read and sink even when its work limit is exhausted.
+    # The load-provenance closure has its own work limit. It must keep every
+    # direct-load candidate and cover every live read and sink even when that
+    # limit is exhausted.
     *_, invalid_records = numbers(
         r"load-provenance candidates: ([0-9]+) read-site edges, ([0-9]+) stored-site edges, "
         r"([0-9]+) exposure-site edges, ([0-9]+) propagated exposure edges, ([0-9]+) invalid records",

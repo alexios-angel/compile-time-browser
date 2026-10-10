@@ -1,62 +1,62 @@
-// AN OPCODE WITH NO MAPPING ABANDONS THE WHOLE FUNCTION.
+// An opcode with no mapping abandons the whole function.
 //
-// "Never emit partially correct AOT code" is the plan's invariant and this is
-// the test of it: a function containing one unsupported opcode produces NO
-// ctjs.func at all, and says why in a form a machine can read.
+// AOT code is never emitted partially correct, and this is the test of that
+// rule: a function containing one unsupported opcode produces no ctjs.func at
+// all, and says why in a form a machine can read.
 //
 // The failure this guards against is not a crash. It is a function that is
-// translated up to the opcode nobody handled and then quietly ends - which
+// translated up to the opcode nobody handled and then quietly ends, which
 // verifies, prints, and computes something else.
 
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %s 2>/dev/null | ctjs-opt | FileCheck %s
 
-// THE EXAMPLE HAS NOW BEEN REWRITTEN THREE TIMES, and every time for the right
-// reason: it named something that started working. It was a closure, then it
-// was `+a` - unary plus, op::to_number - then it was `import(u)`, which was
-// chosen "to outlast the phase" and lasted until the ES-modules commit that
-// removed op::dyn_import from ImporterCoverage's pending list.
+// The example is a generator because op::yield_value is the opcode furthest
+// from being implemented: it is may_suspend, and the AOT ABI has no suspend
+// helper at all. The only row covering it is ct_aot_suspend_unsupported
+// (ctbrowser/include/ctbrowser/aot/helpers/calls-and-modules.def), which
+// makes "this opcode has no AOT lowering" a declared outcome with a
+// diagnosable message rather than a silent gap. Any opcode the importer does
+// handle would make the function import and this test fail.
 //
-// SO THIS ONE IS CHOSEN FOR THE OPCODE FURTHEST FROM BEING IMPLEMENTED, which
-// is not the same as the one furthest down a plan. op::yield_value is
-// may_suspend, and the ABI has NO SUSPEND HELPER AT ALL: the only row covering
-// it is ct_aot_suspend_unsupported, which exists to make "this opcode has no
-// tier-1 lowering" a declared outcome with a diagnosable message. Its own
-// comment says Phase 14 owns the suspend ABI and that this table "commits to
-// NO suspend ABI" until then. A suspending opcode is also invisible to
-// ImporterCoverage's ratchet - that test skips may_suspend rows - so nothing
-// else can make this file stale by accident.
+// A suspending opcode is also skipped by the importer coverage test
+// (Import/Coverage.cpp ignores may_suspend rows), so no other test can make
+// this file stale by accident: the example only stops being an example when
+// someone deliberately implements suspension.
 //
-// WHEN PHASE 14 LANDS A SUSPEND ABI, THIS FILE NEEDS A NEW EXAMPLE AGAIN, and
-// if by then nothing is genuinely unsupported the honest move is to delete it
-// rather than to pick something that merely looks obscure. A negative test has
-// to keep naming something GENUINELY unsupported or it asserts nothing.
+// Once a suspend ABI exists, this file needs a new example. If nothing is
+// genuinely unsupported by then, delete the file rather than picking an
+// opcode that merely looks obscure: a negative test must name something that
+// really is unsupported, or it asserts nothing. Whatever replaces the example
+// must first be confirmed unhandled by the importer, or the test passes for
+// the wrong reason.
+
 function* counted(n) { yield n; }
 
-// NO FUNCTION AT ALL, not a partial one.
+// No function at all, not a partial one.
 //
 // READ WHAT THIS ACTUALLY CHECKS, because it is narrower than it looks. A
 // CHECK-NOT before the first CHECK constrains only the text BEFORE that CHECK
-// matches - and `ctjs.skipped` is a module attribute, so it matches on line one
-// and this covers the module header alone. The top level itself IS imported and
+// matches, and `ctjs.skipped` is a module attribute, so it matches on line one
+// and this covers the module header alone. The top level itself is imported and
 // prints below: it declares `counted` with a create_closure over a function
 // index, and the importer does not refuse a closure whose target was skipped.
-// What this line rules out is a ctjs.func emitted BEFORE the skip record - a
-// partial `counted` - which is the shape the invariant is about.
+// What this line rules out is a ctjs.func emitted before the skip record (a
+// partial `counted`), which is the shape the rule is about.
 // CHECK-NOT: ctjs.func
 
-// AND THE REASON, structured: which function, which opcode, where.
+// And the reason, structured: which function, which opcode, where.
 //
-// THE GENERIC REASON IS NOW UNREACHABLE FROM JAVASCRIPT, which is why this
-// asserts the precise one instead. Every NON-suspending opcode in
-// bytecode_opcodes.def is imported - ctcompile_importer_coverage asserts
-// exactly that - so the only opcodes left are the two that suspend, and those
-// are refused by a predicate expanded from the table's own may_suspend column
-// with a message that says what the problem actually is.
+// Every non-suspending opcode in bytecode_opcodes.def is imported
+// (ctcompile_importer_coverage checks exactly that), so the only opcodes left
+// are the two that suspend. Those are refused by a predicate expanded from the
+// table's own may_suspend column, with a message that says what the problem
+// is, so this asserts that specific reason.
 //
-// So "no CTJS operation for this opcode yet" survives as the default arm for an
-// opcode ADDED to the table tomorrow, and nothing this file can write reaches
-// it today. That is the fourth time this test has been repointed and the first
-// time the reason changed rather than the opcode.
+// The generic "no CTJS operation for this opcode yet" reason survives as the
+// default arm for an opcode added to the table later; nothing JavaScript can
+// express reaches it today. A new opcode without importer support fails the
+// coverage test first, before anything here could notice.
+
 // CHECK: ctjs.skipped
 // CHECK-SAME: opcode = "yield_value"
 // CHECK-SAME: reason = "a suspension point

@@ -1,5 +1,10 @@
-// Array/object contents and retention rows share one executable and run in their
-// original order. Topic files keep each matrix beside its live mutation checks.
+//===- main.cpp - Array escape-analysis tests -------------------*- C++ -*-===//
+//
+// Escape-analysis checks for array and object contents, retention and
+// primitive producers, run in one executable. Each check* function lives in
+// its own topic file next to its mutation checks.
+//
+//===----------------------------------------------------------------------===//
 #include "Harness.h"
 #include "PrimitiveBinary.h"
 
@@ -14,7 +19,7 @@ int main() {
     context.getOrLoadDialect<mlir::cf::ControlFlowDialect>();
     context.getOrLoadDialect<mlir::scf::SCFDialect>();
     context.getOrLoadDialect<CTNativeDialect>();
-    // For the DEFAULT-RULE rows: an operation from no dialect at all has no
+    // For the default-rule rows: an operation from no dialect at all has no
     // interface and is not a branch, which is exactly the case the rule is for.
     context.allowUnregisteredDialects();
 

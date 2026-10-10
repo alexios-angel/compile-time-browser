@@ -1,4 +1,4 @@
-var retained;
+var retained; // An Object.prototype getter saves `this`: reading local's property leaks local.
 Object.defineProperty(Object.prototype, "nd3retain", {
     get: function () {
         retained = this;

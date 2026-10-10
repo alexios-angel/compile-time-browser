@@ -1,11 +1,23 @@
+//===- IdentityFields.cpp - Object field presence through identities ------===//
+//
+// Unit rows for field presence on objects that carry a native identity: when a
+// `ctjs.get_property` may drop the implicit `undefined` because this object's
+// own field was definitely stored first, directly or through a Map.get alias,
+// and how live IR edits withdraw and restore that proof.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Tests.h"
 
 namespace ctcompile::test::type_inference {
 
-// The identity field group is a storage schema, not an allocation identity.
-// These rows deliberately give distinct objects the same schema. Presence is
-// allowed to remove only implicit absence at this read; every explicit stored
-// type, including Undefined on another object, still belongs to the join.
+/// Shared prologue for the identity field rows. The identity field group
+/// (`ctnative.object_field_group = 7`) is a storage schema, not an allocation
+/// identity, and these rows deliberately give two distinct objects the same
+/// schema. Presence may remove only implicit absence at a read; every explicit
+/// stored type, including Undefined on another object, still belongs to the
+/// join. %one and %wide are the IEEE-754 bit patterns of 1.0 (inferred as i32)
+/// and 1.5 (f64).
 const std::string kIdentityFieldPrelude = R"mlir(
   %one = ctjs.constant #ctjs.number<4607182418800017408>
   %wide = ctjs.constant #ctjs.number<4609434218613702656>
@@ -17,16 +29,22 @@ const std::string kIdentityFieldPrelude = R"mlir(
   %second = ctjs.create_object {ctnative.object_identity}
 )mlir";
 
+/// Returns a `ctjs.set_property object[key] = value` line in field group 7.
 std::string identityFieldStore(llvm::StringRef object, llvm::StringRef value, llvm::StringRef key) {
     return "  ctjs.set_property " + object.str() + "[" + key.str() + "], " + value.str() +
            " {ctnative.object_field_group = 7 : i64}\n";
 }
 
+/// Returns the `%observed` field read of `object[%key]` that carries `check`.
 std::string identityFieldRead(llvm::StringRef object) {
     return "  %observed = ctjs.get_property " + object.str() +
            "[%key] {check, ctnative.object_field_group = 7 : i64}\n";
 }
 
+/// Checks field presence and value types on identity objects: definite and
+/// conditional stores, stores to other allocations or keys, String fields, a
+/// cross-call origin, and live edits to the store's receiver, position and
+/// value.
 void checkIdentityFieldRows(mlir::MLIRContext & context) {
     const std::string store = identityFieldStore();
     const std::string read = identityFieldRead();
@@ -190,9 +208,10 @@ module {
     check(context, {"a cross-call object origin cannot borrow a schema initialization", crossCall,
                     "!ctnative.opt<!ctnative.num<i32>>", true, 0});
 
-    // Keep all annotations while moving the store to another live allocation.
-    // A newly constructed solver and a cloned source module must both observe
-    // each change. The original schema group remains deliberately unchanged.
+    // Edit the live IR (store receiver, store position, stored value) while
+    // keeping every annotation. A newly constructed solver and a cloned module
+    // must both observe each change. The schema group deliberately stays the
+    // same throughout.
     auto module = mlir::parseSourceString<mlir::ModuleOp>(
         prologue() + kIdentityFieldPrelude + store + read + "  ctjs.return %observed\n}\n",
         &context);
@@ -268,6 +287,8 @@ module {
                  "!ctnative.num<i32>", true);
 }
 
+/// The identity field prelude plus one Map (group 3) and its set, get, delete
+/// and clear methods.
 const std::string kIdentityMapPrelude = kIdentityFieldPrelude + R"mlir(
   %slot = ctjs.constant #ctjs.string<"slot">
   %missing = ctjs.constant #ctjs.string<"missing">
@@ -284,18 +305,22 @@ const std::string kIdentityMapPrelude = kIdentityFieldPrelude + R"mlir(
   %clearer = ctjs.get_property %map[%clearName] {ctnative.map_method}
 )mlir";
 
+/// Returns a `map.set(%slot, object)` call bound to \p result.
 std::string identityMapSet(llvm::StringRef result, llvm::StringRef object) {
     return "  " + result.str() + " = ctjs.call %setter(%map, %slot, " + object.str() +
            ") {ctnative.map_action = \"set\", ctnative.map_group = 3 : i64}\n";
 }
 
+/// Returns a `map.get(key)` call bound to \p result.
 std::string identityMapGet(llvm::StringRef result, llvm::StringRef key) {
-    // Even refusals carry map_present. It is an old report, not proof that
-    // this exact read still names an initialized object in the current source.
+    // Every get carries ctnative.map_present, even where the analysis refuses.
+    // The attribute is a cached result from an earlier pass, not proof that
+    // this read still returns an initialized object in the current IR.
     return "  " + result.str() + " = ctjs.call %getter(%map, " + key.str() +
            ") {ctnative.map_action = \"get\", ctnative.map_present}\n";
 }
 
+/// Returns the last `ctjs.get_property` in \p module that carries `check`.
 ctcompile::ctjs::GetPropertyOp checkedField(mlir::ModuleOp module) {
     ctcompile::ctjs::GetPropertyOp read;
     module.walk([&](ctcompile::ctjs::GetPropertyOp op) {
@@ -304,6 +329,9 @@ ctcompile::ctjs::GetPropertyOp checkedField(mlir::ModuleOp module) {
     return read;
 }
 
+/// Checks that the checked field's presence answer is \p assigned with an
+/// unlimited budget, that every smaller work budget reports exhaustion and
+/// no presence, and that a budget of exactly the measured work reproduces it.
 void checkFieldBudgets(mlir::ModuleOp module, const char * what, bool assigned) {
     const auto read = checkedField(module);
     const auto complete = ctcompile::ctnative::queryNativeObjectFieldPresence(read);
@@ -328,6 +356,9 @@ void checkFieldBudgets(mlir::ModuleOp module, const char * what, bool assigned) 
                 static_cast<unsigned long long>(complete.work));
 }
 
+/// Checks field presence for objects saved in and read back from a Map:
+/// overwrites, deletes, clears, branch writes through aliases, and live edits
+/// to the reaching payload, lookup key and method key.
 void checkIdentityMapFieldRows(mlir::MLIRContext & context) {
     const std::string store = identityFieldStore();
     const std::string save = identityMapSet("%put") + identityMapGet();
@@ -421,8 +452,8 @@ void checkIdentityMapFieldRows(mlir::MLIRContext & context) {
     };
     for (const row & r : rows) { check(context, r); }
 
-    // The positive also passes actual preparation: raw annotations are not
-    // required for this source to acquire the independently checked schema.
+    // The positive case also passes through real preparation: the source does
+    // not need hand-written annotations to acquire the checked schema.
     const std::string text = prologue() + kIdentityMapPrelude + store + save +
                              identityMapSet("%overwrite", "%second") + read +
                              "  ctjs.return %observed\n}\n";
@@ -490,9 +521,10 @@ void checkIdentityMapFieldRows(mlir::MLIRContext & context) {
     liveAndFresh("saved Map field restores its live method and lookup", "!ctnative.num<i32>", true);
     checkFieldBudgets(*module, "restored saved Map alias", true);
 
-    // A live malformed source can retain valid reports. Query it directly,
-    // without sending invalid SSA to the type solver: a then-only allocation
-    // cannot become the receiver outside its region or in the sibling arm.
+    // Malformed live IR can still carry valid-looking report attributes. Query
+    // presence directly, without sending invalid SSA to the type solver: an
+    // allocation made inside the then-region cannot become the receiver
+    // outside that region or in the sibling arm.
     for (bool sibling : {false, true}) {
         const std::string thenBody = R"mlir(
   %bit = ctjs.truthy %p
@@ -541,6 +573,8 @@ void checkIdentityMapFieldRows(mlir::MLIRContext & context) {
         checkFieldBudgets(*absentModule, "different allocation refusal", false);
     }
 
+    // rows[12] is "both branches can initialize one object through different
+    // aliases".
     auto branchModule = mlir::parseSourceString<mlir::ModuleOp>(
         prologue() + rows[12].body + "  ctjs.return %observed\n}\n", &context);
     if (!branchModule) {

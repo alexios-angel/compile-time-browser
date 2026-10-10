@@ -3,8 +3,8 @@
 // RUN: python3 %S/../check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name invariant-bitwise-latch
 // RUN: FileCheck %s --check-prefix=CLAIM < %t/escape-claims-invariant-bitwise-latch.claims
 
-// Invariant bitwise latches preserve original primitive snapshots, signed results
-// and masked shift counts. Changed operands and unsafe bounds refuse.
+// Bitwise strides (&, |, ^, <<, >>, >>>) over primitives saved before the loop are folded
+// with int32 wrap and shift counts masked to 0-31; changing operands or bad bounds are refused.
 // IMPORT-LABEL: ctjs.func @savedAnd$
 // IMPORT: ctjs.binary bitand
 // IMPORT-LABEL: ctjs.func @savedOr$

@@ -1,8 +1,23 @@
+//===- Contents.cpp - Array contents and retention tests ------------------===//
+//
+// Table-driven tests for the array contents proof (computeArrayContents) and
+// the array retention refinement built on it, including live IR mutations
+// that check the analyses re-read current operands.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Harness.h"
 
 namespace ctcompile::test::escape::arrays {
 
+/// Table-driven test of computeArrayContents: each row is a ctjs function body
+/// (wrapped in kPrologue, whose fourth argument is the unknown parameter %p)
+/// and the expected per-array element origins, recorded reads, writes and
+/// returned reachable set, or the ArrayContentsFailure that must refuse it.
 void checkArrayContents(mlir::MLIRContext & context) {
+    // ctjs.number attributes hold the IEEE-754 bit pattern of the double:
+    // 4607182418800017408 = 1.0, 4611686018427387904 = 2.0,
+    // 9221120237041090560 = NaN, 9223372036854775808 = -0.0.
     const std::string values =
         "  %zero = ctjs.constant #ctjs.number<0> {storage_test_id = \"zero\"}\n"
         "  %one = ctjs.constant #ctjs.number<4607182418800017408> "
@@ -228,10 +243,10 @@ void checkArrayContents(mlir::MLIRContext & context) {
     };
     for (const contents_row & r : rows) { run(r); }
 
-    // The key interpretation is independent of the VM's permissive numeric
-    // cast. Fractional/NaN/infinite numbers must never borrow a dense slot
-    // proof. Number -0 and canonical String "0" qualify; lookalike spellings
-    // are named properties and cannot borrow an existing element's origin.
+    // Only canonical array indices may reuse a dense element's proof: Number -0
+    // and String "0" qualify. Fractional, NaN or infinite numbers and lookalike
+    // strings ("00", "+0", " 0") are named properties, even though the VM's
+    // lenient number cast would map some of them to index 0.
     const std::vector<std::pair<std::string, bool>> keys = {
         {"#ctjs.number<9223372036854775808>", true}, // -0
         {"#ctjs.string<\"0\">", true},
@@ -285,6 +300,10 @@ void checkArrayContents(mlir::MLIRContext & context) {
         ctjs::GetPropertyOp load;
         module->walk([&](ctjs::SetPropertyOp op) { store = op; });
         module->walk([&](ctjs::GetPropertyOp op) { load = op; });
+        // Mutate the parsed IR in place and re-run the analysis to prove it reads the
+        // current operands rather than a cached result. Operand indices: for
+        // SetPropertyOp 2 is the stored value; for GetPropertyOp 0 is the object and
+        // 1 is the key. Argument 3 of the function is the unknown parameter %p.
         const mlir::Value original = store.getValue();
         const mlir::Value base = load.getObject();
         const mlir::Value key = load.getKey();
@@ -310,7 +329,8 @@ void checkArrayContents(mlir::MLIRContext & context) {
         checkArrayContents(*module, mutation);
         load->setOperand(0, base);
 
-        // A forged completion marker cannot rescue a proof after publication.
+        // Once the array is stored to a global (published), manually setting the
+        // ctnative.array_contents_complete attribute must not make the proof succeed.
         mlir::OpBuilder builder(function.getBody().front().getTerminator());
         auto published = ctjs::StoreGlobalOp::create(builder, function.getLoc(), "held", base);
         base.getDefiningOp()->setAttr("ctnative.array_contents_complete", builder.getUnitAttr());
@@ -386,6 +406,10 @@ void checkArrayContents(mlir::MLIRContext & context) {
                 keys.size());
 }
 
+/// Table-driven test of array retention: for each fixture, checks which array
+/// children a complete contents proof lets the escape analysis discharge
+/// (`discharged`) and which receivers and nested allocations it may mark
+/// confined (`confinedReceivers`, `confinedNested`).
 void checkArrayRetention(mlir::MLIRContext & context) {
     const std::string values = "  %zero = ctjs.constant #ctjs.number<0>\n"
                                "  %one = ctjs.constant #ctjs.number<4607182418800017408>\n"
@@ -457,12 +481,17 @@ void checkArrayRetention(mlir::MLIRContext & context) {
     const std::string countedEnd = "  %step = ctjs.binary add %i, %one\n"
                                    "  cf.br ^header(%step : !ctjs.value)\n^exit:\n" +
                                    done;
+    // %max is 4294967295.0 (2^32 - 1), one past the largest valid array index.
     const std::string loopValues = localStart +
                                    "  %one = ctjs.constant #ctjs.number<4607182418800017408>\n"
                                    "  %two = ctjs.constant #ctjs.number<4611686018427387904>\n"
                                    "  %max = ctjs.constant #ctjs.number<4751297606873776128>\n"
                                    "  %negative = ctjs.unary neg %one\n"
                                    "  %name = ctjs.constant #ctjs.string<\"length\">\n";
+    // Builds an scf.while loop over `%index` from `start` by `stride` while
+    // `%index < %guard.length`, where `%guard` is created with `elements`. `body`
+    // must define `%fresh`, which each iteration yields as `%saved`. `header` is
+    // spliced into the condition region and `preheader` before the loop.
     const auto allocationLoop = [](const std::string & body, const std::string & start = "%zero",
                                    const std::string & stride = "%one",
                                    const std::string & elements = "%zero",
@@ -516,6 +545,10 @@ void checkArrayRetention(mlir::MLIRContext & context) {
         "  %aliases = ctjs.create_array [%guard] {storage_test_id = \"aliases\"}\n";
     const std::string loadedReceiver = "      %slot = ctjs.binary add %zero, %zero\n"
                                        "      %reloaded = ctjs.get_property %aliases[%slot]\n";
+    // Emits `result = scf.if %flag` yielding `left` or `right`. The `...Keys`
+    // fixtures select dense indices; each `...Gap` twin yields a value loaded from
+    // %guard[1] in one arm instead, so the key is not a known index and the proof
+    // must be refused.
     const auto selectedInput =
         [](const std::string & left, const std::string & right, const std::string & thenBody = "",
            const std::string & elseBody = "", const std::string & result = "%key") {
@@ -523,6 +556,8 @@ void checkArrayRetention(mlir::MLIRContext & context) {
                    "      scf.yield " + left + " : !ctjs.value\n    } else {\n" + elseBody +
                    "      scf.yield " + right + " : !ctjs.value\n    }\n";
         };
+    // Allocates %fresh, runs `input` (which must define `key`), then stores %fresh
+    // to receiver[key].
     const auto selectedStore = [&](const std::string & input,
                                    const std::string & receiver = "%guard",
                                    const std::string & key = "%key") {
@@ -537,6 +572,7 @@ void checkArrayRetention(mlir::MLIRContext & context) {
     const std::string clearBoth = clearGuard + "  ctjs.set_property %guard[%one], %zero\n";
     const std::string gapKeys = selectedStore("    %read = ctjs.get_property %guard[%one]\n" +
                                               selectedInput("%read", "%two"));
+    // selectedInput into %selectedKey, then %key = ctjs.binary `expression`.
     const auto arithmeticInput = [&](const std::string & left, const std::string & right,
                                      const std::string & expression = "add %selectedKey, %zero",
                                      const std::string & thenBody = "",
@@ -552,6 +588,7 @@ void checkArrayRetention(mlir::MLIRContext & context) {
     const std::string correlatedGap =
         selectedStore("    %read = ctjs.get_property %guard[%one]\n" +
                       arithmeticInput("%read", "%two", "sub %selectedKey, %selectedKey"));
+    // One scf.if yielding a pair; the key is the difference of the two results.
     const auto pairedInput = [](const std::string & thenValues, const std::string & elseValues,
                                 const std::string & thenBody = "",
                                 const std::string & elseBody = "") {
@@ -564,6 +601,8 @@ void checkArrayRetention(mlir::MLIRContext & context) {
     const std::string pairedKeys = selectedStore(pairedInput("%zero, %zero", "%one, %one"));
     const std::string pairedGap = selectedStore("    %read = ctjs.get_property %guard[%one]\n" +
                                                 pairedInput("%read, %read", "%two, %two"));
+    // Two sibling scf.if selections (%firstKey, %secondKey) whose difference is
+    // the key; `condition` replaces %flag in the second and `reversed` swaps its arms.
     const auto siblingInput = [&](const std::string & left = "%zero",
                                   const std::string & right = "%one",
                                   const std::string & condition = "%flag",
@@ -4629,8 +4668,9 @@ void checkArrayRetention(mlir::MLIRContext & context) {
         base.getDefiningOp()->setAttr("ctnative.confined", builder.getUnitAttr());
         budgets += checkArrayRetention(*module, mutation);
         publication.erase();
-        // Forged markers remain present. Only restoring the complete current
-        // operation/contents graph permits the same refinement again.
+        // The manually set array_contents_complete and confined attributes are still
+        // on the array; the refinement succeeds again only because erasing the global
+        // store restored IR whose contents proof is genuinely complete.
         mutation.complete = true;
         mutation.discharged = "x";
         budgets += checkArrayRetention(*module, mutation);
@@ -6551,10 +6591,13 @@ void checkArrayRetention(mlir::MLIRContext & context) {
         rows.size(), budgets);
 }
 
+/// Runs computeArrayContents over object-property fixtures and checks that
+/// each one is refused, along with fixed-key controls and in-place IR mutations.
 void checkObjectContents(mlir::MLIRContext & context) {
-    // Preserve the historical object cases and their later mutations. Their
-    // first assignment now refuses: an inherited setter may retain either
-    // operand without installing an own field, so no later graph is evidence.
+    // Object-field cases. Every row expects UnsupportedOperation because the
+    // first set_property may hit an inherited setter that keeps either operand
+    // without creating an own field. The expected object graphs are kept so the
+    // cases still run, but they are not evidence of a supported analysis.
     const std::string values =
         "  %zero = ctjs.constant #ctjs.number<0> {storage_test_id = \"zero\"}\n"
         "  %key = ctjs.constant #ctjs.string<\"child\">\n"
@@ -6814,6 +6857,8 @@ void checkObjectContents(mlir::MLIRContext & context) {
     };
     for (const object_row & expected : rows) { run(expected); }
 
+    // Each fixed key and whether it may name an own field: any String of at most
+    // 256 characters except "__proto__"; non-String keys would need coercion.
     const std::vector<std::pair<std::string, bool>> keys = {
         {"#ctjs.string<\"\">", true},
         {"#ctjs.string<\"0\">", true},

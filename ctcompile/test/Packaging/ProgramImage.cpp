@@ -1,10 +1,14 @@
-// The program image: does it round-trip, and does the loader refuse what it
-// should?
+//===- ctcompile/test/Packaging/ProgramImage.cpp - Program image tests ----===//
 //
-// Same discipline as the DOM and style comparators. The positive case is a few
-// lines; the negative cases are the file. A comparator too lenient does not
-// fail to catch a bad image - it certifies one - and a loader too permissive
-// does not fail to catch a corrupt file, it EXECUTES it.
+// Tests the program image (write_image / load_image): does it round-trip, and
+// does the loader refuse what it should?
+//
+// As with the DOM and style comparators, the positive case is a few lines and
+// most of the file is negative cases. A comparator that is too lenient does
+// not just miss a bad image, it approves one; a loader that is too permissive
+// does not just miss a corrupt file, it executes it.
+//
+//===----------------------------------------------------------------------===//
 #include <ctcompile/JavaScript/ProgramComparator.hpp>
 
 #include <ctbrowser/script/compile.hpp>
@@ -31,9 +35,10 @@ using ctbrowser::script::write_image;
 
 namespace {
 
-// Deliberately saturated: a field nobody serialized comes back at its default
-// and fails here. Generators, arrows in methods, accessors, a BigInt literal,
-// closures three deep, a for-of, negative zero, and awkward strings.
+// Deliberately exercises every field: a field nobody serialized comes back at
+// its default and fails the round trip. Generators, arrows in methods,
+// accessors, a BigInt literal, closures three deep, a for-of, negative zero,
+// and awkward strings.
 constexpr std::string_view rich_source =
     "const big = 123456789012345678901234567890n;\n"
     "const neg = -0;\n"
@@ -64,7 +69,8 @@ constexpr std::string_view rich_source =
     return compiler::compile(source);
 }
 
-// Round-trip and require equality. Returns the bytes so a caller can corrupt them.
+/// Writes `from` as an image, loads it back and fails the test unless the two
+/// programs compare equal. Returns the bytes so a caller can corrupt them.
 std::vector<std::byte> round_trip(const program & from, std::string_view what,
                                   image_option option = image_option::keep_source) {
     const std::vector<std::byte> bytes = write_image(from, option);
@@ -90,9 +96,9 @@ std::vector<std::byte> round_trip(const program & from, std::string_view what,
     return bytes;
 }
 
-// A corrupt image must be REFUSED. Not "must not crash" - refused, with a
-// reason, because an image that loads and is subtly wrong is worse than one
-// that fails.
+/// Applies `corrupt` to `bytes` and fails the test unless the loader refuses
+/// the result. Not "must not crash": refused, because an image that loads and
+/// is subtly wrong is worse than one that fails.
 void must_refuse(std::string_view what, std::vector<std::byte> bytes,
                  void (*corrupt)(std::vector<std::byte> &)) {
     corrupt(bytes);
@@ -103,12 +109,11 @@ void must_refuse(std::string_view what, std::vector<std::byte> bytes,
     }
 }
 
-// AND REFUSED FOR THE STATED REASON. Two decisions in program_image/ rest on
-// which check runs first - the source hash algorithm is tagged into the
-// FINGERPRINT rather than the version because the layout did not change, and
-// dropping `nested` bumped the VERSION because it did. Neither is worth
-// anything if the loader reports the wrong one, and "it was refused" cannot
-// tell them apart.
+/// Like must_refuse, and also requires the error to mention `expected`. Which
+/// check fires matters: a change of source hash algorithm is tagged into the
+/// fingerprint (the layout did not change), while a layout change bumps the
+/// version. Neither is useful if the loader reports the wrong one, and "it was
+/// refused" cannot tell them apart.
 void must_refuse_saying(std::string_view what, std::vector<std::byte> bytes,
                         void (*corrupt)(std::vector<std::byte> &), std::string_view expected) {
     corrupt(bytes);
@@ -126,18 +131,18 @@ void must_refuse_saying(std::string_view what, std::vector<std::byte> bytes,
     }
 }
 
-// --- THE HASHES THE SOURCE HASH MUST NOT BE ---------------------------
+// --- Hashes the source hash must not be ---------------------------------
 //
-// `image_source_hash` is what makes the cache safe - an image built from other
-// source is refused rather than run - and it is XXH64 over 64-bit words rather
-// than a byte at a time because it also sits on the page-load path. Widening a
-// hash gives it failure modes a byte-at-a-time one cannot have, and these are
-// those failure modes, written out so the case that catches each can be
-// WATCHED failing. A negative case nobody has seen go red is not evidence.
+// `image_source_hash` is what makes the image cache safe (an image built from
+// other source is refused rather than run), and it is XXH64 over 64-bit words
+// rather than a byte at a time because it also sits on the page-load path.
+// Widening a hash gives it failure modes a byte-at-a-time one cannot have.
+// These deliberately broken hashes are those failure modes written out, so the
+// case that catches each one can be seen failing against it (see hash_case).
 //
-// The first of them is not hypothetical. The four-lane FNV below is what this
-// file's hash was for most of a day, and it collides on one in five single-byte
-// edits to real JavaScript.
+// The first is not hypothetical: the four-lane FNV below was briefly the real
+// source hash, and it collides on one in five single-byte edits to real
+// JavaScript.
 
 constexpr std::uint64_t fnv_prime = 1099511628211ull;
 constexpr std::uint64_t fnv_basis = 14695981039346656037ull;
@@ -157,11 +162,13 @@ constexpr std::uint64_t fnv_basis = 14695981039346656037ull;
     return x;
 }
 
-// WHAT THE HASH WAS UNTIL TODAY: one multiply per byte. The fingerprint now
-// carries a tag naming which algorithm an image was written with, and that tag
-// is only worth its line if the two answers actually differ.
+/// The previous source hash: FNV-1a, one multiply per byte. The fingerprint
+/// carries a tag naming which algorithm wrote an image, and that tag is only
+/// useful if the two algorithms give different answers.
 [[nodiscard]] std::uint64_t legacy_byte_fnv(std::string_view s) {
-    std::uint64_t h = 1469598103934665603ull; // the basis as it was written
+    // The basis the old code used: FNV's 14695981039346656037 missing its last
+    // digit. Kept as written, since only the old hash's answers matter here.
+    std::uint64_t h = 1469598103934665603ull;
     for (const char c : s) {
         h ^= static_cast<std::uint8_t>(c);
         h *= fnv_prime;
@@ -169,14 +176,13 @@ constexpr std::uint64_t fnv_basis = 14695981039346656037ull;
     return h;
 }
 
-// FNV-1a WIDENED TO 64-BIT WORDS - the obvious way to make the hash above four
-// times faster, and the way that was taken first. It is fast, it round-trips,
-// every test in this file passed with it, and it is BROKEN: a multiply carries a
-// difference only upward, so an edit to a word's top bits leaves the lane
-// differing in its top three bits and nowhere else - the same three bits
-// wherever in the lane the edit landed. Distinct edits reach identical
-// accumulators. Kept here because a defect with a witness is worth more than a
-// paragraph saying it was avoided.
+/// FNV-1a widened to 64-bit words: the obvious way to make the hash above four
+/// times faster. It is fast, it round-trips, every other test in this file
+/// passes with it, and it is broken: a multiply carries a difference only
+/// upward, so an edit to a word's top bits leaves the lane differing in its top
+/// three bits and nowhere else, the same three bits wherever in the lane the
+/// edit landed. Distinct edits reach identical accumulators. Kept as a witness
+/// for the "every byte must matter" case below.
 [[nodiscard]] std::uint64_t word_fnv_four_lane(std::string_view s) {
     std::uint64_t h0 = fnv_basis;
     std::uint64_t h1 = fnv_basis ^ 0x9E3779B97F4A7C15ull;
@@ -197,9 +203,9 @@ constexpr std::uint64_t fnv_basis = 14695981039346656037ull;
                      std::rotl(avalanche(h3), 48));
 }
 
-// THE SAME AGAIN WITH THE LANES INTERCHANGEABLE: one basis for all four and a
-// symmetric fold, so the hash cannot tell which lane a block went to. Moving
-// eight bytes from one lane to another is invisible to it.
+/// The same with interchangeable lanes: one basis for all four and a symmetric
+/// fold, so the hash cannot tell which lane a block went to. Moving eight bytes
+/// from one lane to another is invisible to it.
 [[nodiscard]] std::uint64_t interchangeable_lanes(std::string_view s) {
     std::uint64_t h[4] = {fnv_basis, fnv_basis, fnv_basis, fnv_basis};
     const auto * at = reinterpret_cast<const unsigned char *>(s.data());
@@ -215,10 +221,10 @@ constexpr std::uint64_t fnv_basis = 14695981039346656037ull;
     return avalanche(h[0] ^ h[1] ^ h[2] ^ h[3]);
 }
 
-// AND ONE WITH A LANE READING ANOTHER'S WORD - the copy-paste four nearly
-// identical lines invite, in which bytes 16..23 of every block are never read.
-// It round-trips, it is exactly as fast, and it hashes a quarter of the source
-// to nothing.
+/// One with a lane reading another lane's word, the copy-paste mistake four
+/// nearly identical lines invite: bytes 16..23 of every block are never read.
+/// It round-trips, it is exactly as fast, and it ignores a quarter of the
+/// source.
 [[nodiscard]] std::uint64_t dropped_lane(std::string_view s) {
     std::uint64_t h0 = fnv_basis;
     std::uint64_t h1 = fnv_basis ^ 0x9E3779B97F4A7C15ull;
@@ -229,7 +235,7 @@ constexpr std::uint64_t fnv_basis = 14695981039346656037ull;
     while (left >= 32) {
         h0 = (h0 ^ word_le(at)) * fnv_prime;
         h1 = (h1 ^ word_le(at + 8)) * fnv_prime;
-        h2 = (h2 ^ word_le(at + 8)) * fnv_prime; // the defect
+        h2 = (h2 ^ word_le(at + 8)) * fnv_prime; // The defect: should be at + 16.
         h3 = (h3 ^ word_le(at + 24)) * fnv_prime;
         at += 32;
         left -= 32;
@@ -239,8 +245,9 @@ constexpr std::uint64_t fnv_basis = 14695981039346656037ull;
                      std::rotl(avalanche(h3), 48));
 }
 
-// A case is evidence only if the blinded hash it is aimed at MISSES it. This
-// asserts both halves and names which half went wrong.
+/// Requires that the real source hash tells `a` and `b` apart and that the
+/// deliberately broken `blinded` hash does not: a case is evidence only if the
+/// hash it is aimed at misses it. Names which half went wrong.
 void hash_case(std::string_view what, std::string_view a, std::string_view b,
                std::uint64_t (*blinded)(std::string_view), std::string_view blinded_name) {
     if (image_source_hash(a) == image_source_hash(b)) {
@@ -269,7 +276,7 @@ int main() {
     const std::vector<std::byte> bytes = round_trip(rich, "the saturated fixture");
     if (bytes.empty()) { return 1; }
 
-    // DETERMINISM. Two writes of the same program must be byte-identical, or an
+    // Determinism. Two writes of the same program must be byte-identical, or an
     // image cannot be hashed, cached or compared. This is the assertion that
     // catches a writer copying `instruction`'s padding byte, whose contents
     // depend on the optimisation level of the code that built it.
@@ -277,7 +284,7 @@ int main() {
     check(write_image(compiled(rich_source)) == bytes,
           "two compiles of one source produce identical images");
 
-    // Dropping the source is a different image AND a different behaviour, so
+    // Dropping the source is a different image and a different behaviour, so
     // the round trip has to hold for it separately.
     {
         const auto lean = write_image(rich, image_option::drop_source);
@@ -298,18 +305,18 @@ int main() {
         check(write_image(broken).empty(), "the writer refuses a program that did not compile");
     }
 
-    // --- WHAT THE LOADER MUST REFUSE ------------------------------------
+    // --- What the loader must refuse --------------------------------------
     // Each of these is a file that would otherwise reach the VM, whose pool
     // reads are unchecked and one of whose writes is unbounded.
     must_refuse("a truncated image", bytes,
                 [](std::vector<std::byte> & b) { b.resize(b.size() / 2); });
     must_refuse("an image with no magic", bytes,
                 [](std::vector<std::byte> & b) { b[0] = std::byte{0}; });
-    // THE TWO REFUSALS THAT MUST NOT BE CONFUSED WITH EACH OTHER. The version
-    // sits at offset 4 and the fingerprint at 8, and the loader reads them in
-    // that order on purpose: a changed LAYOUT has to be reported as a format
-    // version, and a changed MEANING as a different engine. Bumping the wrong
-    // one sends a reader looking for a format difference that is not there.
+    // Two refusals that must not be confused. The version sits at offset 4 and
+    // the fingerprint at 8, and the loader reads them in that order on
+    // purpose: a changed layout has to be reported as a format version, and a
+    // changed meaning as a different engine. Bumping the wrong one sends a
+    // reader looking for a format difference that is not there.
     must_refuse_saying(
         "an image in an older format version", bytes,
         [](std::vector<std::byte> & b) { b[4] = std::byte{1}; }, "image format version 1");
@@ -320,22 +327,23 @@ int main() {
     must_refuse("an image with a nonsense option", bytes,
                 [](std::vector<std::byte> & b) { b[16] = std::byte{9}; });
 
-    // --- THE TWO THE VALIDATOR USED TO MISS ------------------------------
-    // Both were found by reading the loader against the VM rather than by any
-    // test here, which is why each gets a case that fails without its fix.
+    // --- Two defects the validator must catch -----------------------------
+    // Both were found by reading the loader against the VM, not by a test, so
+    // each has a case here that fails without its fix.
 
-    // AN UPVALUE THAT CAPTURES A REGISTER ITS ENCLOSING FRAME DOES NOT HAVE.
-    // run_loop.cpp:904 pushes `reg(up.index)` with no bound - `registers_[base
-    // + index]` - and then a cell test dereferences whatever came back. The
-    // program is mutated rather than the bytes, so the case names the defect
-    // instead of an offset that moves whenever the format does.
+    // An upvalue that captures a register its enclosing frame does not have.
+    // context::make_closure (vm/call/coroutines.cpp) reads the enclosing
+    // frame's register `up.index` through upvalue_source::at with no bound,
+    // and a cell test then dereferences whatever it read. The program is
+    // mutated rather than the bytes, so the case names the defect instead of
+    // an offset that moves whenever the format does.
     {
         program bad = compiled(rich_source);
         bool patched = false;
         for (auto & fn : bad.functions) {
             for (auto & up : fn.upvalues) {
                 if (up.from_parent_local) {
-                    up.index = 60000; // no frame in this fixture is that large
+                    up.index = 60000; // No frame in this fixture is that large.
                     patched = true;
                     break;
                 }
@@ -349,19 +357,17 @@ int main() {
         check(!back.ok, "an upvalue capturing a register outside the enclosing frame is refused");
     }
 
-    // A POOL COUNT THAT IS SMALLER THAN THE FILE AND FAR LARGER THAN THE FILE
-    // CAN JUSTIFY. The guard used to compare an ENTRY COUNT against BYTES
-    // REMAINING and then reserve count * sizeof(std::string); on a 25.9 MB
-    // babylon image that reserves up to 828 MB before reading anything.
+    // A pool count smaller than the file but far larger than the file can
+    // justify. A guard that compares an entry count against bytes remaining
+    // and then reserves count * sizeof(std::string) would, on a 25.9 MB
+    // Babylon image, reserve up to 828 MB before reading anything.
     //
-    // WHAT THIS CASE CAN AND CANNOT SHOW, stated because a test that looks
-    // like it covers a bug it does not is worse than no test: both the old
-    // guard and the new one end at `!ok` here, because a count that outruns
-    // the data fails either way once entries are read. What the new guard
-    // buys is BOUNDED ALLOCATION on the way to that refusal, and the
-    // difference is only visible at image sizes a unit test should not build.
-    // So this pins the verdict, and the allocation bound is defended by the
-    // arithmetic in read_pool rather than by this assertion.
+    // What this case can and cannot show: any guard ends at `!ok` here,
+    // because a count that outruns the data fails once entries are read. The
+    // real guard in read_pool also bounds the allocation on the way to that
+    // refusal, but the difference is only visible at image sizes a unit test
+    // should not build. So this pins the verdict, and the allocation bound is
+    // defended by the arithmetic in read_pool rather than by this assertion.
     {
         constexpr std::size_t name_count_at = 4 + 4 + 8 + 4 + 8;
         std::vector<std::byte> huge = bytes;
@@ -373,15 +379,15 @@ int main() {
         check(!back.ok, "a pool count the image cannot possibly hold is refused");
     }
 
-    // AND EVERY SINGLE-BYTE CORRUPTION, AT EVERY OFFSET. This used to walk a
-    // stride of 7 to stay quick, and that made it blind in the one place it
-    // most needed to see: a 32-bit count's low byte is worth plus or minus 255,
-    // while its HIGH bytes are worth millions, and a stride reaches one and not
-    // the others. Two reserve-the-world bugs lived behind exactly that gap. The
-    // fixture image is a few kilobytes, so every offset costs nothing.
+    // Every single-byte corruption, at every offset. A stride (say every 7th
+    // byte) would be blind where it most needs to see: a 32-bit count's low
+    // byte is worth plus or minus 255 while its high bytes are worth millions,
+    // and a stride reaches some and not the others. Two huge-reservation bugs
+    // hid in exactly that gap. The fixture image is a few kilobytes, so
+    // checking every offset is cheap.
     //
-    // The loader may accept - a flipped byte inside the retained source is
-    // legitimately harmless - but it must never crash, never allocate wildly,
+    // The loader may accept (a flipped byte inside the retained source is
+    // legitimately harmless), but it must never crash, never allocate wildly,
     // and never hand back a program whose tables disagree with its operands.
     {
         std::size_t accepted = 0, tried = 0;
@@ -394,18 +400,18 @@ int main() {
         std::printf("  single-byte corruption: %zu of %zu offsets still loaded\n", accepted, tried);
     }
 
-    // --- WHAT THE COMPILER EMITS, NOT ONLY WHICH OPCODES EXIST -----------
-    // `image_fingerprint()` folds a codegen identity: the canary in
-    // program_image/write.cpp is compiled and its bytecode hashed, so a change to
-    // what the compiler EMITS moves the fingerprint even though every opcode
-    // stayed the same. It exists because that happened - `finally` was
-    // rewritten on 2026-08-21 from two copies of the block to a completion
-    // record, which changed the bytecode of every try/finally in every program
-    // and changed not one opcode, so an image written that morning would have
-    // loaded into the fixed build carrying the old, wrong `finally`.
+    // --- What the compiler emits, not only which opcodes exist -----------
+    // `image_fingerprint()` folds in a codegen identity: the canary in
+    // program_image/write.cpp is compiled and its bytecode hashed, so a change
+    // to what the compiler emits moves the fingerprint even when every opcode
+    // stays the same. Rewriting `finally` from two copies of the block to a
+    // completion record did exactly that: it changed the bytecode of every
+    // try/finally without changing any opcode, so without this an image
+    // written before the change would have loaded into the new build carrying
+    // the old `finally`.
     //
-    // The identity itself cannot be checked from inside one build - that needs
-    // two compilers. What IS checkable is that the fold it uses is sensitive to
+    // The identity itself cannot be checked from inside one build; that needs
+    // two compilers. What is checkable is that the fold it uses is sensitive to
     // exactly the thing it claims: two programs whose bytecode differs must
     // fold differently, and the same program must fold the same way twice.
     {
@@ -435,8 +441,8 @@ int main() {
         check(fold(compiled(base)) == fold(compiled(base)),
               "one source folds to one codegen identity");
 
-        // A DIFFERENT `finally` LOWERING IS A DIFFERENT FOLD, which is the case
-        // that motivated the whole mechanism. The two-copy shape and the
+        // A different `finally` lowering is a different fold: the case that
+        // motivated the whole mechanism. The two-copy shape and the
         // completion record produce different instruction streams for this
         // source; anything that changes the stream must change the fold.
         constexpr std::string_view moved = "function g() { try { return 1; } finally { g; } }\n";
@@ -450,28 +456,27 @@ int main() {
         check(fold(compiled(same_ops)) != fold(compiled(other_reg)),
               "and so does the same opcode on a different register");
 
-        // The fingerprint is stable within a build - the canary is compiled
+        // The fingerprint is stable within a build: the canary is compiled
         // once and memoised, and a fingerprint that moved between two calls
         // would refuse images it had just written.
         check(ctbrowser::script::image_fingerprint() == ctbrowser::script::image_fingerprint(),
               "the fingerprint is the same twice");
     }
 
-    // --- MORE FUNCTIONS THAN A 16-BIT OPERAND HOLDS ----------------------
-    // `op::closure` names its target with a THIRTY-TWO BIT operand, and three
-    // of the four sites that emit it narrowed the index to uint16 first. That
-    // is not a bound, it is a wrap: a program with 70,001 functions called
-    // function 69,999 and ran function 4,463 - 69,999 minus 65,536 - with no
-    // error from the compiler, the VM or this format. Babylon is 31,905
-    // functions, so the corpus in this repository was at 49% of a ceiling the
-    // instruction encoding never had.
+    // --- More functions than a 16-bit operand holds ------------------------
+    // `op::closure` names its target with a 32-bit operand. An emitter that
+    // narrows the index to uint16 first does not bound it, it wraps it: a
+    // program with 70,001 functions that calls function 69,999 would run
+    // function 4,463 (69,999 minus 65,536) with no error from the compiler, the
+    // VM or this format. Babylon has 31,905 functions, about half of a 16-bit
+    // ceiling the instruction encoding does not actually have.
     //
-    // 70,001 functions compile in 17 ms, so this is a cheap thing to pin.
+    // 70,001 functions compile in 17 ms, so this is cheap to pin.
     {
         std::string many = "var a = [";
-        // ONE name for all of them: the compiler refuses a program with more
-        // than 65,536 distinct property names - a real guard, for the operand
-        // that selects one - and naming each function would hit that first and
+        // One name for all of them: the compiler refuses a program with more
+        // than 65,536 distinct property names (a real limit, for the operand
+        // that selects one), and naming each function would hit that first and
         // prove nothing about this.
         constexpr int count = 70000;
         for (int i = 0; i < count; ++i) {
@@ -484,7 +489,7 @@ int main() {
         check(wide.ok, "a program with 70,001 functions compiles");
         check(wide.functions.size() > 65536, "and really does have more than 65,536 of them");
 
-        // THE INSTRUCTION, NOT THE OUTPUT. Running it would prove the same
+        // Check the instruction, not the output. Running it would prove the same
         // thing, but this says exactly which field was wrong: every op::closure
         // must name a function index that exists, and the last one must reach
         // past the old ceiling.
@@ -507,7 +512,7 @@ int main() {
         check(closures >= static_cast<std::size_t>(count), "every function is closed over");
         check(highest > 65535, "AND AN INDEX PAST 65,535 SURVIVES THE ENCODING");
 
-        // And the image carries it, which the writer used to refuse outright.
+        // And the image can carry such a program.
         const auto image = write_image(wide);
         check(!image.empty(), "an image is written for it");
         if (!image.empty()) {
@@ -520,15 +525,15 @@ int main() {
         }
     }
 
-    // --- THE SAME TEXT, COMPILED TWO WAYS ---------------------------------
-    // A source hash is a hash of the TEXT, and the same text compiles to two
+    // --- The same text, compiled two ways ----------------------------------
+    // A source hash is a hash of the text, and the same text compiles to two
     // different programs: a classic script declares into the global object, a
-    // module into a scope of its own. Before the image recorded which,
-    // `var out = 41 + 1;` compiled as a module recorded source hash
-    // d52677f505aae6c3 - identical to the classic one - loaded against it with
-    // ok=1 and no error, ran without raising, and left `globalThis.out`
-    // undefined where the page expected 42. Silent wrong code at full speed,
-    // which is the one failure this format exists to prevent.
+    // module into a scope of its own. If the image did not record which,
+    // `var out = 41 + 1;` compiled as a module would record source hash
+    // d52677f505aae6c3, identical to the classic one, load against it with
+    // ok=1 and no error, run without raising, and leave `globalThis.out`
+    // undefined where the page expected 42: silent wrong code at full speed,
+    // the one failure this format exists to prevent.
     {
         constexpr std::string_view same_text = "var out = 41 + 1;\n";
         const program classic = compiler::compile(same_text, script_kind::classic);
@@ -561,20 +566,18 @@ int main() {
               "and the program it hands back knows what it is");
     }
 
-    // --- THE IDENTITY OF THE INSTRUCTION SET ------------------------------
+    // --- The identity of the instruction set ------------------------------
     // An image stores opcodes as bare bytes, so if byte 45 means `sub` when it
-    // is written and `add` when it is read, the program loads clean and
-    // computes the wrong answer. `image_fingerprint()` guards that, and until
-    // today it guarded it with `opcode_count` alone - which a renumbering does
-    // not change. Measured before the fix: reordering two opcodes in both the
-    // enum and the table left the fingerprint at 19b2766c29d904c0 and the image
-    // loaded with ok=1. After it, the same reorder moves the fingerprint and
-    // the loader refuses.
+    // is written and `add` when it is read, the program loads cleanly and
+    // computes the wrong answer. `image_fingerprint()` guards that by hashing
+    // the opcode names in order. Hashing only `opcode_count` would miss a
+    // renumbering: reordering two opcodes in both the enum and the table left
+    // such a fingerprint at 19b2766c29d904c0 and the image loaded with ok=1.
     //
-    // The value itself is NOT pinned here. Phases 13 and 14 add opcodes on
-    // purpose, so a golden number would be a line to edit rather than a fact to
-    // check. What is pinned is the property that makes it work: the identity
-    // depends on the ORDER of the names and not merely on their contents.
+    // The value itself is not pinned here. Opcodes are added routinely, so a
+    // golden number would be a line to edit rather than a fact to check. What
+    // is pinned is the property that makes it work: the identity depends on
+    // the order of the names, not merely on their contents.
     {
         const auto fold = [](const std::vector<std::string_view> & names) {
             std::uint64_t h = fnv_basis;
@@ -611,46 +614,46 @@ int main() {
               "and so does reversing the whole instruction set");
     }
 
-    // --- THE SOURCE HASH -------------------------------------------------
-    // The field that decides whether a cached image is this page's. It is now
-    // XXH64 over 64-bit words rather than FNV-1a a byte at a time, because it
-    // was 4.16 ms of a p5 page load on its own. Speed is why it changed; these
+    // --- The source hash --------------------------------------------------
+    // The field that decides whether a cached image is this page's. It is
+    // XXH64 over 64-bit words rather than FNV-1a a byte at a time, because the
+    // byte-at-a-time hash was 4.16 ms of a p5 page load on its own. Speed is why it changed; these
     // are what it still has to be.
 
-    // THE PRECONDITION FOR THE FINGERPRINT TAG. `image_fingerprint()` mixes in
-    // `source_hash_algorithm` so an image written by the old build is refused
-    // as a different ENGINE rather than as different SOURCE. That tag is worth
+    // The precondition for the fingerprint tag. `image_fingerprint()` mixes in
+    // `source_hash_algorithm` so an image written with the old hash is refused
+    // as a different engine rather than as different source. That tag is worth
     // its line only if the two algorithms really disagree, and this is the one
     // thing about it that a single build can check.
     check(image_source_hash(rich_source) != legacy_byte_fnv(rich_source),
           "the source hash is no longer the byte-at-a-time one it replaced");
 
-    // BLOCKS THAT SWAP LANES. Hashing 32 bytes at a time means bytes 0..7 and
+    // Blocks that swap lanes. Hashing 32 bytes at a time means bytes 0..7 and
     // 8..15 go through different accumulators, and accumulators that start
     // alike and are folded together symmetrically cannot tell one arrangement
-    // from the other - so an edit that moves one line past another produces the
+    // from the other, so an edit that moves one line past another produces the
     // same image hash.
     hash_case("two eight-byte blocks exchanged between lanes", "AAAAAAAABBBBBBBBCCCCCCCCDDDDDDDD",
               "BBBBBBBBAAAAAAAACCCCCCCCDDDDDDDD", interchangeable_lanes,
               "a hash whose lanes are interchangeable");
 
-    // A LAST PARTIAL WORD PADDED WITH ZEROS cannot see a trailing NUL. XXH64
+    // A last partial word padded with zeros cannot see a trailing NUL. XXH64
     // mixes the length in before it reads the tail, which is what closes this.
     hash_case("a trailing NUL byte", std::string_view{"let x = 1;\0", 10},
               std::string_view{"let x = 1;\0", 11}, interchangeable_lanes,
               "a hash whose last word is zero-padded");
 
-    // A LANE THAT READS ANOTHER LANE'S WORD, so a quarter of every source is
+    // A lane that reads another lane's word, so a quarter of every source is
     // not hashed at all. The image would round-trip, load and run; it would
     // simply stop noticing a class of edit.
     hash_case("a change in the third eight bytes of a block", "0123456789abcdefghijklmnopqrstuv",
               "0123456789abcdefghXjklmnopqrstuv", dropped_lane,
               "a hash with one lane reading another's word");
 
-    // EVERY BYTE OF THE INPUT MUST MATTER, at every offset, across several
-    // blocks and into the tail - and THIS IS THE CASE THAT CAUGHT THE REAL ONE.
-    // The four-lane FNV that stood here for most of a day passes every other
-    // assertion in this file and fails this one on nine of two hundred edits;
+    // Every byte of the input must matter, at every offset, across several
+    // blocks and into the tail. This is the case that caught the real defect:
+    // the four-lane FNV, briefly the real hash, passes every other assertion
+    // in this file and fails this one on nine of two hundred edits;
     // on 64 KB of real p5.js it collides on 50,678 of 262,145. A round trip
     // cannot see it, because the hash is not what is round-tripped.
     {
@@ -678,8 +681,9 @@ int main() {
                     real_seen.size(), word_fnv_seen.size(), dropped_seen.size(), all);
     }
 
-    // EVERY LENGTH IS ITS OWN, across the 32-byte boundary and both sides of
-    // it, and through each of XXH64's three tail steps - eight bytes, four, one.
+    // Every length hashes differently, across the 32-byte boundary and both
+    // sides of it, and through each of XXH64's three tail steps (eight bytes,
+    // four, one).
     {
         std::set<std::uint64_t> seen;
         for (std::size_t n = 0; n <= 96; ++n) {
@@ -688,7 +692,7 @@ int main() {
         check(seen.size() == 97, "97 lengths of the same byte hash 97 different ways");
     }
 
-    // WHERE THE BYTES SIT IN MEMORY IS NOT PART OF THE ANSWER. True today for
+    // Where the bytes sit in memory is not part of the answer. True today for
     // free; here for the day somebody reaches for an aligned load.
     {
         const std::string content = "function f(a, b) { return a + b; } // and a tail";
@@ -702,7 +706,7 @@ int main() {
         check(same, "the same bytes at eight different alignments hash alike");
     }
 
-    // KNOWN ANSWERS, AND NOT OURS. These came out of `xxhsum -H64`, Yann
+    // Known answers, and not ours. These came out of `xxhsum -H64`, Yann
     // Collet's own tool, and the first two are the values XXH64's specification
     // publishes; nothing in this repository computed them. So they check three
     // things at once that a self-generated table checks none of: that the hash

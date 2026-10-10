@@ -1,7 +1,17 @@
+//===- Primitives/BigInt.cpp - BigInt index contents tests ------*- C++ -*-===//
+//
+// Array-contents tests where an element index is a BigInt literal, or the
+// difference of two BigInt literals.
+//
+//===----------------------------------------------------------------------===//
+
 #include "../Harness.h"
 
 namespace ctcompile::test::escape::arrays {
 
+/// Checks that a BigInt literal (or a BigInt subtraction of two literals)
+/// indexes an array exactly like the equal Number index, and that any
+/// spelling the analysis cannot prove is an array index yields UnknownIndex.
 void checkLiteralBigIntIndices(mlir::MLIRContext & context) {
     const std::string values =
         "  %zero = ctjs.constant #ctjs.number<0> {storage_test_id = \"zero\"}\n"
@@ -78,9 +88,11 @@ void checkLiteralBigIntIndices(mlir::MLIRContext & context) {
              .arrays = "a:[zero] | a:[zero]",
              .exit = "a -> {a}; a -> {a}"});
     }
-    // BigIntAttr holds the bytecode literal WITHOUT source 'n'. Malformed
-    // attributes and unsupported spellings cannot borrow an index proof, even
-    // where today's VM would substitute zero or parse an equivalent number.
+    // BigIntAttr holds the literal without its trailing 'n'. Only an unsigned
+    // decimal with no leading zero, or a 0x/0o/0b spelling, whose value is at
+    // most 4294967294 (the largest array index, 2^32 - 2) counts as an index.
+    // Anything else is UnknownIndex, even where the VM would parse it as an
+    // equivalent number.
     for (const auto & [spelling, failure] :
          {std::pair{"0", ArrayContentsFailure::None},
           std::pair{"1", ArrayContentsFailure::MissingElement},
@@ -194,8 +206,9 @@ void checkLiteralBigIntIndices(mlir::MLIRContext & context) {
             check(*module, original, "x");
             ++liveStates;
         }
-        // The same bytes are an element key only for BigInt. Forged completion
-        // markers and an earlier successful query cannot authorize String keys.
+        // The same text is an element index only as a BigInt: a String "0x0"
+        // is a named key. Forged completion attributes and an earlier successful
+        // run must not make the String spelling pass.
         for (const auto spelling : {"0x0", "0X0", "0o0", "0O0", "0b0", "0B0"}) {
             key.setValueAttr(ctjs::BigIntAttr::get(&context, spelling));
             original.failure = ArrayContentsFailure::None;

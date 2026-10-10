@@ -1,3 +1,10 @@
+//===- Main.cpp - Shared-Map ownership test driver --------------*- C++ -*-===//
+//
+// Entry point of ctcompile-test-owned-global-shared-map: runs checkSharedMap and
+// the closed-source-session admission checks below.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Tests.h"
 
 #include "check.hpp"
@@ -6,6 +13,9 @@ using namespace ctcompile::test::owned_global_shared_map;
 
 namespace {
 
+/// Checks that a closed-source session reuses the ordinary captured-table owner
+/// proof unchanged, refuses tables whose methods escape or capture the wrong
+/// value, and cannot reuse a manifest after a method body changes.
 void checkSessionOwner(mlir::MLIRContext & context) {
     for (const char * source : {capturedFixture, importedCapturedFixture}) {
         auto module = parsed(context, source, "session captured-table fixture parses");

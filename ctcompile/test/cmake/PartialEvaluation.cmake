@@ -1,5 +1,7 @@
-# The ordinary differential pipeline, with opt-in compile-time heap evaluation.
-# Numeric observers receive heap arguments, so they remain runtime functions.
+# Native fixtures for the optional optimizations (partial evaluation,
+# precomputation, deforestation, specialization, reachability pruning,
+# supercompilation), each enabled by the flag after its .js. Heap arguments
+# reach the numeric observers, so those stay runtime functions.
 ctcompile_native_fixture(object_values Objects/values.js)
 ctcompile_native_fixture(object_fields Objects/fields.js)
 ctcompile_native_fixture(partial_evaluation Optimization/partial/evaluation.js PARTIAL_EVALUATE)
@@ -15,8 +17,9 @@ ctcompile_native_fixture(supercompilation Optimization/supercompilation.js SUPER
 ctcompile_native_fixture(supercompilation_generalization
                          Optimization/supercompilation-generalization.js SUPERCOMPILE)
 
-# Native variants retain the original callable value for boxed dispatch. The
-# generic body must still accept tuples used only by those redirected calls.
+# Native specialized variants keep the original callable value for boxed
+# dispatch, so the generic body must still accept argument tuples used only by
+# those redirected calls.
 if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
   set(_dispatch_js "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Specialization/dispatch.js")
   set(_dispatch_inc "${CMAKE_CURRENT_BINARY_DIR}/specialization-dispatch.js.inc")
@@ -41,7 +44,9 @@ if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
     COMMAND ctcompile-test-specialization-dispatch)
 endif()
 
-# The exact vendor-derived Data initializer remains behind dynamic host effects.
+# Reports binding times in the real Bootstrap Data initializer: its dynamic
+# host effects (such as the console read) must stay runtime. The negative
+# control forges a static console read and must be rejected.
 if(TARGET ctjs-translate AND TARGET ctjs-opt AND TARGET ctcompile-test-native-reference AND Python3_EXECUTABLE)
   foreach(_control IN ITEMS observe negative)
     set(_control_arg "")

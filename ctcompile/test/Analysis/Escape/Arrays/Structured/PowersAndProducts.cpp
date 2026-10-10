@@ -1,3 +1,10 @@
+//===- PowersAndProducts.cpp - Pow and product index cases ------*- C++ -*-===//
+//
+// Structured-array cases for pow and product arithmetic on array indices
+// carried through scf loops: pow(1, n) and pow(-1, n) keep a known value or
+// parity and are accepted; anything that could change the index is rejected.
+//
+//===----------------------------------------------------------------------===//
 #include "Cases.hpp"
 
 namespace ctcompile::test::escape::arrays::structured_detail {

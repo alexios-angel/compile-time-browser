@@ -3,9 +3,9 @@
 // RUN: python3 %S/../check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name signed-unary
 // RUN: FileCheck %s --check-prefix=CLAIM < %t/escape-claims-signed-unary.claims
 
-// Plus preserves a held negative Number; a second Neg restores its magnitude.
-// Saved values survive source mutation; decimal Strings convert exactly, canonical
-// or not.
+// Unary `+` keeps a negative number's value, and a second unary `-` restores its magnitude.
+// A length copied before its array shrank keeps its value, and decimal strings convert exactly,
+// whether or not they are in canonical form.
 // IMPORT-LABEL: ctjs.func @plusReleased$
 // IMPORT: ctjs.unary neg
 // IMPORT: ctjs.unary plus

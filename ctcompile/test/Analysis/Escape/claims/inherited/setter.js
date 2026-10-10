@@ -1,4 +1,4 @@
-var retained, receiver;
+var retained, receiver; // An Object.prototype setter saves its value: child escapes.
 Object.defineProperty(Object.prototype, "nd3retain", {
     set: function (value) {
         retained = value;

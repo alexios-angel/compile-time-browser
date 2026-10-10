@@ -1,3 +1,15 @@
+//===- Validation.cpp - Cached-length loop validation tests ---------------===//
+//
+// Checks of the loop-guard proof (`index < array.length`): a length read once
+// before the loop and carried as a block argument, receivers loaded from a
+// holder or joined from several predecessors, and a frozen structured (scf)
+// copy of a real compiled function. Refusal rows show what must invalidate the
+// guard (length changes, a different array, publication, unsupported ops).
+// The file ends with live IR edits that must override stale solver facts and
+// forged markers, and with the finite-stride work budget.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Cases.hpp"
 
 namespace ctcompile::test::escape::arrays::induction_detail {
@@ -86,8 +98,9 @@ void InductionCases::validation() {
          .reads = "box[0]=a; a[0]=x; a[0]=zero; a[1]=zero; a[2]=zero",
          .exit = "x -> {x}"},
         "a");
-    // Exact source d1302d9a after import and ctjs-lift-to-scf. Only diagnostic
-    // labels are added below; the frozen function and its saved receiver stay intact.
+    // The function from test/Analysis/Escape/claims/cached/shortcut-length.test
+    // (`cachedShortcutLengthCleared`) after import and ctjs-lift-to-scf, frozen
+    // verbatim. Only diagnostic labels are added below.
     const std::string projected = R"mlir(module {
   ctjs.func @cachedShortcutLengthCleared$1(%arg0: !ctjs.value, %arg1: !ctjs.value, %arg2: !ctjs.value, %arg3: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
     %0 = ctjs.frame_enter 11
@@ -153,9 +166,10 @@ void InductionCases::validation() {
             }
         });
         checkArrayContents(*module, expected);
-        // A separate current-region census permits the retention query while
-        // the public legacy storage/load evidence stays incomplete. The harness
-        // checks every budget cutoff, retained witness and unchanged lattice.
+        // Retention walks every op of the current region itself, so it can be
+        // queried even though the module's storage/load evidence is incomplete.
+        // checkArrayRetention checks each budget cutoff, the retained children
+        // and that the lattice is unchanged.
         budgets += checkArrayRetention(
             *module,
             {.what = expected.what,

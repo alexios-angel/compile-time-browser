@@ -1,52 +1,52 @@
-// THE SHAPE A COMPILED FUNCTION HAS TO REACH, WRITTEN BY HAND AND COMPILED.
+// The shape a compiled function has to reach, written by hand and compiled.
 //
-// This is the target of the EmitC backend, not its output - no pass produces it
-// yet. It is here because every decision in it was contested and several were
-// wrong on the first attempt, and a target nobody has compiled is a guess.
+// A hand-written example of the C++ shape the EmitC backend
+// (lib/CTJS/Lowering/CTJSToEmitC.cpp) must produce for a compiled function,
+// translated and compiled against the real aot.hpp so every choice below is
+// checked by a C++ compiler.
 //
-// THE SECOND RUN LINE IS THE POINT. Checking the emitted text proves the weaker
-// half: a backend can emit fluent C++ against a signature it invented, which is
-// this project's recurring failure - "code that verifies, prints plausibly and
-// is wrong". The host C++ compiler reads the REAL aot.hpp and settles it, and
-// it costs nothing.
+// The second RUN line matters most. Checking the emitted text proves only the
+// weaker half: a backend can emit fluent C++ against a signature it invented,
+// code that verifies and prints plausibly and is wrong. The host C++ compiler
+// reads the real aot.hpp and settles that question, at no cost to the test
+// run.
 //
-// WHAT IT PINS, each of which was got wrong before it was got right:
+// What it pins:
 //
-//   THE CALLEE IS QUALIFIED. aot.hpp:58 puts the extern "C" prototypes INSIDE
-//   `namespace ctbrowser::aot`, so they have C linkage and the unmangled
-//   linker symbol - but their C++ NAME is qualified. `ct_aot_enter(...)`
-//   unqualified compiles only by ADL off a ct_aot_frame* argument, which the
-//   eleven frameless rows do not have; ct_aot_cell_get fails outright. The
-//   helper table's `symbol` is the LINKER name and is not the callee string.
+//   The callee is qualified. aot.hpp declares the extern "C" prototypes
+//   inside `namespace ctbrowser::aot`, so they have C linkage and unmangled
+//   linker symbols but a qualified C++ name. An unqualified `ct_aot_enter(...)`
+//   compiles only by ADL off a ct_aot_frame* argument, which helpers without a
+//   frame parameter do not have; ct_aot_cell_get fails outright. The helper
+//   table's `symbol` is the linker name, not the callee string.
 //
-//   NO DECLARATIONS ARE EMITTED. emitc.call_opaque resolves nothing and needs
+//   No declarations are emitted. emitc.call_opaque resolves nothing and needs
 //   no prototype, so the translation unit includes aot.hpp and calls what the
 //   header declares. Emitting func.func private instead would re-declare the
-//   helpers at global scope with C++ linkage - undefined symbols against
-//   lib/Script/aot_bridge/ - and emitc.declare_func drops parameter types outright in
+//   helpers at global scope with C++ linkage (undefined symbols against
+//   lib/Script/aot_bridge/), and emitc.declare_func drops parameter types in
 //   this LLVM.
 //
-//   ct_aot_enter FAILS WITH A NULL POINTER, NOT A STATUS. Its row returns
+//   ct_aot_enter fails with a null pointer, not a status. Its row returns
 //   `struct ct_aot_frame *` and "returns NULL on the 512-depth raise";
 //   RuntimeHelpers.hpp carves it out of both failure tiers for this reason. A
 //   status compare here would test a pointer against an enumerator, and the
 //   513th frame would dereference null inside the next helper.
 //
-//   THE STATUS IS SPELLED BY NAME. aot.hpp: "THE PRECEDENCE IS THE CONTRACT;
-//   THE NUMBERS ARE NOT" - nothing may depend on `ok` being any particular
-//   value, and it is 3. emitc.literal carries the static_cast so no number is
-//   baked and a reordering of the enum moves this with it.
+//   The status is spelled by name. aot.hpp says the statuses' precedence is
+//   the contract and their numbers are not (`ok` is 3). emitc.literal carries
+//   the static_cast, so no number is baked in and reordering the enum is safe.
 //
-//   THE FRAME BLOCK IS A LOCAL ARRAY PASSED BY DECAY. ct_aot_enter's storage
-//   is CALLER-allocated precisely so the layout stays the runtime's to change;
-//   passing the array directly gives `unsigned char*` -> `void*` and needs no
-//   subscript, no address-of and no size_t - which mattered, because
+//   The frame block is a local array passed by decay. ct_aot_enter's storage
+//   is caller-allocated so that the layout stays the runtime's to change.
+//   Passing the array directly gives `unsigned char*` -> `void*` and needs no
+//   subscript, no address-of and no size_t, which matters because
 //   !emitc.size_t emits a bare `size_t` that does not compile without
 //   <stddef.h>.
 //
-//   --declare-variables-at-top IS MANDATORY, not a preference: EmitC refuses a
-//   multi-block function without it, and every compiled body has at least two
-//   blocks because of the NULL test above.
+//   --declare-variables-at-top is mandatory: EmitC refuses a multi-block
+//   function without it, and every compiled body has at least two blocks
+//   because of the NULL test above.
 
 // RUN: mlir-translate %s --mlir-to-cpp --declare-variables-at-top | FileCheck %s
 // RUN: mlir-translate %s --mlir-to-cpp --declare-variables-at-top > %t.cpp && %cxx %t.cpp
@@ -77,7 +77,7 @@ emitc.func @f(%ctx: !emitc.ptr<!emitc.opaque<"ctbrowser::aot::ct_aot_ctx">>,
          !emitc.array<64 x !emitc.opaque<"unsigned char">>)
       -> !emitc.ptr<!emitc.opaque<"ctbrowser::aot::ct_aot_frame">>
 
-  // A POINTER TEST, NOT A STATUS TEST.
+  // A pointer test, not a status test.
   // CHECK: = {{.*}} != nullptr;
   %null = emitc.literal "nullptr" : !emitc.ptr<!emitc.opaque<"ctbrowser::aot::ct_aot_frame">>
   %entered = emitc.cmp ne, %fr, %null
@@ -86,8 +86,8 @@ emitc.func @f(%ctx: !emitc.ptr<!emitc.opaque<"ctbrowser::aot::ct_aot_ctx">>,
   cf.cond_br %entered, ^body, ^depth_raise
 
 ^depth_raise:
-  // THE UNCATCHABLE TIER. The frame was never entered, so there is nothing to
-  // leave and no handler to reach.
+  // The uncatchable failure tier. The frame was never entered, so there is
+  // nothing to leave and no handler to reach.
   // CHECK: return static_cast<int32_t>(ctbrowser::aot::ct_aot_status::failed);
   %failed = emitc.literal "static_cast<int32_t>(ctbrowser::aot::ct_aot_status::failed)" : i32
   emitc.return %failed : i32
@@ -97,7 +97,7 @@ emitc.func @f(%ctx: !emitc.ptr<!emitc.opaque<"ctbrowser::aot::ct_aot_ctx">>,
   emitc.call_opaque "ctbrowser::aot::ct_aot_leave"(%fr)
       : (!emitc.ptr<!emitc.opaque<"ctbrowser::aot::ct_aot_frame">>) -> ()
 
-  // ct_aot_return_value TAKES NO FRAME HANDLE, which is why the entry has to
+  // ct_aot_return_value takes no frame handle, which is why the entry has to
   // deliver `receiver` and `constructing` by value: the body must still hold
   // them after ct_aot_leave has run.
   // CHECK: = ctbrowser::aot::ct_aot_return_value(
@@ -106,7 +106,7 @@ emitc.func @f(%ctx: !emitc.ptr<!emitc.opaque<"ctbrowser::aot::ct_aot_ctx">>,
       : (!emitc.opaque<"uint64_t">, !emitc.opaque<"uint64_t">, !emitc.opaque<"uint32_t">)
       -> !emitc.opaque<"uint64_t">
 
-  // `out[0] = ...`, NOT `*out = ...`: LLVM 23's emitter refuses an assignment
+  // `out[0] = ...`, not `*out = ...`: LLVM 23's emitter refuses an assignment
   // through an emitc.dereference result under --declare-variables-at-top and
   // accepts the same store through emitc.subscript. Same C++ for a pointer to
   // one slot; the index is a declared variable under this flag.

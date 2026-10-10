@@ -1,29 +1,33 @@
-// PHASE 54A'S HALF OF THE ORACLE: the static claim, written in the format the
-// checker reads.
+//===- ctcompile/test/Analysis/Types/Claims.cpp - Static type claims ------===//
 //
-// TypeOracle.cpp runs a corpus through the INTERPRETER and writes what every
-// register actually held. This runs the same corpus through the COMPILER and
-// writes what the inference says every register will hold. tools/check/
-// type-oracle.py compares the two and the answer is a soundness number.
+// The static half of the type oracle: what the compiler's type inference claims
+// each register will hold, written in the format tools/check/type-oracle.py
+// reads.
 //
-// THE TWO PROGRAMS MUST BE THE SAME PROGRAM, and nothing here enforces that
-// beyond both sides compiling the same file with the same compiler. That is
-// what the program key is for: `program_source_hash` is FNV-1a over the source
-// text, so a claim written against different bytes simply fails to join to any
-// observation and shows up as unverifiable rather than as a false pass.
+// Oracle.cpp runs a corpus through the interpreter and writes what every
+// register actually held. This tool runs the same corpus through the compiler
+// and writes what the inference says every register will hold. type-oracle.py
+// compares the two and reports a soundness number.
 //
-// WHY A SEPARATE EXECUTABLE FROM TypeOracle.cpp. That file says it "needs no
-// MLIR: a recording is the INTERPRETER's opinion, and asking the compiler
-// anything here would beg the question." Keeping the two apart is what stops
-// the recording and the claim sharing a bug.
+// Both sides must describe the same program, and nothing here enforces that
+// beyond both compiling the same file with the same compiler. The program key
+// covers it: `program_source_hash` is FNV-1a over the source text, so a claim
+// written against different bytes joins to no observation and shows up as
+// unverifiable rather than as a false pass.
 //
-// A REGISTER'S CLAIM IS THE JOIN OVER EVERY VALUE THAT EVER OCCUPIED IT, which
-// is the only thing that can be sound: the recording is a SET of everything the
-// register held across the whole run, so the claim has to admit all of it. The
-// importer's register map is what makes that join possible - and it records at
-// the write sites rather than at block terminators, because a register written
-// twice in one block leaves only its second value at the terminator and the
-// interpreter saw both.
+// This is a separate executable from Oracle.cpp on purpose: the recording is
+// the interpreter's opinion and must not ask the compiler anything, so the
+// recording and the claim cannot share a bug.
+//
+// A register's claim is the join over every value that ever occupied it. That
+// is the only sound choice, because the recording is the set of everything the
+// register held across the whole run. The importer's register map makes the
+// join possible, and it records at write sites rather than at block
+// terminators: a register written twice in one block leaves only its second
+// value at the terminator, but the interpreter saw both.
+//
+//===----------------------------------------------------------------------===//
+
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
 #include "ctcompile/CTJS/Import/BytecodeImport.hpp"
 #include "ctcompile/CTNative/Analysis/TypeInference.h"
@@ -54,31 +58,33 @@ namespace {
 
 using ctcompile::ctnative::TypeLattice;
 
-// The atom names tools/check/type-oracle.py knows. Spelled here rather than
-// shared, for the reason that file gives about its own duplication: a checker
-// that reads its definitions out of the thing it checks cannot fail for the one
-// reason that matters. If these drift, the checker rejects the atom by name.
+/// Returns the comma-separated atom names tools/check/type-oracle.py knows for
+/// `type`, or "boxed" when nothing is proved.
+///
+/// The atom names are spelled here rather than shared, for the reason that file
+/// gives about its own duplication: a checker that reads its definitions out of
+/// the thing it checks cannot fail for the one reason that matters. If these
+/// drift, the checker rejects the atom by name.
 std::string atomsOf(mlir::Type type) {
     using namespace ctcompile::ctnative;
 
-    // NOTHING PROVED IS `boxed`, NOT AN EMPTY CLAIM. An empty claim is the
+    // Nothing proved is `boxed`, not an empty claim. An empty claim is the
     // bottom of the lattice and asserts the register is never reached, which is
-    // a violation the moment it is. This is the fall-back, so it must be the
+    // a violation the moment it is. This is the fallback, so it must be the
     // top.
     if (type == nullptr) { return "boxed"; }
 
     if (llvm::isa<BoolType>(type)) { return "bool"; }
     if (llvm::isa<StrType, StrViewType>(type)) { return "str"; }
     if (auto num = llvm::dyn_cast<NumType>(type)) {
-        // i64 IS NOT AN ATOM the checker knows, and it is not an i32 either -
+        // i64 is not an atom the checker knows, and it is not an i32 either;
         // `f64` is the only sound name for it. The checker's `covers` admits
         // an observed i32 under a claimed f64 and never the reverse.
         return num.getKind() == NumKind::I32 ? "i32" : "f64";
     }
-    // AN EMPTY OPTIONAL CARRIES BOTH `null` AND `undefined`, because part 24
-    // collapses the two into it. Claiming both is the over-approximation that
-    // keeps this sound; CTNative_OptType's description records the narrowing
-    // this costs.
+    // An empty optional stands for both `null` and `undefined`, because the type
+    // inference represents both as an empty OptType. Claiming both keeps this
+    // sound; CTNative_OptType's description records the precision this costs.
     if (auto opt = llvm::dyn_cast<OptType>(type)) {
         const std::string inner = atomsOf(opt.getElementType());
         if (inner == "boxed") { return "boxed"; }
@@ -98,9 +104,8 @@ std::string atomsOf(mlir::Type type) {
         }
         return out.empty() ? "boxed" : out;
     }
-    // json, boxed, and every container. Nothing in Phase 54A produces a
-    // container, and a rule for a case with no producer is a rule nobody has
-    // tested.
+    // json, boxed, and every container. The inference does not produce container
+    // types yet, so they fall back to `boxed` rather than to an untested rule.
     return "boxed";
 }
 
@@ -110,7 +115,7 @@ int main(int argc, char ** argv) {
     namespace po = boost::program_options;
     std::string script;
     std::string out;
-    std::uint32_t dump = ~0U; // no function has this index, so without --dump nothing is printed
+    std::uint32_t dump = ~0U; // No function has this index; without --dump nothing prints.
     po::options_description options{
         "usage: ctcompile-test-type-claims --script BUNDLE.js --out CLAIMS [--dump N]"};
     auto add = options.add_options();
@@ -147,17 +152,16 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
-    // DeadCodeAnalysis is not optional - see TypeInference.h.
+    // DeadCodeAnalysis is not optional; see TypeInference.h.
     mlir::DataFlowSolver solver;
     solver.load<mlir::dataflow::DeadCodeAnalysis>();
-    // AND SparseConstantPropagation, WHICH IS NOT OPTIONAL EITHER, and the
-    // reason is a trap worth naming. DeadCodeAnalysis decides which successor
-    // of a branch is live by asking for every branch operand's ConstantValue
-    // lattice; if nothing provides one, those lattices stay uninitialized, it
-    // bails out, and NO successor is ever marked live. The sparse analysis
-    // then skips every op in every non-entry block - measured: 109 unvisited
-    // values and zero registers beating `boxed` on the fixture, while the
-    // single-block unit rows all passed.
+    // SparseConstantPropagation is not optional either. DeadCodeAnalysis decides
+    // which successor of a branch is live by asking for every branch operand's
+    // ConstantValue lattice; if nothing provides one, those lattices stay
+    // uninitialized, it bails out, and no successor is ever marked live. The
+    // sparse analysis then skips every op in every non-entry block. Without
+    // this line the fixture had 109 unvisited values and zero registers beating
+    // `boxed`, while the single-block unit tests all passed.
     solver.load<mlir::dataflow::SparseConstantPropagation>();
     solver.load<ctcompile::ctnative::TypeInference>();
     if (failed(solver.initializeAndRun(imported.module->getOperation()))) {
@@ -165,12 +169,12 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
-    // LIVENESS, COUNTED. The sparse analysis skips every operation in a block
-    // DeadCodeAnalysis has not marked live, and a function whose entry block
-    // is dead produces a claim of `boxed` for every register - which is sound
-    // and worthless and looks, from the outside, exactly like an inference
-    // that has nothing to say. So the ratio is printed, and the fixture's
-    // cmake gate on "beat boxed" is what turns a liveness regression red.
+    // Count live blocks. The sparse analysis skips every operation in a block
+    // DeadCodeAnalysis has not marked live, so a function whose entry block is
+    // dead claims `boxed` for every register: sound, useless, and
+    // indistinguishable from an inference with nothing to say. The lit tests in
+    // claims/*.test require a non-zero `beat-boxed` count, which is what makes
+    // a liveness regression fail.
     std::size_t blocks = 0;
     std::size_t liveBlocks = 0;
     imported.module->walk([&](mlir::FunctionOpInterface fn) {
@@ -181,10 +185,10 @@ int main(int argc, char ** argv) {
             if (executable != nullptr && executable->isLive()) { ++liveBlocks; }
         }
     });
-    // FUNCTIONS THE IMPORTER REFUSED get no claim, and the checker counts their
-    // observed registers as "unclaimed" rather than as sound - so the refusals
-    // are reported, by reason, because p5 alone has seventy generators and a
-    // line per function would bury the verdict.
+    // Functions the importer refused get no claim, and the checker counts their
+    // observed registers as "unclaimed" rather than sound. Report the refusals
+    // grouped by reason: the p5.js corpus alone has about seventy generator
+    // functions, and one line each would bury the summary.
     {
         std::map<std::string, std::size_t> reasons;
         for (const ctcompile::js::unsupported_opcode & skip : imported.skipped) {
@@ -205,20 +209,19 @@ int main(int argc, char ** argv) {
 
     std::size_t claims = 0;
     std::size_t beatBoxed = 0;
-    // TWO KINDS OF "THE SOLVER NEVER VISITED THIS", AND THEY MUST NOT BE
-    // CONFLATED. The first version of this loop treated an unvisited value as
-    // the identity of the join, and thirty bootstrap registers claimed only
-    // their entry seed. The second boxed every unvisited value, and precision
-    // went to zero - because the importer records the arguments of the leader
-    // block it makes after every `ret`, a block with no predecessors, whose
-    // values never occupy a register at run time.
+    // Two kinds of value the solver never visited, handled differently. Treating
+    // them as the join's identity would make registers claim only their entry
+    // seed; boxing them all would destroy precision, because the importer
+    // records arguments of the leader block it creates after every `ret`, a
+    // block with no predecessors whose values never occupy a register at run
+    // time.
     //
-    //   * a value in a block DeadCodeAnalysis proved UNREACHABLE contributes
-    //     nothing: it is never executed, so the interpreter never observed it
-    //     and dropping it is exact, not optimistic;
-    //   * a value in a LIVE block with no lattice is a gap in the analysis, is
-    //     boxed so the claim stays sound, and is counted - check-type-claims
-    //     .cmake fails the fixture if that count is anything but zero.
+    //   * A value in a block DeadCodeAnalysis proved unreachable contributes
+    //     nothing: it never executes, so the interpreter never observed it and
+    //     dropping it is exact, not optimistic.
+    //   * A value in a live block with no lattice is a gap in the analysis: it
+    //     is boxed so the claim stays sound, and counted; the claims/*.test lit
+    //     tests require that count to be zero.
     std::size_t deadValues = 0;
     std::size_t unvisited = 0;
     const auto blockIsLive = [&](mlir::Block * block) {
@@ -228,12 +231,12 @@ int main(int argc, char ** argv) {
         return executable != nullptr && executable->isLive();
     };
     for (const ctcompile::js::register_map & map : imported.register_maps) {
-        // slot -> the join of every value that ever occupied it.
+        // Slot -> the join of every value that ever occupied it.
         std::map<std::uint16_t, mlir::Type> perSlot;
         for (const auto & entry : map.slots) {
             const TypeLattice * lattice = solver.lookupState<TypeLattice>(entry.first);
             mlir::Type inferred = lattice == nullptr ? mlir::Type{} : lattice->getValue().getType();
-            mlir::Value occupant = entry.first; // getParentBlock is not const
+            mlir::Value occupant = entry.first; // getParentBlock is not const.
             const bool dead = !blockIsLive(occupant.getParentBlock());
             const bool wasUnvisited = !dead && inferred == nullptr;
             if (dead) {
@@ -266,8 +269,10 @@ int main(int argc, char ** argv) {
                 if (found == perSlot.end()) {
                     perSlot.emplace(slot, inferred);
                 } else {
-                    // THE JOIN, and the reason a claim is per REGISTER while
-                    // the analysis is per VALUE.
+                    // Join the claims of every value that occupied this slot
+                    // (ctnative::meet is this lattice's join; see
+                    // TypeInference.h). This is why a claim is per register
+                    // while the analysis is per value.
                     found->second = ctcompile::ctnative::meet(found->second, inferred);
                 }
             }

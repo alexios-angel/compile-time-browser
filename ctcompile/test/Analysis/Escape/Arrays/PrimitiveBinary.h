@@ -1,3 +1,10 @@
+//===- PrimitiveBinary.h - Primitive binary producer checks -----*- C++ -*-===//
+//
+// Shared array-contents test for ctjs.compare and ctjs.binary results, which
+// the analysis treats as fresh primitives.
+//
+//===----------------------------------------------------------------------===//
+
 #pragma once
 
 #include "Harness.h"
@@ -6,9 +13,13 @@
 
 namespace ctcompile::test::escape::arrays {
 
-// Both families require independent original primitive operands, and share
-// the same contents/retention obligations. Operator-specific mutation controls
-// keep their distinct whitelists independent.
+/// Checks that the array-contents analysis treats the result of one
+/// ctjs.compare or ctjs.binary op (selected by ProducerOp and producerKind) as
+/// a fresh primitive: it never aliases an array element, each operand needs
+/// its own proved primitive origin, and the producer never licenses
+/// publication, calls, throws or unknown effects. Runs a fixed table of rows,
+/// per-operand-origin rows, a 32-result work-cost check, and in-place IR edits
+/// of the operands and the kind.
 template <typename ProducerOp, typename Kind>
 void checkPrimitiveBinaryProducer(mlir::MLIRContext & context, Kind producerKind) {
     constexpr bool isComparison = std::is_same_v<ProducerOp, ctjs::CompareOp>;
@@ -27,6 +38,9 @@ void checkPrimitiveBinaryProducer(mlir::MLIRContext & context, Kind producerKind
             return producerKind == ctjs::BinaryKind::Concat;
         }
     }();
+    // The non-bitwise arithmetic kinds (a mixed BigInt/Number pair throws a
+    // TypeError). These, comparisons and concat admit a BigInt operand; the
+    // bitwise kinds refuse it.
     const bool isMixedError = [&] {
         if constexpr (isComparison) {
             return false;
@@ -176,8 +190,9 @@ void checkPrimitiveBinaryProducer(mlir::MLIRContext & context, Kind producerKind
                               .arrays = "a:[x] | a:[x]",
                               .exit = "produced -> {}; produced -> {}"}});
         }
-        // An overwritten slot's new tag never cleans the saved old origin;
-        // conversely, a later BigInt/object cannot taint an earlier primitive.
+        // Overwriting the slot does not clean the value already read from it,
+        // and a later BigInt or object in the slot cannot taint an earlier
+        // primitive read.
         for (const std::string saved : {"%zero", "%big", "%x"}) {
             const std::string replacement = saved == "%zero" ? "%big" : "%zero";
             run({.contents = {.what = "comparison follows saved array values across tag overwrites",
@@ -229,9 +244,8 @@ void checkPrimitiveBinaryProducer(mlir::MLIRContext & context, Kind producerKind
                               "^pad:\n  %id, %exception = ctjs.catch_land\n"
                               "  ctjs.return %a\n",
                       .failure = ArrayContentsFailure::UnsupportedControlFlow}});
-    // Every admitted relational result is an independent primitive origin,
-    // including when consumed by a different comparison kind. This contents
-    // query supplies no completion or effect contract for the guarded paths.
+    // Every relational result is an independent primitive origin, including
+    // when a different comparison kind consumes it.
     for (const std::string kind : {"lt", "le", "gt", "ge"}) {
         run({.contents = {
                  .what = "relational result origins feed independently checked comparisons",
@@ -248,8 +262,8 @@ void checkPrimitiveBinaryProducer(mlir::MLIRContext & context, Kind producerKind
                  .arrays = "a:[x]",
                  .exit = "produced -> {}"}});
     }
-    // Add can yield either Number or String; its result is primitive without
-    // a concrete tag fact. Every consumer must work with both original cases.
+    // Add can yield a Number or a String, so its result is a primitive of
+    // unknown type. Every consumer must accept both.
     for (const bool stringLeft : {false, true}) {
         const std::string operands = stringLeft ? "%text, %zero" : "%zero, %text";
         run({.contents = {.what =
@@ -274,6 +288,9 @@ void checkPrimitiveBinaryProducer(mlir::MLIRContext & context, Kind producerKind
             computeArrayContents(*narrowModule->template getOps<ctjs::FuncOp>().begin());
         const auto expanded =
             computeArrayContents(*wideModule->template getOps<ctjs::FuncOp>().begin());
+        // Each extra result costs two work units (its producer and its
+        // snapshot); the non-bitwise arithmetic kinds cost a third for their
+        // independent arithmetic fact, so 32 extras cost 64 or 96.
         const unsigned extraWork = spelling == "sub" || spelling == "add" || spelling == "mul" ||
                                            spelling == "div" || spelling == "mod" ||
                                            spelling == "pow"
@@ -306,6 +323,9 @@ void checkPrimitiveBinaryProducer(mlir::MLIRContext & context, Kind producerKind
         module->walk([&](ctjs::ConstantOp op) {
             if (llvm::isa<ctjs::BigIntAttr>(op.getValue())) { big = op; }
         });
+        // Forge the analysis's own completion attributes, then swap operands
+        // and kinds in place: the verdict must follow the live IR, never the
+        // forged attributes. %p is the function's fourth block argument.
         mlir::OpBuilder builder(comparison);
         function->setAttr("ctnative.array_contents_complete", builder.getUnitAttr());
         function->setAttr("ctnative.array_retention_complete", builder.getUnitAttr());

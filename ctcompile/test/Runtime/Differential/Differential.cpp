@@ -1,38 +1,42 @@
-// DOES COMPILED CODE COMPUTE WHAT THE INTERPRETER COMPUTES?
+//===- Differential.cpp - AOT differential ----------------------*- C++ -*-===//
 //
-// This is the test the project's own policy asks for: "when a CTJS operation
-// and the ctbrowser VM disagree, the VM is correct by definition." So nothing
-// here writes an expected answer down. Each body is run twice against the same
-// context - once interpreted, once with its compiled entry installed - and the
-// two results are compared.
+// Does compiled code compute what the interpreter computes?
 //
-// WHY IT IS DIFFERENT FROM EVERY OTHER TEST HERE. The lit tests read the
-// emitted C++ and compile it; ctcompile_linkable links it; ctcompile_gc_roots
-// runs one body with the collector hostile. None of them asks whether the
-// answer is RIGHT. A backend can emit fluent, linkable, correctly-rooted code
-// that computes the wrong thing - lowering `a + b` to op::add instead of
+// The interpreter is correct by definition: when a CTJS operation and the
+// ctbrowser VM disagree, the VM wins. So each body is run twice against the
+// same context, once interpreted and once with its compiled entry installed,
+// and the two results are compared. (A pinned expected answer is also checked;
+// see subject::expected for why.)
+//
+// The other tests check different things: the lit tests read the emitted C++
+// and compile it, ctcompile_linkable links it, and ctcompile_gc_roots runs one
+// body with a hostile collector. None of them asks whether the answer is
+// right. A backend can emit fluent, linkable, correctly rooted code that
+// computes the wrong thing: lowering `a + b` to op::add instead of
 // op::add_generic passes every one of those and makes `{valueOf:()=>3} + 1`
 // answer NaN.
 //
-// THE INPUTS ARE CHOSEN TO SEPARATE THE LOWERINGS, not to cover them. A test
+// The inputs are chosen to separate the lowerings, not to cover them. A test
 // whose answer is the same whether or not the compiler is right is worse than
 // no test, so every case below is one where a plausible mistake changes the
 // result:
 //
-//   AN OBJECT WITH A valueOf separates the two `+` families. op::add uses the
+//   An object with a valueOf separates the two `+` families. op::add uses the
 //   static conversions and cannot run user code; op::add_generic runs
 //   ToPrimitive. The runtime reaches the static one only from `++`.
 //
 //   NaN separates the four relational operators from one another.
-//   ct_aot_compare answers UNORDERED for it, which makes all four false -
+//   ct_aot_compare answers unordered for it, which makes all four false,
 //   including `>=`, so `>=` lowered as `!(<)` answers true here and nowhere
 //   else.
 //
-//   0 AND "0" AND false separate strict from loose equality, which reach
+//   0 and "0" and false separate strict from loose equality, which reach
 //   different helpers with different effect profiles.
 //
 // It deliberately does not test the collector: gc_roots owns that, and keeping
 // them apart means a rooting bug and a wrong answer never look like each other.
+//
+//===----------------------------------------------------------------------===//
 #include <ctbrowser/aot/aot.hpp>
 #include <ctbrowser/aot/aot_entry.h>
 #include <ctbrowser/script/builtins.hpp>
@@ -53,7 +57,8 @@ using ctbrowser::script::function_proto;
 using ctbrowser::script::program;
 using ctbrowser::script::value;
 
-// Compiled by the build from differential.js, one per function named there.
+// The compiled entries, built from differential.js, one per function named
+// there.
 #define CT_ENTRY(name_)                                                                            \
     extern "C" std::int32_t ctc_##name_(                                                           \
         ctbrowser::aot::ct_aot_ctx *, const ctbrowser::aot::ct_aot_site *, const std::uint64_t *,  \
@@ -115,71 +120,49 @@ CT_ENTRY(arrayOut)
 
 namespace {
 
-// THE SAME FILE THE PIPELINE COMPILES, not a transcription of it.
-//
-// It WAS a transcription, with a comment saying the two must stay identical -
-// and they drifted in ORDER: a function appended in a different position in
-// each. That is not cosmetic. A compiled body bakes the function INDEX of every
-// closure it builds, and ct_aot_make_closure's row says outright that "a
-// function index means nothing outside the program it was compiled in" - so a
-// reordered fixture makes a compiled body build a closure over a DIFFERENT
-// function. It presented as a case reporting the wrong answer and passing,
-// because both tiers agreed on a stale OUT.
+/// The same differential.js the build compiles, not a copy. A compiled body
+/// bakes in the index of every function it closes over (ct_aot_make_closure's
+/// row: "a function index means nothing outside the program it was compiled
+/// in"), so a copy whose functions were in a different order would build
+/// closures over the wrong function, and both tiers could still agree.
 constexpr std::string_view fixture =
 #include "differential.js.inc"
 
     ;
 
-// One proto to install a compiled entry on.
-//
-// BY NAME AND ORDINAL, because an arrow has no name: the importer calls every
-// anonymous function `fn`, and picking the first match silently would be the
-// wrong closure the moment a fixture grows a second one. The lookup below
-// refuses an ambiguous name rather than guessing.
+/// One compiled entry to install on a function_proto, found by name and
+/// ordinal. An arrow has no name (its proto's name is ""), so picking the
+/// first match would pick the wrong closure as soon as a fixture had two; the
+/// lookup in main() refuses a name that matches nothing.
 struct installed {
     const char * name;
     unsigned ordinal;
     ctbrowser::aot::ct_aot_entry_fn entry;
 };
 
+/// One differential case: a drive() arm and the entries to install for it.
 struct subject {
-    // WHICH ARM OF drive() THIS IS, written down rather than taken from the
-    // row's position. It was positional, and inserting a case in the middle
-    // silently misattributed every row after it - the answers stayed right and
-    // the NAMES moved, so a failure would have named the wrong lowering. A
-    // test that lies about which case failed is worse than one that fails.
+    /// The drive() arm to run. Stored explicitly, not taken from the row's
+    /// position, so reordering rows cannot attach the wrong name to a failure.
     unsigned which;
+    /// The case's name in the output.
     const char * name;
-    // WHICH function_protos GET A COMPILED ENTRY, which is not always the
-    // function the arm calls, and is not always ONE.
-    //
-    // Installing a single entry is what the harness did, and a case that drives
-    // `counters` while installing `counters` runs `step` INTERPRETED and
-    // exercises no closure at all - which is what the first two-closure case
-    // did. It passed with the closure handoff removed, and that is how it was
-    // found.
-    //
-    // MORE THAN ONE IS NOT A CONVENIENCE EITHER. Whether a closure BUILT by
-    // compiled code enters compiled code when called is a question no
-    // single-entry case can ask, and the ABI row claims it does not.
+    /// The functions that run compiled in this case: not always the one the
+    /// arm calls, and sometimes two. A closure case must compile the closure
+    /// itself (e.g. `step`), not only its interpreted driver, or it exercises
+    /// no compiled closure at all; and only a two-entry case can test a closure
+    /// built by compiled code entering compiled code when called.
     installed patches[2];
-    // WHAT THE ANSWER MUST BE, and it is written down on purpose.
-    //
-    // THE INTERPRETER DEFINES CORRECT, which is this file's whole premise - but
-    // that premise has a bound, and it is worth stating rather than
-    // discovering. Where the two tiers share an implementation, a bug in the
-    // shared part breaks BOTH and they agree. context::make_closure is exactly
-    // that: it was factored out so run_loop and ct_aot_make_closure could not
-    // drift, and the price is that the differential comparison goes blind to
-    // it. Swapping its two descriptor arms makes every closure case answer
-    // `undefined` and every one of them still "agree".
-    //
-    // So the cases that reach shared code carry an anchor. It is not a second
-    // source of truth for the language - it is a tripwire on the one path the
-    // comparison cannot see.
-    // WHY THIS CASE WOULD DIFFER, so a failure says what broke rather than only
-    // that something did.
+    /// Why this case would differ, so a failure says what broke rather than
+    /// only that something did.
     const char * separates;
+    /// The interpreter's expected answer. The interpreter defines correctness,
+    /// but where both tiers share an implementation, a bug in the shared part
+    /// breaks both identically and they still agree. context::make_closure,
+    /// used by both run_loop and ct_aot_make_closure, is such code: swapping
+    /// its two descriptor arms makes every closure case answer `undefined` in
+    /// both tiers. This pinned value is a tripwire on that blind spot, not a
+    /// second source of truth for the language.
     const char * expected;
 };
 
@@ -194,11 +177,10 @@ int main() {
 
     context cx;
     ctbrowser::script::install_builtins(cx);
-    // ARMS 50 AND 51 READ A PROMISE'S STATE as `__value`/`__settled`/
-    // `__rejected`. Those slots are PRIVATE now (TYPE-001: a page could forge
-    // or rewrite them), so this harness - and only this harness - hangs
-    // getters by those names on %Promise.prototype% that read the private
-    // slots back, and the pinned answers stay what they were.
+    // drive() arms 50 and 51 read a promise's state as `__value`, `__settled`
+    // and `__rejected`. The engine keeps those slots private so a page cannot
+    // forge them, so this test alone installs getters by those names on
+    // %Promise.prototype% that read the private slots back.
     if (ctbrowser::script::object_object * promise_proto =
             cx.prototype(context::proto_kind::promise)) {
         const std::pair<const char *, std::string_view> peeks[] = {
@@ -268,11 +250,8 @@ int main() {
          "cannot see its closure answers undefined, because the write lands on a non-cell and "
          "is dropped",
          "12"},
-        // PATCHES step, NOT counters. The instance-versus-proto question is
-        // about the two `step` closures, so `step` is what has to be running
-        // compiled; `counters` is the interpreted driver that makes two of them.
-        // PATCHES counter, WHICH BUILDS THE CLOSURE. Everything above reads
-        // one; this is the first case where ct_aot_make_closure runs in
+        // Patches `counter`, which builds the closure. The cases above only
+        // read one; this is the first where ct_aot_make_closure runs in
         // compiled code.
         {9u,
          "make closure",
@@ -286,41 +265,31 @@ int main() {
          "the from_parent_local arm against the enclosing-closure arm - `y` is middle's own "
          "register and `x` is not",
          "3"},
-        // AN ARROW'S `this`, WITH BOTH HALVES COMPILED. `methodish` builds the
-        // arrow, so it exercises ct_aot_make_closure's enclosing_this; the
-        // arrow itself reads it, which exercises ct_aot_this.
-        //
-        // ITS PROTO NAME IS EMPTY. `fn` is what the IMPORTER calls an anonymous
-        // function when it builds a SYMBOL - `fn$2` - and the proto's own name
-        // is "". The two are not the same string, and the ordinal is there
-        // because a second anonymous function would make "" ambiguous.
         {19u,
          "throw",
          {{"thrower", 0u, &ctc_thrower}, {}},
          "a real throw against a frame that merely unwound - a lost thrown_ catches undefined",
          "caught 7"},
-        // ONLY `build`, SO Point STAYS INTERPRETED - and that is the whole
-        // difference between this case and the next, which was found by a
-        // mutant that passed.
+        // Only `build` is patched, so Point stays interpreted; that is the
+        // whole difference between this case and the next.
         //
-        // THE PRIMITIVE-RETURN RULE IS WRITTEN TWICE and only one copy runs at
-        // a time. ct_aot_construct_result applies it INSIDE a compiled body
+        // The primitive-return rule is implemented twice and only one copy runs
+        // at a time. ct_aot_construct_result applies it inside a compiled body
         // before returning; context::construct_new applies it to what invoke()
-        // handed back. Patch both halves and the compiled Point has already
-        // done it, so construct_new's copy sees an object and can be deleted
-        // with every case still green. Leaving Point interpreted is what makes
-        // that copy load-bearing - and it is the only thing that does, because
-        // an interpreted frame entered through invoke() has `constructing`
-        // FALSE (the aggregate initialiser fills eight members and constructing
-        // is the twelfth), so run_loop's own copy of the rule does not fire
-        // either.
+        // handed back. With both halves compiled, Point has already applied it,
+        // so construct_new's copy sees an object and could be deleted with
+        // every case still green. Leaving Point interpreted is what tests that
+        // copy, and nothing else does: an interpreted frame entered through
+        // invoke() has `constructing` false (the aggregate initialiser fills
+        // eight members and constructing is the twelfth), so run_loop's own
+        // copy of the rule does not fire either.
         {20u,
          "construct",
          {{"build", 0u, &ctc_build}, {}},
          "the fresh instance against the body's return value - `new` throws away the 7 Point "
          "returns, and an ordinary call would answer it",
          "9"},
-        // AND NOW BOTH HALVES, which is a different path rather than a stronger
+        // Now both halves, which is a different path rather than a stronger
         // one: `Point` is entered with constructing set, so the rule is applied
         // by the compiled body and construct_new never sees a primitive.
         {20u,
@@ -329,28 +298,26 @@ int main() {
          "entering a COMPILED constructor - ct_aot_construct_result is where the rule lives on "
          "that side, and `constructing` is what selects it",
          "9"},
-        // THE ONE CASE THAT READS ct_aot_construct's `site`. See newBad.
+        // The one case that reads ct_aot_construct's `site`. See newBad in
+        // differential.js.
         {21u,
          "new on a number",
          {{"newBad", 0u, &ctc_newBad}, {}},
          "the entry's own site against the memo marker - the site is only ever read to name "
          "the enclosing function in this message",
          "TypeError: `new` on the value is number (5), not a function - in `newBad`"},
-        // THE TWO CONDITIONAL JUMPS THE IMPORTER'S CFG CLASSIFIER DID NOT
-        // KNOW. Their emission was written and correct; is_conditional_jump
-        // named two of the four, so neither one's target was ever marked a
-        // block leader and the emitter refused every function containing one.
-        //
-        // ALL THREE BODIES ARE PATCHED, because each compiles to a different
-        // one of the three shapes and a single entry would leave two
-        // interpreted.
+        // `??` and `?.` compile to conditional jumps that branch on
+        // definedness, not truthiness. `coalesce` and `chain` are both patched
+        // so each shape runs compiled; `dflt` (a default parameter) stays
+        // interpreted here and is compiled only in the all-entries AOT pass
+        // below.
         {22u,
          "nullish",
          {{"coalesce", 0u, &ctc_coalesce}, {"chain", 0u, &ctc_chain}},
          "definedness against truthiness - `0 ?? 9` is 0, and a jump lowered through ctjs.truthy "
          "answers 9",
          "0//9/undefined/4/0"},
-        // for-of, WHICH IS ONE OPCODE AND THREE ARMS OF ONE HELPER.
+        // for-of, which is one opcode and three arms of one helper.
         {23u,
          "for-of",
          {{"total", 0u, &ctc_total}, {"chars", 0u, &ctc_chars}},
@@ -418,9 +385,9 @@ int main() {
          "after, so a copy in the wrong order changes both digits - and an array source, which "
          "spreads by index",
          "29/78"},
-        // THE SHAPE THAT JUMPS BACK TO INSTRUCTION ZERO. It is a differential
-        // case rather than an import test because importing it was only half
-        // the question: the entry now falls through into a header block
+        // A loop whose back edge jumps to instruction zero. It is a
+        // differential case rather than an import test because importing it is
+        // only half the question: the entry falls through into a header block
         // carrying the whole register file, and getting that edge wrong loses
         // the loop variable rather than failing to compile.
         {34u,
@@ -429,7 +396,7 @@ int main() {
          "a back edge to instruction 0 - the importer marked it a leader and built no block for "
          "it, and the second call checks the loop is skipped rather than entered once",
          "3/1"},
-        // THE COMPILED BODY IS `accessors`, WHICH INSTALLS THEM - not
+        // The compiled body is `accessors`, which installs them, not
         // useAccessor, which merely reads and writes. define_getter and
         // define_setter are what is under test, and they run where the object
         // literal is built.
@@ -440,11 +407,11 @@ int main() {
          "makes the read answer undefined AND the write record nothing, so both halves of the "
          "answer move at once",
          "41/7/s"},
-        // ONLY `guarded` IS PATCHED, so `thrower` stays interpreted and the
+        // Only `guarded` is patched, so `thrower` stays interpreted and the
         // caught status reaches the compiled frame from ct_aot_call across a
         // real throw. The AOT pass below runs the same arm with `thrower`
         // compiled too, which is a different path through ct_aot_check: a
-        // callee's UNWOUND reclassified as the caller's CAUGHT.
+        // callee's unwound status reclassified as the caller's caught one.
         {36u,
          "try/catch",
          {{"guarded", 0u, &ctc_guarded}, {}},
@@ -490,18 +457,18 @@ int main() {
          "claims a register an extra argument may be in, so gather_rest must read the frame's "
          "copy rather than the window",
          "2:2,3/0:/3/2,3"},
-        // ASYNC WITHOUT await. op::wrap_promise is the only opcode async
-        // adds to a body with no suspension point in it, and it is the only
-        // one of Phase 14's three that a compiled C++ stack frame can execute
-        // at all.
+        // An async function with no `await`. op::wrap_promise is the only
+        // async opcode such a body contains, and the only async opcode a
+        // compiled C++ frame can execute: `await` and `yield` must suspend the
+        // frame, which only the interpreter can do.
         {50u,
          "wrap_promise",
          {{"wrapped", 0u, &ctc_wrapped}, {}},
          "the wrap itself - a body that returned its value raw answers "
          "\"number/2/undefined\" and the second field still looks nearly right",
          "object/2/true/false"},
-        // BOTH SHAPE TESTS, and they are the two a plausible simplification
-        // gets wrong in opposite directions.
+        // Both shape tests, which a plausible simplification gets wrong in
+        // opposite directions.
         {51u,
          "promise shapes",
          {{"passes", 0u, &ctc_passes}, {"arrayOut", 0u, &ctc_arrayOut}},
@@ -547,20 +514,29 @@ int main() {
          {{"bnot", 0u, &ctc_bnot}, {}},
          "the ToInt32 arm against the unbounded one - a BigInt has no width to truncate to",
          "-6/-9007199254740994"},
+        // An arrow's `this` with both halves compiled: `methodish` builds the
+        // arrow (ct_aot_make_closure's enclosing_this) and the arrow reads it
+        // (ct_aot_this). The arrow's proto name is "" (the importer's `fn$2`
+        // is only its symbol name), so it is selected by name "" and ordinal
+        // 0; a second anonymous function would make "" ambiguous.
         {11u,
          "arrow this",
          {{"methodish", 0u, &ctc_methodish}, {"", 0u, &ctc_fn}},
          "the EFFECTIVE receiver against the entry's raw one - `seen()` is called with no "
          "receiver, so the raw one is undefined",
          "captured"},
-        // A CLOSURE BUILT BY COMPILED CODE, CALLED FROM COMPILED CODE. No
-        // single-entry case can ask this, and the ABI row claims it does not
-        // work - a claim that predates function_proto::aot_entry.
+        // A closure built by compiled code and called from compiled code,
+        // which no single-entry case can test. ct_aot_make_closure's row in
+        // aot_helpers.def says this does not work; that note predates
+        // function_proto::aot_entry.
         {9u,
          "nested compiled",
          {{"counter", 0u, &ctc_counter}, {"step", 0u, &ctc_step}},
          "whether a closure built by compiled code enters compiled code when called",
          "52"},
+        // Patches `step`, not `counters`. The instance-versus-proto question is
+        // about the two `step` closures, so `step` is what has to run compiled;
+        // `counters` is the interpreted driver that makes two of them.
         {8u,
          "two closures",
          {{"step", 0u, &ctc_step}, {}},
@@ -569,24 +545,24 @@ int main() {
          "302"},
     };
 
-    // ---- AND THE THIRD MODE ------------------------------------------------
+    // ---- All-entries (AOT) mode ---------------------------------------------
     //
-    // The plan asks for differential runs under VM, HYBRID and AOT. Everything
-    // above is HYBRID: one or two protos carry a compiled entry and the rest of
-    // the program is interpreted, which is what makes each case separate one
-    // lowering from its neighbours.
+    // Differential runs are wanted interpreted (VM), hybrid and all-compiled
+    // (AOT). Everything above is hybrid: one or two protos carry a compiled
+    // entry and the rest of the program is interpreted, which is what lets each
+    // case isolate one lowering.
     //
-    // IT IS ALSO THE MODE THAT CANNOT SEE A CROSS-FUNCTION DEFECT. A compiled
-    // caller reaching a compiled callee goes through paths a single patch never
-    // exercises - the argument window survives a callee that collects, a
-    // new.target handoff crosses a frame boundary that is compiled on BOTH
-    // sides - and exactly one case above (`nested compiled`) asks that question,
-    // about exactly two functions.
+    // Hybrid runs cannot see a cross-function defect. A compiled caller
+    // reaching a compiled callee goes through paths a single patch never
+    // exercises (the argument window surviving a callee that collects, a
+    // new.target handoff across a frame boundary compiled on both sides), and
+    // only one case above (`nested compiled`) asks that question, about two
+    // functions.
     //
-    // So this installs EVERY entry the build produced and runs every arm again.
-    // It separates nothing on its own; it is the check that the cases above,
-    // which each hold one variable still, did not agree only because everything
-    // around them was interpreted.
+    // So this installs every entry the build produced and runs every arm
+    // again. It isolates nothing on its own; it checks that the cases above,
+    // which each hold one variable still, did not agree only because
+    // everything around them was interpreted.
     const installed all[] = {
         {"plus", 0u, &ctc_plus},
         {"ge", 0u, &ctc_ge},
@@ -644,7 +620,7 @@ int main() {
     };
 
     for (const subject & each : subjects) {
-        // EVERY PROTO THIS CASE INSTALLS ON, resolved before anything runs so a
+        // Every proto this case installs on, resolved before anything runs so a
         // missing one is reported rather than silently skipped.
         function_proto * bodies[std::size(each.patches)] = {};
         bool resolved = true;
@@ -685,8 +661,8 @@ int main() {
         const std::string interpreted = answer(false);
         const std::string generated = answer(true);
 
-        // THE ARM HAS TO HAVE RUN. Without this a case whose arm throws leaves
-        // OUT holding the PREVIOUS case's answer, both tiers read the same
+        // The arm has to have run. Without this a case whose arm throws leaves
+        // OUT holding the previous case's answer, both tiers read the same
         // stale value, and the case reports success while testing nothing.
         if (interpreted == "<the arm did not run>") {
             std::printf("%-12s FAILED - drive(%u) set nothing, so the arm threw or does not "
@@ -695,7 +671,7 @@ int main() {
             ++ctbrowser_test_failures;
             continue;
         }
-        // AND THE ANCHOR, for the paths the comparison cannot see. See the
+        // The pinned answer, for the paths the comparison cannot see. See the
         // note on subject::expected: where the two tiers share an
         // implementation, a bug in it breaks both and they agree.
         if (interpreted != each.expected) {
@@ -715,12 +691,11 @@ int main() {
         }
     }
 
-    // ---- the AOT pass ------------------------------------------------------
+    // ---- The AOT pass ------------------------------------------------------
     //
-    // RESOLVED FIRST AND ASSERTED, because a name that matches nothing would
-    // silently install nothing, and a pass that compiles nothing agrees with
-    // the interpreter perfectly. That is the shape of every vacuous test this
-    // project has already found.
+    // Every name is resolved first and asserted, because a name that matches
+    // nothing would silently install nothing, and a pass that compiles nothing
+    // agrees with the interpreter perfectly.
     function_proto * every[std::size(all)] = {};
     for (std::size_t slot = 0; slot < std::size(all); ++slot) {
         unsigned seen = 0;

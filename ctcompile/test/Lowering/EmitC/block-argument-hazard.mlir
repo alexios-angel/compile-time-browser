@@ -1,37 +1,37 @@
-// THE C++ EMITTER LOSES A COPY ON A BLOCK-ARGUMENT EDGE, AND THIS IS THAT BUG.
+// The C++ emitter loses a copy on a block-argument edge; this test pins that bug.
 //
-// It is not a style note. `mlir-translate --mlir-to-cpp` in the pinned LLVM
-// (22.1.8) serialises the parallel copy on a branch edge naively - it assigns
-// the block arguments one at a time, in order, with no temporaries - so an edge
-// where one block argument's new value is ANOTHER block argument of the same
-// block reads a destination that has already been overwritten.
+// `mlir-translate --mlir-to-cpp` (seen in LLVM 22.1.8; the assertion at the end
+// shows whether the pinned version still does it) serialises the parallel copy
+// on a branch edge naively: it assigns the block arguments one at a time, in
+// order, with no temporaries. So an edge where one block argument's new value
+// is another block argument of the same block reads an overwritten variable.
 //
-// MEASURED, NOT INFERRED. The emitted function below was compiled and run:
+// This was measured, not inferred. The emitted function below, compiled and run:
 //
 //     n=0 -> 10   n=1 -> 20   n=2 -> 20   n=3 -> 20   n=4 -> 20   n=5 -> 20
 //
 // Each iteration swaps (a, b) from (10, 20), so MLIR's answer is 10 for even n
-// and 20 for odd. n=2 and n=4 are wrong. No diagnostic, exit status 0.
+// and 20 for odd. n=2 and n=4 are wrong, with no diagnostic and exit status 0.
 //
-// WHY THIS PROJECT IS EXPOSED TO IT SPECIFICALLY. The bytecode importer models
-// the register file as BLOCK ARGUMENTS - that is its design, chosen over SSA
-// construction - so every register live across a branch is a block argument,
-// and any loop that permutes two registers across its back edge is exactly the
-// shape below. A `[a, b] = [b, a]` in a loop is not an exotic program.
+// This project is exposed to it because the bytecode importer models the
+// register file as block arguments (by design, instead of SSA construction),
+// so every register live across a branch is a block argument, and any loop
+// that permutes two registers across its back edge has exactly the shape
+// below. A `[a, b] = [b, a]` in a loop is not an exotic program.
 //
-// THE HAZARD IS CONDITIONAL, WHICH IS WHY IT NEEDS A TEST. Route the same swap
+// The hazard is conditional, which is why it needs a test. Route the same swap
 // through an intermediate block and the emitter is correct, because the extra
-// edge introduces the temporaries by accident; the first attempt at this test
+// edge introduces the temporaries by accident; a first version of this test
 // did that and passed. It only loses when a block argument's new value is a
-// block argument of the SAME block and the destination is written before the
+// block argument of the same block and the destination is written before the
 // source is read.
 //
-// SO THE BACKEND MUST NOT EMIT BLOCK ARGUMENTS ON NON-ENTRY BLOCKS. It lowers
-// them to an emitc.variable per argument, with every read issued before any
-// write. This file exists so that if anybody ever removes that step, or decides
-// block arguments look fine because a simpler case worked, it fails here with
-// the reason attached rather than in a rendered page.
-//
+// So the backend must not emit block arguments on non-entry blocks.
+// --emitc-eliminate-block-arguments lowers them to an emitc.variable per
+// argument, with every read issued before any write (see
+// block-arguments-eliminated.mlir). If that step is ever removed, or block
+// arguments are judged safe because a simpler case worked, this file explains
+// why the output is wrong.
 // If a later LLVM fixes this, the CHECK below stops matching and the reason to
 // keep the elimination step disappears with it. That is the intended way for
 // this file to die.
@@ -48,16 +48,16 @@ emitc.func @swaploop(%n: i32) -> i32 {
   %one = "emitc.constant"() <{value = 1 : i32}> : () -> i32
   %inext = emitc.add %i, %one : (i32, i32) -> i32
   %more = emitc.cmp lt, %i, %n : (i32, i32) -> i1
-  // A TRUE SWAP ACROSS THE BACK EDGE, with no intermediate block.
+  // A true swap across the back edge, with no intermediate block.
   cf.cond_br %more, ^loop(%b, %a, %inext : i32, i32, i32), ^exit
 
 ^exit:
   emitc.return %a : i32
 }
 
-// THE LOST COPY, ASSERTED. The two assignments name the same variable as
-// destination and source in sequence: the second reads what the first just
-// wrote, so `b` ends up holding the new `a` rather than the old one.
+// The lost copy. The two assignments name the same variable as destination
+// and source in sequence: the second reads what the first just wrote, so `b`
+// ends up holding the new `a` rather than the old one.
 //
 // Anchored inside the taken branch, because the same two-assignment shape
 // appears harmlessly where the loop is entered.

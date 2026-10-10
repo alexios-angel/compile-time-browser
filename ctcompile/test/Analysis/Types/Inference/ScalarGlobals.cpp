@@ -1,11 +1,22 @@
+//===- ScalarGlobals.cpp - Scalar globals saved by owned methods ----------===//
+//
+// Tests for the types inferred for scalar globals that owned global methods
+// save and read back, and for how OwnedGlobalRoots withdraws its
+// initialization proof when the live IR is edited.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Tests.h"
 
 namespace ctcompile::test::type_inference {
 
-// Exercise the dependency, rather than relying on a particular worklist order:
-// the literal arrives only after the alias first waits, then the actual saved
-// SSA lattice widens three times. These are sound overapproximations of the
-// same immutable program. No host category supplies a native type here.
+/// A TypeInference that forces one propagation order, so the test exercises
+/// the dependency rather than whatever order the worklist picks. It skips
+/// `literal` on its first visit and re-enqueues it once `observed` has been
+/// visited without a type; then each time `observed` reaches the expected type
+/// it widens `saved` one more step (initial type, wider type, optional,
+/// boxed). Every step is a sound over-approximation of the same program. No
+/// host category supplies a native type here.
 class ScheduledScalarInference final : public TypeInference {
 public:
     enum class Kind {
@@ -60,6 +71,7 @@ public:
         return mlir::success();
     }
 
+    /// Returns how many scheduled steps ran; 5 means every step was observed.
     [[nodiscard]] unsigned stages() const { return stage_; }
 
 private:
@@ -76,6 +88,10 @@ private:
     unsigned stage_ = 0;
 };
 
+/// Checks the types inferred for scalar globals that owned methods save and
+/// read, and that each IR edit (initialization moved after the read, a
+/// duplicate initialization, a renamed global, a changed return) withdraws or
+/// changes the ownership proof until it is undone.
 void checkSavedScalarGlobalTypes(mlir::MLIRContext & context) {
     namespace fixtures = ctcompile::test::owned_global_methods;
     namespace ctjs = ctcompile::ctjs;
@@ -483,8 +499,11 @@ void checkSavedScalarGlobalTypes(mlir::MLIRContext & context) {
                 }
             }
 
-            // Rebuild the borrowed owner after every edit. An old fingerprint must
-            // refuse before exposing any edges; a new one must prove the live IR.
+            // After each IR edit below, build OwnedGlobalRoots again from a fresh
+            // contract. A contract whose fingerprint no longer matches the IR
+            // must be refused before any edge is exposed; a fresh one must
+            // re-prove the edited IR. The first step adds `ctnative.*` report
+            // attributes, which must not change the inferred types.
             mlir::Builder attributes(&context);
             module->walk([&](mlir::Operation * op) {
                 op->setAttr("ctnative.scalar_global", attributes.getStringAttr("number"));
@@ -539,9 +558,9 @@ void checkSavedScalarGlobalTypes(mlir::MLIRContext & context) {
             duplicate->erase();
             restored();
             savedRead->setAttr("name", attributes.getStringAttr("trace"));
-            // This creates an uninitialized cycle in the ordinary global lattice;
-            // query the finite proof alone rather than interpreting that cycle as
-            // a fresh Number fact or asking the solver to guess an initializer.
+            // The rename creates an uninitialized cycle in the ordinary global
+            // lattice, so query only the ownership proof rather than running the
+            // solver, which would have to guess an initializer.
             OwnedGlobalRoots wrongName(*module, requested(*module));
             require(!wrongName.proved() && wrongName.scalarReads().empty(),
                     "a changed global name cannot consume the old edge");
@@ -552,9 +571,9 @@ void checkSavedScalarGlobalTypes(mlir::MLIRContext & context) {
             auto returned = llvm::cast<ctjs::ReturnOp>(getter.getBody().front().getTerminator());
             const auto originalReturn = returned.getValue();
             returned->setOperand(0, getter.getBody().front().getArgument(0));
-            // The changed method invalidates complete ownership. Its saved
-            // result becomes boxed; an independent constant keeps its actual
-            // literal type plus the ordinary global absence seed.
+            // The changed method invalidates ownership. Its saved result becomes
+            // boxed; an independent constant keeps its literal type plus the
+            // `undefined` every global load starts from.
             OwnedGlobalRoots changedReturn(*module, requested(*module));
             require(!changedReturn.proved() && changedReturn.scalarReads().empty(),
                     "an unknown return cannot inherit the former Number category");

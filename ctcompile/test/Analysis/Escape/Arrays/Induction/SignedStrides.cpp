@@ -1,3 +1,19 @@
+//===- SignedStrides.cpp - Signed loop-induction stride tests -------------===//
+//
+// Loop-induction cases whose stride is not a plain positive Number literal:
+// Boolean strides, commuted Add, subtraction of a negative literal or String,
+// and Neg, BitNot and signed bitwise results. Each case checks that the
+// analysis keeps exact element contents and retained children, and refuses a
+// stride that changes across the backedge or comes from an unknown value.
+//
+// `#ctjs.number<N>` writes a double as its raw IEEE-754 bit pattern:
+// 4607182418800017408 = 1.0, 13830554455654793216 = -1.0,
+// 13835058055282163712 = -2.0, 4746794007244308480 = 2^31 - 1 (INT32_MAX),
+// 13970166044103278592 = -2^31, 4751297606873776128 = 2^32 - 1 (UINT32_MAX),
+// 13974669643728551936 = -(2^32 - 1), 9223372036854775808 = -0.0.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Cases.hpp"
 
 namespace ctcompile::test::escape::arrays::induction_detail {
@@ -104,6 +120,7 @@ void InductionCases::signedStrides() {
                replace(replace(maxStride, "binary_static add %i, %max", opcode + " add %max, %i"),
                        "^header(%a, %zero, %zero", "^header(%a, %one, %zero"));
     }
+    // -1.0; every subtraction case below starts from this literal.
     negativeLiteral = "#ctjs.number<13830554455654793216>";
     subtract = "  %minus = ctjs.constant " + negativeLiteral + "\n" +
                replace(savedChild, "binary_static add %i, %one", "binary sub %i, %minus");
@@ -162,6 +179,8 @@ void InductionCases::signedStrides() {
          .arrays = "a:[one,x]",
          .reads = "a[0]=one; a[1]=x",
          .exit = "x -> {x}"});
+    // 0, 1, -0.5, -2^32, -inf, NaN, the String "-1" and the BigInt -1n. Only the
+    // String converts to a bounded negative integer, so only it is admitted.
     for (const std::string constant :
          {"#ctjs.number<0>", "#ctjs.number<4607182418800017408>",
           "#ctjs.number<13826050856027422720>", "#ctjs.number<13974669643730649088>",
@@ -575,15 +594,15 @@ void InductionCases::signedStrides() {
     // Subtracting the expected signed result must produce index zero. This
     // checks the full magnitude at both ToInt32 boundaries, not just its sign.
     for (const auto & [input, output] :
-         {std::pair{"0", "13830554455654793216"},
-          std::pair{"9223372036854775808", "13830554455654793216"},
-          std::pair{"13830554455654793216", "0"},
-          std::pair{"13835058055282163712", "4607182418800017408"},
-          std::pair{"4746794007244308480", "13970166044103278592"},
-          std::pair{"4746794007248502784", "4746794007244308480"},
-          std::pair{"4751297606873776128", "0"},
-          std::pair{"13970166044103278592", "4746794007244308480"},
-          std::pair{"13974669643728551936", "13835058055282163712"}}) {
+         {std::pair{"0", "13830554455654793216"},                       // ~0 = -1
+          std::pair{"9223372036854775808", "13830554455654793216"},     // ~-0 = -1
+          std::pair{"13830554455654793216", "0"},                       // ~-1 = 0
+          std::pair{"13835058055282163712", "4607182418800017408"},     // ~-2 = 1
+          std::pair{"4746794007244308480", "13970166044103278592"},     // ~INT32_MAX = -2^31
+          std::pair{"4746794007248502784", "4746794007244308480"},      // ~2^31 = INT32_MAX
+          std::pair{"4751297606873776128", "0"},                        // ~UINT32_MAX = 0
+          std::pair{"13970166044103278592", "4746794007244308480"},     // ~-2^31 = INT32_MAX
+          std::pair{"13974669643728551936", "13835058055282163712"}}) { // ~-UINT32_MAX = -2
         run({.what = "BitNot preserves exact ToInt32 boundary values and its result identity",
              .body = prefix + "  %operand = ctjs.constant #ctjs.number<" + input +
                      ">\n"
@@ -641,6 +660,7 @@ void InductionCases::signedStrides() {
         reject("signed bitwise snapshots cannot borrow an unknown operand",
                replace(snapshot, kind + " %operand", kind + " %p"),
                ArrayContentsFailure::UnknownValue);
+        // "-1", -1n, 0.5, 2^32, -2^32, +inf and NaN: only the String converts exactly.
         for (const std::string input :
              {"#ctjs.string<\"-1\">", "#ctjs.bigint<\"-1\">", "#ctjs.number<4602678819172646912>",
               "#ctjs.number<4751297606875873280>", "#ctjs.number<13974669643730649088>",
@@ -664,6 +684,7 @@ void InductionCases::signedStrides() {
         const char * right;
         const char * expected;
     };
+    // Each row computes `left kind right` and checks the exact ToInt32 or ToUint32 result.
     for (const auto & [kind, left, right, expected] :
          {bitwise_case{"bitand", "13830554455654793216", "13835058055282163712",
                        "13835058055282163712"}, // -1 & -2 = -2
@@ -673,37 +694,43 @@ void InductionCases::signedStrides() {
                        "13970166044103278592"}, // 2^31 & UINT32_MAX = -2^31
           bitwise_case{"bitor", "13970166044103278592", "4746794007244308480",
                        "13830554455654793216"}, // -2^31 | INT32_MAX = -1
-          bitwise_case{"bitor", "13974669643728551936", "0", "4607182418800017408"},
+          bitwise_case{"bitor", "13974669643728551936", "0",
+                       "4607182418800017408"}, // -UINT32_MAX | 0 = 1
           bitwise_case{"bitxor", "13830554455654793216", "13835058055282163712",
                        "4607182418800017408"}, // -1 ^ -2 = 1
           bitwise_case{"bitxor", "13970166044103278592", "4751297606873776128",
-                       "4746794007244308480"},
-          bitwise_case{"bitxor", "9223372036854775808", "0", "0"},
+                       "4746794007244308480"},                     // -2^31 ^ UINT32_MAX = INT32_MAX
+          bitwise_case{"bitxor", "9223372036854775808", "0", "0"}, // -0 ^ 0 = 0
           bitwise_case{"shl", "13830554455654793216", "13853072453791645696",
                        "13830554455654793216"}, // -1 << -32 = -1
           bitwise_case{"shl", "13830554455654793216", "13830554455654793216",
                        "13970166044103278592"}, // -1 << -1 = -2^31
-          bitwise_case{"shl", "13970166044103278592", "4607182418800017408", "0"},
+          bitwise_case{"shl", "13970166044103278592", "4607182418800017408", "0"}, // -2^31 << 1 = 0
           bitwise_case{"shl", "13974669643728551936", "13852790978814935040",
                        "4611686018427387904"}, // -UINT32_MAX << -31 = 2
-          bitwise_case{"shl", "4751297606873776128", "4607182418800017408", "13835058055282163712"},
+          bitwise_case{"shl", "4751297606873776128", "4607182418800017408",
+                       "13835058055282163712"}, // UINT32_MAX << 1 = -2
           bitwise_case{"shr", "13830554455654793216", "13830554455654793216",
                        "13830554455654793216"}, // -1 >> -1 = -1
           bitwise_case{"shr", "13837309855095848960", "4607182418800017408",
                        "13835058055282163712"}, // -3 >> 1 = -2
           bitwise_case{"shr", "4746794007248502784", "4629700416936869888",
                        "13970166044103278592"}, // 2^31 >> 32 = -2^31
-          bitwise_case{"shr", "4751297606873776128", "0", "13830554455654793216"},
+          bitwise_case{"shr", "4751297606873776128", "0",
+                       "13830554455654793216"}, // UINT32_MAX >> 0 = -1
           bitwise_case{"shr", "13974669643728551936", "13853072453791645696",
                        "4607182418800017408"}, // -UINT32_MAX >> -32 = 1
-          bitwise_case{"shr", "9223372036854775808", "13830554455654793216", "0"},
-          bitwise_case{"ushr", "13830554455654793216", "0", "4751297606873776128"},
+          bitwise_case{"shr", "9223372036854775808", "13830554455654793216", "0"}, // -0 >> -1 = 0
+          bitwise_case{"ushr", "13830554455654793216", "0",
+                       "4751297606873776128"}, // -1 >>> 0 = UINT32_MAX
           bitwise_case{"ushr", "13830554455654793216", "13830554455654793216",
                        "4607182418800017408"}, // -1 >>> -1 = 1
           bitwise_case{"ushr", "13970166044103278592", "13853072453791645696",
                        "4746794007248502784"}, // -2^31 >>> -32 = 2^31
-          bitwise_case{"ushr", "13974669643728551936", "13852790978814935040", "0"},
-          bitwise_case{"ushr", "9223372036854775808", "13830554455654793216", "0"}}) {
+          bitwise_case{"ushr", "13974669643728551936", "13852790978814935040",
+                       "0"}, // -UINT32_MAX >>> -31 = 0
+          bitwise_case{"ushr", "9223372036854775808", "13830554455654793216",
+                       "0"}}) { // -0 >>> -1 = 0
         run({.what = "signed bitwise snapshots retain exact ToInt32 bits and result identity",
              .body = prefix + "  %left = ctjs.constant #ctjs.number<" + left +
                      ">\n  %right = ctjs.constant #ctjs.number<" + right +
@@ -723,6 +750,8 @@ void InductionCases::signedStrides() {
         const char * trueRight;
         const char * zeroRight;
     };
+    // Expected results of `input kind -1` (Left) and `-1 kind input` (Right),
+    // where input is true (1) or false/null (0).
     for (const auto & [kind, trueLeft, zeroLeft, trueRight, zeroRight] :
          {primitive_bitwise_case{"bitand", "4607182418800017408", "0", "4607182418800017408", "0"},
           primitive_bitwise_case{"bitor", "13830554455654793216", "13830554455654793216",

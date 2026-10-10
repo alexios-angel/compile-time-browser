@@ -1,7 +1,19 @@
+//===- Primitives.cpp - Primitive-producer array-contents tests -*- C++ -*-===//
+//
+// Array-contents and retention tests for ops that produce a fresh primitive:
+// ctjs.binary_static (Add, bitwise operations and shifts) and the arithmetic
+// ctjs.unary kinds (Neg, Plus, BitNot).
+//
+//===----------------------------------------------------------------------===//
+
 #include "Harness.h"
 
 namespace ctcompile::test::escape::arrays {
 
+/// Checks ctjs.binary_static Add, bitwise and shift results: which results are
+/// proved primitive, when a mixed BigInt/Number operand pair is admitted, and
+/// that forged completion attributes are rechecked after the IR is edited in
+/// place.
 void checkStaticBinaryProducers(mlir::MLIRContext & context) {
     const std::string values =
         "  %zero = ctjs.constant #ctjs.number<0> {storage_test_id = \"zero\"}\n"
@@ -28,8 +40,9 @@ void checkStaticBinaryProducers(mlir::MLIRContext & context) {
                                   " %x, %a {storage_test_id = \"produced\"}\n"
                                   "  ctjs.return %produced\n",
                           .failure = ArrayContentsFailure::UnsupportedOperation}},
-            // Source Array.prototype.valueOf can retain this[0] before the
-            // overwrite. The current VM's static conversion is not authority.
+            // A source-level Array.prototype.valueOf can read and keep this[0]
+            // before the overwrite. The analysis must follow JavaScript
+            // semantics, not what this VM's built-in conversion happens to do.
             {.contents = {.what = "fresh array conversion can retain an overwritten child",
                           .body = values + operation + " %a, %zero\n" + overwrite,
                           .failure = ArrayContentsFailure::UnsupportedOperation}},
@@ -293,6 +306,7 @@ void checkStaticBinaryProducers(mlir::MLIRContext & context) {
         if (narrowModule && wideModule) {
             const auto narrow = computeArrayContents(*narrowModule->getOps<ctjs::FuncOp>().begin());
             const auto expanded = computeArrayContents(*wideModule->getOps<ctjs::FuncOp>().begin());
+            // Each extra result costs one producer and one snapshot: 32 * 2.
             if (!narrow.complete || !expanded.complete || expanded.work != narrow.work + 64) {
                 fail(row{.what = "static binary snapshots charge every primitive origin",
                          .body = wide.contents.body,
@@ -358,8 +372,9 @@ void checkStaticBinaryProducers(mlir::MLIRContext & context) {
             auto constant = number.getDefiningOp<ctjs::ConstantOp>();
             const mlir::Attribute oldValue = constant.getValue();
             constant.setValueAttr(big.getValue());
-            // This original BigInt one is also the later array index. The
-            // one-element array has no slot one, regardless of producer results.
+            // The constant is now BigInt 1, and it is also the later array
+            // index. The one-element array has no slot 1, whatever the producer
+            // computes.
             inspect(ArrayContentsFailure::MissingElement);
             constant.setValueAttr(oldValue);
             inspect(ArrayContentsFailure::None);
@@ -386,6 +401,7 @@ void checkStaticBinaryProducers(mlir::MLIRContext & context) {
     }
 }
 
+/// The same checks for the arithmetic unary operators Neg, Plus and BitNot.
 void checkArithmeticUnaryProducers(mlir::MLIRContext & context) {
     const std::string values =
         "  %zero = ctjs.constant #ctjs.number<0> {storage_test_id = \"zero\"}\n"
@@ -554,9 +570,10 @@ void checkArithmeticUnaryProducers(mlir::MLIRContext & context) {
         if (narrowModule && wideModule) {
             const auto narrow = computeArrayContents(*narrowModule->getOps<ctjs::FuncOp>().begin());
             const auto expanded = computeArrayContents(*wideModule->getOps<ctjs::FuncOp>().begin());
-            // Each unary result charges its producer, scalar snapshot and either
-            // the exact BitNot Number or the Plus/Neg bitwise conversion fact.
-            // Plus/Neg also charge the independent binary64 Number snapshot.
+            // Each unary result costs its producer, its scalar snapshot, and
+            // either the exact BitNot Number fact or the Plus/Neg bitwise
+            // conversion fact. Plus/Neg also cost a binary64 Number snapshot,
+            // so 3 units per result for bitnot and 4 for the others.
             const unsigned perResult = spelling == "bitnot" ? 3 : 4;
             if (!narrow.complete || !expanded.complete ||
                 expanded.work != narrow.work + 32 * perResult) {

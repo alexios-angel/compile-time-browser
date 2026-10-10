@@ -1,4 +1,4 @@
-// THE CLOSED WORLD - Phase 62½-A.
+// Tests for --ctjs-resolve-globals: closed-world resolution of global calls.
 //
 // A whole-program compile knows every call site, and the importer's IR does
 // not say so: `function add` is a create_closure stored into the global "add",
@@ -6,35 +6,35 @@
 // dispatcher. --ctjs-resolve-globals proves, per global name across the whole
 // module, that the name is bound exactly once, in the top level's hoisting
 // prologue, to one closure, and that nothing writes the globals table
-// dynamically - and then every call through it becomes a ctjs.call_direct
+// dynamically; then every call through it becomes a ctjs.call_direct
 // naming the function, which is made private once every caller is one.
 //
-// FROM JAVASCRIPT, ON PURPOSE. The pass exists to match what the importer
-// actually emits - the `%arg2[1]` closure, the `$1` symbol suffix, the hoisted
-// closure/store prologue - and hand-written IR would prove only that the pass
-// matches the IR its author imagined. Four programs live in this one file
-// because ctjs-translate reads a whole file as one script; split-file cuts
+// The inputs are JavaScript on purpose. The pass exists to match what the
+// importer actually emits (the `%arg2[1]` closure, the `$1` symbol suffix, the
+// hoisted closure/store prologue), and hand-written IR would prove only that
+// the pass matches the IR its author imagined. Many programs live in this one
+// file because ctjs-translate reads a whole file as one script; split-file cuts
 // them apart and drops this preamble.
 //
-// THE NEGATIVE CASES ARE THE POINT. Each removes one clause of the proof and
-// asserts that NOTHING resolves: a global stored twice, a call passing more
-// arguments than the callee declares, and a write through globalThis.
-// Blinding the "exactly one store" check made the first of them go green with
-// `f = 1` resolved to @f$1 - which is what a negative test is for.
+// The negative cases are the point. Each removes one clause of the proof and
+// asserts that the affected name does not resolve: a global stored twice, or a
+// call passing more arguments than the callee declares. Disabling the
+// "exactly one store" check makes the first of them fail with `f = 1`
+// resolved to @f$1, which is what a negative test is for.
 //
-// AND TWO OF THE CLAUSES ARE PER NAME RATHER THAN PER MODULE, which is what
-// the second half of this file is about. A refused function used to refuse
-// every global in the program and a `.constructor` read used to be assumed to
-// be `Function`; between them they resolved NOTHING on bootstrap, p5 or
-// phaser. Both are still here, and each now has a positive case beside its
-// negative one - a refused body that stores nothing, an object literal, a
-// `super(...)` - so that widening either again has to make a green test red.
+// Several clauses refuse per name rather than for the whole module: a
+// function the importer refused refuses only the names its body stores, and a
+// `.constructor` read is followed as a value rather than assumed to be
+// `Function`. The second half of this file pairs each with a positive case
+// beside its negative one (a refused body that stores nothing, an object
+// literal, `super(...)`), so widening either one again makes a passing test
+// fail.
 //
-// ONE EXPECTATION IN THIS FILE WAS DELIBERATELY FLIPPED. `skipped.js` used to
-// assert that a generator ANYWHERE refuses the whole module; it now asserts
-// that a generator storing NO global refuses nothing, and `skipped-stores.js`
-// is the case that keeps the tooth. That is the change, stated where somebody
-// reading the diff will see it.
+// `skipped.js` asserts that a refused function (a generator) that stores no
+// global refuses nothing, and `skipped-stores.js` asserts that one that does
+// store a global refuses exactly that name and no other. Together they pin
+// the per-name rule from both sides: a module-wide refusal fails the first,
+// and ignoring refused bodies fails the second.
 
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/closed.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=CLOSED
@@ -79,23 +79,23 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/this-handed.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=THISHANDED
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/this-inherited.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=THISINHERITED
 
-// --- THE POSITIVE CASE: the MVP program ---------------------------------------
+// --- Positive: a closed program --------------------------------------------
 //
-// THE VERDICT IS IN THE IR. Every global the program names gets a row on the
-// module: `add` and `twice` resolve and are closed - one call and two calls
-// rewritten - while `r`, bound to a call's result, does not.
+// The verdict is in the IR. Every global the program names gets a row on the
+// module: `add` and `twice` resolve and are closed (one call and two calls
+// rewritten), while `r`, bound to a call's result, does not.
 //
 // CLOSED: module attributes {ctjs.globals = [
 // CLOSED-SAME: {name = "add", reason = "closed: 1 call(s) rewritten", resolved = @add$1, stores = 1 : i32}
 // CLOSED-SAME: {name = "twice", reason = "closed: 2 call(s) rewritten", resolved = @twice$2, stores = 1 : i32}
 // CLOSED-SAME: {name = "r", reason = "bound to something other than a closure", resolved = "none", stores = 1 : i32}
 //
-// THE TOP LEVEL STAYS PUBLIC - the host calls it - and both its calls to
-// `twice` become direct. The load_global is KEPT as the callee-value operand,
-// because the boxed tier dispatches on it; new.target is a fresh undefined -
-// the constant the resolver puts IMMEDIATELY before the call, after the
-// receiver's own undefined the importer emitted - which is what op::call
-// pushes for a plain call.
+// The top level stays public (the host calls it), and both its calls to
+// `twice` become direct. The load_global is kept as the callee-value operand,
+// because the boxed backend (generated code that keeps every JS value boxed)
+// dispatches on it; new.target is a fresh undefined (the constant the resolver
+// puts immediately before the call, after the receiver's own undefined the
+// importer emitted), which is what op::call pushes for a plain call.
 //
 // CLOSED-LABEL: ctjs.func @_script_$0(
 // CLOSED-NOT: ctjs.call %
@@ -110,9 +110,9 @@
 // CLOSED-NEXT: ctjs.call_direct @twice$2(%[[RCV2]], %[[NT2]], %[[F2]], %{{.*}})
 // CLOSED-NOT: ctjs.call %
 //
-// BOTH FUNCTIONS ARE PRIVATE: every caller of each is a ctjs.call_direct in
+// Both functions are private: every caller of each is a ctjs.call_direct in
 // this module, which is the closed-world statement. `twice`'s call to `add`
-// passes the callee's entry block in order - receiver, new.target, the
+// passes the callee's entry block in order: receiver, new.target, the
 // callee value, then `x` twice, which is %arg3 twice.
 //
 // CLOSED-LABEL: ctjs.func private @add$1(
@@ -125,11 +125,11 @@
 // CLOSED-NEXT: ctjs.call_direct @add$1(%[[RCV3]], %[[NT3]], %[[F3]], %arg3, %arg3)
 // CLOSED-NOT: ctjs.call %
 
-// --- NEGATIVE: a global stored twice -------------------------------------------
+// --- Negative: a global stored twice -------------------------------------------
 //
 // `f = 1` after the declaration is a second store, so no call site can know
 // which value it reaches. Nothing resolves, the function stays public, and the
-// call stays a ctjs.call - the `callee unresolved` diagnostic of part 24.
+// call stays a ctjs.call and gets the `callee unresolved` diagnostic.
 //
 // REBOUND-NOT: call_direct
 // REBOUND: ctjs.globals = [{name = "f", reason = "stored 2 times", resolved = "none", stores = 2 : i32}
@@ -140,14 +140,14 @@
 // REBOUND-LABEL: ctjs.func @f$1(
 // REBOUND-NOT: call_direct
 
-// --- NEGATIVE: a surplus argument -----------------------------------------------
+// --- Negative: a surplus argument -----------------------------------------------
 //
 // `add(1, 2, 3)` passes three arguments to two parameters. The third lands in
-// the callee's raw register window - where `arguments` and a rest parameter
-// read it - and ctjs.call_direct has no operand for a value the callee's
+// the callee's raw register window (where `arguments` and a rest parameter
+// read it), and ctjs.call_direct has no operand for a value the callee's
 // block does not name. That site keeps the dispatcher; `add(1)` is short and
 // is padded with undefined exactly as op::call fills a missing parameter; and
-// because one caller is not a call_direct, `add` is resolved but OPEN - not
+// because one caller is not a call_direct, `add` is resolved but open, not
 // private.
 //
 // SURPLUS: ctjs.globals = [{name = "add", reason = "open: a call passes 3 argument(s) to 2 parameter(s) - the surplus has frame semantics (ctjs.call at {{[^)]*}}); 1 call(s) rewritten", resolved = @add$1, stores = 1 : i32}
@@ -160,22 +160,22 @@
 // SURPLUS-NEXT: ctjs.call_direct @add$1(%[[RCV]], %[[NT]], %[[F]], %{{.*}}, %[[NT]])
 // SURPLUS-LABEL: ctjs.func @add$1(
 
-// --- NEGATIVE: a write through the global object --------------------------------
+// --- Negative: a write through the global object --------------------------------
 //
 // `globalThis.x = 1` is a ctjs.set_property on a value loaded from
 // "globalThis". In a spec-conformant engine that is a write to the global
-// bindings, so nothing in the module may be resolved - every row carries the
-// same reason, and `add`'s call stays a ctjs.call.
+// bindings, but it rebinds only the name written: the window proxy's `set`
+// handler (ctbrowser/lib/Shell/bindings/window/window.cpp) either stores an
+// own property of the window target or calls define_global, and both touch
+// exactly that name. So `x` gets a refusal row of its own and `add` still
+// resolves.
 //
-// THE EXPECTATION THAT CHANGED, AND THE CLAUSE THAT CHANGED WITH IT. This
-// pinned `globalThis.x = 1` refusing EVERY name in the program, on the
-// reasoning that a write through the window proxy calls define_global. That
-// reasoning is right and it is about ONE name: the `set` trap
-// (the "set" window_trap in lib/Shell/bindings/window/window.cpp) is a two-armed if, and both arms -
-// store_property on an own property of the window target, define_global on
-// everything else - touch exactly the name written. `x` is therefore rebound
-// and `add` is not, so `add` resolves and `x` gets a row of its own saying
-// why it cannot. Deleting the constant_key() test in the SetPropertyOp clause
+// A computed key (`globalThis[k] = 1`) names no binding, so it still refuses
+// the whole module; enter-computed.js below covers that through a callee.
+// The `globalThis` row itself only says that the name is a host binding.
+//
+// Deleting the constantKey() test in ResolveGlobals.cpp's SetPropertyOp
+// clause makes `x` resolve as an ordinary unstored name, and this test fails.
 // makes `x` resolve as an ordinary unstored name and this goes red on it.
 //
 // DYNAMIC: ctjs.globals = [
@@ -186,119 +186,119 @@
 // DYNAMIC: ctjs.set_property
 // DYNAMIC: ctjs.call_direct @add$1
 
-// --- POSITIVE: a function the importer refused that stores NOTHING --------------
+// --- Positive: a function the importer refused that stores nothing --------------
 //
 // A body this pass cannot read may contain a `ctjs.store_global`, and the
-// census counts only the stores that are IN the module. With a refused
+// census counts only the stores that are in the module. With a refused
 // function present, a name stored once visibly and once inside that body looks
 // singly bound, and every call to it would be compiled to the wrong function
 // rather than diagnosed.
 //
-// THIS FILE USED TO ASSERT THAT SUCH A FUNCTION REFUSES THE WHOLE MODULE, and
-// that is the expectation that changed. The reason it gave - "nothing says
-// which names the missing bodies touch" - was not true of the BYTECODE, which
-// the importer still has when it drops the function: op::set_global names its
-// target with a static index into the function's own name pool. So the
-// importer writes the exact set on the ctjs.skipped row, and a body that
-// stores nothing refuses nothing. `add` resolves with a generator in the
-// program, which is what 51 refused functions cost p5 and two cost phaser.
+// The importer still has the dropped function's bytecode when it refuses the
+// function, and op::set_global names its target by a static index into the
+// function's own name pool. So the importer records exactly which names the
+// body stores on the ctjs.skipped row, and this pass refuses only those
+// names. A body that stores nothing therefore refuses nothing, and `add`
+// resolves with a generator in the program. This matters for real bundles,
+// which routinely contain functions the importer refuses; refusing the
+// whole module for one of them would leave nothing resolved.
 //
 // SKIPPED: ctjs.globals = [
 // SKIPPED-SAME: {name = "add", reason = "closed: 1 call(s) rewritten", resolved = @add$1, stores = 1 : i32}
 // SKIPPED: ctjs.call_direct @add$1
 
-// --- NEGATIVE: and one that DOES store, which refuses that name ONLY ------------
+// --- Negative: and one that does store, which refuses that name only ------------
 //
-// THE TOOTH, AND THE HALF THAT MUST STAY. `gen` assigns to `add`, which is an
+// This half must stay. `gen` assigns to `add`, which is an
 // op::set_global in a body that emits no ctjs.func - so the store the census
 // can see is not the only one, and `add` is refused exactly as a second
 // visible store would refuse it.
 //
-// AND `twice` IS NOT. That is the change: one program pins a refusal and an
-// acceptance at once, which a module-wide clause makes impossible and a
-// per-name one is defined by. Deleting the `refused.contains(name)` test
-// resolves `add` to @add$1 and this goes red on the first line.
+// And `twice` is not refused: one program pins a refusal and an acceptance at
+// once, which a module-wide clause makes impossible and a per-name one is
+// defined by. Deleting the `refused.contains(name)` test in ResolveGlobals.cpp
+// resolves `add` to @add$1, and this test fails on the first line.
 //
 // SKIPSTORE: ctjs.globals = [
 // SKIPSTORE-SAME: {name = "add", reason = "a function the importer refused (ctjs.skipped) stores this name, so the binding this pass can see is not the only one", resolved = "none", stores = 1 : i32}
 // SKIPSTORE-SAME: {name = "twice", reason = "closed: 1 call(s) rewritten", resolved = @twice$2, stores = 1 : i32}
 // SKIPSTORE: ctjs.call_direct @twice$2
 
-// --- NEGATIVE: a refused body whose summary bounds nothing ----------------------
+// --- Negative: a refused body whose summary bounds nothing ----------------------
 //
 // `Function` in a refused body's name pool. This pass cannot follow a value
 // through bytecode it never imported, so the summary says so in `opaque` and
-// the module is refused exactly as it was before - the old behaviour, kept for
-// the bodies that earn it rather than for all of them.
+// the whole module is refused, but only for bodies like this one, not for
+// every refused body.
 //
 // SKIPOPAQUE-NOT: call_direct
 // SKIPOPAQUE: ctjs.globals = [
 // SKIPOPAQUE-SAME: reason = "a refused body reads `Function`, and the program it compiles can store any global"
 // SKIPOPAQUE: ctjs.call %
 
-// --- NEGATIVE: the compiler reached through `.constructor` ----------------------
+// --- Negative: the compiler reached through `.constructor` ----------------------
 //
 // `Function` is not only a global name: it is on every function's prototype as
 // `.constructor`, so this reaches the run-time compiler without ever loading
 // the global. The value is followed rather than the key refused, and here it
-// is CALLED, which is the escape that answers.
+// is called, which is the escape that refuses the module.
 //
 // CTOR-NOT: call_direct
 // CTOR: ctjs.globals = [
 // CTOR-SAME: reason = "a value that may be the run-time compiler escapes into ctjs.call{{[^"]*}}"
 // CTOR: ctjs.call %
 
-// --- POSITIVE: `.constructor` that only gets COMPARED still resolves ------------
+// --- Positive: `.constructor` that is only compared still resolves ------------
 //
-// The point of following the value instead of refusing the key: a comparison
-// answers a primitive, so it stops the walk, and the module stays closed. If
-// this went red the fix would have cost every program that writes
+// This is why the value is followed instead of the key being refused: a
+// comparison answers a primitive, so it stops the walk, and the module stays
+// closed. Refusing the key would cost every program that writes
 // `o.constructor === C`.
 //
 // COMPARED: ctjs.globals = [
 // COMPARED-SAME: {name = "add", reason = "closed: 1 call(s) rewritten", resolved = @add$1, stores = 1 : i32}
 // COMPARED: ctjs.call_direct @add$1
 
-// --- POSITIVE: `.constructor` on an object literal --------------------------------
+// --- Positive: `.constructor` on an object literal --------------------------------
 //
-// `({}).constructor` is `Object`. It is not `Function`, and the clause used to
-// say it might be because it looked only at the KEY. The receiver decides:
-// `constructor` is an own property of every `X.prototype` table holding the
-// function that owns that table, and only `Function.prototype`'s copy holds
-// `Function`. The value escapes into a ctjs.store_global here, which is what
-// the old rule answered on.
+// `({}).constructor` is `Object`, not `Function`; the receiver decides, not
+// the key. `constructor` is an own property of every `X.prototype` table,
+// holding the function that owns that table, and only `Function.prototype`'s
+// copy holds `Function`. The value escapes into a ctjs.store_global here, so
+// a rule that looked only at the key would refuse the module and this test
+// would fail.
 //
 // LITERAL: ctjs.globals = [
 // LITERAL-SAME: {name = "add", reason = "closed: 1 call(s) rewritten", resolved = @add$1, stores = 1 : i32}
 // LITERAL: ctjs.call_direct @add$1
 
-// --- NEGATIVE: and the second read off it IS the compiler -------------------------
+// --- Negative: and the second read off it is the compiler -------------------------
 //
-// `Object` is itself a function, so `({}).constructor.constructor` IS
+// `Object` is itself a function, so `({}).constructor.constructor` is
 // `Function`. The second read's receiver is a ctjs.get_property, which
-// may_be_function() does not clear - listing a `.constructor` RESULT as a
-// non-function would have opened exactly this hole.
+// may_be_function() does not clear; listing a `.constructor` result as a
+// non-function would open exactly this hole.
 //
 // CHAIN-NOT: call_direct
 // CHAIN: ctjs.globals = [
 // CHAIN-SAME: reason = "a value that may be the run-time compiler escapes into ctjs.store_global{{[^"]*}}"
 
-// --- POSITIVE: `super(...)`, which IS a `.constructor` read ------------------------
+// --- Positive: `super(...)`, which is a `.constructor` read ------------------------
 //
-// AND IT IS THE WHOLE OF BOOTSTRAP'S LOSS. compile/expressions.cpp:640
+// The ctbrowser bytecode compiler (lib/Script/compile/expression_calls.cpp)
 // compiles `super(x)` to `load_home; get_proto; get_prop "constructor"` and
-// then CALLS it, so the taint answered "escapes into ctjs.call" at
-// bootstrap.bundle.js's first derived constructor and refused all 37 of its
-// globals. 17 of bootstrap's 38 constructor reads are this shape.
+// then calls the result. Treating that call as an escape would refuse every
+// global in a program at its first derived constructor, which class-based
+// libraries such as Bootstrap reach almost immediately.
 //
 // SUPER: ctjs.globals = [
 // SUPER-SAME: {name = "add", reason = "closed: 1 call(s) rewritten", resolved = @add$1, stores = 1 : i32}
 // SUPER: ctjs.call_direct @add$1
 
-// --- NEGATIVE: unless the class extends `Function` ---------------------------------
+// --- Negative: unless the class extends `Function` ---------------------------------
 //
-// THE PREMISE OF THE SUPER CLAUSE, NEGATED. `super()` reaches `Function` only
-// when the parent's `prototype` table IS `Function.prototype` - which means
+// The premise of the super clause, negated. `super()` reaches `Function` only
+// when the parent's `prototype` table is `Function.prototype`, which means
 // naming `Function`, and a ctjs.load_global of that name refuses the module on
 // its own. That is why the relaxation is sound, and this is the test of it.
 //
@@ -306,103 +306,103 @@
 // EXTENDSFN: ctjs.globals = [
 // EXTENDSFN-SAME: reason = "a run-time compiler is reachable (ctjs.load_global{{[^)]*}}) and the program it builds can store any global"
 
-// --- NEGATIVE: or unless a `prototype` table was replaced --------------------------
+// --- Negative: or unless a `prototype` table was replaced --------------------------
 //
 // THE PREMISE THE SSA WALK CANNOT SEE, CHECKED RATHER THAN ASSUMED. The super
 // clause reasons that the link `extends` installs points at a `prototype`
 // table, whose `constructor` is the class that owns it. `Base.prototype =
 // make()` points it at something this pass cannot rule out being a function,
-// whose `.constructor` IS `Function` - so prototype_replaced() retires the
+// whose `.constructor` is `Function`, so prototype_replaced() retires the
 // clause for the whole module and `super()` is tainted again.
 //
 // PROTOSET-NOT: call_direct
 // PROTOSET: ctjs.globals = [
 // PROTOSET-SAME: reason = "a value that may be the run-time compiler escapes into ctjs.call{{[^"]*}}"
 
-// --- POSITIVE: a NAMED read off a value that may be the compiler -------------------
+// --- Positive: a named read off a value that may be the compiler -------------------
 //
 // `o.constructor.name`. The receiver of the first read is a block argument, so
-// that read IS tainted - and the named read off it is not, because no property
-// of `Function` called `name` is `Function`. This is bootstrap's other 21
-// constructor reads (`this.constructor.NAME`, `.Default`, `.DATA_KEY`,
-// `.eventName(...)`, `.getOrCreateInstance(...)`), every one of which used to
-// end in a call and answer.
+// that read is tainted, but the named read off it is not, because no property
+// of `Function` called `name` is `Function`. Real code reads many such
+// members off `this.constructor` (`.NAME`, `.Default`, `.DATA_KEY`,
+// `.eventName(...)`, `.getOrCreateInstance(...)` in Bootstrap), and each
+// ends in a call that would otherwise refuse the module.
 //
 // MEMBER: ctjs.globals = [
 // MEMBER-SAME: {name = "add", reason = "closed: 1 call(s) rewritten", resolved = @add$1, stores = 1 : i32}
 // MEMBER-SAME: {name = "label", reason = "closed: 1 call(s) rewritten", resolved = @label$2, stores = 1 : i32}
 // MEMBER: ctjs.call_direct @label$2
 
-// --- NEGATIVE: except for the four names that hand it back -------------------------
+// --- Negative: except for the names that hand it back ------------------------------
 //
-// `prototype` is one of them: `o.constructor.prototype.constructor` is
-// `Function` for any function `o`, so the taint follows this read and the
-// returned value escapes. Dropping "prototype" from hands_back_the_compiler()
-// makes this go green.
+// `prototype` is one of them (hands_back_the_compiler() lists the rest):
+// `o.constructor.prototype.constructor` is `Function` for any function `o`, so
+// the taint follows this read and the returned value escapes. Dropping
+// "prototype" from that list makes `add` resolve, and this test fails.
 //
 // MEMBERPROTO-NOT: call_direct
 // MEMBERPROTO: ctjs.globals = [
 // MEMBERPROTO-SAME: reason = "a value that may be the run-time compiler escapes into ctjs.return{{[^"]*}}"
 
-// --- POSITIVE: a NAMED read off the GLOBAL OBJECT ----------------------------------
+// --- Positive: a named read off the global object ----------------------------------
 //
-// THE SAME PRECISION, ASKED OF THE OTHER WATCHED KIND. The walk propagated
-// through every read off `window` on the grounds that `window.window` is the
-// window - so `window.innerWidth` was a value that "may be the global object"
-// and storing it answered "the global object escapes into ctjs.store_global".
-// It is a number.
+// The same precision, applied to the global object. A read off `window`
+// propagates the taint only when the key is one of the host's self-aliases
+// (`window.window` is the window); `window.innerWidth` is a number, so storing
+// it is not "the global object escapes into ctjs.store_global".
+// hands_back_the_global_object() in Globals/Effects.cpp lists the aliases.
 //
-// THE ALIAS SET IS THE HOST'S AND IT IS CLOSED, because putting the window in
-// any OTHER global needs a ctjs.store_global of the marked value, which is an
+// The alias set is the host's and it is closed, because putting the window in
+// any other global needs a ctjs.store_global of the marked value, which is an
 // escape and already the answer.
 //
-// WHAT THIS DOES NOT BUY, and the measurement says so: `window.foo(...)` is a
-// METHOD call, so the window is the call's RECEIVER and escapes anyway. That
-// is why bootstrap still resolves nothing - its UMD header passes
-// `globalThis`/`self` into the factory - and it is a real refusal, because
-// the window proxy's `set` trap calls define_global.
+// This does not cover `window.foo(...)`: that is a method call, so the window
+// is the call's receiver and escapes anyway. That is a real refusal, because
+// the window proxy's `set` handler calls define_global. A UMD header that
+// passes `globalThis` or `self` into its factory is handled separately (see
+// enter-read.js below).
 //
 // WINREAD: ctjs.globals = [
 // WINREAD-SAME: {name = "add", reason = "closed: 1 call(s) rewritten", resolved = @add$1, stores = 1 : i32}
 // WINREAD: ctjs.call_direct @add$1
 
-// --- NEGATIVE: and `window.self` IS the window -------------------------------------
+// --- Negative: and `window.self` is the window -------------------------------------
 //
-// One of the five names lib/Shell/bindings/window/window.cpp binds to the same proxy.
-// The taint follows it and the write through it answers - which is not
-// politeness: the proxy's `set` trap calls define_global, so this really does
+// One of the names ctbrowser/lib/Shell/bindings/window/window.cpp binds to the
+// same proxy. The taint follows it and the write through it is refused, and
+// rightly: the proxy's `set` handler calls define_global, so this really does
 // rebind a global.
 //
-// AND IT IS STILL THE WINDOW AFTER THE NAMED-WRITE CLAUSE, which is what this
+// It is still the window under the named-write clause, which is what this
 // case has to keep proving. `injected` gets a row only because the walk
 // followed `window` through `.self` and recognised the write as a global
 // binding; dropping "self" from hands_back_the_global_object() leaves the
 // value unmarked, no row is written for `injected` at all, and the first line
-// below goes red while `add` stays green either way.
+// below fails while `add` resolves either way.
 //
 // WINALIAS: ctjs.globals = [
 // WINALIAS-SAME: {name = "add", reason = "closed: 1 call(s) rewritten", resolved = @add$1, stores = 1 : i32}
 // WINALIAS-SAME: {name = "injected", reason = "written through the global object (ctjs.set_property at {{[^)]*}}), which binds this name", resolved = "none", stores = 0 : i32}
 // WINALIAS: ctjs.call_direct @add$1
 
-// --- POSITIVE: the global object FOLLOWED INTO A KNOWN CALLEE ----------------------
+// --- Positive: the global object followed into a known callee ----------------------
 //
-// THE CHANGE THIS COMMIT IS. `(function (g) { ... })(globalThis)` is a closure
-// defined two tokens before it is called - the shape of every UMD header - and
-// the walk used to answer "the global object escapes into ctjs.call" and refuse
-// all four names here. The callee is a ctjs.create_closure result naming its
-// own function index, so nothing leaves this pass's sight: the object arrives
-// at `g`, and the walk continues at that block argument. `g.innerWidth` is a
-// named read that is not one of the host's self-aliases, so it stops there.
+// `(function (g) { ... })(globalThis)`, the shape of every UMD header, calls a
+// closure defined two tokens earlier. The callee is a ctjs.create_closure
+// result naming its own function index, so nothing leaves this pass's sight:
+// instead of treating the call as an escape that refuses all four names here,
+// the walk follows the object into `g` and continues at that block argument.
+// `g.innerWidth` is a named read that is not one of the host's self-aliases,
+// so it stops there.
 //
-// Deleting the CallOp clause in dynamic_global_writes() restores the escape and
-// this goes red on the first line.
+// Deleting the CallOp clause in dynamic_global_writes() restores the escape, and
+// this test fails on the first line.
 //
 // ENTERREAD: ctjs.globals = [
 // ENTERREAD-SAME: {name = "add", reason = "closed: 1 call(s) rewritten", resolved = @add$1, stores = 1 : i32}
 // ENTERREAD: ctjs.call_direct @add$1
 
-// --- POSITIVE AND NEGATIVE AT ONCE: a NAMED write inside that callee ---------------
+// --- Positive and negative at once: a named write inside that callee ---------------
 //
 // The write rules do not change when the walk crosses a call: `g.injected = 1`
 // two frames from the load is the same proxy `set` trap as `globalThis.injected
@@ -416,35 +416,35 @@
 // ENTERWRITE-SAME: {name = "injected", reason = "written through the global object (ctjs.set_property at {{[^)]*}}), which binds this name", resolved = "none", stores = 0 : i32}
 // ENTERWRITE: ctjs.call_direct @add$1
 
-// --- NEGATIVE: a COMPUTED key inside it refuses the module, unchanged --------------
+// --- Negative: a computed key inside it refuses the module, unchanged --------------
 //
-// THE HALF THAT MUST NOT MOVE. `o[k] = 1` with `k` a parameter names no name,
-// so nothing bounds which binding it rebinds and the whole census is void. That
-// the write is two frames from the ctjs.load_global changes nothing: following
-// the value is what makes this reachable at all, and precision is not
-// permission.
+// This half must not move. `o[k] = 1` with `k` a parameter names no binding,
+// so nothing bounds which binding it rebinds and the whole census is void.
+// That the write is two frames from the ctjs.load_global changes nothing:
+// following the value is what makes this reachable at all, and precision is
+// not permission.
 //
 // ENTERCOMPUTED-NOT: call_direct
 // ENTERCOMPUTED: ctjs.globals = [
 // ENTERCOMPUTED-SAME: reason = "the global object is written through (ctjs.set_property{{[^"]*}}"
 
-// --- NEGATIVE: an UNKNOWN callee still bails, and it is bootstrap's ----------------
+// --- Negative: an unknown callee still bails ----------------------------------------
 //
-// `window.scrollTo(0, 0)` passes the window as the RECEIVER of a call whose
-// callee is a property read - a native this module does not hold. This is
-// bootstrap.bundle.js:3062 exactly, the first escape in that bundle, and no
-// amount of following makes a body that is not here visible.
+// `window.scrollTo(0, 0)` passes the window as the receiver of a call whose
+// callee is a property read, a native this module does not hold. This shape
+// is the first escape in bootstrap.bundle.js, and no amount of following
+// makes a body that is not here visible.
 //
 // ENTERUNKNOWN-NOT: call_direct
 // ENTERUNKNOWN: ctjs.globals = [
 // ENTERUNKNOWN-SAME: reason = "the global object escapes into a call whose callee this module does not name (ctjs.call{{[^"]*}}"
 
-// --- POSITIVE: a CYCLE terminates -------------------------------------------------
+// --- Positive: a cycle terminates -------------------------------------------------
 //
 // `ping` and `pong` hand the global object to each other. Entering a callee
-// marks a BLOCK ARGUMENT and mark() enqueues a value only the first time it is
+// marks a block argument and mark() enqueues a value only the first time it is
 // seen, so each parameter is marked once and the fixpoint closes. A walk
-// without that property does not fail this test, it hangs - which is why the
+// without that property does not fail this test, it hangs, which is why the
 // case is here rather than in a comment.
 //
 // ENTERCYCLE: ctjs.globals = [
@@ -453,12 +453,12 @@
 // ENTERCYCLE-SAME: {name = "pong", reason = "closed: 1 call(s) rewritten", resolved = @pong$3, stores = 1 : i32}
 // ENTERCYCLE: ctjs.call_direct
 
-// --- NEGATIVE: a callee that reads its RAW argument window -------------------------
+// --- Negative: a callee that reads its raw argument window -------------------------
 //
-// `arguments` copies the FRAME's registers - every value the site passed - and
+// `arguments` copies the frame's registers (every value the site passed) and
 // is read back under an index this walk cannot see, so a parameter is not where
 // the value stops. Deleting the reads_arguments() guard makes this resolve
-// `add` and hides a real hole: `arguments[0]` IS the global object here.
+// `add` and hides a real hole: `arguments[0]` is the global object here.
 //
 // ENTERARGS-NOT: call_direct
 // ENTERARGS: ctjs.globals = [
@@ -467,53 +467,53 @@
 // --- NEGATIVE: more arguments than parameters --------------------------------------
 //
 // The surplus lands in the callee's raw register window with no block argument
-// to name it - the same frame semantics the rewrite refuses a call site for -
+// to name it (the same frame semantics the rewrite refuses a call site for),
 // so there is nowhere to continue the walk.
 //
 // ENTERSURPLUS-NOT: call_direct
 // ENTERSURPLUS: ctjs.globals = [
 // ENTERSURPLUS-SAME: reason = "the global object is passed to one$2 beyond its 1 parameter(s), where the surplus keeps frame semantics (ctjs.call{{[^"]*}}"
 
-// --- NEGATIVE: `self` IS a name of the global object, and was not ------------------
+// --- Negative: `self` is a name of the global object -------------------------
 //
-// the end of install_window in lib/Shell/bindings/window/window.cpp is three define_global calls of the
-// same proxy and names_global_object() listed two of them, so `self.injected =
-// 1` - define_global("injected", 1) through the `set` trap - was invisible.
-// The row below is the whole test: without `self` in that list the value is
-// never marked, no row is written for `injected`, and `add` resolves for the
-// wrong reason.
+// install_window (ctbrowser/lib/Shell/bindings/window/window.cpp) binds the
+// window proxy as a global under three names (`window`, `self`, and
+// `globalThis` through set_global_this); names_global_object() must list all
+// three, or `self.injected = 1` (define_global("injected", 1) through the
+// `set` handler) goes unseen, no row is written for `injected`, and `add`
+// resolves for the wrong reason.
 //
 // SELFWRITE: ctjs.globals = [
 // SELFWRITE-SAME: {name = "add", reason = "closed: 1 call(s) rewritten", resolved = @add$1, stores = 1 : i32}
 // SELFWRITE-SAME: {name = "injected", reason = "written through the global object (ctjs.set_property at {{[^)]*}}), which binds this name", resolved = "none", stores = 0 : i32}
 
-// --- THE COUNTERS, ASSERTED RATHER THAN READ ---------------------------------------
+// --- The counters, asserted rather than read ---------------------------------------
 //
-// A STATISTIC IS NOT A TEST IN THIS RELEASE. The LLVM package this builds
-// against compiles pass statistics out, so --mlir-pass-statistics prints an
-// empty report and a check reading one checks nothing. The `report` option
-// emits the three counters as a remark instead - the same escape hatch
-// --ctjs-lift-to-scf ships - and tools/check/native-claims.py reads exactly
-// this line to put a floor under the closed world on the real corpora.
+// The LLVM build used here compiles pass statistics out, so
+// --mlir-pass-statistics prints an empty report and a check reading one would
+// check nothing. The `report` option emits the three counters as a remark
+// instead (the same approach --ctjs-lift-to-scf uses), and
+// tools/check/native-claims.py reads exactly this line to put a floor under
+// the closed world on the real corpora.
 //
 // REPORT: resolved 2 global(s), rewrote 3 call(s), closed 2 function(s) over 5 name(s)
-// AND THE SECOND SHAPE'S COUNTER IS ITS OWN, which this program earns nothing
-// of: every call in it goes through a global name.
+// The closure-call counter is separate, and this program earns none of it:
+// every call in it goes through a global name.
 // REPORT-SAME: named 0 closure call(s)
 
-// --- THE SECOND SHAPE: A CALL WHOSE CALLEE IS THE CLOSURE ---------------------
+// --- Closure calls: a call whose callee is the closure ---------------------
 //
-// NO GLOBAL NAME IS INVOLVED, WHICH IS THE WHOLE POINT. Clauses 1-3 need a name
-// bound once in the hoisting prologue, and a vendor bundle binds no globals at
-// all - each hands a factory's result to one property of the window - so
-// `resolved` is 0 on bootstrap, p5 and phaser before any other clause is asked.
-// A ctjs.create_closure result names its function index outright, so calling it
-// enters that function whatever the globals table does. Measured on the corpora
-// the day this landed: bootstrap 0 -> 21 ctjs.call_direct, p5 0 -> 41, phaser
-// 0 -> 48.
+// No global name is involved. The per-name clauses need a name bound once in
+// the hoisting prologue, and a vendor bundle binds no globals at all: it hands
+// a factory's result to one property of the window. A ctjs.create_closure
+// result names its function index outright, so calling it enters that
+// function whatever the globals table does, and the call can be direct.
+// This is the main source of direct calls in real bundles, which typically
+// wrap everything in such immediately invoked functions. The report counts
+// these as `named N closure call(s)`.
 //
-// THE OPERANDS ARE THE ENTRY BLOCK IN ORDER: receiver, new.target, the closure
-// VALUE (kept - the boxed tier dispatches on it), then the two arguments.
+// The operands are the entry block in order: receiver, new.target, the closure
+// value (kept, since the boxed backend dispatches on it), then the two arguments.
 //
 // IIFE-LABEL: ctjs.func @_script_$0(
 // IIFE: %[[FN:.*]] = ctjs.create_closure
@@ -522,49 +522,49 @@
 // IIFE-NOT: ctjs.call %
 // IIFEREPORT: named 1 closure call(s)
 
-// A SURPLUS IS REFUSED, and it has to be refused HERE rather than left to fail:
+// A surplus is refused, and it has to be refused here rather than left to fail:
 // CallDirectOp::verifySymbolUses holds the operand count equal to the entry
 // block's, so emitting one would be a hard verifier error and not a wrong
-// answer. Three arguments, two parameters - the call stays a ctjs.call.
+// answer. Three arguments, two parameters: the call stays a ctjs.call.
 //
 // CLOSURESURPLUS-LABEL: ctjs.func @_script_$0(
 // CLOSURESURPLUS: ctjs.call %
 // CLOSURESURPLUS-NOT: ctjs.call_direct
 
-// AND A SHORT CALL INTO A BODY THAT READS ITS RAW ARGUMENT WINDOW. The pad this
-// rewrite adds is what VM_CASE(call) does to the callee's REGISTERS and NOT
+// And a short call into a body that reads its raw argument window. The pad this
+// rewrite adds is what VM_CASE(call) does to the callee's registers, not
 // what op::call does to `arguments`: make_arguments_object copies the raw
 // window, whose length is argc. `(function (a, b) { return arguments.length;
-// })(1)` is 1 in the VM, and the boxed tier parks getArgs() as that window - so
-// padding this site would make it 2.
+// })(1)` is 1 in the VM, and the boxed backend parks getArgs() as that window,
+// so padding this site would make it 2.
 //
 // CLOSUREARGS-LABEL: ctjs.func @_script_$0(
 // CLOSUREARGS: ctjs.call %
 // CLOSUREARGS-NOT: ctjs.call_direct
 
-// THE SAME HOLE ON THE PER-NAME PATH, WHICH HAD NO SUCH CLAUSE AT ALL. `two` is
-// bound once in the prologue to one closure and passes clauses 1-6; the call is
-// short and the body reads `arguments`, so it is now left alone. Before this
-// clause the pass rewrote it and `arguments.length` came out 2.
+// The same hole on the per-name path. `two` is bound once in the prologue to
+// one closure and passes every other clause in ResolveGlobals.cpp, but the
+// call is short and the body reads `arguments`, so it must stay a ctjs.call:
+// padding it would make `arguments.length` 2 where the VM says 1.
 //
 // NAMEARGS: {name = "two", reason = "open: a call passes 1 argument(s) to 2 parameter(s) and the callee reads its raw argument window, which the pad would lengthen ({{[^)]*}}); 0 call(s) rewritten"
 // NAMEARGS-LABEL: ctjs.func @_script_$0(
 // NAMEARGS: ctjs.call %
 // NAMEARGS-NOT: ctjs.call_direct
 
-// --- THE GLOBAL OBJECT AS `this` ------------------------------------------------
+// --- The global object as `this` ------------------------------------------------
 //
-// NO NAME IS NEEDED TO HOLD IT. A classic script's top level runs with the
+// No name is needed to hold it. A classic script's top level runs with the
 // global object as its receiver, so `this.f = ...` there is the same write as
-// `globalThis.f = ...` - and before the receiver was watched, `f` resolved and
-// its call_direct answered 1 where the VM answers 2.
+// `globalThis.f = ...`; if the receiver were not watched, `f` would resolve
+// and its call_direct would answer 1 where the VM answers 2.
 //
 // THISTOP: ctjs.globals = [
 // THISTOP-SAME: {name = "f", reason = "written through the global object (ctjs.set_property at {{[^)]*}}), which binds this name", resolved = "none", stores = 1 : i32}
 // THISTOP-NOT: call_direct
 
-// AND ONE CALL DEEPER. A plain call hands its callee an undefined receiver,
-// which OrdinaryCallBindThis turns into the global object in a sloppy body -
+// And one call deeper. A plain call hands its callee an undefined receiver,
+// which OrdinaryCallBindThis turns into the global object in a sloppy body,
 // so the `this` of every body a call this pass can name enters is watched.
 //
 // THISCALLED: ctjs.globals = [
@@ -572,20 +572,20 @@
 // THISCALLED-SAME: {name = "install", reason = "closed: 1 call(s) rewritten", resolved = @install${{[0-9]+}}, stores = 1 : i32}
 // THISCALLED-NOT: call_direct @f$
 
-// AN ARROW KEEPS THE `this` IT WAS WRITTEN WITH, which at the top level is the
+// An arrow keeps the `this` it was written with, which at the top level is the
 // global object itself.
 //
 // THISARROW: ctjs.globals = [
 // THISARROW-SAME: {name = "f", reason = "written through the global object (ctjs.set_property at {{[^)]*}}), which binds this name", resolved = "none", stores = 1 : i32}
 // THISARROW-NOT: call_direct @f$
 
-// A CLOSURE CALLED WHERE IT IS WRITTEN is a call this pass names too.
+// A closure called where it is written is a call this pass names too.
 //
 // THISIIFE: ctjs.globals = [
 // THISIIFE-SAME: {name = "f", reason = "written through a receiver that may be the global object (ctjs.set_property at {{[^)]*}}), which binds this name", resolved = "none", stores = 1 : i32}
 // THISIIFE-NOT: call_direct @f$
 
-// AND RETURNED IT IS OUT OF SIGHT: `(function () { return this; })()` is the
+// And returned, it is out of sight: `(function () { return this; })()` is the
 // global object obtained without naming it, and whoever receives it may write
 // anything through it.
 //
@@ -593,9 +593,9 @@
 // THISRETURNED-SAME: {name = "add", reason = "a receiver that may be the global object escapes into ctjs.return{{[^"]*}}", resolved = "none", stores = 1 : i32}
 // THISRETURNED-NOT: call_direct
 
-// BUT A RECEIVER IS ALMOST ALWAYS AN INSTANCE. `this.count = 0` binds the
+// But a receiver is almost always an instance. `this.count = 0` binds the
 // global `count` only in the world where `this` is the global object, and no
-// load or store in the program names `count` - so it gets no row, and `add`
+// load or store in the program names `count`, so it gets no row, and `add`
 // resolves.
 //
 // THISFIELD: ctjs.globals = [
@@ -603,7 +603,7 @@
 // THISFIELD-NOT: name = "count"
 // THISFIELD: ctjs.call_direct @add$1
 
-// A REFUSED BODY'S `this` MAY BE THE GLOBAL OBJECT TOO, and its summary reads
+// A refused body's `this` may be the global object too, and its summary reads
 // the name written through it off the bytecode, as it does for `globalThis`.
 //
 // THISREFUSED: ctjs.globals = [
@@ -612,7 +612,7 @@
 // THISREFUSED-SAME: stores = ["f"]
 // THISREFUSED-NOT: call_direct @f$
 
-// AND HANDED ON FROM THERE, where no IR marks the parameter it arrives at:
+// And handed on from there, where no IR marks the parameter it arrives at:
 // `helper(this)` in a generator writes `f` through `o`. The summary follows
 // the object through the body's registers and refuses the body opaque.
 //
@@ -620,7 +620,7 @@
 // THISHANDED-SAME: {name = "f", reason = "a refused body holds the global object and hands it on (call), where this summary cannot follow it", resolved = "none", stores = 1 : i32}
 // THISHANDED-NOT: call_direct
 
-// AN ARROW A REFUSED BODY CREATES inherits that body's `this`. No
+// An arrow a refused body creates inherits that body's `this`. No
 // create_closure in the module builds it, so its receiver is watched.
 //
 // THISINHERITED: ctjs.globals = [
@@ -652,7 +652,7 @@ var w = add(1, 2);
 //--- skipped.js
 function add(a, b) { return a + b; }
 // A generator is a suspension point, which the importer refuses to lower, so
-// its body - and any store_global in it - never reaches this pass. This one
+// its body (and any store_global in it) never reaches this pass. This one
 // has none, and the importer says so on the skipped row.
 function* gen() { yield 1; }
 var y = add(1, 2);
@@ -660,7 +660,7 @@ var y = add(1, 2);
 //--- skipped-stores.js
 function add(a, b) { return a + b; }
 function twice(x) { return x + x; }
-// The same refusal, and this body DOES store a global: `add = 1` is an
+// The same refusal, and this body does store a global: `add = 1` is an
 // op::set_global that emits no IR. `add` is refused for it; `twice` is not.
 function* gen() { add = 1; yield 1; }
 var y = add(1, 2);
@@ -676,8 +676,8 @@ var y = add(1, 2);
 //--- constructor.js
 function add(a, b) { return a + b; }
 function seed() { return 1; }
-// Called where it is read, so the CALL is the escape. Storing it into a global
-// first would also answer - as a store_global escape - but then this test
+// Called where it is read, so the call is the escape. Storing it into a global
+// first would also be refused (as a store_global escape), but then this test
 // would be pinning the store rather than the thing it is about.
 seed.constructor("return 1");
 var z = add(1, 2);
@@ -690,14 +690,14 @@ var z = add(1, 2);
 
 //--- ctor-literal.js
 function add(a, b) { return a + b; }
-// The receiver is an object literal, so this is `Object`, not `Function` - and
-// it escapes into a store_global, which is what the old rule answered on.
+// The receiver is an object literal, so this is `Object`, not `Function`, and
+// it escapes into a store_global, which a key-only rule would refuse.
 var ctor = ({}).constructor;
 var z = add(1, 2);
 
 //--- ctor-literal-chain.js
 function add(a, b) { return a + b; }
-// But `Object` IS a function, so the second read is the compiler.
+// But `Object` is a function, so the second read is the compiler.
 var ctor = ({}).constructor.constructor;
 var z = add(1, 2);
 
@@ -712,7 +712,7 @@ var z = add(1, 2);
 
 //--- ctor-extends-function.js
 function add(a, b) { return a + b; }
-// The one class for which that value IS the compiler - and naming `Function`
+// The one class for which that value is the compiler, and naming `Function`
 // is what refuses the module.
 class Weird extends Function { constructor() { super("return 1"); } }
 var w = new Weird();
@@ -730,7 +730,7 @@ var z = add(1, 2);
 
 //--- ctor-member.js
 function add(a, b) { return a + b; }
-// `o.constructor` is tainted - `o` is a parameter - and `.name` off it is not.
+// `o.constructor` is tainted (`o` is a parameter) and `.name` off it is not.
 function label(o) { return o.constructor.name; }
 var t = label(1);
 var z = add(1, 2);
@@ -738,20 +738,20 @@ var z = add(1, 2);
 //--- window-read.js
 function add(a, b) { return a + b; }
 // A named read off the window that is not one of the host's self-aliases, and
-// the value then STORED - which is the escape the old propagation answered on.
+// the value then stored, which would be an escape if the read were tainted.
 var w = window.innerWidth;
 var z = add(1, 2);
 
 //--- window-alias.js
 function add(a, b) { return a + b; }
-// And one that IS. `window.self` is the same proxy, so the write through it
+// And one that is. `window.self` is the same proxy, so the write through it
 // binds a global.
 window.self.injected = 1;
 var z = add(1, 2);
 
 //--- ctor-member-prototype.js
 function add(a, b) { return a + b; }
-// `.prototype` off it IS, because `Function.prototype.constructor` is
+// `.prototype` off it is, because `Function.prototype.constructor` is
 // `Function`.
 function grab(o) { return o.constructor.prototype; }
 var t = grab(1);
@@ -759,8 +759,8 @@ var z = add(1, 2);
 
 //--- enter-read.js
 function add(a, b) { return a + b; }
-// The global object handed to a closure defined two tokens earlier - a UMD
-// header, minus the module/define arms. `g` is a parameter and the walk
+// The global object handed to a closure defined two tokens earlier (a UMD
+// header, minus the module/define arms). `g` is a parameter and the walk
 // continues there; `g.innerWidth` is a number.
 (function (g) { return g.innerWidth; })(globalThis);
 var z = add(1, 2);
@@ -768,7 +768,7 @@ var z = add(1, 2);
 //--- enter-write.js
 function add(a, b) { return a + b; }
 function twice(x) { return add(x, x); }
-// A NAMED write two frames from the load: the proxy's `set` trap, so it binds
+// A named write two frames from the load: the proxy's `set` handler, so it binds
 // `injected` and nothing else.
 (function (g) { g.injected = 1; })(globalThis);
 var z = add(1, 2);
@@ -776,16 +776,16 @@ var y = twice(3);
 
 //--- enter-computed.js
 function add(a, b) { return a + b; }
-// And a COMPUTED one, which names no name. `k` is a block argument, so
-// constant_key() is empty exactly as it is for `globalThis[k] = 1`.
+// And a computed key, which names no binding. `k` is a block argument, so
+// constantKey() is empty, exactly as it is for `globalThis[k] = 1`.
 function bind(o, k) { o[k] = 1; }
 bind(globalThis, "x");
 var z = add(1, 2);
 
 //--- enter-unknown.js
 function add(a, b) { return a + b; }
-// The window as the RECEIVER of a call whose callee is a property read. This
-// is bootstrap.bundle.js:3062, the first escape in that bundle.
+// The window as the receiver of a call whose callee is a property read. This
+// is the shape of the first escape in bootstrap.bundle.js.
 window.scrollTo(0, 0);
 var z = add(1, 2);
 
@@ -799,7 +799,7 @@ var z = add(1, 2);
 
 //--- enter-arguments.js
 function add(a, b) { return a + b; }
-// `arguments[0]` IS the global object, under an index this walk cannot read.
+// `arguments[0]` is the global object, under an index this walk cannot read.
 function loose(o) { return arguments.length + (o ? 1 : 0); }
 loose(globalThis);
 var z = add(1, 2);
@@ -813,13 +813,13 @@ var z = add(1, 2);
 
 //--- self-write.js
 function add(a, b) { return a + b; }
-// The third name the Shell binds the window proxy to, and the one this list
-// was missing. `(function (global_scope) { ... }(self))` is testharness.js.
+// The third name the Shell binds the window proxy to. testharness.js is
+// `(function (global_scope) { ... }(self))`.
 self.injected = 1;
 var z = add(1, 2);
 
 //--- closure-callee.js
-// THE SECOND SHAPE, AND THE ONLY ONE A VENDOR BUNDLE HAS. No global name is
+// Closure calls, the only shape a vendor bundle has. No global name is
 // involved at all: the callee is the closure two tokens back, which names its
 // function index outright. This is what a UMD header is.
 var out = (function (a, b) { return a + b; })(1, 2);
@@ -827,19 +827,19 @@ var out = (function (a, b) { return a + b; })(1, 2);
 //--- closure-surplus.js
 // Two parameters, three arguments. CallDirectOp::verifySymbolUses holds the
 // operand count equal to the entry block's, so the surplus cannot be dropped
-// and cannot be passed - it is refused here rather than failing the verifier.
+// and cannot be passed, so it is refused here rather than failing the verifier.
 var out = (function (a, b) { return a + b; })(1, 2, 3);
 
 //--- closure-arguments.js
-// A SHORT call into a body that reads its raw argument window. The pad the
-// rewrite would add is invisible to registers and VISIBLE to `arguments`:
+// A short call into a body that reads its raw argument window. The pad the
+// rewrite would add is invisible to registers and visible to `arguments`:
 // op::call fills registers with undefined but make_arguments_object copies the
 // raw window, whose length is argc. Padding this would make `arguments.length`
 // 2 where the VM says 1.
 var out = (function (a, b) { return arguments.length; })(1);
 
 //--- name-arguments.js
-// THE SAME HOLE ON THE PER-NAME PATH, which had no such clause at all. `two(1)`
+// The same hole on the per-name path: `two(1)`
 // is one argument to two parameters, and `two` reads its raw window.
 function two(a, b) { return arguments.length; }
 var out = two(1);

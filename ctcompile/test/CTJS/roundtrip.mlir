@@ -1,14 +1,14 @@
-// EVERY OPERATION AND EVERY TYPE, parsed, verified, printed, and parsed again.
+// Every operation and every type, parsed, verified, printed, and parsed again.
 //
-// THE SECOND ctjs-opt IS THE TEST. One pass proves the parser accepts the
-// syntax; the pair proves the PRINTER emits something the parser accepts, which
+// The second ctjs-opt run is the test. One pass proves the parser accepts the
+// syntax; the pair proves the printer emits something the parser accepts, which
 // is the property that makes every later test's expected output trustworthy. A
 // printer that dropped an operand or a kind would pass a single-pass check
 // against its own output forever.
 //
-// The Phase 8 gate asks that this cover every operation. It does, and the
-// anti-pattern list names the alternative: "An operation added without a
-// roundtrip test."
+// Each CTJS operation should round-trip here, or in its own file under IR/
+// (invoke.mlir, exceptions.mlir); add a case whenever you add an operation, so
+// a printer bug in it cannot hide.
 
 // RUN: ctjs-opt %s | ctjs-opt | FileCheck %s
 
@@ -23,7 +23,7 @@ func.func private @every_ctjs_type(%value: !ctjs.value, %context: !ctjs.context,
     -> !ctjs.coroutine
 
 // ---- constants -------------------------------------------------------------
-// EVERY CONSTANT SHAPE, because the reason these are dialect attributes rather
+// Every constant shape, because the reason these are dialect attributes rather
 // than builtin ones is that -0.0, NaN and BigInt have to survive exactly.
 // CHECK-LABEL: ctjs.func @constants
 ctjs.func @constants(%unused: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
@@ -33,8 +33,8 @@ ctjs.func @constants(%unused: !ctjs.value) -> !ctjs.value attributes {upvalue_co
   %null = ctjs.constant #ctjs.null
   // CHECK: ctjs.constant #ctjs.boolean<true>
   %yes = ctjs.constant #ctjs.boolean<true>
-  // THE BITS OF -0.0, which is 0x8000000000000000 and is a DIFFERENT value from
-  // 0.0: Object.is(-0, 0) is false and 1 / -0 is -Infinity.
+  // The bits of -0.0 are 0x8000000000000000 (9223372036854775808), a different
+  // value from 0.0: Object.is(-0, 0) is false and 1 / -0 is -Infinity.
   // CHECK: ctjs.constant #ctjs.number<9223372036854775808>
   %negzero = ctjs.constant #ctjs.number<9223372036854775808>
   // CHECK: ctjs.constant #ctjs.number<0>
@@ -63,17 +63,17 @@ ctjs.func @bindings(%closure: !ctjs.value) -> !ctjs.value attributes {upvalue_co
 // CHECK-LABEL: ctjs.func @upvalues
 ctjs.func @upvalues(%v: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 1 : i32} {
   %ctx = ctjs.frame_enter 4
-  // A !ctjs.program FROM NOWHERE. ctjs.func takes only !ctjs.value parameters -
-  // its verifier says so - and no operation produces a program yet: Phase 9's
-  // ITS FIRST OPERAND IS THE ENCLOSING CLOSURE, a value, and it used to be a
-  // !ctjs.program that nothing produced - which is exactly why the importer
-  // could not emit this operation and skipped every `closure` opcode. The
-  // program is selected from `enclosing->owner`, because a context can be
-  // running functions from more than one program and a function index means
-  // nothing outside the one it was compiled in.
+  // ctjs.create_closure's first operand is the enclosing closure, a
+  // !ctjs.value, not a !ctjs.program: the runtime finds the program through
+  // `enclosing->owner`, because one context can run functions from several
+  // programs and a function index only means something inside the program it
+  // was compiled in. (ctjs.func takes only !ctjs.value parameters, so a
+  // !ctjs.program operand would have nothing to come from, and the importer
+  // could not emit this operation for a `closure` opcode.)
   //
-  // AND THE LAST IS THE EFFECTIVE RECEIVER, used only when the target is an
-  // arrow: an arrow's `this` is decided where it is WRITTEN.
+  // The last operand is the effective receiver, used only when the target is an
+  // arrow: an arrow's `this` is decided where it is written, so the creating
+  // frame supplies it.
   // CHECK: ctjs.create_closure %{{.*}}[3] this %{{.*}} captures %{{.*}}
   %fn = ctjs.create_closure %v[3] this %v captures %v
   // CHECK: ctjs.create_cell %{{.*}}
@@ -82,7 +82,7 @@ ctjs.func @upvalues(%v: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 
   %inside = ctjs.cell_get %cell
   // CHECK: ctjs.cell_set %{{.*}}, %{{.*}}
   ctjs.cell_set %cell, %inside
-  // THE CLOSURE OPERAND IS A VALUE, because a frame's own closure arrives as an
+  // The closure operand is a value, because a frame's own closure arrives as an
   // ordinary argument and ctjs.func takes only !ctjs.value.
   // CHECK: ctjs.load_upvalue %{{.*}}[0]
   %up = ctjs.load_upvalue %v[0]
@@ -100,9 +100,9 @@ ctjs.func @properties(%obj: !ctjs.value, %key: !ctjs.value) -> !ctjs.value
   %read = ctjs.get_property %obj[%key]
   // CHECK: ctjs.set_property %{{.*}}[%{{.*}}], %{{.*}}
   ctjs.set_property %obj[%key], %read
-  // NO RESULT: ct_aot_delete_index answers with a ct_aot_status, and the
-  // bytecode loads `true` as a separate step. Declaring a !ctjs.value here
-  // made `delete o[k]` evaluate to the status, whose `ok` is 3.
+  // No result: ct_aot_delete_index answers with a ct_aot_status, and the
+  // bytecode loads `true` as a separate step. Declaring a !ctjs.value result here
+  // would make `delete o[k]` evaluate to the status, whose `ok` is 3.
   // CHECK: ctjs.delete_property %{{.*}}[%{{.*}}]
   ctjs.delete_property %obj[%key]
   // CHECK: ctjs.has_property %{{.*}} in %{{.*}}
@@ -118,7 +118,7 @@ ctjs.func @operators(%a: !ctjs.value, %b: !ctjs.value) -> !ctjs.value
   %sum = ctjs.binary add %a, %b
   // CHECK: ctjs.binary concat %{{.*}}, %{{.*}}
   %joined = ctjs.binary concat %a, %b
-  // THE STATIC FAMILY IS A DIFFERENT OPERATION, not a flag: it cannot run user
+  // The static family is a different operation, not a flag: it cannot run user
   // code, which is a difference in traits.
   // CHECK: ctjs.binary_static add %{{.*}}, %{{.*}}
   %bumped = ctjs.binary_static add %a, %b
@@ -132,14 +132,14 @@ ctjs.func @operators(%a: !ctjs.value, %b: !ctjs.value) -> !ctjs.value
   %less = ctjs.compare lt %a, %b
   // CHECK: ctjs.convert to_boolean %{{.*}}
   %truthy = ctjs.convert to_boolean %a
-  // THE BRIDGE TO A BRANCH: an i1, not a JavaScript boolean.
+  // The bridge to a branch: an i1, not a JavaScript boolean.
   // CHECK: ctjs.truthy %{{.*}}
   %bit = ctjs.truthy %a
-  // AN i1: ct_aot_instance_of returns a uint32_t 0 or 1. As a !ctjs.value it
-  // would have been value::from_bits(1) - a subnormal double.
+  // An i1: ct_aot_instance_of returns a uint32_t 0 or 1. As a !ctjs.value it
+  // would be value::from_bits(1), a subnormal double.
   // CHECK: ctjs.instanceof %{{.*}}, %{{.*}}
   %isa = ctjs.instanceof %a, %b
-  // BOTH PREDICATES ARE i1 AND NEITHER IS RETURNABLE AS A VALUE, which is the
+  // Both predicates are i1 and neither is returnable as a value, which is the
   // point: boxing is a separate step the front end asks for when it needs one.
   ctjs.return %a
 }
@@ -174,9 +174,9 @@ ctjs.func @calls(%callee: !ctjs.value, %recv: !ctjs.value, %arg: !ctjs.value) ->
 }
 
 // ---- control flow and completion -------------------------------------------
-// AN UNSTRUCTURED CFG, which is the plan's decision: "Import produces an
-// unstructured CFG matching the bytecode: basic blocks, cf terminators, and
-// explicit handler blocks derived from the bytecode handler table."
+// The importer produces an unstructured CFG that mirrors the bytecode: basic
+// blocks, cf terminators, and explicit handler blocks taken from the
+// bytecode's handler table.
 // CHECK-LABEL: ctjs.func @control
 ctjs.func @control(%v: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
   // CHECK: ctjs.push_handler ^{{.*}} catch ^{{.*}}

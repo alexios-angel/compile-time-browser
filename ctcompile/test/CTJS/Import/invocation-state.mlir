@@ -1,8 +1,8 @@
 // RUN: split-file %s %t
 // RUN: python3 %S/invocation-state.py --translate ctjs-translate --opt ctjs-opt --fixtures %t --work %t.check --node %node --reference %native_reference
 
-// A throwing assignment must retain the state after argument evaluation and
-// before the call. These are source/import boundary tests, not native positives.
+// A throwing call inside a try must leave the catch the register state after
+// argument evaluation and before the call. These test the importer, not native lowering.
 
 //--- assignment.js
 function choose(flag) {

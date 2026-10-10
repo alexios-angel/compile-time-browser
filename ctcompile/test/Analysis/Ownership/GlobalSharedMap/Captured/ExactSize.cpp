@@ -1,7 +1,19 @@
+//===- ExactSize.cpp - Exact Map size tests ---------------------*- C++ -*-===//
+//
+// Tests that OwnedGlobalRoots proves an exact captured Map size after
+// `clear()` plus known writes, and that a size read used as a Map key finds
+// the right entry.
+//
+//===----------------------------------------------------------------------===//
+
 #include "../Tests.h"
 
 namespace ctcompile::test::owned_global_shared_map {
 
+/// Checks that OwnedGlobalRoots proves an exact Map size only after a clear()
+/// plus known writes, and refuses every variant where older entries or a
+/// reordered read could change the count. \p prepared selects the
+/// prepared-module spelling of the fixture.
 void checkCapturedMapExactSizeOwner(mlir::MLIRContext & context, const std::string & source,
                                     bool prepared) {
     auto fixture =
@@ -24,6 +36,8 @@ void checkCapturedMapExactSizeOwner(mlir::MLIRContext & context, const std::stri
     const std::string read = "    %loaded = ctjs.call %reader(%state, %saved)\n"
                              "    %answer = ctjs.get_property %loaded[%fieldKey]\n"
                              "    ctjs.return %answer\n  }\n}\n";
+    // ctjs.number holds IEEE-754 bit patterns: 1.0, 1.0, 2.0, 3.0, 0, -0.0,
+    // and two NaNs with different payloads.
     const std::string setup =
         "    %clearKey = ctjs.constant #ctjs.string<\"clear\">\n"
         "    %clearer = ctjs.get_property %state[%clearKey]\n"
@@ -197,6 +211,8 @@ void checkCapturedMapExactSizeOwner(mlir::MLIRContext & context, const std::stri
             repeated += "    %repeat" + std::to_string(index) +
                         " = ctjs.call %setter(%state, %anotherOne, %value)\n";
         }
+        // The analysis tracks at most 64 candidate writes per key; the 65th must
+        // refuse rather than drop candidates and claim a smaller upper bound.
         variant(replaced(fixture, seed, repeated), writes == 64,
                 writes == 64 ? "the complete sixty-four-candidate census proves one equal key"
                              : "sixty-five candidates refuse rather than truncate the upper bound");
@@ -236,8 +252,9 @@ void checkCapturedMapExactSizeOwner(mlir::MLIRContext & context, const std::stri
         if (!snapshot || !lookup) { continue; }
         auto * restoreBefore = snapshot->getNextNode();
         auto * first = setter.getBody().front().front().getNextNode();
-        // Keep definitions in scope: moving before the first clear changes
-        // the evaluated state without altering the live Map or key operands.
+        // Move the size read before the last clear() of the entry block (or
+        // before the branch holding the clears): its operands stay in scope
+        // and unchanged, but the Map state it reads is different.
         setter.walk([&](ctjs::CallOp op) {
             if (op.getArgs().empty() && first->getBlock() == op->getBlock() &&
                 first->isBeforeInBlock(op)) {
@@ -269,8 +286,9 @@ void checkCapturedMapExactSizeOwner(mlir::MLIRContext & context, const std::stri
                     prepared ? "prepared" : "source", label, rows, completion);
     }
 
-    // Imported early returns retain their original entry-frame exits in both
-    // scalar SCF arms. This witness needs no cross-invocation child invariant.
+    // An early return imported into SCF keeps its frame exit in both arms of
+    // the scf.if. This case does not depend on child objects staying unchanged
+    // between calls.
     const auto enterFrame = [](std::string text, llvm::StringRef function, llvm::StringRef name) {
         const auto start = text.find('\n', text.find("ctjs.func private @" + function.str()));
         check(start != std::string::npos, "frame fixture retains its source method");
@@ -370,8 +388,8 @@ void checkCapturedMapExactSizeOwner(mlir::MLIRContext & context, const std::stri
         replaced(inverted, leafRead, "      %lateClear = ctjs.call %clearer(%state)\n" + leafRead),
         false, "a mutation in the proved arm revokes its acquired membership");
 
-    // CFG-to-SCF places Data's remaining effects in the opposite arm of
-    // if (!has) return. Both structural paths retain one common frame exit.
+    // CFG-to-SCF lowers `if (!has) return; <rest>` by putting <rest> in the
+    // else arm. Both arms must still reach the one shared frame exit.
     const std::string continuation = "    scf.if %guard {\n"
                                      "      scf.yield\n    } else {\n" +
                                      leafRead + "      scf.yield\n    }\n" + exit +

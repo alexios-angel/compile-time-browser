@@ -1,3 +1,12 @@
+//===- NumericEntry.cpp - Numeric entry ownership tests ---------*- C++ -*-===//
+//
+// Tests the owned-global-map proof when the setter takes a Number argument and
+// the entry script does arithmetic on its results: valid Number sources are
+// admitted, other kinds are withheld, cross-scope SSA mutations make the stale
+// fingerprint fail, and the proof stays within its step budget.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Tests.h"
 
 namespace ctcompile::test::owned_global_shared_map {
@@ -18,6 +27,7 @@ void checkEntryNumericOwner(mlir::MLIRContext & context, const std::string & sha
                       "    %sizeKey = ctjs.constant #ctjs.string<\"size\">\n"
                       "    %size = ctjs.get_property %state[%sizeKey]\n"
                       "    ctjs.return %size\n  }\n}\n");
+    // 4607182418800017408 is the IEEE-754 bit pattern of 1.0.
     source = replaced(source, "    %putResult = ctjs.call %putter(%owned)",
                       "    %actual = ctjs.constant #ctjs.number<4607182418800017408>\n"
                       "    %putResult = ctjs.call %putter(%owned, %actual)\n"
@@ -186,6 +196,8 @@ void checkEntryNumericOwner(mlir::MLIRContext & context, const std::string & sha
                 true, "ordinary entry arithmetic does not require a result-fed method argument");
         for (const bool before : {false, true}) {
             for (const auto & [definition, expected] :
+                 // Number constants are IEEE-754 bit patterns: 0, -0.0, NaN,
+                 // +Infinity.
                  {std::pair{"ctjs.constant #ctjs.number<0>", true},
                   {"ctjs.constant #ctjs.number<9223372036854775808>", true},
                   {"ctjs.constant #ctjs.number<9221120237041090560>", true},
@@ -430,6 +442,7 @@ void checkEntryNumericOwner(mlir::MLIRContext & context, const std::string & sha
             auto contract = requested(*module);
             OwnedGlobalRoots complete(*module, contract);
             const unsigned completion = complete.steps();
+            // 18000 steps is a loose ceiling; a proof needing more is a regression.
             check(complete.proved() && completion < 18000,
                   "numeric dependency proof is bounded and complete");
             if (!complete.proved() || completion >= 18000) { continue; }

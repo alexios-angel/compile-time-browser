@@ -1,50 +1,50 @@
-// WHAT THE BACKEND REFUSES, AND THAT IT SAYS SO.
+// What the boxed EmitC backend refuses, and how it reports each refusal.
 //
-// The importer set the precedent - "the count of what it leaves behind is the
-// work list" - and a backend needs it more, not less. Half-lowering a function
-// nobody taught it about does not fail: it produces a translation unit that
-// compiles and computes something else, which is the failure this project keeps
-// meeting. So the pass carries an ALLOW-LIST, and every function it declines is
-// left intact with a `ctjs.not_lowered` attribute saying why.
+// Half-lowering a function the backend was never taught about does not fail:
+// it produces a translation unit that compiles and computes something else.
+// So --ctjs-lower-to-emitc works from an allow-list, and every function it
+// declines is left intact with a `ctjs.not_lowered` attribute saying why; the
+// set of those attributes is the backend's work list, as the importer's
+// leftovers are the importer's.
 //
-// THE REFUSALS ARE THE TEST. A guard nobody has watched fire is not a guard,
-// and an allow-list is exactly the kind that rots quietly: widen it by accident
+// The refusals are the test. An allow-list rots quietly: widen it by accident
 // and nothing goes red, because the wrong answer still compiles. Each case
-// below names the reason it is refused, so a change that starts lowering one of
-// them has to come here and say so.
+// below names the reason it is refused, so a change that starts lowering one
+// of them has to update this file. Some cases that used to be refusals now
+// check that the construct is lowered.
 
 // RUN: ctjs-opt %s --ctjs-lower-to-emitc | FileCheck %s
 
-// AND THE PASS ORDER, WHICH IS THE ONE MISTAKE THAT IS SILENT.
+// The pass order, the one mistake that is otherwise silent.
 //
 // --emitc-eliminate-block-arguments walks emitc.func and nothing else, so run
-// BEFORE the lowering it finds nothing, returns success and says nothing - and
+// before the lowering it finds nothing, returns success and says nothing, and
 // the lowering then emits block arguments that reach mlir-translate, which
 // loses a copy on their edges. Measured on a self-loop from real JavaScript:
 // reversed, `sl(10,20,2)` answers 20 where 10 is correct, with ctjs-opt,
-// mlir-translate and g++ all exiting 0. A leftover ctjs.func is exactly that
-// mistake and nothing else looks like it, so it is refused.
+// mlir-translate and g++ all exiting 0. A leftover ctjs.func indicates exactly
+// that mistake and nothing else, so the elimination pass refuses one.
 // RUN: not ctjs-opt %s --emitc-eliminate-block-arguments 2>&1 \
 // RUN:   | FileCheck --check-prefix=ORDER %s
 // ORDER: ran before the module was lowered
 
-// --- new.target IS NO LONGER REFUSED ---------------------------------------
+// --- new.target is lowered ---------------------------------------------------
 //
-// The importer gives every function three implicit arguments - receiver,
-// new.target, callee - because the bytecode reads them with their own opcodes.
+// The importer gives every function three implicit arguments (receiver,
+// new.target, callee) because the bytecode reads them with their own opcodes.
 // Only `receiver` is in the entry signature; the other two are fetched after
 // ct_aot_enter, from the frame it pushed.
 //
-// THIS CASE WAS A REFUSAL, AND ITS COMMENT SAID WHY IT WOULD STOP BEING ONE.
-// Passing `undefined` instead would have been easy and wrong - "undefined is an
-// answer, and it would be the wrong one the moment either gap is closed". Both
-// are closed. ct_aot_new_target has a body, and behind it the real blocker was
-// that ct_aot_enter takes new.target from pending_new_target_ and op::construct
-// never set that on the compiled path; context::construct_new sets it, which is
-// what its save/set/restore is for.
+// Passing `undefined` for new.target instead would be easy and wrong. The
+// value comes from ct_aot_new_target: ct_aot_enter takes new.target from
+// context::pending_new_target_, which context::construct_new sets (that is
+// what its save/set/restore is for), so a compiled function called as a
+// constructor sees the real new.target and a plain call sees `undefined`.
 //
-// It matters more than one opcode suggests: Babel's _classCallCheck guard is a
-// new.target test, so a transpiled bundle has one in nearly every class.
+// This matters more than one opcode suggests: Babel's _classCallCheck guard is
+// a new.target test, so a transpiled bundle has one in nearly every class,
+// and a function that could not read it would make every such class refuse to
+// compile.
 //
 // CHECK-NOT: ctjs.func @uses_new_target
 // CHECK: emitc.func @uses_new_target
@@ -56,16 +56,16 @@ ctjs.func @uses_new_target(%receiver: !ctjs.value, %new_target: !ctjs.value,
   ctjs.return %new_target
 }
 
-// --- THE CALLEE IS NO LONGER REFUSED ---------------------------------------
+// --- The callee is lowered ----------------------------------------------------
 //
-// ct_aot_callee has a body now, and it is the only way a compiled function can
-// reach its own upvalues: they live on the closure INSTANCE, while `site` is
-// the function_proto that every closure over the same function shares. The
-// entry ABI delivers `site` and not the closure, so the value comes out of
+// ct_aot_callee is the only way a compiled function can reach its own
+// upvalues: they live on the closure instance, while `site` is the
+// function_proto that every closure over the same function shares. The entry
+// ABI delivers `site` and not the closure, so the value comes out of
 // call_frame::closure once ct_aot_enter has put one there.
 //
-// new.target IS DELIVERED THE SAME WAY NOW, above - the two gaps were not the
-// same and both are closed.
+// new.target is read from the frame in the same way (see above), though the
+// two values reach the frame by different routes.
 //
 // CHECK-NOT: ctjs.func @uses_callee
 // CHECK: emitc.func @uses_callee
@@ -77,9 +77,9 @@ ctjs.func @uses_callee(%receiver: !ctjs.value, %new_target: !ctjs.value,
   ctjs.return %callee
 }
 
-// --- AN UPVALUE OPERATION NAMING SOMEBODY ELSE'S CLOSURE ---------------------
+// --- An upvalue operation naming somebody else's closure ----------------------
 //
-// ct_aot_upvalue_cell reads the FRAME, so the operand is redundant with it -
+// ct_aot_upvalue_cell reads the frame, so the operand is redundant with it:
 // the bytecode's get_upvalue reads the current frame's closure and the importer
 // only ever names the callee argument. An operation naming a different closure
 // would be lowered into a read of the wrong one, silently, so it is refused.
@@ -95,14 +95,14 @@ ctjs.func @foreign_upvalue(%receiver: !ctjs.value, %new_target: !ctjs.value,
   ctjs.return %captured
 }
 
-// --- CONTROL FLOW IS NO LONGER REFUSED ------------------------------------
+// --- Control flow is lowered --------------------------------------------------
 //
-// It was, until --emitc-eliminate-block-arguments existed: emitting a block
-// argument as it stands hits the copy the C++ emitter loses. That pass runs
-// after this one, so a function with branches lowers here with its block
-// arguments intact and is cleaned up downstream. The pipeline order is the
-// contract; end-to-end.mlir runs it and compiles the result.
-//
+// Emitting a block argument as it stands would hit the copy the C++ emitter
+// loses, so block arguments are kept here and removed later by
+// --emitc-eliminate-block-arguments, which runs after this pass. A function
+// with branches lowers here with its block arguments intact and is cleaned up
+// downstream. The pipeline order is the contract; end-to-end.mlir runs it and
+// compiles the result.
 // CHECK-NOT: ctjs.func @has_a_branch
 // CHECK: emitc.func @has_a_branch
 ctjs.func @has_a_branch(%receiver: !ctjs.value, %new_target: !ctjs.value,
@@ -119,17 +119,17 @@ ctjs.func @has_a_branch(%receiver: !ctjs.value, %new_target: !ctjs.value,
   ctjs.return %b
 }
 
-// --- CONTAINS AN OPERATION WITH NO LOWERING ---------------------------------
+// --- Contains an operation with no lowering -----------------------------------
 //
 // The allow-list's default, and the reason names the operation so the work list
-// reads itself. `ctjs.create_regexp` is not a CTJS_RuntimeOp at all -
-// aot_helpers.def declares no helper for a regexp literal - so there is nothing
-// to call even if a conversion were written.
+// reads itself. `ctjs.create_regexp` is not a CTJS_RuntimeOp at all
+// (aot_helpers.def declares no helper for a regexp literal), so there is
+// nothing to call even if a conversion were written.
 //
-// PROPERTY WRITES USED TO BE THIS CASE, and then `ctjs.has_property` was, and
-// both are lowered now. That is the right reason for a negative test to need
-// rewriting, and it is worth saying twice: the case has to keep naming an
-// operation that is GENUINELY unsupported, or it asserts nothing.
+// Keep this case pointed at an operation that is genuinely unsupported, or it
+// asserts nothing. Operations that once filled this slot (property writes,
+// `ctjs.has_property`) are lowered now; when `ctjs.create_regexp` gains a
+// lowering, move the case to another operation that has none.
 //
 // CHECK-LABEL: ctjs.func @matcher
 // CHECK-SAME: ctjs.not_lowered = "no lowering yet for ctjs.create_regexp"
@@ -142,15 +142,15 @@ ctjs.func @matcher(%receiver: !ctjs.value, %new_target: !ctjs.value,
   ctjs.return %re
 }
 
-// --- A BITWISE ctjs.binary IS NO LONGER REFUSED -----------------------------
+// --- A bitwise ctjs.binary is lowered -----------------------------------------
 //
-// THIS CASE WAS A REFUSAL: ct_aot_binary_op's switch had no arm for a bitwise
-// opcode, so `ctjs.binary shl` would have passed op::halt - in range, so
-// aot_bridge's bounds check passes - and answered `undefined` with status ok.
-// context::binary_op now runs the six as the interpreter does, ToNumeric of
-// both operands and then the static operator, so OpcodeMapping.hpp maps every
-// kind in the re-entering family and the shift reaches op::shl by name. The
-// kind check stays in Admission.cpp for the next kind a family does not serve.
+// context::binary_op runs the six bitwise operators as the interpreter does
+// (ToNumeric of both operands, then the static operator), so OpcodeMapping.hpp
+// maps every kind in the re-entering family and `shl` reaches op::shl by name.
+// Admission.cpp keeps the kind check for any future kind a family does not
+// handle. Without a mapping, `ctjs.binary shl` would pass op::halt, which is in
+// range, so aot_bridge's bounds check passes and the call answers `undefined`
+// with status ok.
 //
 // CHECK-NOT: ctjs.func @bitwise_generic
 // CHECK: emitc.func @bitwise_generic
@@ -164,34 +164,34 @@ ctjs.func @bitwise_generic(%receiver: !ctjs.value, %new_target: !ctjs.value,
   ctjs.return %shifted
 }
 
-// --- A CONSTANT THAT CANNOT BE MATERIALISED WITHOUT ALLOCATING ------------
+// --- Constants: all lowered ---------------------------------------------------
 //
-// A NUMBER IS NO LONGER REFUSED, and the reason is worth keeping: its attribute
-// carries the double's BIT PATTERN, so `value::number(bit_cast<double>(bits))`
-// is exact for every double there is - both zeroes and every NaN payload. A
-// decimal literal in the emitted source would not be: 0.0 and -0.0 print
-// identically and are different JavaScript values.
+// Numbers are emitted from their bit pattern: the attribute carries the
+// double's bits, so `value::number(bit_cast<double>(bits))` is exact for every
+// double, both zeroes and every NaN payload included. A decimal literal in the
+// emitted source would not be: 0.0 and -0.0 print identically and are
+// different JavaScript values.
 //
-// A STRING IS NOT REFUSED ANY MORE, and the reason it used to give had gone
-// stale rather than been wrong: "ct_aot_new_string is a safepoint, and nothing
-// roots the result yet" was true when it was written and untrue from the moment
-// the backend started parking every value it produces. Nobody rechecked it, and
-// it was 383 of 417 refusals on bootstrap.bundle.js - 92% of the blockage
-// traced to one sentence.
+// Strings go through ct_aot_new_string. It is a safepoint, so its result must
+// be rooted before anything else can collect; the backend parks every value it
+// produces where the collector can see it, so the string survives a
+// collection triggered by a later helper.
 //
-// A BIGINT LITERAL IS NOT REFUSED ANY MORE EITHER, and its stale reason is
-// worth recording beside the string's: "ct_aot_new_bigint_literal is one of the
-// rows aot.hpp declares and lib/Script/aot_bridge/ does not define, so a call would
-// compile and fail at link." That was true when written. The helper has a body
-// now, delegating to context::interned_bigint_literal - which the ABI row had
-// asked for by name and which nothing had extracted.
+// BigInt literals go through ct_aot_new_bigint_literal, which delegates to
+// context::interned_bigint_literal, the same code the interpreter uses, so a
+// compiled body and the interpreter share one interned value per literal. Its
+// result is rooted the same way as a string's.
 //
-// SO THE CONSTANT ARM HAS NO NEGATIVE CASE LEFT, and inventing an attribute to
-// keep one would be asserting against a shape the importer cannot produce. What
-// remains is the POSITIVE assertion: it must reach the helper, memoised under
-// the marker rather than the entry's site, because the two number their slots
-// differently and sharing the key lets a compiled body read a slot the
-// interpreter filled with another literal.
+// Every ABI helper the backend calls must have a body in
+// lib/Script/aot_bridge/: aot.hpp declares every row, so a call to a helper
+// without a body would compile and fail only at link.
+//
+// So constants have no negative case left, and inventing an attribute to keep
+// one would assert against a shape the importer cannot produce. What remains
+// is the positive assertion: a BigInt literal must reach its helper memoised
+// under the marker rather than the entry's site, because the two number their
+// slots differently and sharing the key would let a compiled body read a slot
+// the interpreter filled with another literal.
 //
 // CHECK-NOT: ctjs.func @returns_a_bigint
 // CHECK: emitc.func @returns_a_bigint
@@ -208,7 +208,7 @@ ctjs.func @returns_a_bigint(%receiver: !ctjs.value, %new_target: !ctjs.value,
   ctjs.return %n
 }
 
-// --- AND ONE THAT IS ACCEPTED, so the allow-list is not simply refusing all --
+// --- One accepted function, so the allow-list is not simply refusing all -----
 //
 // Without this the file would pass just as well if the pass lowered nothing at
 // all, which is the failure mode of a suite made only of negative cases.

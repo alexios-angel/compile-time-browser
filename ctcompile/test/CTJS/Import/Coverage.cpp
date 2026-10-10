@@ -1,29 +1,26 @@
-// WHICH BYTECODE OPERATIONS THE IMPORTER UNDERSTANDS, MEASURED RATHER THAN
-// LISTED.
+//===- ctcompile/test/CTJS/Import/Coverage.cpp - Importer opcode coverage -===//
 //
-// Phase 13's tracking mechanism, and the plan is specific about why it is
-// shaped this way: "Coverage is measured against the bytecode_opcodes.def
-// table, not against a hand-kept checklist that will fall out of date... so a
-// newly added opcode fails the test until it is handled or explicitly listed as
-// suspending."
+// Checks which bytecode operations the importer understands, measured rather
+// than listed. Coverage is measured against the bytecode_opcodes.def table, not
+// a hand-kept checklist, so a newly added opcode fails this test until the
+// importer handles it or the table marks it `may_suspend`; an opcode that stops
+// being handled fails the same way.
 //
-// BOTH SIDES ARE DERIVED, WHICH IS THE WHOLE POINT. The opcode list comes from
-// the X-macro, so it cannot disagree with the engine. What the importer handles
-// comes from the importer's own SOURCE, so it cannot disagree with the
-// importer. Nothing here is a transcription of either, and a transcription is
-// what this project has already watched drift twice - once in a fixture that
-// was duplicated in two files, once in an ABI table whose line numbers rotted.
+// Both sides are derived. The opcode list comes from the X-macro, so it cannot
+// disagree with the engine. What the importer handles comes from the
+// importer's own source, so it cannot disagree with the importer. Nothing here
+// is a hand transcription of either, because transcriptions drift.
 //
-// WHY IT READS SOURCE INSTEAD OF CALLING SOMETHING. The importer dispatches
-// from a `switch (in.code)` and from two dispatch TABLES, and there is no
-// runtime predicate that answers "do you handle this opcode" - adding one would
+// It reads source instead of calling something because the importer dispatches
+// from a `switch (in.code)` and from two dispatch tables, and there is no
+// runtime predicate that answers "do you handle this opcode". Adding one would
 // be a third place to keep in step with the switch, which is the drift this
 // test exists to prevent. The build passes the driver, instruction-dispatch
-// and operator-table paths, so moving dispatch into a helper keeps it visible.
+// and operator-table source paths, so moving dispatch into a helper keeps it
+// visible.
 //
-// IT IS A GATE: every non-suspending opcode in the table must be dispatched.
-// A new opcode fails here until the importer handles it or the .def marks it
-// `may_suspend`; an opcode that stops being handled fails the same way.
+//===----------------------------------------------------------------------===//
+
 #include <ctbrowser/script/bytecode.hpp>
 
 #include <algorithm>
@@ -52,17 +49,17 @@ constexpr row table[] = {
 
 #undef CT_OPCODE
 
-// A DISPATCH SITE, NOT A MENTION. The importer reaches an opcode two ways - a
-// `case op::x:` label in its switch, and a `{op::x, ...}` row in one of its two
-// dispatch tables - and it also TALKS about opcodes in comments. Counting a
-// comment as coverage would let a prose mention hide a missing case, which is
-// exactly the failure this test is for.
+/// Whether \p source dispatches \p opcode: a dispatch site, not a mention. The
+/// importer reaches an opcode two ways, a `case op::x:` label in its switch and
+/// a `{op::x, ...}` row in one of its two dispatch tables, and it also talks
+/// about opcodes in comments. Counting a comment as coverage would let a prose
+/// mention hide a missing case, which is exactly the failure this test is for.
 bool dispatches(const std::string & source, std::string_view opcode) {
     const std::string needle = "op::" + std::string{opcode};
     for (std::size_t at = source.find(needle); at != std::string::npos;
          at = source.find(needle, at + 1)) {
         const std::size_t after = at + needle.size();
-        // The name must END here: `op::add` must not match inside
+        // The name must end here: `op::add` must not match inside
         // `op::add_generic`.
         if (after < source.size() &&
             (std::isalnum(static_cast<unsigned char>(source[after])) != 0 ||
@@ -99,9 +96,9 @@ int main() {
     }
     const std::string source = text.str();
 
-    // A SANITY CHECK ON THE MATCHER ITSELF, because a matcher that finds
-    // nothing would report every opcode as missing, and a matcher that finds
-    // everything would report none - and both would look like a result.
+    // A sanity check on the matcher itself: a matcher that finds nothing would
+    // report every opcode as missing, and one that finds everything would
+    // report none, and both would look like a result.
     // op::add is dispatched from a table and op::iterable from a case label,
     // so one of each is pinned.
     if (!dispatches(source, "add") || !dispatches(source, "iterable")) {

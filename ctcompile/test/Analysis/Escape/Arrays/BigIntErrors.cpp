@@ -1,7 +1,22 @@
+//===- BigIntErrors.cpp - Array contents around throwing BigInt ops -------===//
+//
+// Array-contents escape analysis around BigInt operations that throw a
+// TypeError: unary plus on a BigInt (`+big`) and arithmetic that mixes a
+// BigInt with a Number (`big - 0`, `big * 0`, ...). The result of such an
+// operation must be modelled as a fresh value unrelated to its operands. It
+// may not erase a retained child, prove an exact index or key, authorize a
+// publication or call, or hide a throw or handler. Each check* function runs
+// a fixed row table plus operand matrices and live-mutation checks.
+//
+// 9007199254740993 is 2^53 + 1, which no Number can represent exactly, so the
+// operand is unmistakably a BigInt.
+//
+//===----------------------------------------------------------------------===//
 #include "Harness.h"
 
 namespace ctcompile::test::escape::arrays {
 
+/// Checks unary plus on a BigInt (`+big`), which throws a TypeError.
 void checkBigIntPlusErrors(mlir::MLIRContext & context) {
     const std::string values =
         "  %zero = ctjs.constant #ctjs.number<0> {storage_test_id = \"zero\"}\n"
@@ -78,8 +93,11 @@ void checkBigIntPlusErrors(mlir::MLIRContext & context) {
                      .failure = ArrayContentsFailure::UnsupportedOperation}});
         }
     }
-    // Saved operands preserve their ORIGINAL identity when the current slot
-    // changes category, including Object/opaque refusal on either incoming arm.
+    // The operand reaches the throwing operation through a block argument fed by
+    // %big on one edge and `input` on the other (either order). The analysis must
+    // judge each incoming value by its own type: a primitive (%big, %zero) is
+    // accepted, while an object (%x) or an unknown parameter (%p) is refused on
+    // whichever edge it arrives.
     for (const std::string input : {"%big", "%zero", "%x", "%p"}) {
         for (const bool reversed : {false, true}) {
             const std::string operands = reversed ? input + " : !ctjs.value), ^join(%big"
@@ -225,6 +243,9 @@ void checkBigIntPlusErrors(mlir::MLIRContext & context) {
                 rowCount, liveStates, budgets);
 }
 
+/// Checks a BigInt minus a Number (`big - 0`), which throws a TypeError: same
+/// row table, operand matrices and live-mutation checks as
+/// checkBigIntPlusErrors.
 void checkBigIntMixedSubErrors(mlir::MLIRContext & context) {
     const std::string values =
         "  %zero = ctjs.constant #ctjs.number<0> {storage_test_id = \"zero\"}\n"
@@ -302,8 +323,11 @@ void checkBigIntMixedSubErrors(mlir::MLIRContext & context) {
                               .failure = ArrayContentsFailure::UnsupportedOperation}});
         }
     }
-    // Saved operands preserve their ORIGINAL identity when the current slot
-    // changes category, including Object/opaque refusal on either incoming arm.
+    // The operand reaches the throwing operation through a block argument fed by
+    // %big on one edge and `input` on the other (either order). The analysis must
+    // judge each incoming value by its own type: a primitive (%big, %zero) is
+    // accepted, while an object (%x) or an unknown parameter (%p) is refused on
+    // whichever edge it arrives.
     for (const std::string input : {"%big", "%zero", "%x", "%p"}) {
         for (const bool reversed : {false, true}) {
             const std::string operands = reversed ? input + " : !ctjs.value), ^join(%big"
@@ -345,9 +369,10 @@ void checkBigIntMixedSubErrors(mlir::MLIRContext & context) {
                           .objects = "x:{}",
                           .propertyReads = savedBigInt ? "x[value]=big" : "x[value]=zero"}});
     }
-    // Each side has its own original category. In particular, a computed
-    // primitive need not prove Number: mixed Sub rejects every non-BigInt
-    // primitive before conversion and gives an independent Undefined carrier.
+    // Each operand is classified on its own. A computed primitive need not be
+    // proved to be a Number: subtracting any non-BigInt primitive from a BigInt
+    // throws before conversion, so the result is modelled as a fresh undefined
+    // value unrelated to either operand.
     for (const bool left : {false, true}) {
         const auto subtract = [&](const std::string & input) {
             return "  %produced = ctjs.binary sub " + (left ? input + ", %big" : "%big, " + input) +
@@ -535,6 +560,8 @@ void checkBigIntMixedSubErrors(mlir::MLIRContext & context) {
                 rowCount, liveStates, budgets);
 }
 
+/// Same matrix as checkBigIntMixedSubErrors for BigInt-with-Number
+/// arithmetic, run once per \p operation (Mul, Div, Mod, Pow or Add).
 void checkBigIntMixedArithmeticErrors(mlir::MLIRContext & context, ctjs::BinaryKind operation) {
     const std::string values =
         "  %zero = ctjs.constant #ctjs.number<0> {storage_test_id = \"zero\"}\n"
@@ -595,8 +622,9 @@ void checkBigIntMixedArithmeticErrors(mlir::MLIRContext & context, ctjs::BinaryK
     };
     const auto parse = [&](const discharge_row & expected) {
         auto module = parseContents(context, expected.contents);
-        // Preserve every historical Mul fixture; run the same independent
-        // operand/retention matrix for Div/Mod/Pow/Add by changing only those operations.
+        // The fixtures are written with `mul`. For Div, Mod, Pow and Add, rewrite
+        // every Mul op to `operation` after parsing, so one table covers all five
+        // operators.
         if (module && operation != ctjs::BinaryKind::Mul) {
             module->walk([&](ctjs::BinaryOp binary) {
                 if (binary.getKind() == ctjs::BinaryKind::Mul) {
@@ -627,8 +655,11 @@ void checkBigIntMixedArithmeticErrors(mlir::MLIRContext & context, ctjs::BinaryK
                               .failure = ArrayContentsFailure::UnsupportedOperation}});
         }
     }
-    // Saved operands preserve their ORIGINAL identity when the current slot
-    // changes category, including Object/opaque refusal on either incoming arm.
+    // The operand reaches the throwing operation through a block argument fed by
+    // %big on one edge and `input` on the other (either order). The analysis must
+    // judge each incoming value by its own type: a primitive (%big, %zero) is
+    // accepted, while an object (%x) or an unknown parameter (%p) is refused on
+    // whichever edge it arrives.
     for (const std::string input : {"%big", "%zero", "%x", "%p"}) {
         for (const bool reversed : {false, true}) {
             const std::string operands = reversed ? input + " : !ctjs.value), ^join(%big"
@@ -670,9 +701,10 @@ void checkBigIntMixedArithmeticErrors(mlir::MLIRContext & context, ctjs::BinaryK
                           .objects = "x:{}",
                           .propertyReads = savedBigInt ? "x[value]=big" : "x[value]=zero"}});
     }
-    // Each side has its own original category. In particular, a computed
-    // primitive need not prove Number: mixed Mul rejects every non-BigInt
-    // primitive before conversion and gives an independent Undefined carrier.
+    // Each operand is classified on its own. A computed primitive need not be
+    // proved to be a Number: multiplying any non-BigInt primitive with a BigInt
+    // throws before conversion, so the result is modelled as a fresh undefined
+    // value unrelated to either operand.
     for (const bool left : {false, true}) {
         const auto multiply = [&](const std::string & input) {
             return "  %produced = ctjs.binary mul " + (left ? input + ", %big" : "%big, " + input) +

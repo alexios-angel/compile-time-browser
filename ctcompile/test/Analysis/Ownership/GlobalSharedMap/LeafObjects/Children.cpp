@@ -1,3 +1,10 @@
+//===- Children.cpp - Child Map owners --------------------------*- C++ -*-===//
+//
+// Ownership tests where the value stored in a captured Map is itself a Map
+// (checkChildMapOwner) or an object the caller creates (checkCallerPayloadOwner).
+//
+//===----------------------------------------------------------------------===//
+
 #include "Helpers.hpp"
 
 namespace ctcompile::test::owned_global_shared_map {
@@ -7,6 +14,8 @@ void checkChildMapOwner(mlir::MLIRContext & context, const std::string & source,
     %childConstructor = ctjs.load_global "Map"
     %value = ctjs.construct %childConstructor(%childConstructor)
 )MLIR");
+    // Read the child back, set entry 1.0 (IEEE-754 bits 4607182418800017408) on
+    // it and return that entry.
     nested = replaced(nested, "    %written = ctjs.call %setter(%state, %entryKey, %value)", R"MLIR(
     %written = ctjs.call %setter(%state, %entryKey, %value)
     %readKey = ctjs.constant #ctjs.string<"get">
@@ -28,6 +37,7 @@ void checkChildMapOwner(mlir::MLIRContext & context, const std::string & source,
     %clearer = ctjs.get_property %state[%clearKey]
     %cleared = ctjs.call %clearer(%state)
     %childSetter = ctjs.get_property)MLIR");
+    // Creates and stores the child only when `has` reports the key absent.
     const auto conditionalize = [&](std::string program) {
         program = replaced(program,
                            "    %childConstructor = ctjs.load_global \"Map\"\n"
@@ -468,7 +478,9 @@ void checkChildMapOwner(mlir::MLIRContext & context, const std::string & source,
     }
     ctjs.return %selected)MLIR";
     prior = replaced(prior, "    ctjs.return %loaded", selection);
-    // Both the child key and stored category come from complete actual censuses.
+    // Make the stored child value a parameter (`%input`, the Number 1.0 at every
+    // call site) so both the key and the stored value's type come from the
+    // actual arguments of every call.
     prior =
         replaced(prior, "%entryKey: !ctjs.value)", "%entryKey: !ctjs.value, %input: !ctjs.value)");
     prior = replaced(prior, "    %actual =",
@@ -674,6 +686,7 @@ void checkCallerPayloadOwner(mlir::MLIRContext & context, const std::string & so
     auto fixture =
         replaced(source, "%entryKey: !ctjs.value)", "%entryKey: !ctjs.value, %value: !ctjs.value)");
     fixture = replaced(fixture, "    %value = ctjs.create_object\n", "");
+    // The caller builds `{value: 64}` (4634204016564240384 is 64.0) and passes it.
     const std::string initialization =
         "    %payload = ctjs.create_object\n"
         "    %fieldKey = ctjs.constant #ctjs.string<\"value\">\n"

@@ -1,16 +1,19 @@
-// The application bundle: does it round-trip, does the loader refuse what it
-// should, and does a packaged page ACTUALLY skip the parse?
+//===- ctcompile/test/Packaging/AppBundle.cpp - App bundle tests ----------===//
 //
-// Same shape as ProgramImage.cpp, and for a sharper reason. A bundle is a table
-// of offsets read out of a file, which is to say a list of instructions to go
-// and look somewhere; and the thing it carries is program images, which are
-// executable input. So the negative cases are the file.
+// Tests the application bundle: does it round-trip, does the loader refuse what
+// it should, and does a packaged page actually skip parsing its scripts?
 //
-// THE LAST SECTION IS THE ONE THAT MATTERS MOST. Everything above it checks
-// that bytes survive a trip. That section checks the only property the whole
-// feature exists for - that the images are actually USED - and it checks it
-// with a counter, because a page that quietly compiled from source produces
-// exactly the same document as one that did not.
+// Shaped like ProgramImage.cpp, for a sharper reason. A bundle is a table of
+// offsets read out of a file, that is, a list of instructions to go and look
+// somewhere, and what it carries is program images, which are executable
+// input. So most of the file is negative cases.
+//
+// The most important section is "a page packaged with its images does not
+// parse its scripts": the others check that bytes survive a round trip, while
+// that one checks, with a counter, that the images are actually used. A page
+// that silently compiled from source renders exactly the same document.
+//
+//===----------------------------------------------------------------------===//
 #include <ctbrowser/script/compile.hpp>
 #include <ctbrowser/script/program_image.hpp>
 #include <ctbrowser/shell/app_bundle.hpp>
@@ -50,8 +53,9 @@ std::string text_of(std::span<const std::byte> bytes) {
     return {reinterpret_cast<const char *>(bytes.data()), bytes.size()};
 }
 
-// A refusal, not a crash and not a success. Every negative case below goes
-// through this so the message says which one failed.
+/// Fails the test unless read_bundle refuses `bytes` with an error message:
+/// a refusal, not a crash and not a success. `what` names the case in the
+/// failure message.
 void must_refuse(std::vector<std::byte> bytes, std::string_view what) {
     const auto loaded = read_bundle(bytes);
     if (loaded.ok) {
@@ -80,12 +84,12 @@ int main(int argc, char ** argv) {
     positional.add("out-dir", 1);
     if (!ctbrowser_cli::parse_options(argc, argv, options, positional)) { return 2; }
 
-    // ---- the round trip -------------------------------------------------
+    // ---- The round trip --------------------------------------------------
     app_bundle made;
     made.entries.push_back({bundle_kind::meta, "title", raw("A Packaged Page")});
     made.entries.push_back({bundle_kind::html, {}, raw(page_html)});
-    // A NAME THAT IS NOT A PATH RELATIVE TO ANYTHING, which is the case a
-    // directory of files cannot represent and the reason this is a table.
+    // A name that is not a path relative to anything: the case a directory of
+    // files cannot represent, and the reason the bundle is a table.
     made.entries.push_back({bundle_kind::asset, "../../vendor/p5/p5.js", raw("// a library\n")});
     made.entries.push_back(
         {bundle_kind::asset, "sprites.bmp",
@@ -111,8 +115,8 @@ int main(int argc, char ** argv) {
                   back.value.entries[i].bytes == made.entries[i].bytes,
               "entry " + std::to_string(i) + " round-trips exactly");
     }
-    // AN EMPTY BLOB IS NOT A MISSING BLOB. A zero-length asset is a legal thing
-    // to package and the offset arithmetic treats it as a special case.
+    // An empty blob is not a missing blob. A zero-length asset is legal to
+    // package, and the offset arithmetic treats it as a special case.
     {
         app_bundle with_empty;
         with_empty.entries.push_back({bundle_kind::html, {}, raw(page_html)});
@@ -123,7 +127,7 @@ int main(int argc, char ** argv) {
               "a zero-length asset round-trips as a zero-length asset");
     }
 
-    // ---- what the loader must refuse ------------------------------------
+    // ---- What the loader must refuse -------------------------------------
     must_refuse({}, "nothing at all");
     must_refuse(raw("CTAP"), "a magic number and then the end of the file");
     {
@@ -138,16 +142,16 @@ int main(int argc, char ** argv) {
         must_refuse(std::move(wrong), "a format version this build does not read");
     }
     {
-        // THE ENGINE FINGERPRINT, bytes 8..15. This is the check that stops a
-        // bundle built by another ctbrowser from being run by this one, where
-        // the images inside describe different instructions with the same
-        // bytes. One flipped bit is the whole test.
+        // The engine fingerprint, bytes 8..15. It stops a bundle built by
+        // another ctbrowser from being run by this one, where the images inside
+        // would describe different instructions with the same bytes. One
+        // flipped bit is the whole test.
         std::vector<std::byte> wrong = bytes;
         wrong[8] ^= static_cast<std::byte>(1);
         must_refuse(std::move(wrong), "a bundle from a different engine build");
     }
     {
-        // A count the file cannot pay for - the reserve-the-world case.
+        // An entry count the file is too short to hold (a huge reserve).
         std::vector<std::byte> wrong = bytes;
         for (std::size_t i = 0; i < 4; ++i) { wrong[16 + i] = static_cast<std::byte>(0xFF); }
         must_refuse(std::move(wrong), "an entry count of four billion");
@@ -159,19 +163,19 @@ int main(int argc, char ** argv) {
         must_refuse(std::move(wrong), "a payload offset past the end");
     }
     {
-        // NO DOCUMENT. A bundle of images and assets with nothing to run is not
-        // an application, and this is the only place that notices.
+        // No document. A bundle of images and assets with nothing to run is
+        // not an application, and this is the only place that notices.
         app_bundle headless;
         headless.entries.push_back({bundle_kind::asset, "a.css", raw("body{}")});
         must_refuse(write_bundle(headless), "a bundle carrying no document");
     }
     {
-        // EVERY ENTRY CLAIMING THE WHOLE PAYLOAD. Each blob passes the check
-        // that it lies inside the payload - they all start at zero - and
-        // together they ask the reader for a multiple of the file's size. This
-        // is the difference between bounding each read and bounding the total,
-        // and at four hundred thousand rows it is the difference between a
-        // refusal and an OOM kill.
+        // Every entry claims the whole payload. Each blob passes the check
+        // that it lies inside the payload (they all start at zero), yet
+        // together they ask the reader for a multiple of the file's size. The
+        // loader must bound the total, not only each read: at four hundred
+        // thousand rows that is the difference between a refusal and an OOM
+        // kill.
         //
         // The field is found by walking the table the same way the writer laid
         // it out: header, then one row per entry of kind, name length, name,
@@ -189,7 +193,7 @@ int main(int argc, char ** argv) {
         must_refuse(std::move(greedy), "entries that together claim more than the payload holds");
     }
 
-    // EVERY TRUNCATION, because a partial copy is the ordinary way this file
+    // Every truncation, because a partial copy is the ordinary way this file
     // arrives broken and any one of these lengths could be the one that reads
     // past the end. None may crash and none may be accepted.
     for (std::size_t n = 0; n < bytes.size(); ++n) {
@@ -202,7 +206,7 @@ int main(int argc, char ** argv) {
         }
     }
 
-    // ---- the bundle stuck on the end of an executable --------------------
+    // ---- The bundle appended to an executable -----------------------------
     const std::vector<std::byte> launcher = raw(std::string(4096, 'L'));
     {
         const std::vector<std::byte> joined = append_bundle_to(launcher, bytes);
@@ -213,18 +217,18 @@ int main(int argc, char ** argv) {
               "byte for byte, so the launcher reads what the packager wrote");
         check(read_bundle(found).ok, "and it still loads");
 
-        // A LAUNCHER WITH NOTHING APPENDED, which is the ordinary case for the
+        // A launcher with nothing appended, which is the ordinary case for the
         // launcher itself and must not be mistaken for an application.
         check(find_appended_bundle(launcher).empty(), "a bare launcher has no bundle");
         check(find_appended_bundle({}).empty(), "and neither does an empty file");
 
-        // A TRUNCATED COPY. The trailer is gone, so there is no bundle - the
-        // dangerous answer here is a bundle at a made-up offset.
+        // A truncated copy. The trailer is gone, so there is no bundle; the
+        // dangerous answer here would be a bundle at a made-up offset.
         std::vector<std::byte> cut{joined.begin(), joined.end() - 4};
         check(find_appended_bundle(cut).empty(), "a truncated executable has no bundle");
 
-        // THE TRAILER MAGIC IN THE LAUNCHER'S OWN DATA. A launcher that happens
-        // to contain these eight bytes - a string literal, say - must not be
+        // The trailer magic in the launcher's own data. A launcher that happens
+        // to contain these eight bytes (a string literal, say) must not be
         // read as carrying a bundle, which is why the trailer has to account
         // for the whole file rather than just being present.
         std::vector<std::byte> decoy = launcher;
@@ -234,8 +238,8 @@ int main(int argc, char ** argv) {
         check(find_appended_bundle(decoy).empty(),
               "the trailer magic alone does not make a bundle");
 
-        // PACKAGING A PACKAGED EXECUTABLE. Re-running the compiler over its own
-        // output has to give the LATEST bundle, not the first one.
+        // Packaging a packaged executable. Re-running the compiler over its own
+        // output has to give the latest bundle, not the first one.
         app_bundle second;
         second.entries.push_back({bundle_kind::meta, "title", raw("The Second One")});
         second.entries.push_back({bundle_kind::html, {}, raw(page_html)});
@@ -246,20 +250,21 @@ int main(int argc, char ** argv) {
               "appending over an already-packaged file finds the newest bundle");
     }
 
-    // ---- and the only property any of this exists for ---------------------
+    // ---- The property all of this exists for ------------------------------
     //
-    // A PAGE PACKAGED WITH ITS IMAGES DOES NOT PARSE ITS SCRIPTS. Nothing above
+    // A page packaged with its images does not parse its scripts. Nothing above
     // can see that: the document, the values and the render are identical
     // either way, and a page that silently recompiled would pass every check in
     // this file up to here. The counter is the only witness.
     {
-        // THE TEXT COMES FROM THE ENGINE, and getting this wrong is the whole
-        // trap. A script's source is NOT the bytes between its tags: the walk
-        // in browser/scripts.cpp appends a newline to each one, so that a trailing `//`
-        // comment terminates and so that a <script src> and the inline text
-        // after it are two lines rather than one. An image built from the text
-        // an author typed hashes differently and is never looked up - and the
-        // page still works, just slowly. So a packager asks, and so does this.
+        // The script text comes from the engine, and getting this wrong is the
+        // whole trap. A script's source is not the bytes between its tags: the
+        // walk in lib/Shell/browser/scripts.cpp appends a newline to each one,
+        // so that a trailing `//` comment terminates and a <script src> and
+        // the inline text after it are two lines rather than one. An image
+        // built from the text an author typed hashes differently and is never
+        // looked up, and the page still works, just slowly. So a packager asks
+        // the engine for the text, and so does this test.
         std::vector<std::string> sources;
         {
             browser probe{browser_options{100, 100}};
@@ -291,10 +296,10 @@ int main(int argc, char ** argv) {
         }
         check(packaged.script_error().empty(), "and the page ran cleanly");
 
-        // THAT NEWLINE, PINNED. It is the difference between a packaged
-        // application and one that silently compiles from source, it is
-        // invisible in the HTML, and the only thing stopping someone tidying it
-        // away is a test that fails when they do.
+        // That newline, pinned. It is the difference between a packaged
+        // application and one that silently compiles from source, and it is
+        // invisible in the HTML, so only a failing test stops someone from
+        // tidying it away.
         check(sources[0] == "var first = 1;\n",
               "a script's source is its text plus the newline the walk adds");
         {
@@ -306,9 +311,9 @@ int main(int argc, char ** argv) {
                   "but it matches nothing - which is why a packager must ask, not assume");
         }
 
-        // THE BLINDED ARM. Same page, an image for a DIFFERENT script, so every
-        // lookup misses. If the counter above were wired to a constant this
-        // would still read zero, and it does not.
+        // The negative case: the same page with an image for a different
+        // script, so every lookup misses. A counter wired to a constant would
+        // still read zero here; this one must not.
         browser mismatched{browser_options{100, 100}};
         check(mismatched.add_script_image(image_of("var somethingElse = 1;\n")),
               "a non-matching image is still a valid image");
@@ -318,20 +323,21 @@ int main(int argc, char ** argv) {
         check(mismatched.script_error().empty(),
               "and still runs correctly - which is exactly why this needs a counter");
 
-        // AND WITH NO IMAGES AT ALL, the number is the number of scripts. This
-        // pins the counter to something other than zero-or-not.
+        // With no images at all, the count is the number of scripts. This pins
+        // the counter to an exact value rather than just zero or nonzero.
         browser plain{browser_options{100, 100}};
         plain.load_html(page_html);
         check(plain.scripts_compiled_from_source() == 2, "an unpackaged page compiles both");
     }
 
-    // ---- a sealed registry looks nowhere ---------------------------------
+    // ---- A sealed registry looks nowhere else ------------------------------
     //
-    // WHAT A PACKAGED APPLICATION IS. Unsealed, a name that misses is resolved
-    // against the WORKING DIRECTORY - so an application missing a resource
-    // serves whatever happens to sit next to the user under the name its own
-    // document asked for, and works on the machine that built it. The two arms
-    // here are the same registry and the same name; only the seal differs.
+    // This is what makes a packaged application self-contained. Unsealed, a
+    // name that misses is resolved against the working directory, so an
+    // application missing a resource serves whatever happens to sit next to
+    // the user under that name, and works only on the machine that built it.
+    // The two cases here use the same registry and the same name; only the
+    // seal differs.
     {
         const std::string name = "ctbrowser-seal-probe.txt";
         {
@@ -345,7 +351,7 @@ int main(int argc, char ** argv) {
         ctbrowser::shell::asset_registry sealed;
         sealed.set_sealed(true);
         check(sealed.load(name).empty(), "AND A SEALED ONE DOES NOT - a miss stays a miss");
-        // What it DOES still answer: what was baked into it.
+        // What a sealed registry does still answer: what was baked into it.
         sealed.add(name, raw("baked"));
         check(text_of(sealed.load(name)) == "baked",
               "a sealed registry still answers from what it carries");
@@ -355,11 +361,11 @@ int main(int argc, char ** argv) {
         std::filesystem::remove(name, ignored);
     }
 
-    // ---- two bundles for the launcher to refuse ---------------------------
+    // ---- Two bundles for the launcher to refuse ----------------------------
     //
     // Written out rather than run here, because the guard they exercise lives
-    // in run_app, which needs a window. roundtrip.cmake feeds them to the
-    // real launcher; without an output directory this does nothing.
+    // in run_app, which needs a window. roundtrip.test feeds them to the real
+    // launcher (ctrun); without an output directory this does nothing.
     if (!out_dir.empty()) {
         const auto emit = [&out_dir](const std::string & file, const app_bundle & what) {
             const std::vector<std::byte> raw_bytes = write_bundle(what);
@@ -367,14 +373,14 @@ int main(int argc, char ** argv) {
             out.write(reinterpret_cast<const char *>(raw_bytes.data()),
                       static_cast<std::streamsize>(raw_bytes.size()));
         };
-        // A PAGE WITH SCRIPTS AND NO IMAGES AT ALL. This is the case the run
-        // guard used to skip entirely, because it tested whether any images had
-        // arrived before asking whether they had worked.
+        // A page with scripts and no images at all. The run guard must refuse
+        // it: checking only whether any images arrived would skip this case
+        // instead of asking whether the images worked.
         app_bundle no_images;
         no_images.entries.push_back({bundle_kind::html, {}, raw(page_html)});
         emit("no-images.ctapp", no_images);
 
-        // AND A PAGE OF MODULE SCRIPTS, which no image can cover: there is no
+        // A page of module scripts, which no image can cover: there is no
         // image path into load_module, so every count reads a truthful zero
         // while the application parses all of its JavaScript at every start.
         app_bundle module_page;

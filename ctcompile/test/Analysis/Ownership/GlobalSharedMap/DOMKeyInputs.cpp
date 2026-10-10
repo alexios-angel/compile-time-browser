@@ -1,3 +1,10 @@
+//===- DOMKeyInputs.cpp - DOM element Map keys ------------------*- C++ -*-===//
+//
+// Tests that a captured Map may be keyed by DOM elements only when they come
+// from declared entry parameters of the DOM Data host contract.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Tests.h"
 
 #include "ctcompile/CTNative/Analysis/TypeInference.h"
@@ -8,8 +15,19 @@
 
 namespace ctcompile::test::owned_global_shared_map {
 
+/// Checks that a captured Map may be keyed by DOM elements only when they
+/// arrive as declared entry parameters (the DOM Data host contract's
+/// `elementParameters`). \p source and \p family are fixtures that create the
+/// key object locally; `external` rewrites them to take it as a fourth entry
+/// parameter instead. \p prepared selects the variant already lowered to
+/// direct calls. Every row runs HostContractAnalysis and OwnedGlobalRoots and
+/// checks that both agree; budget rows check that a partial run publishes
+/// nothing.
 void checkDOMKeyInputs(mlir::MLIRContext & context, const std::string & source,
                        const std::string & family, bool prepared) {
+    // Turns the fixture's locally created %actual object into a fourth entry
+    // parameter %element, so the Map key comes from the host instead of being
+    // allocated by the script.
     const auto external = [&](std::string text) {
         text =
             replaced(text, "@script$0(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value)",
@@ -27,6 +45,8 @@ void checkDOMKeyInputs(mlir::MLIRContext & context, const std::string & source,
         contract.initialIntrinsics = {"Map", "Array"};
         if (module.lookupSymbol<ctjs::FuncOp>("dataEntry$9")) { contract.entry = "dataEntry$9"; }
         auto entry = module.lookupSymbol<ctjs::FuncOp>(contract.entry);
+        // Parameters 0-2 are %this, %new and %callee; every parameter after them
+        // is a declared DOM element input.
         for (unsigned index = 3; index < entry.getBody().front().getNumArguments(); ++index) {
             contract.elementParameters.push_back(index - 3);
         }
@@ -64,9 +84,13 @@ void checkDOMKeyInputs(mlir::MLIRContext & context, const std::string & source,
             }
             check(llvm::equal(owner.domInputs(), expectedInputs),
                   "DOM source ownership retains every declared external input origin");
-            // Unused inputs still cross the validated entry boundary, but only
-            // the observed identities receive captured Map key authority.
+            // Every declared input appears in domInputs(), used or not, but only
+            // the inputs actually passed as Map keys may serve as keys of the
+            // captured Map.
             expectedInputs.resize(inputs);
+            // Run type inference on the first (baseline) row only: without the
+            // owner proof the DOM input must not be typed DOMElementType, and
+            // with it the input must be.
             if (rows == 1 && owner.proved()) {
                 using namespace ctcompile::ctnative;
                 context.getOrLoadDialect<CTNativeDialect>();
@@ -112,6 +136,7 @@ void checkDOMKeyInputs(mlir::MLIRContext & context, const std::string & source,
     const auto siblings = external(family);
     const std::string observation = "    ctjs.store_global \"trace\", %answer\n";
     const std::string has = "    %found = ctjs.call %method(%state, %entryKey)\n";
+    // 4607182418800017408 is the IEEE-754 bit pattern of 1.0.
     const std::string retain = R"MLIR(
     %setKey = ctjs.constant #ctjs.string<"set">
     %setter = ctjs.get_property %state[%setKey]
@@ -199,8 +224,9 @@ void checkDOMKeyInputs(mlir::MLIRContext & context, const std::string & source,
                          has),
             false, "a fluent outer snapshot cannot bypass the complete input-role census");
 
-    // Keep the local record and Map computations alongside the complete public
-    // family. Only the joined scalar reaches that family, never either owner.
+    // Add a locally constructed record and a local Map next to the shared Map's
+    // calls. Only a scalar computed from them reaches the shared Map's methods,
+    // never the local record or the local Map, so the proof must still hold.
     const std::string localGraph = R"MLIR(
     %localLiteral = ctjs.constant #ctjs.number<4607182418800017408>
     %localInert = ctjs.create_object

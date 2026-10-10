@@ -1,16 +1,16 @@
-// EVERY OPERATION THE BACKEND ACCEPTS, IN ONE FUNCTION, SO THAT THE RESULT CAN
-// BE LINKED.
+// Every operation the backend accepts, in one function, so that the result can
+// be linked.
 //
-// A call to a helper the runtime declares but never defines COMPILES PERFECTLY
-// and fails at link - and that is not hypothetical: the backend emitted
-// ct_aot_global_get and ct_aot_negate for two commits while every test passed,
-// because every EmitC test compiles its output with -fsyntax-only and none of
-// them linked it.
+// A call to a helper the runtime declares but never defines compiles and
+// fails only at link, and the EmitC tests compile their output with
+// -fsyntax-only, so none of them would notice. This file is compiled through
+// the real pipeline and linked into the ctcompile-test-linkable binary
+// (Linkable.cpp), which checks that every helper the backend names exists.
 //
-// So this file exists to be LINKED. It is deliberately not a test of what the
-// generated code computes - GC/Roots.cpp does that - only of whether the symbols
-// it names exist. Anything the backend learns to lower belongs here on the same
-// day, or the next unimplemented helper is found by whoever ships first.
+// It is deliberately not a test of what the generated code computes -
+// GC/Roots.cpp does that - only of whether the symbols it names exist. Add
+// each newly lowered operation here, or the next unimplemented helper is
+// found only when someone ships it.
 function everything(a, b) {
     // Arithmetic: the re-entering family, with its status edge.
     var sum = a + b;
@@ -32,21 +32,21 @@ function everything(a, b) {
     if (!a) {
         sum = b;
     }
-    // NO UNARY PLUS HERE, and the reason is upstream: the IMPORTER has no CTJS
-    // operation for op::to_number, so `+sum` never reaches the backend from real
-    // JavaScript. ctjs.unary plus IS lowered - operators.mlir exercises it from
-    // hand-written IR - and it belongs in this file the day the importer learns
-    // the opcode.
+    // Unary plus is missing here: `+x` imports as ctjs.unary plus and lowers
+    // to a ct_aot_to_number call. Runtime/Differential's `plusOf` already
+    // compiles and links that helper, so its absence here leaves no symbol
+    // unchecked, but by the rule at the top of this file `+a` belongs in this
+    // function too.
     // `void`, which reaches no helper at all.
     void a;
     // And constants of every kind the backend spells.
     if (a === null) {
         return true;
     }
-    // `undefined` IS A GLOBAL READ in JavaScript. It needed ct_aot_global_get,
-    // which had no body - so this was an uninitialised local, and it is spelled
-    // properly again now that the row is implemented. It is the link check for
-    // both global rows: a write follows.
+    // `undefined` is a global read, so this links ct_aot_global_get; the
+    // assignment to globalThis below links ct_aot_global_set. Together they
+    // are the link check for both global helpers, which nothing else in this
+    // file reaches.
     var nothing = undefined;
     globalThis = nothing;
     if (b === nothing) {
@@ -54,24 +54,24 @@ function everything(a, b) {
     }
     // A property read, whose helper takes an inline cache this backend can only
     // pass as nullptr - ct_aot_ic is forward-declared and nothing can allocate
-    // one - and a call, which is the only operation so far that needs a
-    // CONTIGUOUS run of frame slots rather than just rooting.
+    // one - and a call, which is the only operation here that needs a
+    // contiguous run of frame slots rather than just rooting.
     var got = a[b];
     return got(a, b, sum);
 }
 
-// EVERY FUNCTION IN THIS FILE COUNTS, not only the one the driver declares.
+// Every function in this file counts, not only the one the driver declares.
 // mlir-translate emits the whole module into one translation unit and the test
-// binary links all of it, so a helper named by ANY function here is checked.
+// binary links all of it, so a helper named by any function here is checked.
 // That is what lets the operations below sit in shapes of their own rather than
 // being crammed into `everything` - a class method cannot go there at all.
 
-// STRINGS, ARRAYS, OBJECTS AND typeof.
+// Strings, arrays, objects and typeof.
 //
 // ct_aot_new_string memoises per (site, slot); ct_aot_new_array takes a
-// reserve HINT and the elements follow as ct_aot_append; an object literal is
+// reserve hint and the elements follow as ct_aot_append; an object literal is
 // ct_aot_new_object written through ct_aot_set_index; and typeof reaches
-// ct_aot_type_of_name, which answers a LENGTH and a static pointer.
+// ct_aot_type_of_name, which answers a length and a static pointer.
 function literals(a) {
     var text = "ab\u0001cd";
     var list = [1, a, 3];
@@ -83,20 +83,20 @@ function literals(a) {
     return text + list.length + box.j + typeof a;
 }
 
-// UNARY MINUS AND BITWISE NOT, which are two different helpers because one has
+// Unary minus and bitwise not, which are two different helpers because one has
 // a BigInt arm with no width to truncate to.
 function unaries(a) {
     return -a + ~a;
 }
 
-// A THROW, WHICH NEVER COMES BACK ok. ct_aot_throw returns CAUGHT, UNWOUND or
+// A throw, which never comes back ok. ct_aot_throw returns CAUGHT, UNWOUND or
 // FAILED and never CT_AOT_OK, so the lowering makes it a terminator that
 // branches straight to the shared failure path.
 function thrower(a) {
     throw a;
 }
 
-// CLOSURES, WHICH ARE FIVE HELPERS AT ONCE: ct_aot_cell_new boxes the captured
+// Closures, which are five helpers at once: ct_aot_cell_new boxes the captured
 // binding, ct_aot_make_closure builds the instance, ct_aot_callee is how the
 // body reaches its own closure at all, and ct_aot_upvalue_cell plus
 // ct_aot_cell_get / ct_aot_cell_set read and write through it.
@@ -108,7 +108,7 @@ function counter(start) {
     };
 }
 
-// for-of AND SPREAD, which are the same helper reached two ways.
+// for-of and spread, which are the same helper reached two ways.
 function iterate(xs) {
     var total = 0;
     for (var v of xs) {
@@ -117,9 +117,9 @@ function iterate(xs) {
     return total + [...xs].length;
 }
 
-// `in`, `instanceof` and `delete` - three helpers with three different shapes:
-// a status with a uint32_t out-parameter, a RAISE-tier call that returns its
-// boolean, and a status with no out-parameter at all.
+// `in`, `instanceof` and `delete` - three helper shapes: a status with a
+// uint32_t out-parameter, a call that returns its boolean directly (errors are
+// raised and polled later through ct_aot_failed), and a status with no out-parameter.
 function predicates(o, k, C) {
     var there = k in o;
     var kind = o instanceof C;
@@ -127,7 +127,7 @@ function predicates(o, k, C) {
     return there && kind;
 }
 
-// `new`, WHOSE `site` IS THE ENTRY'S OWN - the only helper that reads it for
+// `new`, whose `site` is the entry's own - the only helper that reads it for
 // anything but a memo key.
 function Maker(v) {
     this.v = v;
@@ -137,12 +137,12 @@ function build(n) {
     return new Maker(n).v;
 }
 
-// AND new.target, WHICH WAS REFUSED UNTIL BOTH HALVES OF ITS BLOCKER CLOSED.
+// `new.target`, which reaches ct_aot_new_target.
 function guarded() {
     return new.target === undefined;
 }
 
-// `super`, WHICH IS FOUR HELPERS AND ONLY WORKS AS A CLASS. ct_aot_home and
+// `super`, which is four helpers and only works in a class. ct_aot_home and
 // ct_aot_get_proto are the method form; ct_aot_pass_new_target is the
 // constructor form; ct_aot_set_proto is what `extends` itself writes.
 class LinkBase {
@@ -166,7 +166,7 @@ function hierarchy(n) {
     return new LinkDerived(n).tag();
 }
 
-// AN ASYNC FUNCTION'S `return`, WHICH IS ct_aot_wrap_promise AND NOTHING ELSE.
+// An async function's `return`, which is ct_aot_wrap_promise and nothing else.
 //
 // The whole of async that does not suspend. A body with no `await` carries
 // op::wrap_promise on every return path - the explicit one and the implicit

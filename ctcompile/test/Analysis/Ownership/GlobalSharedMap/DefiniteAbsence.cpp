@@ -1,7 +1,18 @@
+//===- DefiniteAbsence.cpp - Map entry absence ------------------*- C++ -*-===//
+//
+// Tests that OwnedGlobalRoots proves a captured Map entry reads Undefined
+// after an exact-key `delete()`.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Tests.h"
 
 namespace ctcompile::test::owned_global_shared_map {
 
+/// Checks that OwnedGlobalRoots proves a captured Map entry is definitely
+/// absent (reads Undefined) after an exact-key `delete`, across aliasing
+/// writes, branches and SameValueZero keys, and that each forged or mutated
+/// variant is refused. \p prepared selects the prepared form of \p source.
 void checkDefiniteMapAbsenceOwner(mlir::MLIRContext & context, const std::string & source,
                                   bool prepared) {
     using Alternatives = ctcompile::ctnative::PrimitiveAlternatives;
@@ -14,6 +25,9 @@ void checkDefiniteMapAbsenceOwner(mlir::MLIRContext & context, const std::string
     const std::string aliasWrite = "    %aliased = ctjs.call %setter(%state, %aliasKey, %value)\n";
     const std::string disjointWrite =
         "    %disjoint = ctjs.call %setter(%state, %numericKey, %value)\n";
+    // #ctjs.number holds the IEEE-754 bit pattern: 9223372036854775808 is
+    // 0x8000000000000000 (-0.0); below, 9221120237041090560 is the quiet NaN
+    // 0x7FF8000000000000 and ...561 a second NaN payload.
     const std::string setup =
         "\n    %deleteKey = ctjs.constant #ctjs.string<\"delete\">\n"
         "    %eraser = ctjs.get_property %state[%deleteKey]\n"
@@ -398,7 +412,7 @@ void checkDefiniteMapAbsenceOwner(mlir::MLIRContext & context, const std::string
         };
         const auto aliasKey = setter.getBody().front().getArgument(prepared ? 5 : 4);
         mutation(get, 2, aliasKey);
-        // In the two-arm witness, this removes the only exact deletion in
+        // In the two-arm fixture, this removes the only exact deletion in
         // the first arm; the second arm still has two real deletions.
         mutation(deletes.front(), 2, aliasKey);
         mutation(deletes.front(), 1, setter.getBody().front().getArgument(0));

@@ -1,3 +1,11 @@
+//===- Mixed.cpp - Mixed scalar/object readback tests -----------*- C++ -*-===//
+//
+// Tests getter families whose invocations return different kinds: exact
+// Number or Null results per invocation (checkExactScalarReturns) and child Maps
+// holding either a Number or a caller object (checkMixedChildReadbacks).
+//
+//===----------------------------------------------------------------------===//
+
 #include "Helpers.hpp"
 
 namespace ctcompile::test::owned_global_shared_map {
@@ -96,6 +104,7 @@ void checkExactScalarReturns(mlir::MLIRContext & context, const std::string & di
                    !query.returnedLeaf(firstValue) && !query.returnedLeaf(secondValue);
         };
         const unsigned completion = owner.steps();
+        // 100000 steps is a loose ceiling; a census needing more is a regression.
         check(completion > 2 && completion < 100000, "exact scalar proof has a bounded census");
         if (completion <= 2 || completion >= 100000) { return; }
         checkIncompleteBudgets(
@@ -136,6 +145,8 @@ void checkExactScalarReturns(mlir::MLIRContext & context, const std::string & di
                      "    ctjs.store_global \"trace\", %answer\n"
                      "    ctjs.store_global \"trace\", %againAnswer\n"),
             number, {}, "a later object store cannot inherit the first store's Number evidence");
+    // Falsy literals: 0, -0.0, NaN, false, undefined and null. The replaced
+    // field value 4634204016564240384 is 64.0.
     for (const char * literal : {"#ctjs.number<0>", "#ctjs.number<9223372036854775808>",
                                  "#ctjs.number<9221120237041090560>", "#ctjs.boolean<false>",
                                  "#ctjs.undefined", "#ctjs.null"}) {

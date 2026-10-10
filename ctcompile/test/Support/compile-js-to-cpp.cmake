@@ -1,16 +1,14 @@
-# RUN THE WHOLE BACKEND ON ONE JAVASCRIPT FILE, at build time.
+# Runs the whole backend on one JavaScript file at build time:
+# ctjs-translate, then ctjs-opt, then mlir-translate, producing C++.
 #
-# A script rather than a chain of add_custom_command PIPEs, because CMake has no
+# A script rather than a chain of add_custom_command steps, because CMake has no
 # pipe: each stage would need its own intermediate file and its own rule, and
 # the failure of a middle stage would leave a stale output that the next build
 # would happily reuse. execute_process runs the pipeline in one go and this
 # checks every stage's result.
 #
-# THE SYMBOL IS RENAMED at the end. The importer suffixes every function with
-# its index - `f` becomes `f$1`, which the backend spells `f_1` - so a driver
-# declaring the generated entry by name would break the moment the fixture grew
-# a second function. Renaming to a fixed symbol keeps that a property of this
-# script rather than of every test that uses it.
+# Required: -DTRANSLATE= -DOPT= -DMLIR_TRANSLATE= -DSOURCE= -DOUTPUT=
+# Optional: -DKIND=classic|module, -DENTRIES=<function names> (default "f").
 cmake_minimum_required(VERSION 3.20)
 
 foreach(required TRANSLATE OPT MLIR_TRANSLATE SOURCE OUTPUT)
@@ -19,11 +17,11 @@ foreach(required TRANSLATE OPT MLIR_TRANSLATE SOURCE OUTPUT)
   endif()
 endforeach()
 
-# CLASSIC OR MODULE, and the default is classic so no existing caller changes.
-# It is a real difference rather than a spelling: op::load_import,
-# op::bind_export and op::load_namespace are emitted by compile_program's module
-# arm and by nothing else, so a fixture meaning to exercise them must be
-# compiled with -DKIND=module or it is a syntax error instead.
+# Classic or module; the default is classic. It is a real difference rather
+# than a spelling: op::load_import, op::bind_export and op::load_namespace are
+# emitted by compile_program's module arm and by nothing else, so a fixture
+# meaning to exercise them must be compiled with -DKIND=module or it is a
+# syntax error instead.
 if(DEFINED KIND AND KIND STREQUAL "module")
   set(translate_flag --ctbrowser-module-to-ctjs)
 elseif(NOT DEFINED KIND OR KIND STREQUAL "classic")
@@ -34,12 +32,12 @@ endif()
 
 execute_process(
   COMMAND "${TRANSLATE}" ${translate_flag} "${SOURCE}"
-  # --ctjs-drop-uncompiled BETWEEN THE TWO, because a module still holding CTJS
-  # operations cannot be translated at all - so one refused function would mean
-  # no translation unit rather than one missing that function.
+  # --ctjs-drop-uncompiled sits between the two because a module still holding
+  # CTJS operations cannot be translated at all, so one refused function would
+  # mean no translation unit rather than one missing that function.
   COMMAND "${OPT}" --ctjs-lower-to-emitc --ctjs-drop-uncompiled
                    --emitc-eliminate-block-arguments
-  # --declare-variables-at-top IS NOT OPTIONAL: EmitC refuses a multi-block
+  # --declare-variables-at-top is required: EmitC refuses a multi-block
   # function without it, and every compiled body has at least two blocks,
   # because ct_aot_enter's NULL test is a branch.
   COMMAND "${MLIR_TRANSLATE}" --mlir-to-cpp --declare-variables-at-top
@@ -54,8 +52,8 @@ foreach(outcome IN LISTS outcomes)
   endif()
 endforeach()
 
-# AN EMPTY RESULT IS A FAILURE, and it is the one this would otherwise miss: if
-# the backend REFUSED the function it exits 0 having lowered nothing, and the
+# An empty result is a failure, and it is the one this would otherwise miss: if
+# the backend refused the function it exits 0 having lowered nothing, and the
 # test would then fail at link with an undefined symbol rather than here with a
 # reason.
 string(LENGTH "${generated}" produced)
@@ -69,7 +67,7 @@ if(NOT generated MATCHES "extern \"C\"")
     "ctjs.not_lowered attribute it leaves behind.\n${generated}")
 endif()
 
-# THE ENTRIES ARE RENAMED TO FIXED SYMBOLS.
+# The entries are renamed to fixed symbols.
 #
 # The importer suffixes every function with its index - `f` becomes `f$1`, which
 # the backend spells `f_1` - and the index depends on how many functions precede
@@ -77,7 +75,7 @@ endif()
 # the fixture grew a function above it, so the caller names the functions it
 # means and this finds whatever index each was given.
 #
-# ENTRIES IS A LIST, because a differential harness wants several bodies in one
+# ENTRIES is a list, because a differential harness wants several bodies in one
 # translation unit: compiling each to its own file would multiply the pipeline
 # runs and the link steps for nothing.
 if(NOT DEFINED ENTRIES)
@@ -92,7 +90,7 @@ foreach(wanted IN LISTS ENTRIES)
       "refused it. Run ctjs-opt --ctjs-lower-to-emitc on ${SOURCE} and read the "
       "ctjs.not_lowered attribute it leaves behind.")
   endif()
-  # THE PREFIX IS FIXED AND THE NAME IS THE FIXTURE'S, so a driver declares
+  # The prefix is fixed and the name is the fixture's, so a driver declares
   # ctc_<name> and does not care what index the importer chose.
   string(REGEX REPLACE "([^A-Za-z0-9_])${emitted_name}\\(" "\\1ctc_${wanted}(" generated "${generated}")
 endforeach()

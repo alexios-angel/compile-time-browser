@@ -1,3 +1,18 @@
+//===- IndexSnapshots.cpp - Array length snapshot tests -------------------===//
+//
+// Rows for array `length` reads used as snapshots and index arithmetic: a
+// saved length (and length +/- a constant, or times a constant) keeps its
+// read-time value across later appends, stores and block-argument transport,
+// so an overwrite at that exact index can release the old child. Unproved
+// offsets (non-canonical strings, NaN, out-of-range, BigInt, opaque values)
+// must fail with the named ArrayContentsFailure.
+//
+// `#ctjs.number<N>` is the raw IEEE-754 bit pattern of a double:
+// 4607182418800017408 = 1.0, 4611686018427387904 = 2.0,
+// 4751297606873776128 = 2^32 - 1 (the largest array length).
+//
+//===----------------------------------------------------------------------===//
+
 #include "Cases.hpp"
 
 namespace ctcompile::test::escape::arrays::length_detail {
@@ -279,7 +294,8 @@ void LengthCases::indexSnapshots() {
                  "  cf.br ^loop(%next : !ctjs.value)\n",
          .failure = ArrayContentsFailure::UnsupportedControlFlow});
     const std::string stringOne = "  %one = ctjs.constant #ctjs.string<\"1\">\n";
-    // Preserve the exact formerly refused String-offset body.
+    // `length - "1"`: a canonical numeric String offset converts exactly, so the
+    // overwritten slot is known.
     run({.what = "the original denseIndexStringOffset releases its overwritten child",
          .body = values + stringOne + read + subtract + indexed,
          .arrays = "a:[zero]",

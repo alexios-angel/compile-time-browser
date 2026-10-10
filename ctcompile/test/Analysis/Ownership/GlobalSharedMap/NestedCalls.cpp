@@ -1,3 +1,11 @@
+//===- NestedCalls.cpp - Nested-call ownership tests ------------*- C++ -*-===//
+//
+// Tests that a family whose call results feed further calls (a result DAG)
+// publishes one owner only after the full family proof, keeps exact result
+// edges, and loses the owner when a source edge is mutated.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Tests.h"
 
 namespace ctcompile::test::owned_global_shared_map {
@@ -81,6 +89,7 @@ void checkNestedOwner(mlir::MLIRContext & context, const std::string & source, b
         if (!complete || !inner || !outer) { continue; }
         if (rows <= 2) {
             const unsigned completion = query.steps();
+            // 15000 steps is a loose ceiling; a census needing more is a regression.
             check(completion < 15000, "nested owner census remains bounded");
             if (completion >= 15000) { continue; }
             checkBudgetsBelow(

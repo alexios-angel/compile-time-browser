@@ -1,4 +1,4 @@
-var retained;
+var retained; // Spreading/iterating reads inherited "0", whose getter saves `this`.
 var seed = {
     length: 1
 };

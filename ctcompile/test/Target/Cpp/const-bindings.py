@@ -61,9 +61,10 @@ def main():
             run([str(binary)])
             print(f"const bindings: {Path(compiler).name} preserved {label} behavior")
 
-    # Mutation witnesses keep the declared value and change only the pin.
-    # One rejects dropping binding const; the other rejects moving const from
-    # the pointer binding to its pointee. Disabling pins restores the same run.
+    # Each mutation keeps the declared value and changes only its CTCOMPILE_PIN
+    # type: dropping the binding's const, or moving const from the pointer to
+    # its pointee, must fail to compile at the pin's JS site. With
+    # -DCTCOMPILE_NO_TYPE_PINS the mutated program must build and run again.
     mutations = [
         (
             "scalar-pin",

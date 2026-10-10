@@ -1,7 +1,22 @@
+//===- Selectors.cpp - Selector-producer array-contents tests ---*- C++ -*-===//
+//
+// Array-contents escape analysis over "selector" producers (nothing to do
+// with CSS selectors): ops whose result is a fresh primitive computed from
+// their operands (strict compare, ToBoolean, logical not, typeof, void), plus
+// opaque values forwarded through block arguments. Each check verifies that a
+// primitive result carries none of its operands' heap origins, that opaque
+// inputs stay unknown, and that each extra producer costs a fixed amount of
+// analysis work.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Harness.h"
 
 namespace ctcompile::test::escape::arrays {
 
+/// Checks that opaque function arguments forwarded through block arguments
+/// stay unknown: they never become array contents, keys, bases, roots or
+/// returns that the analysis can prove.
 void checkOpaqueEntryTransport(mlir::MLIRContext & context) {
     const std::string values =
         "  %zero = ctjs.constant #ctjs.number<0> {storage_test_id = \"zero\"}\n"
@@ -104,9 +119,8 @@ void checkOpaqueEntryTransport(mlir::MLIRContext & context) {
             runDischarge(context, expected, "x", "the opaque forwarding fixture did not parse");
     }
 
-    // Extra unused entry arguments cost one seed and one opaque entry in the
-    // only conditional snapshot. Pin both charges independently of whatever
-    // completion budget an accidentally uncharged implementation reports.
+    // Each extra unused entry argument costs one seed and one opaque entry in
+    // the single conditional snapshot, so 32 extras cost exactly 64 work units.
     std::string widePrologue = kPrologue;
     std::string extraArguments;
     for (unsigned i = 0; i < 32; ++i) {
@@ -133,8 +147,10 @@ void checkOpaqueEntryTransport(mlir::MLIRContext & context) {
              "the opaque snapshot charge fixture did not parse");
     }
 
-    // Prove the live origin class after each edit, including edits to an edge
-    // after a previous successful query. Input annotations never repair it.
+    // Edit the parsed IR in place and re-run the analysis after each edit,
+    // including edits to a branch operand after a successful run. The function
+    // is pre-tagged with forged ctnative.array_*_complete and ctnative.confined
+    // attributes; the result must follow the live IR, never those attributes.
     contents_row mutation{
         .what = "live opaque and known origins stay separate under forged completion markers",
         .body = "  %frame = ctjs.frame_enter 8\n" + values +
@@ -190,6 +206,9 @@ void checkOpaqueEntryTransport(mlir::MLIRContext & context) {
                 rows.size(), liveStates, budgets);
 }
 
+/// Checks strict_eq comparisons and to_boolean conversions: their results are
+/// fresh primitives that retain no operand, while coercing compare kinds and
+/// non-Boolean conversions are refused.
 void checkSelectorProducers(mlir::MLIRContext & context) {
     const std::string values =
         "  %zero = ctjs.constant #ctjs.number<0> {storage_test_id = \"zero\"}\n"
@@ -309,8 +328,9 @@ void checkSelectorProducers(mlir::MLIRContext & context) {
                                 "the selector producer fixture did not parse");
     };
     for (const auto & expected : rows) { parseAndCheck(expected); }
-    // Inspect every other enum kind, including apparently harmless primitive
-    // cases: this increment proves no loose equality or coercion behavior.
+    // Every coercing compare kind and every non-Boolean convert kind must be
+    // refused on object or opaque inputs: the analysis has no rule for loose
+    // equality or for coercions that can call user code.
     const std::vector<std::string> comparisons = {"eq", "lt", "le", "gt", "ge"};
     for (const auto & kind : comparisons) {
         parseAndCheck(
@@ -327,8 +347,8 @@ void checkSelectorProducers(mlir::MLIRContext & context) {
                           .failure = ArrayContentsFailure::UnsupportedOperation}});
     }
 
-    // Every additional primitive origin costs its producer visit and its
-    // copied entry in the one path snapshot, even when no later use needs it.
+    // Every extra primitive origin costs its producer visit and its copied
+    // entry in the single path snapshot, even when nothing uses it later.
     discharge_row wide = rows.front();
     std::string extras;
     for (unsigned i = 0; i < 32; ++i) {
@@ -419,6 +439,8 @@ void checkSelectorProducers(mlir::MLIRContext & context) {
                 rows.size() + comparisons.size() + conversions.size(), liveStates, budgets);
 }
 
+/// Checks `ctjs.unary not`: its Boolean result retains no operand, and the
+/// other unary kinds do not reuse its proof.
 void checkLogicalNegation(mlir::MLIRContext & context) {
     const std::string values =
         "  %zero = ctjs.constant #ctjs.number<0> {storage_test_id = \"zero\"}\n"
@@ -526,8 +548,9 @@ void checkLogicalNegation(mlir::MLIRContext & context) {
                                 "the logical negation fixture did not parse");
     };
     for (const auto & expected : rows) { parseAndCheck(expected); }
-    // Preserve all five historical controls. TypeOf/Void now have independent
-    // primitive-result proofs; no arithmetic kind borrows the Boolean proof.
+    // No other unary kind may reuse the `not` rule. typeof and void always
+    // yield primitives and have their own proof, so they pass; neg, plus and
+    // bitnot can call user code (valueOf) on an opaque operand and are refused.
     const std::vector<std::string> otherKinds = {"neg", "plus", "bitnot", "typeof", "void"};
     for (const auto & kind : otherKinds) {
         const bool total = kind == "typeof" || kind == "void";
@@ -621,6 +644,9 @@ void checkLogicalNegation(mlir::MLIRContext & context) {
                 rows.size() + otherKinds.size(), liveStates, budgets);
 }
 
+/// Checks typeof and void, which yield a primitive for any operand (they are
+/// total): the result retains no operand and edits to the live IR are
+/// rechecked.
 void checkTotalUnaryProducers(mlir::MLIRContext & context) {
     const std::string values =
         "  %zero = ctjs.constant #ctjs.number<0> {storage_test_id = \"zero\"}\n"

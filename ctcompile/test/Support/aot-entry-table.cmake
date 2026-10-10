@@ -1,8 +1,8 @@
-# THE TABLE THAT INSTALLS A GENERATED TRANSLATION UNIT'S BODIES.
+# Writes the table that installs a generated translation unit's bodies.
 #
-# `compile-js-to-cpp.cmake` beside this produces the compiled bodies and stops
+# compile-js-to-cpp.cmake beside this produces the compiled bodies and stops
 # there: it renames a handful of entries to fixed symbols so that a driver can
-# DECLARE them, which is what a differential harness wants and what a generated
+# declare them, which is what a differential harness wants and what a generated
 # application cannot use - an application has nobody to write the declarations.
 #
 # So this reads the emitted C++ and writes the other half: one `extern "C"`
@@ -10,12 +10,11 @@
 # them all. The application then installs its own bodies at startup with no
 # hand-written list anywhere.
 #
-# IT READS THE EMITTED C++ AND NOT THE MLIR, and that is the point rather than
-# convenience. The definitive list of what this build can install is the list of
-# symbols that actually EXIST in the object file; a function the backend refused
-# leaves no definition, and a table generated from an earlier stage would name
-# it and fail at link with an undefined symbol instead of being one row shorter.
-# The refusal is a fact about the build, and this is downstream of it.
+# It reads the emitted C++, not the MLIR, on purpose. The definitive list of
+# what this build can install is the list of symbols that actually exist in
+# the object file; a function the backend refused leaves no definition, and a
+# table generated from an earlier stage would name it and fail at link with an
+# undefined symbol instead of being one row shorter.
 #
 # Required: -DGENERATED= -DOUTPUT= -DTABLE=   Optional: -DSOURCE_NAME=
 cmake_minimum_required(VERSION 3.20)
@@ -31,9 +30,9 @@ endif()
 
 file(READ "${GENERATED}" emitted)
 
-# THE ENTRY SIGNATURE IS THE MATCH, not merely `extern "C"`. The backend emits
-# the two boxing shims into an anonymous namespace and a memo byte per entry as
-# a file-scope `static const char`, and a looser pattern would collect those and
+# Match the entry signature, not merely `extern "C"`. The backend emits the two
+# boxing shims into an anonymous namespace and a memo byte per entry as a
+# file-scope `static const char`, and a looser pattern would collect those and
 # then fail to compile the declarations it wrote for them. Anchoring on the
 # first ABI parameter means only a `ct_aot_entry_fn` is picked up, which is
 # exactly what the table may hold.
@@ -49,10 +48,10 @@ if(how_many EQUAL 0)
     "matches it.")
 endif()
 
-# A SEMICOLON, THROUGH A VARIABLE. CMake's list separator IS the semicolon, and
+# A semicolon, through a variable. CMake's list separator is the semicolon, and
 # every way of writing one literally inside a quoted string - escaped or not -
-# either splits the argument or survives into the output as `\;`. Both were
-# tried; this is the spelling that emits a semicolon and nothing else.
+# either splits the argument or survives into the output as `\;`. This is the
+# spelling that emits a semicolon and nothing else.
 set(semi ";")
 
 set(declarations "")
@@ -60,13 +59,13 @@ set(rows "")
 set(symbols "")
 foreach(one IN LISTS found)
   string(REGEX REPLACE "^extern \"C\" int32_t ([A-Za-z_][A-Za-z0-9_]*)\\(.*$" "\\1" symbol "${one}")
-  # A DUPLICATE WOULD BE A DUPLICATE DEFINITION and the link would say so, but
-  # it would say so about the generated file rather than about this one, and the
-  # message would not mention that a table was involved.
+  # A duplicate would be a duplicate definition and the link would say so, but
+  # about the generated file rather than about this one, and the message would
+  # not mention that a table was involved.
   if(symbol IN_LIST symbols)
     message(FATAL_ERROR "aot-entry-table.cmake: ${GENERATED} defines ${symbol} twice")
   endif()
-  # THE DECLARATION IS SPELLED AS aot_entry.h SPELLS THE TYPEDEF, so that taking
+  # The declaration is spelled as aot_entry.h spells the typedef, so that taking
   # its address yields a ct_aot_entry_fn with no cast. A cast here would compile
   # whatever the emitted signature turned into.
   string(APPEND declarations
@@ -77,10 +76,9 @@ foreach(one IN LISTS found)
   list(APPEND symbols "${symbol}")
 endforeach()
 
-# THE COUNT COMES FROM THE ROWS, not from the matches. They are the same number
+# The count comes from the rows, not from the matches. They are the same number
 # today because nothing is skipped, and a table whose declared length is one
-# more than its array is a read past the end of it - which is not the kind of
-# defect to leave one edit away.
+# more than its array would be read past its end.
 list(LENGTH symbols how_many)
 
 file(WRITE "${OUTPUT}"

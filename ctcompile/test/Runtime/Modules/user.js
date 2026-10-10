@@ -1,9 +1,9 @@
-// THE OTHER SIDE OF op::bind_export, and the only thing that can see it.
+// The other side of op::bind_export, and the only thing that can see it.
 //
-// Interpreted in every arm, like module-dep.js. Reading `mine` from inside
-// module-main.js proves only that its local works; what bind_export decides is
-// whether the cell in main's RECORD is the same box that local writes through.
-// This module takes that box - through op::load_import against main's record -
+// Interpreted in every arm, like dep.js. Reading `mine` from inside main.js
+// proves only that its local works; what bind_export decides is whether the
+// cell in main's record is the same box that local writes through. This
+// module takes that box - through op::load_import against main's record -
 // and reads it after main has written to it.
 //
 // A lowering that published the register's own freshly-made cell instead of

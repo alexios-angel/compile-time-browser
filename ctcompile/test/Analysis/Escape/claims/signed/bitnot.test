@@ -3,8 +3,8 @@
 // RUN: python3 %S/../check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name signed-bitnot
 // RUN: FileCheck %s --check-prefix=CLAIM < %t/escape-claims-signed-bitnot.claims
 
-// BitNot preserves signed Number snapshots, ToInt32 of an unbounded Number and
-// exactly converted original Strings, canonical or not.
+// `~x` loop steps: the analysis bounds them for a length copied before its array shrank,
+// for inputs outside int32 (ToInt32 wraps them), and for strings like "2" or "02" read exactly.
 // IMPORT-LABEL: ctjs.func @snapshotReleased$
 // IMPORT: ctjs.unary bitnot
 // IMPORT: ctjs.set_property

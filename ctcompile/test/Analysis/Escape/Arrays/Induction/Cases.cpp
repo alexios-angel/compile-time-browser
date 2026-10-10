@@ -1,3 +1,9 @@
+//===- Cases.cpp - Induction case table -------------------------*- C++ -*-===//
+//
+// InductionCases' row runners and checkArrayInduction, which runs every
+// induction test group in order.
+//
+//===----------------------------------------------------------------------===//
 #include "Cases.hpp"
 
 namespace ctcompile::test::escape::arrays::induction_detail {

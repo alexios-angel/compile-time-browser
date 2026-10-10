@@ -1,4 +1,9 @@
-"""Install and relocate the tools component, then use only installed executables."""
+"""Install and relocate the tools component, then use only installed executables.
+
+Installs the ctcompile-tools component, moves the prefix to a new path, and
+checks that the relocated binaries name no build or source directory in their
+dynamic sections and still package, launch and (with MLIR) compile natively.
+"""
 
 import argparse
 import json
@@ -36,6 +41,7 @@ env = dict(
     SDL_VIDEODRIVER="dummy",
     SDL_AUDIODRIVER="dummy",
 )
+# Strip anything that could make an installed binary find build-tree files.
 for name in ("LD_LIBRARY_PATH", "LD_PRELOAD", "CTBROWSER_FONT_PATH", "DESTDIR"):
     env.pop(name, None)
 env["PATH"] = os.pathsep.join(
@@ -50,6 +56,7 @@ env["PATH"] = os.pathsep.join(
 
 
 def run(*command, input=None, code=0):
+    """Runs `command` in the scratch directory, asserts its exit code, returns stdout."""
     result = subprocess.run(
         list(map(str, command)),
         input=input,
@@ -94,7 +101,7 @@ with tempfile.TemporaryDirectory(prefix="ctcompile install ") as directory:
         assert os.access(executable, os.X_OK)
         dynamic = run(args.readelf, "-d", executable)
         # ANGLE is an external host dependency, fetched beside the checkout.
-        # A tools-only install retains that location just like the Brew prefix.
+        # A tools-only install keeps that location, as it does the Homebrew prefix.
         if args.angle_dir:
             dynamic = dynamic.replace(str(Path(args.angle_dir).resolve()), "<external ANGLE>")
         assert all(
@@ -118,7 +125,8 @@ with tempfile.TemporaryDirectory(prefix="ctcompile install ") as directory:
     if args.launcher:
         executable = work / "application"
         # The flag lets CTBROWSER_TEST_FRAMES bound the run below; a packaged
-        # application ignores CTBROWSER_* without it (ctrun reads them for a loose bundle).
+        # application ignores CTBROWSER_* without it (ctrun reads them for a
+        # loose bundle).
         run(compiler, app, "--fonts", fonts, "-o", executable, "--allow-env-overrides")
         info = json.loads(run(executable, "--info"))
         assert info["entry"] == "index.html" and len(info["scripts"]) == 1
@@ -126,11 +134,14 @@ with tempfile.TemporaryDirectory(prefix="ctcompile install ") as directory:
         run(executable)
         run(binaries / "ctrun", bundle)
         app.mkdir()
+    # A module-script page is refused, and the refusal leaves the old bundle intact.
     (app / "index.html").write_text('<script type="module">var answer = 42;</script>')
     original_bundle = bundle.read_bytes()
     run(compiler, app, "--bundle", "--fonts", fonts, "-o", bundle, code=1)
     assert bundle.read_bytes() == original_bundle
 
+    # The installed native pipeline: the generated C++ must build and run with
+    # no reference to the engine's runtime, and an eval must be refused.
     if args.mlir:
         translate = binaries / "ctjs-translate"
         opt = binaries / "ctjs-opt"

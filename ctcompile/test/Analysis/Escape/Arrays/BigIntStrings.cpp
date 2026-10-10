@@ -1,7 +1,17 @@
+//===- BigIntStrings.cpp - Array contents and BigInt strings ----*- C++ -*-===//
+//
+// Array-contents escape analysis tests for values produced from BigInts:
+// String + BigInt concatenation and BigInt comparisons. Each produces a
+// primitive, so it must never retain an object, provide an array index or
+// key, or permit publication, throws or handlers. Each test also mutates the
+// IR in place to check that a cached solver result is not reused.
+//
+//===----------------------------------------------------------------------===//
 #include "Harness.h"
 
 namespace ctcompile::test::escape::arrays {
 
+/// Checks String + BigInt concatenation, written as both `add` and `concat`.
 void checkStringBigIntConcatenation(mlir::MLIRContext & context) {
     const std::string values =
         "  %zero = ctjs.constant #ctjs.number<0> {storage_test_id = \"zero\"}\n"
@@ -200,6 +210,8 @@ void checkStringBigIntConcatenation(mlir::MLIRContext & context) {
         if (narrowModule && wideModule) {
             const auto narrow = computeArrayContents(*narrowModule->getOps<ctjs::FuncOp>().begin());
             const auto expanded = computeArrayContents(*wideModule->getOps<ctjs::FuncOp>().begin());
+            // 32 extra results must add a fixed amount of work, so the analysis stays
+            // linear: 2 units each for Concat (64), 3 for Add (96).
             if (!narrow.complete || !expanded.complete ||
                 expanded.work != narrow.work + (concat ? 64 : 96)) {
                 fail(row{.what = "String Add snapshots charge each held result once",
@@ -230,6 +242,9 @@ void checkStringBigIntConcatenation(mlir::MLIRContext & context) {
             module->walk([&](ctjs::CreateObjectOp op) { child = op; });
             module->walk([&](ctjs::CreateArrayOp op) { array = op; });
             mlir::OpBuilder builder(producer);
+            // Forge the completion attributes and keep a solver (`stale`) that ran on the
+            // original IR. After each in-place edit below, neither may stand in for a
+            // fresh analysis of the edited function.
             function->setAttr("ctnative.array_contents_complete", builder.getUnitAttr());
             function->setAttr("ctnative.array_retention_complete", builder.getUnitAttr());
             child->setAttr("ctnative.confined", builder.getUnitAttr());
@@ -261,6 +276,7 @@ void checkStringBigIntConcatenation(mlir::MLIRContext & context) {
             inspect(ArrayContentsFailure::None);
             for (unsigned position = 0; position < 2; ++position) {
                 const mlir::Value saved = producer->getOperand(position);
+                // Argument 3 is %p, the opaque parameter from kPrologue.
                 const mlir::Value invalidInputs[] = {child.getResult(), array.getResult(),
                                                      function.getBody().front().getArgument(3)};
                 for (const mlir::Value invalid : invalidInputs) {
@@ -285,6 +301,7 @@ void checkStringBigIntConcatenation(mlir::MLIRContext & context) {
                     inspect(ArrayContentsFailure::None);
                 }
             }
+            // 255 is not a valid BinaryKind; the analysis must refuse it.
             for (const auto other : {ctjs::BinaryKind::Add, ctjs::BinaryKind::Concat,
                                      ctjs::BinaryKind::Sub, ctjs::BinaryKind::Mul,
                                      ctjs::BinaryKind::Pow, static_cast<ctjs::BinaryKind>(255)}) {
@@ -307,6 +324,9 @@ void checkStringBigIntConcatenation(mlir::MLIRContext & context) {
     }
 }
 
+/// Checks BigInt comparisons of kind \p producerKind: the boolean result is a
+/// primitive that retains nothing. Also checks live edits of the operands and
+/// the comparison kind, including the invalid kind 255.
 void checkBigIntComparison(mlir::MLIRContext & context, ctjs::CompareKind producerKind) {
     const std::string spelling = ctjs::stringifyCompareKind(producerKind).str();
     const std::string values =
@@ -592,6 +612,8 @@ void checkBigIntComparison(mlir::MLIRContext & context, ctjs::CompareKind produc
     if (narrowModule && wideModule) {
         const auto narrow = computeArrayContents(*narrowModule->getOps<ctjs::FuncOp>().begin());
         const auto expanded = computeArrayContents(*wideModule->getOps<ctjs::FuncOp>().begin());
+        // 32 extra comparisons must cost 2 work units each (one producer, one
+        // snapshot), so the analysis stays linear.
         if (!narrow.complete || !expanded.complete || expanded.work != narrow.work + 64) {
             fail(row{.what = "BigInt comparison charges each independent result and snapshot",
                      .body = wide.contents.body,
@@ -621,6 +643,9 @@ void checkBigIntComparison(mlir::MLIRContext & context, ctjs::CompareKind produc
             if (llvm::isa<ctjs::NumberAttr>(op.getValue())) { zero = op; }
         });
         mlir::OpBuilder builder(comparison);
+        // Forge the completion attributes and keep a solver (`stale`) that ran on the
+        // original IR. After each in-place edit below, neither may stand in for a
+        // fresh analysis of the edited function.
         function->setAttr("ctnative.array_contents_complete", builder.getUnitAttr());
         function->setAttr("ctnative.array_retention_complete", builder.getUnitAttr());
         child->setAttr("ctnative.confined", builder.getUnitAttr());
@@ -652,6 +677,7 @@ void checkBigIntComparison(mlir::MLIRContext & context, ctjs::CompareKind produc
         inspect(ArrayContentsFailure::None);
         for (unsigned position = 0; position < 2; ++position) {
             const mlir::Value original = comparison->getOperand(position);
+            // Argument 3 is %p, the opaque parameter from kPrologue.
             const mlir::Value invalid[] = {zero.getResult(), child.getResult(), array.getResult(),
                                            function.getBody().front().getArgument(3)};
             for (mlir::Value bad : invalid) {
@@ -685,6 +711,7 @@ void checkBigIntComparison(mlir::MLIRContext & context, ctjs::CompareKind produc
         comparison.setKindAttr(ctjs::CompareKindAttr::get(&context, producerKind));
         inspect(ArrayContentsFailure::None);
         if (producerKind != ctjs::CompareKind::Eq) {
+            // 255 is not a valid CompareKind; the analysis must refuse it.
             comparison.setKindAttr(
                 ctjs::CompareKindAttr::get(&context, static_cast<ctjs::CompareKind>(255)));
             inspect(ArrayContentsFailure::UnsupportedOperation);

@@ -1,3 +1,16 @@
+//===- InvariantArithmetic.cpp - Invariant-step loop rows -------*- C++ -*-===//
+//
+// Array-contents rows for structured (scf) loops whose induction step is a
+// dynamic or commuted Add, or a product, quotient or remainder of
+// loop-invariant operands. `#ctjs.number<N>` holds the IEEE-754 bit pattern of
+// a double: 4607182418800017408 is 1.0, 4611686018427387904 is 2.0,
+// 4602678819172646912 is 0.5, 13830554455654793216 is -1.0,
+// 13835058055282163712 is -2.0, 4751297606873776128 is 4294967295.0 (2^32 - 1),
+// 4751297606875873280 is 4294967296.0, 13974669643728551936 is -4294967295.0,
+// 9218868437227405312 is +Infinity and 9221120237041090560 is NaN.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Cases.hpp"
 
 namespace ctcompile::test::escape::arrays::structured_detail {

@@ -1,15 +1,15 @@
-# THE ORACLE, CLOSED - Phase 54A checked by Phase 54B. Three steps over ONE
-# corpus, and steps 1 and 2 never meet until step 3: the INTERPRETER runs the
-# corpus with a recorder installed and writes what every register actually
-# held; the COMPILER imports the same corpus, runs the inference, and writes
-# what it claims every register will hold; tools/check/type-oracle.py compares
-# the two. ZERO SOUNDNESS VIOLATIONS IS THE GATE; precision is reported, never
-# gated ("soundness failing is a defect; precision being low is a backlog").
-# The vacuous pass is guarded: `observed` must be positive, and so must
-# `beat-boxed` - an inference that fell back to `boxed` everywhere is sound the
-# way a stopped clock is right. A VALUE IN A LIVE BLOCK THE SOLVER NEVER
-# VISITED is an analysis gap the emitter hides behind `boxed`, so its count is
-# asserted at zero. The oracle's own self-test runs first.
+# Type-inference soundness check over one corpus, in three steps. The
+# interpreter runs the corpus with a recorder installed and writes what every
+# register actually held (ctcompile-test-type-oracle); the compiler imports the
+# same corpus, runs the inference, and writes what it claims every register
+# will hold (ctcompile-test-type-claims); tools/check/type-oracle.py compares
+# the two and requires zero soundness violations. Precision is reported but
+# never required: a wrong claim is a defect, a weak one is only a backlog.
+# `observed` and `beat-boxed` must both be positive, so an inference that falls
+# back to `boxed` everywhere (sound, but useless) cannot pass vacuously. A value
+# in a live block the solver never visited is an analysis gap the emitter
+# hides behind `boxed`, so that count must be zero. The oracle's own self-test
+# runs first.
 #
 # RUN: ctcompile-test-type-oracle
 # RUN: ctcompile-test-type-oracle --script %S/fixture.js --out %t.rec

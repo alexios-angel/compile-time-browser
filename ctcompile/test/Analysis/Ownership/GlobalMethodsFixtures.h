@@ -1,8 +1,11 @@
+//===- GlobalMethodsFixtures.h - Method table fixtures ----------*- C++ -*-===//
+//
+// Fixtures and check helpers shared by Ownership/GlobalMethods.cpp and the
+// GlobalSharedMap/ tests. Definitions are `inline` so both executables can
+// include this header.
+//
+//===----------------------------------------------------------------------===//
 #pragma once
-// The fixtures and helpers shared by test/OwnedGlobalMethods.cpp and
-// test/OwnedGlobalSharedMap.cpp - one 1,099-line file until 2026-09-08. All
-// verbatim from that file; `inline` in a named namespace only so that both
-// executables can include it.
 
 #include "../../../lib/CTNative/Analysis/OwnedGlobalRoots.h"
 #include "../../CTNative/HostContract/Fixtures.h"
@@ -37,6 +40,9 @@ using host_contract::mapContractFor;
 using host_contract::parsed;
 using host_contract::replaced;
 
+/// The small fixture: `make` returns a table with one method `get` (returning
+/// 42.0, IEEE-754 bits 4631107791820423168), stored in global `host`.slot and
+/// called once through a global alias.
 inline constexpr const char * fixture = R"MLIR(
 module {
   ctjs.func @script$0(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
@@ -70,6 +76,8 @@ module {
 }
 )MLIR";
 
+/// Like `fixture`, but `publish` stores the table through a factory argument,
+/// and the method `get` reads `size` from a Map captured in a cell by `make`.
 inline constexpr const char * capturedFixture = R"MLIR(
 module {
   ctjs.func @script$0(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
@@ -117,9 +125,9 @@ module {
 }
 )MLIR";
 
-// The actual imported publication specimen, retaining public functions, frame
-// bookkeeping and the indirect wrapper callback. Only symbol names are unified
-// with the small fixture above so both use the same assertions.
+/// The captured-Map program as the importer actually emits it, with its public
+/// functions, frame bookkeeping and the indirect wrapper callback. Only symbol
+/// names are renamed to match the small fixture so both use the same checks.
 inline constexpr const char * importedCapturedFixture = R"MLIR(
 module {
   ctjs.func @script$0(%arg0: !ctjs.value, %arg1: !ctjs.value, %arg2: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
@@ -181,14 +189,15 @@ module {
 }
 )MLIR";
 
+/// True when \p query proved no roots and maps no operation of \p module.
 inline bool empty(mlir::ModuleOp module, const OwnedGlobalRoots & query) {
     bool result = query.roots().empty();
     module.walk([&](mlir::Operation * operation) { result &= !query.lookup(operation); });
     return result;
 }
 
-// A live edit has left `contract` stale: the old report refuses on its fingerprint, and the
-// edited source, fingerprinted afresh as `current`, still refuses without running out of work.
+/// A live edit has left \p contract stale: the old report refuses on its fingerprint, and the
+/// edited source, fingerprinted afresh as \p current, still refuses without running out of work.
 inline void checkStaleAndRefused(mlir::ModuleOp module, const HostContract & contract,
                                  const HostContract & current, std::string_view staleWhat,
                                  std::string_view refusedWhat) {
@@ -199,8 +208,8 @@ inline void checkStaleAndRefused(mlir::ModuleOp module, const HostContract & con
     check(!fresh.proved() && !fresh.exhausted() && empty(module, fresh), refusedWhat);
 }
 
-// Every budget in `budgets` (each below completion) refuses, reports exhaustion, stays within
-// its budget and publishes nothing: `withheld` when given, otherwise `empty`.
+/// Every budget in \p budgets (each below completion) refuses, reports exhaustion, stays within
+/// its budget and publishes nothing, as judged by \p withheld when given, otherwise `empty`.
 template <typename Query = OwnedGlobalRoots, typename Budgets = std::initializer_list<unsigned>>
 void checkIncompleteBudgets(
     mlir::ModuleOp module, const HostContract & contract, const Budgets & budgets,
@@ -219,7 +228,7 @@ void checkIncompleteBudgets(
     }
 }
 
-// Every budget below `completion`.
+/// checkIncompleteBudgets over every budget below \p completion.
 template <typename Query = OwnedGlobalRoots>
 void checkBudgetsBelow(
     mlir::ModuleOp module, const HostContract & contract, unsigned completion,

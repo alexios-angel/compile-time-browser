@@ -1,14 +1,19 @@
-// THE NATIVE GATE'S REFERENCE SIDE - ctcompile Phase 62½-D.
+//===- ctcompile/test/Runtime/Reference/Interpreter.cpp - VM reference ----===//
+//
+// Reference side of the native-output check: runs a JavaScript program in the
+// ctbrowser VM and prints the globals it created or changed, in the same text
+// format a compiled native binary prints, so the two outputs can be diffed.
 //
 // "When a CTJS operation and the ctbrowser VM disagree, the VM is correct by
 // definition." So nothing about a native binary's answers is written down
-// anywhere: this runs the SAME JavaScript under the interpreter and prints
+// anywhere: this runs the same JavaScript under the interpreter and prints
 // what it left in the globals, in the exact shape the native binary's `main`
-// prints its own (native-values-fixture.emitc.mlir is the specification of
-// that shape; this file mirrors it), and check-native-unit.cmake compares the
-// two texts.
+// prints its own (the ctnative::print_* helpers in
+// ctcompile/include/ctcompile/CTNative/Runtime/ctnative.hpp define that shape;
+// this file mirrors them), and ctcompile/test/CTNative/Checks/compilation-unit.py
+// compares the two texts.
 //
-// THE SHAPE - one line per global the program created or changed, ascending
+// The shape: one line per global the program created or changed, ascending
 // bytewise by name, `<name>=<value>`, with the value one of:
 //
 //     Number      printf("%.17g", d)          1   -0   2.5   inf   -inf   nan
@@ -17,13 +22,11 @@
 //     null        null
 //     String      "<percent-encoded bytes>"   "text"   ""   "a%3D1"
 //
-// THE NUMBER FORM IS UNCHANGED and the call that prints it is literally the
-// same std::printf as before this file learned the other four, because %.17g
-// round-trips a double exactly and every existing fixture's expected output is
-// that text. Number-to-String is a runtime concern for a later phase; this
-// comparison is on the double's VALUE.
+// Numbers print with %.17g, which round-trips a double exactly, so the
+// comparison is on the double's value rather than on JavaScript's
+// Number-to-String text.
 //
-// THE FIVE FORMS ARE PAIRWISE DISJOINT, which is what makes the line
+// The five forms are pairwise disjoint, which is what makes the line
 // unambiguous without tagging the number. Every %.17g output is a digit
 // string, `inf`, `-inf`, `nan` or `-nan`; none of those is `true`, `false`,
 // `undefined` or `null`, and none of them contains a `"`. So the kind of a
@@ -31,52 +34,49 @@
 // (`nan` and `null` are a one-glyph pair to a reader but they are different
 // tokens, and no %.17g output spells `null`.)
 //
-// WHY PERCENT-ENCODING FOR STRINGS, and why not a naive print:
+// Why percent-encoding for strings, and not a naive print:
 //
-//   * A JavaScript string here is BYTES, not text. `\uD800` with no low
+//   * A JavaScript string here is bytes, not text. `\uD800` with no low
 //     surrogate after it is encoded as a code point in its own right
 //     (core/algorithms.hpp append_utf8), which is the three bytes
-//     ED A0 80 - WTF-8, and NOT valid UTF-8. Any escaping that decodes to
+//     ED A0 80 - WTF-8, and not valid UTF-8. Any escaping that decodes to
 //     code points first would have to agree with the other side about how to
 //     repair those bytes. Percent-encoding is per byte, so ED A0 80 is
 //     %ED%A0%80 on both sides with no decoder in the loop.
-//   * It is TOTAL AND INJECTIVE: all 256 byte values are in the domain and
+//   * It is total and injective: all 256 byte values are in the domain and
 //     each has exactly one representation. The unreserved set of RFC 3986
 //     (A-Z a-z 0-9 - . _ ~) passes through; every other byte becomes `%` and
-//     exactly two UPPERCASE hex digits. Fixed width, no shorthands, no
+//     exactly two uppercase hex digits. Fixed width, no shorthands, no
 //     alternative spellings - so decoding needs no lookahead past two
 //     characters and the encoder is a function.
 //   * Embedded NUL is a legal JavaScript string character, so nothing here is
 //     NUL-terminated: the loop is over `.size()` and 0x00 prints as `%00`.
-//   * THE OUTPUT IS PURE PRINTABLE ASCII WITH NO WHITESPACE, and that is not
-//     cosmetic. This text does not travel from one program to the other
-//     directly - it is captured by execute_process into a CMake variable, cut
-//     on newlines with string(REPLACE) and indexed with list(GET). A `;` in a
-//     value would silently split one line into two list elements and shift
-//     every comparison after it; `\` is CMake's escape character; a raw
-//     newline would forge an extra global; a NUL would truncate the capture.
-//     `%3B`, `%5C`, `%0A` and `%00` remove all four by construction rather
-//     than by hoping no fixture contains one. `=` is escaped too (`%3D`), so
-//     the first `=` on a line is always the separator.
+//   * The output is printable ASCII with no whitespace, so the comparing
+//     script can split it on newlines and on the first `=`: a raw newline in
+//     a value would forge an extra global, and `=` is escaped (`%3D`) so the
+//     first `=` on a line is always the separator.
 //
-// WHAT IS SKIPPED IS COUNTED, on stderr, because the gate asserts it - per
-// kind, so that a reference which has lost the ability to print a boolean
-// fails loudly instead of agreeing with a binary that also prints nothing:
+// Skipped globals are counted per kind on stderr, and compilation-unit.py
+// asserts the counts, so a reference that loses the ability to print a
+// boolean fails loudly instead of agreeing with a binary that also prints
+// nothing:
 //
 //   native reference: 14 globals printed (4 number, 2 boolean, 6 string,
 //   1 null, 1 undefined), 1 function globals skipped, 1 other globals skipped
 //
-// `other` is now only the kinds the convention has NO form for - an object, an
-// array, a symbol, a bigint. The gate still requires it to be zero for a real
-// program: a phase that wants one of those has to extend the convention here
-// first, which is the whole point of the convention being written down.
-// Functions are expected: every top-level `function` is a global too.
+// `other` counts the kinds this format has no form for: an object, an array,
+// a symbol, a bigint. The check requires it to be zero for a real program; a
+// test that needs one of those kinds must extend the format here (and in
+// ctnative.hpp) first. Functions are expected: every top-level `function` is
+// a global too.
 //
-// "CREATED OR CHANGED" rather than "every global", because install_builtins
+// "Created or changed" rather than "every global", because install_builtins
 // fills the table first - Math, Object, the lot - and none of that is the
 // program's. A snapshot before the run says which entries were already there
 // with which value; a program that reassigns a builtin's name still counts,
 // since its value changed.
+//
+//===----------------------------------------------------------------------===//
 #include <ctbrowser/script/builtins.hpp>
 #include <ctbrowser/script/compile.hpp>
 #include <ctbrowser/script/value.hpp>
@@ -100,6 +100,8 @@
 
 namespace {
 
+/// The kind of a printed global; each has its own output form (see the file
+/// header).
 enum class kind {
     number,
     boolean,
@@ -108,6 +110,7 @@ enum class kind {
     undefined_value
 };
 
+/// One global to print, with the field its `k` selects filled in.
 struct printed_global {
     std::string name;
     kind k = kind::number;
@@ -116,14 +119,11 @@ struct printed_global {
     std::string text;
 };
 
-// THE ESCAPING, AND IT IS THE SAME FUNCTION ON BOTH SIDES. The native binary
-// gets this byte-for-byte as `ctnative::print_string` (see
-// native-values-fixture.emitc.mlir); if the two ever drift, the gate reports a
-// string global that differs, which is exactly what it is for. Written with
-// putchar and no printf so that a percent sign in the data can never be read
-// as a conversion, and so that the emitted C++'s FIRST std::printf( is still
-// the first line `main` prints - which is where check-native-unit.cmake's
-// MUTATE path inserts its off-by-one.
+/// Percent-encodes \p s exactly as ctnative::print_string (ctnative.hpp) does
+/// on the native side; if the two drift, compilation-unit.py reports a string
+/// global that differs. Written with putchar, not printf, so a `%` in the data
+/// is never a conversion and so the emitted C++'s first printf( in `main` stays
+/// the line compilation-unit.py --mutate anchors its off-by-one edit on.
 void write_percent_encoded(const std::string & s) {
     static constexpr char hex[] = "0123456789ABCDEF";
     for (const char raw : s) {
@@ -183,7 +183,7 @@ int main(int argc, char ** argv) {
         return 0;
     }
 
-    // THE PROGRAM OUTLIVES THE CONTEXT - vm.hpp's rule, since closures hold
+    // The program outlives the context - vm.hpp's rule, since closures hold
     // function_protos that point into it - so it is compiled first and declared
     // first, and the context below is destroyed before it.
     const ctbrowser::script::program prog = ctbrowser::script::compiler::compile(source);
@@ -216,7 +216,7 @@ int main(int argc, char ** argv) {
     for (const auto & [name, v] : cx.globals()) {
         const auto was = before.find(name);
         if (was != before.end() && was->second == v.bits()) { continue; }
-        // is_number() FIRST: it is "does not match the boxed pattern", so it
+        // is_number() first: it is "does not match the boxed pattern", so it
         // is the fast path and every tag below is a boxed bit pattern.
         if (v.is_number()) {
             printed.push_back({name, kind::number, v.as_number(), false, {}});
@@ -248,8 +248,7 @@ int main(int argc, char ** argv) {
     std::ranges::sort(printed, {}, &printed_global::name);
     for (const printed_global & g : printed) {
         switch (g.k) {
-        // THE UNCHANGED CALL. Every fixture that existed before the other four
-        // kinds did prints exactly these bytes, and this line is why.
+        // Keep this exact format: existing expected outputs depend on it.
         case kind::number: std::printf("%s=%.17g\n", g.name.c_str(), g.number); break;
         case kind::boolean:
             std::printf("%s=%s\n", g.name.c_str(), g.boolean ? "true" : "false");

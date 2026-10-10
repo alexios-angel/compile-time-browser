@@ -1,9 +1,22 @@
+//===- MapPresence.cpp - Map.get presence from tracked Map sizes ----------===//
+//
+// Tests for when a `Map.get` is proved to find its key: from a Map size known
+// to be zero or exactly N when the key was stored, from a child Map retained in
+// an owned global Map, and from Map values stored in another Map. Every check
+// also confirms that preparation changes no executable op and ignores forged
+// `ctnative.map_*` attributes.
+//
+//===----------------------------------------------------------------------===//
+
 #include "../../../../lib/CTNative/Analysis/NativeMap/Presence.h"
 #include "Tests.h"
 
 namespace ctcompile::test::type_inference {
 namespace {
 
+/// Checks that a value read from a child Map that a closure stored into an
+/// owned global Map is proved present only when the owner census is supplied,
+/// and that forged `ctnative.map_*` attributes are cleared by preparation.
 void checkRetainedChildPresence(mlir::MLIRContext & context) {
     namespace fixtures = ctcompile::test::owned_global_methods;
     using namespace ctcompile;
@@ -165,9 +178,10 @@ void checkRetainedChildPresence(mlir::MLIRContext & context) {
                     op->setAttr(ctnative::kNativeMapPresent, attrs.getUnitAttr());
                     op->setAttr(ctnative::kNativeMapReadType, attrs.getStringAttr("number"));
                 });
-                // Use the real entry point to clear forged reports. This raw
-                // source has not undergone environment preparation; the direct
-                // query below uses only the separately checked owner census.
+                // Use the real entry point to clear the forged reports. This
+                // source has not been through environment preparation, so the
+                // direct query below relies only on the separately checked
+                // owner census.
                 ctnative::prepareNativeMaps(current);
                 const llvm::DenseSet<mlir::Operation *> copies;
                 const llvm::DenseMap<mlir::Value, ctnative::PrimitiveAlternatives> parameters;
@@ -192,8 +206,12 @@ void checkRetainedChildPresence(mlir::MLIRContext & context) {
                 rows.size());
 }
 
+/// Checks reads through child Maps stored in an outer Map: which outer
+/// overwrites, clears, branch writes and helper calls keep a saved child's
+/// contents known, and which revoke them.
 void checkStoredMapAliases(mlir::MLIRContext & context) {
     using namespace ctcompile;
+    // %one and %two are the IEEE-754 bit patterns of 1.0 and 2.0.
     const std::string prelude = R"mlir(
   %one = ctjs.constant #ctjs.number<4607182418800017408>
   %two = ctjs.constant #ctjs.number<4611686018427387904>
@@ -370,6 +388,10 @@ ctjs.func private @clearChild(%this: !ctjs.value, %new: !ctjs.value, %callee: !c
 
 } // namespace
 
+/// Checks that a `Map.get` of key `0` is proved present exactly when the Map's
+/// saved `size` is provably zero at the store (after a clear on every path),
+/// and that preparation never changes executable ops. Also runs
+/// checkRetainedChildPresence and checkStoredMapAliases.
 void checkMapZeroSizePresence(mlir::MLIRContext & context) {
     checkRetainedChildPresence(context);
     checkStoredMapAliases(context);
@@ -462,8 +484,8 @@ void checkMapZeroSizePresence(mlir::MLIRContext & context) {
     };
     const auto verify = [&](mlir::ModuleOp module, const char * what, bool expected,
                             bool mixed = true) {
-        // The same live preparation is run on a reused module and an exact
-        // fresh clone. Previously attached reports are deliberately hostile.
+        // Run the same preparation on the reused module and on an exact fresh
+        // clone. Attributes left by an earlier run are deliberately wrong.
         for (bool clone : {false, true}) {
             mlir::OwningOpRef<mlir::ModuleOp> fresh;
             auto current = module;
@@ -498,10 +520,10 @@ void checkMapZeroSizePresence(mlir::MLIRContext & context) {
                       : "!ctnative.opt<!ctnative.variant<!ctnative.bool, !ctnative.num<i32>>>");
         }
     };
-    // The original homogeneous Number source retains its optional result:
-    // preparation currently requests public presence only for published or
-    // mixed reads. Adding a later Boolean write independently requests the
-    // mixed read proof without changing any read-time operation or operand.
+    // A Map holding only Numbers keeps its optional result type, because
+    // preparation requests a presence proof only for published or mixed-type
+    // reads. Appending a Boolean write makes the read mixed and requests the
+    // proof without changing any read-time operation or operand.
     const std::string mixedSuffix = "  %boolean = ctjs.constant #ctjs.boolean<false>\n"
                                     "  %booleanWrite = ctjs.call %setter(%map, %two, %boolean)\n";
     for (const presenceRow & r : rows) {
@@ -572,8 +594,13 @@ void checkMapZeroSizePresence(mlir::MLIRContext & context) {
                 rows.size() * 2);
 }
 
+/// Checks that a Map size saved after a clear and known insertions is the
+/// exact entry count (counting equal keys once under SameValueZero), so that a
+/// `get` of that count is proved present.
 void checkMapExactSizePresence(mlir::MLIRContext & context) {
     using namespace ctcompile;
+    // Number constants are IEEE-754 bit patterns: 1.0, 1.0, 2.0, 3.0, +0.0,
+    // -0.0, and two NaNs with different payload bits.
     const std::string prelude = R"mlir(
   %one = ctjs.constant #ctjs.number<4607182418800017408>
   %anotherOne = ctjs.constant #ctjs.number<4607182418800017408>
@@ -756,8 +783,9 @@ void checkMapExactSizePresence(mlir::MLIRContext & context) {
                 fail("{}: exact-size presence fixture did not parse", r.what);
                 continue;
             }
-            // A homogeneous local Number read retains its optional public
-            // type; the later mixed store independently requests presence.
+            // A read from a Map holding only Numbers keeps its optional type;
+            // the appended Boolean store makes the read mixed, which requests a
+            // presence proof.
             verify(*module, r.what, mixed && r.present, mixed);
         }
     }

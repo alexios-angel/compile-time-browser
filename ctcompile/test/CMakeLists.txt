@@ -2,24 +2,22 @@
 # generated outputs, test commands and helper functions keep their meaning.
 # Handwritten sources are registered by the directories that own them below.
 
-# ONE check(), ONE COUNTER: ctbrowser/test/support/check.hpp - check(),
-# CHECK, CHECK_EQ, REPORT and the terminate/signal trace - for every test
-# executable below, where 24 private `int failures; void check()` copies were
-# until 2026-09-15. Directory-wide, because every add_executable in the
-# included files is a test. cpptrace is what check.hpp reaches for when its
-# header is on the path (CTTest.cmake found it for the engine's suite; a box
-# without it prints frames and addresses rather than nothing).
+# Every test executable here uses ctbrowser/test/support/check.hpp (check(),
+# CHECK, CHECK_EQ, REPORT and the terminate/signal trace), so this include is
+# directory-wide. When cpptrace is found (CTTest.cmake), check.hpp uses it for
+# symbolized stack traces; without it, traces print raw frames and addresses.
 include_directories("${CTBROWSER_MONOREPO_ROOT}/ctbrowser/test/support")
 if(CTBROWSER_CPPTRACE AND CTBROWSER_CPPTRACE_INCLUDE)
   include_directories(SYSTEM "${CTBROWSER_CPPTRACE_INCLUDE}")
-  # ponytail: the shared library only - ctcompile is Linux-and-devbox only, and
-  # the static/mingw dependency chain lives in CTTest.cmake if that changes.
+  # ponytail: the shared library only. ctcompile builds only on Linux; the
+  # static/mingw dependency chain lives in CTTest.cmake if that changes.
   link_libraries("${CTBROWSER_CPPTRACE}")
 endif()
 
-# A TEST EXECUTABLE AND ITS TEST: ctcompile-test-<name> linked against LIBS and
-# registered as ctcompile_<name, `-` spelled `_`>, run with ARGS. Its sources
-# are added by the directory that owns them.
+# Declares a test executable and its test: ctcompile-test-<name>, linked
+# against LIBS, compiled with DEFS, and registered as ctcompile_<name> (with
+# `-` spelled `_`) run with ARGS. Its sources are added by the directory that
+# owns them (ctcompile_test_sources).
 function(ctcompile_unit_test name)
   cmake_parse_arguments(_unit "" "" "LIBS;ARGS;DEFS" ${ARGN})
   add_executable(ctcompile-test-${name})
@@ -32,26 +30,26 @@ function(ctcompile_unit_test name)
   add_test(NAME ctcompile_${_test} COMMAND ctcompile-test-${name} ${_unit_ARGS})
 endfunction()
 
-# The handwritten SOURCES of test target TARGET, from the directory that owns
-# them, when that target is configured at all.
+# Adds handwritten sources to test target TARGET from the directory that owns
+# them, if that target is configured at all.
 function(ctcompile_test_sources target)
   if(TARGET ${target})
     target_sources(${target} PRIVATE ${ARGN})
   endif()
 endfunction()
 
-# GENERATED CODE IS NOT THIS PROJECT'S CODE, and the flags that keep the
-# hand-written sources honest do not apply to it. The entry's signature is
-# fixed by ct_aot_entry_fn, so a function that never looks at `argc` has an
-# unused parameter by construction; a JavaScript expression whose value is
-# discarded leaves a variable that is set and never read; and the backend
-# emits no dead-code elimination because that is a later phase's job.
-# -Werror would make every such program a build failure. Narrowed to the
-# three warnings inherent to emitted code rather than turning -Werror off.
+# Generated code does not meet the warning flags that keep the hand-written
+# sources honest. The entry's signature is fixed by ct_aot_entry_fn, so a
+# function that never looks at `argc` has an unused parameter by construction;
+# a JavaScript expression whose value is discarded leaves a variable that is
+# set and never read; and the backend does no dead-code elimination. -Werror
+# would make every such program a build failure, so these three warnings,
+# inherent to emitted code, are disabled rather than -Werror as a whole.
 set(CTCOMPILE_GENERATED_WARNINGS
     "-Wno-unused-parameter;-Wno-unused-variable;-Wno-unused-but-set-variable")
 
-# THE BOXED JS -> C++ PIPELINE, file names relative to this binary directory.
+# The boxed JS -> C++ pipeline. File names are relative to this binary
+# directory.
 #
 # ctcompile_embed_js: `js` as the raw string a driver reads (embed-js.cmake),
 # so the driver runs the same bytes the pipeline compiled.

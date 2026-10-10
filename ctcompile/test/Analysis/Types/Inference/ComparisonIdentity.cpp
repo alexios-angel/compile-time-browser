@@ -1,7 +1,26 @@
+//===- ComparisonIdentity.cpp - Identities proved by strict comparison ----===//
+//
+// Tests for objects whose only identity-observing use is `===`: when
+// prepareNativeObjectIdentities may give such an allocation a native identity
+// without properties, and how forged attributes and live IR edits are handled.
+//
+// Comparison-only identities need their own complete producer and use census.
+// The expectations are attached to source allocations (`test_identity`,
+// `test_field_family`), never inferred from field schema numbers or another
+// comparison operand's type. Preparation may add annotations but must preserve
+// every allocation, scalar write and operand.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Tests.h"
 
 namespace ctcompile::test::type_inference {
 
+/// Runs prepareNativeObjectIdentities on \p module and checks that it changes
+/// no source op or operand, gives a native identity exactly to the
+/// allocations marked `test_identity = true`, and gives field families that
+/// match the `test_field_family` annotations (equal annotations, equal
+/// families; -1 means no family).
 void checkComparisonIdentityPreparation(mlir::ModuleOp module, const char * what) {
     using namespace ctcompile;
     std::vector<mlir::Operation *> operations;
@@ -54,6 +73,9 @@ void checkComparisonIdentityPreparation(mlir::ModuleOp module, const char * what
     if (typed) { check(module, what, "!ctnative.object_identity"); }
 }
 
+/// Stamps a fake identity and field group (777) on every op, so the checks
+/// prove that preparation recomputes from source rather than trusting stale
+/// attributes.
 void forgeComparisonIdentityReports(mlir::ModuleOp module) {
     auto * context = module.getContext();
     module.walk([&](mlir::Operation * op) {
@@ -63,7 +85,11 @@ void forgeComparisonIdentityReports(mlir::ModuleOp module) {
     });
 }
 
+/// Checks a table of source fixtures; each is checked clean, after forging
+/// reports, and as a forged fresh clone.
 void checkComparisonIdentityRows(mlir::MLIRContext & context) {
+    // Number constants are IEEE-754 bit patterns: 4607182418800017408 is 1.0
+    // and 4609434218613702656 is 1.5.
     const std::string prefix = R"mlir(
   %nil = ctjs.constant #ctjs.undefined
   %one = ctjs.constant #ctjs.number<4607182418800017408>
@@ -262,6 +288,10 @@ ctjs.func private @identity(%receiver: !ctjs.value, %new_target: !ctjs.value,
                 rows.size());
 }
 
+/// Mutates live IR (comparison kind, call arity and target, helper visibility,
+/// extra callers, publication, field key and spelling, comparisons or property
+/// reads moved across regions) and checks that the identity proof is withdrawn,
+/// then rebuilt when the edit is undone.
 void checkComparisonIdentityMutations(mlir::MLIRContext & context) {
     using namespace ctcompile;
     const auto expect = [&](mlir::ModuleOp module, bool accepted) {
@@ -281,8 +311,9 @@ void checkComparisonIdentityMutations(mlir::MLIRContext & context) {
         ++states;
         expect(module, accepted);
         forgeComparisonIdentityReports(module);
-        // Clone before the old module is rechecked: both queries see forged
-        // prior reports, including deliberately invalid live SSA/arity below.
+        // Clone before the module is rechecked, so both queries see the forged
+        // reports, including the deliberately invalid live SSA and arity
+        // edits below.
         auto fresh = mlir::OwningOpRef<mlir::ModuleOp>(module.clone());
         checkComparisonIdentityPreparation(module, what);
         checkComparisonIdentityPreparation(*fresh, what);
@@ -436,8 +467,8 @@ ctjs.func @scoped(%receiver: !ctjs.value, %new_target: !ctjs.value,
         scopedComparison->moveBefore(restoreBefore);
         liveAndFresh(*source, "restoring exact comparison source scope rebuilds the proof", true);
     }
-    // The field environment is its own source proof. A property operation on
-    // an unrelated allocation cannot use a same-schema origin from another
+    // The field environment needs its own source proof: a property operation
+    // on an unrelated allocation cannot use a same-schema origin from another
     // region. Fieldless identities do not depend on that environment at all.
     for (bool withField : {false, true}) {
         const std::string environment = prologue() + R"mlir(
@@ -480,8 +511,8 @@ ctjs.func @scoped(%receiver: !ctjs.value, %new_target: !ctjs.value,
             liveAndFresh(*source, "independent field environment before source mutation", true);
             auto * restoreBefore = read->getNextNode();
             read->moveBefore(sibling ? branch.getElseRegion().front().getTerminator() : other);
-            // Only the source proof is queried on malformed IR. The general
-            // sparse type solver is entitled to require verified SSA.
+            // Only the source proof is queried on malformed IR; the sparse type
+            // solver may assume verified SSA, so `check` is removed first.
             source->walk([](mlir::Operation * op) { op->removeAttr("check"); });
             liveAndFresh(*source,
                          withField ? "unrelated malformed property origin blocks field identity"

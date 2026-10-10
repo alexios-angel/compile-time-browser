@@ -1,3 +1,11 @@
+//===- Captured.cpp - Captured-Map snapshot and callback tests ------------===//
+//
+// Tests snapshots of a captured Map's keys (`Array.from(map.keys())` and
+// template strings built from them) and a scalar `console.error` callback. Each
+// test takes `prepared` to select the closure-converted form of the fixture.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Helpers.hpp"
 
 namespace ctcompile::test::owned_global_shared_map {
@@ -81,6 +89,9 @@ void checkCapturedStringSnapshots(mlir::MLIRContext & context, const std::string
     nested = replaced(nested, "%setter(%state, %entryKey, %value)",
                       "%setter(%state, %outerKey, %value)");
     unsigned rows = 0;
+    // expected: whether the proof should succeed. outer/child: whether the outer
+    // Map or the nested child Map is expected to have only String keys.
+    // budgets: also check every truncated step budget.
     const auto variant = [&](const std::string & program, bool expected, bool outer = false,
                              bool child = false, bool budgets = false) {
         ++rows;
@@ -339,6 +350,7 @@ void checkCapturedSnapshots(mlir::MLIRContext & context, const std::string & sou
     %copy =)MLIR"),
            "iterator consumption cannot cross a Map mutation");
     for (const auto & literal :
+         // Index bit patterns: NaN, 0.5, -1.0, then the String "0".
          {"#ctjs.number<9221120237041090560>", "#ctjs.number<4602678819172646912>",
           "#ctjs.number<13830554455654793216>", "#ctjs.string<\"0\">"}) {
         refuse(replaced(normal, "#ctjs.number<0>", literal),
@@ -412,6 +424,8 @@ void checkCapturedSnapshots(mlir::MLIRContext & context, const std::string & sou
                 prepared ? "prepared" : "source");
 }
 
+// The message is Bootstrap's duplicate-instance warning, the real
+// console.error call this shape is modelled on.
 void checkScalarCallbacks(mlir::MLIRContext & context, const std::string & source, bool prepared) {
     const auto requested = [](mlir::ModuleOp module) {
         auto contract = mapContractFor(module);

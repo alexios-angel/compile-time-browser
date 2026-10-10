@@ -1,13 +1,15 @@
-// WHAT AN IMAGE IS WORTH ON A WHOLE PAGE LOAD, which is the only number a user
-// of this compiler would care about.
+//===- ctcompile/tools/ctpageload/ctpageload.cpp - Page-load benchmark ----===//
 //
-// The per-stage baseline says loading a program from an image is about four
-// times faster than compiling it. That is a stage; this loads a real page both
-// ways and reports the difference in `load_html`, where parsing competes with
-// HTML, CSS, style, layout and everything else a page does before it draws.
+// Measures what program images save on a whole page load, the number a user
+// of this compiler cares about. Loading one compiled program from an image is
+// about four times faster than compiling it; this tool measures what that
+// saves in `load_html`, where script compilation competes with HTML, CSS,
+// style, layout and everything else a page does before it draws.
 //
-// It exits non-zero if the image was NOT used, because a run that quietly fell
-// back to compiling would report a saving of zero and look like a finding.
+// It exits non-zero if the images were not used, because a run that silently
+// fell back to compiling would report a saving of zero and look like a result.
+//
+//===----------------------------------------------------------------------===//
 #include <ctbrowser.hpp>
 #include <ctcompile/Support/Measure.hpp>
 
@@ -23,16 +25,16 @@ namespace {
 using ctcompile::median_ms;
 using ctcompile::read_file;
 
-// ONE LOAD FROM IMAGES, IN A FUNCTION WITH A NAME, so callgrind can be told to
-// collect only inside it:
-//
-//   valgrind --tool=callgrind --collect-atstart=no \
-//            --toggle-collect=ctpageload_load_from_images ... ctpageload page.html
-//
-// This tool BUILDS the images it hands over, so the compile it exists to avoid
-// happens in the same process - and profiling the whole run measures that
-// compile rather than the load. docs/plans/ctcompile.md records the first time
-// that happened here. `noinline` because a toggle needs a symbol to land on.
+/// Loads the page once from `images` and returns how many scripts still had
+/// to be compiled from source. It is a named, non-inlined function so
+/// callgrind can collect only inside it:
+///
+///   valgrind --tool=callgrind --collect-atstart=no \
+///            --toggle-collect=ctpageload_load_from_images ... ctpageload page.html
+///
+/// This tool builds the images it hands over, so the compile it exists to avoid
+/// happens in the same process, and profiling the whole run would measure that
+/// compile rather than the load.
 [[gnu::noinline]] std::size_t ctpageload_load_from_images(
     const std::string & page, const std::vector<std::vector<std::byte>> & images) {
     ctbrowser::browser browser{ctbrowser::browser_options{800, 600}};
@@ -59,11 +61,11 @@ int main(int argc, char ** argv) {
         return 2;
     }
 
-    // ASK THE BROWSER WHAT IT COMPILES rather than reproducing it here. A page
-    // has as many classic scripts as it likes - p5-basic.html has three, an
-    // inline flag, the src'd bundle and the sketch - and a tool that guessed
-    // the rule would build images whose hashes never match, which presents as
-    // "no saving" rather than as a bug in the tool.
+    // Ask the browser which scripts it compiles rather than reproducing the
+    // rule here. A page has any number of classic scripts (p5-basic.html has
+    // three: an inline flag, the src'd bundle and the sketch), and a tool that
+    // guessed wrong would build images whose hashes never match, which would
+    // look like "no saving" rather than a bug in the tool.
     std::vector<std::string> scripts;
     {
         ctbrowser::browser first{ctbrowser::browser_options{800, 600}};
@@ -76,8 +78,8 @@ int main(int argc, char ** argv) {
         return 2;
     }
 
-    // ONE IMAGE PER SCRIPT, which is the whole point: the page's own sketch and
-    // the library beside it are separate artefacts with separate keys.
+    // One image per script: the page's own sketch and the library beside it are
+    // separate artefacts with separate keys.
     std::vector<std::vector<std::byte>> images;
     std::size_t functions = 0, source_bytes = 0, image_bytes = 0;
     for (const std::string & text : scripts) {
@@ -125,9 +127,9 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
-    // AND THE NUMBER THE SPLIT WAS FOR. Hand over every image EXCEPT the last
-    // script's - which is what a developer who edited their own sketch has -
-    // and see what the page still avoids recompiling.
+    // One image per script pays off when one script changes: hand over every
+    // image except the last script's (what a developer who edited their sketch
+    // has) and measure what the page still avoids recompiling.
     if (scripts.size() > 1) {
         const double edited = median_ms(3, [&] {
             ctbrowser::browser browser{ctbrowser::browser_options{800, 600}};

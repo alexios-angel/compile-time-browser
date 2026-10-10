@@ -3,8 +3,8 @@
 // RUN: python3 %S/../check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name signed-product
 // RUN: FileCheck %s --check-prefix=CLAIM < %t/escape-claims-signed-product.claims
 
-// Products retain signed Number snapshots and exact String conversions, canonical
-// or not.
+// `*` loop steps on signed numbers, including a length copied before its array shrank, are
+// bounded exactly, and so are numeric string operands, canonical or not.
 // IMPORT-LABEL: ctjs.func @snapshotReleased$
 // IMPORT: ctjs.binary sub
 // IMPORT: ctjs.set_property

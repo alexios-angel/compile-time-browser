@@ -1,3 +1,18 @@
+//===- Arithmetic.cpp - Array index proofs through arithmetic -------------===//
+//
+// Array-index proofs through arithmetic: div, mod, sub, add, unary bitnot and
+// the bitwise and shift operators. Each case checks whether a computed value
+// is proved to be an exact, in-bounds own-element index, and that a stored
+// result keeps its value after its source slot is overwritten.
+//
+// `#ctjs.number<N>` is the raw IEEE-754 bit pattern of a double:
+// 4607182418800017408 = 1.0, 4611686018427387904 = 2.0,
+// 13830554455654793216 = -1.0, 4746794007244308480 = 2^31 - 1,
+// 4751297606873776128 = 2^32 - 1 (the largest array length),
+// 4751297606875873280 = 2^32, 9223372036854775808 = -0.0.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Cases.hpp"
 
 namespace ctcompile::test::escape::arrays::length_detail {
@@ -65,7 +80,7 @@ void LengthCases::arithmetic() {
          .failure = ArrayContentsFailure::UnknownIndex});
     for (const std::string literal : {"#ctjs.number<0>",
                                       "#ctjs.number<9223372036854775808>", // -0
-                                      "#ctjs.number<4611686018427387904>", // fractional 1/2
+                                      "#ctjs.number<4611686018427387904>", // 2 (1 / 2 = 0.5)
                                       "#ctjs.number<4602678819172646912>", // 0.5
                                       "#ctjs.number<4751297606875873280>", // 2^32
                                       "#ctjs.number<9218868437227405312>", // infinity
@@ -132,6 +147,7 @@ void LengthCases::arithmetic() {
          .reads = "a[0]=x",
          .exit = "x -> {x}"},
         "");
+    // %near is 2^32 - 2: (2^32 - 1) mod 2 and mod (2^32 - 2) are both 1.
     for (const std::string divisor : {"%two", "%near"}) {
         run({.what = "a nonzero bounded remainder stays exact at the maximum Number endpoint",
              .body = values + one +
@@ -222,6 +238,7 @@ void LengthCases::arithmetic() {
                  "  %index = ctjs.binary mod %zero, %divisor\n" +
                  indexed,
          .failure = ArrayContentsFailure::UnsupportedOperation});
+    // ~"0" = -1, ~"2147483647" = -2^31, ~"2147483648" = 2^31 - 1, ~"4294967294" = 1.
     for (const auto & [input, expected] :
          {std::pair{"0", "13830554455654793216"}, std::pair{"2147483647", "13970166044103278592"},
           std::pair{"2147483648", "4746794007244308480"},
@@ -449,6 +466,7 @@ void LengthCases::arithmetic() {
                                 : kind == "shl"                 ? "32"
                                 : kind == "bitxor"              ? "2"
                                                                 : "1";
+        // -1.0 for shr ("2147483648" >> "31"), 1.0 for every other operator.
         const std::string expected = kind == "shr" ? "13830554455654793216" : "4607182418800017408";
         run({.what = "canonical String bitwise operands keep exact signed and masked results",
              .body = values + "  %lhs = ctjs.constant #ctjs.string<\"" + lhs +
@@ -473,6 +491,9 @@ void LengthCases::arithmetic() {
               "#ctjs.string<\"1.0\">", "#ctjs.string<\"4294967295\">", "#ctjs.bigint<\"0\">",
               "#ctjs.boolean<false>", "#ctjs.null", "#ctjs.undefined"}) {
             for (const std::string operands : {"%input, %zero", "%zero, %input"}) {
+                // Zero when the input's ToInt32 is 0 (0.5, +-2^32, inf, NaN, "0",
+                // "00", false, null); for a nonzero input only when the operator is
+                // bitand or the input is the shift count.
                 const bool exactZero =
                     literal == "#ctjs.number<4602678819172646912>" ||
                     literal == "#ctjs.number<4751297606875873280>" ||

@@ -1,42 +1,48 @@
 #pragma once
-// PHASE 55A'S TABLE, ONE CELL AT A TIME.
+//===- Harness.h - Shared harness for the escape-analysis row tests -------===//
 //
-// The oracle (Stage 55O) answers "is the analysis sound over a corpus", which
-// is the question that matters and cannot say WHICH cell is wrong. This is the
-// other half: one small function per cell of the sinks-and-carriers table
-// (25-escape-analysis.md §2.2), checked individually, so a regression names
-// the operand.
+// Per-entry checks of the escape analysis's sink/carry table: one small
+// function per operand role of each operation, checked individually, so a
+// regression names the operand. The corpus oracle (AOTOracle.cpp,
+// oracle-checker.test) says whether the analysis is sound overall but cannot
+// say which table entry is wrong.
 //
-// THE NEGATIVE ROWS ARE THE POINT. For every SINK cell there is a row in which
-// that operand ALONE flips a site to `escapes:<reason>`; for every NEITHER and
-// CARRY cell there is a row in which the site stays confined through it. An
-// analysis that sank nothing would pass the positive rows and be wrong about
-// `return {}`; an analysis that sank everything would pass the negative rows
-// and prove nothing. The two families together pin the table.
+// The negative rows are the point. For every SINK entry there is a row in
+// which that operand alone flips a site to `escapes:<reason>`; for every
+// NEITHER and CARRY entry there is a row in which the site stays confined
+// through it. An analysis that sank nothing would pass the positive rows and be
+// wrong about `return {}`; an analysis that sank everything would pass the
+// negative rows and prove nothing. The two families together pin the table.
 //
-// AND EVERY ROLE IS ASSERTED THROUGH THE GENERATED INTERFACE AS WELL: each
-// row's `roles` string names the operand roles of one operation, and the
-// harness reads them back TWICE - once through ctjs::EscapeEffectOpInterface's
-// getEffects directly (the ODS decorators, resource names and all) and once
-// through operandRole (the path the verdict takes). A row can therefore only
-// be wrong by name: if a decorator moves to the wrong operand, the interface
-// check fails before the verdict does; if the C++ default rule or kind switch
-// drifts, the operandRole check fails while the interface still agrees.
+// Every role is also asserted through the generated interface: each row's
+// `roles` string names the operand roles of one operation, and the harness
+// reads them back twice, once through ctjs::EscapeEffectOpInterface's
+// getEffects (the ODS decorators, resource names and all) and once through
+// operandRole (the path the verdict takes). If a decorator moves to the wrong
+// operand, the interface check fails before the verdict does; if the C++
+// default rule or kind switch drifts, the operandRole check fails while the
+// interface still agrees.
 //
-// Two rows exist to be broken on purpose, and were (see the commit): the
-// return/throw rows go red if a sink is moved into visitOperation, because
-// the sparse framework never visits a result-less operation; the DEFAULT-RULE
-// row goes red if an unannotated operation is made NEITHER.
+// Two rows guard specific regressions: the return/throw rows fail if a sink is
+// moved into visitOperation (the sparse framework never visits an operation
+// with no results), and the default-rule row fails if an unannotated operation
+// is made NEITHER.
 //
-// Part 23 §1.4: a TEST, exempt from the ODS-first ratio - there is no TableGen
-// way to assert that `return %s` and `return %p` differ.
+// This is a C++ test rather than an ODS/TableGen declaration because TableGen
+// cannot express that `return %s` and `return %p` behave differently.
 //
-// SPLIT 2026-09-08: this was the top of a single 2,763-line test/EscapeAnalysis.cpp.
-// The harness - `row`, `kPrologue`, `check` and the printers every row file
-// needs - lives here; the rows are EscapeAnalysisSinks.cpp,
-// EscapeAnalysisCompletion.cpp and EscapeAnalysisStorage.cpp, and the array
-// contents/retention tables are EscapeAnalysisArrays.cpp. Everything here is
-// `inline` in a named namespace only so that four executables can include it.
+// The rows live in Sinks.cpp, Completion.cpp and Storage.cpp; the array
+// contents/retention tables live in Arrays/. Everything here is `inline` so
+// several test executables can include it.
+//
+// Row descriptions cite the VM code behind each role with short names:
+// o.cpp, c.cpp and rl.cpp are ctbrowser/lib/Script/vm/objects.cpp, call.cpp
+// and run_loop.cpp as they were before being split into the vm/objects/,
+// vm/call/ and vm/run_loop/ directories, and def is
+// ctbrowser/include/ctbrowser/script/bytecode_opcodes.def. Their line numbers
+// predate the split; search for the named function instead.
+//
+//===----------------------------------------------------------------------===//
 
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
 #include "ctcompile/CTJS/IR/CTJSEscapeEffects.h"
@@ -72,26 +78,26 @@ namespace ctcompile::test::escape {
 using namespace ctcompile::ctnative;
 namespace ctjs = ctcompile::ctjs;
 
-// One row. `body` OWNS its text (TypeInference.cpp says why: a `const char *`
-// into a concatenation temporary dangles) and INCLUDES its terminator, since
-// several rows return or throw the site itself.
+/// One table row. `body` owns its text (a `const char *` into a concatenation
+/// temporary would dangle) and includes its terminator, since several rows
+/// return or throw the site itself.
 struct row {
     const char * what;
     std::string body;
-    // The verdict of the operation marked `check` - "confined" or
-    // "escapes:<reason>" - or, when `alias` is set, the printed alias set of
-    // its result.
+    /// The verdict of the operation marked `check` ("confined" or
+    /// "escapes:<reason>"), or, when `alias` is set, the printed alias set of
+    /// its result.
     const char * expected;
-    // Optional diagnostic witness: the sinking operation name and operand.
+    /// Optional diagnostic witness: the sinking operation name and operand.
     const char * by = nullptr;
     unsigned position = 0;
-    // "<op> <role> <role> ..." - the role of EVERY operand of the first
-    // operation of that name, in ODS argument order, each `neither`, `carry`
-    // or `sink:<reason>`. A leading `~` says the operation must NOT implement
-    // the interface (the kind switch, a branch, the default rule).
+    /// "<op> <role> <role> ...": the role of every operand of the first
+    /// operation of that name, in ODS argument order, each `neither`, `carry`
+    /// or `sink:<reason>`. A leading `~` says the operation must not implement
+    /// the interface (the kind switch, a branch, the default rule).
     const char * roles = nullptr;
-    // For the operation named in `roles`: "" = not a boxed site, else its
-    // reason.
+    /// For the operation named in `roles`: "" means not a boxed site, anything
+    /// else is its reason.
     const char * boxed = nullptr;
     unsigned unvisitedSites = 0;
     unsigned unvisitedOperands = 0;
@@ -99,42 +105,43 @@ struct row {
     bool capturesAllArguments = false;
     const char * wholeFunction = nullptr;
     bool alias = false;
-    // Inspect the first operand's alias set, including a block argument that
-    // has no defining operation to mark with `check`.
+    /// Inspect the first operand's alias set, including a block argument that
+    /// has no defining operation to mark with `check`.
     bool aliasOperand = false;
-    // false: the solver runs WITHOUT EscapeAnalysis, so every lattice is
-    // missing and the post-pass has to account for a live site it never saw.
+    /// When false, the solver runs without EscapeAnalysis, so every lattice is
+    /// missing and the post-pass has to account for a live site it never saw.
     bool withAnalysis = true;
-    // Direct target evidence for the first Stored witness. This never changes
-    // `expected`, which still asserts the original escape verdict.
+    /// Direct target evidence for the first Stored witness. This never changes
+    /// `expected`, which still asserts the original escape verdict.
     const char * storageTarget = nullptr;
     const char * storageTargetVerdicts = nullptr;
-    // Query a synthetic Stored witness on the marked operation to exercise a
-    // missing target lattice or a malformed operand position independently.
+    /// Query a synthetic Stored witness on the marked operation to exercise a
+    /// missing target lattice or a malformed operand position independently.
     std::optional<unsigned> storageWitnessPosition = std::nullopt;
-    // Full direct-write census, including writes after the first sink and
-    // writes whose value has no tracked site. Semicolon-separated in IR order.
+    /// Full direct-write census, including writes after the first sink and
+    /// writes whose value has no tracked site. Semicolon-separated in IR order.
     const char * storageWrites = nullptr;
     std::optional<bool> completeStorage = std::nullopt;
-    // Diagnostic candidate write indices for each live property read. Neither
-    // their presence nor their absence describes the read's current contents.
+    /// Diagnostic candidate write indices for each live property read. Neither
+    /// their presence nor their absence describes the read's current contents.
     const char * loadReads = nullptr;
     std::optional<bool> completeLoads = std::nullopt;
-    // Separate bounded closure: deterministic labelled candidates per read,
-    // and ALL exposures of the marked site, even after its first Stored sink.
+    /// Separate bounded closure: deterministic labelled candidates per read,
+    /// and all exposures of the marked site, even after its first Stored sink.
     const char * provenanceReads = nullptr;
     const char * provenanceExposures = nullptr;
     std::optional<bool> provenanceInputs = std::nullopt;
 };
 
-// The header every row shares - TypeInference.cpp's: three implicit arguments
-// then two parameters, all of which alias an EXTERNAL object, which is what
-// makes a parameter's role observable: sinking %p sinks no site.
+/// The function header every row shares: three implicit arguments then two
+/// parameters, all aliasing an external object, which makes a parameter's role
+/// observable (sinking %p sinks no site).
 inline constexpr const char * kPrologue =
     "ctjs.func @f(%receiver: !ctjs.value, %new_target: !ctjs.value, "
     "%callee: !ctjs.value, %p: !ctjs.value, %q: !ctjs.value) -> !ctjs.value "
     "attributes {upvalue_count = 0 : i32} {\n";
 
+/// Prints the verdict for `site` as "confined" or "escapes:<reason>".
 inline std::string verdictString(const EscapeVerdicts & verdicts, mlir::Operation * site) {
     auto found = verdicts.sites.find(site);
     if (found == verdicts.sites.end()) { return "<no verdict>"; }
@@ -151,10 +158,10 @@ inline std::string roleString(const RoleOf & role) {
     return "?";
 }
 
-// THE INDEPENDENT PATH: the ODS decorators as the generated interface reports
-// them, spelled from the RESOURCE'S NAME rather than from the enum, so a
-// decorator on the wrong operand or a route with the wrong name fails here
-// even if operandRole happened to agree with the row.
+/// The independent path: the ODS decorators as the generated interface reports
+/// them, spelled from the resource's name rather than from the enum, so a
+/// decorator on the wrong operand or a route with the wrong name fails here
+/// even if operandRole happened to agree with the row.
 inline std::string roleThroughInterface(ctjs::EscapeEffectOpInterface roles, unsigned index) {
     llvm::SmallVector<mlir::SideEffects::EffectInstance<ctjs::EscapeEffects::Effect>, 6> effects;
     roles.getEffects(effects);
@@ -175,6 +182,7 @@ inline void fail(const row & r, const std::string & message) {
     ++ctbrowser_test_failures;
 }
 
+/// Prints an alias set with sites named by operation and `storage_test_id`.
 inline std::string labelledAliases(const AliasValue & aliases) {
     if (aliases.isUninitialized()) { return "<uninitialized>"; }
     // Sort labels, not allocation addresses, so same-kind sites stay distinct.
@@ -191,6 +199,8 @@ inline std::string labelledAliases(const AliasValue & aliases) {
     return "{" + llvm::join(names, ", ") + "}";
 }
 
+/// Checks the operand roles and boxed-site reason that `r.roles` and `r.boxed`
+/// name, through both operandRole and the generated interface.
 inline void checkRoles(const row & r, mlir::ModuleOp module) {
     std::istringstream in{r.roles};
     std::string opName;
@@ -247,6 +257,8 @@ inline void checkRoles(const row & r, mlir::ModuleOp module) {
     }
 }
 
+/// Parses one row into a module, runs the solver and checks every expectation
+/// the row sets, plus the counters and invariants every row must satisfy.
 inline void check(mlir::MLIRContext & context, const row & r) {
     const std::string text = std::string{kPrologue} + r.body + "}\n";
     mlir::OwningOpRef<mlir::ModuleOp> module =
@@ -256,8 +268,10 @@ inline void check(mlir::MLIRContext & context, const row & r) {
         return;
     }
 
-    // DeadCodeAnalysis AND SparseConstantPropagation, neither optional - see
-    // TypeInference.h and TypeClaims.cpp for the trap each one closes.
+    // Both are required (TypeInference.h explains): without DeadCodeAnalysis
+    // block arguments never receive the operands branched into them, and
+    // without SparseConstantPropagation DeadCodeAnalysis marks no branch
+    // successor live, so nothing past the first branch is visited.
     mlir::DataFlowSolver solver;
     solver.load<mlir::dataflow::DeadCodeAnalysis>();
     solver.load<mlir::dataflow::SparseConstantPropagation>();
@@ -284,7 +298,7 @@ inline void check(mlir::MLIRContext & context, const row & r) {
 
     std::string got;
     if (r.alias || r.aliasOperand) {
-        // The LAST result: ctjs.catch_land's first is an i32 pad id.
+        // The last result: ctjs.catch_land's first is an i32 pad id.
         mlir::Value value;
         if (r.aliasOperand && marked->getNumOperands() != 0) {
             value = marked->getOperand(0);
@@ -424,8 +438,8 @@ inline void check(mlir::MLIRContext & context, const row & r) {
         }
     }
 
-    // THE COUNTERS, every one of them: a counter nobody asserts is a counter
-    // that can silently stop counting.
+    // Assert every counter: a counter nobody asserts can silently stop
+    // counting.
     const auto expectCount = [&](const char * name, unsigned expected, unsigned actual) {
         if (expected != actual) {
             fail(r, std::string{name} + ": expected " + std::to_string(expected) + ", got " +
@@ -448,7 +462,7 @@ inline void check(mlir::MLIRContext & context, const row & r) {
                     std::to_string(verdicts.blocks) + " live");
     }
 
-    // THE CLOSURE HOLE, CHECKED ON EVERY ROW: no alias set anywhere in the
+    // The closure hole, checked on every row: no alias set anywhere in the
     // module may hold anything but a create_object or a create_array. The
     // analysis asserts it in debug builds; this is the release-build witness.
     const auto checkValue = [&](mlir::Value value) {
@@ -469,6 +483,7 @@ inline void check(mlir::MLIRContext & context, const row & r) {
     if (r.roles != nullptr) { checkRoles(r, *module); }
 }
 
+/// Names an operation by its `storage_test_id` label, or by its operation name.
 inline std::string contentsLabel(mlir::Operation * operation) {
     if (auto label = operation->getAttrOfType<mlir::StringAttr>("storage_test_id")) {
         return label.getValue().str();

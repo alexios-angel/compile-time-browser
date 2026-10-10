@@ -1,13 +1,16 @@
-// THE RUNTIME HEADER, COMPILED AND RUN - the one translation unit in the build
-// that includes Runtime/ctnative.hpp the way a generated program does, with
-// both of its switches on, under -Werror. Until 2026-09-15 the helpers were
-// string literals that nothing compiled until a generated program did, so a
-// warning in one was found by whichever native test happened to emit it.
+//===- ctcompile/test/Runtime/NativeRuntime.cpp - native runtime checks ---===//
+//
+// Compiles and runs ctcompile/CTNative/Runtime/ctnative.hpp exactly as a
+// generated program includes it, with CTNATIVE_DOM and CTNATIVE_ORDERED_MAPS
+// on, under -Werror, so a warning or contract break in a runtime helper fails
+// here instead of in whichever native test happens to use it.
 //
 // The checks are the contracts a generated program relies on and no lit test
 // pins directly: an out-of-range index is undefined, a NaN key is one key, -0
 // is stored as +0, a snapshot keeps insertion order across delete and
 // reinsert, and null == undefined but null !== undefined.
+//
+//===----------------------------------------------------------------------===//
 #define CTNATIVE_DOM 1
 #define CTNATIVE_ORDERED_MAPS 1
 #include "ctcompile/CTNative/Runtime/Browser.hpp"
@@ -306,7 +309,8 @@ int main() {
     CHECK(string_length(high) == 1 && string_length(high + low) == 2);
     CHECK(string_length("") == 0 && string_length("ab") == 2);
     const std::vector<double> three{10, 20, 30};
-    // A fractional key names a property, not an element (element_index, eff9c2f6a).
+    // A fractional, out-of-range or null key names a property, not an element,
+    // so vec_at answers undefined (see element_index in ctnative.hpp).
     CHECK(vec_at(three, nullable_scalar{-0.5}).tag == nullable_scalar::kind::undefined);
     CHECK(vec_at(three, nullable_scalar{3.0}).tag == nullable_scalar::kind::undefined);
     CHECK(vec_at(three, nullable_scalar::null()).tag == nullable_scalar::kind::undefined);
@@ -857,9 +861,10 @@ int main() {
     CHECK(rejects([&] { (void)js_document_t{dom, wrongStyles}; }));
     CHECK(rejects([&] { (void)js_element_t{{&dom, button}, wrongStyles}; }));
 
-    // A DOM entry's element input is never an HTML form, whose controls answer
-    // by index and name ahead of every member (HTML 4.10.3). A Data session's
-    // key and a query result may be one.
+    // require_entry_element and require_dataset_element refuse an HTML <form>,
+    // whose named controls shadow its members ([LegacyOverrideBuiltIns], HTML
+    // 4.10.3). require_element, used for keys, and querySelector results accept
+    // one, and an SVG <form> is not an HTML form.
     const auto refusesForm = [](auto check, ctbrowser::element_ref input) {
         try {
             check(input);

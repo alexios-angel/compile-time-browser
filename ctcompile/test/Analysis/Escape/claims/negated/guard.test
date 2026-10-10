@@ -3,9 +3,9 @@
 // RUN: python3 %S/../check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name negated-guard
 // RUN: FileCheck %s --check-prefix=CLAIM < %t/escape-claims-negated-guard.claims
 
-// Keep the comparison operands and logical negation in the imported source.
-// Both finite forms retain returned children; negating a strict comparison
-// remains an inclusive bound, outside the proof even when the child dies here.
+// The comparisons and `!` must survive import. Both `!(i >= n)` forms bound the loop; `!(i > n)`
+// is inclusive (it reads one past the end), so it is refused even though child dies
+// here.
 // IMPORT-LABEL: ctjs.func @released$
 // IMPORT: ctjs.compare ge
 // IMPORT: ctjs.unary not

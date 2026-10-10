@@ -1,10 +1,12 @@
-// Owned global method tables: the one-method owner census over the small
-// fixture, its mutation refusals, and the captured-Map family (source,
-// indirect, imported and prepared forms).
+//===- GlobalMethods.cpp - Owned global method table tests ------*- C++ -*-===//
 //
-// SPLIT 2026-09-08: checkSharedMap moved to OwnedGlobalSharedMap.cpp (its own
-// executable) and the fixtures, `check`, `contractFor`, `empty` and `replaced`
-// to OwnedGlobalMethodsFixtures.h. Everything else is verbatim, in order.
+// Tests OwnedGlobalRoots on global method tables: the one-method owner census
+// over the small fixture, the mutations it must refuse, and the captured-Map
+// family (source, indirect, imported and prepared forms). The shared-Map
+// checks are in GlobalSharedMap/; the fixtures and the `check`, `contractFor`,
+// `empty` and `replaced` helpers are in GlobalMethodsFixtures.h.
+//
+//===----------------------------------------------------------------------===//
 
 #include "GlobalMethodsFixtures.h"
 
@@ -14,6 +16,9 @@ using namespace ctcompile::test::owned_global_methods;
 
 namespace {
 
+/// True when \p query proved exactly one root, global `host`.slot, whose
+/// method table has one method called \p calls times, and every recorded op
+/// maps back to that root.
 bool complete(const OwnedGlobalRoots & query, unsigned calls = 1) {
     if (!query.proved() || query.exhausted() || query.roots().size() != 1) { return false; }
     const auto & root = query.roots().front();
@@ -35,6 +40,8 @@ bool complete(const OwnedGlobalRoots & query, unsigned calls = 1) {
            !query.lookup(table.calls.front().call);
 }
 
+/// Checks the method table whose method reads a Map captured from its factory,
+/// over the source, indirect, imported and prepared forms of the fixture.
 void checkCapturedMap(mlir::MLIRContext & context) {
     const auto proved = [](const OwnedGlobalRoots & query, bool prepared) {
         if (!query.proved() || query.roots().size() != 1) { return false; }
@@ -55,6 +62,11 @@ void checkCapturedMap(mlir::MLIRContext & context) {
                          : (capture.cell && capture.initialization && !capture.upvalues.empty() &&
                             !capture.argument));
     };
+    // Variants of capturedFixture: `prepared` passes the captured Map as an
+    // explicit argument instead of a cell, `specialized` also creates the
+    // factory inside the wrapper, `indirect` calls the factory through a
+    // value, and the browser*/later*/trailing* variants move the factory to
+    // other wrapper parameter positions.
     auto prepared = replaced(capturedFixture, "    %cell = ctjs.create_cell %u\n", "");
     prepared = replaced(prepared, "    ctjs.cell_set %cell, %state\n", "");
     prepared = replaced(prepared, "captures %cell", "captures %state");
@@ -105,6 +117,8 @@ void checkCapturedMap(mlir::MLIRContext & context) {
                                "%arg2: !ctjs.value, %arg3: !ctjs.value, %arg4: !ctjs.value)");
     importedBrowser = replaced(importedBrowser, "ctjs.call %arg3(%2)", "ctjs.call %arg4(%2)");
     importedBrowser = replaced(importedBrowser, "ctjs.frame_enter 4", "ctjs.frame_enter 5");
+    // Inserts a Map.set("x", 1.0) call (4607182418800017408 is the IEEE-754
+    // bit pattern of 1.0) before the method's size read.
     constexpr llvm::StringLiteral set = R"MLIR(
     %entryKey = ctjs.constant #ctjs.string<"x">
     %value = ctjs.constant #ctjs.number<4607182418800017408>
@@ -141,6 +155,8 @@ void checkCapturedMap(mlir::MLIRContext & context) {
     %deleteMethod = ctjs.get_property %state[%deleteKey]
     %removed = ctjs.call %deleteMethod(%state, %entryKey)
 )MLIR";
+    // `lifted`: the Map arrives as an argument rather than a captured cell;
+    // `reads`/`calls`: Map reads and method calls the proof must record.
     struct specimen {
         std::string source;
         bool lifted;
@@ -414,7 +430,6 @@ int main() {
     mlir::MLIRContext context;
     context.getOrLoadDialect<ctjs::CTJSDialect>();
     checkCapturedMap(context);
-    // checkSharedMap(context) is GlobalSharedMap/SharedMap.cpp now.
     auto module = parsed(context, fixture, "owned global method fixture parses");
     if (!module) { return 1; }
     const auto contract = contractFor(*module);
