@@ -22,6 +22,23 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Summary (updated 2026-10-10)
+- Active goal: Bootstrap; status: in progress
+- Last verified commit on ctcompile-v1: 986ad747a tools(check): make comment-only.py 25 times faster
+  (built clean with `tools/remote-build.sh all`, 1473/1473, which also builds the
+  2026-10-10 comment sweep; no CTest or lit suite was run on it)
+- Workload check: `check-workload.py bootstrap` -> VERDICT: NOT DONE (2026-10-10);
+  `check-workload.py fixture` -> VERDICT: DONE
+- First gap and next step: admission. The bundle has 19 of 574 functions native
+  (top raw reasons: 271 "uses `this`", 137 "uses its own closure", 70 unproved
+  parameter 0) and tools/check/css-dump.js 0 of 6. Next: lower Bootstrap's
+  class receivers and take css-dump.js (the only JavaScript the Bootstrap
+  CTests run) through every checker stage, then add native engine variants of
+  bootstrap_layout and css_syntax.
+- Goals done: none
+- Open questions for the user: none
+- Decisions since the prompt revision: none
+
 ## Forwarded captures and literal String equality, 2026-10-07 UTC
 
 **Landed: `e70c6eaaa` on `ctcompile-v1`, based on clean `30c7fca65`.**
