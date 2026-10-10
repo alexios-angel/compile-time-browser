@@ -73,6 +73,10 @@ liftReport closureLifter::run() {
         }
     }
     bindLocalFunctions(out);
+    // A static variable holding a table of methods is called through
+    // directly (Singletons.cpp). After the binding rule, which removes the
+    // methods' captures of the functions it binds.
+    bindSingletonMethods(out);
     // Unbox object literals that are proved uncaptured before the
     // argument/receiver census. A separate lifter does this because the
     // rewrite erases stores its census points at; the main census below then

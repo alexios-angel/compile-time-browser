@@ -49,6 +49,9 @@ inline constexpr llvm::StringLiteral kNativeClassReason = "ctnative.class_reason
 /// (the constructor lift's `new K(...)`): the class's name, which the lowering
 /// gives the C++ class it emits for that shape.
 inline constexpr llvm::StringLiteral kNativeClassName = "ctnative.class_name";
+/// On the static box of a binding that holds an object literal: why calls of
+/// its methods stay calls through the literal (ClosureLifting/Singletons.cpp).
+inline constexpr llvm::StringLiteral kNativeSingletonReason = "ctnative.singleton_reason";
 
 /// Written by the lowering and read by the C++ emitter (lib/Target/Cpp).
 inline constexpr llvm::StringLiteral kNativeCallableBody = "ctnative.callable_body";
