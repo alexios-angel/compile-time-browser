@@ -1,3 +1,11 @@
+//===- CTNativeOps.cpp - ctnative operation verifiers -----------*- C++ -*-===//
+//
+// Verifiers for ctnative.cpp_try and ctnative.cpp_throw. A try's catch
+// argument fixes one payload type, and every throw that can reach it, directly
+// or through direct calls, must throw that type.
+//
+//===----------------------------------------------------------------------===//
+
 #include "ctcompile/CTNative/IR/CTNativeOps.h"
 
 #include "mlir/Dialect/EmitC/IR/EmitC.h"
@@ -14,6 +22,10 @@
 namespace ctcompile::ctnative {
 namespace {
 
+/// Whether `type` can be thrown by ctnative.cpp_throw and caught by
+/// ctnative.cpp_try: f64, i1, or one of the owning C++ carrier types below.
+/// The size test is only a fast reject: 22 is the length of the longest
+/// carrier name, "ctnative::js_boolean_t".
 bool isExceptionPayload(mlir::Type type) {
     if (type.isF64() || type.isSignlessInteger(1)) { return true; }
     auto opaque = llvm::dyn_cast<mlir::emitc::OpaqueType>(type);
@@ -23,9 +35,11 @@ bool isExceptionPayload(mlir::Type type) {
     return opaque && opaque.getValue().size() <= 22 && carriers.contains(opaque.getValue());
 }
 
-// A throw in a catch body belongs to an enclosing handler, never to the
-// handler already executing. Check the nearest protected region even through
-// nested ifs/tries; JavaScript has no payload-dependent catch filtering.
+/// The cpp_try whose try body (not catch body) most closely encloses
+/// `operation`, stopping at isolated-from-above operations. A throw in a catch
+/// body belongs to an enclosing handler, never to the one already running.
+/// Nested ifs and tries are looked through: JavaScript has no
+/// payload-dependent catch filtering.
 CppTryOp protectedBy(mlir::Operation * operation) {
     for (auto * region = operation->getParentRegion(); region; region = region->getParentRegion()) {
         auto attempt = llvm::dyn_cast_or_null<CppTryOp>(region->getParentOp());
@@ -38,14 +52,17 @@ CppTryOp protectedBy(mlir::Operation * operation) {
     return {};
 }
 
-// Check the actual direct-call graph on every verification. An unhandled
-// primitive throw in a helper reaches the caller's active handler; a local
-// helper catch consumes its own protected throws, but throws from that catch
-// can still escape. Keep no summary across IR mutations. Opaque C++ calls
-// retain their separate foreign-boundary contract: this is a structural
-// payload check, not an effect proof for arbitrary callbacks or source code.
+/// Walks the direct-call graph under a cpp_try on every verification, with no
+/// cached summary, since the IR may have changed. A throw a helper does not
+/// catch reaches the caller's handler, so its type must match the catch
+/// argument; a helper's own try/catch absorbs its protected throws, but a
+/// throw from that catch still escapes. Calls to opaque C++ functions are not
+/// followed: this checks payload types only, not what such calls may throw.
 struct protectedCalls {
     mlir::Type payload;
+    // Work limits: at most 4096 operations visited across the whole call
+    // graph and at most 32 nested callees (checked in call()). Past either,
+    // the verifier refuses rather than running unbounded.
     unsigned remaining = 4096;
     llvm::DenseSet<mlir::Operation *> active;
     llvm::DenseSet<mlir::Operation *> proved;
@@ -56,6 +73,7 @@ struct protectedCalls {
         return false;
     }
 
+    /// Checks the defined callee of `direct` once, refusing recursion.
     bool call(mlir::emitc::CallOp direct) {
         auto target = mlir::SymbolTable::lookupNearestSymbolFrom<mlir::emitc::FuncOp>(
             direct, direct.getCalleeAttr());
@@ -77,6 +95,8 @@ struct protectedCalls {
         return true;
     }
 
+    /// Checks every throw in `body` that `handler` protects (or that escapes,
+    /// when `handler` is null) and follows direct calls.
     bool region(mlir::Region & body, CppTryOp handler) {
         const auto matched = body.walk<mlir::WalkOrder::PreOrder>([&](mlir::Operation * op) {
             if (remaining == 0) {

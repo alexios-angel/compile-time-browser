@@ -1,8 +1,18 @@
+//===- Emit.cpp - try/catch emission ----------------------------*- C++ -*-===//
+//
+// Lowers an admitted ctjs.try and its exits to the ctnative C++ try/catch
+// operations (CppTryOp, CppThrowOp, CppTryEndOp).
+//
+//===----------------------------------------------------------------------===//
+
 #include "../EmitC/Emitter.h"
 #include "ctcompile/CTNative/IR/CTNativeOps.h"
 
 namespace ctcompile::ctnative::lowering_detail {
 
+/// Gives each ctjs.try a result slot and one slot per extra catch argument,
+/// declared before the try, so the catch block reads them instead of block
+/// arguments.
 void lowering::prepareExceptions(ctjs::FuncOp fn) {
     fn.walk([&](ctjs::TryOp attempt) {
         mlir::OpBuilder before(attempt);
@@ -29,6 +39,9 @@ void lowering::prepareExceptions(ctjs::FuncOp fn) {
     });
 }
 
+/// Rewrites a ctjs.try, try_exit or try_yield against the slots
+/// prepareExceptions() made. A throwing exit stores the catch state and
+/// throws; a normal exit stores the result. Returns false for other ops.
 bool lowering::replaceException(mlir::Operation * op) {
     auto attempt = llvm::dyn_cast<ctjs::TryOp>(op);
     auto exit = llvm::dyn_cast<ctjs::TryExitOp>(op);

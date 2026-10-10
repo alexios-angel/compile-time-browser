@@ -1,16 +1,25 @@
+//===- Maps.cpp - DOM entry Maps and records ------------------------------===//
+//
+// Body::mapOperation and Body::recordOperation: local `new Map()` instances and
+// the fixed-shape record objects stored in them.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Body.hpp"
 
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
 
 namespace ctcompile::ctnative::dom_entry_detail {
 
-// A LOCAL STANDARD MAP, admitted here as source shape only. The provider
-// supplies the original constructor, and the complete census admits no
-// binding write, prototype write or script reentry, so these are the standard
-// methods. prepareNativeMaps proves storage, presence and carriers on the same
-// module. Keys are elements, compared by document and node identity, or
-// primitives; payloads are primitives or, one level deep, fresh child Maps.
-// Neither side can run a conversion hook.
+/// Admits a `new Map()` local to the entry function by its source shape only.
+/// The host provider supplies the original Map constructor, and the
+/// whole-module scan has already ruled out writes to bindings or prototypes
+/// and any script reentry, so the methods called are the standard ones.
+/// prepareNativeMaps then proves storage, presence and carriers on the same
+/// module. Keys are elements (compared by document and node identity) or
+/// primitives; values are primitives or, one level deep, fresh child Maps.
+/// No key or value can run a conversion hook. Returns std::nullopt for an
+/// operation that is not a Map or record operation.
 std::optional<bool> Body::mapOperation(mlir::Operation & operation) {
     if (const auto handled = recordOperation(operation)) { return handled; }
     if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(operation)) {
@@ -24,8 +33,9 @@ std::optional<bool> Body::mapOperation(mlir::Operation & operation) {
         if (!plainMapConstruction(made)) {
             return fail("DOM Map requires an empty construction by its own constructor");
         }
-        // A parent stores fresh child Maps. Its fluent aliases share the
-        // family; its reads are children, whose own payloads stay primitive.
+        // A parent Map stores fresh child Maps. The results of its chained
+        // set() calls are aliases of the same parent; its get() results are
+        // children, whose own values stay primitive.
         llvm::SmallVector<mlir::Value> aliases{made.getResult()};
         bool parent = false;
         for (std::size_t index = 0; index < aliases.size(); ++index) {
@@ -91,7 +101,8 @@ std::optional<bool> Body::mapOperation(mlir::Operation & operation) {
     const bool parent = mapParents.contains(call.getReceiver());
     const auto schema = recordSchemas.find(call.getReceiver());
     if (action == "set" && hasKind(call.getArgs()[1], Kind::record)) {
-        // Its own Map, never a parent's, and one closed field set per Map.
+        // A record goes only into its own Map, never a parent Map, and all
+        // records of one Map have the same fields.
         const auto record = call.getArgs()[1];
         const auto & fields = recordFields[record];
         if (recordMaps.lookup(record) != call.getReceiver() || parent ||
@@ -108,7 +119,8 @@ std::optional<bool> Body::mapOperation(mlir::Operation & operation) {
         }
         storedRecords.insert(record);
     } else if (action == "set" && parent) {
-        // Each child is its own fresh allocation: no instance is stored twice.
+        // Each child is a fresh allocation used only here, so no instance is
+        // stored twice.
         auto child = call.getArgs()[1].getDefiningOp<ctjs::ConstructOp>();
         if (!child || !plainMapConstruction(child) || !hasKind(child.getResult(), Kind::map) ||
             !child.getResult().hasOneUse()) {
@@ -122,7 +134,8 @@ std::optional<bool> Body::mapOperation(mlir::Operation & operation) {
         primitiveMaps.insert(call.getReceiver());
     }
     if (action == "get" && schema != recordSchemas.end()) {
-        // Presence is NativeMap's proveRecords obligation: no absent arm.
+        // NativeMap's proveRecords must prove the record is present, so the
+        // result has no absent case.
         values[call.getResult()] = Kind::recordAlias;
         recordMaps[call.getResult()] = call.getReceiver();
         return true;
@@ -134,12 +147,14 @@ std::optional<bool> Body::mapOperation(mlir::Operation & operation) {
     return true;
 }
 
-// A RECORD: a fresh object whose uses are its constant ordinary field reads
-// and writes and `set` payloads of one local Map. Fields written before it is
-// first stored are its whole shape; every record of that Map has the same
-// scalar fields, and later writes through the record or a `get` alias keep
-// each field's kind. The identity stays one object: NativeMap::proveRecords
-// keeps it a stack owner the Map borrows, which also proves every read present.
+/// Admits a record: a fresh object used only through constant ordinary field
+/// reads and writes and as the value of `set` on one local Map. The fields
+/// written before it is first stored are its whole shape; every record of that
+/// Map has the same scalar fields, and later writes through the record or a
+/// `get` alias keep each field's kind. The object keeps a single identity:
+/// NativeMap::proveRecords makes it a stack owner that the Map borrows, which
+/// also proves every read present. Returns std::nullopt for an operation that
+/// does not involve a record.
 std::optional<bool> Body::recordOperation(mlir::Operation & operation) {
     const auto fieldKey = [&](mlir::Value key) {
         auto name = ctjs::constantAttr<ctjs::StringAttr>(key);
@@ -165,8 +180,10 @@ std::optional<bool> Body::recordOperation(mlir::Operation & operation) {
                        ? call.getReceiver()
                        : mlir::Value{};
         };
-        // Uncharged: each use is charged where the main walk visits it, so an
-        // object that is no record keeps the budget its JSON proof had.
+        // This first scan does not spend the analysis budget: the main walk
+        // charges each use when it visits it, so an object that turns out not
+        // to be a record still has the full budget for the JSON object proof
+        // in Body::visit.
         mlir::Value owner;
         for (mlir::OpOperand & use : object.getResult().getUses()) {
             const auto map = stored(use);

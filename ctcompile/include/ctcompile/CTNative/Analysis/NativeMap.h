@@ -1,4 +1,11 @@
-//===- NativeMap.h - proofs for confined standard Map instances -----------===//
+//===- NativeMap.h - Standard Map proofs for native code --------*- C++ -*-===//
+//
+// Proofs that a JavaScript `new Map` is the standard constructor and that
+// every use of the instance is a standard method call native code can
+// implement directly, plus the attributes prepareNativeMaps() writes to
+// record them.
+//
+//===----------------------------------------------------------------------===//
 #ifndef CTCOMPILE_CTNATIVE_ANALYSIS_NATIVEMAP_H
 #define CTCOMPILE_CTNATIVE_ANALYSIS_NATIVEMAP_H
 
@@ -14,6 +21,10 @@ namespace ctcompile::ctnative {
 
 class OwnedGlobalRoots;
 
+/// Attribute names prepareNativeMaps() attaches to proved Map operations.
+/// `map_site` marks a `new Map`, `map_action` the proved method call or `size`
+/// read, `map_group` the schema family id (see nativeMapGroup()), and
+/// `map_reason` why a candidate was refused.
 inline constexpr llvm::StringLiteral kNativeMapSite = "ctnative.map_site";
 inline constexpr llvm::StringLiteral kNativeMapAction = "ctnative.map_action";
 inline constexpr llvm::StringLiteral kNativeMapMethod = "ctnative.map_method";
@@ -22,24 +33,30 @@ inline constexpr llvm::StringLiteral kNativeMapReason = "ctnative.map_reason";
 inline constexpr llvm::StringLiteral kNativeMapGroup = "ctnative.map_group";
 inline constexpr llvm::StringLiteral kNativeMapArgGroups = "ctnative.map_arg_groups";
 inline constexpr llvm::StringLiteral kNativeMapPresent = "ctnative.map_present";
-// A live same-instance/key last-write proof, independent of the family schema.
+/// The type of the value last written to the same instance and key, proved
+/// for this read independently of the family schema.
 inline constexpr llvm::StringLiteral kNativeMapReadType = "ctnative.map_read_type";
-// Exact primitive at the live write, independent of a broader SSA union.
+/// The exact primitive this write stores, even when the SSA value's type is a
+/// broader union.
 inline constexpr llvm::StringLiteral kNativeMapWriteType = "ctnative.map_write_type";
-// Exact key at this operation, rederived independently of the storage schema.
+/// The exact key type at this operation, recomputed independently of the
+/// storage schema.
 inline constexpr llvm::StringLiteral kNativeMapKeyType = "ctnative.map_key_type";
 inline constexpr llvm::StringLiteral kNativeMapSnapshotCopy = "ctnative.map_snapshot_copy";
 inline constexpr llvm::StringLiteral kNativeMapSnapshotBuiltin = "ctnative.map_snapshot_builtin";
 inline constexpr llvm::StringLiteral kNativeMapRecords = "ctnative.map_records";
 
-/// Confined entry-frame record storage, rederived with the standard Map proof.
-/// The payload names a schema representative; an origin names the exact saved object.
+/// Record storage confined to the entry frame, recomputed with the standard
+/// Map proof. nativeMapRecordPayload() returns a representative payload for
+/// the schema; nativeMapRecordOrigin() the exact object a read gets back;
+/// isNativeMapRecordStore() is true for a use that stores such a record.
 mlir::Value nativeMapRecordPayload(mlir::Value map);
 mlir::Value nativeMapRecordOrigin(mlir::Value read);
 bool isNativeMapRecordStore(mlir::OpOperand & use);
 
-/// Annotate only after proving both the standard constructor/method identity
-/// and every instance use. No runtime assumption or boxed fallback is added.
+/// Annotates Map operations, but only after proving both that the constructor
+/// and methods are the standard ones and that every use of the instance is
+/// supported. No run-time check or boxed fallback is added.
 /// `hostTyped` names the operations a complete host proof has typed: none
 /// rebinds or inspects the standard Map, writes a prototype or runs script.
 /// `hostRecord` names fresh payloads that proof typed as scalar-field records:
@@ -51,7 +68,8 @@ void prepareNativeMaps(mlir::ModuleOp module, const OwnedGlobalRoots * globals =
 /// The operation performed by a proved call or size read, or empty.
 llvm::StringRef nativeMapAction(mlir::Operation * op);
 
-/// Names an action taking a key; this lexical check supplies no call proof.
+/// True when `action` takes a key. This only checks the name; it proves
+/// nothing about a call.
 bool nativeMapKeyAction(llvm::StringRef action);
 
 /// The argument count of set/get/has/delete/clear, or nullopt for any other
@@ -71,8 +89,9 @@ inline llvm::StringRef mapMethodName(ctjs::CallOp call) {
 }
 
 /// The proved action of a call that still reads that method from its own
-/// receiver, a Map family member, with the method's exact argument count;
-/// empty otherwise. Rechecks the source edges a stale annotation could skip.
+/// receiver (a Map family member) and passes the method's exact argument
+/// count; empty otherwise. It rechecks the source edges, which a stale
+/// annotation would not.
 llvm::StringRef liveNativeMapAction(ctjs::CallOp call);
 
 /// A zero-argument `new Map` whose new.target is its own callee. Lexical only:
@@ -83,8 +102,9 @@ inline bool plainMapConstruction(ctjs::ConstructOp made) {
            made.getNewTarget() == made.getCallee();
 }
 
-/// The Map scalar tag of a proved one-kind primitive set - "bool", "number" or
-/// "string" - or empty. Tags stay semantic: CTJS-only callers run this proof.
+/// "bool", "number" or "string" when `alternatives` holds exactly one of those
+/// primitive kinds, otherwise empty. Returns JavaScript type names, not C++
+/// types, because callers that never reach the C++ emitter use it too.
 inline llvm::StringRef mapScalarTag(PrimitiveAlternatives alternatives) {
     const auto tag = alternatives.tag();
     if (tag == mlir::TypeID::get<ctjs::BooleanAttr>()) { return "bool"; }
@@ -96,12 +116,15 @@ inline llvm::StringRef mapScalarTag(PrimitiveAlternatives alternatives) {
 /// A proved keys/values snapshot or its confined standard Array.from copy.
 bool isNativeMapSnapshot(mlir::Operation * op);
 
-/// Schema family shared through set results, closed call arguments and returns.
-/// A family may contain distinct runtime instances; it is not an identity proof.
-/// Returns -1 when the value has no proved Map flow.
+/// The schema family id of `value`, shared through `set` results, closed call
+/// arguments and returns. A family may contain distinct run-time instances, so
+/// it is not an identity proof. Returns -1 when the value has no proved Map
+/// flow.
 int64_t nativeMapGroup(mlir::Value value);
 
-/// These values name an erased standard constructor or method, never data.
+/// True when `op` produces a reference to the standard Map constructor, one of
+/// its methods, or a snapshot builtin that lowering erases; its result is
+/// never data.
 bool isNativeMapBookkeeping(mlir::Operation * op);
 
 } // namespace ctcompile::ctnative

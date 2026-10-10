@@ -1,3 +1,13 @@
+//===- Identity.cpp - Callable-identity checks for the host prefix --------===//
+//
+// Checks run after the host-prefix analysis has proved branch arms and call
+// targets. A function whose body gets specialized must not be able to observe
+// which callable is active, so every operation in it must be one the analysis
+// models: no unknown calls, no reads of objects it did not create, and only
+// global reads whose binding is known to be initialized.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Analysis.h"
 
 #include "mlir/IR/SymbolTable.h"
@@ -5,10 +15,12 @@
 
 namespace ctcompile::ctnative::host_detail {
 
+/// True when `load` reads a global binding that is known to exist: a source
+/// declaration, a contract intrinsic or realm property, a global the analysis
+/// tracked, or a literal stored earlier in the same function.
 bool prefixAnalysis::initializedGlobal(ctjs::LoadGlobalOp load) {
-    // With the contract's ordinary initial global bindings, source declarations
-    // close the lookup's identity boundary, not its value. A bare `var`
-    // preserves any preexisting global and need not emit a store.
+    // A source declaration proves the binding exists, not what it holds: a
+    // bare `var` keeps any preexisting global value and emits no store.
     if (declaredGlobals.contains(load.getName())) { return true; }
     if (llvm::is_contained(contract.initialIntrinsics, load.getName()) ||
         llvm::is_contained(contract.realmOwnDataProperties, load.getName()) ||
@@ -21,9 +33,9 @@ bool prefixAnalysis::initializedGlobal(ctjs::LoadGlobalOp load) {
     }
     for (ctjs::StoreGlobalOp store : initializers[load.getName()]) {
         if (!step()) { return false; }
-        // A store elsewhere, later, or in a conditional does not characterize
-        // an initial host value. This fallback covers source literals created
-        // in the entry suffix before their own subsequent reads.
+        // Only a literal stored earlier in the same function, on every path to
+        // the read, counts. A store in another function, a later one, or one in
+        // a conditional says nothing about the value the read sees.
         if (store->getParentOfType<ctjs::FuncOp>() == load->getParentOfType<ctjs::FuncOp>() &&
             dominance.properlyDominates(store.getOperation(), load.getOperation()) &&
             llvm::isa_and_nonnull<ctjs::ConstantOp, ctjs::CreateObjectOp, ctjs::CreateClosureOp>(
@@ -34,6 +46,9 @@ bool prefixAnalysis::initializedGlobal(ctjs::LoadGlobalOp load) {
     return false;
 }
 
+/// True when `function` captures nothing and its body passes
+/// identitySafeRegion. `stack` holds the functions being checked, so recursion
+/// refuses.
 bool prefixAnalysis::identitySafeFunction(ctjs::FuncOp function,
                                           llvm::DenseSet<mlir::Operation *> & stack) {
     if (!step() || !function || function.getBody().empty() || function.getUpvalueCount() != 0 ||
@@ -44,6 +59,10 @@ bool prefixAnalysis::identitySafeFunction(ctjs::FuncOp function,
     return identitySafeRegion(function.getBody(), stack);
 }
 
+/// True when every operation in `region` is one the analysis models: proved
+/// branches and calls (followed recursively), `new Map()`, property access on
+/// fresh objects or the realm's own data properties, initialized global reads,
+/// throws of constants, and side-effect-free arithmetic and bookkeeping.
 bool prefixAnalysis::identitySafeRegion(mlir::Region & region,
                                         llvm::DenseSet<mlir::Operation *> & stack) {
     if (region.empty()) { return true; }
@@ -84,15 +103,16 @@ bool prefixAnalysis::identitySafeRegion(mlir::Region & region,
                 !llvm::is_contained(contract.initialIntrinsics, "Map")) {
                 return false;
             }
-            // Standard zero-argument Map construction cannot inspect the
-            // caller or invoke JS. Allocation/throw behavior remains runtime.
+            // A zero-argument `new Map()` cannot inspect the caller or run
+            // script. Whether it allocates or throws is still decided at run time.
             continue;
         }
         if (auto key = ctjs::propertyKey(&operation)) {
             const auto receiver = operation.getOperand(0); // get/set_property's object
-            // The realm is opaque and never joins the fresh-object heap.
-            // Only the embedding's finite writable own-data slots exclude a
-            // callback here. Their values and publication effects stay live.
+            // The realm object is never modeled as a fresh object. Only its
+            // writable own data properties listed in the contract are safe,
+            // because accessing them cannot run a callback. Their values and
+            // the effects of writing them are still checked at run time.
             if (observedValues.lookup(receiver).kind == prefixValue::Kind::realm &&
                 llvm::is_contained(contract.realmOwnDataProperties, ctjs::constantKey(key))) {
                 continue;

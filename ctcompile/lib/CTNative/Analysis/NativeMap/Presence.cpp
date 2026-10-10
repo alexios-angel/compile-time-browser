@@ -1,4 +1,12 @@
-//===- Presence.cpp - structured must-analysis for nested Map reads -------===//
+//===- Presence.cpp - Map key presence proof --------------------*- C++ -*-===//
+//
+// A forward must-analysis over each function's structured control flow
+// (scf.if, scf.while, scf.for) that proves which native Map `get` calls
+// definitely find their key, and which scalar types Map keys, writes and
+// reads have. NativeMap.cpp calls provePresence() once its own identity and
+// use checks pass; the results become ctnative.map_* attributes.
+//
+//===----------------------------------------------------------------------===//
 #include "Presence.h"
 
 #include "../OwnedGlobalRoots.h"
@@ -16,13 +24,17 @@
 namespace ctcompile::ctnative::map_detail {
 namespace {
 
+/// What is known about one key of one runtime Map instance.
 struct fact {
     mlir::Value instance;
     mlir::Value key;
+    /// The possible primitive kinds of the stored value.
     PrimitiveAlternatives payload;
-    // Payload is valid whenever present, independently of definite membership.
-    // Deletion cannot change a surviving value, so it clears only this flag.
+    /// Whether the key is definitely present. `payload` stays valid whenever
+    /// the key is present, independently of this flag: deletion cannot change
+    /// a surviving value, so it clears only this flag.
     bool present = true;
+    /// The SSA value that was stored (for a Map of Maps, the child Map).
     mlir::Value storedOrigin{};
     bool matches(const fact & other) const {
         return instance == other.instance &&
@@ -30,7 +42,7 @@ struct fact {
     }
 };
 
-// Keeps only the entries `other` records with the same value.
+/// Keeps only the entries `other` records with the same value.
 template <class Map> void keepAgreeing(Map & mine, const Map & other) {
     for (const auto & [key, value] : llvm::make_early_inc_range(mine)) {
         const auto found = other.find(key);
@@ -38,29 +50,35 @@ template <class Map> void keepAgreeing(Map & mine, const Map & other) {
     }
 }
 
+/// The facts known at one program point.
 struct state {
+    /// Keys of specific instances, with their presence and value kinds.
     llvm::SmallVector<fact> entries;
-    // A has result is a snapshot. Erasure invalidates its implication even
-    // though its SSA boolean remains available to later conditions.
+    /// `has` calls whose true result still implies presence. Each records the
+    /// state at the call: an erase removes the implication, even though the
+    /// SSA boolean can still be used by later conditions.
     llvm::DenseSet<mlir::Operation *> observations;
-    // Bounds on already-read SSA numbers survive known mutations. They are
-    // acquired only from a checked size read with exact-instance presence.
+    /// Lower bounds on the Numbers that `size` reads returned. A read value
+    /// never changes, so these survive later mutations. They come only from a
+    /// checked `size` read on a known instance.
     llvm::DenseMap<mlir::Value, unsigned> sizeBounds{};
-    // A complete possible-key census belongs to one runtime instance, never
-    // its schema family or an intersected entry list. Absence from this map
-    // means unknown contents; an empty vector independently proves emptiness.
+    /// Every key an instance may hold (an upper bound on its contents). It
+    /// belongs to one runtime instance, never its schema family. A missing
+    /// entry means unknown contents; an empty vector proves the Map is empty.
     llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value>> possibleKeys{};
+    /// The exact Number a `size` read (or a branch merging two) returned.
     llvm::DenseMap<mlir::Value, unsigned> exactSizes{};
-    // Mutable cardinality of an actual runtime instance. Equal structural
-    // arms can preserve it without sharing any definite key. Only independently
-    // proved mutation effects preserve it; already-read SSA exactSizes remain
-    // immutable.
+    /// The current exact size of an instance. Unlike `exactSizes`, this changes
+    /// with mutations and is kept only across mutations whose effect on the
+    /// size is proved. Two branch arms with equal sizes keep it even when they
+    /// share no definite key.
     llvm::DenseMap<mlir::Value, unsigned> currentSizes{};
-    // A scalar get result owns its value. Unlike membership and entry tags,
-    // its type remains true after the source entry is overwritten or erased.
+    /// Primitive kinds of scalar values, including `get` results. A read value
+    /// keeps its type after the Map entry it came from is overwritten or erased.
     llvm::DenseMap<mlir::Value, PrimitiveAlternatives> scalars{};
-    // A definite get copies the stored owner. Its SSA alias outlives replacement
-    // or deletion of the outer entry; this never unifies a schema's instances.
+    /// Maps a definite `get` result to the value stored under that key. The
+    /// alias outlives replacement or deletion of the outer entry; it never
+    /// joins two instances of one schema.
     llvm::DenseMap<mlir::Value, mlir::Value> aliases{};
 
     PrimitiveMapKeyEvidence keyEvidence(mlir::Value value) const {
@@ -70,7 +88,7 @@ struct state {
                 found == exactSizes.end() ? std::nullopt : std::optional(found->second)};
     }
 
-    // How two keys compare under this state's size evidence.
+    /// How two keys compare under this state's size evidence.
     PrimitiveMapKeyRelation relate(mlir::Value left, mlir::Value right) const {
         return comparePrimitiveMapKeys(left, right, keyEvidence(left), keyEvidence(right));
     }
@@ -79,6 +97,8 @@ struct state {
         unsigned lower = 0;
         std::optional<unsigned> exact;
     };
+    /// The size of `instance`: a lower bound from its distinct present keys,
+    /// and an exact value when its possible keys are exactly those keys.
     size_fact sizeFacts(mlir::Value instance) const {
         if (const auto found = currentSizes.find(instance); found != currentSizes.end()) {
             return {found->second, found->second};
@@ -116,12 +136,14 @@ struct state {
         }
     }
 
+    /// The exact size of `value.instance` after a `set` (or a `delete` when
+    /// `erase`) of `value.key`, if it can be proved.
     std::optional<unsigned> sizeAfterMutation(fact value, bool erase) const {
         const auto size = currentSizes.find(value.instance);
         const auto possible = possibleKeys.find(value.instance);
         if (size == currentSizes.end() || possible == possibleKeys.end()) { return std::nullopt; }
-        // Query the actual instance before mutation. The schema family is
-        // only an alias upper bound and cannot prove this key's membership.
+        // Query the actual instance before the mutation. Its schema family only
+        // bounds what it may alias and cannot prove this key's membership.
         const bool present = llvm::any_of(entries, [&](const fact & old) {
             return old.present && old.instance == value.instance &&
                    relate(old.key, value.key) == PrimitiveMapKeyRelation::Same;
@@ -159,6 +181,7 @@ struct state {
         }
         entries.push_back(value);
     }
+    /// Merges two branch states: keeps only facts both agree on.
     void intersect(const state & other) {
         keepAgreeing(currentSizes, other.currentSizes);
         for (auto & [instance, possible] : llvm::make_early_inc_range(possibleKeys)) {
@@ -200,7 +223,9 @@ struct state {
     }
 };
 
+/// What a function (and everything it calls) may do to Maps, by family.
 struct effects {
+    /// Set by a call this analysis cannot see into; it erases every fact.
     bool unknown = false;
     llvm::DenseSet<mlir::Value> erased;
     llvm::DenseSet<mlir::Value> written;
@@ -214,12 +239,22 @@ struct effects {
     }
 };
 
+/// Forward must-analysis over each function's structured control flow,
+/// proving which Map `get` calls definitely find their key. `proved` holds the
+/// gets that do, `payloads` the primitive kinds they read, and `keys`/`writes`
+/// the scalar key and value tags for lowering. `publications` records the
+/// child entries present when a child Map is stored into a host-captured
+/// global Map; `retainedEntries` lifts those to an invariant of every child of
+/// that global.
 struct presenceAnalysis {
+    /// The Map method each proved call invokes ("get", "set", ...).
     llvm::DenseMap<mlir::Operation *, llvm::StringRef> actions;
+    /// Per-function Map effects, including callees (see buildSummaries).
     llvm::DenseMap<mlir::Operation *, effects> summaries;
     llvm::DenseSet<mlir::Operation *> proved;
     llvm::DenseMap<mlir::Operation *, PrimitiveAlternatives> payloads;
     llvm::DenseMap<mlir::Operation *, llvm::StringRef> writes, keys;
+    /// The `size` reads to track.
     llvm::DenseSet<mlir::Operation *> sizes;
     llvm::DenseMap<mlir::Operation *, llvm::SmallVector<fact>> publications;
     llvm::DenseMap<mlir::Operation *, mlir::Value> storedOrigins;
@@ -235,8 +270,9 @@ struct presenceAnalysis {
         : familyOf(family), snapshotCopies(copies), hostTyped(typed) {}
     bool effectFree(mlir::Operation * op) const { return hostTyped && hostTyped(op); }
 
-    // Only fluent set and a definite get of an exact stored origin prove
-    // runtime identity. Closed parameter/return edges share only a schema.
+    /// The runtime instance `value` is known to be. Only a `set` result (which
+    /// returns its receiver) and a definite `get` of a known stored value prove
+    /// identity; parameters and returns share only a schema.
     mlir::Value instanceOf(mlir::Value value, const state & current) const {
         while (true) {
             if (const auto origin = current.aliases.lookup(value)) { return origin; }
@@ -246,6 +282,7 @@ struct presenceAnalysis {
         }
         return value;
     }
+    /// The (instance, key) a Map method call addresses.
     fact entry(ctjs::CallOp call, const state & current) const {
         return {instanceOf(call.getReceiver(), current), call.getArgs()[0], {}};
     }
@@ -259,6 +296,7 @@ struct presenceAnalysis {
         return familyOf(left) == familyOf(right);
     }
 
+    /// Computes each function's Map effects, merged over everything it calls.
     void buildSummaries(mlir::ModuleOp module) {
         llvm::DenseMap<mlir::Operation *, llvm::SmallVector<ctjs::FuncOp>> callees;
         module.walk([&](ctjs::FuncOp fn) {
@@ -297,6 +335,8 @@ struct presenceAnalysis {
         }
     }
 
+    /// Registers every `set` on a host-captured global Map, so write() can
+    /// record the stored child's entries at that point.
     void collectPublications(const OwnedGlobalRoots * globals) {
         if (!globals || !globals->proved()) { return; }
         for (const auto & root : globals->roots()) {
@@ -312,6 +352,10 @@ struct presenceAnalysis {
         }
     }
 
+    /// For each host-captured global Map of Maps, proves a key every child
+    /// always holds: all child writes use one literal String key with one
+    /// scalar type, nothing deletes from a child, and every child was stored
+    /// with that key present. A `get` of a child then adds that entry.
     void proveRetainedEntries(const OwnedGlobalRoots * globals) {
         if (!globals || !globals->proved()) { return; }
         for (const auto & root : globals->roots()) {
@@ -327,7 +371,7 @@ struct presenceAnalysis {
             fact invariant;
             bool valid = true;
             // ponytail: one literal String key with uniform scalar writes;
-            // extend the finite invariant only when another source needs it.
+            // allow more keys only when a program needs them.
             for (ctjs::CallOp call : captured.calls) {
                 if (!children.contains(familyOf(call.getReceiver()))) { continue; }
                 const auto action = actions.lookup(call);
@@ -376,13 +420,15 @@ struct presenceAnalysis {
                     break;
                 }
             }
-            // The closed owner provides the complete use census only. All
-            // initialization, keys and payloads above came from this analysis's
-            // first pass, without any retained-child or native report fact.
+            // OwnedGlobalRoots only supplies the complete list of calls on this
+            // global; every key and payload checked above was proved by this
+            // analysis's own first pass, not taken from another analysis.
             if (valid && published) { retainedEntries[outer] = invariant; }
         }
     }
 
+    /// Drops the facts `effect` may falsify, limited to Maps that may alias
+    /// `instance` when it is given.
     void invalidate(state & current, const effects & effect, mlir::Value instance = {}) const {
         if (effect.unknown) {
             current = {};
@@ -418,6 +464,8 @@ struct presenceAnalysis {
         }
     }
 
+    /// Refines `current` for the arm where `condition` is `branch`: narrows a
+    /// scalar's kinds and, on a true `has`, records the key as present.
     void learn(mlir::Value condition, bool branch, state & current) const {
         bool inverted = false;
         while (true) {
@@ -442,21 +490,22 @@ struct presenceAnalysis {
         }
     }
 
-    // A mutation of `instance` leaves no saved size of any Map it may alias.
+    /// A mutation of `instance` leaves no saved size of any Map it may alias.
     void forgetSizes(state & current, mlir::Value instance) const {
         for (const auto & [other, exact] : llvm::make_early_inc_range(current.currentSizes)) {
             if (mayAlias(other, instance)) { current.currentSizes.erase(other); }
         }
     }
 
+    /// Applies a `delete` call.
     void eraseKey(state & current, ctjs::CallOp call) const {
         const auto affected = entry(call, current);
         const auto nextSize = current.sizeAfterMutation(affected, true);
         forgetSizes(current, affected.instance);
-        // Only this runtime instance definitely lost the erased key. Other
-        // Maps in its schema family may alias it, so their upper bounds remain
-        // unchanged while mayErase below invalidates definite membership.
-        // Deletion never adds keys, including when equality is unproved.
+        // Only this instance definitely lost the key. Other Maps in its schema
+        // family may alias it, so their possible keys stay as they are while
+        // mayErase below clears their definite membership. Deletion never
+        // adds keys, even when key equality is unproved.
         if (auto found = current.possibleKeys.find(affected.instance);
             found != current.possibleKeys.end()) {
             llvm::erase_if(found->second, [&](mlir::Value key) {
@@ -464,8 +513,8 @@ struct presenceAnalysis {
             });
         }
         const auto mayErase = [&](fact value) {
-            // A schema family may contain several runtime instances. Without
-            // an independent disjointness proof, any of them may be this Map.
+            // A schema family may contain several runtime instances; without a
+            // proof that they differ, any of them may be this Map.
             return mayAlias(value.instance, affected.instance) &&
                    current.relate(value.key, affected.key) != PrimitiveMapKeyRelation::Distinct;
         };
@@ -480,10 +529,10 @@ struct presenceAnalysis {
         if (nextSize) { current.currentSizes[affected.instance] = *nextSize; }
     }
 
-    // Literal, parameter and saved scalar alternatives do not depend on Map
-    // schema inference or prior invocations. Keep a finite nullable payload
-    // independently of the broader storage union. Every possible alias joins
-    // its alternatives; an unproved write clears them. has supplies no tag.
+    /// Records a `set`: the written instance's entry for this key takes the
+    /// value's scalar type exactly; every other entry that may alias it widens
+    /// to include that type. Value types come only from literals, parameters
+    /// and earlier proved reads, never from Map schema inference.
     void write(state & current, ctjs::CallOp call) {
         fact added = entry(call, current);
         if (auto found = publications.find(call); found != publications.end()) {
@@ -521,13 +570,14 @@ struct presenceAnalysis {
             }
         }
         current.add(added);
-        // The census may have reached its limit while adding this key. Never
-        // turn the saved cardinality into a way around that bounded proof.
+        // The possible-key list may have hit its limit and been dropped while
+        // adding this key; keep a size only while that list still exists.
         if (nextSize && current.possibleKeys.contains(added.instance)) {
             current.currentSizes[added.instance] = *nextSize;
         }
     }
 
+    /// Runs a single-block region; anything else forgets every fact.
     void region(mlir::Region & body, state & current) {
         if (body.empty()) { return; }
         if (!body.hasOneBlock()) {
@@ -537,6 +587,7 @@ struct presenceAnalysis {
         for (mlir::Operation & op : body.front()) { operation(&op, current); }
     }
 
+    /// The transfer function for one operation.
     void operation(mlir::Operation * op, state & current) {
         if (sizes.contains(op)) {
             auto read = llvm::cast<ctjs::GetPropertyOp>(op);
@@ -555,9 +606,8 @@ struct presenceAnalysis {
             learn(branch.getCondition(), false, elseState);
             region(branch.getThenRegion(), thenState);
             region(branch.getElseRegion(), elseState);
-            // Retain independently proved truthy/falsy alternatives. A later
-            // test can refine the exact selected SSA value, while all effects
-            // in both structural arms are still visited.
+            // Keep the kinds proved for each result, so a later test can refine
+            // the selected value; both arms' effects were already applied.
             for (unsigned index = 0; index < branch.getNumResults(); ++index) {
                 const auto left = branch.thenYield().getOperand(index),
                            right = branch.elseYield().getOperand(index);
@@ -573,9 +623,9 @@ struct presenceAnalysis {
                     elseState.scalars[branch.getResult(index)] = joined;
                 }
             }
-            // Derive each arm's cardinality before merging key sets. The
-            // union of possible keys and intersection of definite keys cannot
-            // recover equal sizes when different keys survive on each arm.
+            // Compute each arm's size before merging key sets: the union of
+            // possible keys and intersection of definite keys cannot recover
+            // equal sizes when different keys survive on each arm.
             thenState.rememberSizes();
             elseState.rememberSizes();
             thenState.intersect(elseState);
@@ -583,9 +633,10 @@ struct presenceAnalysis {
             return;
         }
         if (auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(op)) {
-            // No incoming fact or cached has is assumed invariant across a
-            // back edge. Fresh tests and sets in each iteration still prove
-            // local reads, including a while(has(...)) body's first lookup.
+            // No incoming fact or earlier `has` is assumed to hold across a
+            // back edge, so each iteration starts empty. Tests and sets inside
+            // the loop still prove its own reads, including the first lookup
+            // in a while (m.has(k)) body.
             state before;
             region(loop.getBefore(), before);
             learn(loop.getConditionOp().getCondition(), true, before);
@@ -600,8 +651,8 @@ struct presenceAnalysis {
             return;
         }
         if (op->getNumRegions() != 0) {
-            // A typed host invocation keeps facts only while no Map
-            // operation hides in its call or continuations.
+            // A host call proved effect-free keeps the facts, provided no Map
+            // operation sits inside its nested regions (callbacks).
             if (effectFree(op) && !op->walk([&](mlir::Operation * inner) {
                                          return actions.contains(inner) || sizes.contains(inner)
                                                     ? mlir::WalkResult::interrupt()
@@ -639,9 +690,9 @@ struct presenceAnalysis {
                         continue;
                     }
                     proved.insert(op);
-                    // A present lookup returns this entry's actual value. A
-                    // repeated lookup retains that alias only while the entry
-                    // binding survives every intervening possible mutation.
+                    // A present lookup returns the entry's actual value. A
+                    // repeated lookup returns the same alias only while the
+                    // entry survives every mutation in between.
                     if (!value.storedOrigin) { value.storedOrigin = call.getResult(); }
                     current.aliases[call.getResult()] = value.storedOrigin;
                     const auto origin = value.storedOrigin;
@@ -744,8 +795,9 @@ std::string provePresence(mlir::ModuleOp module, llvm::ArrayRef<ctjs::CallOp> ca
         }
         if (!tag.empty()) {
             read->setAttr(kNativeMapReadType, mlir::StringAttr::get(read.getContext(), tag));
-            // Dead-code inference may remove an alternative from the final
-            // schema. Its homogeneous read still has definite membership.
+            // Also mark the read present: dead-code inference may later remove
+            // an alternative from the final schema, and a read with one proved
+            // type still has definite membership.
             read->setAttr(kNativeMapPresent, mlir::UnitAttr::get(read.getContext()));
         }
     }

@@ -1,3 +1,14 @@
+//===- Pass.cpp - Clone functions per constant arguments ------------------===//
+//
+// --ctnative-specialize: for each closed ctjs.func with at least two direct
+// callers, clones the function once per distinct set of constant arguments
+// seen at a call (every call except the first, which keeps the generic body
+// and its type evidence alive) and redirects those calls to the clone. Stops
+// at maxVariants clones or maxClonedOps cloned operations; calls past the
+// budget keep the generic callee and get a ctnative.specialization_reason.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Candidates.h"
 
 #include "ctcompile/CTNative/Analysis/HostContract.h"
@@ -33,8 +44,8 @@ struct CTNativeSpecializePass : impl::CTNativeSpecializeBase<CTNativeSpecializeP
         };
         llvm::SmallVector<candidate> candidates;
         mlir::Builder attributes(&getContext());
-        // Complete all proofs against the unchanged call graph. Redirecting a
-        // declaration's call cannot change another candidate's eligibility.
+        // Complete all proofs against the unchanged call graph first, so that
+        // redirecting one call cannot change another candidate's eligibility.
         for (auto & [operation, calls] : callers) {
             auto function = llvm::cast<ctjs::FuncOp>(operation);
             const auto problem = specialization::refusal(function, module);
@@ -45,8 +56,9 @@ struct CTNativeSpecializePass : impl::CTNativeSpecializeBase<CTNativeSpecializeP
             }
             if (calls.size() < 2) { continue; }
             const unsigned operations = specialization::bodySize(function);
-            // Preserve one actual generic call, including its argument types.
-            // An unused original function would lose native inference evidence.
+            // Keep the first call on the generic function, with its argument
+            // types. An original function with no callers would lose the
+            // evidence native type inference needs.
             for (ctjs::CallDirectOp call : llvm::drop_begin(calls)) {
                 auto known = specialization::staticArguments(call, function);
                 if (llvm::any_of(known, [](mlir::Attribute value) { return bool(value); })) {

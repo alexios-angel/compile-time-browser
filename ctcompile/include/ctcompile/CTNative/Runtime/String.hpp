@@ -1,3 +1,10 @@
+//===- String.hpp - The native JavaScript String ----------------*- C++ -*-===//
+//
+// js_string, the C++ type generated native code uses for a JavaScript String,
+// and string_length, which counts UTF-16 code units as JavaScript does.
+//
+//===----------------------------------------------------------------------===//
+
 #pragma once
 
 #include "Number.hpp"
@@ -16,7 +23,9 @@ namespace ctnative {
 
 class js_boolean_t;
 
-// The storage is WTF-8; JavaScript indexing still requires UTF-16 proofs.
+/// A JavaScript string stored as WTF-8. JavaScript indexing and `length` count
+/// UTF-16 code units (see string_length), so any byte-offset operation needs a
+/// proof that the text involved is ASCII.
 template <class T>
 requires std::is_same_v<T, char>
 class js_basic_string {
@@ -26,8 +35,9 @@ class js_basic_string {
         if constexpr (std::is_same_v<U, bool> || std::is_same_v<U, js_boolean_t>) {
             return value ? js_basic_string{"true"} : js_basic_string{"false"};
         } else {
-            // Raw C++ arithmetic enters the JavaScript binary64 Number domain.
-            // Check extended floating-point range before narrowing to double.
+            // Raw C++ arithmetic becomes a JavaScript (binary64) Number. A long
+            // double beyond double's range prints as +/-Infinity, so check that
+            // before narrowing.
             if constexpr (std::is_same_v<U, long double>) {
                 constexpr auto maximum = std::numeric_limits<double>::max();
                 if (value > maximum) { return js_basic_string{"Infinity"}; }
@@ -50,7 +60,9 @@ public:
     std::string value() && { return std::move(text); }
     js_num to_number() const { return js_num{ctbrowser::string_to_number(text)}; }
 
-    // Admission proves an ASCII prefix, where byte and UTF-16 searches agree.
+    /// Callers emit this only when the native admission check has proved
+    /// `prefix` is ASCII; only then does a byte comparison agree with the
+    /// UTF-16 comparison.
     bool startsWith(const js_basic_string & prefix) const { return text.starts_with(prefix.text); }
     friend bool operator==(const js_basic_string &, const js_basic_string &) = default;
     friend js_basic_string operator+(js_basic_string left, const js_basic_string & right) {
@@ -78,8 +90,9 @@ public:
 
 using js_string = js_basic_string<char>;
 
-// ctcompile: a String's `length` - UTF-16 code units over the WTF-8 storage, the
-// interpreter's count (script/utf16.hpp): a code point above U+FFFF is two.
+/// A String's `length`: UTF-16 code units over the WTF-8 storage, counted like
+/// the interpreter (script/utf16.hpp), so a code point above U+FFFF counts as
+/// two.
 inline std::size_t string_length(std::string_view text) {
     std::size_t units = 0;
     for (std::size_t at = 0; at < text.size();) {

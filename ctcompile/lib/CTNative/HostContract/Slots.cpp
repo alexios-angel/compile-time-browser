@@ -1,9 +1,20 @@
+//===- Slots.cpp - Publication slot ordering --------------------*- C++ -*-===//
+//
+// Implements the execution-order queries (active, anchor, before) and
+// analyzer::slot, which pairs every read of a host root's published field with
+// the write it sees.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Analysis.h"
 
 #include "mlir/Dialect/SCF/IR/SCF.h"
 
 namespace ctcompile::ctnative::host_detail {
 
+/// False when `operation` sits inside an scf.if arm whose condition is known
+/// and selects the other arm. True otherwise, including when out of budget,
+/// so callers keep checking the operation.
 bool analyzer::active(mlir::Operation * operation) {
     for (auto * child = operation; child->getParentOp() != nullptr; child = child->getParentOp()) {
         if (!step()) { return true; }
@@ -17,6 +28,9 @@ bool analyzer::active(mlir::Operation * operation) {
     return true;
 }
 
+/// The entry-block operation that contains `operation`, found by climbing out
+/// of scf.if arms whose condition is known to select them. Null when an arm
+/// is not known to run or the function's entry block is not reached.
 mlir::Operation * analyzer::anchor(mlir::Operation * operation) {
     while (!llvm::isa<ctjs::FuncOp>(operation->getParentOp())) {
         if (!step()) { return nullptr; }
@@ -32,6 +46,10 @@ mlir::Operation * analyzer::anchor(mlir::Operation * operation) {
     return operation->getBlock() == &function.getBody().front() ? operation : nullptr;
 }
 
+/// Whether `first` runs before `second` on every path. Within one function
+/// this is dominance, directly or between their anchors. Across functions it
+/// replaces an operation in a helper by the helper's unique call site.
+/// Returns false when unsure.
 bool analyzer::before(mlir::Operation * first, mlir::Operation * second) {
     llvm::DenseSet<mlir::Operation *> visited;
     for (;;) {
@@ -46,9 +64,10 @@ bool analyzer::before(mlir::Operation * first, mlir::Operation * second) {
             return firstAnchor && secondAnchor && firstAnchor != secondAnchor &&
                    dominance.properlyDominates(firstAnchor, secondAnchor);
         }
-        // This first slice has one statically visible invocation path per
-        // helper. Multiple calls/recursion require context-indexed slot state,
-        // rather than equating allocations made by different invocations.
+        // Only a helper with exactly one statically visible caller is
+        // followed: its call site stands in for it. Several calls or recursion
+        // would need slot state per invocation, rather than treating
+        // allocations from different invocations as the same.
         if (from != entry && callers[from].size() == 1 && anchor(first)) {
             auto call = callers[from].front();
             if (!exactCall(call)) { return false; }
@@ -66,6 +85,11 @@ bool analyzer::before(mlir::Operation * first, mlir::Operation * second) {
     }
 }
 
+/// Checks the publication slot `key` of the contract root object bound to
+/// `request.binding`: the root must be a fresh object initialized once by the
+/// entry, every alias use must be modeled, and each read of the slot must
+/// have one latest write that runs before it. Fills `edges` with those
+/// write-to-read pairs; `reason` holds the first refusal, if any.
 HostSlotReport analyzer::slot(const HostRootRequest & request, llvm::StringRef key) {
     HostSlotReport result;
     result.binding = request.binding;

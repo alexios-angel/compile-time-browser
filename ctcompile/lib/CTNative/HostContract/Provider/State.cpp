@@ -1,3 +1,10 @@
+//===- State.cpp - Modeled provider Map contents ----------------*- C++ -*-===//
+//
+// Implements providerState. Keys compare by SameValueZero, and every
+// operation charges the caller's step budget before doing its work.
+//
+//===----------------------------------------------------------------------===//
+
 #include "State.h"
 
 #include "llvm/ADT/DenseSet.h"
@@ -8,15 +15,19 @@
 
 namespace ctcompile::ctnative::host_detail {
 namespace {
+/// True when `value` is a known primitive literal.
 bool primitive(providerValue value) {
     return value.kind == providerValue::Kind::primitive && value.id == 0 && value.literal &&
            ctjs::isPrimitiveAttr(value.literal);
 }
 
+/// True when `value` can be a Map key: a primitive or an object.
 bool keyIsKnown(providerValue value) {
     return primitive(value) || (value.kind == providerValue::Kind::object && !value.literal);
 }
 
+/// Sets `same` to whether two keys are equal under SameValueZero. False when
+/// out of budget.
 bool sameKey(providerValue left, providerValue right, bool & same, providerState::Spend spend) {
     if (!spend(1)) { return false; }
     if (left.kind != right.kind) {
@@ -37,9 +48,9 @@ bool sameKey(providerValue left, providerValue right, bool & same, providerState
         } else if (a == b) {
             same = true;
         } else {
-            // Normally equal literals are interned in the same context. Keep
-            // the helper correct for distinct contexts without an uncharged
-            // comparison of arbitrarily long strings.
+            // Equal literals from one MLIRContext are the same attribute.
+            // For attributes from different contexts, compare the text, but
+            // charge its length first.
             const auto length = a.getValue().size();
             if (length > std::numeric_limits<unsigned>::max() ||
                 !spend(static_cast<unsigned>(length))) {
@@ -59,6 +70,8 @@ bool sameKey(providerValue left, providerValue right, bool & same, providerState
     return true;
 }
 
+/// `key` with -0 replaced by +0, as Map.prototype.set does. A double whose
+/// bits other than the sign bit are all zero is +0 or -0.
 providerValue canonicalKey(providerValue key) {
     if (key.kind == providerValue::Kind::primitive) {
         if (auto number = llvm::dyn_cast<ctjs::NumberAttr>(key.literal);
@@ -69,6 +82,8 @@ providerValue canonicalKey(providerValue key) {
     return key;
 }
 
+/// Sets `index` to the position of `key` in `map`, or to the entry count when
+/// absent. False when out of budget.
 bool find(const providerMap & map, providerValue key, unsigned & index,
           providerState::Spend spend) {
     unsigned candidate = 0;
@@ -97,8 +112,8 @@ bool providerState::acceptsValue(providerValue value) const {
 
 bool providerState::cloneTo(providerState & out, Spend spend) const {
     if (!spend(1)) { return false; }
-    // Charge the whole copy before allocating its storage. Map records and
-    // entries have zero inline capacity so moves never copy an entry payload.
+    // Charge the whole copy before allocating its storage. Maps and entry
+    // lists have zero inline capacity, so moving them never copies entries.
     for (const auto & map : state) {
         if (!spend(1) || !spend(static_cast<unsigned>(map.entries.size()))) { return false; }
     }
@@ -136,6 +151,8 @@ std::optional<std::optional<providerValue>> providerState::lookup(unsigned mapId
     return std::optional{map->entries[index].value};
 }
 
+/// Sets `found` to whether Map `target` is reachable from Map `from` through
+/// entry values. False when out of budget or on a dangling id.
 bool providerState::reaches(unsigned from, unsigned target, bool & found, Spend spend) const {
     if (!spend(1)) { return false; }
     llvm::SmallVector<unsigned> pending{from};
@@ -207,9 +224,9 @@ std::optional<llvm::SmallVector<providerValue, 0>> providerState::keys(unsigned 
     if (!spend(1) || !map || !spend(static_cast<unsigned>(map->entries.size()))) {
         return std::nullopt;
     }
-    // Precharge the entire traversal/copy before allocating its storage. Zero
-    // inline capacity makes publication a storage transfer, without another
-    // uncharged key copy, even when the caller's vector has inline storage.
+    // Charge the whole copy before allocating it. With zero inline capacity
+    // returning the vector moves its buffer instead of copying the keys again
+    // without charge.
     llvm::SmallVector<providerValue, 0> snapshot;
     snapshot.reserve(map->entries.size());
     for (const auto & entry : map->entries) { snapshot.push_back(entry.key); }

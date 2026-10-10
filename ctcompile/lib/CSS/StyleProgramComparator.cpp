@@ -1,3 +1,10 @@
+//===- StyleProgramComparator.cpp - Compare two style engines -------------===//
+//
+// Compares two ctbrowser style engines field by field (filed rules, then page
+// fonts) and reports the first difference. Used to check that a compiled style
+// program files exactly the rules the interpreter-built engine does.
+//
+//===----------------------------------------------------------------------===//
 #include <ctcompile/CSS/StyleProgramComparator.hpp>
 
 #include <cstddef>
@@ -21,7 +28,7 @@ namespace {
     return "?";
 }
 
-// The bucket key, resolved through the table that issued it. See the header for
+/// The bucket key, resolved through the table that issued it. See the header for
 // why crossing the tables fails open rather than loudly.
 [[nodiscard]] std::string key_text(const atom_table & atoms, ctbrowser::atom key) {
     return key ? std::string{atoms.text(key)} : std::string{};
@@ -39,7 +46,7 @@ std::optional<difference> compare(const engine & expected, const engine & actual
     const auto fail = [](std::string where, std::string what) {
         return std::optional<difference>{difference{std::move(where), std::move(what)}};
     };
-    // A NUMBER THAT DIFFERS fails at `where` with "<label> a vs b", or with
+    // A number that differs fails at `where` with "<label> a vs b", or with
     // "a vs b" alone when the label is empty.
     const auto differ = [&](std::string where, const std::string & label, auto a,
                             auto b) -> std::optional<difference> {
@@ -62,8 +69,8 @@ std::optional<difference> compare(const engine & expected, const engine & actual
         const engine::filed_rule & y = ab[i];
         const std::string where = "rule " + std::to_string(i);
 
-        // THE BUCKET FIRST, because it is the field nothing else could see and
-        // the one whose failure is silent.
+        // The bucket first: no other field reveals it, and a wrong bucket fails
+        // silently.
         if (x.where != y.where) {
             return fail(where, std::string{"bucket "}
                                    .append(bucket_name(x.where))
@@ -85,12 +92,12 @@ std::optional<difference> compare(const engine & expected, const engine & actual
         if (x.important != y.important) {
             return fail(where + " (" + px + ")", "!important differs");
         }
-        // ORIGIN decides the cascade before specificity does, and it is set by
-        // the CALLER of add_sheet rather than by the sheet - so a compiled
+        // Origin decides the cascade before specificity does, and it is set by
+        // the caller of add_sheet rather than by the sheet, so a compiled
         // program that files an author rule as user-agent loses every tie it
         // should win, with no other field differing.
         if (auto d = differ(where, "origin", x.origin, y.origin)) { return d; }
-        // The condition ORDINAL, which is engine-local: add_sheet remaps a
+        // The condition ordinal, which is engine-local: add_sheet remaps a
         // sheet's condition indices as it appends them, so this is not the
         // number the parser produced.
         if (auto d = differ(where, "media condition", x.condition, y.condition)) { return d; }

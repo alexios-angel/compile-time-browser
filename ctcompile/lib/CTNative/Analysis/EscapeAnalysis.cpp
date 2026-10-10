@@ -1,24 +1,25 @@
-// THE ALIAS TRANSFER, THE POST-PASS, THE KIND SWITCH, AND THE TWO REFUSALS.
+//===- EscapeAnalysis.cpp - Escape analysis for ctjs IR -------------------===//
 //
-// Everything structural is upstream's - the worklist, the fixpoint, the joins
-// at block arguments through BranchOpInterface successor operands - and
-// everything tabular is TableGen's: which operand sinks and why is an
-// Arg<..., [CTJS_Sink...]> in CTJSOps.td, read here through
-// ctjs::EscapeEffectOpInterface without naming a single operation. What this
-// file owns is (a) the two tracked sites, (b) the default rule that makes an
-// unannotated operation sound, (c) the ~15-line switch for the three
-// operations whose role depends on a kind attribute, (d) the post-fixpoint
-// verdict walk, and (e) R1's placement guard and R4's whole-function refusal.
+// Escape analysis for create_object/create_array sites in ctjs IR.
 //
-// WHY THE SINKS ARE NOT IN visitOperation. The sparse framework's
-// AbstractSparseForwardDataFlowAnalysis::visitOperation(Operation *) begins
-// with "Exit early on operations with no results" - and the operations that
-// make an object escape are precisely the ones with no results: return,
-// throw, store_global, set_property, append, cell_set, store_upvalue,
-// set_proto, define_accessor, copy_props, delete_*. A sink fired there would
-// never fire for `return {}` and every site would read confined. That is the
-// finding the judge panel made against the first design, and the unit test's
-// return/throw rows are its regression test.
+// The MLIR sparse dataflow framework supplies the worklist, the fixpoint and
+// the joins at block arguments (through BranchOpInterface successor operands).
+// Per-operand roles (sink, carry or neither) come from the Arg<..., [CTJS_Sink...]>
+// decorators in CTJSOps.td, read here through ctjs::EscapeEffectOpInterface
+// without naming any operation. This file owns: the two tracked site kinds, the
+// default rule that makes an unannotated operand sink, a small switch for the
+// three ops whose role depends on a kind attribute, the post-fixpoint verdict
+// walk, and two whole-function refusals (`arguments`/rest built after the
+// prologue, and suspension).
+//
+// Sinks are applied in the post-pass, not in visitOperation, because
+// AbstractSparseForwardDataFlowAnalysis::visitOperation exits early on
+// operations with no results, and the ops that make an object escape (return,
+// throw, store_global, set_property, append, cell_set, store_upvalue, set_proto,
+// define_accessor, copy_props, delete_*) have none. A sink placed there would
+// never fire for `return {}`. The unit test's return/throw rows guard this.
+//
+//===----------------------------------------------------------------------===//
 #include "ctcompile/CTNative/Analysis/EscapeAnalysis.h"
 
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
@@ -48,8 +49,6 @@
 
 namespace ctcompile::ctnative {
 
-// --- the lattice element ------------------------------------------------------
-
 bool isTrackedSite(mlir::Operation * op) {
     return llvm::isa<ctjs::CreateObjectOp, ctjs::CreateArrayOp>(op);
 }
@@ -68,8 +67,9 @@ AliasValue AliasValue::external() {
 }
 
 AliasValue AliasValue::site(mlir::Operation * site) {
-    // THE ONE PLACE A SITE ENTERS AN ALIAS SET, and it refuses anything but
-    // the two kinds the NEITHER proofs are valid for.
+    // The only place a site enters an alias set. Only create_object and
+    // create_array are accepted, because the .td's `Neither` operand roles were
+    // proved only for those allocation kinds.
     assert(isTrackedSite(site) && "only create_object/create_array may be an alias site");
     AliasValue v;
     v.initialized_ = true;
@@ -109,18 +109,17 @@ void AliasValue::print(llvm::raw_ostream & os) const {
     os << '}';
 }
 
-// --- the table, read generically ----------------------------------------------
-
 namespace {
 
 bool isValueTyped(mlir::Value v) {
     return llvm::isa<ctjs::ValueType>(v.getType());
 }
 
-// A route's name IS the spelling of a CTNative_EscapeReason case, and this is
-// the only bridge between the two: the ctjs dialect knows nothing of ctnative.
-// A route the enum cannot name is a .td/.h mismatch; the unit test asserts
-// every reason by name, so it cannot hide behind the fallback.
+/// Maps an escape route to its EscapeReason. A route's name is the spelling of
+/// a CTNative_EscapeReason case, and this is the only bridge between the two:
+/// the ctjs dialect knows nothing of ctnative. A route the enum cannot name is
+/// a .td/.h mismatch; the unit test asserts every reason by name, so it cannot
+/// hide behind the UnknownOp fallback.
 EscapeReason reasonOf(mlir::SideEffects::Resource * route) {
     const std::optional<EscapeReason> reason = symbolizeEscapeReason(route->getName());
     assert(reason.has_value() && "an escape route's name is not an EscapeReason case");
@@ -135,7 +134,7 @@ llvm::SmallVector<EscapeInstance, 6> escapeEffects(ctjs::EscapeEffectOpInterface
     return effects;
 }
 
-// The operands of `roles`' effects of kind E, in effect order.
+/// The operands of `roles`' effects of kind E, in effect order.
 template <class E>
 llvm::SmallVector<mlir::OpOperand *, 2> operandsWith(ctjs::EscapeEffectOpInterface roles) {
     llvm::SmallVector<mlir::OpOperand *, 2> out;
@@ -157,18 +156,17 @@ AliasValue aliasOf(const mlir::DataFlowSolver & solver, mlir::Value value) {
     return lattice != nullptr ? lattice->getValue() : AliasValue{};
 }
 
-// Spend one unit of `work` against `limit`; false once it is exhausted.
+/// Spends one unit of `work` against `limit`; false once it is exhausted.
 bool spendUsed(std::size_t & work, std::size_t limit) {
     if (work == limit) { return false; }
     ++work;
     return true;
 }
 
-// THE KIND SWITCH - the only operation-name-specific C++ the design allows,
-// and only because a kind ATTRIBUTE decides the role, which an Arg decorator
-// cannot express. Each case refines the default (sink) in the cases §2.2
-// lists, and nowhere else; every "converted" here is a may_reenter 1 bytecode
-// row that runs the operand's own valueOf/toString.
+/// Roles for the three ops whose behaviour depends on a kind attribute, which
+/// an Arg decorator in the .td cannot express. Returns nullopt for every other
+/// op. A `converted` answer means the op may run the operand's own
+/// valueOf/toString (may_reenter in bytecode_opcodes.def), so the operand sinks.
 std::optional<RoleOf> kindSwitch(mlir::Operation * op) {
     constexpr RoleOf neither{OperandRole::Neither, EscapeReason::Confined};
     constexpr RoleOf converted{OperandRole::Sink, EscapeReason::Converted};
@@ -184,13 +182,15 @@ std::optional<RoleOf> kindSwitch(mlir::Operation * op) {
         return converted;
     }
     if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(op)) {
-        // strict_equals is a bit/content compare (value.hpp:293-311); loose
-        // equality and the four relations convert (def:394-396, 411).
+        // Strict equality compares bits/contents without running user code
+        // (value::strict_equals in script/value/base.hpp); loose equality and
+        // the four relational operators convert their operands.
         return compare.getKind() == ctjs::CompareKind::StrictEq ? neither : converted;
     }
     if (auto convert = llvm::dyn_cast<ctjs::ConvertOp>(op)) {
-        // ToBoolean is total. ToObject is the identity on an object - a CARRY
-        // in principle, a sink in the MVP with no consumer.
+        // ToBoolean runs no user code. ToObject returns an object operand
+        // unchanged, so it could be a carry, but it is treated as a sink until
+        // something needs the precision.
         return convert.getKind() == ctjs::ConvertKind::ToBoolean ? neither : converted;
     }
     return std::nullopt;
@@ -223,17 +223,17 @@ RoleOf operandRole(mlir::Operation * op, unsigned index) {
     }
 
     // A branch terminator's value operands are its successor operands, which
-    // the framework joins into the successor's block arguments: CARRY. Its
+    // the framework joins into the successor's block arguments: a carry. Its
     // non-successor operands (a condition, a switch flag) are not values and
     // were answered above.
     if (llvm::isa<mlir::BranchOpInterface>(op)) {
         return RoleOf{OperandRole::Carry, EscapeReason::Confined};
     }
 
-    // THE DEFAULT RULE. No annotation means every value operand sinks. This
-    // is what makes omission sound: a new ctjs operation cannot weaken the
-    // analysis by not being in a table, because there is no table to be
-    // missing from - only a decorator to add once its VM behaviour is read.
+    // The default rule: with no annotation, every value operand sinks. This
+    // makes omission sound. A new ctjs operation cannot weaken the analysis by
+    // being missing from a table; it only lacks a decorator, to be added once
+    // its VM behaviour has been read.
     return RoleOf{OperandRole::Sink, EscapeReason::UnknownOp};
 }
 
@@ -249,8 +249,9 @@ bool isBoxedSite(mlir::Operation * op, EscapeReason & reason) {
 }
 
 std::optional<unsigned> allocationPc(mlir::Operation * op) {
-    // The importer's location_for: a NameLoc "program:<id>:<fn>:<at>" fused
-    // with a FileLineColLoc, or the NameLoc alone (BytecodeImport.cpp).
+    // The importer's location_for (BytecodeImport.cpp) writes a NameLoc
+    // "program:<id>:<fn>:<at>", fused with a FileLineColLoc or alone. The
+    // trailing <at> is the bytecode pc.
     mlir::NameLoc name;
     if (auto fused = llvm::dyn_cast<mlir::FusedLoc>(op->getLoc())) {
         for (mlir::Location part : fused.getLocations()) {
@@ -269,8 +270,6 @@ std::optional<unsigned> allocationPc(mlir::Operation * op) {
     return at;
 }
 
-// --- the alias half -----------------------------------------------------------
-
 void EscapeAnalysis::setToEntryState(AliasLattice * lattice) {
     propagateIfChanged(lattice, lattice->join(AliasValue::external()));
 }
@@ -278,17 +277,17 @@ void EscapeAnalysis::setToEntryState(AliasLattice * lattice) {
 mlir::LogicalResult EscapeAnalysis::visitOperation(mlir::Operation * op,
                                                    llvm::ArrayRef<const AliasLattice *> operands,
                                                    llvm::ArrayRef<AliasLattice *> results) {
-    // ONLY EVER CALLED FOR AN OPERATION WITH RESULTS, which is why no sink
-    // lives here. Every result of one operation gets the same answer: no ctjs
-    // operation has two value results (catch_land's first is an i32).
+    // The framework calls this only for operations with results, which is why
+    // no sink lives here. Every result of one operation gets the same answer:
+    // no ctjs operation has two value results (catch_land's first is an i32).
     AliasValue answer;
     if (isTrackedSite(op)) {
         answer = AliasValue::site(op);
     } else if (llvm::isa<ctjs::ConstantOp>(op)) {
         answer = AliasValue::none(); // a primitive; strings are untracked
     } else if (auto roles = llvm::dyn_cast<ctjs::EscapeEffectOpInterface>(op)) {
-        // CARRY: the result may be any carried operand's object - PLUS an
-        // external one, because the one carrier (ctjs.iterable) substitutes a
+        // Carry: the result may be any carried operand's object, plus an
+        // external one, because the only carrier (ctjs.iterable) substitutes a
         // fresh array on every non-array arm. An interface operation with no
         // carry is external, like everything else.
         answer = AliasValue::external();
@@ -298,8 +297,8 @@ mlir::LogicalResult EscapeAnalysis::visitOperation(mlir::Operation * op,
     } else {
         answer = AliasValue::external();
     }
-    // THE CLOSURE HOLE, CLOSED: nothing above can put a create_closure (or any
-    // other allocating operation) into a set, and this says so every visit.
+    // Only tracked sites may enter an alias set; in particular a create_closure
+    // (or any other allocating op) must never appear in one.
     assert(answer.onlyTrackedSites() && "an untracked operation entered an alias set");
 
     for (AliasLattice * result : results) {
@@ -309,10 +308,11 @@ mlir::LogicalResult EscapeAnalysis::visitOperation(mlir::Operation * op,
     return mlir::success();
 }
 
-// --- the post-pass ------------------------------------------------------------
-
 namespace {
 
+/// The container a Stored verdict writes into: the array of a create_array
+/// element, an append's array (operand 1 is the element), or a set_property's
+/// object (operand 2 is the value). Null for anything else.
 mlir::Value storageTargetValue(const Verdict & verdict) {
     if (verdict.reason != EscapeReason::Stored || verdict.by == nullptr) { return {}; }
     if (auto array = llvm::dyn_cast<ctjs::CreateArrayOp>(verdict.by)) {
@@ -325,6 +325,9 @@ mlir::Value storageTargetValue(const Verdict & verdict) {
     return {};
 }
 
+/// Checks that every operation nested in scf.if/scf.while regions has solver
+/// state for all its operands and results, so refineArrayRetention may use the
+/// incomplete top-level storage records. Spends `work` against `workLimit`.
 bool structuredRetentionInputs(const mlir::DataFlowSolver & solver, ctjs::FuncOp function,
                                std::size_t & work, std::size_t workLimit) {
     const auto spend = [&]() { return spendUsed(work, workLimit); };
@@ -346,11 +349,12 @@ bool structuredRetentionInputs(const mlir::DataFlowSolver & solver, ctjs::FuncOp
         }
         return true;
     };
-    // The legacy census deliberately models only top-level CFG operations.
-    // Check every nested operand/result against the current solver instead of
-    // presenting that partial census as complete. SCF supplies the region
-    // branch alias transport; this walk supplies no new alias or contents fact.
-    // A nested site needs this ancestry check and the complete contents proof.
+    // computeVerdicts' direct-storage/load records cover only top-level CFG
+    // operations. When those records are incomplete, walk every nested op here
+    // and require each operand/result to have a solver lattice; scf.if and
+    // scf.while regions are accepted, any other region refuses. This walk adds
+    // no alias or contents fact: nested sites still need the
+    // computeArrayContents proof.
     return !function.getBody()
                 .walk<mlir::WalkOrder::PreOrder>([&](mlir::Operation * operation) {
                     if (!spend() ||
@@ -375,6 +379,9 @@ bool structuredRetentionInputs(const mlir::DataFlowSolver & solver, ctjs::FuncOp
                 .wasInterrupted();
 }
 
+/// Turns Stored (and array get/set receiver) verdicts back into Confined when
+/// computeArrayContents proves the function's containers form an acyclic graph
+/// and the site is reachable from no return value. Commits all-or-nothing.
 void refineArrayRetention(EscapeVerdicts & verdicts, const mlir::DataFlowSolver & solver,
                           ctjs::FuncOp function, std::size_t workLimit) {
     const auto retentionReason = [&](const Verdict & verdict) {
@@ -382,9 +389,10 @@ void refineArrayRetention(EscapeVerdicts & verdicts, const mlir::DataFlowSolver 
             verdict.by->getParentRegion() == &function.getBody()) {
             return verdict.reason;
         }
-        // The legacy region census marks implicit captures UnknownOp even
-        // for known sinks. Reuse only this exact operand's current role; the
-        // candidate filter still limits Passed to array Get/Set receivers.
+        // computeVerdicts marks a value captured implicitly by a nested region
+        // as UnknownOp even when its use is a known sink. Recover that use's
+        // real reason from operandRole; the candidate filter still limits
+        // Passed to array get/set receivers.
         const RoleOf role = operandRole(verdict.by, verdict.position);
         return role.role == OperandRole::Sink ? role.reason : verdict.reason;
     };
@@ -408,20 +416,19 @@ void refineArrayRetention(EscapeVerdicts & verdicts, const mlir::DataFlowSolver 
         return;
     }
 
-    // Candidate alias closure cannot discharge a sink. The independent query
-    // must prove every operation in the CURRENT function, including effects
-    // after the last read and the exact origin of a saved, later-returned read.
+    // Alias candidates alone cannot discharge a sink. The contents query must
+    // prove every operation in this function, including effects after the last
+    // read and the exact origin of a saved, later-returned read.
     const ArrayContentsEvidence contents =
         computeArrayContents(function, workLimit - verdicts.arrayRetentionWork);
     verdicts.arrayRetentionWork += contents.work;
     if (!contents.complete) { return; }
     const auto spend = [&]() { return spendUsed(verdicts.arrayRetentionWork, workLimit); };
 
-    // This increment discharges no cycle ownership obligation. Reject cycles
-    // in the union of ALL writes, not just final contents: even a cycle that
-    // was overwritten or deleted before return stays outside this refinement. Count
-    // duplicate edges independently so Kahn's traversal handles shared children
-    // and repeated writes without treating either as a cycle.
+    // This refinement cannot prove ownership of cyclic structures, so reject
+    // any cycle in the union of all writes (including ones later overwritten
+    // or deleted). Duplicate edges are counted separately so Kahn's algorithm
+    // treats shared children and repeated writes as acyclic.
     llvm::DenseMap<mlir::Operation *, std::size_t> incoming;
     llvm::DenseMap<mlir::Operation *, llvm::SmallVector<mlir::Operation *, 2>> successors;
     for (mlir::Operation * array : contents.arrays) {
@@ -483,13 +490,13 @@ void refineArrayRetention(EscapeVerdicts & verdicts, const mlir::DataFlowSolver 
             confined.push_back(site);
         }
     }
-    // Transactional commit: not even the first candidate changes before the
-    // final graph/verdict visit. Reachable children keep their original witnesses,
+    // Commit all-or-nothing: no verdict changes until every check above has
+    // passed. Sites reachable from a return keep their original verdicts,
     // because returning a container does not give each child a unique owner.
-    // Array receivers lose their witness only after the complete current query proved
-    // every access own and excluded all other exposure, including later effects.
-    // Single-instance nested origins are confined to the FRAME, not their region:
-    // yielded aliases may still be observed after that region has ended.
+    // An array receiver is confined only after the contents query proved every
+    // access is to its own elements and excluded all other exposure. A nested
+    // site is confined to the frame, not its region: yielded aliases may still
+    // be observed after the region ends.
     for (mlir::Operation * site : confined) {
         if (retentionReason(verdicts.sites[site]) == EscapeReason::Stored) {
             ++verdicts.confinedStoredSites;
@@ -511,10 +518,10 @@ EscapeVerdicts computeVerdicts(mlir::DataFlowSolver & solver, ctjs::FuncOp funct
                                std::size_t arrayRetentionWorkLimit) {
     EscapeVerdicts out;
 
-    // PASS 1: inventory every site under live top-level blocks. Nested regions
-    // have no instance/control-flow proof here, so even their dead arms remain
-    // inventoried. A dead top-level block drops all its descendant sites; a
-    // top-level site in a live block with no lattice is a counted gap.
+    // Pass 1: inventory every site under live top-level blocks. Nested regions
+    // have no instance/control-flow proof here, so even their dead arms stay
+    // in the inventory. A dead top-level block drops all its descendant sites;
+    // a top-level site in a live block with no lattice is a counted gap.
     llvm::SmallVector<mlir::Operation *, 2> argumentsBuilders;
     mlir::Operation * suspension = nullptr;
     llvm::SmallVector<mlir::Block *, 8> live;
@@ -531,9 +538,9 @@ EscapeVerdicts computeVerdicts(mlir::DataFlowSolver & solver, ctjs::FuncOp funct
         ++out.liveBlocks;
         live.push_back(&block);
         for (mlir::Operation & op : block) {
-            // A region may hide writes that the top-level operand census
-            // cannot model. Keep the records from this CFG, but never present
-            // them as complete. The capture refusal below is still separate.
+            // A region may hide writes that the top-level operand scan cannot
+            // model. Keep the records from this CFG, but mark them incomplete.
+            // The implicit-capture sinks below are a separate check.
             if (op.getNumRegions() != 0) { out.directStorage.complete = false; }
             op.walk<mlir::WalkOrder::PreOrder>([&](mlir::Operation * nested) {
                 if (isTrackedSite(nested)) {
@@ -561,8 +568,9 @@ EscapeVerdicts computeVerdicts(mlir::DataFlowSolver & solver, ctjs::FuncOp funct
         }
     }
 
-    // FIRST REASON WINS, everywhere below. A whole-function refusal is applied
-    // before any sink so it IS the first reason for every site it refuses.
+    // The first reason recorded for a site wins, everywhere below. Whole-function
+    // refusals are applied before any sink so they are the first reason for
+    // every site they refuse.
     const auto mark = [&](mlir::Operation * site, EscapeReason reason, mlir::Operation * by,
                           unsigned position) {
         auto found = out.sites.find(site);
@@ -575,21 +583,20 @@ EscapeVerdicts computeVerdicts(mlir::DataFlowSolver & solver, ctjs::FuncOp funct
         for (auto & entry : out.sites) { mark(entry.first, reason, by, 0); }
     };
 
-    // R4: a suspension point copies the entire register window into a
-    // coroutine object on the heap (run_loop.cpp:866-867, 922-923), so every
-    // site of the function outlives its frame. The importer refuses these
-    // functions already; this line is for hand-written IR.
+    // A suspension point (generator/async `suspend`) copies the whole register
+    // window into a heap coroutine object (context::suspend_frame in
+    // vm/call/coroutines.cpp), so every site in the function outlives its
+    // frame. The importer already refuses such functions; this check covers
+    // hand-written IR.
     if (suspension != nullptr) { refuseWholeFunction(EscapeReason::Suspended, suspension); }
 
-    // R1's GUARD: the per-site `arguments` refusal is sound only because the
-    // arguments array holds what the parameter registers held in the
-    // PROLOGUE - make_arguments is emitted after the parameters are declared
-    // and before any body statement (compile_function_body in
-    // compile/statements/functions.cpp), gather_rest has
-    // exactly one emitter, the parameter prologue. That placement is CHECKED
-    // here, not believed: every builder must be in the entry block and
-    // precede every site there (a site in any other block is after the entry
-    // block by dominance). Otherwise the whole function is refused.
+    // The per-site `arguments` refusal is sound only if the arguments array is
+    // built in the prologue, from the parameter registers. make_arguments is
+    // emitted before any body statement (compile_function_body in
+    // lib/Script/compile/statements/functions.cpp) and gather_rest only in the
+    // parameter prologue. Check that rather than trust it: every builder must
+    // be in the entry block before every site there (sites in other blocks
+    // follow the entry block by dominance). Otherwise refuse the function.
     if (!argumentsBuilders.empty()) {
         mlir::Block & entry = function.getBody().front();
         mlir::Operation * late = nullptr;
@@ -611,20 +618,21 @@ EscapeVerdicts computeVerdicts(mlir::DataFlowSolver & solver, ctjs::FuncOp funct
         if (late != nullptr) { refuseWholeFunction(EscapeReason::ArgumentsLate, late); }
     }
 
-    // ponytail: nested sites need an instance/control-flow proof before any
-    // confinement claim. Keep raw-frame refusals first; otherwise there is no
-    // sinking operand witness for this inventory-only UnknownOp verdict.
+    // ponytail: every site inside a nested region is conservatively UnknownOp,
+    // since nothing here proves whether or how often it runs; upgrade with a
+    // region instance/control-flow proof. Applied after the whole-function
+    // refusals so those stay the first reason.
     for (const auto & [site, verdict] : out.sites) {
         if (site->getParentRegion() != &function.getBody()) {
             mark(site, EscapeReason::UnknownOp, nullptr, 0);
         }
     }
 
-    // PASS 2: THE SINKS, over every operand of every operation in every live
-    // block, through operandRole - the interface, the kind switch, the branch
-    // carry, or the default rule. Nothing feeds back into the alias lattice
-    // (a store's target does not change what the stored value aliases), so
-    // one pass is the fixpoint.
+    // Pass 2: apply the sinks, over every operand of every operation in every
+    // live block, through operandRole (the interface, the kind switch, the
+    // branch carry, or the default rule). Nothing feeds back into the alias
+    // lattice (a store's target does not change what the stored value
+    // aliases), so one pass is the fixpoint.
     const auto sink = [&](mlir::Value value, EscapeReason reason, mlir::Operation * by,
                           unsigned position) {
         const AliasValue aliases = aliasOf(solver, value);
@@ -636,8 +644,8 @@ EscapeVerdicts computeVerdicts(mlir::DataFlowSolver & solver, ctjs::FuncOp funct
             }
         }
         if (aliases.isUninitialized()) {
-            // A gap: the solver never told us what this operand may denote,
-            // so it may denote anything - every site of the function.
+            // A gap: the solver never said what this operand may denote, so it
+            // may denote anything, which is every site of the function.
             ++out.unvisitedOperands;
             for (auto & entry : out.sites) {
                 mark(entry.first, EscapeReason::UnvisitedOperand, by, position);
@@ -659,8 +667,8 @@ EscapeVerdicts computeVerdicts(mlir::DataFlowSolver & solver, ctjs::FuncOp funct
             // cover those implicit captures too. Inspect every nested use,
             // but only sink values defined outside this region owner; local
             // region values have no required lattice in this CFG query.
-            // Even a nested branch proved dead is refused here: admitting
-            // region semantics is a separate proof, not an operand-table row.
+            // Even a nested branch proved dead is refused here: modelling
+            // region semantics would need its own proof.
             op.walk([&](mlir::Operation * nested) {
                 if (nested == &op) { return; }
                 for (unsigned i = 0, n = nested->getNumOperands(); i < n; ++i) {

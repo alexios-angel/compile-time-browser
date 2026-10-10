@@ -1,3 +1,10 @@
+//===- Bindings.cpp - Const binding analysis --------------------*- C++ -*-===//
+//
+// Implements ConstBindings: a fixpoint that marks every written value
+// mutable, then propagates that backwards through alias edges.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Bindings.h"
 
 #include "mlir/Dialect/EmitC/IR/EmitC.h"
@@ -9,6 +16,9 @@
 namespace ctcompile::cpp {
 namespace ec = mlir::emitc;
 
+/// Finds the values that must not be printed `const`: anything written, plus
+/// everything it aliases through emitc.expression captures, member and
+/// subscript.
 void ConstBindings::prepare(mlir::Operation * function) {
     mutableBindings.clear();
     const auto module = function->getParentOfType<mlir::ModuleOp>();

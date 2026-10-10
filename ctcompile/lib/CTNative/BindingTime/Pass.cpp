@@ -1,4 +1,16 @@
+//===- ctcompile/lib/CTNative/BindingTime/Pass.cpp - Binding-time pass ----===//
+//
+// The ctnative-binding-time-analysis pass. It runs BindingTimeAnalysis over
+// the module and records the result as attributes: per operation
+// (`ctnative.binding_time`, its reason, and each result's binding time), per
+// function (argument binding times and a static/dynamic operation count), and
+// a module-wide summary. Stale attributes from an earlier run are removed
+// first.
+//
+//===----------------------------------------------------------------------===//
+
 #include "../PartialEvaluation/ClosureProof.h"
+
 #include "ctcompile/CTNative/Analysis/BindingTime.h"
 #include "ctcompile/CTNative/Transforms/Passes.h"
 #include "mlir/IR/Builders.h"

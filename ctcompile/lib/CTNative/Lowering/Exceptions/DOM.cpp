@@ -1,3 +1,14 @@
+//===- DOM.cpp - DOM exception normalization --------------------*- C++ -*-===//
+//
+// Rewrites try/catch regions in functions bound to the ctbrowser DOM host so
+// they lower without native exceptions: decodeURIComponent/JSON.parse handlers
+// (normalizeDOMURI), explicit throws consumed by their own catch, and Element
+// attribute calls proved unable to throw. Every rewrite here is provisional:
+// the host-contract DOM proof (lib/CTNative/HostContract/DOM/), called below
+// "the final DOM proof", re-checks the result before native lowering.
+//
+//===----------------------------------------------------------------------===//
+
 #include "../../../CTJS/Lowering/Globals/RegisterFlow.h"
 #include "../../HostContract/Analysis.h"
 #include "Recovery.h"
@@ -21,6 +32,11 @@ namespace ctcompile::ctnative::lowering_detail {
 
 namespace {
 
+/// Rewrites a DOM entry whose single try/catch protects a decodeURIComponent
+/// call (optionally followed by JSON.parse) into structured code: each
+/// protected call becomes a ctjs.invoke with explicit normal and unwind
+/// regions, and every other operation in the protected and catch blocks must
+/// be proved unable to throw. Sets `refusal` and returns false otherwise.
 struct DOMURI : workBudget {
     ctjs::FuncOp function;
     ExceptionInvocationSource source;
@@ -97,9 +113,10 @@ struct DOMURI : workBudget {
         return true;
     }
     bool proveTailEffects() {
-        // Identity and String inputs are reproved over the complete final DOM
-        // source. This independent effect whitelist justifies every removed
-        // non-call status edge, including preparation and the caught tail.
+        // Every operation in the protected and catch blocks must be on this list
+        // of operations that cannot throw or run user code; that is what makes
+        // it safe to drop their exception (ctjs.check) edges. Receiver identity
+        // and String inputs are checked again later by the final DOM proof.
         llvm::DenseSet<mlir::Block *> blocks;
         for (auto * block : source.normal) {
             if (!spend()) { return false; }
@@ -371,8 +388,8 @@ struct DOMURI : workBudget {
 
 namespace {
 
-// Whether every arm of the scf.if defining `value` yields a slot `proved`
-// accepts; nullopt when `value` is not an scf.if result.
+/// Whether every arm of the scf.if defining `value` yields a slot `proved`
+/// accepts; nullopt when `value` is not an scf.if result.
 template <class Proof> std::optional<bool> allArms(mlir::Value value, Proof && proved) {
     auto result = llvm::dyn_cast<mlir::OpResult>(value);
     auto branch = result ? llvm::dyn_cast<mlir::scf::IfOp>(result.getOwner()) : mlir::scf::IfOp{};
@@ -384,8 +401,10 @@ template <class Proof> std::optional<bool> allArms(mlir::Value value, Proof && p
     return true;
 }
 
-// Exact Boolean truthiness and integer casts/comparisons of completion
-// dispatch, folded with operands read through `mapping`. Null otherwise.
+/// Folds a completion-dispatch operation (truthiness of a constant Boolean, or
+/// an integer cast or comparison) with operands read through `mapping`.
+/// Returns null for any other operation or when the truthiness operand is not
+/// a constant.
 mlir::Value foldDispatch(mlir::OpBuilder & at, mlir::Operation & operation,
                          const mlir::IRMapping & mapping) {
     if (auto truth = llvm::dyn_cast<ctjs::TruthyOp>(operation)) {
@@ -406,11 +425,16 @@ mlir::Value foldDispatch(mlir::OpBuilder & at, mlir::Operation & operation,
     return {};
 }
 
+/// Proves that individual calls in a DOM entry cannot throw or run user code:
+/// hasAttribute/getAttribute/setAttribute on an Element entry parameter,
+/// Number(x), and number.toString(). Records which SSA values are known
+/// Boolean, String or Number results so later calls can rely on them.
+/// Charges every step against `remaining`.
 struct DOMAttributeProof {
     ctjs::FuncOp function;
     llvm::ArrayRef<unsigned> elementParameters;
     unsigned & remaining;
-    // The constant member name `call` invokes, or empty.
+    /// The constant member name `call` invokes, or empty.
     static llvm::StringRef calleeKey(ctjs::CallOp call) {
         auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
         return method ? ctjs::constantKey(method.getKey()) : llvm::StringRef{};
@@ -454,8 +478,9 @@ struct DOMAttributeProof {
         }
         return false;
     }
-    // Boolean/String origins may include null: these sets prove nonthrowing
-    // primitive conversion, not an exact runtime tag.
+    /// Results known to be Boolean, String or Number. The Boolean and String
+    /// sets may include null: they prove conversion cannot throw, not an exact
+    /// runtime type.
     llvm::DenseSet<mlir::Value> booleanReads;
     llvm::DenseSet<mlir::Value> stringReads;
     llvm::DenseSet<mlir::Value> numberReads;
@@ -469,9 +494,9 @@ struct DOMAttributeProof {
         }
         auto constant = value.getDefiningOp<ctjs::ConstantOp>();
         auto call = value.getDefiningOp<ctjs::CallOp>();
-        // A saved predicate retains its Boolean value across later DOM writes.
-        // Prove the exact read, leaving producer effects and initial method
-        // identity to the complete final DOM proof.
+        // A saved predicate keeps its Boolean value across later DOM writes.
+        // Only the read is proved here; the producers' effects and the
+        // method's identity are left to the final DOM proof.
         if (booleanReads.contains(value) ||
             (constant && llvm::isa<ctjs::BooleanAttr, ctjs::NullAttr>(constant.getValue())) ||
             (call && attributeRead(call) && attributeCall(call))) {
@@ -484,18 +509,19 @@ struct DOMAttributeProof {
         if (depth == 64 || !charge(remaining)) { return false; }
         auto constant = value.getDefiningOp<ctjs::ConstantOp>();
         auto call = value.getDefiningOp<ctjs::CallOp>();
-        // Saved getAttribute and Number.toString results may precede the protected
-        // body. Reuse their charged origins; producer effects and initial method
-        // identity still require the complete final DOM proof.
+        // Saved getAttribute and Number.toString results may precede the
+        // protected body and are reused here; the producers' effects and the
+        // method's identity are left to the final DOM proof.
         if (stringReads.contains(value) ||
             (constant && llvm::isa<ctjs::StringAttr, ctjs::NullAttr>(constant.getValue())) ||
             (call && calleeKey(call) == "getAttribute" && attributeCall(call)) ||
             numberStringCall(call)) {
             return true;
         }
-        // A saved prefix selection carries the selected owning String/null value.
-        // Prove the same result slot in every arm; this grants no effect authority
-        // to the condition or producers, which remain in the final DOM source.
+        // An scf.if result chosen before the try carries a String or null from
+        // each arm. Every arm's slot must be proved; this says nothing about the
+        // effects of the condition or producers, which stay in the source the
+        // final DOM proof checks.
         return allArms(value, [&](mlir::Value arm) { return stringValue(arm, depth + 1); })
             .value_or(false);
     }
@@ -512,13 +538,13 @@ struct DOMAttributeProof {
             return llvm::isa<ctjs::NumberAttr>(constant.getValue());
         }
         if (auto call = value.getDefiningOp<ctjs::CallOp>()) {
-            // A successful initial Number call produces a Number. Final DOM
-            // proof still validates its binding and input; this grants no
-            // effect authority to the call or its argument producers.
+            // A successful call of the built-in Number returns a Number. The
+            // final DOM proof still checks the binding and the input; this
+            // proves nothing about the call's or its argument's effects.
             return numberCallee(call);
         }
-        // Only immutable Number origins prove conversion cannot invoke user code.
-        // This does not discharge the producers' effects or protected status edges.
+        // Only values built from Numbers prove conversion cannot run user code.
+        // This proves nothing about the producers' effects or exception edges.
         if (auto unary = value.getDefiningOp<ctjs::UnaryOp>()) {
             return (unary.getKind() == ctjs::UnaryKind::Neg ||
                     unary.getKind() == ctjs::UnaryKind::Plus ||
@@ -537,8 +563,9 @@ struct DOMAttributeProof {
         return allArms(value, [&](mlir::Value arm) { return numberValue(arm, depth + 1); })
             .value_or(false);
     }
-    // Attribute conversion of a Number/null selection cannot invoke user code.
-    // Null stays out of numberValue: that proof also authorizes Number methods.
+    /// Whether `value` is a Number or null; converting either to an attribute
+    /// string cannot run user code. Null is kept out of numberValue() because
+    /// that proof also allows Number methods such as toString.
     bool nullableNumberValue(mlir::Value value, unsigned depth = 0) {
         if (depth == 64 || !charge(remaining)) { return false; }
         auto constant = value.getDefiningOp<ctjs::ConstantOp>();
@@ -574,23 +601,25 @@ struct DOMAttributeProof {
             return false;
         }
         if (name.getValue().size() > remaining) { return false; }
-        // setAttribute validates before mutation. Charge and call the same public
-        // validator as the VM binding; proved primitive conversion cannot reenter.
+        // setAttribute validates the name before mutating, so call the same
+        // public validator the VM binding uses; the value was proved primitive,
+        // so its conversion cannot reenter.
         remaining -= static_cast<unsigned>(name.getValue().size());
         return ctbrowser::is_valid_attribute_name(
             std::string_view{name.getValue().data(), name.getValue().size()});
     }
     bool nonthrowingCall(ctjs::CallOp call) {
-        // Unlike result-tag evidence, suppressing an exception requires an
-        // input that cannot invoke ToPrimitive or throw during Number conversion.
-        // The initial global binding is checked by the complete final DOM proof.
+        // Dropping an exception edge needs more than a known result type: the
+        // input must not be able to invoke ToPrimitive or throw during Number
+        // conversion. The global `Number` binding is checked by the final DOM
+        // proof.
         return attributeCall(call) || numberStringCall(call) ||
                (numberCallee(call) &&
                 (stringValue(call.getArgs().front()) || booleanValue(call.getArgs().front()) ||
                  numberValue(call.getArgs().front())));
     }
     void callResult(ctjs::CallOp call, mlir::Value result) {
-        // Called only after the independent nonthrowing proof succeeds.
+        // Called only after nonthrowingCall() has succeeded for `call`.
         if (attributeRead(call)) { booleanReads.insert(result); }
         if (const auto key = calleeKey(call); key == "getAttribute" || key == "toString") {
             stringReads.insert(result);
@@ -606,6 +635,12 @@ struct DOMAttributeProof {
 
 } // namespace
 
+/// Removes the single ctjs.try left after exception recovery. The protected
+/// body must contain only effects DOMAttributeProof can show do not throw. If
+/// the body always throws, its operations and the catch body are inlined in
+/// order. Otherwise each constant-dispatch path is projected to the normal
+/// result or the catch body. Returns false when recovery does not apply, and
+/// an error when it applies but a proof fails.
 static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, unsigned maxSteps,
                                                          llvm::ArrayRef<unsigned> elementParameters,
                                                          ExceptionRecoveryMode mode,
@@ -618,7 +653,8 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
     const auto operandCost = [](mlir::Operation * operation) {
         return uint64_t(1) + operation->getNumOperands();
     };
-    // Scan and reserve the final rewrite.
+    // Charge a scan of the function three times over: the scan itself plus a
+    // reserve for the rewrite.
     if (!chargeWalk(function, remaining, 3, [&](mlir::Operation * operation) {
             throws |= llvm::isa<ctjs::ThrowOp>(operation);
             return operandCost(operation);
@@ -669,10 +705,11 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
                                               poison.getResult().hasOneUse()))) {
                 continue; // Mixed completions select their active values below.
             }
-            // Recovery removed protected checks. Prove their effects independently
-            // of DOM result typing: even a typed URI/JSON call can throw implicitly.
-            // Project exact completion dispatch before a later call needs its
-            // saved callee or receiver. Source truthiness still runs normally.
+            // Recovery removed the protected checks, so prove their effects
+            // here, independently of DOM result typing: even a typed URI/JSON
+            // call can throw implicitly. Completion dispatch is folded before a
+            // later call needs its saved callee or receiver; truthiness tests in
+            // the source still run normally.
             mlir::OpBuilder at(&operation);
             if (llvm::isa<ctjs::TruthyOp, mlir::arith::IndexCastUIOp, mlir::arith::CmpIOp>(
                     operation)) {
@@ -693,21 +730,22 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
                 unary && unary.getKind() == ctjs::UnaryKind::Not) {
                 continue;
             }
-            // Only exact Number arithmetic avoids coercion and implicit throws.
-            // Reuse the charged origin proof, but keep checking every producer
-            // independently; a Number result alone never discharges its effects.
+            // Only arithmetic on proved Numbers avoids coercion and implicit
+            // throws. Every producer is still checked on its own; a Number
+            // result alone proves nothing about its effects.
             if (llvm::isa<ctjs::UnaryOp, ctjs::BinaryOp, ctjs::BinaryStaticOp>(operation) &&
                 attributes.numberValue(operation.getResult(0))) {
                 continue;
             }
             if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(operation);
                 load && load.getName() == "Number") {
-                continue; // Kept in order; the final proof requires the initial intrinsic.
+                continue; // Kept in order; the final DOM proof checks the built-in.
             }
-            // The original entry contract fixes this Element and its initial
-            // method identity. Proved Strings/null/Booleans/Numbers cannot invoke
-            // user coercion; valid-name writes cannot throw or reenter. Keep
-            // every mutation in order and reprove the complete DOM body below.
+            // The entry's host contract fixes this Element and its built-in
+            // methods. Proved Strings, nulls, Booleans and Numbers cannot invoke
+            // user coercion, and writes of valid names cannot throw or reenter.
+            // Every mutation is kept in order, and the final DOM proof checks
+            // the whole body again.
             // ponytail: entry parameters and identical branch forwarding only;
             // other aliases need their own source identity proof.
             if (auto method = llvm::dyn_cast<ctjs::GetPropertyOp>(operation);
@@ -731,8 +769,10 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
                     !llvm::isa<ctjs::InvokeYieldOp>(normal.getTerminator())) {
                     return false;
                 }
-                // Recovery's normal tuple contains only its tag, inactive padding
-                // and original saved values. Never infer effects from result types.
+                // After recoverPrimitiveExceptionRegion the normal region holds
+                // only constants and poison (the completion tag, unused padding
+                // and values saved before the call); anything else refuses.
+                // Effects are never inferred from result types.
                 for (auto & projection : normal.without_terminator()) {
                     if (!charge(remaining)) { return false; }
                     if (!llvm::isa<ctjs::ConstantOp, mlir::arith::ConstantOp, mlir::ub::PoisonOp>(
@@ -740,9 +780,9 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
                         return false;
                     }
                 }
-                // Select normal only after the independent effect proof. Keep
-                // the complete tuple, including inactive padding, and record
-                // primitive evidence only for the surviving call result.
+                // Select the normal completion only after the effect proof.
+                // Keep every completion value, including unused padding, and
+                // record a known result type only for the surviving call result.
                 auto projected = host_detail::projectInvocationContinuation(
                     invocation, false, call.getResult(), at, remaining);
                 if (mlir::failed(projected)) { return false; }
@@ -781,8 +821,8 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
                             use.set(value);
                         }
                     }
-                    // Discarded definitions must not survive as evidence when
-                    // subsequent projections allocate new SSA values.
+                    // Facts about discarded definitions must be dropped before
+                    // later projections allocate new SSA values.
                     if (!chargeWalk(branch, remaining, 1, [&](mlir::Operation * nested) {
                             for (auto result : nested->getResults()) {
                                 attributes.booleanReads.erase(result);
@@ -800,10 +840,11 @@ static llvm::Expected<bool> normalizeDOMCaughtCompletion(ctjs::FuncOp function, 
                      llvm::zip(branch.getResults(), yes.getOperands(), no.getOperands())) {
                     if (!charge(remaining)) { return false; }
                     attributes.join(result, left, right);
-                    // Both arms have complete effect proofs. Forward only the
-                    // identical saved SSA value, retaining the branch and its
-                    // effects. Existing result trimming runs before final DOM
-                    // proof; equal callable kinds or names supply no identity.
+                    // Both arms passed the effect proof. Forward only an SSA
+                    // value both arms yield identically, keeping the branch and
+                    // its effects; unused results are trimmed before the final
+                    // DOM proof. Equal callable kinds or names do not prove two
+                    // values identical.
                     if (left != right) { continue; }
                     for (auto & use : llvm::make_early_inc_range(result.getUses())) {
                         if (!charge(remaining)) { return false; }
@@ -1046,10 +1087,10 @@ llvm::Error normalizeDOMAttributeInvocations(ctjs::FuncOp function, unsigned max
                 exit.getNormalResult() != call.getResult() || !attributes.nonthrowingCall(call)) {
                 continue;
             }
-            // Verification covered both complete continuations. Only the call's
-            // independent effect proof permits discarding failure and its saved
-            // registers. The normal continuation is outside this protection;
-            // preserve its operations, including later throws, after the call.
+            // Verification covered both continuations. Only the call's own effect
+            // proof allows dropping the failure path and its saved registers.
+            // The normal continuation is outside this protection; its
+            // operations, including later throws, are kept after the call.
             call->moveBefore(invocation);
             attributes.callResult(call, call.getResult());
             auto & normal = invocation.getNormalBody().front();
@@ -1086,8 +1127,8 @@ llvm::Expected<bool> normalizeDOMCaughtThrow(ctjs::FuncOp function, unsigned max
                                             elementParameters,
                                             ExceptionRecoveryMode::ExplicitThrows);
     }
-    // Probe on a bounded clone: URI/JSON handlers still need their existing
-    // throwing-call consumer when this narrower nonthrowing proof does not apply.
+    // Try on a bounded clone: when this narrower nonthrowing proof does not
+    // apply, URI/JSON handlers must stay intact for normalizeDOMURI.
     if (size > maxSteps / 3) { return false; }
     mlir::OwningOpRef<ctjs::FuncOp> copy(llvm::cast<ctjs::FuncOp>(function->clone()));
     auto normalized =
@@ -1114,7 +1155,7 @@ llvm::Error normalizeDOMURI(mlir::ModuleOp candidate, const HostContract & contr
     if (!scanned || scanCost > remaining) {
         return llvm::createStringError("DOM URI normalization work budget exhausted");
     }
-    remaining -= scanCost; // Reserve the complete fingerprint scan before printing the module.
+    remaining -= scanCost; // Reserve the fingerprint scan, which prints the module.
     if ((contract.provider != HostContract::Provider::ctbrowserDOM &&
          contract.provider != HostContract::Provider::ctbrowserDOMSession) ||
         !llvm::is_contained(contract.initialIntrinsics, "decodeURIComponent") ||

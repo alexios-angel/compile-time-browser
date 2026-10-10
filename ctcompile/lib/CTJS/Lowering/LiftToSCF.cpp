@@ -1,34 +1,18 @@
-// RECOVERING STRUCTURED CONTROL FLOW FROM A CFG THIS PROJECT BUILT OUT OF
-// JUMPS.
+//===- LiftToSCF.cpp - Lift ctjs CFGs to structured control flow ----------===//
 //
-// The importer emits blocks and `cf.br`/`cf.cond_br`, because that is what
-// bytecode is: a register machine with relative jumps and no notion of a loop.
-// The C++ that falls out the other end is a chain of `goto label9`, which is
-// correct, unreadable, and hard for a C++ compiler to optimise - it cannot see
-// a loop it might unroll or a value it might keep in a register.
+// Implements --ctjs-lift-to-scf. The importer emits blocks and cf branches,
+// because bytecode is a register machine with relative jumps; left as is, they
+// become `goto`s in the C++ output, which a C++ compiler optimises poorly.
 //
-// MLIR ALREADY SOLVES THIS AND WE DO NOT HAVE TO WRITE IT. `transformCFGToSCF`
-// implements Bahmann et al., "Perfect Reconstructability of Control Flow from
-// Demand Dependence Graphs" - it lifts an ARBITRARY CFG, including irreducible
-// ones, by inserting edge multiplexers rather than giving up. Every hard part
-// is upstream's.
+// Upstream's transformCFGToSCF (Bahmann et al., "Perfect Reconstructability of
+// Control Flow from Demand Dependence Graphs") lifts any CFG, irreducible ones
+// included. Upstream's own --lift-cf-to-scf cannot be used: it walks only
+// func::FuncOp, so on ctjs.func it matches nothing and silently changes
+// nothing. This pass is the FunctionOpInterface walk around the upstream
+// utility, plus clean-ups that make the lifted loops usable by native
+// lowering.
 //
-// SO WHY IS THIS FILE HERE AT ALL. Upstream's own pass, --lift-cf-to-scf, is
-// one line away from working on this dialect and that line is fatal:
-//
-//     op->walk([&](func::FuncOp funcOp) { ... })
-//
-// It looks for `func.func` BY TYPE, not for FunctionOpInterface. `ctjs.func`
-// implements FunctionOpInterface and is not a func::FuncOp, so the pass walks
-// the module, matches nothing, reports success and changes NOTHING - which is
-// the worst failure mode available, because it looks exactly like a CFG that
-// was already structured. It was measured: twelve `cf` operations before,
-// twelve after, zero `scf`.
-//
-// Everything else upstream exposes. `mlir::ControlFlowToSCFTransformation` is
-// a public class implementing the seven CFGToSCFInterface methods against the
-// SCF dialect, and `mlir::transformCFGToSCF` is a public function. This pass is
-// the walk they are missing and nothing more.
+//===----------------------------------------------------------------------===//
 #include "Globals/RegisterFlow.h"
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
 #include "ctcompile/CTJS/IR/CTJSOps.h"
@@ -57,40 +41,38 @@ namespace ctcompile::ctjs {
 
 namespace {
 
-// A BLOCK ARGUMENT THAT IS ONLY EVER ITSELF OR ONE OTHER VALUE IS THAT VALUE.
-//
-// The importer hands every block the whole register file as block arguments,
-// so a loop header carries an argument for every variable - including one
-// assigned once BEFORE the loop and never inside it. Upstream's
-// simplifyRegions drops an argument only when every predecessor passes the
-// same value, and a loop header's argument for such a variable is passed the
-// variable on the entry edge and ITSELF on the back edge, so it survives;
-// transformCFGToSCF then threads it through the scf.while it builds, and
-// through a loop result when the variable is read after the loop.
-//
-// For a number that is an unneeded copy. For an object literal it is fatal to
-// the native tier: every access inside the loop goes through the loop's
-// argument rather than the literal, the shape is no longer closed (Phase 56A's
-// proof is "every use is a get or set on the literal ITSELF"), and the
-// function is refused. Obligation O-3 - one stack slot, however many SSA
-// values reach it - is exactly this case: the SSA values are a trivial phi.
-//
-// THE RULE IS BRAUN ET AL. 2013 §3.1, applied to a CFG rather than during SSA
-// construction: a phi whose operands are itself or one value v IS v. Here the
-// phi is a non-entry block argument and its operands are what each
-// predecessor's terminator passes at that index. Replace it by v, drop the
-// operand from every predecessor, drop the argument. To a fixpoint, because
-// removing one can make another trivial: an inner loop's header feeds an
-// outer's, and reads as self-carried only once the inner one is gone.
-//
-// WHAT IT DOES NOT TOUCH. Anything but a block argument and a successor
-// operand; upstream's canonicalizer is never run on ctjs IR (it folded an
-// scf.if of ctjs constants once and crashed). A predecessor whose terminator
-// is not a BranchOpInterface, a produced operand, and an argument with no
-// incoming value but itself (dead, and runRegionDCE's business) are all left
-// alone. The dominance test is a belt: in a valid CFG the value passed on an
-// entry edge already dominates the header, because the back edges are the
-// only predecessors the header dominates.
+/// Replaces each block argument that only ever receives itself or one other
+/// value with that value, and returns how many were dropped.
+///
+/// The importer hands every block the whole register file as block arguments,
+/// so a loop header carries an argument for every variable, including one
+/// assigned once before the loop and never inside it. Upstream's
+/// simplifyRegions drops an argument only when every predecessor passes the
+/// same value, and such a header argument receives the variable on the entry
+/// edge and itself on the back edge, so it survives; transformCFGToSCF then
+/// threads it through the scf.while it builds.
+///
+/// For a number that is an unneeded copy. For an object literal it is fatal to
+/// native lowering: native lowering only accepts an object literal whose every
+/// use is a get or set on the literal itself, so an access through the loop
+/// argument makes it refuse the function. These arguments are trivial phis and
+/// should collapse back to the one value they carry.
+///
+/// The rule is Braun et al. 2013, section 3.1, applied to a CFG: a phi whose
+/// operands are itself or one value v is v. Here the phi is a non-entry block
+/// argument and its operands are what each predecessor's terminator passes at
+/// that index. Replace it by v, drop the operand from every predecessor, drop
+/// the argument. Repeat to a fixpoint, because removing one can make another
+/// trivial: an inner loop's header feeds an outer one's, which reads as
+/// self-carried only once the inner one is gone.
+///
+/// Only block arguments and successor operands are touched; upstream's
+/// canonicalizer is never run on ctjs IR (it once folded an scf.if of ctjs
+/// constants and crashed). A predecessor whose terminator is not a
+/// BranchOpInterface, a produced operand, and an argument with no incoming
+/// value but itself (dead, and runRegionDCE's business) are left alone. The
+/// dominance test is a second line of defence: in a valid CFG the value passed
+/// on an entry edge already dominates the header.
 unsigned dropSelfCarriedArguments(mlir::RewriterBase & rewriter, mlir::Region & region,
                                   mlir::DominanceInfo & dominance) {
     unsigned dropped = 0;
@@ -98,7 +80,7 @@ unsigned dropSelfCarriedArguments(mlir::RewriterBase & rewriter, mlir::Region & 
         changed = false;
         for (mlir::Block & block : region) {
             if (block.isEntryBlock() || block.getNumArguments() == 0) { continue; }
-            // THE EDGES FIRST, before anything is rewritten: one entry per
+            // Collect the edges before anything is rewritten: one entry per
             // (predecessor, successor index), so a conditional branch with
             // both arms into this block counts twice, as it must.
             llvm::SmallVector<std::pair<mlir::BranchOpInterface, unsigned>> edges;
@@ -128,15 +110,14 @@ unsigned dropSelfCarriedArguments(mlir::RewriterBase & rewriter, mlir::Region & 
                         common = incoming;
                         continue;
                     }
-                    // THE GUARD: two different values reach it. That is a
-                    // real phi - a variable assigned inside the loop, or on
-                    // only one path before it - and it stays. MEASURED, with
-                    // this deleted: `switching` in native-struct.mlir lowers,
-                    // and the `acc = lo` before its loop is silently dropped -
-                    // it returns hi.v for every n, including n = 0, where the
-                    // loop never runs. The dominance test below does NOT
-                    // catch that one: both literals are made before the loop,
-                    // so both dominate the header.
+                    // Two different values reach it: a real phi (a variable
+                    // assigned inside the loop, or on only one path before
+                    // it), which stays. Without this check, `switching` in
+                    // test/CTNative/Lowering/Objects/struct.mlir drops the
+                    // `acc = lo` before its loop and returns hi.v even when
+                    // the loop never runs. The dominance test below would not
+                    // catch it: both literals are made before the loop, so
+                    // both dominate the header.
                     if (incoming != common) {
                         trivial = false;
                         break;
@@ -157,20 +138,22 @@ unsigned dropSelfCarriedArguments(mlir::RewriterBase & rewriter, mlir::Region & 
     return dropped;
 }
 
-// Whether a catch reads what was thrown. The importer copies the landing's
-// value into the register vector whether or not anything reads that register,
-// so follow it through successor operands to a use that is not another copy.
-// No step budget, as the hand-rolled walk had none; running out would count as a read.
+/// Whether a catch reads what was thrown. The importer copies the landing's
+/// value into the register vector whether or not anything reads that register,
+/// so follow it through successor operands to a use that is not another copy.
+/// The walk is effectively unbounded; if the budget were hit it would count as
+/// a read.
 bool observesThrown(CatchLandOp landing) {
     const auto uses =
         globals_detail::registerFlowUses(landing.getThrown(), std::numeric_limits<unsigned>::max());
     return !uses || !uses->empty();
 }
 
-// Upstream also replaces after arguments with then-yielded values before
-// remapping captures, but only remaps uses inside then. A before-local value
-// would escape directly into the sibling after: answers that value, the one
-// `branch` yields for condition argument `index`, or null when it is safe.
+/// Upstream also replaces after-region arguments with then-yielded values
+/// before remapping captures, but only remaps uses inside the then region, so
+/// a value local to the before region would escape directly into the sibling
+/// after region. Returns that value (the one \p branch yields for condition
+/// argument \p index), or null when it is safe.
 mlir::Value beforeLocalCapture(mlir::scf::WhileOp loop, mlir::scf::IfOp branch, mlir::Value value,
                                std::size_t index) {
     auto yielded =
@@ -180,10 +163,12 @@ mlir::Value beforeLocalCapture(mlir::scf::WhileOp loop, mlir::scf::IfOp branch, 
     return escapes ? yielded : mlir::Value{};
 }
 
-// WhileMoveIfDown replaces all uses while visiting condition operands. A
-// repeated if result would hide its later occurrences, leaving those body
-// arguments carrying the else value. Other rewrites can introduce aliases or
-// move nested loops, so guard each pattern application on the current IR.
+/// Whether upstream's WhileMoveIfDown pattern is safe on \p loop.
+/// WhileMoveIfDown replaces all uses while visiting condition operands. A
+/// repeated if result would hide its later occurrences, leaving those body
+/// arguments carrying the else value. Other rewrites can introduce aliases or
+/// move nested loops, so each pattern application is guarded on the current
+/// IR.
 bool safeWhileInputs(mlir::scf::WhileOp loop) {
     llvm::DenseSet<mlir::Value> forwarded;
     for (auto [index, value] : llvm::enumerate(loop.getConditionOp().getArgs())) {
@@ -195,6 +180,8 @@ bool safeWhileInputs(mlir::scf::WhileOp loop) {
     return true;
 }
 
+/// Wraps an upstream scf.while canonicalization pattern so it applies only when
+/// safeWhileInputs() holds.
 struct CheckedWhilePattern : mlir::RewritePattern {
     explicit CheckedWhilePattern(std::unique_ptr<mlir::RewritePattern> original)
         : RewritePattern(mlir::scf::WhileOp::getOperationName(), original->getBenefit(),
@@ -210,10 +197,12 @@ struct CheckedWhilePattern : mlir::RewritePattern {
     std::unique_ptr<mlir::RewritePattern> original;
 };
 
-// Upstream moves then-yielded header values directly into after-region uses,
-// but only remaps captures inside then. Forward those values explicitly first,
-// so its replacement encounters no live after uses of the affected arguments.
-// Extra results are unused; both the true and false edges retain their values.
+/// Upstream moves then-yielded header values directly into after-region uses,
+/// but only remaps captures inside the then region. This forwards those values
+/// explicitly first, as extra after-region arguments, so upstream's
+/// replacement finds no live after-region uses of the affected arguments. The
+/// extra results are unused; both edges keep their values. Returns the loop
+/// to continue with (a replacement, or \p loop unchanged).
 mlir::scf::WhileOp forwardHeaderCaptures(mlir::scf::WhileOp loop, mlir::scf::IfOp branch,
                                          mlir::IRRewriter & rewriter) {
     llvm::DenseSet<mlir::Value> forwarded;
@@ -245,10 +234,11 @@ mlir::scf::WhileOp forwardHeaderCaptures(mlir::scf::WhileOp loop, mlir::scf::IfO
     return replacement;
 }
 
-// CFG reconstruction encodes a loop's guard as an if result (1/0), then
-// truncates it back to i1. Recover that exact Boolean identity so upstream's
-// WhileMoveIfDown can put the guarded body in the after region. Neither arm's
-// effects move here, and non-Boolean flags keep their original control flow.
+/// CFG reconstruction encodes a loop's guard as an if result (1/0), then
+/// truncates it back to i1. Recover that exact Boolean identity so upstream's
+/// WhileMoveIfDown can put the guarded body in the after region. Neither arm's
+/// effects move here, and non-Boolean flags keep their original control flow.
+/// Returns whether anything changed, or failure if the rewrite driver failed.
 mlir::FailureOr<bool> recoverLoopGuards(mlir::FunctionOpInterface function,
                                         mlir::IRRewriter & rewriter) {
     bool recovered = false;
@@ -280,8 +270,9 @@ mlir::FailureOr<bool> recoverLoopGuards(mlir::FunctionOpInterface function,
         recovered = true;
     });
     if (!recovered) { return false; }
-    // Only checked SCF while patterns; never CTJS folding or IfOp's
-    // arbitrary-type select conversion. DCE removes the inert mux constants.
+    // Apply only the checked scf.while patterns: no CTJS folding and no
+    // scf.if-to-select conversion of arbitrary types. DCE removes the inert
+    // mux constants.
     mlir::RewritePatternSet patterns(function->getContext());
     mlir::scf::WhileOp::getCanonicalizationPatterns(patterns, function->getContext());
     for (auto & pattern : patterns.getNativePatterns()) {
@@ -297,32 +288,31 @@ mlir::FailureOr<bool> recoverLoopGuards(mlir::FunctionOpInterface function,
     return true;
 }
 
-// WHY A FUNCTION KEEPS ITS CFG FOR EXCEPTION RECOVERY, as the refusal the
-// structuring utility would have given, or nothing.
+/// Returns the reason \p body must keep its CFG for exception recovery,
+/// phrased like the structuring utility's own refusal, or nullopt to lift it.
 std::optional<std::string> handlerRefusal(mlir::FunctionOpInterface body) {
-    // Exception candidates need the complete importer
-    // register vectors: throw has no successor operands, so its
-    // block arguments identify the catch-visible state. This is
-    // only a preservation filter; recovery and native admission
-    // still prove the actual control flow, types and effects.
-    // Preserve ordinary calls/property reads too, including a
-    // prefix before a non-entry handler; neither those effects
-    // nor their callees acquire proof by keeping their CFG.
-    // Other handler functions keep legacy simplification, which
-    // exposes the value flow needed by closure/callback lifting.
+    // A function with a handler that uses only the ops listed below keeps its
+    // CFG: exception recovery needs the importer's complete register vectors,
+    // because a throw has no successor operands and the block arguments are
+    // the only record of the state a catch can see. This is a preservation
+    // filter only; recovery and native admission still prove control flow,
+    // types and effects. Ordinary calls and property reads are preserved too,
+    // including a prefix before a non-entry handler; neither they nor their
+    // callees gain a proof by keeping the CFG. Other handler functions are
+    // simplified and lifted normally, which exposes the value flow
+    // closure/callback lifting needs.
     mlir::Operation * handler = nullptr;
     bool exceptionCandidate = true, holder = false;
     llvm::SmallVector<CatchLandOp> landings;
     body.getFunctionBody().walk([&](mlir::Operation * operation) {
-        // Captured helpers also need their original saved
-        // registers. This proves no effects.
+        // Captured helpers also need their original saved registers. Allowing
+        // them proves nothing about effects.
         if (llvm::isa<CreateClosureOp, CreateCellOp, CellGetOp>(operation)) {
             return mlir::WalkResult::advance();
         }
-        // So do local iterator holders, but only for a catch that
-        // observes the exception (41c9f87de). A landing that only
-        // suppresses an iterator close is represented by the DOM
-        // close normalizer, which needs the simplified CFG.
+        // So do local iterator holders, but only when a catch reads the
+        // thrown value. A landing that only suppresses an iterator close is
+        // handled by the DOM close normalizer, which needs the simplified CFG.
         if (llvm::isa<BinaryStaticOp, CreateObjectOp, SetPropertyOp, DefineAccessorOp, IterableOp>(
                 operation)) {
             holder = true;
@@ -353,16 +343,13 @@ struct CTJSLiftToSCFPass : impl::CTJSLiftToSCFBase<CTJSLiftToSCFPass> {
     void runOnOperation() override {
         mlir::ControlFlowToSCFTransformation transformation;
         bool changed = false;
-        // COUNTED HERE AS WELL AS IN THE ODS STATISTIC, for the reason
-        // --ctnative-prune-dead-stores gives: Homebrew's release LLVM 23
-        // accepts --mlir-pass-statistics and prints no custom counter at all
-        // (measured - ResolveGlobals' three print nothing either), so a
-        // statistic cannot be asserted on by a test here. The remark can.
+        // Also counted locally for the `report` remark: the release LLVM build
+        // prints no custom pass statistics, so tests assert on the remark
+        // instead.
         unsigned droppedHere = 0;
 
-        // BY INTERFACE, WHICH IS THE WHOLE POINT OF THIS FILE. Anything that
-        // is a function participates - ctjs.func today, func.func if this
-        // pipeline ever grows one.
+        // Walk by FunctionOpInterface, unlike upstream's pass, so ctjs.func
+        // (and any other function op) participates.
         const mlir::WalkResult walked =
             getOperation()->walk([&](mlir::FunctionOpInterface body) -> mlir::WalkResult {
                 if (body.getFunctionBody().empty()) { return mlir::WalkResult::advance(); }
@@ -373,9 +360,9 @@ struct CTJSLiftToSCFPass : impl::CTJSLiftToSCFBase<CTJSLiftToSCFPass> {
                     return mlir::WalkResult::advance();
                 }
 
-                // UNREACHABLE BLOCKS FIRST, because the utility refuses a
-                // region containing one outright - "transformation does not
-                // support unreachable blocks" - and this importer makes them
+                // Remove unreachable blocks first, because the utility refuses
+                // a region containing one ("transformation does not support
+                // unreachable blocks"), and the importer makes them
                 // routinely: every leader gets a block up front, including the
                 // one after a `ret`, which nothing can branch to.
                 //
@@ -390,7 +377,7 @@ struct CTJSLiftToSCFPass : impl::CTJSLiftToSCFBase<CTJSLiftToSCFPass> {
                 // functions, even though pass analysis invalidation is at exit.
                 mlir::DominanceInfo dominance;
                 for (mlir::Region & region : body->getRegions()) {
-                    // THE TRIVIAL PHIS GO BEFORE THE LIFT SEES THEM: after
+                    // Drop trivial phis before the lift sees them: after
                     // simplifyRegions has dropped the single-predecessor
                     // arguments that make a back edge read as self-carried,
                     // and before transformCFGToSCF turns what is left into
@@ -401,18 +388,13 @@ struct CTJSLiftToSCFPass : impl::CTJSLiftToSCFBase<CTJSLiftToSCFPass> {
                     droppedSelfCarriedArguments += dropped;
                     droppedHere += dropped;
                     changed |= dropped != 0;
-                    // A REFUSAL IS EXPECTED AND MUST NOT BE AN ERROR.
-                    //
-                    // The utility reports one by emitting a diagnostic, and an
-                    // emitted error fails the whole ctjs-opt run - so lifting a
-                    // module containing one try/catch would produce nothing at
-                    // all. That is backwards: this pass is an IMPROVEMENT, and
-                    // a region it cannot structure is left in CFG form for the
-                    // backend that reads CFG perfectly well.
-                    //
-                    // So the diagnostic is swallowed here and the reason is
-                    // recorded on the function instead, where the work list
-                    // already lives.
+                    // A refusal is expected and must not be an error. The
+                    // utility reports one by emitting a diagnostic, and an
+                    // emitted error fails the whole ctjs-opt run. This pass is
+                    // an optimisation, and a region it cannot structure stays
+                    // in CFG form, which the backend handles. So the
+                    // diagnostic is swallowed and the reason is recorded on
+                    // the function as ctjs.not_structured.
                     std::string refusal;
                     mlir::FailureOr<bool> lifted = mlir::failure();
                     {
@@ -451,10 +433,9 @@ struct CTJSLiftToSCFPass : impl::CTJSLiftToSCFBase<CTJSLiftToSCFPass> {
                 << "dropped " << droppedHere << " self-carried block argument(s)";
         }
 
-        // THE ANALYSIS IS INVALIDATED WHOLESALE. transformCFGToSCF rewrites
-        // blocks, so a cached DominanceInfo describes a CFG that no longer
-        // exists - and a stale dominance analysis is the kind of thing that
-        // produces a verifier failure three passes later.
+        // Invalidate every analysis. transformCFGToSCF rewrites blocks, so a
+        // cached DominanceInfo would describe a CFG that no longer exists and
+        // cause failures several passes later.
         if (changed) {
             getAnalysisManager().invalidate(mlir::AnalysisManager::PreservedAnalyses{});
         }

@@ -1,3 +1,14 @@
+//===- Primitives.cpp - Exact primitive folding for contents --------------===//
+//
+// Exact constant folding of JavaScript primitive operations for the contents
+// query. The helpers recognise literal operands and bounded arithmetic whose
+// result is provably exact, so array indices and object keys can be known at
+// compile time. Every walk is bounded by a depth cap or the caller's work
+// budget. 4294967295 (2^32 - 1) is the largest array length, so valid indices
+// are strictly below it.
+//
+//===----------------------------------------------------------------------===//
+
 #include "../StringNumber.h"
 #include "Contents.hpp"
 #include "ctbrowser/core/number.hpp"
@@ -7,8 +18,8 @@
 
 namespace ctcompile::ctnative::escape_detail {
 
-// An original Number in the exact array-length range; -0 has index value zero.
-// Negation also recognizes the frontend's single Neg of an original literal.
+/// A literal Number that is an integer in [0, 2^32 - 1]; -0 counts as zero.
+/// With `negate`, also accepts the frontend's single Neg of such a literal.
 std::optional<std::size_t> boundedNumber(mlir::Value value, bool negate) {
     if (!value) { return std::nullopt; }
     if (negate) {
@@ -27,9 +38,9 @@ std::optional<std::size_t> boundedNumber(mlir::Value value, bool negate) {
     return std::nullopt;
 }
 
-// An own array element, not a property requiring conversion/prototype lookup.
-// Number -0 and canonical String/BigInt "0" are index zero; 2^32-1 is not an element.
-// Original literals, or one subtraction of two bounded original BigInt literals.
+/// The own array index a literal key names, with no conversion or prototype
+/// lookup. Number -0 and canonical String/BigInt "0" are index zero; 2^32 - 1
+/// is not an index. Accepts literals, or one subtraction of two BigInt literals.
 std::optional<std::size_t> ownArrayIndex(mlir::Value value) {
     if (auto binary = value.getDefiningOp<ctjs::BinaryOp>();
         binary && binary.getKind() == ctjs::BinaryKind::Sub) {
@@ -37,7 +48,8 @@ std::optional<std::size_t> ownArrayIndex(mlir::Value value) {
             !ctjs::constantAttr<ctjs::BigIntAttr>(binary.getRhs())) {
             return std::nullopt;
         }
-        // ponytail: two literal parses only; loaded operands/chains need charged provenance.
+        // ponytail: folds only `bigintLiteral - bigintLiteral`. A loaded operand or
+        // a longer chain would need a walk that charges the shared work budget.
         const auto left = ownArrayIndex(binary.getLhs());
         const auto right = ownArrayIndex(binary.getRhs());
         if (left && right && *left >= *right) { return *left - *right; }
@@ -53,9 +65,9 @@ std::optional<std::size_t> ownArrayIndex(mlir::Value value) {
     if (auto string = llvm::dyn_cast<ctjs::StringAttr>(constant.getValue())) {
         key = string.getValue();
     } else if (auto bigint = llvm::dyn_cast<ctjs::BigIntAttr>(constant.getValue())) {
-        // compile/expressions.cpp removes source 'n' before load_bigint. The VM
-        // converts literal digits to an index without object hooks. Do not strip
-        // an attribute suffix: the literal parser rejects it and substitutes 0n.
+        // compile/expressions.cpp strips the source 'n' before load_bigint, and
+        // the VM converts literal digits to an index without object hooks. Do
+        // not strip a suffix here: the literal parser rejects it and uses 0n.
         key = bigint.getText();
         if (key.consume_front_insensitive("0x")) {
             radix = 16;
@@ -66,7 +78,8 @@ std::optional<std::size_t> ownArrayIndex(mlir::Value value) {
         }
     }
     std::uint32_t index = 0;
-    // ponytail: at most 32 nondecimal digits; extend only with charged parsing.
+    // ponytail: at most 32 nondecimal digits; longer keys would need parsing
+    // that charges the work budget.
     if (!key.empty() && key.size() <= (radix == 10 ? 10U : 32U) &&
         (radix != 10 || key.size() == 1 || key.front() != '0') && !key.getAsInteger(radix, index) &&
         index < 4294967295ULL) {
@@ -75,11 +88,14 @@ std::optional<std::size_t> ownArrayIndex(mlir::Value value) {
     return std::nullopt;
 }
 
+/// A literal key that names an ordinary own property: not `__proto__` (which
+/// can reach the prototype) and at most 256 bytes long. Null otherwise.
 mlir::StringAttr ownObjectKey(mlir::StringAttr key) {
     if (!key || key.getValue().size() > 256 || key.getValue() == "__proto__") { return {}; }
     return key;
 }
 
+/// ownObjectKey for a String constant operand.
 mlir::StringAttr ownObjectKey(mlir::Value value) {
     auto string = ctjs::constantAttr<ctjs::StringAttr>(value);
     if (!string || string.getValue().size() > 256 || string.getValue() == "__proto__") {
@@ -88,6 +104,8 @@ mlir::StringAttr ownObjectKey(mlir::Value value) {
     return mlir::StringAttr::get(value.getContext(), string.getValue());
 }
 
+/// ownArrayIndex for a held value: its exact Number, a single held ASCII digit,
+/// or its literal origin.
 std::optional<std::size_t> ownArrayIndex(const ContentsValue & key) {
     if (!key.origin()) { return std::nullopt; }
     if (key.integerNumber && *key.integerNumber < 4294967295ULL) { return key.integerNumber; }
@@ -100,6 +118,8 @@ std::optional<std::size_t> ownArrayIndex(const ContentsValue & key) {
     return ownArrayIndex(key.origin());
 }
 
+/// The own index an exact arithmetic result names, if it is an integer below
+/// 2^32 - 1.
 std::optional<std::size_t> arithmeticArrayIndex(const ContentsValue & key) {
     if (!key.origin() || !key.arithmeticNumber) { return std::nullopt; }
     const double number = *key.arithmeticNumber;
@@ -110,14 +130,17 @@ std::optional<std::size_t> arithmeticArrayIndex(const ContentsValue & key) {
     return static_cast<std::size_t>(number);
 }
 
+/// Folds `base[key]` or `base.length` for a literal ASCII String (or a held
+/// single character) and a Number key. Null when it cannot be folded.
 std::optional<ContentsValue> boundedStringRead(const ContentsValue & base,
                                                const ContentsValue & key, mlir::Value result) {
     if (!base.string() || !base.origin() || !key.origin()) { return std::nullopt; }
     auto string = ctjs::constantAttr<ctjs::StringAttr>(base.origin());
     if (!string && !base.asciiCharacter) { return std::nullopt; }
     const auto text = string ? string.getValue() : llvm::StringRef{};
-    // ponytail: bound the scan to 256 original ASCII bytes. Wider/computed Strings
-    // need charged provenance; Unicode needs agreement with Script's byte length.
+    // ponytail: only literal ASCII strings of up to 256 bytes are read. A longer or
+    // computed string would need a budget-charged walk, and non-ASCII text would
+    // need to agree with how the ctbrowser VM counts string length.
     if (text.size() > 256 || !llvm::all_of(text, [](unsigned char c) { return c < 128; })) {
         return std::nullopt;
     }
@@ -126,8 +149,9 @@ std::optional<ContentsValue> boundedStringRead(const ContentsValue & base,
     if (name && name.getValue() == "length") {
         return ContentsValue{result, ContentsKind::NonBigInt, size};
     }
-    // Script's lookup_index exposes characters only for Number keys. Its String
-    // and BigInt property lookups disagree with JS, so do not coerce their keys.
+    // The ctbrowser VM (context::lookup_index) returns string characters only for
+    // Number keys, and its String and BigInt key lookups differ from JS, so only
+    // Number keys are folded here.
     const auto index = key.integerNumber ? key.integerNumber : boundedNumber(key.origin());
     if (!index || *index >= size) { return std::nullopt; }
     ContentsValue character{result, ContentsKind::String};
@@ -138,19 +162,21 @@ std::optional<ContentsValue> boundedStringRead(const ContentsValue & base,
 
 namespace {
 
+/// ToNumber of a held literal String of at most 32 bytes.
 std::optional<double> boundedStringNumber(const ContentsValue & input) {
     if (!input.string() || !input.origin() || input.asciiCharacter) { return std::nullopt; }
     auto string = ctjs::constantAttr<ctjs::StringAttr>(input.origin());
-    // ponytail: uncharged provenance queries keep the 32-byte bound; wider
-    // Strings need the caller's shared work budget threaded through this path.
+    // ponytail: this path is not charged to the work budget, so it stops at 32
+    // bytes; longer Strings need the caller's budget threaded through.
     if (!string || string.getValue().size() > 32) { return std::nullopt; }
     return literalStringNumber(string.getValue());
 }
 
 } // namespace
 
-// One signed magnitude of an exact primitive Number conversion. Facts attach
-// only to the operation result; primitive origins keep their property keys.
+/// The magnitude of an exact ToNumber of `input`: the nonnegative value, or with
+/// `negate` the magnitude of a negative one. Facts attach only to the operation
+/// result; primitive origins keep their property keys.
 std::optional<std::size_t> boundedConvertedNumber(const ContentsValue & input, bool negate) {
     const auto snapshot = negate ? input.negativeIntegerNumber : input.integerNumber;
     if (snapshot) { return snapshot; }
@@ -187,8 +213,9 @@ std::optional<std::int64_t> signedConvertedNumber(const ContentsValue & input) {
     return std::nullopt;
 }
 
-// Bitwise conversion accepts an original Number or bounded String. Arithmetic and
-// property keys still require their separate exact Number/spelling proofs.
+/// ToUint32 of `input` for bitwise operators: accepts a literal Number or a
+/// short String, through up to 64 unary +/-. Arithmetic and property keys still
+/// need their own exact Number or spelling proofs.
 std::optional<std::uint32_t> boundedConvertedBits(const ContentsValue & input) {
     if (input.convertedBits) { return input.convertedBits; }
     if (const auto number = signedConvertedNumber(input)) {
@@ -200,8 +227,9 @@ std::optional<std::uint32_t> boundedConvertedBits(const ContentsValue & input) {
     auto origin = input.origin();
     if (!origin) { return std::nullopt; }
     bool negate = false;
-    // ponytail: cap literal-only provenance at 64 operations, matching loop proofs.
-    // Unbounded chains need charged traversal; loads and arithmetic still stop here.
+    // ponytail: follow at most 64 unary operations back to a literal, the same cap
+    // LoopProof uses. Longer chains would need a budget-charged walk; loads and
+    // arithmetic stop the walk.
     for (unsigned depth = 0; depth < 64; ++depth) {
         auto unary = origin.getDefiningOp<ctjs::UnaryOp>();
         if (!unary ||
@@ -212,7 +240,8 @@ std::optional<std::uint32_t> boundedConvertedBits(const ContentsValue & input) {
         origin = unary.getOperand();
     }
     const auto number = ctjs::constantAttr<ctjs::NumberAttr>(origin);
-    // Core maps nonfinite Numbers to zero and reduces finite Numbers before integer conversion.
+    // ctbrowser::number_to_uint32 maps NaN and infinities to zero and reduces
+    // finite Numbers modulo 2^32 (ToUint32).
     if (number) {
         return ctbrowser::number_to_uint32(negate ? -number.getDouble() : number.getDouble());
     }
@@ -239,7 +268,7 @@ void boundedNumberBitwise(const ContentsValue & left, const ContentsValue & righ
     if (!ctjs::isBitwise(kind)) { return; }
     const auto a = boundedConvertedBits(left);
     const auto b = boundedConvertedBits(right);
-    // Bounded primitive operands use Core's ToUint32 conversion. Mask counts;
+    // Bounded primitive operands use ctbrowser's ToUint32. Mask shift counts;
     // C++23 signed right shift preserves the sign. Only UShr keeps an unsigned
     // result; negative magnitudes never become own-index facts.
     if (a && b) {
@@ -260,6 +289,8 @@ void boundedNumberBitwise(const ContentsValue & left, const ContentsValue & righ
 
 namespace {
 
+/// The exact binary64 value of `input`: a recorded arithmetic result or a
+/// Number literal.
 std::optional<double> arithmeticNumber(const ContentsValue & input) {
     if (input.arithmeticNumber) { return input.arithmeticNumber; }
     const auto value =
@@ -267,6 +298,8 @@ std::optional<double> arithmeticNumber(const ContentsValue & input) {
     return value ? std::optional<double>{value.getDouble()} : std::nullopt;
 }
 
+/// Records the exact binary64 result (and its ToUint32 bits) of `left kind
+/// right` when both are exact Numbers and the chain is under 64 operations.
 void boundedNumberArithmetic(const ContentsValue & left, const ContentsValue & right,
                              ctjs::BinaryKind kind, ContentsValue & result) {
     const auto a = arithmeticNumber(left);
@@ -447,9 +480,10 @@ std::pair<mlir::Value, bool> conditionChoiceKey(mlir::Value condition,
                 value = common;
                 continue;
             }
-            // Nested selections may forward one saved SSA leaf through
-            // different immediate results. Keep exact identity only; every
-            // arm's producers and effects still require census and replay.
+            // Nested scf.if results may forward the same SSA value through
+            // different intermediate results. Accept only when every leaf is
+            // that one value. This proves the key only: replay still checks
+            // every arm's producers and side effects.
             const auto walked = ifLeaves(value, spend, [&](mlir::Value leaf) {
                 if (common && common != leaf) { return false; }
                 common = leaf;
@@ -494,8 +528,8 @@ std::pair<mlir::Value, bool> conditionChoiceKey(mlir::Value condition,
                     // An opaque value, Number or read cannot borrow that tag.
                     // Literal leaves must agree on one exact Boolean attribute;
                     // no arm-local SSA value becomes a dominating representative.
-                    // Every nested input carrier leaf must prove its Boolean tag;
-                    // correspondence and all arm effects are checked separately.
+                    // Every nested input leaf must prove it is a Boolean; arm
+                    // correspondence and side effects are checked separately.
                     if (exactBoolean && boolean) {
                         value = input;
                         negated ^= !boolean.getValue();
@@ -526,7 +560,7 @@ std::pair<mlir::Value, bool> conditionChoiceKey(mlir::Value condition,
         // One exact SSA leaf or immutable primitive attribute supplies the same input.
         // No snapshot, coercion, signed-zero or BigInt spelling equivalence is inferred.
         // All selected leaves must agree; no arm-local SSA representative escapes.
-        // The census and replay still validate every arm's producers and effects.
+        // Replay still checks every arm's producers and side effects.
         mlir::Attribute common;
         mlir::Value identity;
         const auto leaf = [&](mlir::Value current) {
@@ -545,7 +579,8 @@ std::pair<mlir::Value, bool> conditionChoiceKey(mlir::Value condition,
             identity = current;
             return true;
         };
-        // Right's leaves first, as one stack seeded {left, right} visited them.
+        // Visit right's leaves before left's (the pop order of one stack seeded
+        // with {left, right}).
         auto walked = ifLeaves(right, spend, leaf);
         if (walked && *walked) { walked = ifLeaves(left, spend, leaf); }
         if (!walked) {
@@ -572,7 +607,7 @@ std::pair<mlir::Value, bool> conditionChoiceKey(mlir::Value condition,
         if (compare && compare.getKind() == ctjs::CompareKind::StrictEq) {
             // Strict equality is total and noncoercing, including opaque objects.
             // Prefixes before enclosing Ifs dominate this producer. Choose the
-            // outermost first match, so local duplicates share its replay snapshot.
+            // outermost first match, so local duplicates share its held value.
             // An earlier If result can also represent matching comparisons in
             // both arms. Its completed result owns the choice, not a sibling op.
             // Never cross a loop or borrow a following producer's choice.
@@ -627,7 +662,7 @@ std::pair<mlir::Value, bool> conditionChoiceKey(mlir::Value condition,
         negated ^= reversed;
         if (auto branch = input.getDefiningOp<mlir::scf::IfOp>()) {
             // Both incoming chains must retain one SSA representative and polarity.
-            // This selects no arm: census and replay still check every effect.
+            // This selects no arm: replay still checks every side effect.
             std::pair<mlir::Value, bool> common;
             for (mlir::Value arm : armYields(llvm::cast<mlir::OpResult>(input))) {
                 if (!spend(1)) { return {}; }

@@ -1,9 +1,21 @@
+//===- Closures.cpp - Evaluate cells and closures -------------------------===//
+//
+// evaluator::closureOperation: abstract evaluation of capture cells and
+// ctjs.create_closure. Only immutable captures are modelled: a cell may be
+// initialized at most once, and a closure may capture only known local cells.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Heap.h"
 
 #include "ctcompile/CTNative/Analysis/ImmutableCaptures.h"
 
 namespace ctcompile::ctnative::partial_eval {
 
+/// True when `use` of a factory's implicit `parameter` is harmless for partial
+/// evaluation: rooting it, or passing the callee (operand 0,
+/// $enclosing_closure) or receiver (operand 1, $enclosing_this) into a
+/// ctjs.create_closure.
 bool factoryParameterUse(mlir::OpOperand & use, unsigned parameter) {
     if (llvm::isa<ctjs::RootOp>(use.getOwner())) { return true; }
     if (!llvm::isa<ctjs::CreateClosureOp>(use.getOwner())) { return false; }

@@ -1,8 +1,12 @@
+//===- CTJSEnums.h - CTJS operation kind enums ------------------*- C++ -*-===//
+//
+// The generated enum classes and their stringification, plus classification
+// helpers. Separate from CTJSAttrs.h because an EnumAttr's storage is the enum,
+// so anything including the attributes needs these first.
+//
+//===----------------------------------------------------------------------===//
+
 #pragma once
-// The generated enum classes and their stringification. Separate from
-// CTJSAttrs.h because the enums are what the attributes are ABOUT: an
-// EnumAttr's storage is the enum, so anything including the attributes needs
-// these first.
 #include "mlir/IR/BuiltinAttributes.h"
 #include "llvm/ADT/StringRef.h"
 
@@ -10,11 +14,12 @@
 
 namespace ctcompile::ctjs {
 
-// THE SIX BITWISE KINDS, the ones both binary families implement. The importer
-// emits them as ctjs.binary, whose ToNumeric can run an operand's valueOf; a
-// ctjs.binary_static of one says the operands are numeric already. A pass may
-// treat the two alike only once it has proved the operands primitive: on a
-// primitive, ToNumeric is the identity and both reach the same operator.
+/// Returns true for the six bitwise kinds, which both binary families
+/// implement. The importer emits them as ctjs.binary, whose ToNumeric can run
+/// an operand's valueOf; a ctjs.binary_static of one says the operands are
+/// numeric already. A pass may treat the two alike only once it has proved the
+/// operands primitive: on a primitive, ToNumeric is the identity and both
+/// reach the same operator.
 constexpr bool isBitwise(BinaryKind kind) {
     switch (kind) {
     case BinaryKind::Shl:
@@ -27,8 +32,9 @@ constexpr bool isBitwise(BinaryKind kind) {
     }
 }
 
-// THE SIX ARITHMETIC KINDS, listed rather than derived: a kind outside the
-// enum (tests forge 255) must answer false here as it does in isBitwise.
+/// Returns true for the six arithmetic kinds. They are listed rather than
+/// derived so that a kind outside the enum (tests forge 255) answers false
+/// here, as it does in isBitwise.
 constexpr bool isArithmetic(BinaryKind kind) {
     switch (kind) {
     case BinaryKind::Add:

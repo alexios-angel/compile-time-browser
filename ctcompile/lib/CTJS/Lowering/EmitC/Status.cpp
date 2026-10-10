@@ -1,34 +1,29 @@
-// Boxed EmitC status lowering.
+//===- Status.cpp - EmitC lowering of status-returning helpers ------------===//
+//
+// EmitC lowering for runtime-helper calls that return a ct_aot_status, and the
+// shared failure and catch paths those calls branch to. Each such call splits
+// its block: the ok path continues in a fresh block, every other status goes
+// to the handler or the function's epilogue.
+//
+//===----------------------------------------------------------------------===//
 #include "Lowering.h"
 
 namespace ctcompile::ctjs::emitc_detail {
 
-// ONE OPERATION.
-//
-// NO DEFAULT ARM AND NO FALLBACK. body_is_supported has already refused
-// anything not listed here, so an operation reaching the end is a
-// disagreement between the two - which is a bug in this file rather than in
-// its input, and is worth crashing over rather than emitting a call to
-// something plausible.
-// WHERE A FAILED HELPER GOES, built once per function and shared.
-//
-// THE STATUS ARRIVES AS A BLOCK ARGUMENT, which is safe precisely because
-// --emitc-eliminate-block-arguments runs after this pass and turns it into
-// a variable. Every status test in the body branches here with its own
-// status; writing that variable by hand would be the same thing done worse.
-//
-// ct_aot_leave IS CONDITIONAL, and that is the part that is easy to get
-// wrong. On CT_AOT_UNWOUND the unwinder has already truncated the frame
-// stack and destroyed this frame - the row says leave "must NOT run on the
-// CT_AOT_UNWOUND path" - so calling it again would pop somebody else's
-// frame. On CT_AOT_FAILED the frame is still standing and must be left.
-//
-// CT_AOT_CAUGHT CANNOT REACH HERE, and that is a fact about the input
-// rather than an assumption: `caught` is reported only when a handler in
-// THIS frame won, and nothing in the allow-list pushes one. When try/catch
-// arrives this block needs a third arm - a `caught` escaping the entry is a
-// SILENT wrong answer, because the caller writes no result and reports
-// success, so the program sees `undefined` with no error at all.
+/// Returns the block a failed helper call branches to, built once per function
+/// and shared.
+///
+/// The status arrives as a block argument. That is safe because
+/// --emitc-eliminate-block-arguments runs after this pass and turns it into a
+/// variable.
+///
+/// ct_aot_leave runs only on CT_AOT_FAILED. On CT_AOT_UNWOUND the unwinder has
+/// already destroyed this frame (the helper contract says leave "must NOT run
+/// on the CT_AOT_UNWOUND path"), so leaving again would pop another frame.
+///
+/// CT_AOT_CAUGHT never reaches this block. Inside a try region the caller
+/// branches through caught_or_failure(), which tests for `caught` first and
+/// jumps to the handler; only `unwound` and `failed` arrive here.
 mlir::Block * lowering::failure_path(compiled_entry & scope, mlir::OpBuilder & build,
                                      mlir::Location where) {
     if (scope.propagate) { return scope.propagate; }
@@ -56,18 +51,17 @@ mlir::Block * lowering::failure_path(compiled_entry & scope, mlir::OpBuilder & b
     return propagate;
 }
 
-// WHERE A FAILING STATUS GOES, WHICH IS NOT ALWAYS OUT.
-//
-// Outside a protected region it is the shared epilogue, unchanged. INSIDE
-// one, CT_AOT_CAUGHT means a handler in THIS frame took the throw and
-// execution continues at the pad rather than returning - so this emits a
-// block that tests for caught first and branches to the handler with the
-// register file as of the throw, falling through to the epilogue for
-// UNWOUND and FAILED.
-//
-// PER CALL SITE rather than shared, because the epilogue takes the status
-// as a block argument and this needs it twice: once to compare and once to
-// hand on.
+/// Returns the block a failing status branches to, which is not always the
+/// epilogue.
+///
+/// Outside a protected region it is failure_path(). Inside one, CT_AOT_CAUGHT
+/// means a handler in this frame took the throw and execution continues at the
+/// landing pad, so this emits a block that tests for `caught` first and
+/// branches to the handler with the register file as of the throw, falling
+/// through to the epilogue for `unwound` and `failed`.
+///
+/// The block is built per call site rather than shared, because it needs the
+/// status twice: once to compare and once to pass on.
 mlir::Block * lowering::caught_or_failure(compiled_entry & scope, mlir::OpBuilder & build,
                                           mlir::Location where) {
     if (scope.caught_target == nullptr) { return failure_path(scope, build, where); }
@@ -83,15 +77,15 @@ mlir::Block * lowering::caught_or_failure(compiled_entry & scope, mlir::OpBuilde
     return sorted;
 }
 
-// THE CONTINUATION GOES RIGHT AFTER THE BLOCK IT CONTINUES, not at the end
-// of the function. Block order is emission order for mlir-translate, and an
-// `emitc.literal` is printed inline at each use rather than declared at the
-// top - so a literal defined in the continuation and used in a block that
-// was ALREADY in the list (CSE merges equal constants across a function, and
-// a split moves the surviving definition into the new block) printed its
-// use before its definition and came out as an undeclared name. Keeping the
-// continuation adjacent keeps every definition ahead of its uses in the
-// text, which is what the translator assumes.
+/// Creates the block that continues after the current insertion block, placed
+/// directly after it rather than at the end of the function.
+///
+/// Block order is emission order for mlir-translate, and an `emitc.literal` is
+/// printed inline at each use rather than declared at the top. If CSE moved a
+/// literal's definition into a continuation appended at the end, a use in an
+/// earlier block would print before its definition and name an undeclared
+/// variable. Keeping the continuation adjacent keeps every definition ahead of
+/// its uses in the text.
 mlir::Block * continuation_after(compiled_entry & scope, mlir::OpBuilder & build) {
     mlir::Region & body = scope.entry.getBody();
     mlir::Block * current = build.getInsertionBlock();
@@ -101,41 +95,31 @@ mlir::Block * continuation_after(compiled_entry & scope, mlir::OpBuilder & build
     return fresh;
 }
 
-// A HELPER THAT ANSWERS WITH A STATUS AND A VALUE THROUGH A POINTER.
-//
-// Most of the ABI has this shape, so it is written once: declare a local
-// for the result, take its address, call, test the status against
-// ct_aot_status::ok BY NAME, and continue in a fresh block where the result
-// is loaded.
-//
-// THE BLOCK SPLITS AND THE CALLER KEEPS EMITTING INTO THE NEW ONE. An
-// operation with an exception edge is two blocks, and everything after it
-// in the source block belongs to the second - which is why this leaves the
-// builder pointing at the continuation rather than restoring it.
-//
-// `seed` IS THE OUT-SLOT'S STARTING VALUE, and exactly one row needs it.
-// ct_aot_module_export_cell's write is CONDITIONAL - outside a module the
-// interpreter leaves the destination register alone, and the register holds
-// the local being exported - and the row asked for a CT_AOT_NO_WRITE status
-// to say so. `ct_aot_status` has four members and none of them is that one,
-// and adding a fifth would not be one enumerator: every test below compares
-// against `ok` and branches to the shared failure path, so a compiled body
-// would RETURN on the ordinary no-module path. Seeding the slot says the
-// same thing without a new status - the helper hands the seed straight back
-// and the register ends up holding what it held.
-//
-// AN emitc.assign RATHER THAN A VariableOp INITIALISER, because
-// `emitc.variable` takes an ATTRIBUTE and this is an SSA value - and
-// because --declare-variables-at-top hoists the declaration, so an
-// initialiser would be evaluated in the wrong place even if it fitted.
+/// Emits a call to a helper that returns a status and writes its result through
+/// a pointer, and returns the loaded result.
+///
+/// Most of the ABI has this shape: declare a local for the result, take its
+/// address, call, test the status against ct_aot_status::ok by name, and
+/// continue in a fresh block where the result is loaded. The builder is left
+/// pointing at that continuation, because everything after the call in the
+/// source block belongs there.
+///
+/// `seed` is the out-slot's starting value. Only ct_aot_module_export_cell uses
+/// it: outside a module that helper writes nothing, so seeding the slot with the
+/// register's current value keeps the register unchanged without needing a
+/// "no write" status (see ctjs.module_export_cell in Modules.td).
+///
+/// The seed is written with emitc.assign rather than as a VariableOp
+/// initialiser, because `emitc.variable` takes an attribute, not an SSA value,
+/// and --declare-variables-at-top hoists the declaration away from this point.
 mlir::Value lowering::status_call(compiled_entry & scope, mlir::OpBuilder & build,
                                   mlir::Location where, const std::string & symbol,
                                   llvm::ArrayRef<mlir::Value> arguments, mlir::Type produces,
                                   mlir::Value seed) {
-    // THE OUT-PARAMETER IS NOT ALWAYS A VALUE, which is why this takes a
-    // type. ct_aot_binary_op writes a `uint64_t *`, ct_aot_loose_equals a
-    // `uint32_t *` boolean and ct_aot_compare an `int32_t *` ORDERING. The
-    // pointer's pointee has to match the row or the emitted call is a type
+    // The out-parameter is not always a boxed value, which is why this takes a
+    // type: ct_aot_binary_op writes a `uint64_t *`, ct_aot_loose_equals a
+    // `uint32_t *` boolean and ct_aot_compare an `int32_t *` ordering. The
+    // pointee must match the helper's signature, or the emitted call is a type
     // error at best and a reinterpreted write at worst.
     auto slot = ec::VariableOp::create(build, where, ec::LValueType::get(produces),
                                        ec::OpaqueAttr::get(build.getContext(), ""));
@@ -147,19 +131,15 @@ mlir::Value lowering::status_call(compiled_entry & scope, mlir::OpBuilder & buil
     passed.push_back(address.getResult());
     status_call_void(scope, build, where, symbol, passed);
 
-    // LOADED ONLY ON THE OK PATH, which the ABI requires rather than merely
-    // permits: "*out written ONLY on CT_AOT_OK", so on any other status the
-    // local still holds whatever it held before the call.
+    // Loaded only on the ok path, which the ABI requires: "*out written ONLY
+    // on CT_AOT_OK", so on any other status the local still holds whatever it
+    // held before the call.
     return ec::LoadOp::create(build, where, produces, slot.getResult()).getResult();
 }
 
-// A HELPER THAT ANSWERS WITH A STATUS AND NOTHING ELSE.
-//
-// ct_aot_set_index is the first: the bytecode performs the write and
-// evaluates the expression separately, so there is a status to test and no
-// result to load. The edge is the same one; only the out-parameter is
-// missing, and inventing a slot for a value the helper never writes would
-// be a local read before it was ever assigned.
+/// Emits a call to a helper that returns only a status (ct_aot_set_index, for
+/// example), branches on it like status_call(), and leaves the builder in the
+/// continuation. No out-slot is declared, since the helper writes no result.
 void lowering::status_call_void(compiled_entry & scope, mlir::OpBuilder & build,
                                 mlir::Location where, const std::string & symbol,
                                 llvm::ArrayRef<mlir::Value> arguments) {

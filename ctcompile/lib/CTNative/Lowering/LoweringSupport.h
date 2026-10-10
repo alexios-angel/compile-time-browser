@@ -1,3 +1,12 @@
+//===- LoweringSupport.h - Carriers for EmitC lowering ----------*- C++ -*-===//
+//
+// Declarations shared by the native EmitC lowering: the carrier enum (the C++
+// representation each lowered JavaScript value takes) with its spelling table,
+// carrier predicates, Map/closure/method-table storage spellings, and the
+// naming and source-site helpers the emitter uses.
+//
+//===----------------------------------------------------------------------===//
+
 #pragma once
 
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
@@ -48,6 +57,9 @@ class DOMEntryAnalysis;
 namespace ctcompile::ctnative::lowering_detail {
 
 namespace ec = mlir::emitc;
+/// The C++ representation a lowered JavaScript value takes in generated code.
+/// kCarriers gives each one's spelling, in enum order. `none` means the value
+/// has no native representation and must be refused.
 enum class carrier {
     none,
     boolean,
@@ -91,12 +103,13 @@ inline constexpr llvm::StringLiteral kNullableType = "ctnative::nullable_scalar"
 inline constexpr llvm::StringLiteral kObjectValueType = "ctnative::object_value";
 inline constexpr llvm::StringLiteral kDOMElementType = "ctbrowser::element_ref";
 inline constexpr llvm::StringLiteral kDOMElementVectorType = "std::vector<ctbrowser::element_ref>";
-// The lattice's json rung, carried by the shared Core parser's owning tree.
+/// The carrier for a JSON value in the type lattice: the owning tree built by
+/// ctbrowser's shared JSON parser.
 inline constexpr llvm::StringLiteral kDOMJSONType = "ctbrowser::json_value";
 inline constexpr llvm::StringLiteral kObjectIdentityType =
     "std::shared_ptr<ctnative::identity_object>";
-// ONE ROW PER CARRIER, in enum order: its C++ spelling (empty when the
-// carrier has no fixed one) and whether it is a String-union variant.
+/// One row per carrier, in enum order: its C++ spelling (empty when the
+/// carrier has no fixed one) and whether it is a String-union variant.
 struct carrierRow {
     carrier which;
     llvm::StringLiteral spelling;
@@ -136,16 +149,22 @@ static_assert(
         return true;
     }(),
     "carrier rows out of enum order");
+/// The kCarriers row for `which`.
 inline const carrierRow & carrierInfo(carrier which) {
     return kCarriers[static_cast<size_t>(which)];
 }
+/// Number, Boolean, or a nullable/Number|Boolean scalar.
 bool isScalarCarrier(carrier value);
 bool isStringUnionCarrier(carrier value);
 bool isPrimitiveCarrier(carrier value);
-// The carriers a stored callable's concrete signature may use.
+/// The carriers a stored callable's concrete signature may use.
 bool isCallableCarrier(carrier value);
+/// The lattice type for an observed scalar whose possible primitives are
+/// `alternatives`: Boolean and/or Number, made optional when null or undefined
+/// is possible. Null when any other primitive is possible or nothing is known.
 mlir::Type scalarObservationType(mlir::MLIRContext * context, PrimitiveAlternatives alternatives);
-// An emitc opaque type's spelling, through an lvalue; empty for anything else.
+/// An emitc opaque type's spelling, looking through an lvalue; empty for any
+/// other type.
 llvm::StringRef opaqueSpelling(mlir::Type type);
 inline bool isNullableCarrier(mlir::Type type) {
     return opaqueSpelling(type) == kNullableType;
@@ -185,11 +204,11 @@ inline bool isIdentityCarrier(mlir::Type type) {
 bool isObjectValueType(mlir::Type type);
 bool identityOrAbsent(mlir::Type type);
 bool onlyAbsent(mlir::Type type);
-// A definite Number, Boolean or String lattice type.
+/// A definite Number, Boolean or String lattice type.
 inline bool isPrimitive(mlir::Type type) {
     return llvm::isa_and_nonnull<NumType, BoolType, StrType>(type);
 }
-// A definite primitive, or only null/undefined.
+/// A definite primitive, or only null/undefined.
 inline bool primitiveOrAbsent(mlir::Type type) {
     return isPrimitive(type) || onlyAbsent(type);
 }
@@ -208,14 +227,18 @@ mlir::Type mapCarrierType(MapType type);
 mlir::Type closureCarrierType(ClosureType type);
 mlir::Type methodTableCarrierType(MethodTableType type);
 mlir::Type carrierType(mlir::MLIRContext * context, carrier which);
+/// `type` printed as text, or `<unvisited>` for a null type (a value the
+/// dataflow solver never reached).
 std::string printed(mlir::Type type);
+/// Each value mapped to every value that names the same object.
 using receiverGroups = llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 2>>;
 llvm::SmallVector<mlir::Value, 2> aliasesOf(const receiverGroups * groups, mlir::Value value);
 std::string siteOf(mlir::Location loc);
 std::string siteOfFunction(ctjs::FuncOp fn);
+/// `symbol` made into a valid C++ identifier.
 std::string cIdentifier(llvm::StringRef symbol);
-// The generated C++ names, each spelled once: a method table's class and a
-// closure's environment type (both in namespace ctnative), and its binder.
+/// The generated C++ names, each spelled once: a method table's class and a
+/// closure's environment type (both in namespace ctnative), and its binder.
 inline std::string methodTableClass(llvm::StringRef site) {
     return "method_" + cIdentifier(site);
 }
@@ -227,26 +250,32 @@ inline std::string binderName(llvm::StringRef target) {
 }
 mlir::FrozenRewritePatternSet declarativePatterns(mlir::MLIRContext * context);
 
+/// Whether `fn` is the importer's top-level script function, `_script_$0`.
 bool isScriptEntry(ctjs::FuncOp fn);
-// Where a `ctjs.create_closure`'s captures start: after $enclosing_closure and
-// $enclosing_this, which are operands and not attributes.
+/// Where a `ctjs.create_closure`'s captures start: after $enclosing_closure
+/// and $enclosing_this, which are operands and not attributes.
 inline constexpr unsigned kFirstCapture = 2;
-// A FUNCTION DECLARATION IS A BINDING, NOT A VALUE. `function f() {}` at
-// any level is `create_closure` whose only use is `store_global "f"`; in
-// the closed world the function exists as an emitc.func and calls of it
-// are direct, so the pair lowers to nothing. A closure used as a VALUE -
-// passed, returned, stored anywhere else - is not native yet (Phase 59).
+/// Whether `o` is a function declaration: a ctjs.create_closure whose only use
+/// is a ctjs.store_global. A declaration is a binding, not a value. In the
+/// closed world the function is an emitc.func called directly, so the pair
+/// lowers to nothing. Closures used as values are handled by the closure lift
+/// (ClosureLifting/).
 bool isDeclarationClosure(mlir::Operation * o);
-// A get/set_property of a constant key on the object `use` supplies.
+/// Whether `use` is the object operand of a get/set_property with a constant
+/// key.
 inline bool isConstantKeyAccess(mlir::OpOperand & use) {
     const auto key = ctjs::propertyKey(use.getOwner());
     return key && use.getOperandNumber() == 0 && !ctjs::constantKey(key).empty();
 }
-// What a DOM entry reads only to reach its proved host calls: a callback
-// closure, the initial intrinsics, a prefix RegExp and method-like reads.
+/// Whether `op` exists only so a DOM entry can reach its proved host calls: a
+/// callback closure, the initial intrinsics, a prefix RegExp or a method-like
+/// read. Such operations lower to nothing.
 bool domBookkeeping(const DOMEntryAnalysis & entry, mlir::Operation * op);
-// All source stores to each emitted identity member, before any retyping.
-// A read's narrower result never selects storage shared by other allocations.
+/// The storage type of each identity-object member, keyed by property name:
+/// the meet of every source store to it across `functions`, computed before any
+/// retyping. A member that is only read stays opt<bottom>, and a store with no
+/// inferred type makes it boxed (which admission then refuses). A read's
+/// narrower result never selects storage shared by other allocations.
 llvm::StringMap<mlir::Type> identityFieldStoreTypes(mlir::DataFlowSolver & solver,
                                                     llvm::ArrayRef<ctjs::FuncOp> functions);
 

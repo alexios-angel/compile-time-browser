@@ -1,3 +1,11 @@
+//===- RegisterFlow.h - Follow values through block arguments ---*- C++ -*-===//
+//
+// The importer models the bytecode register file as block arguments, so one
+// JavaScript value may travel through many of them. These queries follow a
+// value forward to its real uses, or backward to its origin, across branch
+// edges.
+//
+//===----------------------------------------------------------------------===//
 #pragma once
 
 #include "mlir/IR/Value.h"
@@ -7,19 +15,26 @@
 
 namespace ctcompile::ctjs::globals_detail {
 
-// Follow only successor operands into block arguments. Status checks forward
-// both their normal vector and their pre-operation handler snapshot; this
-// query does not remove either edge or assert that its operation cannot throw.
-// The returned operand pointers are valid only until the caller mutates IR.
-// When supplied, steps is reset and receives the work consumed on every exit,
-// including failure, so a caller can share one budget across several queries.
+/// Returns every use of \p value that is not a successor operand, following
+/// successor operands into the block arguments they feed. Returns nullopt if
+/// \p maxSteps runs out.
+///
+/// Status checks forward both their normal register vector and their
+/// pre-operation handler snapshot; this query follows both edges and does not
+/// assume the operation cannot throw. The returned operand pointers are valid
+/// only until the caller mutates IR. When supplied, \p steps is reset and
+/// receives the work consumed on every exit, including failure, so a caller
+/// can share one budget across several queries.
 std::optional<llvm::SmallVector<mlir::OpOperand *>> registerFlowUses(mlir::Value value,
                                                                      unsigned maxSteps = 4096,
                                                                      unsigned * steps = nullptr);
 
-// Every incoming definition must be this exact source, including both arms of
-// a branch to the same successor. A reachable source is required, so a dead
-// self-contained cycle never manufactures a callee identity.
+/// Whether \p value, followed backward through block arguments, always comes
+/// from \p source. Every incoming definition must be this exact source,
+/// including both arms of a branch to the same successor. The source must be
+/// reached at least once, so a dead self-contained cycle never manufactures a
+/// callee identity. Returns false if \p maxSteps runs out; \p steps works as
+/// in registerFlowUses().
 bool registerFlowHasOrigin(mlir::Value value, mlir::Value source, unsigned maxSteps = 4096,
                            unsigned * steps = nullptr);
 

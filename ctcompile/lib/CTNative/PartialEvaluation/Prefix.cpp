@@ -1,3 +1,12 @@
+//===- Prefix.cpp - Evaluate a function's static prefix -------------------===//
+//
+// evaluator::runPrefix. When a whole function cannot be evaluated, the leading
+// straight-line run of static operations in its entry block may still be. The
+// prefix is evaluated, and every value it defines that the rest of the
+// function uses is recorded as a binding for Residualize.cpp to rebuild.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Heap.h"
 
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
@@ -7,6 +16,8 @@
 
 namespace ctcompile::ctnative::partial_eval {
 
+/// Whether `op` stays in place when a prefix is evaluated: frame entry,
+/// ub.poison placeholders, and global loads used only as a direct-call callee.
 bool retainedPrefixScaffolding(mlir::Operation * op) {
     if (llvm::isa<ctjs::FrameEnterOp>(op) || op->getName().getStringRef() == "ub.poison") {
         return true;
@@ -32,8 +43,10 @@ std::optional<snapshot> evaluator::runPrefix(ctjs::FuncOp function, llvm::ArrayR
     llvm::SmallPtrSet<mlir::Operation *, 32> prefix;
     bool initialized = false;
     for (mlir::Operation & op : entry) {
-        // A backedge or a dynamic branch must continue to execute its original
-        // region. This slice consumes only one straight-line entry prefix.
+        // A backedge or a dynamic branch must keep executing its original
+        // region, so the prefix stops at the first terminator, region-holding
+        // op or dynamic operation. Only the straight-line prefix of the entry
+        // block is evaluated.
         if (op.hasTrait<mlir::OpTrait::IsTerminator>() || op.getNumRegions() != 0 ||
             (!isStatic(&op) && !retainedPrefixScaffolding(&op) && !llvm::isa<ctjs::RootOp>(op))) {
             state.boundary = &op;
@@ -45,9 +58,9 @@ std::optional<snapshot> evaluator::runPrefix(ctjs::FuncOp function, llvm::ArrayR
             continue;
         }
         value result = operation(&op, env, 1);
-        // A nested call may have changed the attempt's private heap before
-        // discovering an unsupported operation. Reject the entire attempt;
-        // never retain that call against its already mutated input state.
+        // A nested call may have changed this attempt's private heap before
+        // reaching an unsupported operation, so reject the whole attempt
+        // rather than keep the call against an already mutated heap.
         if (!problem.empty()) { return {}; }
         if (op.getNumResults() == 1) { env[op.getResult(0)] = result; }
         if (!llvm::isa<ctjs::ConstantOp>(op) && op.getName().getStringRef() != "arith.constant") {

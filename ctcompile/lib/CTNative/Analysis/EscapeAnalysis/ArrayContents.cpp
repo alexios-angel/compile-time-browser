@@ -1,3 +1,23 @@
+//===- ArrayContents.cpp - Exact array/object contents query ----*- C++ -*-===//
+//
+// computeArrayContents: a path-by-path symbolic execution of one ctjs.func that
+// tracks the exact elements of every fresh array and the own properties of
+// every fresh object, and records each write, read, copy and deletion. Escape
+// analysis uses it to confine sites that are stored only into containers which
+// never escape.
+//
+// Every structural path is enumerated separately ("replay"); a counted loop
+// proved by LoopProof is stepped one iteration at a time. Anything outside the
+// supported subset refuses the whole function with an ArrayContentsFailure.
+//
+// Several operator arms below may exit early with an independent Error (a
+// recursion-depth guard, a BigInt RangeError or TypeError). The function is
+// refused if it calls, installs handlers or publishes values, so such an exit
+// cannot retain fresh locals. The result is retention evidence only: it proves
+// neither normal completion, no-throw behaviour nor allocation success.
+//
+//===----------------------------------------------------------------------===//
+
 #include "LoopProof.hpp"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -22,8 +42,8 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
         out.work += count;
         return true;
     };
-    // A binary result charges once for a Number fact: Add only for its
-    // converted bits, every other kind for any fact.
+    // Whether a binary result records a Number fact that must be charged:
+    // for Add only converted bits count, for every other kind any exact Number.
     const auto numberFact = [](ctjs::BinaryKind kind, const ContentsValue & result) {
         return result.convertedBits || (kind != ctjs::BinaryKind::Add && result.exactNumber());
     };
@@ -33,10 +53,11 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
 
     // Enumerate structural paths, never solver flags or annotations. A join
     // keeps separate exact states: unioning array aliases before a strong
-    // overwrite would incorrectly erase an element of an unmodified array.
-    // Every ordinary branch edge is visited, including a constant flag's untaken
-    // edge and a switch's default edge. A certified finite loop selects its
-    // guard and reuses exact i1 choices within that path. Unsupported paths refuse.
+    // overwrite would wrongly erase an element of an unmodified array. Every
+    // ordinary branch edge is visited, including a constant flag's untaken
+    // edge and a switch's default edge. A loop certified by LoopProof follows
+    // its guard and reuses exact i1 choices within that path. Unsupported
+    // paths refuse.
     State state;
     for (mlir::BlockArgument argument : function.getBody().front().getArguments()) {
         if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, function); }
@@ -57,7 +78,8 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
             return ArrayContentsFailure::UnsupportedControlFlow;
         }
         // Read every source before assigning any destination: successor operands
-        // are simultaneous, including swaps. One kind replaces exact/opaque state.
+        // are assigned simultaneously, including swaps. The incoming fact
+        // replaces the destination's previous exact or opaque state.
         if (!spend(operands.size())) { return ArrayContentsFailure::WorkLimit; }
         llvm::SmallVector<ContentsValue, 8> incoming;
         for (mlir::Value value : operands) {
@@ -118,8 +140,8 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
         if (auto entered = llvm::dyn_cast<ctjs::FrameEnterOp>(&op)) {
             // The importer enters before seeding registers or allocating any
             // tracked object. Its depth failure is real, but on that path no
-            // object from these sites exists. This is NOT an effect proof that
-            // permits erasing entry or treating it as pure/nonthrowing.
+            // object from these sites exists. This is not an effect proof that
+            // permits erasing the entry or treating it as pure or nonthrowing.
             if (&op != &function.getBody().front().front() || state.frame ||
                 entered.getRegCountAttr().getInt() < 0) {
                 return ArrayContentsFailure::InvalidFrame;
@@ -138,7 +160,7 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
             return ArrayContentsFailure::None;
         }
         if (auto root = llvm::dyn_cast<ctjs::RootOp>(&op)) {
-            // RootOp parks only in THIS frame's window (Frames.td). The exact
+            // RootOp parks a value only in this frame's window (Frames.td). The exact
             // matching exit kills that window; no call, suspension or unknown
             // effect in this query can keep it or expose its contents.
             if (!state.frame || state.frameExited ||
@@ -180,13 +202,15 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
         }
         if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(&op)) {
             if (!origin(branch.getCondition())) { return ArrayContentsFailure::UnknownValue; }
-            // ponytail: single-block structured arms only; nested CFG
-            // needs its own lifetime/transport proof. The first choice runs
-            // both arms in separate states, including an implicit empty else.
-            // One charge per arm.
+            // ponytail: single-block structured arms only; nested CFG would need
+            // its own lifetime and successor-operand proof. Without a recorded
+            // choice, both arms run in separate states, including an implicit
+            // empty else. One charge per arm.
             if (!spend(2)) { return ArrayContentsFailure::WorkLimit; }
-            // The census admits every nested If only for one body visit.
-            // No-result branches retain full structural replay.
+            // Inside a certified loop, LoopProof admits a nested scf.if only when
+            // it runs once per iteration. A result-producing If reuses the arm
+            // already chosen for its condition on this path; an If with no
+            // results always replays both arms.
             const bool correlated = state.loop && branch.getNumResults() != 0;
             const auto [choiceKey, negated] = conditionChoiceKey(branch.getCondition(), spend);
             if (!choiceKey) { return ArrayContentsFailure::WorkLimit; }
@@ -244,9 +268,9 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
             if (state.loop && state.loop->header == op.getBlock()) {
                 const auto continued = loopProof.loopContinues();
                 if (!continued) { return ArrayContentsFailure::UnsupportedControlFlow; }
-                // Only this independently checked finite guard selects an
-                // edge. Exact replay records every actual element alternative;
-                // all unrelated conditions retain both structural paths.
+                // Only the certified loop guard selects an edge. Replay records
+                // every actual element alternative; every other condition keeps
+                // both structural paths.
                 if (!*continued) { state.loop.reset(); }
                 return forward(
                     state, op.getBlock(), *continued ? branch.getTrueDest() : branch.getFalseDest(),
@@ -260,10 +284,10 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
         }
         if (auto branch = llvm::dyn_cast<mlir::cf::SwitchOp>(&op)) {
             if (!origin(branch.getFlag())) { return ArrayContentsFailure::UnknownValue; }
-            // The flag selects an edge without JS coercion. Prove every
-            // structural edge, so neither case values nor exhaustiveness
-            // supply a liveness fact. Repeated destinations still carry
-            // their own operands. Push in reverse for default/case order.
+            // The flag selects an edge without JS coercion. Every structural
+            // edge is explored, so neither case values nor exhaustiveness are
+            // used to prune. Repeated destinations still carry their own
+            // operands. Cases are pushed in reverse so they run in order.
             for (unsigned i = branch->getNumSuccessors() - 1; i != 0; --i) {
                 const auto failure = alternative(op.getBlock(), branch.getCaseDestinations()[i - 1],
                                                  branch.getCaseOperands(i - 1));
@@ -279,9 +303,9 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
             state.values[constant.getResult()] = {constant.getResult()};
             return ArrayContentsFailure::None;
         }
-        // Truthy is total, noncapturing and nonthrowing (Operators.td). An
-        // external input remains unknown for every other use; only its i1
-        // result can be carried as a predicate. Neither branch is pruned.
+        // A constant has no heap effect. Record its primitive category so later
+        // arithmetic and comparisons can tell String, BigInt and other
+        // primitives apart.
         if (auto constant = llvm::dyn_cast<ctjs::ConstantOp>(&op)) {
             ContentsKind kind = ContentsKind::Identity;
             if (llvm::isa<ctjs::StringAttr>(constant.getValue())) {
@@ -295,20 +319,20 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
             state.values[constant.getResult()] = {constant.getResult(), kind};
             return ArrayContentsFailure::None;
         }
+        // Truthy is total, noncapturing and nonthrowing (Operators.td). An
+        // external input stays unknown for every other use; only its i1 result
+        // is carried as a predicate, and neither branch is pruned.
         if (auto truthy = llvm::dyn_cast<ctjs::TruthyOp>(&op)) {
             state.values[truthy.getResult()] = {truthy.getResult()};
             return ArrayContentsFailure::None;
         }
         if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(&op)) {
-            // Strict equality reads primitive contents or object identity;
-            // it cannot coerce, call, throw or retain either operand
-            // (Operators.td, value::strict_equals). The independent Boolean
-            // result is known even when an operand is an opaque entry.
-            // Every coercing kind needs BOTH original primitive origins.
-            // Mixed BigInt comparisons have separate VM value-semantics
-            // gaps, but no primitive conversion calls an object hook or
-            // retains an input identity. Every structural arm is checked;
-            // this query never infers a value, key or liveness fact.
+            // Strict equality reads primitive contents or object identity; it
+            // cannot coerce, call, throw or retain either operand (Operators.td,
+            // value::strict_equals), so its Boolean result is known even for an
+            // opaque operand. Every coercing kind needs both operands to be
+            // known primitives: converting a primitive calls no object hook and
+            // retains no input. The result is never used to prune a branch.
             switch (compare.getKind()) {
             case ctjs::CompareKind::StrictEq: break;
             case ctjs::CompareKind::Eq:
@@ -325,14 +349,11 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     (!right.nonBigInt() && !right.bigInt())) {
                     return ArrayContentsFailure::UnsupportedOperation;
                 }
-                // loose_equals uses digits, String parsing and static
-                // numeric conversions. Its BigInt/Boolean arm additionally
-                // enters to_primitive's guard; all relational kinds do so.
-                // Primitive inputs return before any lookup or user call.
-                // The guard's independent Error cannot expose this whole
-                // frame's unpublished fresh locals. Calls, handlers and
-                // publication still refuse. Retention supplies no normal
-                // completion, allocation-success or no-throw contract.
+                // loose_equals uses digits, String parsing and static numeric
+                // conversions; its BigInt/Boolean arm and every relational kind
+                // also enter to_primitive's depth guard. Primitive inputs return
+                // before any lookup or user call (see the file header for the
+                // guard's early exit).
                 break;
             }
             default: return ArrayContentsFailure::UnsupportedOperation;
@@ -341,9 +362,9 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
             return ArrayContentsFailure::None;
         }
         if (auto convert = llvm::dyn_cast<ctjs::ConvertOp>(&op)) {
-            // ToBoolean, like Truthy, is total and noncapturing, but returns
-            // a !ctjs.value Boolean. Its primitive result carries no heap
-            // alias; this does not turn its input into a known origin.
+            // ToBoolean, like Truthy, is total and noncapturing, but returns a
+            // !ctjs.value Boolean. Its primitive result carries no heap alias;
+            // its input does not become a known origin.
             if (convert.getKind() != ctjs::ConvertKind::ToBoolean) {
                 return ArrayContentsFailure::UnsupportedOperation;
             }
@@ -351,14 +372,11 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
             return ArrayContentsFailure::None;
         }
         if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(&op)) {
-            // Not/TypeOf/Void never invoke user code or retain their
-            // already-evaluated operand (Operators.td, VM coerce.cpp).
-            // Not yields a Boolean; TypeOf yields a String; Void yields
-            // Undefined. TypeOf's VM String allocation may hit the fatal
-            // allocation ceiling, but carries no operand object identity.
-            // This is a contents proof, not a no-allocation/effect claim.
-            // Keep an independent primitive origin without a value, key,
-            // operand alias or structural-edge liveness fact.
+            // Not, TypeOf and Void never invoke user code or retain their
+            // operand (Operators.td, VM coerce.cpp). Not yields a Boolean,
+            // TypeOf a String and Void Undefined. TypeOf allocates a VM String,
+            // which may hit the fatal allocation limit but holds no operand
+            // identity. The result is a fresh primitive with no recorded value.
             ContentsValue result{unary.getResult(), ContentsKind::NonBigInt};
             switch (unary.getKind()) {
             case ctjs::UnaryKind::Not:
@@ -370,40 +388,29 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 const ContentsValue input = held(unary.getOperand());
                 if (input.bigInt()) {
                     if (unary.getKind() == ctjs::UnaryKind::Plus) {
-                        // to_number_value rejects BigInt before any lookup
-                        // or user conversion. Its TypeError (or depth-guard
-                        // Error) has no input/local object edge. The entire
-                        // frame still excludes calls, handlers and publication.
-                        // Keep the independent Number carrier used by the VM
-                        // and inspect EVERY structural continuation; neither
-                        // successful completion nor dead code follows here.
+                        // to_number_value rejects BigInt before any lookup or
+                        // user conversion; its TypeError references no input
+                        // or local object. Keep the NonBigInt result the VM
+                        // would carry and keep exploring every continuation.
                         break;
                     }
-                    // negate_value/bit_not_value allocate independent BigInt
-                    // digits before any conversion or user callback. Record
-                    // the actual category, never a Number or concrete value.
-                    // No allocation-success/native effect claim follows.
+                    // negate_value/bit_not_value allocate fresh BigInt digits
+                    // before any conversion or user callback. Record the BigInt
+                    // category only, never a Number or concrete value.
                     if (!spend()) { return ArrayContentsFailure::WorkLimit; }
                     result.kind = ContentsKind::BigInt;
                     break;
                 }
                 if (!input.nonBigInt()) { return ArrayContentsFailure::UnsupportedOperation; }
-                // Known primitive non-BigInt inputs cannot invoke object
-                // conversion or reach Plus's catchable BigInt TypeError.
-                // All three return an independent Number. BitNot uses the
-                // VM's static conversion, but objects stay outside this
-                // common source-compatible proof. String parsing may
-                // allocate C++ temporaries; allocation success is unproved.
-                // Neg/Plus still enter a recursion guard that may throw an
-                // unrelated RangeError. This whole-frame retention query
-                // rejects publication, calls and handlers, so that early
-                // exit cannot expose its fresh locals. This is NOT proof
-                // of normal completion or an effect/no-throw contract.
+                // A known non-BigInt primitive cannot invoke object conversion
+                // or reach Plus's BigInt TypeError, and all three ops return a
+                // fresh Number. Neg/Plus still enter a recursion guard that may
+                // throw (see the file header).
                 if (unary.getKind() != ctjs::UnaryKind::BitNot) {
-                    // Preserve held signed Numbers through Plus/Neg, keeping
-                    // negative magnitudes separate from own-index facts.
-                    // Canonical original Strings share the exact decimal
-                    // conversion used by Sub; zero stays nonnegative.
+                    // Carry exact signed Numbers through Plus/Neg, keeping
+                    // negative magnitudes apart from own-index facts. Canonical
+                    // literal Strings use the same exact decimal conversion as
+                    // Sub; zero stays nonnegative.
                     result.integerNumber = boundedConvertedNumber(input);
                     result.negativeIntegerNumber =
                         result.integerNumber ? std::nullopt : boundedConvertedNumber(input, true);
@@ -413,11 +420,14 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     if (result.exactNumber() && !spend()) {
                         return ArrayContentsFailure::WorkLimit;
                     }
+                    // Carry ToUint32 bits through at most 64 chained unary
+                    // operations. The depth saturates at 65, so a longer chain
+                    // stops carrying bits and the work stays bounded.
                     result.unaryDepth = std::min(input.unaryDepth + 1, 65U);
                     if (!result.exactNumber() && result.unaryDepth <= 64) {
-                        // ToUint32(-x) is -ToUint32(x) modulo 2^32. Keep
-                        // the read-time conversion without inventing an exact
-                        // Number for subsequent arithmetic or property access.
+                        // ToUint32(-x) is -ToUint32(x) modulo 2^32. Keep only the
+                        // converted bits, not an exact Number for later
+                        // arithmetic or property access.
                         if (!spend()) { return ArrayContentsFailure::WorkLimit; }
                         result.convertedBits = boundedConvertedBits(input);
                         if (result.convertedBits && unary.getKind() == ctjs::UnaryKind::Neg) {
@@ -458,14 +468,10 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 (binary.getKind() == ctjs::BinaryKind::Concat ||
                  (binary.getKind() == ctjs::BinaryKind::Add &&
                   (left.string() || right.string())))) {
-                // Concat converts both primitives before bigint_binary;
-                // Add selects its String arm before mixed-BigInt errors.
-                // BigInt conversion copies digits, never an input object
-                // or a user callback. Only an independently proved String
-                // permits Add: a generic non-BigInt result can be Number.
-                // Add's guarded ToPrimitive still has an unrelated Error
-                // exit. The entire frame's call/publication/handler refusals
-                // apply; this proves neither completion nor native effects.
+                // Concat converts both primitives before bigint_binary; Add
+                // takes its String arm before any mixed-BigInt error. Only a
+                // known String operand lets Add produce a String: otherwise
+                // the result could be a Number.
                 if (binary.getKind() == ctjs::BinaryKind::Add) {
                     if (!spend()) { return ArrayContentsFailure::WorkLimit; }
                 }
@@ -474,60 +480,38 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
             }
             if (lhs && rhs && left.bigInt() && right.bigInt() &&
                 ctjs::isArithmetic(binary.getKind())) {
-                // bigint_binary combines digits into a fresh independent
-                // BigInt. Add first enters to_primitive's depth guard;
-                // Div/Mod raise an independent RangeError for zero divisors,
-                // and Pow for negative or VM-capped oversized exponents.
-                // bigint_pow checks those bounds before computing digits,
-                // including the VM's unconditional cap for small bases.
-                // No user conversion or local object edge enters those
-                // errors. The whole-frame exclusion of calls,
-                // handlers and publication keeps either early exit from
-                // exposing unpublished fresh objects. The normal result's
-                // category proves neither allocation success nor normal
-                // completion or no-throw/native effects. Mixed inputs remain
-                // a separate boundary even on observed success.
+                // bigint_binary combines digits into a fresh BigInt. Div/Mod
+                // throw a RangeError for a zero divisor, and Pow (bigint_pow)
+                // for a negative or oversized exponent, before computing
+                // digits; no user code or local object is involved.
                 if (!spend()) { return ArrayContentsFailure::WorkLimit; }
                 state.values[binary.getResult()] = {binary.getResult(), ContentsKind::BigInt};
                 return ArrayContentsFailure::None;
             }
             if (ctjs::isArithmetic(binary.getKind()) && lhs && rhs &&
                 ((left.bigInt() && right.nonBigInt()) || (left.nonBigInt() && right.bigInt()))) {
-                // Mixed original primitives cannot retain local objects:
-                // bigint_binary returns an independent TypeError/Undefined.
-                // Add first makes both operands primitive and may concatenate
-                // Strings instead; neither that result nor its depth-guard
-                // Error aliases an input. Only the separate String proof
-                // above supplies that category; this result is never BigInt.
-                // Calls, handlers and publication remain excluded across
-                // the whole frame. Check EVERY structural continuation:
-                // retention proves no successful completion or native effect.
+                // Mixing a BigInt with another primitive makes bigint_binary
+                // throw a TypeError that references no input. Add may instead
+                // concatenate Strings; that case was handled above, so this
+                // result is recorded as a non-BigInt primitive.
                 state.values[binary.getResult()] = {binary.getResult(), ContentsKind::NonBigInt};
                 return ArrayContentsFailure::None;
             }
             if (!lhs || !rhs || !left.nonBigInt() || !right.nonBigInt()) {
                 return ArrayContentsFailure::UnsupportedOperation;
             }
-            // With primitive non-BigInt originals, binary_op cannot call
-            // object conversions or return an operand object. Sub/Mul/Div/
-            // Mod/Pow return Number via to_number_value. Add uses guarded
-            // to_primitive followed by static Number/String operations;
-            // Concat uses primitive to_string. Their result is independent,
-            // without a Number/String tag, value, index or key inference
-            // except for bounded exact Number arithmetic below.
-            // Add and numeric conversions have a depth guard that may
-            // throw an unrelated RangeError. This whole-frame query refuses
-            // calls, handlers and publication, so it cannot retain fresh
-            // locals on that exit. This is retention-only evidence, never
-            // a normal-completion or no-throw/effect contract. String
-            // results allocate in the VM and static conversions can allocate
-            // C++ temporaries; absence/success of allocation is unproved.
+            // With known non-BigInt primitive operands, binary_op cannot call
+            // object conversions or return an operand. Sub/Mul/Div/Mod/Pow
+            // return a Number via to_number_value; Add uses guarded
+            // to_primitive and then static Number/String operations. The result
+            // is a fresh primitive; only the bounded exact Number arithmetic
+            // below records its value.
             ContentsValue result{binary.getResult(), ContentsKind::NonBigInt};
             boundedNumberBinary(binary.getKind(), left, right, result);
             if (binary.getKind() == ctjs::BinaryKind::Sub && !result.exactNumber() &&
                 boundedConvertedNumber(right) == 0 && left.unaryDepth <= 64) {
-                // ToNumber(x) - 0 preserves ToUint32(x), including signed
-                // zero and nonfinite inputs. This is no exact Number fact.
+                // ToNumber(x) - 0 preserves ToUint32(x), including signed zero
+                // and nonfinite inputs. Only the bits are kept, not a Number.
                 result.convertedBits = boundedConvertedBits(left);
                 result.unaryDepth = left.unaryDepth;
             }
@@ -537,10 +521,10 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
             state.values[binary.getResult()] = result;
             return ArrayContentsFailure::None;
         }
-        // THE STATIC FAMILY, AND A BITWISE ctjs.binary. Every arm below first
-        // requires original primitives, on which ToNumeric is the identity,
-        // so binary_op answers as binary_op_static does - bar a Symbol's
-        // TypeError, one more exit this retention-only evidence never claims.
+        // binary_static, and bitwise ctjs.binary. Every arm below requires known
+        // primitive operands. ToNumeric is the identity on those, so binary_op
+        // behaves like binary_op_static, apart from a Symbol's TypeError, which
+        // is one more early exit this evidence does not exclude.
         if (llvm::isa<ctjs::BinaryOp, ctjs::BinaryStaticOp>(&op)) {
             const ctjs::BinaryKind kind = llvm::isa<ctjs::BinaryOp>(&op)
                                               ? llvm::cast<ctjs::BinaryOp>(&op).getKind()
@@ -556,11 +540,9 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
             if (!lhs || !rhs) { return ArrayContentsFailure::UnknownValue; }
             if ((left.bigInt() && right.nonBigInt()) || (left.nonBigInt() && right.bigInt()) ||
                 (kind == ctjs::BinaryKind::UShr && left.bigInt() && right.bigInt())) {
-                // bigint_binary rejects mixed original primitives, or two
-                // BigInts for UShr, before conversion. Its independent
-                // TypeError/Undefined carrier has no operand/local edge or
-                // BigInt category. Keep all continuations and whole-frame
-                // exclusions; normal completion/native effects are unproved.
+                // bigint_binary rejects a BigInt mixed with another primitive,
+                // or two BigInts for UShr, before conversion. Its TypeError
+                // references no operand, and the result is not a BigInt.
                 state.values[produced] = {produced, ContentsKind::NonBigInt};
                 return ArrayContentsFailure::None;
             }
@@ -568,16 +550,10 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 (kind == ctjs::BinaryKind::Add || kind == ctjs::BinaryKind::BitAnd ||
                  kind == ctjs::BinaryKind::BitOr || kind == ctjs::BinaryKind::BitXor ||
                  kind == ctjs::BinaryKind::Shl || kind == ctjs::BinaryKind::Shr)) {
-                // These exact bigint_binary arms allocate independent digits
-                // before static Number conversion, with no input alias or
-                // user conversion. Signed shifts may instead raise an
-                // independent RangeError for an oversized left shift,
-                // including a negative right-shift count. The whole-frame
-                // exclusion of calls, handlers and publication prevents
-                // that early exit from retaining unpublished local objects.
-                // Keep the normal result's separate per-path category; this
-                // proves neither allocation success nor normal completion
-                // or no-throw/native effects.
+                // These bigint_binary arms allocate fresh digits with no input
+                // alias or user conversion. Signed shifts may instead throw a
+                // RangeError for an oversized left shift (including a negative
+                // right-shift count).
                 if (!spend()) { return ArrayContentsFailure::WorkLimit; }
                 state.values[produced] = {produced, ContentsKind::BigInt};
                 return ArrayContentsFailure::None;
@@ -585,11 +561,10 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
             if (!left.nonBigInt() || !right.nonBigInt()) {
                 return ArrayContentsFailure::UnsupportedOperation;
             }
-            // Independent primitive origins exclude source user conversion.
-            // Fresh objects/arrays are insufficient: inherited valueOf or
-            // toString can retain them or their contents - the VM's bitwise
-            // handlers ToNumeric an object. Only bounded exact primitive
-            // conversions or saved Number facts supply an index.
+            // Known primitive operands rule out user conversion. A fresh object
+            // or array would not: the VM's bitwise handlers run ToNumeric on
+            // it, and an inherited valueOf or toString could retain it. Only
+            // exact bounded conversions or recorded Number facts give an index.
             ContentsValue result{produced, ContentsKind::NonBigInt};
             boundedNumberBinary(kind, left, right, result);
             if (numberFact(kind, result) && !spend()) { return ArrayContentsFailure::WorkLimit; }
@@ -625,12 +600,11 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
             if (sourceObject == state.objects.end() || targetObject == state.objects.end()) {
                 return ArrayContentsFailure::UnsupportedOperation;
             }
-            // The live runtime copies enumerable own entries through property
-            // lookup, which can invoke getters in general (objects/chain.cpp).
-            // This complete query admits only fresh own data with attr_default:
-            // no accessors, prototypes, descriptors or unknown effects occur.
-            // Snapshot before writes, including when both exact aliases name
-            // one object. Charge the allocation and each subsequent copy edge.
+            // The VM copies enumerable own entries through property lookup,
+            // which can invoke getters in general (objects/chain.cpp). Here both
+            // objects are fresh and hold only own data properties with
+            // attr_default, so no accessor or prototype is involved. Snapshot
+            // the source before writing, in case both operands are one object.
             if (!spend(sourceObject->second.size())) { return ArrayContentsFailure::WorkLimit; }
             const HeldProperties snapshot = sourceObject->second;
             for (const auto & [key, value] : snapshot) {
@@ -662,11 +636,10 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
             const mlir::Value removed =
                 found == properties.end() ? mlir::Value{} : found->second.original;
             if (removed) {
-                // Fresh set_property fields are configurable (value.hpp's
-                // attr_default). delete_own_property erases exactly that own
-                // field; no prototype walk or accessor can occur in this subset.
-                // MapVector erase shifts fields and repairs its index. Charge
-                // the complete field set before mutating even a single entry.
+                // Fresh set_property fields are configurable (attr_default), so
+                // delete_own_property erases exactly that own field with no
+                // prototype walk or accessor. MapVector::erase shifts the later
+                // fields, so charge the whole field set before erasing.
                 if (!spend(properties.size())) { return ArrayContentsFailure::WorkLimit; }
                 properties.erase(key);
             }
@@ -686,9 +659,9 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
             mlir::Operation * container = base ? base.getDefiningOp() : nullptr;
             auto object = state.objects.find(container);
             if (object != state.objects.end() && !llvm::isa<ctjs::AppendOp>(&op)) {
-                // The implicit prototype can intercept even a first write
-                // and retain its value. Until an own-data/prototype proof
-                // exists, an assignment cannot establish object contents.
+                // A setter on the implicit prototype can intercept even a first
+                // write and retain its value, so without a prototype proof an
+                // assignment cannot establish object contents.
                 if (llvm::isa<ctjs::SetPropertyOp>(&op)) {
                     return ArrayContentsFailure::UnsupportedOperation;
                 }
@@ -708,9 +681,13 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
             if (auto append = llvm::dyn_cast<ctjs::AppendOp>(&op)) {
                 const ContentsValue value = held(append.getElement());
                 if (!value.origin()) { return ArrayContentsFailure::UnknownValue; }
+                // JS arrays hold at most 2^32 - 1 elements; refuse to model an
+                // append past that limit.
                 if (elements.size() >= 4294967295ULL) {
                     return ArrayContentsFailure::MissingElement;
                 }
+                // The second field is the stored value's operand index: append's
+                // element is operand 1, set_property's value is operand 2.
                 out.writes.push_back({&op, 1, container, elements.size(), value.original});
                 elements.push_back(value);
                 return ArrayContentsFailure::None;
@@ -720,10 +697,10 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
             if (llvm::isa<ctjs::GetPropertyOp>(&op)) {
                 const auto name = key ? ownObjectKey(key) : mlir::StringAttr{};
                 if (name && name.getValue() == "length") {
-                    // lookup_property returns js_length as Number before any
-                    // prototype lookup. This exact tracked array admits no
-                    // sparse writes/deletion/accessors. Snapshot this read;
-                    // a saved origin must survive later array appends unchanged.
+                    // lookup_property returns js_length as a Number before any
+                    // prototype lookup, and a tracked array has no sparse
+                    // writes, deletions or accessors. Snapshot the length now so
+                    // a saved read is unaffected by later appends.
                     if (elements.size() > 4294967295ULL) {
                         return ArrayContentsFailure::MissingElement;
                     }
@@ -743,10 +720,10 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     }
                     if (!wanted) { return ArrayContentsFailure::UnknownIndex; }
                     if (*wanted > elements.size()) { return ArrayContentsFailure::MissingElement; }
-                    // Fresh dense arrays own writable length and configurable
-                    // elements; an exact Number runs no coercion hook. Keep
-                    // saved origins/lengths and every historical cycle edge.
-                    // ponytail: non-growing lengths only; growth needs hole evidence.
+                    // A fresh dense array has a writable length and configurable
+                    // elements, and an exact Number runs no coercion hook.
+                    // Earlier write records stay, so cycle detection sees them.
+                    // ponytail: shrinking only; growing would need hole tracking.
                     if (!spend(elements.size() - *wanted)) {
                         return ArrayContentsFailure::WorkLimit;
                     }
@@ -755,13 +732,12 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 }
             }
             auto index = ownArrayIndex(keyValue);
-            // The loop guard independently bounded every key before replay.
-            // Retain its exact Number snapshot without generalizing scalar
-            // contents, length writes or conversion facts.
+            // Inside a certified loop, LoopProof already bounded every key, so
+            // an exact arithmetic Number may also serve as an index here.
             if (!index && state.loop) { index = arithmeticArrayIndex(keyValue); }
             if (!index) { return ArrayContentsFailure::UnknownIndex; }
             // Overwrite only. Extending with set_property can leave holes or
-            // consult a prototype setter; literal append has neither behavior.
+            // consult a prototype setter; append has neither behaviour.
             if (*index >= elements.size()) { return ArrayContentsFailure::MissingElement; }
             if (auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(&op)) {
                 const ContentsValue value = held(store.getValue());
@@ -804,8 +780,8 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     }
                 }
             }
-            // Public evidence keeps original producers, never private scalar facts.
-            // Charge the projection before copying each container and its values.
+            // The exit record keeps only original producers, not scalar facts.
+            // Charge each container and its values before copying them.
             for (const auto & [array, elements] : state.arrays) {
                 if (!spend() || !spend(elements.size())) { return ArrayContentsFailure::WorkLimit; }
                 auto & originals = exit.arrays[array];

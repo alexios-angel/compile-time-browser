@@ -1,3 +1,10 @@
+//===- ctcompile/lib/Target/Cpp/Const/Types.cpp - Const-safe types --------===//
+//
+// Implements supportsConstBinding: the types whose values may be bound
+// `const` in emitted C++.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Bindings.h"
 
 #include "mlir/Dialect/EmitC/IR/EmitC.h"

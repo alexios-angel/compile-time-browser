@@ -1,3 +1,12 @@
+//===- NativeObjectIdentity.cpp - Object identity proof ---------*- C++ -*-===//
+//
+// Finds plain objects (`{...}` literals) used only for their identity: as
+// native Map keys, as native Map values, or in `===` comparisons. Such objects
+// get ctnative.object_identity, and their scalar field accesses a shared
+// ctnative.object_field_group, so they can be lowered natively. Any other use
+// records a ctnative.object_reason instead.
+//
+//===----------------------------------------------------------------------===//
 #include "ctcompile/CTNative/Analysis/NativeObjectIdentity.h"
 #include "ClosedValueFlow.h"
 #include "NativeObject/Fields.h"
@@ -13,6 +22,7 @@
 namespace ctcompile::ctnative {
 namespace {
 
+/// True when `use` is the key operand of a native Map set/get/has/delete.
 bool mapKeyUse(mlir::OpOperand & use) {
     auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
     if (!call || use.getOperandNumber() != 2) { return false; }
@@ -24,12 +34,14 @@ bool strictComparison(mlir::Operation * op) {
     return compare && compare.getKind() == ctjs::CompareKind::StrictEq;
 }
 
+/// True when `use` is a `===` comparison, a root, or a value-carrying edge of
+/// scf.if / scf.while / scf.for that connectValues followed.
 bool comparisonObservation(mlir::OpOperand & use) {
     auto * op = use.getOwner();
     if (strictComparison(op)) { return true; }
     if (llvm::isa<ctjs::RootOp>(op)) { return use.getOperandNumber() == 1; }
-    // Accept only the exact structural edges connectValues added. A yield
-    // from an arbitrary region cannot silently publish an untracked alias.
+    // Accept only the exact edges connectValues added, so a yield from some
+    // other region cannot pass on an alias nobody tracked.
     if (auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(op)) {
         if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(yield->getParentOp())) {
             return yield.getNumOperands() == branch.getNumResults();
@@ -60,10 +72,13 @@ bool comparisonObservation(mlir::OpOperand & use) {
     return false;
 }
 
-// Unlike the original Map families, a comparison family need not have any
-// upstream Map proof. Its scalar fields therefore need their own closed
-// property environment. Only live source edges (and already checked standard
-// Map recognition) authorize effects here, never object/host report tags.
+/// Whether every operation in `module` is one that cannot reach a getter,
+/// setter or unknown object, for objects used only in `===` comparisons.
+///
+/// Such objects (not Map keys or values) have no Map analysis behind them, so
+/// their fields need this check of their own. Only operations whose effect is
+/// proved here (or by the standard Map recognition) count, never attributes
+/// left by other analyses.
 template <typename OrdinaryObject>
 bool comparisonFieldEnvironment(mlir::ModuleOp module, const OwnedGlobalRoots * globals,
                                 OrdinaryObject ordinaryObject) {
@@ -132,12 +147,14 @@ bool erasedCapture(mlir::OpOperand & use) {
 }
 
 void prepareNativeObjectIdentities(mlir::ModuleOp module, const OwnedGlobalRoots * globals) {
-    // Derived from uses, never trusted from a prior lowering or input IR.
+    // These attributes are derived from uses, never trusted from an earlier
+    // run or from the input IR.
     module.walk([](mlir::Operation * op) {
         op->removeAttr(kNativeObjectIdentity);
         op->removeAttr(kNativeObjectFieldGroup);
-        // Other closure/object censuses also own diagnostics in this slot.
-        // Discard only this new census's stale reason on an ineligible rerun.
+        // Other analyses also write `ctnative.object_reason`. Remove only the
+        // reasons this analysis wrote for comparison-only objects on an
+        // earlier run (prefixed "strict-comparison object").
         if (auto reason = op->getAttrOfType<mlir::StringAttr>("ctnative.object_reason");
             reason && reason.getValue().starts_with("strict-comparison object ")) {
             op->removeAttr("ctnative.object_reason");
@@ -147,10 +164,11 @@ void prepareNativeObjectIdentities(mlir::ModuleOp module, const OwnedGlobalRoots
     int64_t nextFieldGroup = 0;
     closedValueFlow flow;
     flow.build(module);
-    // A returned closure owns its captures. Connect slot extractions to the
-    // original object schema, as for Maps; each factory call still allocates
-    // a fresh identity and environment. These tags were rederived by the
-    // native closure lifter immediately before this analysis.
+    // A returned closure owns its captures. Join reads of captured slots to
+    // the captured object's schema, as for Maps; each factory call still
+    // allocates a fresh object and environment. The environment-read
+    // attributes were recomputed by the native closure lifter just before
+    // this analysis runs.
     llvm::DenseSet<mlir::Operation *> reads;
     llvm::DenseMap<mlir::Operation *, mlir::Value> keyInitializations;
     if (globals && globals->proved()) {
@@ -168,9 +186,10 @@ void prepareNativeObjectIdentities(mlir::ModuleOp module, const OwnedGlobalRoots
     object_detail::connectValues(flow, module);
     llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value>> families;
     for (mlir::Value value : flow.nodes()) { families[flow.find(value)].push_back(value); }
-    // Property access elsewhere in the module must not enter an unknown
-    // object/getter. Schema connectivity proves only possible producers here;
-    // it never says that two allocations are the same runtime instance.
+    // Whether every value in `value`'s family is a fresh object or flows from
+    // one through a checked edge, so a property access on it cannot reach an
+    // unknown object or getter. Families group possible producers; they never
+    // say two allocations are the same runtime instance.
     const auto ordinaryObject = [&](mlir::Value value) {
         const auto family = families.find(flow.find(value));
         if (family == families.end()) { return false; }
@@ -212,8 +231,8 @@ void prepareNativeObjectIdentities(mlir::ModuleOp module, const OwnedGlobalRoots
                 compared |= strictComparison(use.getOwner());
             }
         }
-        // This family already has enclosing stack owners and typed Map borrows.
-        // Its aliases must keep the same record schema, never identity objects.
+        // A record Map (see NativeMap.cpp's proveRecords) already holds these
+        // objects as stack-owned records; they keep that representation.
         if (retainedRecord) { continue; }
         const bool comparisonOnly = !usedAsKey && !usedAsPayload;
         if ((comparisonOnly && !compared) || made.empty()) { continue; }
@@ -230,11 +249,11 @@ void prepareNativeObjectIdentities(mlir::ModuleOp module, const OwnedGlobalRoots
         };
         for (mlir::Value value : family) {
             if (value.getDefiningOp<ctjs::CreateObjectOp>()) {
-                // Fresh allocation, even when another allocation has the same schema.
+                // A fresh allocation, even when another one has the same schema.
             } else if (auto arg = llvm::dyn_cast<mlir::BlockArgument>(value)) {
                 if (llvm::isa<mlir::scf::WhileOp, mlir::scf::ForOp>(
                         arg.getOwner()->getParentOp())) {
-                    // Every initial/backedge value was connected above.
+                    // Every initial and back-edge value was joined above.
                 } else if (!flow.closedParameter(arg)) {
                     reject("parameter requires a closed function with visible callers");
                 } else if (!flow.exactCallers(arg)) {
@@ -249,10 +268,10 @@ void prepareNativeObjectIdentities(mlir::ModuleOp module, const OwnedGlobalRoots
             } else if (nativeMapAction(value.getDefiningOp()) == "get" ||
                        llvm::isa_and_nonnull<mlir::scf::IfOp, mlir::scf::WhileOp, mlir::scf::ForOp>(
                            value.getDefiningOp())) {
-                // Producers and all alternative values share this checked family.
+                // Its possible values all belong to this checked family.
             } else if (usedAsPayload && object_detail::primitiveProducer(value)) {
-                // The type lattice retains these alternatives; only object
-                // allocations receive the identity proof, never the whole family.
+                // The type lattice keeps these primitive alternatives; only the
+                // object allocations get the identity attribute.
             } else {
                 reject(("flow contains a non-object producer `" +
                         value.getDefiningOp()->getName().getStringRef() + "`")

@@ -1,18 +1,22 @@
+//===- RuntimeHelpers.hpp - The AOT helper ABI table ------------*- C++ -*-===//
+//
+// The runtime-helper ABI table, as constexpr data the compiler can read.
+//
+// ctbrowser/aot/aot_helpers.def (with helpers/*.def) declares every runtime
+// helper with its obligations. The dialect already names them: CTJS_RuntimeOp
+// takes a helper_id enumerator, so an operation cannot claim a helper the
+// runtime does not declare, and a wrong name is a C++ compile error. This
+// header gives the lowering the rest: the symbol to call, the arity, and the
+// role of each parameter and of the return value.
+//
+// The arity check catches what the name check cannot: an operation whose
+// operand list has drifted from the helper's parameters. `get_property(object,
+// key)` against a helper that grew a third parameter reads fine in both files
+// and would produce a call with a garbage argument.
+//
+//===----------------------------------------------------------------------===//
+
 #pragma once
-// THE ABI TABLE, AS DATA THE COMPILER CAN READ.
-//
-// aot_helpers.def declares 69 helpers with their obligations. The dialect
-// already names them - CTJS_RuntimeOp takes a helper_id enumerator, so an
-// operation cannot claim a helper the runtime does not declare, and a wrong
-// name is a C++ compile error. This is the other half: at lowering time the
-// compiler needs the SYMBOL to call and the ARITY to check against.
-//
-// THE ARITY CHECK CLOSES THE HOLE FROM THE OTHER SIDE. The name check catches a
-// helper that does not exist; it cannot catch an operation whose operand list
-// has drifted from the helper's parameters - `get_property(object, key)` against
-// a helper that grew a third parameter reads fine in both files and produces a
-// call with a garbage argument. Counting both and comparing is one line and
-// catches exactly that.
 #include <cstddef>
 #include <string_view>
 
@@ -20,120 +24,112 @@
 
 namespace ctcompile::ctjs {
 
-// A PREFIX TEST THAT DOES NOT NEED C++20.
-//
-// std::string_view::starts_with would be the obvious spelling and this header
-// cannot use it: CTJSDialect is built by add_mlir_library, which compiles at
-// MLIR's own language standard rather than this project's, and the same header
-// is read from a C++23 test. One four-line function is cheaper than making the
-// two agree, and keeps the table readable from anywhere.
+/// Returns true if `text` starts with `prefix`.
+///
+/// std::string_view::starts_with is C++20, and this header cannot rely on it:
+/// CTJSDialect is built by add_mlir_library at MLIR's own language standard,
+/// while a C++23 test reads the same header.
 [[nodiscard]] constexpr bool begins(std::string_view text, std::string_view prefix) {
     return text.size() >= prefix.size() && text.substr(0, prefix.size()) == prefix;
 }
 
-// WHAT ONE ABI PARAMETER IS FOR.
-//
-// The lowering has to supply every parameter of a helper, and they do not all
-// come from the same place: some are the operation's operands, one is the
-// frame, several are immediates that live in an ATTRIBUTE, and a few have no
-// source in the IR at all. Naming the difference is what lets one pattern serve
-// the whole table instead of fifty hand-written ones.
-//
-// DERIVED FROM THE .def, NEVER WRITTEN DOWN TWICE. The parameter list is
-// already there as C source, with its TYPES and its NAMES, and both are needed:
-// every `uint32_t` in the table is ambiguous by type alone - it is an argc, a
-// slot, a length, a pad, a register count or an opcode - and unambiguous by
-// name. A hand-kept column would be a second copy of the ABI, which this
-// project treats as a defect in itself.
+/// What one ABI parameter is for.
+///
+/// The lowering has to supply every parameter of a helper, and they come from
+/// different places: some are the operation's operands, one is the frame,
+/// several are immediates held in an attribute, and a few have no source in
+/// the IR at all. Naming the difference lets one pattern serve the whole table
+/// instead of fifty hand-written ones.
+///
+/// Roles are derived from the .def's C parameter list, never written down a
+/// second time. Both the types and the names are needed: every `uint32_t` in
+/// the table is ambiguous by type alone (an argc, a slot, a length, a pad, a
+/// register count or an opcode) and unambiguous by name.
 enum class param_role {
-    unknown,   // nothing should ever be this - the golden test asserts it
-    frame,     // struct ct_aot_frame * - the enclosing ctjs.frame_enter
-    context,   // struct ct_aot_ctx * - the script context itself
-    operand,   // uint64_t - a JavaScript value, from the operation's operands
-    out_value, // uint64_t * - the result, returned through a pointer
-    out_other, // uint32_t*/int32_t*/double*/const char** - a non-value result
-    opcode,    // uint32_t op_kind / opcode - A BYTECODE OPCODE, see below
-    count,     // uint32_t argc/len/slot/pad/index/... - an immediate integer
-    number,    // double - an immediate float
-    text,      // const char * - a string's bytes
-    values,    // const uint64_t * - a run of values (argv, slots, upvalues)
-    name,      // const struct ct_aot_name * - an interned property name
-    site,      // const struct ct_aot_site * - the baked diagnostic identity
-    cache,     // struct ct_aot_ic * - inline-cache storage, per site
-    storage,   // void * - caller-allocated frame space
+    unknown,   ///< Never valid; the golden test asserts no parameter has it.
+    frame,     ///< struct ct_aot_frame *: the enclosing ctjs.frame_enter.
+    context,   ///< struct ct_aot_ctx *: the script context itself.
+    operand,   ///< uint64_t: a JavaScript value, from the operation's operands.
+    out_value, ///< uint64_t *: the result, returned through a pointer.
+    out_other, ///< uint32_t*/int32_t*/double*/const char**: a non-value result.
+    opcode,    ///< uint32_t op_kind / opcode: a bytecode opcode (see below).
+    count,     ///< uint32_t argc/len/slot/pad/index/...: an immediate integer.
+    number,    ///< double: an immediate float.
+    text,      ///< const char *: a string's bytes.
+    values,    ///< const uint64_t *: a run of values (argv, slots, upvalues).
+    name,      ///< const struct ct_aot_name *: an interned property name.
+    site,      ///< const struct ct_aot_site *: the baked diagnostic identity.
+    cache,     ///< struct ct_aot_ic *: inline-cache storage, per site.
+    storage,   ///< void *: caller-allocated frame space.
 };
 
-// WHAT ONE HELPER RETURNS - AND THEREFORE HOW A CALLER LEARNS IT FAILED.
-//
-// THE .def STATES THIS AS A RULE AND THIS IS THAT RULE, READ: "an unsigned
-// return is data, never a status" (aot_helpers.def:761). It is not a
-// convention - ct_aot_failed argues for its own uint32_t return explicitly,
-// "it is data, not a status" (:232), and ct_aot_bit_not argues the other way,
-// keeping a status return "despite being raise-tier-only" because the row is a
-// safepoint. Both arguments are only decidable because the rule exists.
+/// What one helper returns, and therefore how a caller learns it failed.
+///
+/// The helper table states the rule: "an unsigned return is data, never a
+/// status" (helpers/values-and-properties.def). ct_aot_failed returns uint32_t
+/// because its result is data, and ct_aot_bit_not keeps a status return,
+/// although its only failure is a raise, because it is a safepoint; both
+/// follow from the rule.
 enum class return_role {
-    unknown, // nothing should ever be this - a static_assert below says so
-    nothing, // void
-    status,  // int32_t - a ct_aot_status the caller MUST test
-    value,   // uint64_t - a JavaScript value
-    data,    // uint32_t - a length, a flag, a slot. DATA, NEVER A STATUS.
-    number,  // double
-    frame,   // struct ct_aot_frame * - ct_aot_enter alone; NULL is the failure
-    values,  // uint64_t * - ct_aot_slots' span
-    name,    // const struct ct_aot_name * - ct_aot_intern_name
+    unknown, ///< Never valid; a static_assert below checks no row has it.
+    nothing, ///< void.
+    status,  ///< int32_t: a ct_aot_status the caller must test.
+    value,   ///< uint64_t: a JavaScript value.
+    data,    ///< uint32_t: a length, a flag, a slot. Data, never a status.
+    number,  ///< double.
+    frame,   ///< struct ct_aot_frame *: ct_aot_enter only; NULL is the failure.
+    values,  ///< uint64_t *: ct_aot_slots' span.
+    name,    ///< const struct ct_aot_name *: ct_aot_intern_name.
 };
 
-// TWO TIERS OF FAILURE, AND A BACKEND THAT CONFLATES THEM IS WRONG TWICE OVER.
+// There are two kinds of failure, and a backend must not conflate them.
 //
-// aot_helpers.def opens by separating them: raise() "sets a flag no try/catch
-// can see" and unwinds the whole native chain, while thrown_ plus
-// unwind_to_handler "completes INSIDE the callee". The RETURN TYPE is what
-// tells them apart, which is why this is derived here rather than guessed at
-// each call site:
+// raise() sets a flag no try/catch can see and unwinds the whole native chain;
+// a thrown exception (thrown_ plus unwind_to_handler) completes inside the
+// callee and is catchable (aot_helpers.def). The return type tells them apart,
+// which is why it is derived here rather than guessed at each call site:
 //
-//   returns int32_t   ->  the catchable edge. Test the status after the call.
-//   may_throw, but returns data or a value  ->  RAISE TIER ONLY. The result is
-//       always well-formed - allocate() "raises past the ceiling and then STILL
-//       returns a real object" (:1132) - and the caller polls ct_aot_failed at
-//       BACK-EDGES, not after every allocation, because "a function running
-//       past the ceiling is WASTEFUL, NEVER UNSAFE" (:230).
+//   returns int32_t  ->  catchable. Test the status after the call.
+//   may_throw, but returns data or a value  ->  raise only. The result is
+//       always well-formed (allocate() still returns a real object past the
+//       allocation ceiling), and the caller polls ct_aot_failed at loop
+//       back-edges, not after every allocation: running past the ceiling is
+//       wasteful, never unsafe.
 //
-// GETTING THIS BACKWARDS FAILS SILENTLY IN BOTH DIRECTIONS. Emit a status test
-// after ct_aot_new_object and there is no status to test - the uint64_t is a
-// value, and any bit pattern it compares equal to is a coincidence. Omit the
-// back-edge poll and a program past the allocation ceiling runs on forever
+// Getting this backwards fails silently either way. A status test after
+// ct_aot_new_object tests a value, so any match is a coincidence; a missing
+// back-edge poll lets a program past the allocation ceiling run forever
 // instead of ending.
 
-// `op_kind` IS A ctbrowser::script::op, NOT A CTJS ENUM ORDINAL.
+// `op_kind` is a ctbrowser::script::op, not a CTJS enum ordinal.
 //
-// This is the sharpest thing about the table and it is invisible from the
-// signature: aot_bridge/operators.cpp does `static_cast<op>(op_kind)` and dispatches the
-// interpreter's own switch on it. So lowering `ctjs.binary pow` by passing the
-// CTJS BinaryKind ordinal - 5 - would call the runtime with `op(5)`, whatever
-// that happens to be, and compile `**` into a different operator entirely. It
-// reads correctly in both files and computes the wrong answer.
-//
-// The role exists so a backend must spell the opcode BY NAME, which makes a
-// renumbering of `enum class op` a build error rather than a miscompile.
+// The signature does not show this: aot_bridge/operators.cpp does
+// `static_cast<op>(op_kind)` and dispatches the interpreter's own switch on
+// it. Lowering `ctjs.binary pow` by passing the CTJS BinaryKind ordinal (5)
+// would call the runtime with `op(5)` and compile `**` into a different
+// operator. The opcode role exists so a backend must spell the opcode by name
+// (see OpcodeMapping.hpp), which makes a renumbering of `enum class op` a
+// build error rather than a miscompile.
 
+/// One row of the helper table, classified.
 struct runtime_helper {
     std::string_view symbol;
-    // EVERY PARAMETER, INCLUDING THE FRAME HANDLE. The .def writes the
-    // parameter list as C source and this counts it, rather than a hand-kept
-    // number beside each row that could disagree with the row above it.
-    // Always role_count: both come from the one splitter, classify_all.
+    /// Every parameter, including the frame handle, counted from the .def's
+    /// C parameter list rather than kept by hand. Always equals role_count:
+    /// both come from classify_all().
     std::size_t arity;
     bool may_throw;
     bool may_reenter;
     bool is_safepoint;
-    // WHAT IT RETURNS, under the .def's own return-type rule. See return_role.
+    /// What it returns, under the return-type rule; see return_role.
     return_role ret;
-    // One per parameter, in ABI order. Twelve is wider than the widest row.
+    /// One role per parameter, in ABI order. Twelve is wider than the widest
+    /// row.
     param_role roles[12];
     std::size_t role_count;
 };
 
-// One parameter's role, from its type and its name.
+/// One parameter's role, from its type and its name.
 [[nodiscard]] constexpr param_role classify(std::string_view one) {
     while (!one.empty() && one.front() == ' ') { one.remove_prefix(1); }
     while (!one.empty() && one.back() == ' ') { one.remove_suffix(1); }
@@ -158,7 +154,7 @@ struct runtime_helper {
     if (begins(one, "uint64_t")) { return param_role::operand; }
     if (begins(one, "double")) { return param_role::number; }
     if (begins(one, "uint32_t")) {
-        // THE AMBIGUOUS ONE, RESOLVED BY NAME. Every uint32_t in the table is
+        // The ambiguous type, resolved by name: every uint32_t in the table is
         // an opcode or an immediate integer, and only its name says which.
         if (name == "op_kind" || name == "opcode") { return param_role::opcode; }
         return param_role::count;
@@ -166,10 +162,11 @@ struct runtime_helper {
     return param_role::unknown;
 }
 
-// Every TOP-LEVEL parameter's role, in order. Returns how many there were -
-// the row's arity. Top-level, because a parameter's own type can contain a
-// comma - none does today, and `std::function<void(int, int)>` in a future row
-// would make a naive count wrong by one without anything saying so.
+/// Classifies every top-level parameter in `params` (a parenthesised C
+/// parameter list) into `into`, and returns how many there were: the row's
+/// arity. Only top-level commas split, because a parameter's own type could
+/// contain one (`std::function<void(int, int)>`); none does today, and a naive
+/// count would then be wrong by one without anything saying so.
 [[nodiscard]] constexpr std::size_t classify_all(std::string_view params, param_role * into,
                                                  std::size_t capacity) {
     std::size_t depth = 0;
@@ -194,24 +191,21 @@ struct runtime_helper {
     return count;
 }
 
-// One row's return role - FROM THE RETURN TYPE AND THE PARAMETERS BOTH.
-//
-// THE PARAMETERS ARE NOT OPTIONAL HERE, and the .def says why: ct_aot_to_int32
-// is "THE ONE DELIBERATE EXCEPTION to the return-type rule ... a signed int32
-// return that is DATA, not a status, because ToInt32's result is signed by
-// definition. It takes no frame handle, which is the mechanical tell - no
-// status-returning helper in the table lacks one" (aot_helpers.def:824-828).
-//
-// THE TELL IS EXACT, NOT A HEURISTIC: 24 rows return int32_t and take a frame,
-// exactly one returns int32_t and does not, and it is that row. So the rule is
-// READ rather than the row special-cased by name - a second frameless int32_t
-// row would classify correctly on arrival instead of being missed.
-//
-// AND GETTING IT WRONG IS THE WORST KIND OF WRONG. A backend that read
-// ct_aot_to_int32's result as a status would be testing the value of `x | 0`
-// against ct_aot_status: 1 is `failed` and unwinds the whole native chain, 2 is
-// `caught` and branches to a landing pad that does not exist, and 3 is `ok` by
-// coincidence. `2.7 | 0` is 2.
+/// One row's return role, from the return type and the parameters together.
+///
+/// The parameters are needed because ct_aot_to_int32 returns a signed int32_t
+/// that is data, not a status (ToInt32's result is signed by definition), and
+/// it is the only int32_t-returning helper without a frame parameter (see its
+/// row in helpers/values-and-properties.def). Every other int32_t row takes a
+/// frame, so "int32_t with no frame is data" is an exact rule, not a
+/// heuristic, and a second frameless int32_t row would be classified
+/// correctly on arrival instead of special-cased by name.
+///
+/// Getting it wrong would be severe: a backend that read ct_aot_to_int32's
+/// result as a status would test the value of `x | 0` against ct_aot_status,
+/// where 1 is `failed` and unwinds the whole native chain, 2 is `caught` and
+/// branches to a landing pad that does not exist, and 3 is `ok` by coincidence.
+/// `2.7 | 0` is 2.
 [[nodiscard]] constexpr return_role classify_return(std::string_view ret, std::string_view params) {
     while (!ret.empty() && ret.front() == ' ') { ret.remove_prefix(1); }
     while (!ret.empty() && ret.back() == ' ') { ret.remove_suffix(1); }
@@ -229,7 +223,7 @@ struct runtime_helper {
     return return_role::unknown;
 }
 
-// param_role's enumerators, spelled, in declaration order.
+/// param_role's enumerators, spelled, in declaration order.
 inline constexpr const char * param_role_names[] = {
     "unknown", "frame", "context", "operand", "out_value", "out_other", "opcode", "count",
     "number",  "text",  "values",  "name",    "site",      "cache",     "storage"};
@@ -237,10 +231,12 @@ static_assert(std::size(param_role_names) == static_cast<std::size_t>(param_role
 static_assert(std::string_view{param_role_names[static_cast<std::size_t>(param_role::out_other)]} ==
               "out_other");
 
+/// The spelling of `role`, for diagnostics and the golden test.
 [[nodiscard]] constexpr const char * role_name(param_role role) {
     return param_role_names[static_cast<std::size_t>(role)];
 }
 
+// Expands each .def row into a classified runtime_helper.
 #define CT_AOT_HELPER(name_, ret_, params_, may_throw_, may_reenter_, is_safepoint_)               \
     [] {                                                                                           \
         runtime_helper row{#name_,                                                                 \
@@ -254,6 +250,7 @@ static_assert(std::string_view{param_role_names[static_cast<std::size_t>(param_r
         row.arity = row.role_count = classify_all(#params_, row.roles, std::size(row.roles));      \
         return row;                                                                                \
     }(),
+/// Every helper, indexed by ctbrowser::aot::helper_id.
 inline constexpr runtime_helper runtime_helpers[] = {
 #include <ctbrowser/aot/aot_helpers.def>
 };
@@ -262,29 +259,29 @@ inline constexpr runtime_helper runtime_helpers[] = {
 static_assert(std::size(runtime_helpers) == ctbrowser::aot::helper_count,
               "the lowering's helper table and helper_id disagree");
 
+/// The table row for `which`.
 [[nodiscard]] constexpr const runtime_helper & helper_for(ctbrowser::aot::helper_id which) {
     return runtime_helpers[static_cast<std::size_t>(which)];
 }
 
-// WHETHER A CALLER MUST TEST A STATUS AFTER THIS CALL.
+/// Returns true if a caller must test a status after this call.
 [[nodiscard]] constexpr bool returns_status(const runtime_helper & row) {
     return row.ret == return_role::status;
 }
 
-// WHETHER THIS HELPER'S ONLY FAILURE IS THE RAISE TIER, so the caller takes its
-// result unconditionally and polls ct_aot_failed at the next back-edge.
-//
-// ct_aot_enter IS NOT ONE OF THESE and the carve-out is deliberate: it fails by
-// returning a NULL frame pointer, which is neither a status nor a poll, and a
-// backend that lumped it in with the value-returning rows would dereference the
-// null. It is the single row whose failure has its own shape.
+/// Returns true if this helper's only failure is a raise, so the caller takes
+/// its result unconditionally and polls ct_aot_failed at the next back-edge.
+///
+/// ct_aot_enter is deliberately excluded: it fails by returning a NULL frame
+/// pointer, which is neither a status nor a poll, and a backend that treated
+/// it like the value-returning rows would dereference the null.
 [[nodiscard]] constexpr bool is_raise_tier_only(const runtime_helper & row) {
     return row.may_throw && row.ret != return_role::status && row.ret != return_role::frame;
 }
 
-// EVERY ROW CLASSIFIES. An unknown return type means the ABI grew a shape this
-// file has not been taught, and the compiler would otherwise decide what to do
-// about it by accident.
+// Every row must classify. An unknown return type means the ABI grew a shape
+// this file has not been taught, and the compiler would otherwise decide what
+// to do about it by accident.
 constexpr bool every_return_classifies() {
     for (const runtime_helper & row : runtime_helpers) {
         if (row.ret == return_role::unknown) { return false; }
@@ -295,23 +292,22 @@ static_assert(every_return_classifies(),
               "a helper's return type is not one this file knows - teach classify_return, and "
               "decide which failure tier the new shape belongs to before a backend guesses");
 
-// THE ROW THE .def ARGUES ABOUT, PINNED. ct_aot_failed IS THE SIGNAL for the
-// raise tier and returns uint32_t "not int32_t, under the return-type rule - it
-// is data, not a status" (aot_helpers.def:232). If it ever returned int32_t,
-// every poll site would start testing it as a status - and CT_AOT_OK is zero,
-// so a raised program would read as healthy.
+// ct_aot_failed is the raise signal and returns uint32_t data, not a status.
+// If it returned int32_t, every poll would test it as a status, and since
+// CT_AOT_OK is zero a raised program would read as healthy.
 static_assert(helper_for(ctbrowser::aot::helper_id::ct_aot_failed).ret == return_role::data,
               "ct_aot_failed returns DATA - nonzero means the run is over; as a status, zero "
               "would mean the opposite");
 static_assert(!returns_status(helper_for(ctbrowser::aot::helper_id::ct_aot_failed)));
 
-// AND THE CLASSIFIER ITSELF returns a status while NOT being may_throw: it is
-// how a caller of any other row obtains one, so it cannot need one of its own.
+// The status classifier, ct_aot_check, returns a status but is not
+// may_throw: it is how a caller of any other row obtains one, so it cannot
+// need one of its own.
 static_assert(returns_status(helper_for(ctbrowser::aot::helper_id::ct_aot_check)));
 static_assert(!helper_for(ctbrowser::aot::helper_id::ct_aot_check).may_throw);
 
-// THE TWO TIERS, ONE ROW EACH. ct_aot_binary_op is the catchable edge - a
-// valueOf can throw - and ct_aot_new_object is the ceiling only.
+// One row for each kind of failure: ct_aot_binary_op is catchable (a valueOf
+// can throw), and ct_aot_new_object can only raise at the allocation ceiling.
 static_assert(returns_status(helper_for(ctbrowser::aot::helper_id::ct_aot_binary_op)));
 static_assert(!is_raise_tier_only(helper_for(ctbrowser::aot::helper_id::ct_aot_binary_op)));
 static_assert(is_raise_tier_only(helper_for(ctbrowser::aot::helper_id::ct_aot_new_object)),
@@ -321,11 +317,11 @@ static_assert(helper_for(ctbrowser::aot::helper_id::ct_aot_new_object).may_throw
               "and it IS may_throw, which is exactly why may_throw alone cannot tell a backend "
               "what edge to emit");
 
-// A FRAME OR A CONTEXT IS ALWAYS THE FIRST PARAMETER, NEVER A LATER ONE.
+// A frame or a context is always the first parameter, never a later one.
 //
-// CTJSABIShape's `leads_with_frame` reads roles[0] and nothing else, which is
-// only a reading of the row if no later position can hold a frame. Checking the
-// property over every row is what fires if a row ever arrives that breaks it.
+// CTJSABIShape's `leads_with_frame` reads only roles[0], which is correct only
+// if no later position can hold a frame. This check fires if a row ever
+// arrives that breaks that.
 constexpr bool frame_is_always_first() {
     for (const runtime_helper & row : runtime_helpers) {
         for (std::size_t i = 1; i < row.role_count; ++i) {
@@ -340,18 +336,18 @@ static_assert(frame_is_always_first(),
               "a helper takes a frame handle somewhere other than first - decide what that means "
               "for leads_with_frame before a lowering decides for you");
 
-// THE ONE DELIBERATE EXCEPTION, PINNED BY NAME. ct_aot_to_int32 returns
-// int32_t and is NOT a status: ToInt32's result is signed by definition. Read
-// as a status it would test the value of `x | 0` against ct_aot_status - and
-// `2.7 | 0` is 2, which is `caught`.
+// The one deliberate exception, pinned by name: ct_aot_to_int32 returns
+// int32_t and is not a status, because ToInt32's result is signed by
+// definition. Read as a status it would test the value of `x | 0` against
+// ct_aot_status, and `2.7 | 0` is 2, which is `caught`.
 static_assert(helper_for(ctbrowser::aot::helper_id::ct_aot_to_int32).ret == return_role::data,
               "ToInt32 returns DATA that happens to be signed - a backend testing it as a status "
               "branches on the arithmetic");
 static_assert(!returns_status(helper_for(ctbrowser::aot::helper_id::ct_aot_to_int32)));
-// AND ITS SIBLING, which differs only in signedness and must stay data too.
+// Its sibling differs only in signedness and must stay data too.
 static_assert(helper_for(ctbrowser::aot::helper_id::ct_aot_to_uint32).ret == return_role::data);
 
-// ct_aot_enter's failure has a THIRD shape and is excluded from both.
+// ct_aot_enter's failure has a third shape and is excluded from both.
 static_assert(helper_for(ctbrowser::aot::helper_id::ct_aot_enter).ret == return_role::frame);
 static_assert(!returns_status(helper_for(ctbrowser::aot::helper_id::ct_aot_enter)));
 static_assert(!is_raise_tier_only(helper_for(ctbrowser::aot::helper_id::ct_aot_enter)),

@@ -1,4 +1,11 @@
-// EmitC/Operations.cpp - native lowering implementation.
+//===- Operations.cpp - Rewrite ctjs ops to EmitC ---------------*- C++ -*-===//
+//
+// Per-operation rewrites of the EmitC lowering: lowering::replace() turns each
+// ctjs operation of an admitted function into EmitC operations over the native
+// carrier types, plus the shared helpers for cells, object members and the
+// entry's printed observations.
+//
+//===----------------------------------------------------------------------===//
 #include "../Admission/Admission.h"
 #include "Emitter.h"
 #include "ctcompile/Support/CppLiterals.hpp"
@@ -6,9 +13,10 @@
 
 namespace ctcompile::ctnative::lowering_detail {
 
-// THE ONLY ERASE. An operation with uses is never erased: in a release
-// build that is a use-after-free with no diagnostic - it surfaced as a
-// crash at context teardown that came and went with the heap layout.
+/// The only way this lowering erases an operation. Erasing one that still has
+/// uses is a fatal error: in a release build it would be a silent
+/// use-after-free, which once showed up only as an intermittent crash at
+/// context teardown.
 void lowering::eraseIfUnused(mlir::Operation * o) {
     if (!o->use_empty()) {
         llvm::report_fatal_error(llvm::Twine("ctnative lowering: erasing `") +
@@ -17,17 +25,11 @@ void lowering::eraseIfUnused(mlir::Operation * o) {
     o->erase();
 }
 
-// `o.x` OR `self->x`, DECIDED BY WHAT THE OBJECT IS. A literal in this
-// frame is an `emitc.variable` and takes `emitc.member`; a lifted method's
-// receiver arrived as a pointer and takes `emitc.member_of_ptr` through the
-// local `lower()` made for it. Both give an lvalue, so the read and the
-// write above are the same two lines either way.
-// `v` OR `*p`, DECIDED BY WHAT THE BINDING IS - the exact shape of
-// memberAccess one level down, and here for the same reason: a read and a
-// write of a shared binding are the same two lines whichever side of the
-// call they are on. The variable in the owning frame is already an lvalue;
-// a capture parameter is a pointer, and `emitc.dereference` is the lvalue
-// one indirection through it.
+/// Returns the place a shared binding (a cell) is read from and written to.
+/// In the frame that owns it the cell is an `emitc.variable`, already an
+/// lvalue; a closure that captured it receives a pointer, and
+/// `emitc.dereference` turns that into an lvalue, so reads and writes are
+/// emitted the same way on both sides of the call.
 mlir::Value lowering::cellPlace(mlir::OpBuilder & b, mlir::Location where, mlir::Value cell) {
     if (auto pointer = llvm::dyn_cast<ec::PointerType>(cell.getType())) {
         return ec::DereferenceOp::create(b, where, ec::LValueType::get(pointer.getPointee()), cell);
@@ -35,23 +37,20 @@ mlir::Value lowering::cellPlace(mlir::OpBuilder & b, mlir::Location where, mlir:
     return cell;
 }
 
+/// Returns the lvalue for `object.member`. An object literal in this frame is
+/// an `emitc.variable` and is accessed with `emitc.member` (`o.x`); a lifted
+/// method's receiver arrives as a pointer and is accessed through a local
+/// copy with `emitc.member_of_ptr` (`self->x`).
 mlir::Value lowering::memberAccess(mlir::OpBuilder & b, mlir::Location where, mlir::Value object,
                                    llvm::StringRef member, mlir::Type type) {
     if (!receiverArgs.contains(object) && !llvm::isa<ec::PointerType>(object.getType())) {
         return ec::MemberOp::create(b, where, ec::LValueType::get(type), member, object);
     }
-    // AT THE FIRST FIELD, NOT AT THE FUNCTION'S FIRST LINE - AND THIS IS A
-    // TIDINESS CHOICE, WHICH IS NOT WHAT THE COMMENT HERE FIRST CLAIMED.
-    // `twice() { return this.area() * 2; }` reads no field of its own, so
-    // building the local eagerly leaves `ctn_h_w * v2; v2 = v1;` with
-    // nothing reading v2, and the prediction was that -Werror would reject
-    // it. Measured: it does not. The pipeline's `canonicalize` deletes the
-    // dead `emitc.variable` before any C++ is printed, `twice` compiles
-    // clean either way, and the whole suite is green with the eager form.
-    // So this buys nothing the pipeline was not already buying - what it
-    // buys is that the RAW `--ctnative-lower-to-emitc` output, which the
-    // lit and the printing gate read, has no variable no one reads in it.
-    // Block start still dominates every use, so building it here is free.
+    // The receiver's local is created lazily, at the first field access, so a
+    // method that reads no field of its own gets no unused variable in the raw
+    // `--ctnative-lower-to-emitc` output that lit tests check. (canonicalize
+    // would delete it anyway.) It is inserted at the block start or right after
+    // the receiver's definition, which dominates every use.
     mlir::Value & local = receiverLocal[object];
     if (!local) {
         mlir::OpBuilder at(context);
@@ -67,7 +66,7 @@ mlir::Value lowering::memberAccess(mlir::OpBuilder & b, mlir::Location where, ml
     return ec::MemberOfPtrOp::create(b, where, ec::LValueType::get(type), member, local);
 }
 
-// The entry's observation of each printed global, before its `return 0`.
+/// Emits the entry's observation of each printed global, before its `return 0`.
 void lowering::printObservations(mlir::OpBuilder & b, mlir::Location where) {
     using namespace ctjs;
     const auto boolean = carrierType(context, carrier::boolean);
@@ -158,9 +157,9 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
     if (replaceIdentityField(o)) { return; }
     if (replaceStringValue(o)) { return; }
 
-    // FRAME BOOKKEEPING LOWERS TO NOTHING - but frame_enter's result is
-    // used by every frame_exit and root after it, and walk order visits
-    // it first, so its users go now and it goes in the sweep at the end.
+    // Frame bookkeeping lowers to nothing. frame_enter's result is used by
+    // every frame_exit and root after it, and walk order visits it first, so
+    // its users are erased now and it is erased in the sweep at the end.
     if (llvm::isa<FrameExitOp, RootOp>(o)) {
         eraseIfUnused(o);
         return;
@@ -251,14 +250,11 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
         swap(numberConstant(b, where, std::numeric_limits<double>::quiet_NaN()));
         return;
     }
-    // PHASE 59 SLICE 2 STEP 2: THE SHARED BINDING, AS A VARIABLE AND TWO
-    // ACCESSES OF IT.
-    //
-    // `ctjs.create_cell` is a local in this frame, assigned the box's
-    // initial value. A hoisted `var` starts with tagged undefined, so
-    // a read on a path that reaches no `ctjs.cell_set` yields exactly what
-    // the interpreter yields, which is the whole reason this rule needs no
-    // dominance proof where step 1 needed two.
+    // A shared binding (`ctjs.create_cell`) becomes a local variable in this
+    // frame, initialised to the cell's initial value; `cell_get` and `cell_set`
+    // load and assign it. A hoisted `var` starts as tagged undefined, so a read
+    // on a path with no `cell_set` yields what the interpreter yields, and no
+    // dominance proof is needed.
     if (auto cell = llvm::dyn_cast<CreateCellOp>(o); cell && admission::isCarriedCell(o)) {
         mlir::Value local = ec::VariableOp::create(b, where, cell.getResult().getType(),
                                                    ec::OpaqueAttr::get(context, ""));
@@ -303,7 +299,7 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
         const family & f = families[site.family];
         mlir::Value local =
             ec::VariableOp::create(b, where, classType(site), ec::OpaqueAttr::get(context, ""));
-        // THE MEMBER TAKES THE SITE'S CONCRETE CARRIER, never the family's
+        // Each member takes the site's concrete carrier, never the family's
         // template parameter: the assign and the load after it are typed
         // ops over the actual carrier, and `T0` is a spelling that exists
         // only inside the class.
@@ -381,8 +377,8 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
         eraseIfUnused(o);
         return;
     }
-    // THE METHOD FIELD IS NOT A FIELD, so its store goes and the closure it
-    // held loses its last use and goes in the sweep. `this` is a parameter
+    // A method field is not stored in the object, so its store is erased and
+    // the closure it held loses its last use and is erased in the sweep. `this` is a parameter
     // and the method is a free function; there is nothing to write.
     if (o->hasAttr("ctnative.method")) {
         eraseIfUnused(o);
@@ -461,14 +457,11 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
         case UnaryKind::Neg:
             swap(ec::UnaryMinusOp::create(b, where, numeric, number(b, where, u.getOperand())));
             return;
-        // `+x` IS GONE BY NOW, ERASED BY UnaryPlusIsIdentity in
-        // applyDeclarativeRules() above. This arm is not dead code and it
-        // is not llvm_unreachable: a pattern driver has NO DIAGNOSTIC ON A
-        // NON-MATCH, so a pattern that silently stopped firing - a rename in
-        // CTJSOps.td, a guard the match gets wrong, a driver that never ran -
-        // would otherwise reach the default arm and abort with a message
-        // blaming admission. Naming the pattern that owed the rewrite is the
-        // whole difference between a bug report and a wild goose chase.
+        // Numeric `+x` was already erased by the UnaryPlusIsIdentity pattern
+        // (LoweringSupport.cpp, run from applyDeclarativeRules() in Functions.cpp).
+        // A pattern that silently stops matching produces no diagnostic, so this
+        // arm reports the pattern by name instead of reaching the generic
+        // "admission refused it" abort.
         case UnaryKind::Plus:
             if (u.getOperand().getType() == numeric) {
                 llvm::report_fatal_error("ctnative lowering: numeric unary plus survived "
@@ -560,11 +553,10 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
         // order the two are visited in.
         const auto operands = call.getArgOperands();
         llvm::SmallVector<mlir::Value> args;
-        // THE RECEIVER GOES FIRST WHEN THE LIFT MARKED THE CALL, and this
-        // one line is where the tier stops dropping it. The callee takes a
-        // pointer, so a literal in this frame - an `emitc.variable`, an
-        // lvalue - needs its address, and a receiver being PASSED ON by
-        // `this.other()` is already one.
+        // A call to a lifted method (marked `ctnative.receiver`) passes the
+        // receiver as the first argument, by pointer: an object literal in this
+        // frame is an lvalue and needs its address taken; a receiver forwarded
+        // by `this.other()` is already a pointer.
         const auto asPointer = [&](mlir::Value v) {
             return llvm::isa<ec::PointerType>(v.getType())
                        ? v
@@ -576,14 +568,12 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
                              .getResult();
         };
         if (o->hasAttr("ctnative.receiver")) { args.push_back(asPointer(call.getReceiver())); }
-        // AND THE SAME ADDRESS-OF FOR AN OBJECT ARGUMENT, through the one
-        // lambda above - so the receiver and an argument cannot drift into
-        // two different ways of taking one address.
+        // Object arguments and shared bindings (cells) are also passed by
+        // pointer through asPointer, so all three cases take an address the same
+        // way. A function that itself received a cell pointer forwards it
+        // unchanged, which is how a binding several closures out reaches the
+        // innermost one. Operands 0-2 are the implicit arguments dropped above.
         for (unsigned i = 3; i < operands.size(); ++i) {
-            // AND A SHARED BINDING GOES THE SAME WAY, THROUGH THE SAME
-            // LAMBDA: `&n` for the variable in this frame, and the pointer
-            // unchanged when this function received one itself - which is
-            // how a binding two levels out reaches the innermost closure.
             const bool byAddress = admission::isObjectArg(o, i) || admission::isCellArg(o, i);
             args.push_back(byAddress ? asPointer(operands[i]) : operands[i]);
         }

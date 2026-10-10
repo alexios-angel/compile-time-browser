@@ -1,3 +1,11 @@
+//===- Facts.cpp - Symbolic primitive-value facts -------------------------===//
+//
+// Implements symbolic::Analysis (see Facts.h). Constant folding reuses the
+// partial evaluator's primitive operations, so a folded value matches the
+// interpreter exactly.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Facts.h"
 
 #include "../PartialEvaluation/Heap.h"
@@ -60,7 +68,7 @@ namespace {
 Fact exported(partial_eval::value value) {
     return value.tag == partial_eval::value::kind::constant ? literalFact(value.constant) : Fact{};
 }
-// The constant the evaluator folded `value` to, or nullopt.
+/// The constant the evaluator folded `value` to, or nullopt.
 std::optional<Fact> folded(partial_eval::value value) {
     const auto fact = exported(value);
     return fact.literal ? std::optional(fact) : std::nullopt;
@@ -68,6 +76,7 @@ std::optional<Fact> folded(partial_eval::value value) {
 partial_eval::value imported(Fact fact) {
     return fact.literal ? partial_eval::value::primitive(fact.literal) : partial_eval::value{};
 }
+/// The `typeof` result for a single known domain, or empty.
 llvm::StringRef typeName(unsigned domains) {
     switch (domains) {
     case Number: return "number";
@@ -102,9 +111,9 @@ Fact Analysis::operation(mlir::Operation * op) {
             }
             return {(left.domains | right.domains) & String ? Number | String : Number, {}};
         }
-        // Known primitive domains exclude BigInt, so the other arithmetic kinds
-        // and the bitwise six are Numbers here exactly as ctjs.binary_static's
-        // are below. A kind outside the enum stays unknown.
+        // Known primitive domains exclude BigInt, so the other arithmetic and
+        // bitwise kinds produce a Number here, as ctjs.binary_static's do
+        // below. Any other kind stays unknown.
         if (!ctjs::isArithmetic(binary.getKind()) && !ctjs::isBitwise(binary.getKind())) {
             return {};
         }
@@ -143,8 +152,9 @@ Fact Analysis::operation(mlir::Operation * op) {
                                                      imported(right), context))) {
             return *fact;
         }
-        // No arithmetic identity is implied by a numeric type: NaN is not
-        // equal to itself. Primitive boolean/string/nullish domains exclude it.
+        // `x == x` is not always true for a number, because NaN is not equal
+        // to itself. Boolean, string and nullish values are always equal to
+        // themselves, so the fold applies only when Number is excluded.
         if (compare.getLhs() == compare.getRhs() && left.domains && !(left.domains & Number) &&
             (compare.getKind() == ctjs::CompareKind::StrictEq ||
              compare.getKind() == ctjs::CompareKind::Eq)) {
@@ -178,8 +188,9 @@ Fact Analysis::operation(mlir::Operation * op) {
 
 bool Analysis::region(mlir::Region & body) {
     for (mlir::Block & block : body) {
-        // Only closed function entries have argument facts. CFG/SCF arguments
-        // remain unknown: an initializer is not a fact about every iteration.
+        // Only closed function entry blocks have argument facts. Other block
+        // and scf region arguments stay unknown: a loop's initial value is not
+        // a fact about every iteration.
         for (mlir::BlockArgument arg : block.getArguments()) { facts[arg] = arguments.lookup(arg); }
         for (mlir::Operation & op : block) {
             if (!budget.spend()) { return false; }
@@ -215,8 +226,11 @@ bool Analysis::collectCallers(llvm::ArrayRef<ctjs::FuncOp> functions) {
                          [](mlir::Operation * user) { return !llvm::isa<ctjs::RootOp>(user); })) {
             continue;
         }
-        // Charge the complete symbol/closure census before publishing any
-        // caller evidence. Reports and supplied native annotations are inert.
+        // Spend budget for one full walk of the module (one unit per operation
+        // plus one per operand) before recording this function's callers, so a
+        // module too large for the budget fails here instead of being scanned
+        // for free below. Report attributes already on the IR are not used as
+        // evidence.
         auto charged = module.walk([&](mlir::Operation * op) {
             for (unsigned i = 0; i <= op->getNumOperands(); ++i) {
                 if (!budget.spend()) { return mlir::WalkResult::interrupt(); }
@@ -227,10 +241,13 @@ bool Analysis::collectCallers(llvm::ArrayRef<ctjs::FuncOp> functions) {
         if (!closedCallableProblem(fn, module).empty()) { continue; }
         bool argumentsObject = false;
         fn.walk([&](ctjs::MakeArgumentsOp) { argumentsObject = true; });
-        if (argumentsObject) { continue; } // Non-strict arguments.callee publishes this callable.
-        // Specialization may keep this closure as another symbol's boxed
-        // dispatch value. Those actuals belong to the original function too;
-        // leave it generic instead of using only its remaining symbolic calls.
+        // In non-strict code, arguments.callee exposes this function as a
+        // value, so it may have callers this analysis cannot see.
+        if (argumentsObject) { continue; }
+        // Specialization may leave this closure as the callee value of a call
+        // redirected to another symbol. Those calls' arguments reach the
+        // original function too, so leave it generic rather than trust only
+        // its remaining direct calls.
         auto sites = directCallers(fn, module);
         if (sites && !sites->empty() && !hasAlternateCalleeCalls(fn, module)) {
             callers[fn] = std::move(*sites);
@@ -243,9 +260,12 @@ void Analysis::run() {
     llvm::SmallVector<ctjs::FuncOp> functions;
     module.walk([&](ctjs::FuncOp fn) { functions.push_back(fn); });
     if (!collectCallers(functions)) { return; }
-    // Unknown summaries are the starting point. A recursive dependency cannot
-    // invent a primitive result, while normal literal returns can ground a
-    // summary even when the call has effects or might not return.
+    // Iterate argument and return summaries to a fixed point, starting from
+    // unknown. A recursive dependency cannot invent a primitive result, while
+    // literal returns can ground a summary even when the call has effects or
+    // might not return. Facts only widen (join), so functions.size() + 1
+    // rounds is enough; when there are callers, at least two rounds run,
+    // because round 0 computes argument facts before any return fact exists.
     for (size_t round = 0; round <= functions.size(); ++round) {
         bool changed = false;
         for (const auto & [operation, sites] : callers) {

@@ -1,3 +1,17 @@
+//===- Publication.cpp - Sink class-instance registrations ----------------===//
+//
+// A "publication" is a constructor storing its new instance in a captured Map
+// (`registry.set(key, this)`), which makes the half-built object reachable from
+// outside the constructor. These rewrites move that registration out of the
+// constructor to just after each `new`, when every field is known, so the
+// class can be initialised natively.
+//
+// Return convention, shared by every function here: false means the work
+// budget ran out or a proof failed and set `reason`; true means the rewrite
+// was applied or the shape was declined and the IR left unchanged.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Proof.hpp"
 #include "llvm/ADT/ScopeExit.h"
 
@@ -7,8 +21,9 @@ namespace ctcompile::ctnative::class_detail {
 
 namespace {
 
-// A value stops normalization: retain the body on an observer/unknown census,
-// or propagate budget failure. No value means the census found no observer.
+/// Does any symbol use of `function` observe it? Returns true to decline the
+/// rewrite (an observer or unknown use was found), false when the work budget
+/// ran out, and nothing when no observer exists.
 std::optional<bool> publicationSymbolObserver(classInitialization & proof, ctjs::FuncOp function) {
     return host_detail::forEachSymbolUse(
         proof.module, true, [&] { return proof.step(); },
@@ -17,8 +32,8 @@ std::optional<bool> publicationSymbolObserver(classInitialization & proof, ctjs:
         });
 }
 
-// The same convention for the users of `op`: true at a user other than a root
-// or one of `allowed`, false on budget failure.
+/// The same convention for the users of `op`: true at a user other than a root
+/// or one of `allowed`, false on budget failure, nothing otherwise.
 std::optional<bool> unrootedUser(classInitialization & proof, mlir::Operation * op,
                                  llvm::ArrayRef<mlir::Operation *> allowed = {}) {
     for (mlir::Operation * user : op->getUsers()) {
@@ -28,8 +43,9 @@ std::optional<bool> unrootedUser(classInitialization & proof, mlir::Operation * 
     return std::nullopt;
 }
 
-// The sole class derived from `base`; true (stop) when it is not unique,
-// capture-free and a leaf, false on budget failure.
+/// Sets `leaf` to the one class derived from `base`. Returns true (decline)
+/// when that class is not unique, captures values or has subclasses of its
+/// own, false on budget failure, and nothing on success.
 std::optional<bool> soleLeaf(classInitialization & proof, mlir::Value base,
                              ctjs::CreateClosureOp & leaf) {
     for (auto [derived, inherited] : proof.heritage) {
@@ -44,7 +60,8 @@ std::optional<bool> soleLeaf(classInitialization & proof, mlir::Value base,
     return std::nullopt;
 }
 
-// The shared holder census, with the uses of one captured read of the holder.
+/// Analyzes `holder` with analyzeLocalCallableObject(), counting the uses of
+/// `captured`, one captured read of the holder, as uses of the holder too.
 llvm::Expected<CallableObject> capturedHolder(classInitialization & proof,
                                               ctjs::CreateObjectOp holder, mlir::Value captured) {
     return analyzeLocalCallableObject(
@@ -61,6 +78,10 @@ llvm::Expected<CallableObject> capturedHolder(classInitialization & proof,
 
 } // namespace
 
+/// Checks that everything in the constructor after `publication` is safe to
+/// run after the instance is registered: no observable work, and, when
+/// `allowFields`, only stores of literals or arguments every construction in
+/// `instances` passes as a Number.
 bool classInitialization::publicationSuffix(ctjs::CallOp publication,
                                             llvm::ArrayRef<ctjs::ConstructOp> instances,
                                             bool allowFields) {
@@ -69,9 +90,11 @@ bool classInitialization::publicationSuffix(ctjs::CallOp publication,
     auto self = body.getArgument(ctjs::arg_receiver);
     llvm::DenseSet<mlir::Value> numbers;
     if (allowFields) {
-        // A generic arithmetic opcode can invoke user coercion. Prove its
-        // operands from every exact construction, never from an observed run.
-        // ponytail: literal Number arguments; wider callers need typed source proof.
+        // A generic arithmetic op can call user code (valueOf) through type
+        // coercion, so it is allowed only when its operands are known Numbers:
+        // literals, or parameters every `new` in `instances` passes a Number.
+        // ponytail: only literal Number arguments; wider callers need a typed
+        // proof of the argument's source.
         for (auto [index, argument] :
              llvm::enumerate(body.getArguments().drop_front(ctjs::implicit_arguments))) {
             bool numeric = !instances.empty();
@@ -141,11 +164,15 @@ bool classInitialization::publicationSuffix(ctjs::CallOp publication,
     return reason.empty();
 }
 
+/// Moves a registration that `setup(Constructor)` performs on a captured
+/// constructor so it runs after each `new`, for the DOM and closed-source host
+/// contracts. Adds helpers the rewrite depends on to `requiredHelpers`.
 bool classInitialization::sinkCapturedPublication(
     ctjs::CallOp setup, const HostContract & contract,
     llvm::SmallVectorImpl<unsigned> & requiredHelpers) {
-    // ponytail: terminal registration, or one unconstructed base with one leaf.
-    // Shared/deeper families and observable suffixes need a wider publication proof.
+    // ponytail: handles a registration that is the constructor's last work, or
+    // one never-constructed base with one subclass. Deeper class families and
+    // observable work after the registration need a wider proof.
     const bool domData = contract.provider == HostContract::Provider::ctbrowserDOMDataSession;
     const bool dom = contract.provider == HostContract::Provider::ctbrowserDOM ||
                      contract.provider == HostContract::Provider::ctbrowserDOMSession;
@@ -178,7 +205,8 @@ bool classInitialization::sinkCapturedPublication(
             continue;
         } else if (op != setup && !llvm::isa<ctjs::RootOp, ctjs::SetPropertyOp, ctjs::GetPropertyOp,
                                              ctjs::DefineAccessorOp, ctjs::InstanceOfOp>(op)) {
-            // Ordinary calls and unproved heritage retain the original body.
+            // Any other use (an ordinary call, an unproved `extends`) could run
+            // the original constructor, so decline.
             return true;
         }
     }
@@ -187,8 +215,9 @@ bool classInitialization::sinkCapturedPublication(
         return true;
     }
     if (!isBase && instances.empty()) { return true; }
-    // sourceUses omits capture transport. A hidden caller must retain the
-    // original constructor until a complete callable proof can account for it.
+    // sourceUses() does not report uses that only pass the constructor through
+    // a captured cell, so check every cell holding it: a caller reached that
+    // way could see the unmodified constructor, so decline.
     for (auto [alias, initial] : cells) {
         if (!step()) { return false; }
         if (sourceValue(initial) != constructor.getResult()) { continue; }
@@ -197,13 +226,14 @@ bool classInitialization::sinkCapturedPublication(
         if (!*transport) { return true; }
     }
     if (auto stop = publicationSymbolObserver(*this, function)) { return *stop; }
-    // Uniform actuals can put a guarded registration in the entry block.
-    // Reuse the constructor proof before inspecting the selected capture.
+    // When every `new` passes the same arguments, a registration guarded by a
+    // branch can be decided and moved into the entry block. Do that first.
     if (!foldDecidedArms(constructor, instances)) { return false; }
     auto & body = function.getBody().front();
     ctjs::LoadUpvalueOp captured;
-    // Select the registration's capture from its receiver argument. Other
-    // captures stay in place for the complete constructor/helper census.
+    // Find the one capture the registration call (which passes `this`) reads.
+    // Other captures stay in place; the later census of the constructor and
+    // its helpers checks them.
     for (mlir::OpOperand & use : body.getArgument(ctjs::arg_receiver).getUses()) {
         if (!step()) { return false; }
         auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
@@ -266,8 +296,9 @@ bool classInitialization::sinkCapturedPublication(
     if (auto stop = unrootedUser(*this, invocation)) { return *stop; }
     if (holder) {
         if (auto stop = unrootedUser(*this, selection, invocation.getOperation())) { return *stop; }
-        // Keep every slot and observer. The shared holder census proves that
-        // moving this exact selection cannot cross a slot replacement.
+        // Keep every slot and observer. The holder analysis proves that no
+        // slot is replaced after the constructor is created, so moving this
+        // read cannot observe a different helper.
         auto proof = capturedHolder(*this, holder, captured.getResult());
         if (!proof) {
             llvm::consumeError(proof.takeError());
@@ -294,8 +325,9 @@ bool classInitialization::sinkCapturedPublication(
     }
     auto returned = llvm::dyn_cast<ctjs::ReturnOp>(body.getTerminator());
     if (!returned || !undefined(returned.getValue())) { return true; }
-    // A base guard still depends on super's actuals. The sole leaf must flatten
-    // it and prove the entire suffix, including work after the arm and super.
+    // A base constructor's guard still depends on the arguments super() passes,
+    // so its suffix is checked later, in the one subclass, after the base body
+    // has been inlined there.
     if (!isBase && !publicationSuffix(invocation, instances, normalizedSuper.contains(function))) {
         return reason.empty();
     }
@@ -330,8 +362,9 @@ bool classInitialization::sinkCapturedPublication(
                     return refuseWalk("inherited registration requires its original captures");
                 }
                 copied |= load.getIndex() == captureIndex;
-                // Before the class census, super substitutes the base callee with
-                // undefined. Restore every original cell in the capture-free leaf.
+                // Inlining super() replaced the base callee with undefined. Point
+                // these capture reads at the subclass's own callee, which now
+                // carries the base's captures.
                 load->setOperand(0, leafFunction.getBody().front().getArgument(ctjs::arg_callee));
                 return mlir::WalkResult::advance();
             })) {
@@ -363,8 +396,9 @@ bool classInitialization::sinkCapturedPublication(
                 return true;
             }
         }
-        // A fresh receiver's own field supplies the key only after its unique
-        // store. Keep the store and actual for the complete element-field proof.
+        // The key is read from a field of `this`, so it must be written exactly
+        // once, from a parameter, before the read. Keep that store and its
+        // argument; the element-field proof checks them later.
         for (mlir::OpOperand & use : self.getUses()) {
             if (!step()) { return false; }
             auto * op = use.getOwner();
@@ -402,8 +436,9 @@ bool classInitialization::sinkCapturedPublication(
             }
             auto text = ctjs::constantAttr<ctjs::StringAttr>(argument);
             if (!text) {
-                // Only the outer key can carry identity. Keep the original
-                // allocation/input, and let nested routing prove every use.
+                // Only the first key may be an object (a fresh object or a
+                // declared DOM element) rather than a String. Keep it as is;
+                // the nested-Map proof checks every use of it.
                 if (position != 0 || !parameter) { return true; }
                 auto object = argument.getDefiningOp<ctjs::CreateObjectOp>();
                 auto input = llvm::dyn_cast<mlir::BlockArgument>(argument);
@@ -427,8 +462,9 @@ bool classInitialization::sinkCapturedPublication(
             keys.push_back(argument);
         }
     }
-    // Precharge the new calls, constants, selection and rooted cleanup. The
-    // outer pass owns a disposable candidate if any later proof refuses.
+    // Charge the work budget for every operation this rewrite will create
+    // before mutating anything. If a later proof refuses, the outer pass
+    // discards this candidate copy of the module.
     if (!spend((uint64_t(24) + 4 * keyParameters.size()) * instances.size()) || !reason.empty()) {
         return false;
     }
@@ -442,8 +478,9 @@ bool classInitialization::sinkCapturedPublication(
         auto second = ctjs::ConstantOp::create(
             at, invocation.getLoc(),
             keys[2 * index + 1].getDefiningOp<ctjs::ConstantOp>().getValue());
-        // The formal only fed this registration. Preserve evaluation of its
-        // actual, but stop transporting a host identity into the constructor.
+        // The parameter only fed this registration. The argument expression is
+        // still evaluated, but undefined is passed in its place so a host
+        // object no longer flows into the constructor.
         for (unsigned parameter : keyParameters) {
             auto absent = undefinedAt(at, invocation.getLoc());
             absent->moveBefore(made);
@@ -464,16 +501,19 @@ bool classInitialization::sinkCapturedPublication(
                              mlir::ValueRange{first, second, made.getResult()});
     }
     retirePublication(keyRead);
-    // The helper body is unchanged and must pass the existing Map-only
-    // expansion. Generic helper admission cannot discharge this obligation.
+    // The helper body is unchanged and must still pass the Map-only helper
+    // expansion; the generic helper checks are not enough to accept it.
     requiredHelpers.push_back(*functionIndex(helperFunction));
     return true;
 }
 
+/// Rewrites a constructor that captures one Map and one key so the key is a
+/// constant String the publication proof can check.
 bool classInitialization::normalizePublicationKey(ctjs::CreateClosureOp constructor,
                                                   const HostContract & contract) {
-    // ponytail: one Map and one immutable String key. Distinct caller keys need
-    // per-call specialization; nested Maps still need their own lifetime proof.
+    // ponytail: one Map and one String key that every caller passes the same.
+    // Distinct caller keys need per-call specialization; nested Maps need
+    // their own lifetime proof.
     auto function = target(constructor);
     auto scope = constructor->getParentOfType<ctjs::FuncOp>();
     if (contract.provider != HostContract::Provider::closedSource ||
@@ -522,7 +562,7 @@ bool classInitialization::normalizePublicationKey(ctjs::CreateClosureOp construc
             declaration = store;
         }
         if (declaration) {
-            // Precharge the shared hoisting/declaration proof's module/use scans.
+            // Charge up front for closedDeclaration()'s module and use scans.
             if (!spendWalk(module, declarationCost)) { return false; }
             if (!closedDeclaration(declaration, scope, module)) { return true; }
             for (const auto & root : contract.roots) {
@@ -549,9 +589,10 @@ bool classInitialization::normalizePublicationKey(ctjs::CreateClosureOp construc
             return false;
         }
         if (!exact || callers.empty()) { return true; }
-        // The resolver's diagnostic table is not a caller. Every actual
-        // declaration/callee was rechecked above; all other symbol attributes
-        // still participate. Restore the report even when this proof refuses.
+        // The resolver's `ctjs.globals` diagnostic table names the function but
+        // is not a caller, so hide it from the symbol-use scan. The declaration
+        // and every callee were checked above. Restore the table even when
+        // this proof refuses.
         auto report = module->removeAttr("ctjs.globals");
         llvm::scope_exit restoreReport([&] {
             if (report) { module->setAttr("ctjs.globals", report); }
@@ -581,10 +622,11 @@ bool classInitialization::normalizePublicationKey(ctjs::CreateClosureOp construc
         (load.getIndex() == keyIndex ? keys : mapReads).push_back(load);
     }
     if (keys.empty() || mapReads.empty()) { return true; }
-    // No symbolic caller may retain the old environment layout.
+    // The capture layout changes below, so no symbol reference may call the
+    // function with the old layout.
     if (auto stop = publicationSymbolObserver(*this, function)) { return *stop; }
-    // Charge substitutions/cleanup before mutation; the enclosing pass rolls
-    // back this private candidate if any later source or ownership proof fails.
+    // Charge for the substitutions and cleanup before mutating. If a later
+    // proof fails, the enclosing pass discards this candidate module.
     uint64_t cost = key.getNumUses() + body.getArgument(ctjs::arg_callee).getNumUses() +
                     uint64_t(2) * (keys.size() + 1) + cells.size();
     for (ctjs::LoadUpvalueOp load : keys) { cost += load.getResult().getNumUses(); }
@@ -606,11 +648,15 @@ bool classInitialization::normalizePublicationKey(ctjs::CreateClosureOp construc
     return true;
 }
 
+/// Inlines a pure registration helper (`register(this)`) captured directly or
+/// through one holder-object slot, so sinkConstructorPublication() sees the
+/// Map store itself.
 bool classInitialization::normalizePublicationHelper(ctjs::CreateClosureOp constructor,
                                                      const HostContract & contract) {
     if (!normalizePublicationKey(constructor, contract)) { return false; }
-    // ponytail: one pure registration helper, direct or in one exact holder slot.
-    // Shared helpers and earlier publication need a complete observer proof.
+    // ponytail: one pure registration helper, captured directly or in one
+    // holder slot. Shared helpers, or registration before other work, need a
+    // proof that nothing else observes the half-built object.
     auto function = target(constructor);
     if (contract.provider != HostContract::Provider::closedSource ||
         constructor.getUpvalues().size() != 1 || !function.getBody().hasOneBlock()) {
@@ -641,8 +687,8 @@ bool classInitialization::normalizePublicationHelper(ctjs::CreateClosureOp const
             !holder->isBeforeInBlock(constructor)) {
             return true;
         }
-        // The raw cell/alias census below proves every omitted transport.
-        // Project only this constructor's sole captured holder read.
+        // Uses through cells are checked by the raw cell scan below. Here,
+        // count only this constructor's one captured read of the holder.
         auto proof = capturedHolder(*this, holder, selectedHelper.getResult());
         if (!proof) {
             llvm::consumeError(proof.takeError());
@@ -746,8 +792,9 @@ bool classInitialization::normalizePublicationHelper(ctjs::CreateClosureOp const
         return true;
     }
     if (auto stop = unrootedUser(*this, invocation)) { return *stop; }
-    // Raw cell uses matter: sourceUses intentionally omits capture transport.
-    // No second helper/Map observer can survive retirement of this helper.
+    // Scan raw cell uses, because sourceUses() leaves out uses through cells.
+    // Nothing else may observe the helper or the Map once the helper is
+    // erased.
     bool initialized = mapCell.getDefiningOp<ctjs::CreateCellOp>().getInitial() == map.getResult();
     for (auto [cell, owner] : {std::pair{helperCell, constructor}, std::pair{mapCell, helper}}) {
         for (mlir::OpOperand & use : cell.getUses()) {
@@ -788,7 +835,8 @@ bool classInitialization::normalizePublicationHelper(ctjs::CreateClosureOp const
         }
     }
     for (ctjs::CellGetOp read : cellReads) {
-        // Precharge the cleanup scan as well; it cannot fail after mutation.
+        // The second step pays for the cleanup scan in advance, so that scan
+        // cannot run out of budget after mutation has begun.
         if (!step() || !step()) { return false; }
         if (read.getCell() != helperCell) { continue; }
         for (mlir::Operation * user : read->getUsers()) {
@@ -798,11 +846,13 @@ bool classInitialization::normalizePublicationHelper(ctjs::CreateClosureOp const
     }
     if (auto stop = publicationSymbolObserver(*this, targetFunction)) { return *stop; }
     if (!reason.empty()) { return false; }
-    // Count operations, operands and results before allocation. A forwarded
-    // key keeps its original evaluation; the publication proof checks its type.
+    // Charge for the new operations, operands and results before creating
+    // them. A key passed through as a parameter is left as is; the publication
+    // proof checks its type.
     if (!spend(keyed ? 12 : 14)) { return false; }
-    // The helper has no other effects or callers. Replace its exact call,
-    // then let the existing terminal-publication and owner proofs run afresh.
+    // The helper has no other effects or callers. Replace its call with the
+    // `map.set(key, this)` it performs; the publication and owner proofs then
+    // run again on the result.
     mlir::OpBuilder at(invocation);
     auto name = ctjs::ConstantOp::create(at, selection.getLoc(),
                                          ctjs::StringAttr::get(module.getContext(), "set"));
@@ -823,12 +873,15 @@ bool classInitialization::normalizePublicationHelper(ctjs::CreateClosureOp const
     return true;
 }
 
+/// Moves the `map.set(key, this)` registration in `constructor` to just after
+/// each `new` in `instances`, for a leaf class or one base with one leaf.
 bool classInitialization::sinkConstructorPublication(ctjs::CreateClosureOp constructor,
                                                      llvm::ArrayRef<ctjs::ConstructOp> instances,
                                                      const HostContract & contract) {
-    // ponytail: a terminal leaf, or one unconstructed base with one leaf whose
-    // remaining work only stores literals or proved Numbers. General partial
-    // publication needs exception/reentry and complete family observer proofs.
+    // ponytail: a class with no subclasses, or one never-constructed base with
+    // one subclass whose remaining work only stores literals or proved Numbers.
+    // Registering earlier in general needs proofs about exceptions, reentry
+    // and every class in the family observing the half-built object.
     auto function = target(constructor);
     const bool isBase = baseClasses.contains(constructor.getResult());
     const bool dom = contract.provider == HostContract::Provider::ctbrowserDOM ||
@@ -886,9 +939,10 @@ bool classInitialization::sinkConstructorPublication(ctjs::CreateClosureOp const
                   keyParameter.getArgNumber() < ctjs::implicit_arguments) {
         return true;
     }
-    // A base parameter remains a deferred obligation: super normalization
-    // substitutes it into the sole leaf, which checks every exact new below.
-    // ponytail: literal String actuals; computed keys need a wider type proof.
+    // A base constructor's key parameter is checked later: inlining super()
+    // substitutes it into the one subclass, which checks every `new` below.
+    // ponytail: only literal String arguments; computed keys need a wider type
+    // proof.
     llvm::SmallVector<ctjs::ConstantOp> keys;
     for (ctjs::ConstructOp made : instances) {
         if (!step()) { return false; }
@@ -904,8 +958,8 @@ bool classInitialization::sinkConstructorPublication(ctjs::CreateClosureOp const
     if (!publicationSuffix(publication, instances, bool(basePublication))) {
         return reason.empty();
     }
-    // This sole capture must have no other observer, including another class
-    // or helper. Every remaining Map use stays in the completed-owner census.
+    // This capture must have no other observer, including another class or
+    // helper. Every other use of the Map is checked by the later census.
     for (auto [alias, initial] : cells) {
         if (!step()) { return false; }
         if (sourceValue(initial) != map.getResult()) { continue; }
@@ -931,8 +985,8 @@ bool classInitialization::sinkConstructorPublication(ctjs::CreateClosureOp const
         if (!step()) { return false; }
         if (made->getBlock() != map->getBlock() || !map->isBeforeInBlock(made)) { return true; }
     }
-    // Numeric closure uses were completely enumerated by examine. A symbol
-    // call would bypass that census and must keep the original constructor.
+    // examine() listed every use of the closure value. A call by symbol would
+    // bypass that list and could run the original constructor, so decline.
     if (auto stop = publicationSymbolObserver(*this, function)) { return *stop; }
     if (!proveMaps()) { return false; }
     auto binding = dom ? classBindingContract(contract) : contract;
@@ -947,9 +1001,10 @@ bool classInitialization::sinkConstructorPublication(ctjs::CreateClosureOp const
         deferredPublications[function] = publication;
         return true;
     }
-    // There is no observable work between the original set and return. Keep
-    // registration immediately after each exact new, before its caller resumes.
-    // A throwing prefix still skips it; a throwing set still skips the caller.
+    // There is no observable work between the original set() and the return,
+    // so registering right after each `new`, before the caller continues, is
+    // equivalent. A throw before the set() still skips the registration, and
+    // a throwing set() still skips the rest of the caller.
     for (auto [made, actual] : llvm::zip(instances, keys)) {
         if (!spend(14)) { return false; }
         mlir::OpBuilder at(made);

@@ -6,13 +6,13 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// A FORK OF UPSTREAM'S EmitC EMITTER, VENDORED. Do not reformat it, do not
+// A vendored fork of upstream's EmitC emitter. Do not reformat it, do not
 // tidy it, and do not adopt this project's brace or comment style in it: every
 // line that differs from upstream is a line that has to be re-applied at the
 // next LLVM bump, and a whitespace change makes the real diff unreadable. It is
 // listed in .clang-format-ignore for exactly that reason.
 //
-//   upstream: llvm/llvm-project, tag llvmorg-22.1.8 - the FORK BASE. The
+//   upstream: llvm/llvm-project, tag llvmorg-22.1.8 (the fork base). The
 //             build pins 23.1.0 (ctcompile/CMakeLists.txt); the 22 -> 23 bump
 //             only removed the `emitc.apply` printer here and deferred rebasing
 //             onto 23's emitter (ctcompile/docs/LLVMUpgrade.md), so the diff
@@ -22,28 +22,22 @@
 //   re-fetch: curl -fsSL https://raw.githubusercontent.com/llvm/llvm-project/\
 //             llvmorg-22.1.8/mlir/lib/Target/Cpp/TranslateToCpp.cpp
 //
-// WHY FORK AT ALL. Phase 47 of ctcompile-plan/22-lexical-cpp-backend.md. The
-// emitter is good and its limitations are precisely the ones in the way of a
-// readable backend: `getOrCreateName` is `formatv("v{0}", ++valueCount)` and
-// consults neither a name attribute nor a NameLoc, so every value in 392,228
-// lines of emitted C++ is `v1..vN`; there are no namespaces, no references, no
-// `auto`; and --declare-variables-at-top hoists every declaration to function
-// entry, which is the opposite of lexical scoping.
+// Why fork: upstream's emitter works, but it blocks readable output. It names
+// every value `v<N>` (getOrCreateName ignores name attributes and NameLocs),
+// has no namespaces, references or `auto`, and --declare-variables-at-top
+// hoists every declaration to function entry instead of keeping lexical scope.
 //
-// WHAT KEEPS THIS A SUPERSET RATHER THAN A DIVERGENCE, and it is not good
-// intentions: upstream's own 35 EmitC lit tests are vendored beside ours in
-// ctcompile/test/Target/Cpp/upstream/ and run against this file: 31 are
-// 22.1.8's unmodified, lvalue/global/common-cpp are 23.1.0's unmodified, and
-// expressions.mlir is 22's minus its two `emitc.apply` functions with one
-// expectation from 23 (its header says which). A change here that breaks one
-// of them is a change that has stopped being a superset, and it fails the
-// suite the same afternoon rather than at the next bump.
+// Staying a superset of upstream is enforced by tests: upstream's EmitC lit
+// tests are vendored in ctcompile/test/Target/Cpp/upstream/ and run against
+// this file (31 from 22.1.8 unchanged, lvalue/global/common-cpp from 23.1.0,
+// and expressions.mlir as described in its header). Any change that breaks one
+// of them has broken compatibility with upstream.
 //
 // Native printing extensions are gated by ctnative attributes. Const-binding
 // analysis lives in Const/, and finite float spelling in ReadableFloat.cpp.
-// Locals are upstream's v<N>: source-derived identifiers were retired on
-// 2026-09-15, the host compiler never cared and a function's provenance is
-// its ctnative.provenance attribute, not its variable names.
+// Locals keep upstream's v<N> names. The C++ compiler does not need source
+// names, and the ctnative.provenance attribute records where each function
+// came from in the JavaScript.
 // Unmarked modules retain upstream output; vendored tests remain unchanged.
 
 #include "Const/Bindings.h"
@@ -169,10 +163,11 @@ struct CppEmitter {
   explicit CppEmitter(raw_ostream &os, bool declareVariablesAtTop,
                       StringRef fileId);
 
-  // A nested callable shares only output and module spelling policy. Its
-  // declaration caches, names, expression stack and analyses stay independent.
-  // Its v<N> counter continues the parent's so a lambda body never redeclares
-  // an enclosing local's name - legal C++, but a reader's trap.
+  /// Emitter for a nested callable body. It shares only the output and the
+  /// module's spelling policy; its declaration caches, names, expression stack
+  /// and analyses stay independent. Its v<N> counter continues the parent's so
+  /// a lambda body never redeclares an enclosing local's name (legal C++, but a
+  /// reader's trap).
   CppEmitter(raw_ostream &os, const CppEmitter &parent)
       : CppEmitter(os, parent.declareVariablesAtTop, parent.fileId) {
     readableLiterals = parent.readableLiterals;
@@ -260,6 +255,8 @@ struct CppEmitter {
   void prepareFunction(Operation *function,
                        ArrayRef<std::string> parameters = {});
   void finishFunction() { constBindings.finish(); }
+  /// A value can be declared const unless declare-at-top mode assigns it after
+  /// its declaration; block arguments are always bound where they are declared.
   bool isConstBinding(Value value) {
     return (!isa<OpResult>(value) || !shouldDeclareVariablesAtTop()) &&
            constBindings.qualifies(value);
@@ -313,7 +310,8 @@ struct CppEmitter {
     ~LoopScope() { emitter.decreaseLoopNestingLevel(); }
   };
 
-  /// Keep declarations within a native try or catch lexical block.
+  /// Limits value names declared inside an emitted C++ try or catch block to
+  /// that block, matching C++ scoping.
   struct ExceptionScope : Scope {
     ExceptionScope(CppEmitter &emitter) : Scope(emitter) {}
   };
@@ -352,7 +350,8 @@ struct CppEmitter {
     return isEmittingExpression() && shouldBeInlined(def);
   };
 
-  // Resets the value counter to 0.
+  /// Resets the value counter to valueBase: 0 at top level, or the parent's
+  /// count inside a nested callable body.
   void resetValueCounter();
   /// After a nested callable body: its locals were numbered past this
   /// emitter's, so continue after them and the function has one namespace.
@@ -379,7 +378,10 @@ private:
   /// includes results from ops located in nested regions.
   bool declareVariablesAtTop;
 
-  /// Native-only literal spelling, scoped to the operation's nearest module.
+  /// Spelling options read from the current op's module for each
+  /// emitOperation: readableLiterals prints floats in their shortest exact form
+  /// (ReadableFloat.cpp), and numericAlias prints f64 as `js_num` instead of
+  /// `double`.
   bool readableLiterals = false;
   bool numericAlias = false;
 
@@ -1324,19 +1326,17 @@ static LogicalResult printOperation(CppEmitter &emitter, ModuleOp moduleOp) {
 
 static LogicalResult printOperation(CppEmitter &emitter, ClassOp classOp) {
   raw_indented_ostream &os = emitter.ostream();
-  // ctcompile Phase 56C: ONE SHAPE IS ONE DEFINITION, and a family of object
-  // literals that agree on the field NAMES while disagreeing on a field TYPE
-  // is ONE class template at several instantiations. The parameter list is an
-  // attribute the lowering sets and this is its one consumer - the same
-  // divergence discipline as `ctnative.deduced` and `ctnative.provenance`.
+  // ctcompile: object literals with the same field names but different field
+  // types share one class template, instantiated once per type combination.
+  // The lowering stores the template parameter names in
+  // `ctnative.template_params`, and this printer is the only code that reads
+  // them.
   if (auto parameters =
           classOp->getAttrOfType<ArrayAttr>(ctn::kNativeTemplateParams)) {
-    // `template <>` IS NOT A DECLARATION. It is the explicit-specialisation
-    // syntax and is ill-formed on a primary template, so a family with nothing
-    // to parametrise - the empty shape `var e = {};` is admitted and reaches
-    // here - must arrive with no attribute at all rather than an empty one.
-    // Refused here, where it is a diagnostic, rather than emitted, where it is
-    // a C++ syntax error on a program ctcompile declared native.
+    // An empty list would print `template <>`, which is explicit-specialisation
+    // syntax and invalid on a primary template. A shape with no varying field
+    // (e.g. `var e = {};`) must come without the attribute, so refuse an empty
+    // list here with a diagnostic rather than emit C++ that does not compile.
     if (parameters.empty())
       return classOp.emitError("ctnative.template_params is empty: `template <>` is "
                                "not a declaration, and a shape with no varying "
@@ -1970,20 +1970,12 @@ LogicalResult CppEmitter::emitAssignPrefix(Operation &op) {
     break;
   case 1: {
     OpResult result = op.getResult(0);
-    // ctcompile: A CALL MARKED `ctnative.statement` IS PRINTED AS ONE.
-    // Declaring a variable for a call whose result nothing reads emits
-    // `double v13 = f();` with v13 never read, which is
-    // -Werror=unused-variable, and nothing downstream removes it: EmitC ops
-    // declare no memory effects, so `isOpTriviallyDead` is false for all of
-    // them, and --ctnative-prune-dead-stores deliberately will not erase a
-    // call, because a call may do anything.
-    //
-    // ON AN ATTRIBUTE, NOT ON `use_empty()` ITSELF. Upstream declares the
-    // variable in that case and its tests are kept here verbatim to measure
-    // the fork's distance from it; a silent behaviour change would rewrite
-    // eight of them. So the divergence is opt-in and carried in the IR, like
-    // `ctnative.deduced` and `ctnative.provenance` - one ctcompile pass sets
-    // it, one consumer reads it.
+    // ctcompile: print a call marked `ctnative.statement` as a bare statement.
+    // Declaring a variable for an unused result triggers
+    // -Werror=unused-variable, and nothing removes it later (EmitC ops have no
+    // memory effects, and --ctnative-prune-dead-stores never erases calls).
+    // The change is opt-in through the attribute, not keyed on use_empty(), so
+    // the vendored upstream tests still see upstream's output.
     if (!shouldDeclareVariablesAtTop() && op.hasAttr(ctn::kNativeStatement)) {
       // An opaque callee may name a type: Type(v) alone parses as a
       // declaration. Explicit discard retains construction and destruction.
@@ -1995,11 +1987,11 @@ LogicalResult CppEmitter::emitAssignPrefix(Operation &op) {
       if (failed(emitVariableAssignment(result)))
         return failure();
     } else if (op.hasAttr(ctn::kNativeDeduced)) {
-      // ctcompile Stage 53E: `auto` is an ATTRIBUTE, not a type. The policy
-      // pass (--ctnative-print-deduced) marks a declaration whose initialiser
-      // fixes its type; the IR keeps the proved type, and this is the one
-      // consumer that prints `auto` for it. Stage 53F pins the deduction
-      // right after the statement - see emitOperation.
+      // ctcompile: print `auto` for a declaration marked `ctnative.deduced`.
+      // The IR keeps the proved type, and --ctnative-print-deduced sets the
+      // attribute only where the initialiser fixes that type. emitOperation
+      // follows the statement with a CTCOMPILE_PIN static_assert that checks
+      // the deduction.
       if (hasDeferredEmission(result.getDefiningOp()))
         return success();
       if (hasValueInScope(result))
@@ -2038,6 +2030,10 @@ LogicalResult CppEmitter::emitLabel(Block &block) {
 }
 
 LogicalResult CppEmitter::emitOperation(Operation &op, bool trailingSemicolon) {
+  // ctcompile: these ops print nothing. cpp_try_end only terminates a try
+  // region (the CppTryOp printer writes the braces); the other two are marked
+  // parameter discards that a printed use makes redundant, and callable
+  // definitions whose lambda is expanded inline at every creation site.
   if (isa<ctcompile::ctnative::CppTryEndOp>(op))
     return success();
   if (ctcompile::cpp::omitParameterSuppression(op))
@@ -2057,9 +2053,9 @@ LogicalResult CppEmitter::emitOperation(Operation &op, bool trailingSemicolon) {
       numericAlias,
       module && module->hasAttrOfType<UnitAttr>(ctn::kNativeNumericAlias));
 
-  // ctcompile Phase 63 Step 7: a provenance comment above every generated
-  // definition, so a C++ diagnostic on generated code names a JavaScript
-  // site. The lowering composes the text; this is its one consumer.
+  // ctcompile: print the op's `ctnative.provenance` text as a comment above
+  // the definition, so a C++ compiler diagnostic in generated code points the
+  // reader back to the JavaScript source. The lowering writes the text.
   if (auto provenance = op.getAttrOfType<StringAttr>(ctn::kNativeProvenance))
     os << "// ctcompile: " << provenance.getValue() << "\n";
 
@@ -2120,13 +2116,14 @@ LogicalResult CppEmitter::emitOperation(Operation &op, bool trailingSemicolon) {
 
   os << (trailingSemicolon ? ";\n" : "\n");
 
-  // ctcompile Stage 53F: every deduction is pinned by a static_assert that
-  // names the JavaScript site, so a C++ compiler that deduces differently
-  // from ctcompile fails the build there instead of running something else.
-  // `ctnative.pinned` overrides the pinned type; the policy pass sets it only
-  // under its mutation option, which is how the gate proves the pin bites.
-  // CTCOMPILE_PIN is defined by the policy pass at the top of the module and
-  // is empty under -DCTCOMPILE_NO_TYPE_PINS.
+  // ctcompile: after every `auto` declaration, emit
+  // CTCOMPILE_PIN(name, "file:line:col", Type), a static_assert that the C++
+  // compiler deduced the type ctcompile proved. A mismatch then fails the
+  // build at the JavaScript site instead of running with a different type.
+  // `ctnative.pinned` replaces the pinned type; --ctnative-print-deduced sets
+  // it only under its `mutate=N` option, which tests use to show the
+  // assertion really fires. That pass defines CTCOMPILE_PIN at the top of the
+  // module, and it expands to nothing under -DCTCOMPILE_NO_TYPE_PINS.
   if (trailingSemicolon && op.getNumResults() == 1 &&
       op.hasAttr(ctn::kNativeDeduced) && !shouldDeclareVariablesAtTop()) {
     Type pinned = op.getResult(0).getType();

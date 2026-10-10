@@ -1,14 +1,25 @@
+//===- Paths.h - Shared region walker for provider methods ------*- C++ -*-===//
+//
+// Declares providerRegion, the structured-control-flow walker that the
+// provider-method readers (reads, mutations, callbacks) share.
+//
+//===----------------------------------------------------------------------===//
+
 #pragma once
 
 #include "../Prefix/Analysis.h"
 
 namespace ctcompile::ctnative::host_detail {
 
-// Provider paths discover normal results only. They have no branch-rewrite or
-// ordinary heap-publication hook, and cannot specialize a reusable method body.
-// A reader with `primitive(prefixValue)` (a callback) is primitive-only: each
-// region entry costs a step, and returned, yielded and branch values pass
-// through `primitive`, a yielded non-primitive stopping the path.
+/// Runs `region` with `reader`, following the one known arm of each scf.if,
+/// and returns how it completed (returned or yielded, with values). Unknown on
+/// anything the reader cannot model. Provider paths only find normal results:
+/// they have no hook to rewrite branches or publish heap facts, so they never
+/// specialize a shared method body. A reader with `primitive(prefixValue)` (a
+/// callback reader) is primitive-only: each region entry costs a step,
+/// returned, yielded and branch values pass through `primitive`, and a yielded
+/// non-primitive stops the path. `stopped`, when given, receives the
+/// operation the path stopped at. `depth` caps scf.if nesting at 64.
 template <class Reader>
 prefixAnalysis::completion providerRegion(Reader & reader, mlir::Region & region,
                                           prefixAnalysis::environment & values,

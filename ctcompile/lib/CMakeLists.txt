@@ -1,9 +1,5 @@
-# The compiler's libraries. Organised by the phases they serve - Support first,
-# because it is the only one that exists yet.
-#
-# The full set the plan lays out is Application, CodeGen, CSS, CTJS, HTML,
-# JavaScript, Lowering, Packaging and Support. They arrive as the phases that
-# need them do; a directory with nothing in it is not architecture.
+# The compiler's libraries. CTJS, CTNative and Target need MLIR and build only
+# with CTCOMPILE_ENABLE_MLIR; Support, HTML, CSS and JavaScript always build.
 if(CTCOMPILE_ENABLE_MLIR)
   add_subdirectory(CTJS)
   add_subdirectory(CTNative)

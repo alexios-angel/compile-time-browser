@@ -1,12 +1,20 @@
-// ClosureLifting/Diagnostics.cpp - native lowering implementation.
+//===- ClosureLifting/Diagnostics.cpp - The open-literal census -----------===//
+//
+// Labels the uses that keep a method-bearing object literal open and counts
+// them in the open-literal census (see the census fields in
+// ClosureLifter.h). The census is a measurement for choosing what to support
+// next; it does not change what is lifted.
+//
+//===----------------------------------------------------------------------===//
+
 #include "ClosureLifter.h"
 
 namespace ctcompile::ctnative::lowering_detail {
 
-// ONE BLOCKING USE, NAMED BY WHAT IT IS AND WHERE IT SITS. No judgement:
-// the label is the operation and the operand number, refined only where
-// the operand number alone would merge two genuinely different things (a
-// dynamic key and a value store are both `set_property`).
+/// Labels one blocking use by its operation and operand position, without
+/// judging it. The label is refined only where the operand number alone
+/// would merge two genuinely different things (a dynamic key and a value
+/// store are both `set_property`).
 std::string closureLifter::blockingLabel(mlir::Value object, mlir::OpOperand & use) {
     mlir::Operation * user = use.getOwner();
     const unsigned n = use.getOperandNumber();
@@ -14,8 +22,8 @@ std::string closureLifter::blockingLabel(mlir::Value object, mlir::OpOperand & u
     if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user)) {
         if (n == 1) { return "set.as-key"; }
         if (n == 2) {
-            // WHERE IT IS STORED DECIDES WHETHER IT NEEDS AN OWNER. Into
-            // another literal made here it could be a member of that
+            // Where it is stored decides whether it needs an owner. Stored
+            // into another literal made here, it could be a member of that
             // literal's class, which owns it outright; anywhere else it
             // outlives the frame that made it.
             mlir::Value into = set.getObject();
@@ -39,13 +47,11 @@ std::string closureLifter::blockingLabel(mlir::Value object, mlir::OpOperand & u
         return "call.receiver-dynamic-key";
     }
     if (llvm::isa<ctjs::CallDirectOp>(user)) {
-        // A SITE THE CLOSED WORLD NAMED IS STILL THE SAME SITE. This census
-        // is what the plan's next lever gets chosen from, so a ctjs.call
-        // that --ctjs-resolve-globals turned into a ctjs.call_direct must
-        // not silently change bucket from `call.argument.<detail>` to an
-        // undifferentiated `call_direct.argument` - that would have erased
-        // the very `callee-known` / `callee-opaque` distinction the census
-        // exists to draw.
+        // A ctjs.call that --ctjs-resolve-globals rewrote into
+        // ctjs.call_direct is labelled like the original call
+        // (`call.argument.<detail>`), so the census keeps the callee-known /
+        // callee-opaque split instead of merging both into
+        // `call_direct.argument`.
         if (n == 0) { return "call_direct.receiver"; }
         if (n >= 3 && closureCalledBy(user)) {
             return "call.argument." + argumentDetail(user, n - 3);
@@ -65,16 +71,16 @@ std::string closureLifter::blockingLabel(mlir::Value object, mlir::OpOperand & u
     return (user->getName().getStringRef() + "#" + llvm::Twine(n)).str();
 }
 
-// IS THE CALLEE ONE FUNCTION, AND DOES IT ONLY READ THE ARGUMENT? Exactly
-// the question the receiver lift asks of `this`, asked of an argument
-// position - because if the answer is yes the carrier is the same one.
+/// Is the callee one known function, and does it only read the argument?
+/// This is the question the receiver lift asks of `this`, asked of an
+/// argument position, because if the answer is yes the carrier is the same.
 std::string closureLifter::argumentDetail(mlir::Operation * call, unsigned j) {
     ctjs::CreateClosureOp made = closureCalledBy(call);
     if (!made) { return "callee-opaque"; }
     ctjs::FuncOp target = targetOf(made);
     if (!target || target.getBody().empty()) { return "callee-not-imported"; }
     mlir::Block & entry = target.getBody().front();
-    // `j` IS THE JAVASCRIPT ARGUMENT INDEX, not an operand number, because
+    // `j` is the JavaScript argument index, not an operand number, because
     // the two call shapes number their operands differently and the entry
     // block does not: argument j always lands on entry argument j + 3.
     const unsigned slot = j + 3;
@@ -83,19 +89,17 @@ std::string closureLifter::argumentDetail(mlir::Operation * call, unsigned j) {
                                                           : "parameter-escapes";
 }
 
-// Every use of `object` that `closedAfterLift` would refuse, labelled.
+/// Every use of `object` that `closedAfterLift` would refuse, labelled.
 void closureLifter::blockingLabelsOf(mlir::Value object, llvm::StringSet<> & into,
                                      llvm::StringMap<unsigned> * tally) {
     for (mlir::OpOperand & use : object.getUses()) {
         if (isConstantKeyAccess(use)) { continue; }
         if (auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner())) {
             if (use.getOperandNumber() == 1 && methodCallOn(call, object)) { continue; }
-            // AND THE ARM `closedAfterLift` GAINED, so that the two agree
-            // about what "blocking" means. Without it a literal that is
-            // open for some other reason but IS passed to a carried
-            // parameter would count that use as a blocker, and the
-            // sole-blocker column - the only one that decides anything -
-            // would be wrong for exactly the shape this slice admits.
+            // Mirror closedAfterLift: an argument passed to a parameter that
+            // carries an object is not a blocker. Without this, the
+            // sole-blocker count would be wrong for literals passed to such
+            // parameters.
             if (use.getOperandNumber() >= 2) {
                 auto made = call.getCallee().getDefiningOp<ctjs::CreateClosureOp>();
                 if (made && slotCarriesAnObject(made, use.getOperandNumber() - 2)) { continue; }
@@ -107,12 +111,12 @@ void closureLifter::blockingLabelsOf(mlir::Value object, llvm::StringSet<> & int
     }
 }
 
-// WHERE THE NESTING ACTUALLY ROOTS, which is the only thing that says
-// whether widening the nested-literal case would cascade. `{a: {b: {c:
-// {x: 1, m: f}}}}` reports `set.stored-into.an-open-literal` three times
-// over and tells a reader nothing; what decides the work is what the
-// OUTERMOST literal in that chain is blocked by, because until that one
-// closes none of the inner ones can be a member of anything.
+/// The blocking label of the outermost literal in a chain of nested literals,
+/// which says whether supporting nested literals would cascade. `{a: {b: {c:
+/// {x: 1, m: f}}}}` reports `set.stored-into.an-open-literal` three times,
+/// which says nothing; what matters is what blocks the outermost literal,
+/// because until that one closes none of the inner ones can be a member of
+/// anything. Returns "mixed" when a level has several blockers.
 std::string closureLifter::rootBlockingLabel(mlir::Value object, unsigned & depthOut) {
     llvm::SmallPtrSet<mlir::Operation *, 8> seen;
     mlir::Value at = object;
@@ -133,11 +137,13 @@ std::string closureLifter::rootBlockingLabel(mlir::Value object, unsigned & dept
     }
 }
 
+/// Adds one open object literal to the census: its blocking labels, its sole
+/// blocker if it has one, and the label at the root of its nesting chain.
 void closureLifter::censusOpenLiteral(mlir::Value object) {
-    // ONLY THE LITERALS THIS WORK IS ABOUT: one that holds no method field
-    // is refused for some other reason entirely and would drown the count.
-    // Weighted by HOW MANY method fields it holds as well as counted once,
-    // because a refusal is per method field and a literal is not.
+    // Only literals that hold a method field are counted: one with no method
+    // field is refused for some other reason and would drown the count.
+    // Weighted by how many method fields it holds as well as counted once,
+    // because a refusal is per method field, not per literal.
     unsigned fields = 0;
     for (mlir::Operation * user : object.getUsers()) {
         auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user);

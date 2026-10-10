@@ -1,23 +1,17 @@
-//===- PruneDeadStores.cpp - variables nothing reads, and what then dies ---===//
+//===- PruneDeadStores.cpp - Remove write-only EmitC variables ------------===//
 //
-// PART 24 PHASE 63 STEP 7: the generated file compiles clean, and that is a
-// test. -Wunused-variable and -Wunused-but-set-variable are the two
-// diagnostics the loop conversion earns: every scf result becomes an
-// emitc.variable assigned on every path and loaded after the loop, whether
-// or not anything reads it. The load is trivially dead and a canonicalize
-// removes it; the variable is not, because an emitc.assign has a write
-// effect, so it survives as `double v5;` set on every iteration and never
-// read. This pass removes exactly that, then whatever it left dead.
+// Generated C++ must compile without warnings. Converting scf loops to EmitC
+// makes every loop result an emitc.variable assigned on every path and loaded
+// after the loop, whether or not anything reads it. Canonicalize removes the
+// dead load but not the variable, because emitc.assign has a write effect, so
+// it survives as `double v5;` that is set and never read and triggers
+// -Wunused-but-set-variable. This pass removes such write-only variables and
+// then whatever they left dead.
 //
-// ITS SECOND RULE IS A PATTERN: "a call whose single result nothing reads is a
-// statement" is a structural match on one operation and an attribute on the
-// same operation, so it is an OpRewritePattern run by the greedy driver. It
-// was a PDLL file until 2026-09-15; every constraint and the rewrite were
-// already one-call C++ bodies, so the .pdll bought an mlir-pdll build step, a
-// PDL text parse at pass-run time and the bytecode interpreter for nothing a
-// ten-line struct does not say more plainly. Erasing a write-only variable
-// stays a hand loop because it needs every USE of a value classified, its
-// users erased with it, and a fixpoint of its own.
+// It also marks a call whose single result is unused as a statement. That is
+// an OpRewritePattern run by the greedy driver; erasing write-only variables
+// stays a hand-written loop because it must classify every use of a value,
+// erase those users too, and iterate to its own fixpoint.
 //
 //===----------------------------------------------------------------------===//
 
@@ -42,15 +36,14 @@ namespace {
 
 namespace ec = mlir::emitc;
 
-// A CALL WHOSE SINGLE RESULT NOTHING READS IS A STATEMENT: the attribute is
-// what the forked C++ emitter keys off to print `f(x);` instead of
-// `double v = f(x);`. The call itself is never erased - a call may do anything
-// - so the rewrite adds an attribute and stops. Refusing an operation that
-// already carries it is the termination condition, and it is load-bearing: the
-// rewrite neither replaces nor erases its root, so without it the greedy
-// driver would re-enqueue the operation it just modified and match it again
-// for ever. `emitc.call` and `emitc.call_opaque` both declare variadic
-// results, hence the explicit count.
+/// Marks a call whose single result nothing reads with `ctnative.statement`,
+/// which the forked C++ emitter keys off to print `f(x);` instead of
+/// `double v = f(x);`. The call itself is never erased, since a call may do
+/// anything. Refusing an operation that already carries the attribute is the
+/// termination condition: the rewrite neither replaces nor erases its root, so
+/// without that check the greedy driver would re-enqueue the operation it just
+/// modified and match it forever. `emitc.call` and `emitc.call_opaque` both
+/// declare variadic results, hence the explicit result count.
 template <typename Call> struct UnreadCallIsAStatement : mlir::OpRewritePattern<Call> {
     using mlir::OpRewritePattern<Call>::OpRewritePattern;
 
@@ -61,19 +54,19 @@ template <typename Call> struct UnreadCallIsAStatement : mlir::OpRewritePattern<
             o->hasAttr("ctnative.statement")) {
             return mlir::failure();
         }
-        // THROUGH THE REWRITER rather than by a bare setAttr: an in-place
-        // modification the driver is not told about is one it cannot
-        // schedule around.
+        // Go through the rewriter rather than a bare setAttr: the driver
+        // cannot schedule around an in-place modification it is not told
+        // about.
         rewriter.modifyOpInPlace(
             o, [&] { o->setAttr("ctnative.statement", mlir::UnitAttr::get(o->getContext())); });
         return mlir::success();
     }
 };
 
-// EmitC ops declare NO memory effects - they model C expressions, and a call
-// may do anything - so MLIR's generic "trivially dead" test refuses every one
-// of them. These are the ones that are C expressions without side effects:
-// unused, they are dead. A call, an assign, a variable are not on the list.
+/// Whether `o` is a C expression with no side effects, and so dead when
+/// unused. EmitC ops declare no memory effects, so MLIR's generic "trivially
+/// dead" test refuses all of them. Calls (except js_num's `value()`
+/// accessor), assigns and variables are not on the list.
 bool isPureExpression(mlir::Operation * o) {
     if (auto call = llvm::dyn_cast<ec::MemberCallOpaqueOp>(o)) {
         return isOpaque(call.getReceiver().getType(), "ctnative::js_num") &&
@@ -89,8 +82,8 @@ bool isPureExpression(mlir::Operation * o) {
                      ec::MemberOfPtrOp, ec::SubscriptOp>(o);
 }
 
-// True when nothing ever READS the variable: every use is the target of an
-// assign, or there is no use at all.
+/// True when nothing ever reads the variable: every use is the target of an
+/// assign, or there is no use at all.
 bool isWriteOnly(ec::VariableOp var) {
     for (mlir::OpOperand & use : var.getResult().getUses()) {
         auto assign = llvm::dyn_cast<ec::AssignOp>(use.getOwner());
@@ -99,20 +92,12 @@ bool isWriteOnly(ec::VariableOp var) {
     return true;
 }
 
-// WHAT THE PATTERN DRIVER ERASED WHILE IT WAS HERE.
-//
-// Hosting a pattern means hosting a pattern DRIVER, and every greedy entry
-// point in this release "performs simple dead-code elimination before
-// attempting to match any of the provided patterns". No GreedyRewriteConfig
-// option turns that off. An `emitc.variable` nobody uses is memory-effect
-// allocate-only, which is precisely what that DCE removes - so the moment this
-// pass started running a driver, one of the erasures it used to make itself
-// started happening inside the driver instead, and prune-dead-stores.mlir went
-// red on the COUNT while the output IR stayed identical.
-//
-// The counts stay true by asking. A listener is the driver's own hook for
-// exactly this, and the classification mirrors the loop below: a variable is a
-// variable, everything else is an operation.
+/// Counts the operations the greedy driver erases. Every greedy entry point
+/// runs simple dead-code elimination before matching, with no option to turn
+/// it off, and an unused emitc.variable (allocate-only) is exactly what that
+/// removes. Counting through this listener keeps the pass's pruned-variable
+/// and pruned-op totals accurate. The classification mirrors the loop in
+/// runOnOperation: a variable is a variable, anything else is an operation.
 struct driver_erasures : mlir::RewriterBase::Listener {
     unsigned variables = 0;
     unsigned operations = 0;
@@ -136,7 +121,8 @@ struct CTNativePruneDeadStoresPass
         unsigned prunedOpCount = 0;
         for (bool changed = true; changed;) {
             changed = false;
-            // THE VARIABLES, collected first: erasing inside a walk is UB.
+            // Collect the variables first: erasing inside a walk is undefined
+            // behaviour.
             llvm::SmallVector<ec::VariableOp> dead;
             root->walk([&](ec::VariableOp var) {
                 if (isWriteOnly(var)) { dead.push_back(var); }
@@ -151,9 +137,9 @@ struct CTNativePruneDeadStoresPass
                 ++prunedVariableCount;
                 changed = true;
             }
-            // WHAT THAT LEFT DEAD: the assigned values' producers, if pure and
-            // now unused. Post-order so a user goes before its producer; to a
-            // fixpoint through the outer loop.
+            // Then erase what that left dead: the assigned values' producers,
+            // if pure and now unused. Post-order so a user goes before its
+            // producer; the outer loop repeats until a fixpoint.
             llvm::SmallVector<mlir::Operation *> trivially;
             root->walk<mlir::WalkOrder::PostOrder>([&](mlir::Operation * o) {
                 if (o == root) { return; }
@@ -162,32 +148,27 @@ struct CTNativePruneDeadStoresPass
                 }
             });
             for (mlir::Operation * o : trivially) {
-                // A later entry may already have been erased through a parent
-                // region; PostOrder lists children first, so no: children are
-                // erased before their parent is considered. Erase directly.
+                // Post-order lists children before their parent, so no entry
+                // has been erased through its parent's region when reached.
                 o->erase();
                 ++prunedOps;
                 ++prunedOpCount;
                 changed = true;
             }
         }
-        // Cleanup can erase a call's final use. Mark after its fixpoint so
-        // the effect survives without declaring an unused result variable.
-        // A CALL WHOSE RESULT NOTHING READS IS A STATEMENT, and only this tier
-        // may say so - upstream's emitter declares a variable for it, and its
-        // tests are kept verbatim here. The emitter honours the attribute; the
-        // call itself stays, because a call may do anything.
+        // Mark unread calls only after the cleanup fixpoint, since cleanup can
+        // erase a call's last use. Upstream's emitter would declare a variable
+        // for such a call (and its tests are kept verbatim); the forked emitter
+        // prints it as a statement when ctnative.statement is set.
         //
-        // THE DRIVER IS NOT A LA CARTE: the greedy one arrives with folding,
-        // constant CSE and AGGRESSIVE region simplification (block merging)
-        // all on by default - none of which this pass has ever done, and one
-        // of which (running upstream folding over this IR) has crashed
-        // before. Every one is turned off explicitly rather than inherited.
+        // The greedy driver enables folding, constant CSE and aggressive
+        // region simplification (block merging) by default. This pass wants
+        // none of them (upstream folding over this IR has crashed), so each is
+        // disabled explicitly.
         //
-        // THE DRIVER DOES NOT SAY HOW OFTEN A PATTERN FIRED, so the count the
-        // `report` option prints - which unused-call.mlir pins - is recovered
-        // from the IR: the marks that were not there before are the marks
-        // this run made.
+        // The driver does not report how often a pattern fired, so the count
+        // printed by the `report` option (pinned by unused-call.mlir) is the
+        // number of ctnative.statement marks that were not there before.
         llvm::DenseSet<mlir::Operation *> markedBefore;
         root->walk([&](mlir::Operation * o) {
             if (o->hasAttr("ctnative.statement")) { markedBefore.insert(o); }
@@ -218,10 +199,10 @@ struct CTNativePruneDeadStoresPass
         prunedOps += erased.operations;
         prunedVariableCount += erased.variables;
         prunedOpCount += erased.operations;
-        // Homebrew's release LLVM 23 accepts --mlir-pass-statistics but prints
-        // no custom counters (the same is true of ResolveGlobals' statistics).
-        // Keep the ODS statistics for builds that enable them, and give tests
-        // and people an explicit, release-build-independent report as well.
+        // A release LLVM build accepts --mlir-pass-statistics but prints no
+        // custom counters (ResolveGlobals' statistics have the same problem).
+        // Keep the ODS statistics for builds that enable them, and also give
+        // tests and people an explicit report that works in any build.
         if (report) {
             root->emitRemark() << "pruned " << prunedVariableCount << " variable(s) and "
                                << prunedOpCount << " operation(s), marked " << markedStatementCount

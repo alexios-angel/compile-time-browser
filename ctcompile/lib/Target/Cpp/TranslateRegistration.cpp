@@ -7,19 +7,18 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// UNDER UPSTREAM'S OWN FLAG NAME, `-mlir-to-cpp`, and pointed at OUR emitter.
-// That is the whole trick behind Stage 47A's gate: upstream's EmitC lit tests
-// are vendored in ctcompile/test/Target/Cpp/upstream/ (which tag each one is
-// from: TranslateToCpp.cpp's header) and their RUN lines say
-// `mlir-translate -mlir-to-cpp`, so the only thing that has to move
-// is which binary lit calls `mlir-translate` - which is one lit.local.cfg,
-// rather than 35 edited test files.
+// Registered under upstream's flag name, `-mlir-to-cpp`, but pointed at our
+// forked emitter, so the vendored upstream EmitC lit tests in
+// ctcompile/test/Target/Cpp/upstream/ run unchanged: their RUN lines say
+// `mlir-translate -mlir-to-cpp`, and their lit.local.cfg only redirects which
+// binary `mlir-translate` names. TranslateToCpp.cpp's header says which LLVM
+// tag each test comes from.
 //
-// THIS IS NOT LINKED BESIDE MLIRTargetCpp in any binary today, but if it ever
+// This is not linked beside MLIRTargetCpp in any binary today, but if it ever
 // is, nothing collides: the function is `ctcompile::cpp::registerToCppTranslation`
 // and upstream's is `mlir::registerToCppTranslation`. Two translations of the
-// same NAME registered in one process would be a genuine conflict, and it is
-// deliberately left as one rather than papered over - a driver offering
+// same name registered in one process would be a genuine conflict, and it is
+// deliberately left as one rather than papered over: a driver offering
 // `-mlir-to-cpp` should not have to guess which emitter it got.
 //
 //===----------------------------------------------------------------------===//
@@ -35,6 +34,8 @@
 
 namespace ctcompile::cpp {
 
+/// Registers the `-mlir-to-cpp` translation and its two options,
+/// -declare-variables-at-top and -file-id.
 void registerToCppTranslation() {
     static llvm::cl::opt<bool> declareVariablesAtTop(
         "declare-variables-at-top", llvm::cl::desc("Declare variables at top when emitting C/C++"),
@@ -43,8 +44,9 @@ void registerToCppTranslation() {
     static llvm::cl::opt<std::string> fileId(
         "file-id", llvm::cl::desc("Emit emitc.file ops with matching id"), llvm::cl::init(""));
 
-    // STATIC, AND CALLED FROM main RATHER THAN RUN AS A LIBRARY INITIALISER -
-    // the same reason ctjs-translate's own registrations say so out loud. A
+    // A function-local static, registered when main calls this function rather
+    // than by a library initialiser (ctjs-translate's registrations do the same
+    // for the same reason). A
     // registration object living at namespace scope in a static archive is
     // dropped by the linker unless something references it, and the symptom is
     // a driver that builds and simply does not have the flag.

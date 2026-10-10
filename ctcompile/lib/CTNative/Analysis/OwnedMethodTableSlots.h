@@ -1,3 +1,9 @@
+//===- OwnedMethodTableSlots.h - Method table slots -------------*- C++ -*-===//
+//
+// Declares OwnedMethodTableSlots: object fields written once at creation and
+// then only read, the storage shape of a method table.
+//
+//===----------------------------------------------------------------------===//
 #pragma once
 
 #include "ctcompile/CTJS/IR/CTJSOps.h"
@@ -9,22 +15,25 @@
 
 namespace ctcompile::ctnative {
 
-// A structural storage edge, not a proof of the stored value's type. The
-// returned-table census and final admission must still prove its table,
-// callable signatures and owning captures. No input annotations are read.
+/// One field of a local object that is written once, right after the object
+/// is created, and then only read. This describes storage only, not the
+/// stored value's type: later checks must still prove the table, its callable
+/// signatures and their captures. No IR attributes are read.
 struct OwnedMethodTableSlot {
     ctjs::CreateObjectOp owner;
     ctjs::SetPropertyOp initialization;
     llvm::SmallVector<ctjs::GetPropertyOp> reads;
 };
 
-// Borrows current IR. Reconstruct after any semantic mutation; retained
-// operation handles are not an authority for a later module snapshot.
+/// Finds every OwnedMethodTableSlot in a module. Borrows the IR: rebuild after
+/// any change to it, since old operation handles prove nothing about the new
+/// IR. Finds nothing if `maxSteps` runs out.
 class OwnedMethodTableSlots {
 public:
     explicit OwnedMethodTableSlots(mlir::ModuleOp module, unsigned maxSteps = 100000);
 
     [[nodiscard]] llvm::ArrayRef<OwnedMethodTableSlot> slots() const { return checked; }
+    /// The slot a store initialises or a read reads, or null.
     [[nodiscard]] const OwnedMethodTableSlot * lookup(ctjs::SetPropertyOp store) const;
     [[nodiscard]] const OwnedMethodTableSlot * lookup(ctjs::GetPropertyOp read) const;
     [[nodiscard]] bool exhausted() const { return budget.exhausted; }

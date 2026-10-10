@@ -1,32 +1,32 @@
-// BLOCK ARGUMENTS, TURNED INTO VARIABLES, BECAUSE THE C++ EMITTER LOSES A COPY.
+//===- EmitCBlockArguments.cpp - Turn EmitC block arguments into variables ===//
 //
-// mlir-translate --mlir-to-cpp serialises the parallel copy on a branch edge
-// naively - one assignment at a time, in order, with no temporaries - so an edge
-// where one block argument's new value is another block argument of the SAME
-// block reads a destination that has already been overwritten.
-// test/Lowering/EmitC/block-argument-hazard.mlir compiles and RUNS that
-// miscompile: a loop that swaps two values returns 20 where the IR says 10, with
-// no diagnostic and exit status 0.
+// Implements --emitc-eliminate-block-arguments. mlir-translate --mlir-to-cpp
+// serialises the parallel copy on a branch edge naively, one assignment at a
+// time with no temporaries, so an edge where one block argument's new value is
+// another block argument of the same block reads a destination that has
+// already been overwritten. ctcompile/test/Lowering/EmitC/block-argument-hazard.mlir
+// compiles and runs that miscompile: a loop that swaps two values returns 20
+// where the IR says 10, with no diagnostic and exit status 0.
 //
-// THIS PROJECT MEETS IT ON ORDINARY PROGRAMS. The bytecode importer models the
-// register file as block arguments - chosen over SSA construction deliberately -
-// so every register live across a branch is a block argument, and any loop that
-// permutes two registers across its back edge is exactly that shape.
+// Ordinary programs hit this. The bytecode importer models the register file
+// as block arguments, so every register live across a branch is a block
+// argument, and any loop that permutes two registers across its back edge has
+// exactly that shape.
 //
-// SO THE FIX IS NOT A WORKAROUND, IT IS THE LOWERING. A block argument becomes
-// an emitc.variable declared once in the entry block; the block reads it at its
-// top, and each incoming edge writes it. Every read is issued before any write
-// because the reads sit at the top of the block and the writes sit on the edges
-// into it, which is what makes the swap come out right.
+// This pass is therefore the lowering, not a workaround. A block argument
+// becomes an emitc.variable declared once in the entry block; the block reads
+// it at its top, and each incoming edge writes it. Every read happens before
+// any write, because the reads sit at the top of the block and the writes sit
+// on the edges into it, which makes the swap come out right.
 //
-// EDGES ARE SPLIT RATHER THAN ASSIGNED IN PLACE, and that is not tidiness. A
-// cf.cond_br may name the SAME successor twice with different operands -
-// `cf.cond_br %c, ^B(%x), ^B(%y)` is legal and the importer can produce it - and
-// writing both sets before the branch would perform both assignments on
-// whichever path is taken. The second would win, unconditionally. Putting each
-// edge's writes in a block of their own is the only placement that is correct
-// for every terminator, so it is used for all of them rather than only where the
-// hazard is visible.
+// Edges are split rather than assigned in place. A cf.cond_br may name the
+// same successor twice with different operands (`cf.cond_br %c, ^B(%x),
+// ^B(%y)` is legal and the importer can produce it), and writing both sets
+// before the branch would perform both assignments on whichever path is taken.
+// Putting each edge's writes in a block of their own is correct for every
+// terminator, so it is used for all of them.
+//
+//===----------------------------------------------------------------------===//
 #include "ctcompile/CTJS/IR/CTJSOps.h"
 #include "ctcompile/CTJS/Transforms/Passes.h"
 
@@ -50,27 +50,11 @@ struct EmitCEliminateBlockArgumentsPass
     using EmitCEliminateBlockArgumentsBase::EmitCEliminateBlockArgumentsBase;
 
     void runOnOperation() override {
-        // THE PASS ORDER IS LOAD-BEARING, SO IT IS CHECKED RATHER THAN
-        // DOCUMENTED.
-        //
-        // This pass walks emitc.func and nothing else. Run BEFORE
-        // --ctjs-lower-to-emitc it therefore finds nothing, returns success and
-        // says nothing - and the lowering then emits block arguments that reach
-        // mlir-translate, which loses a copy on their edges. Measured on a real
-        // self-loop from real JavaScript: reversed, `sl(10,20,2)` answers 20
-        // where 10 is correct, with ctjs-opt, mlir-translate and g++ all
-        // exiting 0.
-        //
-        // A leftover ctjs.func is exactly that mistake, and nothing else looks
-        // like it.
-        // A REFUSED FUNCTION IS NOT THIS MISTAKE, and telling the two apart is
-        // the whole difficulty. The lowering leaves behind every function it
-        // could not compile - that is its design, and the count of them is the
-        // work list - so "a CTJS function is present" cannot be the test.
-        //
-        // What distinguishes them is the ctjs.not_lowered attribute: a refusal
-        // carries one and says why, and a function the lowering never saw does
-        // not. So the check is for an UNEXPLAINED CTJS function.
+        // This pass must run after --ctjs-lower-to-emitc. Run earlier, it finds
+        // no emitc.func and does nothing, and the block arguments reach
+        // mlir-translate, which miscompiles them with no error. So fail if any
+        // ctjs.func lacks a ctjs.not_lowered reason: functions the lowering
+        // refused carry one, and an unlowered module has none.
         if (mlir::WalkResult early = getOperation().walk([](mlir::Operation * op) {
                 if (op->getName().getStringRef() != "ctjs.func") {
                     return mlir::WalkResult::advance();
@@ -103,7 +87,7 @@ struct EmitCEliminateBlockArgumentsPass
         mlir::Region & region = function.getBody();
         if (region.empty()) { return mlir::success(); }
 
-        // THE ENTRY BLOCK'S ARGUMENTS ARE THE FUNCTION'S PARAMETERS and stay
+        // The entry block's arguments are the function's parameters and stay
         // exactly as they are: they are real C++ parameters, no edge writes
         // them, and the hazard cannot reach them.
         llvm::SmallVector<mlir::Block *> carrying;
@@ -115,10 +99,9 @@ struct EmitCEliminateBlockArgumentsPass
         mlir::OpBuilder build(function.getContext());
         mlir::Block & entry = region.front();
 
-        // ---- one variable per block argument, declared in the entry --------
-        //
-        // In the ENTRY BLOCK because a definition has to dominate its uses, and
-        // the entry dominates every block. The C++ emitter hoists all
+        // One variable per block argument, declared in the entry block because
+        // a definition has to dominate its uses and the entry dominates every
+        // block. The C++ emitter hoists all
         // declarations to the top of the function anyway under
         // --declare-variables-at-top, which it requires for a multi-block
         // function - so this costs nothing in the output.
@@ -140,7 +123,7 @@ struct EmitCEliminateBlockArgumentsPass
             slots[block] = std::move(here);
         }
 
-        // ---- every read, at the top of the block that reads ----------------
+        // Every read goes at the top of the block that reads.
         for (mlir::Block * block : carrying) {
             build.setInsertionPointToStart(block);
             const llvm::SmallVector<mlir::Value> & here = slots[block];
@@ -151,9 +134,8 @@ struct EmitCEliminateBlockArgumentsPass
             }
         }
 
-        // ---- every write, on an edge of its own ----------------------------
-        //
-        // Collected before anything is rewritten: creating the edge blocks
+        // Every write goes on an edge block of its own. Terminators are
+        // collected before anything is rewritten: creating the edge blocks
         // appends to the region, and iterating a region while adding blocks to
         // it walks over the ones just added.
         llvm::SmallVector<mlir::Operation *> terminators;
@@ -192,7 +174,6 @@ struct EmitCEliminateBlockArgumentsPass
             }
         }
 
-        // ---- and the arguments are gone -----------------------------------
         for (mlir::Block * block : carrying) { block->eraseArguments(0, block->getNumArguments()); }
         return mlir::success();
     }

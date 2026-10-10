@@ -1,4 +1,12 @@
-// ClosureLifting/Constructors.cpp - native lowering implementation.
+//===- ClosureLifting/Constructors.cpp - The constructor lift ---*- C++ -*-===//
+//
+// `new X(...)` of a local closure X becomes an empty frame-scope
+// ctjs.create_object plus a direct call of X with that object as its
+// receiver. This file holds the census of constructed closures and the
+// checks that refuse a constructor this rewrite cannot model.
+//
+//===----------------------------------------------------------------------===//
+
 #include "ClosureLifter.h"
 
 #include <ctbrowser/core/number_format.hpp>
@@ -7,14 +15,11 @@
 
 namespace ctcompile::ctnative::lowering_detail {
 
-// --- the constructor lift -----------------------------------------------
-
-// WHICH CLOSURES ARE USED AS `new` CALLEES AND AS NOTHING ELSE.
-//
-// A closure that is BOTH called and constructed is left to
-// `whyNotLiftable`, which refuses it by name ("it is used as a
-// constructor"): one ctjs.func is one C++ signature, and a body that is a
-// free function at one site and a constructor at another would need two.
+/// Records every closure that appears as the callee of a `new`, whatever else
+/// it is used for, and indexes each `new` site by the function it constructs.
+/// A closure that is also called or passed elsewhere is refused later by
+/// whyConstructorSetupDoesNotLift, which can name the actual reason (for
+/// example a `prototype` write) instead of a generic escape.
 void closureLifter::constructorCensus() {
     llvm::DenseSet<mlir::Operation *> constructed;
     for (ctjs::ConstructOp made : allConstructs) {
@@ -25,33 +30,29 @@ void closureLifter::constructorCensus() {
             constructsOfTarget[target.getOperation()].push_back(made);
         }
     }
-    // EVERY CLOSURE A `new` NAMES, whatever else it does. The narrower set
-    // - only those used as nothing but a `new` callee - was the wrong one:
-    // a closure that is ALSO written through (`Shape.prototype = {...}`)
-    // then fell to `whyNotLiftable`, which met the new.target operand first
-    // and answered "it is passed as an argument". The clause a reader needs
-    // is the prototype, and only the constructor rule knows to say so.
+    // Include closures that are also used in other ways, so the constructor
+    // rule (not the generic one) reports why they cannot be lifted.
     constructorClosures.insert(constructed.begin(), constructed.end());
 }
 
-// IS THIS VALUE PROVABLY NOT `is_object_like()`?
-//
-// THE QUESTION `new` ASKS OF A RETURN, and the reason it has to be asked.
-// `context::construct` ends `return produced.is_object_like() ? produced :
-// self` (vm/call/construct.cpp, and the same for a native), so a constructor that
-// returns an object REPLACES the instance and `new X()` is not the struct
-// this rewrite built at all. `is_object_like()` is
-// `is_object() || is_array() || is_callable() || is_kind(proxy)`
-// (Script/value.hpp:162-164) - note a STRING is not one, so
-// `return "done"` is harmless and still evaluates to the instance.
-//
-// THE ANSWER IS "NO" UNLESS THE DEFINING OPERATION SAYS OTHERWISE, which is
-// the direction that keeps this sound: a block argument, a call result, a
-// property read and anything this list does not name are all assumed to be
-// able to carry an object.
+/// Is this value provably not `is_object_like()`?
+///
+/// This is the question `new` asks of a constructor's return value.
+/// `context::construct` ends `return produced.is_object_like() ? produced :
+/// self` (ctbrowser/lib/Script/vm/call/construct.cpp, and the same for a
+/// native constructor), so a constructor that returns an object replaces the
+/// instance and `new X()` is not the struct this rewrite built.
+/// `is_object_like()` is `is_object() || is_array() || is_callable() ||
+/// is_kind(proxy)` (ctbrowser/include/ctbrowser/script/value/base.hpp); a
+/// string is not one, so `return "done"` still evaluates to the instance.
+///
+/// The answer is "no" unless the defining operation says otherwise, which
+/// keeps this sound: a block argument, a call result, a property read and
+/// anything this list does not name are all assumed to be able to carry an
+/// object.
 bool closureLifter::isNotObjectLike(mlir::Value v) {
     mlir::Operation * definition = v.getDefiningOp();
-    if (definition == nullptr) { return false; } // a block argument: unknown
+    if (definition == nullptr) { return false; } // A block argument: unknown.
     // ctjs.constant carries undefined, null, a string, a number or a
     // boolean and nothing else; the arithmetic, predicate and conversion
     // operations all answer primitives.
@@ -60,18 +61,14 @@ bool closureLifter::isNotObjectLike(mlir::Value v) {
                      ctjs::HasPropertyOp, ctjs::DeletePropertyOp, ctjs::DeleteNamedOp>(definition);
 }
 
-// GUARD 3: the body must not hand back an object.
-//
-// SHADOWED FOR THE OUTCOME AND NOT FOR THE DIAGNOSTIC, measured. Removing
-// this clause does not admit `returns-object.js`: the `{v: 9}` it hands
-// back is then refused as "an object literal that escapes - it is
-// returned", and an array by the array form of the same sentence. Every
-// object-like value this tier can build already has an escape rule, so no
-// program could be found where this clause alone decides. It is kept, and
-// it runs FIRST, because it is the only one that names what `new` does -
-// and because the clause that shadows it is exactly what Phase 59 slice 2
-// exists to relax, after which this is the only thing between a returning
-// constructor and a wrong answer.
+/// Refuses a constructor whose `return` may produce an object, because `new`
+/// then evaluates to that object instead of the instance this lift builds.
+///
+/// Today the object-literal escape rule also refuses these bodies ("an object
+/// literal that escapes - it is returned"), so this check never decides the
+/// outcome alone. It runs first because its message names what `new` does,
+/// and it becomes the only safeguard if returned object literals are ever
+/// allowed to escape.
 std::optional<std::string> closureLifter::whyConstructorReturnsAnObject(ctjs::FuncOp target) {
     std::optional<std::string> bad;
     target.getBody().walk([&](ctjs::ReturnOp returned) {
@@ -91,9 +88,13 @@ bool closureLifter::isSelfConstruct(mlir::OpOperand & use, ctjs::CreateClosureOp
            made.getNewTarget() == c.getResult();
 }
 
-// Recompute from live uses. Primitive defaults and immutable methods are safe
-// only when neither the prototype nor property ownership is observable.
-// ponytail: one same-block literal replacement; inheritance needs Stage 60A.
+/// Proves that `c`'s prototype is a single object literal, assigned as
+/// `C.prototype = {...}` in the constructor closure's own block before every
+/// `new`, whose fields are constants or closures set once in that block.
+/// Recomputed from live uses. Primitive defaults and immutable methods are
+/// safe only when neither the prototype nor property ownership is observable.
+// ponytail: only one `C.prototype = {...}` in the constructor's own block is
+// supported; prototype chains with inheritance or later mutation are refused.
 std::optional<closureLifter::prototypeFields> closureLifter::immutablePrototype(
     ctjs::CreateClosureOp c) {
     prototypeFields proof;
@@ -139,7 +140,9 @@ std::optional<closureLifter::prototypeFields> closureLifter::immutablePrototype(
     return proof;
 }
 
-// Other prototype accesses retain the precise Stage 60A diagnostic.
+/// Refuses a constructor whose `prototype` is read or written, unless
+/// immutablePrototype() proves it is a single same-block object literal that
+/// is never changed.
 std::optional<std::string> closureLifter::whyPrototypeIsTouched(ctjs::CreateClosureOp c) {
     if (immutablePrototype(c)) { return std::nullopt; }
     for (mlir::Operation * user : c.getResult().getUsers()) {
@@ -157,10 +160,10 @@ std::optional<std::string> closureLifter::whyPrototypeIsTouched(ctjs::CreateClos
     return std::nullopt;
 }
 
-// THE CONSTRUCTOR FORM OF whyNotLiftable, one sentence per clause. Every
-// clause it shares with the method lift is CALLED rather than re-typed:
-// the instance is a literal and the constructor is a receiver carrier, so
-// the two rules are the same rule reached through `new`.
+/// The constructor form of whyNotLiftable, one message per check. Every check
+/// it shares with the method lift is called rather than duplicated: the
+/// instance is a literal and the constructor is a receiver carrier, so the
+/// two rules are the same rule reached through `new`.
 std::optional<std::string> closureLifter::whyNotLiftableConstructor(ctjs::CreateClosureOp c) {
     if (auto why = whyConstructorSetupDoesNotLift(c)) { return why; }
     if (auto prototype = immutablePrototype(c)) {
@@ -223,13 +226,14 @@ std::optional<std::string> closureLifter::whyNotLiftableConstructor(ctjs::Create
     return whyThisLeaks(targetOf(c));
 }
 
-// Receiver resolution needs the prototype method census. All other constructor
-// guards hold before seeding that census; full admission still checks both.
+/// The constructor checks that do not depend on the prototype method census.
+/// Receiver resolution needs that census, so these run before seeding it;
+/// full admission (whyNotLiftableConstructor) still checks both.
 std::optional<std::string> closureLifter::whyConstructorSetupDoesNotLift(ctjs::CreateClosureOp c) {
-    // THE ARROW GUARD FIRST, as the method form does: an arrow's `this` is
-    // lexical, so every use of it reads as a legal constant-key access to
-    // the receiver clause below and admitting one would answer wrongly
-    // rather than refuse. (An arrow is not a constructor in the VM either -
+    // The arrow check first, as in the method form: an arrow's `this` is
+    // lexical, so every use of it looks like a legal constant-key access to
+    // the receiver check below, and admitting one would give a wrong answer
+    // rather than a refusal. (An arrow is not a constructor in the VM either:
     // `ensure_prototype` returns undefined for one.)
     if (const std::optional<std::string> why = whyTargetIsNotLiftable(c)) { return why; }
     if (!ctjs::isUndefinedConstant(c.getEnclosingThis())) {
@@ -239,8 +243,9 @@ std::optional<std::string> closureLifter::whyConstructorSetupDoesNotLift(ctjs::C
     ctjs::FuncOp target = targetOf(c);
     mlir::Block & entry = target.getBody().front();
     const unsigned parameters = entry.getNumArguments() - ctjs::implicit_arguments;
-    // GUARD 5, before the generic clauses, so the diagnostic names the
-    // prototype rather than whatever else the read happens to be.
+    // Check `prototype` access before the generic use checks, so the
+    // diagnostic names the prototype rather than whatever else the read
+    // happens to be.
     if (const std::optional<std::string> why = whyPrototypeIsTouched(c)) { return why; }
     // Aside from the proved prototype attachment, every operand use must be
     // its own callee/new.target pair. Passing the closure as an argument to
@@ -260,7 +265,8 @@ std::optional<std::string> closureLifter::whyConstructorSetupDoesNotLift(ctjs::C
     if (!entry.getArgument(ctjs::arg_new_target).use_empty()) {
         return "its constructor uses new.target, whose function identity this lift does not carry";
     }
-    // GUARD 3.
+    // The constructor must not return an object (see
+    // whyConstructorReturnsAnObject).
     if (const std::optional<std::string> why = whyConstructorReturnsAnObject(target)) {
         return why;
     }
@@ -269,38 +275,30 @@ std::optional<std::string> closureLifter::whyConstructorSetupDoesNotLift(ctjs::C
         return "nothing constructs it";
     }
     for (ctjs::ConstructOp made : sites->second) {
-        // GUARD 1 AT EVERY SITE, not only at this one: a target is one C++
-        // signature, so a second `new` through a callee this pass cannot
-        // name would leave that site dispatching through a closure which is
-        // about to lower to nothing.
+        // Every `new` of this function must name this closure directly: the
+        // target becomes one C++ function, so a `new` through some other
+        // callee would be left dispatching through a closure that is about to
+        // lower to nothing.
         if (made.getCallee().getDefiningOp<ctjs::CreateClosureOp>() != c) {
             return "it is constructed at a site whose callee this pass cannot name";
         }
-        // GUARD 4: the instance's own uses close its shape, by the literal
-        // rule, asked of the value the rewrite is about to make a literal.
+        // The instance must have a closed shape under the same rule an object
+        // literal uses, because the rewrite turns it into one.
         if (!usesCloseTheShape(made.getResult())) {
             return "the instance `new` makes does not have a closed shape - every use of it "
                    "has to be a constant-key read or write, or a receiver this lift carries";
         }
-        // A CLAUSE WAS HERE AND IS GONE, MEASURED: "the instance's `k` is
-        // read but never assigned". It refused every instance that reads a
-        // key the constructor does not write, on the grounds that the VM
-        // would find it on the prototype. THE HAZARD IS ALREADY COVERED
-        // AND MORE PRECISELY: admission's own clause names the keys
-        // Object.prototype answers ("field `constructor` is read but never
-        // written, and Object.prototype answers that name - the interpreter
-        // finds a function where this would find undefined"), and every
-        // OTHER unwritten key is undefined in the VM too, exactly as it is
-        // for a literal. Removing it, `unwritten-key.js` compiles with no
-        // refusal at all and agrees with the interpreter; the clause was
-        // strictly narrowing the tier for nothing.
+        // Reading a key the constructor never writes is allowed: admission
+        // already refuses the names Object.prototype answers (such as
+        // `constructor`), and any other unwritten key is undefined in the VM
+        // too, as for a literal.
         if (auto why = whyCallSiteDoesNotLift(made, made.getArgs().size(), parameters, "a `new`")) {
             return why;
         }
     }
     if (const std::optional<std::string> why = whyCapturesDoNotLift(c)) { return why; }
-    // AND THE CAPTURED VALUES REACH EVERY `new` SITE, which the clause
-    // above has just established are the only users of the closure value.
+    // The captured values must also reach every `new` site; the check above
+    // established that those are the only users of the closure value.
     return whyLiftTailFails(c, target, c.getResult().getUsers());
 }
 

@@ -1,4 +1,13 @@
-// Admission/Operations.cpp - native lowering implementation.
+//===- Admission/Operations.cpp - Per-operation native admission ----------===//
+//
+// admission::op decides, for each ctjs operation in a function, whether the
+// native (C++) backend can lower it. It returns true to admit the operation
+// or calls refuse() with a reason that is reported to the user. The larger
+// arms (DOM operations, Map calls, closed objects, direct calls, returns) are
+// separate members defined below.
+//
+//===----------------------------------------------------------------------===//
+
 #include "../../Analysis/OwnedGlobalRoots.h"
 #include "../../Analysis/OwnedMethodTableSlots.h"
 #include "Admission.h"
@@ -93,7 +102,7 @@ bool admission::op(mlir::Operation * o) {
         return nativeMapCall(o, action);
     }
     if (llvm::isa<FrameEnterOp, FrameExitOp, RootOp>(o)) { return true; }
-    // THE METHOD FIELD'S STORE LOWERS TO NOTHING, with the closure in it.
+    // A method field's store lowers to nothing, with the closure in it.
     // Checked before the closed-shape arms below because the value it
     // stores is a closure, which has no carrier and would be refused as a
     // field the moment the literal is examined.
@@ -101,11 +110,10 @@ bool admission::op(mlir::Operation * o) {
     if (auto object = llvm::dyn_cast<CreateObjectOp>(o)) { return closedObject(object); }
     if (auto array = llvm::dyn_cast<CreateArrayOp>(o)) {
         if (!isVectorSite(array.getResult())) { return refuse(whyNotDense(array.getResult())); }
-        // ONE FRAME SLOT, WHICH IS OBLIGATION O-4. A literal made inside an
-        // `if` or a loop body would declare its vector inside that block
-        // and the storage would end at the closing brace; the function's
-        // own entry block is the only place a frame-scope declaration can
-        // go.
+        // An array literal must live in a single frame-scope slot. A literal
+        // made inside an `if` or a loop body would declare its vector inside
+        // that block and the storage would end at the closing brace, so only
+        // literals in the function's entry block are accepted.
         if (!llvm::isa<ctjs::FuncOp>(o->getParentOp()) || !o->getBlock()->isEntryBlock()) {
             return refuse("an array literal created inside a branch or a loop - its storage "
                           "has to be one frame slot (obligation O-4)");
@@ -141,7 +149,7 @@ bool admission::op(mlir::Operation * o) {
             return true;
         }
         if (isVectorSite(get.getObject())) {
-            // `length` is `size()`, exactly, BECAUSE the site proof is what
+            // `length` is exactly `size()`, because the site proof is what
             // rules out a hole; every other key is an index, and the index
             // has to be a number - `a[k]` with a string `k` reads a
             // property, and `a["push"]` is a function.
@@ -151,7 +159,7 @@ bool admission::op(mlir::Operation * o) {
         if (!isClosedObject(get.getObject())) {
             return refuse("a property read on an object that is not a closed-shape literal");
         }
-        return true; // its result's carrier is checked with every other value
+        return true; // Its result's carrier is checked with every other value.
     }
     if (auto set = llvm::dyn_cast<SetPropertyOp>(o)) {
         if (nativeObjectFieldGroup(o) >= 0) { return identityField(o); }
@@ -162,14 +170,14 @@ bool admission::op(mlir::Operation * o) {
                    (carrierOf(typeOf(set.getValue())) == carrier::number ||
                     refuse("dense array storage requires definite numbers"));
         }
-        // The site's diagnostic names an unproved write's sparsity route.
+        // A write to an array literal not proved dense: report why it is not dense.
         if (set.getObject().getDefiningOp<CreateArrayOp>()) {
             return refuse(whyNotDense(set.getObject()));
         }
         if (!isClosedObject(set.getObject())) {
             return refuse("a property write on an object that is not a closed-shape literal");
         }
-        return true; // the value's carrier was checked at the object
+        return true; // The value's carrier was checked at the object.
     }
     if (isKeyOnlyString(o) || isVectorKeyString(o)) { return true; }
     if (auto load = llvm::dyn_cast<LoadGlobalOp>(o);
@@ -178,20 +186,19 @@ bool admission::op(mlir::Operation * o) {
     }
     if (auto call = llvm::dyn_cast<CallDirectOp>(o)) { return directCall(call); }
     if (isDeclarationClosure(o) || isDeclarationStore(o)) { return true; }
-    // PHASE 59 SLICE 1. A lifted closure and the constant cell it captured
-    // are both gone by the time the emitter sees anything; a closure that
-    // could NOT be lifted carries the reason the lift wrote onto it, which
-    // is what turns "`ctjs.create_closure` is not native yet" - a name for
-    // a whole phase - into a work item.
+    // Closures that closure lifting turned into direct calls, and the constant
+    // cells they captured, are erased before emission, so they need no check.
+    // A closure that could not be lifted carries the lift's reason, which
+    // becomes the refusal message.
     if (isLiftedClosure(o) || isUnboxedCell(o)) { return true; }
     if (llvm::isa<CreateClosureOp>(o)) { return refuse(closureRefusal(o)); }
-    // PHASE 59 SLICE 2 STEP 2: THE SHARED BINDING'S BOX IS A VARIABLE IN
-    // THIS FRAME, and this is where its carrier is proved. The lift ran
-    // before the solve and could not ask; nothing else between here and
-    // the emitter does. A cell of a type with no C++ representation is
-    // refused HERE, so no pointer to one is ever taken - which is the
-    // second of the three conditions the design rests on, and the only one
-    // that cannot be asked at the lift.
+    // A captured binding shared by reference becomes a local variable in this
+    // frame, and lifted callees receive its address. Closure lifting runs
+    // before type inference, so this is the first place the variable's C++
+    // type can be checked; a cell whose type has no C++ representation is
+    // refused here, so no pointer to it is ever taken. (The other conditions
+    // for passing the address are listed beside `carriedCells` in
+    // ClosureLifter.h.)
     if (auto cell = llvm::dyn_cast<CreateCellOp>(o); cell && isCarriedCell(o)) {
         if (carrierOf(typeOf(cell.getResult())) == carrier::none) {
             return refuse("a shared binding of type " + printed(typeOf(cell.getResult())) +
@@ -205,11 +212,11 @@ bool admission::op(mlir::Operation * o) {
         }
         return true;
     }
-    // A READ AND A WRITE OF ONE, in this frame or through the pointer a
-    // lifted call handed us. The read's result carrier is asked by the
-    // per-result walk in function(); what is asked here is that the write
-    // stores the carrier the variable holds - two carriers in one variable
-    // is a `double` assigned a `bool`, and the join that produced the
+    // A read or a write of a shared binding, in this frame or through the
+    // pointer a lifted call handed us. The read's result carrier is checked by
+    // the per-result walk in function(); here the write must store the
+    // carrier the variable holds (two carriers in one variable would be a
+    // `double` assigned a `bool`), and the join that produced the
     // cell's type must select tagged storage for mixed scalar assignments.
     // A refusal here names the store rather than the box.
     if (auto get = llvm::dyn_cast<CellGetOp>(o); get && namesASharedCell(get.getCell())) {
@@ -234,11 +241,11 @@ bool admission::op(mlir::Operation * o) {
         return refuse(why ? ("a captured binding that stays a cell: " + why.getValue()).str()
                           : std::string{"a captured binding that stays a cell - Phase 59"});
     }
-    // THE LIFT'S UNDEFINED VALUE for a block argument no predecessor sets:
+    // The lift's undefined value for a block argument no predecessor sets:
     // never read on any executed path. Lowering chooses NaN or an empty
     // string per destination slot, so poison itself needs no carrier.
     if (o->getName().getStringRef() == "ub.poison") { return true; }
-    // THE STRUCTURING PASS'S MULTIPLEXERS: --ctjs-lift-to-scf encodes which
+    // The structuring pass's multiplexers: --ctjs-lift-to-scf encodes which
     // edge a merged block came from as i32 flags, in arith. They carry no
     // JavaScript value and --convert-arith-to-emitc lowers them.
     if (o->getDialect() != nullptr && o->getDialect()->getNamespace() == "arith") {
@@ -295,7 +302,9 @@ bool admission::op(mlir::Operation * o) {
         case BinaryKind::Shr:
         case BinaryKind::UShr:
             return numericOperand(b.getLhs(), "binary") && numericOperand(b.getRhs(), "binary");
-        // (`**` is not std::pow; exponentiate() below is why.)
+        // Any other kind is refused. (`**` is lowered by lowering::exponentiate in
+        // EmitC/Expressions.cpp, not std::pow, because they differ for a base
+        // of magnitude one with an infinite exponent.)
         default: return refuse("a bitwise or string operator is not native yet");
         }
     }
@@ -417,7 +426,7 @@ bool admission::op(mlir::Operation * o) {
     return refuse(("`" + o->getName().getStringRef() + "` is not native yet").str());
 }
 
-// The DOM entry's own operations, or nullopt when `o` is not one of them.
+/// Admits the DOM entry's own operations; nullopt when `o` is not one of them.
 std::optional<bool> admission::domOperation(mlir::Operation * o) {
     using namespace ctjs;
     if (!domEntry) { return std::nullopt; }
@@ -475,7 +484,7 @@ std::optional<bool> admission::domOperation(mlir::Operation * o) {
     return std::nullopt;
 }
 
-// A native Map method call, named by its `action`.
+/// Admits a native Map method call, named by its `action`.
 bool admission::nativeMapCall(mlir::Operation * o, llvm::StringRef action) {
     using namespace ctjs;
     if (action == "size") { return true; }
@@ -604,11 +613,11 @@ bool admission::nativeMapCall(mlir::Operation * o, llvm::StringRef action) {
 bool admission::closedObject(ctjs::CreateObjectOp object) {
     using namespace ctjs;
     if (!isClosedObject(object.getResult())) { return refuse(whyOpen(object.getResult())); }
-    // EVERY ACCESS IN THE GROUP, NOT ONLY THE LITERAL'S OWN. A lifted
-    // method reaches these fields through its `%arg0`, in a different
-    // function, and those reads and writes are this shape's too - so
-    // `this.class = 1` has to be refused HERE, at the one place that
-    // checks a key, or it reaches the emitter as `self->class`.
+    // Check every access in the receiver group, not only the literal's own. A
+    // lifted method reaches these fields through its `%arg0`, in a different
+    // function, and those reads and writes belong to this shape too, so
+    // `this.class = 1` has to be refused here, at the one place that checks
+    // a key, or it reaches the emitter as `self->class`.
     llvm::SmallVector<mlir::Operation *> accesses;
     for (mlir::Value alias : aliasesOf(groups, object.getResult())) {
         for (mlir::OpOperand & use : alias.getUses()) {
@@ -618,14 +627,14 @@ bool admission::closedObject(ctjs::CreateObjectOp object) {
             }
         }
     }
-    // The keys this literal is ever WRITTEN with. A read of one of
+    // The keys this literal is ever written with. A read of one of
     // them is an own property; a read of anything else falls through
     // to the prototype, which is what makes an inherited name wrong.
     llvm::StringSet<> written;
     llvm::StringSet<> stringFields;
     for (mlir::Operation * user : accesses) {
         if (auto set = llvm::dyn_cast<SetPropertyOp>(user)) {
-            // A METHOD FIELD IS NOT A FIELD. Its store lowers to
+            // A method field is not a data field. Its store lowers to
             // nothing and it takes no space in the class, so it is not
             // a key that shadows an inherited name either.
             if (!user->hasAttr(kNativeMethod)) {
@@ -697,24 +706,22 @@ bool admission::directCall(ctjs::CallDirectOp call) {
         }
     }
     // new.target and the callee value are dropped; each remaining
-    // argument needs a proved carrier. Whether the CALLEE is native is the fixpoint in
-    // runOnOperation, not a question for one function.
+    // argument needs a proved carrier. Whether the callee is native is decided
+    // by the fixpoint in runOnOperation, not by one function.
     //
-    // THE RECEIVER IS NOT DROPPED WHEN THE LIFT MARKED THIS CALL. It
-    // is operand 0, it becomes the callee's first C++ parameter, and
-    // its carrier is the generated class - so what has to hold here is
-    // that it really is a closed-shape object and not some other
-    // value the lift never looked at.
+    // The receiver is not dropped when the lift marked this call. It is
+    // operand 0, it becomes the callee's first C++ parameter, and its carrier
+    // is the generated class, so it must really be a closed-shape object and
+    // not some other value the lift never looked at.
     const auto operands = call.getArgOperands();
     if (o->hasAttr(kNativeReceiver) && !isClosedObject(call.getReceiver())) {
         return refuse("a method call whose receiver is not a closed-shape object");
     }
     for (unsigned i = 3; i < operands.size(); ++i) {
-        // AN OBJECT ARGUMENT IS NOT A NUMBER AND MUST NOT BE ASKED TO
-        // BE ONE. The lift proved the literal closed before it wrote
-        // the index; this asks the same question of the IR that came
-        // out, exactly as the receiver arm above does, because a
-        // refusal since then can have opened it.
+        // An object argument is a pointer, not a number. The lift proved the
+        // literal closed before it wrote the index; this asks the same
+        // question of the IR that came out, as the receiver check above
+        // does, because a refusal since then can have opened it.
         if (isObjectArg(o, i)) {
             if (!isClosedObject(operands[i])) {
                 return refuse("it passes an object whose shape is no longer closed to a "
@@ -722,13 +729,10 @@ bool admission::directCall(ctjs::CallDirectOp call) {
             }
             continue;
         }
-        // A SHARED BINDING IS NOT A NUMBER EITHER: what is passed is
-        // the ADDRESS of a variable in this frame, so what has to hold
-        // is that the variable is still one this tier can spell and
-        // that the operand still names it. A carrier of `none` is
-        // refused at the box itself; this catches the operand that
-        // stopped being a box at all, which would be the lift and this
-        // check disagreeing.
+        // A shared-binding argument is the address of a variable in this
+        // frame. Check that the operand is still such a variable and that
+        // its type has a C++ representation; a mismatch means closure
+        // lifting and admission disagree.
         if (isCellArg(o, i)) {
             if (!namesASharedCell(operands[i])) {
                 return refuse("it passes something that is not a shared binding of this "

@@ -1,3 +1,11 @@
+//===- Values.cpp - Value evaluation for the host-entry prefix --*- C++ -*-===//
+//
+// Evaluates scalar operations (truthiness, unary operators, comparisons) on
+// analysis values, and implements prefixAnalysis::operation, the per-operation
+// interpreter of the host-entry prefix.
+//
+//===----------------------------------------------------------------------===//
+
 #include "../Provider/Objects.h"
 #include "Analysis.h"
 
@@ -7,6 +15,7 @@
 
 namespace ctcompile::ctnative::host_detail {
 
+/// The JS truthiness of `value`, or nullopt when it is not known.
 std::optional<bool> prefixTruth(prefixValue value) {
     if (value.kind == prefixValue::Kind::object || value.kind == prefixValue::Kind::realm ||
         value.kind == prefixValue::Kind::resource || value.kind == prefixValue::Kind::closure) {
@@ -19,6 +28,8 @@ std::optional<bool> prefixTruth(prefixValue value) {
     return literalTruth(value.literal);
 }
 
+/// Evaluates constants and truthiness conversions. nullopt when `operation`
+/// is not one of those; an unknown value when its operand's truth is unknown.
 std::optional<prefixValue> prefixScalar(mlir::Operation * operation,
                                         const prefixAnalysis::environment & values,
                                         mlir::MLIRContext * context) {
@@ -35,6 +46,7 @@ std::optional<prefixValue> prefixScalar(mlir::Operation * operation,
     return bit ? prefixValue::constant(ctjs::BooleanAttr::get(context, *bit)) : prefixValue{};
 }
 
+/// Evaluates `void`, `!` and `typeof` on a known operand; unknown otherwise.
 prefixValue prefixUnary(ctjs::UnaryKind kind, prefixValue operand, mlir::MLIRContext * context) {
     if (kind == ctjs::UnaryKind::Void) {
         return prefixValue::constant(ctjs::UndefinedAttr::get(context));
@@ -60,10 +72,12 @@ prefixValue prefixUnary(ctjs::UnaryKind kind, prefixValue operand, mlir::MLIRCon
                         : prefixValue::constant(ctjs::StringAttr::get(context, name));
 }
 
+/// Evaluates `===` on primitives and `==`/`===` on two strings; unknown
+/// otherwise.
 prefixValue prefixCompare(ctjs::CompareKind kind, prefixValue left, prefixValue right,
                           mlir::MLIRContext * context) {
-    // Strict primitive equality cannot call JS. In particular null and
-    // undefined must stay distinct when advancing source observation guards.
+    // Strict primitive equality cannot run script. It must also keep null and
+    // undefined distinct, since the guards it decides often test for one.
     if (kind == ctjs::CompareKind::StrictEq && left.kind == prefixValue::Kind::primitive &&
         right.kind == prefixValue::Kind::primitive) {
         auto supported = [](mlir::Attribute value) { return ctjs::isPrimitiveAttr(value); };
@@ -81,6 +95,8 @@ prefixValue prefixCompare(ctjs::CompareKind kind, prefixValue left, prefixValue 
     return a && b ? prefixValue::constant(ctjs::BooleanAttr::get(context, a == b)) : prefixValue{};
 }
 
+/// Interprets one operation of the host-entry prefix. Returns its value, or
+/// calls stop() with a reason (returning unknown) when it is not modeled.
 prefixValue prefixAnalysis::operation(mlir::Operation * operation, environment & values,
                                       unsigned depth) {
     auto * context = module.getContext();
@@ -134,8 +150,8 @@ prefixValue prefixAnalysis::operation(mlir::Operation * operation, environment &
             return stop(operation, "property read lacks a fresh ordinary receiver/key");
         }
         auto field = objects[owner.object].fields.find(text.getValue());
-        // Missing properties could reach an intrinsic prototype. The first
-        // slice reads only already initialized own fields.
+        // A missing property could be found on an intrinsic prototype, so
+        // only own fields this prefix has already initialized are read.
         return field == objects[owner.object].fields.end()
                    ? stop(operation, "property read lacks an initialized own slot")
                    : field->second;
@@ -208,9 +224,9 @@ prefixValue prefixAnalysis::operation(mlir::Operation * operation, environment &
         }
         llvm::SmallVector<prefixValue> arguments;
         for (auto [index, argument] : llvm::enumerate(invoked.getOperands())) {
-            // A call's raw receiver is not a proof of effective JS `this`:
-            // sloppy substitution/boxing and lexical receivers need their
-            // own contract. Preserve the operand but do not interpret it.
+            // The receiver operand is not necessarily the callee's `this`:
+            // sloppy-mode substitution and boxing, and lexical `this`, would
+            // need their own modeling. Pass it as unknown.
             arguments.push_back(index == 0 ? prefixValue{} : values.lookup(argument));
         }
         auto returned = function(callee, arguments, depth + 1);
@@ -225,6 +241,8 @@ prefixValue prefixAnalysis::operation(mlir::Operation * operation, environment &
             closure.made && ctjs::isUndefinedConstant(closure.made.getEnclosingThis());
         const bool summarizedClosure =
             followPublication && closure.made && factoryClosures.contains(closure.made);
+        // The callee's entry block has the three implicit arguments (receiver,
+        // new.target, callee) before the declared ones.
         if (!callee || callee.getBody().empty() || (!lexical && !summarizedClosure) ||
             callee.getBody().front().getNumArguments() != invoked.getArgs().size() + 3 ||
             pendingNewTarget.contains(invoked->getParentOfType<ctjs::FuncOp>())) {
@@ -236,15 +254,16 @@ prefixValue prefixAnalysis::operation(mlir::Operation * operation, environment &
             if (result.kind != prefixValue::Kind::unknown) { return result; }
         }
         if (followProviderReads) {
-            // A mutating prefix must never consult the old empty-Map model.
+            // A prefix that mutates provider Maps must use providerMutation:
+            // providerRead assumes the captured Maps are still empty.
             const auto result = followProviderMutations
                                     ? providerMutation(invoked, callee, closure, values)
                                     : providerRead(invoked, callee, closure, values);
             if (result.kind != prefixValue::Kind::unknown) { return result; }
         }
-        // Naming this invocation requires its actual closure value, not a
-        // reusable-body proof. Interpreting the target would additionally need
-        // that body's unique context; stop before any of its effects instead.
+        // The call target is known from the closure value, so the call is
+        // recorded above. Interpreting the body would also need proof that
+        // this is its only calling context, so stop before any of its effects.
         return stop(operation, "resolved call body remains a runtime effect boundary");
     }
     if (llvm::isa<ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::RootOp>(operation)) { return {}; }

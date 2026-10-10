@@ -10,13 +10,14 @@ def CTJS_BinaryOp : CTJS_RuntimeOp<"binary", "ct_aot_binary_op", CTJS_GenericEff
     runtime keeps the three `+` opcodes distinct, and for its reason - concat
     ToStrings both sides unconditionally and must never reach the BigInt arm.
   }];
-  // PHASE 55 (may_reenter 1: concat, add_generic, sub, mul, div, mod, pow,
-  // and the six bitwise opcodes, which ToNumeric both operands first).
-  // Both SINK(converted): ToPrimitive runs valueOf/toString with the operand
-  // as receiver (coerce.cpp:171-179). Those methods come from the shared
-  // Object.prototype table, which a page can replace - so a confined object
-  // IS handed to user code here, and R3 (anything reachable from globalThis)
-  // is why this is a sink and not a NEITHER.
+  // Escape effects (may_reenter 1: concat, add_generic, sub, mul, div, mod,
+  // pow, and the six bitwise opcodes, which ToNumeric both operands first):
+  // both operands SINK(converted). ToPrimitive runs valueOf/toString with the
+  // operand as receiver (context::to_primitive, vm/coerce.cpp). Those methods
+  // come from the shared Object.prototype table, which a page can replace, so
+  // a confined object is handed to user code here. Anything reachable from
+  // globalThis counts as external, which is why this is a sink and not
+  // NEITHER.
   let arguments = (ins CTJS_BinaryKind:$kind,
                        Arg<CTJS_ValueType, "", [CTJS_SinkConverted]>:$lhs,
                        Arg<CTJS_ValueType, "", [CTJS_SinkConverted]>:$rhs);
@@ -44,19 +45,20 @@ def CTJS_BinaryStaticOp
     ToNumerics their operands. A bitwise ctjs.binary_static means the
     operands are already numeric: the helper converts nothing.
   }];
-  // PHASE 55: both NEITHER - the STATIC conversions. coerce.cpp:285-299 is
-  // bigint_binary, then to_number (49-60, no user code) and to_int32; the
-  // bytecode rows say "never runs user code" (bytecode_opcodes.def:211-232).
+  // Escape effects: both NEITHER, because these are the static conversions.
+  // context::binary_op_static (vm/coerce.cpp) uses bigint_binary, then
+  // to_number (no user code) and to_int32, and the bytecode rows in
+  // bytecode_opcodes.def say "never runs user code".
   let arguments = (ins CTJS_BinaryKind:$kind, CTJS_ValueType:$lhs, CTJS_ValueType:$rhs);
   let results = (outs CTJS_ValueType:$result);
   let assemblyFormat = "$kind $lhs `,` $rhs attr-dict";
-  // ONLY THE SEVEN KINDS THE HELPER IMPLEMENTS. context::binary_op_static
-  // switches on add, bit_and, bit_or, bit_xor, shl, shr and ushr and answers
-  // `undefined` for anything else - deliberately, because the AOT entry is
-  // untrusted input. The importer never emits the others here, but hand-written
-  // IR could, and an inference that said `f64` for `binary_static sub` would
-  // be wrong about a value that is really undefined. Invalid IR is the honest
-  // answer, so the verifier says so.
+  // The verifier accepts only the seven kinds the helper implements.
+  // context::binary_op_static switches on add, bit_and, bit_or, bit_xor, shl,
+  // shr and ushr and answers `undefined` for anything else, deliberately,
+  // because the AOT entry is untrusted input. The importer never emits the
+  // others here, but hand-written IR could, and an inference that said `f64`
+  // for `binary_static sub` would be wrong about a value that is really
+  // undefined.
   let hasVerifier = 1;
 }
 
@@ -70,11 +72,11 @@ def CTJS_UnaryOp : CTJS_Op<"unary", CTJS_GenericEffects> {
     exists precisely so that operations which CAN answer are lowered without
     a pattern of their own. Phase 10 lowers this one by kind.
   }];
-  // PHASE 55: NO ANNOTATION, ON PURPOSE - the role depends on $kind, which a
-  // decorator cannot express, so this is one of the three operations in
-  // EscapeAnalysis.cpp's kind switch: not/typeof/void NEITHER (total, no
-  // conversion); neg/plus/bitnot SINK(converted) - negate and to_number are
-  // may_reenter 1 (bytecode_opcodes.def:337-340, 354-356).
+  // Escape effects: deliberately no annotation. The role depends on $kind,
+  // which a decorator cannot express, so this is one of the three operations
+  // in EscapeAnalysis.cpp's kind switch: not/typeof/void NEITHER (total, no
+  // conversion); neg/plus/bitnot SINK(converted), because negate and to_number
+  // are may_reenter 1 in bytecode_opcodes.def.
   let arguments = (ins CTJS_UnaryKind:$kind, CTJS_ValueType:$operand);
   let results = (outs CTJS_ValueType:$result);
   let assemblyFormat = "$kind $operand attr-dict";
@@ -92,11 +94,10 @@ def CTJS_CompareOp : CTJS_Op<"compare", CTJS_GenericEffects> {
     returns an ORDERING, and UNORDERED - either operand NaN - makes all four
     of them false. They cannot be lowered as negations of one another.
   }];
-  // PHASE 55: NO ANNOTATION, ON PURPOSE - the kind switch's second
-  // operation: strict_eq NEITHER (value::strict_equals is a bit/content
-  // compare, value.hpp:293-311); eq/lt/le/gt/ge SINK(converted) -
-  // loose_equal and less are may_reenter 1 (bytecode_opcodes.def:394-396,
-  // 411).
+  // Escape effects: deliberately no annotation; the second operation in the
+  // kind switch. strict_eq is NEITHER (value::strict_equals in value.hpp is a
+  // bit or content compare); eq/lt/le/gt/ge are SINK(converted), because
+  // loose_equal and less are may_reenter 1 in bytecode_opcodes.def.
   let arguments = (ins CTJS_CompareKind:$kind, CTJS_ValueType:$lhs, CTJS_ValueType:$rhs);
   let results = (outs CTJS_ValueType:$result);
   let assemblyFormat = "$kind $lhs `,` $rhs attr-dict";
@@ -111,16 +112,16 @@ def CTJS_ConvertOp : CTJS_Op<"convert", CTJS_GenericEffects> {
     querying traits would otherwise be told the wrong thing about five of the
     six. Phase 10 narrows this by splitting to_boolean out if it measures.
   }];
-  // PHASE 55: NO ANNOTATION, ON PURPOSE - the kind switch's third operation:
-  // to_boolean NEITHER (total); every other kind SINK(converted). ToObject is
-  // the identity on an object and a CARRY in principle; SINK in the MVP, no
-  // consumer.
+  // Escape effects: deliberately no annotation; the third operation in the
+  // kind switch. to_boolean is NEITHER (total); every other kind is
+  // SINK(converted). ToObject is the identity on an object, so it could be a
+  // CARRY, but nothing would use that yet, so it is a SINK.
   let arguments = (ins CTJS_ConvertKind:$kind, CTJS_ValueType:$operand);
   let results = (outs CTJS_ValueType:$result);
   let assemblyFormat = "$kind $operand attr-dict";
 }
 
-// PHASE 55: NEITHER - total, row (0,0,0), and the result is an i1.
+// Escape effects: NEITHER - total, runtime row (0,0,0), and the result is an i1.
 def CTJS_TruthyOp : CTJS_RuntimeOp<"truthy", "ct_aot_truthy", [Pure, CTJS_NoEscapeEffects]> {
   let summary = "ToBoolean, as an i1 - the only bridge from a value to a branch";
   let description = [{

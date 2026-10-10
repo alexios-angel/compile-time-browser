@@ -1,22 +1,17 @@
-//===- CTNativeBase.td - the ctnative dialect and its base classes --------===//
+//===- CTNativeBase.td - The ctnative dialect and its base classes --------===//
 //
-// THE SECOND DIALECT, AND IT EXISTS BECAUSE THE FIRST ONE DELIBERATELY HAS NO
-// TYPES. CTJSTypes.td opens with "FIVE, AND THE SMALLNESS IS THE DESIGN", and
-// that is right for CTJS: "Refinements are expressed as guarded operations and
-// analysis facts, never as unconditional MLIR types."
+// ctnative is a second dialect because the first, CTJS, deliberately has
+// almost no types: in CTJS, refinements are guarded operations and analysis
+// facts, never unconditional MLIR types (see CTJSTypes.td).
 //
-// ctnative is where a refinement becomes a type, and the reason the two cannot
-// be one dialect is the word UNCONDITIONAL. A `!ctjs.value` is true of every
-// JavaScript value there has ever been. A `!ctnative.num<i32>` is true only
-// where a proof says so, and part 24 §1.2 states the consequence:
-//
-//   "A function compiles to native C++ only when the compiler can PROVE it is
-//    in the static subset. Everything else falls back to the value-boxed
-//    backend, which already compiles 574/574 of Bootstrap."
-//
-// So every type below is a CLAIM, every claim has a proof obligation attached
-// to it in a later phase, and the top of the lattice - `!ctnative.boxed` - is
-// the honest answer that hands the function back to CTJS.
+// ctnative is where a refinement becomes a type, and the two cannot be one
+// dialect because CTJS types are unconditional. A `!ctjs.value` is true of
+// every JavaScript value. A `!ctnative.num<i32>` is true only where a proof
+// says so. A function compiles to native C++ only when the compiler can prove
+// it is in this static subset; everything else falls back to the value-boxed
+// CTJS backend. So every type below is a claim with a proof obligation, and
+// the top of the lattice, `!ctnative.boxed`, is the honest answer that hands
+// the function back to CTJS.
 //
 //===----------------------------------------------------------------------===//
 #ifndef CTCOMPILE_CTNATIVE_BASE
@@ -47,15 +42,16 @@ def CTNative_Dialect : Dialect {
     ctcompile/docs/native-divergences.md, with a test.
   }];
 
-  // Free parsing and printing for every TypeDef below. Four of them carry
-  // parameters, so unlike CTJS this is doing real work: `!ctnative.num<f64>`
-  // and `!ctnative.variant<...>` both round-trip without a hand-written parser.
+  // Generated parsing and printing for every TypeDef. Many of them take
+  // parameters (`!ctnative.num<f64>`, `!ctnative.variant<...>`,
+  // `!ctnative.map<K, V>`, ...), so unlike CTJS this replaces real hand-written
+  // parsers.
   let useDefaultTypePrinterParser = 1;
 
   // The typed exception operations introduce neither attributes nor a
   // constant materializer. Their payload values use ordinary EmitC types.
 
-  // Split for the same reason CTJS splits it: addTypes<> needs the STORAGE
+  // Split for the same reason CTJS splits it: addTypes<> needs the storage
   // classes complete, and those are emitted into CTNativeTypes.cpp by
   // GET_TYPEDEF_CLASSES.
   let extraClassDeclaration = [{
@@ -66,11 +62,14 @@ def CTNative_Dialect : Dialect {
   // The native type and exception definitions require no dependent dialect.
 }
 
+// Base class of every ctnative type; `typeMnemonic` is its spelling after
+// `!ctnative.`.
 class CTNative_Type<string name, string typeMnemonic, list<Trait> traits = []>
     : TypeDef<CTNative_Dialect, name, traits> {
   let mnemonic = typeMnemonic;
 }
 
+// Base class of every ctnative operation.
 class CTNative_Op<string mnemonic, list<Trait> traits = []>
     : Op<CTNative_Dialect, mnemonic, traits>;
 

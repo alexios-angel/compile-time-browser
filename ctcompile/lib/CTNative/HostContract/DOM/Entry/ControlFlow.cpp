@@ -1,3 +1,10 @@
+//===- ControlFlow.cpp - DOM entry control flow ---------------------------===//
+//
+// Body::controlFlow: loops, branches, saved throws and try/catch invokes in a DOM
+// entry body, plus the kind join for values that leave a branch.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Body.hpp"
 
 #include "mlir/IR/Matchers.h"
@@ -15,14 +22,15 @@ bool ctcompile::ctnative::validSelector(llvm::StringRef text) {
 namespace ctcompile::ctnative::dom_entry_detail {
 
 namespace {
-// Scalars a branch arm may yield.
+/// Scalar kinds an scf.if arm may yield.
 constexpr std::array yieldKinds{Kind::boolean,        Kind::optionalBoolean, Kind::number,
                                 Kind::optionalNumber, Kind::string,          Kind::null,
                                 Kind::optionalString, Kind::undefined,       Kind::json,
                                 Kind::jsonAggregate,  Kind::symbol,          Kind::undefinedString,
                                 Kind::element,        Kind::mapPayload};
 
-// The kind two arms' yields join to, or none for incompatible alternatives.
+/// The kind two arms' yields join to, or std::nullopt when they are
+/// incompatible.
 std::optional<Kind> joinKind(Kind a, Kind b) {
     if (a == b) { return a; }
     const auto both = [&](std::initializer_list<Kind> kinds) {
@@ -42,8 +50,8 @@ std::optional<Kind> joinKind(Kind a, Kind b) {
         return k == Kind::string || k == Kind::boolean || k == Kind::number || k == Kind::null ||
                k == Kind::optionalString;
     };
-    // Primitive arms become owning JSON alternatives. Undefined and borrowed
-    // browser values have no JSON representation.
+    // A JSON value joined with a primitive becomes an owned JSON value.
+    // Undefined and borrowed browser values have no JSON representation.
     if ((json(a) && (json(b) || jsonScalar(b))) || (jsonScalar(a) && json(b))) {
         return Kind::json;
     }
@@ -68,8 +76,8 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
         }
         if (!spend() || !spend()) { return false; }
         if (hasKind(thrown.getValue(), {Kind::element, Kind::nullableElement})) {
-            // The host owns nodes only through this invocation. An escaping
-            // exception can survive destruction of that document during unwind.
+            // The host keeps nodes alive only for this invocation. An escaping
+            // exception could outlive the document while the stack unwinds.
             return fail("DOM thrown element requires an owner that outlives the exception");
         }
         if (!hasKind(thrown.getValue(), {Kind::number, Kind::boolean, Kind::string,
@@ -111,8 +119,9 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
                        one && one.getDouble() == 1;
             };
             const auto next = yield.getOperand(argument.getArgNumber());
-            // Ordinary for loops forward the tested index into the after body.
-            // Require its exact identity on both the condition and backedge.
+            // An ordinary for loop forwards the tested index into the after
+            // body. The same value must reach both the condition and the
+            // backedge for the index to count as increasing.
             if (auto add = next.getDefiningOp<ctjs::BinaryStaticOp>()) {
                 if (!spend()) { return false; }
                 auto index = llvm::dyn_cast<mlir::BlockArgument>(add.getLhs());
@@ -125,8 +134,9 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
             auto forwarded = llvm::dyn_cast<mlir::BlockArgument>(next);
             if (!forwarded || forwarded.getOwner() != &after) { continue; }
             const unsigned slot = forwarded.getArgNumber();
-            // The normalizer returns the condition and its entire
-            // continuation tuple together from each selected arm.
+            // The normalizer returns the condition and its whole continuation
+            // tuple together from each selected arm. The recursion through
+            // nested scf.if conditions is capped at 64 levels.
             const auto advances = [&](auto && check, mlir::Value flag, mlir::Value next,
                                       unsigned level) -> bool {
                 if (!spend() || level == 64) { return false; }
@@ -176,8 +186,9 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
             }
         }
         if (!visit(after, depth + 1, frame)) { return false; }
-        // Supported attribute/class writes cannot reclaim nodes or change a
-        // querySelectorAll snapshot. Dataset aliases still need a backedge proof.
+        // Supported attribute and class writes cannot free nodes or change a
+        // querySelectorAll snapshot, but they can change a dataset, and
+        // dataset aliases across the backedge are not proved, so refuse.
         if (mutationEpoch != loopEpoch && !proved.datasetElements.empty()) {
             return fail("DOM loop mutation needs a backedge dataset-alias proof");
         }
@@ -217,8 +228,9 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
         std::optional<bool> selected =
             known == constantBooleans.end() ? std::nullopt : std::optional(known->second);
         if (!selected && !branch.getNumResults()) {
-            // Iterator completion retains a literal done flag. Prove its
-            // selected cleanup arm without narrowing ordinary scalar joins.
+            // Iterator completion keeps a literal `done` flag. Treat only the
+            // arm it selects as reachable, without narrowing ordinary scalar
+            // joins.
             if (!spend()) { return false; }
             auto truth = branch.getCondition().getDefiningOp<ctjs::TruthyOp>();
             auto boolean = truth ? ctjs::constantAttr<ctjs::BooleanAttr>(truth.getValue())
@@ -235,7 +247,8 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
             const auto restore = llvm::make_scope_exit([&] {
                 documentRootPresent = previousRootPresent;
                 if (!refined) { return; }
-                // Look up by key: recursive visits can rehash both maps.
+                // Look up by key, not a saved iterator: recursive visits can
+                // rehash both maps.
                 values[refined] = previous;
                 activeRefinements.erase(refined);
             });
@@ -243,19 +256,21 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
                 predicate != predicates.end() &&
                 hasKind(predicate->second.optional, {Kind::optionalString, Kind::undefinedString,
                                                      Kind::nullableElement, Kind::json})) {
-                // Reserve save/restore and the new evidence before visiting.
+                // Charge for the save, the restore and the new evidence
+                // before visiting.
                 if (!spend() || !spend() || !spend()) { return false; }
                 refined = predicate->second.optional;
                 previous = values[refined];
                 const bool present = first == predicate->second.stringOnTrue;
                 if (present && previous == Kind::nullableElement &&
                     proved.documentRoots.contains(refined.getDefiningOp<ctjs::GetPropertyOp>())) {
-                    // Every admitted effect preserves the document root:
-                    // structural mutation and reentry fail the complete proof.
+                    // No accepted operation can remove the document root:
+                    // tree mutation and script reentry are refused.
                     documentRootPresent = true;
                 }
-                // A closest result borrows the original document. Only this
-                // arm may dereference it; absence grants no scalar-null facts.
+                // A closest() result borrows from the original document. Only
+                // the arm where it is present may dereference it; the absent
+                // arm learns nothing beyond "not an element".
                 values[refined] =
                     previous == Kind::nullableElement
                         ? (present ? Kind::element : Kind::nullableElement)
@@ -284,8 +299,9 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
                 if (!llvm::is_contained(yieldKinds, kind)) {
                     return fail("DOM entry branch cannot carry a borrowed or callable value");
                 }
-                // Both arms retain the complete typed effect proof, even
-                // when an original argument decides the default branch.
+                // Both arms were fully checked above, even when a constant
+                // condition selects one; only reachable, non-throwing arms
+                // contribute to the joined result kind.
                 if (throws || (selected && first != *selected)) { continue; }
                 if (!joinedArm) {
                     joined.push_back(kind);
@@ -305,8 +321,9 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
             nonReturning.insert(&body);
         }
         if (thenThrows && elseThrows) {
-            // Neither arm reaches its yield. Give only this structural padding
-            // a common primitive kind; both payloads and effects proved above.
+            // Neither arm reaches its yield. Give the unreachable results a
+            // placeholder primitive kind; both arms' payloads and effects were
+            // proved above.
             for (unsigned i = 0; i < branch.getNumResults(); ++i) {
                 if (!spend()) { return false; }
                 joined.push_back(Kind::boolean);
@@ -362,9 +379,10 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
     }
     if (auto invocation = llvm::dyn_cast<ctjs::InvokeOp>(operation)) {
         if (invocation.getNumResults() == 0) {
-            // Only the exact unused-result wrapper can disappear. Complete
-            // DOM proof below excludes receiver failure, coercion and reentry;
-            // a valid literal name/selector excludes the remaining source exception.
+            // A try/catch around an unused setAttribute or matches call with
+            // empty continuations can be dropped. The DOM proof below rules out
+            // a bad receiver, coercion and reentry, and a valid literal name or
+            // selector rules out the only exception left.
             if (invocation->getParentOfType<ctjs::InvokeOp>() ||
                 !invocation.getBody().hasOneBlock() || !invocation.getNormalBody().hasOneBlock() ||
                 !invocation.getUnwindBody().hasOneBlock()) {
@@ -400,7 +418,7 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
             }
             auto name = ctjs::constantAttr<ctjs::StringAttr>(call.getArgs()[0]);
             if (!name) { return fail("DOM suppression requires a valid literal name or selector"); }
-            // Reserve the public validator's byte scan before invoking it.
+            // Charge one step per byte the validator will scan.
             for (std::size_t i = 0; i < name.getValue().size(); ++i) {
                 if (!spend()) { return false; }
             }
@@ -415,7 +433,8 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
             proved.invocations.push_back(invocation);
             return true;
         }
-        // A nested invoke may only continue the enclosing success.
+        // A nested invoke may only sit in the enclosing invoke's normal
+        // (success) continuation.
         auto parent = invocation->getParentOfType<ctjs::InvokeOp>();
         if ((parent && (!llvm::is_contained(proved.invocations, parent) ||
                         invocation->getParentRegion() != &parent.getNormalBody())) ||
@@ -439,7 +458,8 @@ std::optional<bool> Body::controlFlow(mlir::Operation & operation, mlir::Block &
             return fail("DOM URI invocation requires exact call and unused catch payload");
         }
         const bool parses = hasKind(call.getCallee(), Kind::jsonParse);
-        // Reserve before nested invokes look this parent up.
+        // Record this invoke before visiting, so nested invokes find it as
+        // their proved parent.
         proved.invocations.push_back(invocation);
         if (!visit(called, depth + 1, frame)) { return false; }
         values[normal.getArgument(0)] = parses ? Kind::json : Kind::string;

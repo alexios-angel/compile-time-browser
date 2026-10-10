@@ -1,29 +1,34 @@
-#pragma once
-// PHASE 55'S EFFECT VOCABULARY - the three things an operand position can do to
-// an object, and the places an escaping object can go.
+//===- CTJSEscapeEffects.h - Escape-analysis effects ------------*- C++ -*-===//
 //
-// The sinks-and-carriers table itself is NOT here. It is in CTJSOps.td, as an
+// Escape-analysis effects: the three things an operand position can do to an
+// object (sink, carry, boxed site), and the destinations an escaping object
+// can reach.
+//
+// The sinks-and-carriers table itself is not here. It is in Ops/*.td, as an
 // Arg<..., [CTJS_Sink...]> decorator beside the operand it describes, and this
-// header only names the C++ classes those decorators expand to - the same
-// split mlir/Interfaces/SideEffectInterfaces.h makes for MemoryEffects, whose
-// Read/Write/Allocate/Free are four empty structs and whose table is every
-// [MemRead] in every dialect's .td. Part 23 §1: the table is where every
-// soundness bug will live, so it lives where a wrong row is a .td diff.
+// header only names the C++ classes those decorators expand to. That is the
+// same split mlir/Interfaces/SideEffectInterfaces.h makes for MemoryEffects,
+// whose Read/Write/Allocate/Free are four empty structs and whose table is
+// every [MemRead] in every dialect's .td. The table is where soundness bugs
+// live, so it is kept in the .td files, where a wrong row shows up as a
+// one-line diff.
 //
-// A CUSTOM EffectOpInterfaceBase, NOT MemoryEffects. Canonicalize, CSE and DCE
-// consult MemoryEffectOpInterface and nothing else, so nothing MLIR does reads
-// this; ctcompile_lit is the proof and stays byte-identical.
+// These use a custom EffectOpInterfaceBase, not MemoryEffects. Canonicalize,
+// CSE and DCE consult only MemoryEffectOpInterface, so no MLIR pass reads
+// these effects and the lit test output is unchanged by them.
 //
-// THE REASON RIDES AS THE RESOURCE. §2.3 of the design wrote CTJS_Sink with no
-// reason attached, and the verdict needs one per operand - `returned` and
-// `stored` get different owners in 55B. A SideEffect decorator has exactly
-// one per-instance slot that names a C++ class, the Resource, and a Resource
-// is by definition "what the effect applies to": for an escape that IS the
-// destination - the caller's frame, the heap, the globals table, a callee.
-// So each destination below is a Resource whose getName() is the spelling of
-// the matching CTNative_EscapeReason case, and the analysis turns it back into
-// the enum with symbolizeEscapeReason. A route with a name the enum does not
-// know fails the unit test by name.
+// The escape reason is carried as the effect's Resource. The analysis needs a
+// reason per operand (`returned` and `stored` lead to different owners), and a
+// SideEffect decorator has exactly one per-instance slot that names a C++
+// class: the Resource, which for an escape is its destination (the caller's
+// frame, the heap, the globals table, a callee). So each route below is a
+// Resource whose getName() is the spelling of the matching
+// CTNative_EscapeReason case, and the analysis maps it back with
+// symbolizeEscapeReason. A route the enum does not know fails the unit test.
+//
+//===----------------------------------------------------------------------===//
+
+#pragma once
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 
 #include "llvm/ADT/StringRef.h"
@@ -45,13 +50,14 @@ struct Effect : public mlir::SideEffects::Effect {
 /// with the reason the instance's resource names.
 struct Sink : public Effect::Base<Sink> {};
 
-/// CARRY: the result may BE the operand's object (ctjs.iterable's array arm
+/// CARRY: the result may be the operand's object (ctjs.iterable's array arm
 /// returns the same array). The result's alias set includes the operand's.
 struct Carry : public Effect::Base<Carry> {};
 
-/// BOXED-SITE, on a RESULT: an allocating operation the MVP does not track,
-/// claimed `escapes(reason)` so the oracle reports it as backlog rather than
-/// as unclaimed. The resource names the reason.
+/// BOXED-SITE, on a result: an allocation the escape analysis does not track
+/// yet. It is claimed `escapes(reason)` so the escape oracle
+/// (tools/check/escape-oracle.py) lists it as known untracked work rather than
+/// as an unclaimed site. The resource names the reason.
 struct BoxedSite : public Effect::Base<BoxedSite> {};
 
 inline bool Effect::classof(const mlir::SideEffects::Effect * effect) {
@@ -59,7 +65,7 @@ inline bool Effect::classof(const mlir::SideEffects::Effect * effect) {
 }
 
 /// Where an escaping object goes, one resource per CTNative_EscapeReason case
-/// an operand or result can name. getName() IS the enum case's spelling.
+/// an operand or result can name. getName() is the enum case's spelling.
 #define CTJS_ESCAPE_ROUTE(Name, spelling)                                                          \
     struct Name final : public mlir::SideEffects::Resource::Base<Name> {                           \
         llvm::StringRef getName() const final { return spelling; }                                 \
@@ -76,6 +82,8 @@ CTJS_ESCAPE_ROUTE(AccessorDefined, "accessor_defined")
 // The boxed-site reasons, named only by a result decorator.
 CTJS_ESCAPE_ROUTE(Arguments, "arguments")
 CTJS_ESCAPE_ROUTE(RuntimeArray, "runtime_array")
+// `phase59`: closures and cells, which the escape analysis does not track yet.
+// The name is historical and must match the CTNative_EscapeReason case.
 CTJS_ESCAPE_ROUTE(Phase59, "phase59")
 CTJS_ESCAPE_ROUTE(NotTracked, "not_tracked")
 #undef CTJS_ESCAPE_ROUTE

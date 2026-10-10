@@ -1,3 +1,11 @@
+//===- CTNativeTypes.cpp - ctnative dialect types and their verifier ------===//
+//
+// Instantiates the TableGen-generated ctnative types (storage, parsers,
+// printers), registers them with the dialect, and defines the one hand-written
+// type verifier, VariantType::verify.
+//
+//===----------------------------------------------------------------------===//
+
 #include "ctcompile/CTNative/IR/CTNativeTypes.h"
 
 #include "ctcompile/CTNative/IR/CTNativeDialect.h"
@@ -7,9 +15,9 @@
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/TypeSwitch.h"
 
-// The generated enums first: four of the eighteen types take one as a parameter,
-// and EnumParameter's parser and printer name symbolizeNumKind /
-// stringifyNumKind by their unqualified spelling inside this namespace.
+// The generated enums first: some types take an enum parameter, and
+// EnumParameter's parser and printer name symbolizeNumKind / stringifyNumKind
+// by their unqualified spelling inside this namespace.
 #include "ctcompile/CTNative/IR/CTNativeEnums.cpp.inc"
 
 // Then the storage, parsers and printers. Nothing hand-written: the dialect
@@ -29,19 +37,19 @@ void CTNativeDialect::registerTypes() {
         >();
 }
 
-// THE ONLY TYPE WITH A VERIFIER, AND IT ENFORCES A CANONICAL FORM RATHER THAN
-// A WELL-FORMEDNESS RULE.
-//
-// Every clause below rejects a type that is a SECOND SPELLING of one that
-// already exists: `variant` nests, `bottom` and `opt` lift out of a union,
-// `json` and `boxed` absorb it. A lattice with two spellings for one element
-// does not have a working `==`, and `meet` compares types with `==` in three
-// places - the fast path, the dedupe, and the caller's fixpoint check. So this
-// is not tidiness; it is the invariant the meet's termination rests on.
-//
-// It fires on hand-written IR, which is where a wrong variant can come from:
-// `meet` constructs only canonical ones. ctcompile/test/CTNative/IR/variant-form.mlir
-// is one `expected-error` per clause.
+/// The only ctnative type with a verifier. It enforces a canonical form rather
+/// than a well-formedness rule.
+///
+/// Every clause below rejects a type that is a second spelling of one that
+/// already exists: `variant` nests, `bottom` and `opt` lift out of a union,
+/// `json` and `boxed` absorb it. A lattice with two spellings for one element
+/// does not have a working `==`, and `meet` compares types with `==` in three
+/// places: the fast path, the dedupe, and the caller's fixpoint check. So the
+/// meet's termination depends on this invariant.
+///
+/// It fires on hand-written IR, which is where a wrong variant can come from:
+/// `meet` constructs only canonical ones. ctcompile/test/CTNative/IR/variant-form.mlir
+/// has one `expected-error` per clause.
 ::mlir::LogicalResult VariantType::verify(
     ::llvm::function_ref<::mlir::InFlightDiagnostic()> emitError,
     ::llvm::ArrayRef<::mlir::Type> alternatives) {

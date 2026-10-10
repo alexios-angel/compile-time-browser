@@ -1,34 +1,34 @@
-// PHASE 54A - WHAT TYPE IS THIS VALUE, ANSWERED STATICALLY AND CHECKED AGAINST
-// A RUNNING INTERPRETER.
+//===- TypeInference.h - Static types for ctjs values -----------*- C++ -*-===//
 //
-// Every phase from 55 onward consumes this: escape analysis needs to know what
-// it is proving a bound on, structification needs to know a field's type, and
-// the native backend refuses any function whose values it cannot name. So the
-// analysis is not the deliverable - the analysis TOGETHER WITH the oracle that
-// checks it is, and part 24 says so: "An analysis nobody can check is a
-// liability."
+// Static type inference for ctjs values, checked against a running
+// interpreter.
 //
-// THE SHAPE IS UPSTREAM'S. A sparse forward dataflow analysis over SSA values,
-// on MLIR's DataFlowFramework, so the fixpoint, the worklist, the block
-// argument joins and the dead-code interaction are all upstream's problem. Our
-// contribution is the transfer function - one switch over ctjs operations
-// stating what JavaScript guarantees about each one's result - and the lattice
-// it moves in, which is CTNativeLattice.h's.
+// Escape analysis, structification (objects lowered to C++ structs) and the
+// native backend all consume these types; the native backend refuses any
+// function whose values it cannot type. Every claim made here is checked
+// against the types the interpreter actually recorded, by
+// tools/check/type-oracle.py and ctcompile/test/Analysis/Types/Oracle/.
 //
-// TWO WORDS FOR ONE OPERATION, AND THEY COLLIDE. MLIR's framework calls the
-// binary lattice operation `join`; ctnative calls it `meet`. THEY ARE THE SAME
-// FUNCTION HERE. CTNativeLattice.h explains the naming: ctnative orders the
-// lattice bottom-to-top as bottom -> concrete -> boxed, so "the smallest type
-// correct for both" is a JOIN in that ordering and is called `meet` for the
-// lattice-theory reason that it is the greatest lower bound in the ordering by
-// PRECISION. Nothing here may introduce a second rule; TypeValue::join simply
-// calls ctnative::meet.
+// The analysis is a sparse forward dataflow analysis over SSA values on MLIR's
+// DataFlowFramework, which supplies the fixpoint, the worklist, block-argument
+// joins and dead-code handling. This file adds the transfer function (one
+// switch over ctjs operations stating what JavaScript guarantees about each
+// result) and uses the lattice from CTNativeLattice.h.
 //
-// SOUNDNESS IS ABSOLUTE AND PRECISION IS A BACKLOG. A transfer function that
-// answers `num<i32>` for a value the interpreter observed as 1.5 is a DEFECT,
-// and Phase 54B's oracle names it. A transfer function that answers `boxed`
-// for a value that was always a string is merely disappointing. When the two
-// are in tension the answer is `boxed`, every time.
+// Two names for one operation: MLIR's framework calls the binary lattice
+// operation `join`; ctnative calls it `meet`. They are the same function here.
+// CTNativeLattice.h explains the naming: ctnative orders the lattice bottom to
+// top as bottom -> concrete -> boxed, so "the smallest type correct for both"
+// is a join in that order, and is called `meet` because it is the greatest
+// lower bound when ordered by precision. Nothing here may add a second rule;
+// TypeValue::join just calls ctnative::meet.
+//
+// Soundness is required; precision is best-effort. Answering `num<i32>` for a
+// value the interpreter observed as 1.5 is a bug, and the type oracle reports
+// it. Answering `boxed` for a value that was always a string is only
+// imprecise. When the two conflict, answer `boxed`.
+//
+//===----------------------------------------------------------------------===//
 #ifndef CTCOMPILE_CTNATIVE_ANALYSIS_TYPEINFERENCE_H
 #define CTCOMPILE_CTNATIVE_ANALYSIS_TYPEINFERENCE_H
 
@@ -51,33 +51,32 @@ namespace ctcompile::ctnative {
 class OwnedGlobalRoots;
 class DOMEntryAnalysis;
 
-/// PHASE 59 SLICE 2 STEP 3: THE ATTRIBUTE THAT SAYS A CARRIED BINDING'S
-/// HOISTED `undefined` CANNOT BE READ.
+/// Attribute meaning a carried binding's hoisted `undefined` can never be read.
 ///
-/// `--ctnative-lower-to-emitc`'s closure lift writes it onto a
-/// `ctjs.create_cell` it also marked `ctnative.carried` when one
-/// `ctjs.cell_set` of that box properly dominates every read of the binding -
-/// every `ctjs.cell_get` in the owning frame, and every CALL of every closure
-/// that captured it. `cellTypeOf` then joins the WRITES alone and leaves the
-/// cell's initial out, which is what takes `var n = 0; function tick() { n = n
-/// + 1; }` from `opt<num>` to `num`.
+/// The closure lift in `--ctnative-lower-to-emitc` sets it on a
+/// `ctjs.create_cell` (already marked `ctnative.carried`) when one
+/// `ctjs.cell_set` of that cell properly dominates every read of the binding:
+/// every `ctjs.cell_get` in the owning frame and every call of every closure
+/// that captured it. `cellTypeOf` then joins only the writes, dropping the
+/// cell's initial value, so `var n = 0; function tick() { n = n + 1; }` types
+/// as `num` rather than `opt<num>`.
 ///
-/// THE PROOF IS THE LIFT'S AND NOT THIS ANALYSIS'S, deliberately. It is a
-/// dominance question over the `ctjs.call`s of the capturing closures, and
-/// `lift()` erases every one of them before the solver runs - so the only
-/// place it can be asked is where slice 2 step 1 already asks it. Spelled once,
+/// The lift proves this, not this analysis, on purpose: it is a dominance
+/// question over the `ctjs.call`s of the capturing closures, and `lift()`
+/// erases those calls before the solver runs, so it can only be asked where
+/// the lift already decides which calls to rewrite. The name is spelled once,
 /// here, because the writer and the reader are in different translation units
-/// and a mistyped attribute name is a silent narrowing that nothing verifies.
+/// and a mistyped attribute name is a silent narrowing nothing would catch.
 inline constexpr llvm::StringLiteral kAssignedBeforeRead = "ctnative.assigned_before_read";
 
-// One SSA value's inferred type, as a lattice element.
-//
-// A NULL TYPE IS "NOTHING KNOWN YET" AND IS NOT bottom. The framework
-// constructs every lattice element before it visits anything that could define
-// it, and that initial state has to be the identity so the first real answer
-// replaces it rather than joining with it. ctnative::meet already treats a null
-// Type as absent - `meet(Type(), t)` is `t` - so the identity is free and this
-// class does not re-implement it.
+/// One SSA value's inferred type, as a lattice element.
+///
+/// A null type means "nothing known yet" and is not bottom. The framework
+/// constructs every lattice element before it visits anything that could
+/// define it, and that initial state has to be the identity so the first real
+/// answer replaces it rather than joining with it. ctnative::meet already
+/// treats a null Type as absent (`meet(Type(), t)` is `t`), so this class gets
+/// the identity for free.
 class TypeValue {
 public:
     TypeValue() = default;
@@ -86,8 +85,9 @@ public:
     [[nodiscard]] mlir::Type getType() const { return type_; }
     [[nodiscard]] bool isUninitialized() const { return type_ == nullptr; }
 
-    /// THE JOIN, WHICH IS ctnative::meet. See the file comment: the two names
-    /// describe the same operation and this is the only place they touch.
+    /// The framework's join, which is ctnative::meet. See the file comment: the
+    /// two names describe the same operation and this is the only place they
+    /// meet.
     static TypeValue join(const TypeValue & lhs, const TypeValue & rhs) {
         return TypeValue{meet(lhs.type_, rhs.type_)};
     }
@@ -102,16 +102,16 @@ private:
 
 using TypeLattice = mlir::dataflow::Lattice<TypeValue>;
 
-// The analysis itself. Load it into a solver alongside BOTH DeadCodeAnalysis
-// AND SparseConstantPropagation, and neither is optional:
-//
-//   * without DeadCodeAnalysis the framework has no predecessor information,
-//     so block arguments never receive the operands branched into them;
-//   * without SparseConstantPropagation, DeadCodeAnalysis cannot decide which
-//     successor of a branch is live - it asks for each branch operand's
-//     ConstantValue lattice, finds it uninitialized, and marks NO successor
-//     live. Every op past the first branch is then never visited. The unit
-//     test has a multi-block row so this cannot regress quietly.
+/// The analysis itself. Load it into a solver together with both
+/// DeadCodeAnalysis and SparseConstantPropagation; neither is optional:
+///
+///   * without DeadCodeAnalysis the framework has no predecessor information,
+///     so block arguments never receive the operands branched into them;
+///   * without SparseConstantPropagation, DeadCodeAnalysis cannot decide which
+///     successor of a branch is live: it asks for each branch operand's
+///     ConstantValue lattice, finds it uninitialized, and marks no successor
+///     live, so no op past the first branch is ever visited. The unit test has
+///     a multi-block case so this cannot regress quietly.
 class TypeInference : public mlir::dataflow::SparseForwardDataFlowAnalysis<TypeLattice> {
 public:
     explicit TypeInference(mlir::DataFlowSolver & solver,
@@ -123,102 +123,104 @@ public:
                                        llvm::ArrayRef<const TypeLattice *> operands,
                                        llvm::ArrayRef<TypeLattice *> results) override;
 
-    /// An invoke unwind's payload is produced by the call, not forwarded from
-    /// its unavailable normal result. Infer it from live throw operands in a
-    /// bounded direct-callee query. Other non-forwarded region arguments keep
-    /// the framework's conservative entry state. This is not native admission.
+    /// The payload on an invoke's unwind edge is produced by the call, not
+    /// forwarded from its (unavailable) normal result, so it is inferred from
+    /// the throw operands of the direct callee in a bounded query. Other
+    /// non-forwarded region arguments keep the framework's conservative entry
+    /// state. A type here does not mean the native backend accepts the code.
     void visitNonControlFlowArguments(
         mlir::Operation * op, const mlir::RegionSuccessor & successor,
         mlir::ValueRange nonSuccessorInputs,
         llvm::ArrayRef<TypeLattice *> nonSuccessorInputLattices) override;
 
-    /// THE CLOSED WORLD FOR GLOBALS (part 24 Phase 62½-A). A whole-program
+    /// Globals are typed under a closed-world assumption. A whole-program
     /// compile sees every `ctjs.store_global` of a name, so a
     /// `ctjs.load_global` of that name is the join of everything ever stored
-    /// under it - and the framework re-visits the load when any of those
-    /// stores' operands change, because the load subscribes to them. Three
-    /// cases keep it sound:
+    /// under it, and the framework revisits the load when any of those stores'
+    /// operands change, because the load subscribes to them. Three cases keep
+    /// it sound:
     ///   * no store anywhere: the name is a builtin (`Math`) or undeclared,
     ///     and the load is `boxed`;
     ///   * any dynamic write to the globals table in the program (a property
     ///     store through `globalThis`/`window`): every load is `boxed`;
-    ///   * otherwise: the join over the stores' operand types and implicit
-    ///     Undefined. A fresh complete owner proof of this exact scalar load's
-    ///     single earlier store removes only the implicit absence. The actual
-    ///     store operand still supplies its type, including pending or boxed.
+    ///   * otherwise: the join over the stores' operand types and an implicit
+    ///     Undefined. When the owned-globals proof shows this scalar load has
+    ///     exactly one earlier store, the implicit Undefined is dropped; the
+    ///     store's operand still supplies its type, even if pending or boxed.
     /// The index is built once, in initialize(), from the module being solved.
     mlir::LogicalResult initialize(mlir::Operation * top) override;
 
-    /// THE CLOSED SHAPE (part 24 Phase 56A, the typing half). An object
-    /// literal whose every use is a `get_property` or `set_property` with a
-    /// constant string key has a shape nothing else can change: no dynamic
-    /// key, no delete, no enumeration, no escape - it never reaches anything
-    /// that could add or remove a field. For such an object a read of key
-    /// `k` is the join of every store of `k` to it, starting from undefined
-    /// because nothing orders the read after a store. Any other use of the
-    /// object - a call, a return, a dynamic key, a `delete`, `in`, spread -
-    /// makes its shape open and every read of it `boxed`.
+    /// Whether `object` is a literal with a closed shape. An object literal
+    /// whose every use is a `get_property` or `set_property` with a constant
+    /// string key has a shape nothing else can change: no dynamic key, no
+    /// delete, no enumeration, no escape, so it never reaches anything that
+    /// could add or remove a field. For such an object a read of key `k` is
+    /// the join of every store of `k` to it, starting from undefined because
+    /// nothing orders the read after a store. Any other use of the object (a
+    /// call, a return, a dynamic key, `delete`, `in`, spread) makes its shape
+    /// open and every read of it `boxed`.
     static bool hasClosedShape(mlir::Value object);
 
-    /// THE RECEIVER IS A PARAMETER (part 24, the receiver carrier). A method
-    /// whose `this` uses are all constant-key property accesses is lifted:
-    /// `--ctnative-lower-to-emitc` marks the target `ctnative.receiver` and
-    /// each of its calls with the same attribute, and `%arg0` - the entry
-    /// block's receiver - then names the object literal the call passes. So a
-    /// receiver argument has a closed shape by the lift's own proof, and
-    /// `this.x` is the same field read as `o.x` in the caller.
+    /// Whether `v` is the lifted `this` of a method. A method whose `this` uses
+    /// are all constant-key property accesses is lifted:
+    /// `--ctnative-lower-to-emitc` marks the target and each of its calls
+    /// `ctnative.receiver`, and `%arg0` (the entry block's receiver) then
+    /// names the object literal the call passes. So a receiver argument has a
+    /// closed shape by the lift's own proof, and `this.x` is the same field
+    /// read as `o.x` in the caller.
     ///
-    /// TRUE FOR `%arg0` OF A `ctnative.receiver` FUNCTION, with the same use
-    /// loop as a literal: the argument is closed only if every use of it is a
-    /// constant-key get or set, or the receiver of another lifted method call.
+    /// True for `%arg0` of a `ctnative.receiver` function, checked with the
+    /// same use loop as a literal: the argument is closed only if every use of
+    /// it is a constant-key get or set, or the receiver of another lifted
+    /// method call.
     static bool isReceiverArgument(mlir::Value v);
 
-    /// AND AN ARGUMENT IS A PARAMETER TOO. `f(o)` where every call passes a
-    /// closed literal there and the parameter is only ever read through
-    /// constant keys is lifted the same way: the lowering marks the target and
-    /// each of its calls `ctnative.object_args` with the ENTRY-BLOCK indices
-    /// that carry a `ctn_x *`. Nothing in the receiver carrier was about
-    /// operand 0, so this is the same row of the table one operand along.
+    /// Whether `v` is a lifted object parameter. An ordinary argument is
+    /// lifted the same way as a receiver: for `f(o)` where every call passes a
+    /// closed literal and the parameter is only read through constant keys,
+    /// the lowering marks the target and each of its calls
+    /// `ctnative.object_args` with the entry-block indices that carry a
+    /// `ctn_x *`.
     ///
-    /// TRUE FOR ANY ENTRY ARGUMENT THE LIFT LISTED, `%arg0` included via
-    /// isReceiverArgument - so `hasClosedShape` and `groupReceivers` ask this
-    /// one question rather than two.
+    /// True for any entry argument the lift listed, and for `%arg0` via
+    /// isReceiverArgument, so `hasClosedShape` and `groupReceivers` ask one
+    /// question rather than two.
     static bool namesAnObjectParameter(mlir::Value v);
 
-    /// THE VALUES THAT NAME ONE OBJECT, once `this` is a parameter. A method
-    /// lifted onto two literals of one shape has ONE `%arg0` standing for
-    /// both, and `this.x = 5` inside it is a store the caller's `o.x` has to
-    /// see - so the field index, the shape census and the emitted class all
-    /// have to work over the GROUP and not over one value. Built by one walk
-    /// of `top`: every closed literal and every receiver argument is a node,
-    /// and each `ctnative.receiver` call joins the callee's `%arg0` to the
-    /// receiver it passes. Every member maps to the whole group, itself
-    /// included, so a singleton literal is a group of one and nothing else in
-    /// the pipeline needs a special case for it.
+    /// Groups the values that name one object once `this` is a parameter. A
+    /// method lifted onto two literals of one shape has one `%arg0` standing
+    /// for both, and `this.x = 5` inside it is a store the caller's `o.x` has
+    /// to see, so the field index, the shape census and the emitted class all
+    /// work over the group rather than one value. Built by one walk of `top`:
+    /// every closed literal and every receiver argument is a node, and each
+    /// `ctnative.receiver` call joins the callee's `%arg0` to the receiver it
+    /// passes. Every member maps to the whole group, itself included, so a
+    /// singleton literal is a group of one and needs no special case.
     ///
-    /// ONE FUNCTION, TWO CALLERS: TypeInference::initialize() indexes the
-    /// field stores with it, and the EmitC lowering's shape census collects a
-    /// class's fields with it. A second copy of this walk is a second chance
-    /// for the two to disagree about what a field is.
+    /// Both TypeInference::initialize() (to index field stores) and the EmitC
+    /// lowering's shape census (to collect a class's fields) call this one
+    /// function, so they cannot disagree about what a field is.
     static llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 2>> groupReceivers(
         mlir::Operation * top);
 
-    /// THE DENSE ARRAY (part 24 Phase 57A, the typing half). An array literal
-    /// whose uses preserve density and local lifetime can use `std::vector`.
-    /// Appends, index/length reads and complete current own-element overwrite
-    /// proofs and literal non-growing length stores qualify. SCF selections and
-    /// certified counted loops borrow entry-block literals after a complete census.
-    /// Other transport, sparse writes, deletion and escape open the site.
+    /// Whether `array` is a dense array literal that can be a `std::vector`:
+    /// its uses keep it dense (no holes) and local. Allowed uses are appends,
+    /// index and length reads, overwrites of elements proved to exist, and
+    /// literal length stores that do not grow it. `scf` selections and checked
+    /// counted loops may borrow an entry-block literal once all its uses are
+    /// checked. Any other transport, a sparse write, deletion or escape
+    /// disqualifies the site.
     ///
-    /// For such an array a read of an index is the join of every appended/stored
-    /// value, starting from undefined - because an index nothing appended,
-    /// and every index past the end, reads `undefined` - and a read of
-    /// `length` is a Number.
+    /// For such an array a read of an index is the join of every appended or
+    /// stored value, starting from undefined (an index nothing appended, and
+    /// every index past the end, reads `undefined`), and a read of `length` is
+    /// a Number.
     static bool isDenseVectorSite(mlir::Value array);
 
-    /// Complete local ownership group: owning literals and their SCF-carried
-    /// borrows. Empty on any unknown origin/use or incomplete contents proof.
-    /// Recomputed from current IR; no annotations authorize ownership.
+    /// The local ownership group of `array`: the owning literals and the
+    /// values that borrow them through `scf` control flow. Empty when any
+    /// origin or use is unknown or the contents proof is incomplete. Always
+    /// recomputed from the current IR; no annotation grants ownership.
     static llvm::SmallVector<mlir::Value, 4> denseVectorAliases(mlir::Value array);
 
     /// A value that names a shared binding the closure lift made a
@@ -228,10 +230,10 @@ public:
     /// read and write the same storage, so both answer the same type.
     static bool namesACarriedCell(mlir::Value v);
 
-    /// The values that name ONE carried binding: the cell, and every capture
+    /// The values that name one carried binding: the cell, and every capture
     /// parameter reached from it through a `ctnative.cell_args` operand of a
-    /// `ctjs.call_direct`. Built the way groupReceivers is and for the same
-    /// reason - a write through the pointer is a write the box has to report.
+    /// `ctjs.call_direct`. Built like groupReceivers and for the same reason:
+    /// a write through the pointer is a write the cell has to report.
     static llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 4>> groupCells(
         mlir::Operation * top);
     /// The native type a Map key/read/write tag (mapScalarTag or
@@ -239,18 +241,19 @@ public:
     static mlir::Type mapTagType(mlir::MLIRContext * c, llvm::StringRef tag);
 
 private:
-    /// The one direct call protected by invoke has a checked normal-only
-    /// result. Join live return operands after a fresh bounded completion
-    /// query, without treating throw exits as returns. All ordinary calls,
-    /// including calls in either continuation, keep upstream conservative
-    /// call inference. This does not authorize native exception admission.
+    /// For the one direct call wrapped in an invoke, the result on the normal
+    /// path is the join of the callee's live return operands, found by a
+    /// bounded query that does not treat throw exits as returns. Every other
+    /// call, including calls in either continuation, keeps upstream's
+    /// conservative call inference. A type here does not mean the native
+    /// backend accepts exceptions.
     mlir::LogicalResult visitCallOperation(
         mlir::CallOpInterface call,
         llvm::ArrayRef<const mlir::dataflow::AbstractSparseLattice *> operands,
         llvm::ArrayRef<mlir::dataflow::AbstractSparseLattice *> results) override;
 
-    // A live proof supplied by the consumer, never reconstructed from a
-    // diagnostic annotation. The module must remain unchanged during solving.
+    // Proofs supplied by the caller, never rebuilt from diagnostic annotations.
+    // The module must not change while the solver runs.
     const OwnedGlobalRoots * ownedRoots_;
     const DOMEntryAnalysis * domEntry_;
     llvm::StringMap<llvm::SmallVector<mlir::Value, 4>> globalStores_;
@@ -260,48 +263,51 @@ private:
     // closed-shape objects only; built in initialize().
     llvm::DenseMap<std::pair<mlir::Value, llvm::StringRef>, llvm::SmallVector<mlir::Value, 2>>
         fieldStores_;
-    // Owning object families share a scalar field schema, not runtime identity.
+    // (field group id, key) -> values stored. Owned object families share a
+    // scalar field schema, not run-time identity.
     llvm::DenseMap<std::pair<int64_t, llvm::StringRef>, llvm::SmallVector<mlir::Value, 2>>
         identityFieldStores_;
-    // Fresh bounded per-read facts, reconstructed from this immutable module
-    // at initialize(), independently of schema groups and host reports.
+    // Reads whose identity field is proved assigned before the read
+    // (queryNativeObjectFieldPresence), computed in initialize() independently
+    // of schema groups and host reports.
     llvm::DenseSet<mlir::Operation *> assignedIdentityFields_;
-    /// PHASE 59 SLICE 2 STEP 3, THE FIELD HALF: the same key, indexed by the
-    /// STORE'S OWN object value and holding the `ctjs.set_property` OPERATIONS
-    /// rather than the values they wrote.
+    /// Field stores indexed by the exact object value written to (not its alias
+    /// group), holding the `ctjs.set_property` operations rather than the
+    /// values they wrote. Used to decide whether a store dominates a read.
     ///
-    /// NOT OVER THE GROUP, AND THAT IS THE WHOLE SOUNDNESS OF IT. `fieldStores_`
-    /// above is over the group because a store made through a lifted method's
-    /// `%arg0` is a store the caller's read has to SEE - joining more values in
-    /// is always safe. Ordering is the opposite: a store to one member of a
-    /// group says nothing about when another member's field was written, and
-    /// `{}` and `{n: 1}` reached through one parameter are one group. So this
-    /// index is keyed on the exact SSA value, which is one object.
+    /// This must not be over the group; soundness depends on it. `fieldStores_`
+    /// is over the group because a store made through a lifted method's
+    /// `%arg0` is one the caller's read has to see, and joining more values is
+    /// always safe. Ordering is the opposite: a store to one member of a group
+    /// says nothing about when another member's field was written, and `{}`
+    /// and `{n: 1}` reached through one parameter are one group. So this index
+    /// is keyed on the exact SSA value, which is one object.
     llvm::DenseMap<std::pair<mlir::Value, llvm::StringRef>, llvm::SmallVector<mlir::Operation *, 2>>
         fieldStoreSites_;
-    // Complete direct call sites for closed private object parameters. Every
-    // member's uses preserve its shape, and callable values cannot escape.
-    // Residual method stores qualify only when their whole closed alias group
-    // has no remaining read of the callable's key after method lifting.
-    // Presence still checks each actual operand's stores in its own caller.
+    // Every direct call site of each closed private object parameter. Every
+    // member's uses keep its shape, and callable values cannot escape. A
+    // method store left after lifting counts only when no member of its closed
+    // alias group still reads the callable's key. Field presence is still
+    // checked against each actual operand's stores in its own caller.
     llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Operation *, 2>> objectParameterCallSites_;
     /// For the dominance question above. Built lazily per region by MLIR and
     /// valid for the whole solve, because nothing mutates the IR while the
-    /// solver runs - the closure lift and every rewrite in
+    /// solver runs: the closure lift and every rewrite in
     /// `--ctnative-lower-to-emitc` happen before it is loaded.
     mlir::DominanceInfo dominance_{nullptr};
     // array value -> everything appended or stored into it, for
     // dense vector sites only; built in initialize() beside fieldStores_.
     llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 4>> appends_;
 
-    // Direct reads whose every current path names an existing own element.
-    // Origins come only from a complete, bounded contents proof during this solve.
+    // Direct array reads that hit an existing own element on every path, and
+    // the values they can return, from a bounded contents proof in this solve.
     llvm::DenseMap<mlir::Operation *, llvm::SmallVector<mlir::Value, 2>> arrayReadValues_;
 
-    // Proved Map schema families: every queried/stored key and stored value,
-    // including through set aliases and closed parameters, captures and returns.
-    // A live exact key proof applies only at its Map operation. Keep the
-    // original value's broader type everywhere else, including other calls.
+    // Per proved Map schema family (nativeMapGroup): every key queried or
+    // stored and every value stored, including through `set` aliases and
+    // closed parameters, captures and returns. An exact key type proved at one
+    // Map operation applies only there; everywhere else, including other
+    // calls, the value keeps its broader type.
     llvm::DenseMap<int64_t, llvm::SmallVector<std::pair<mlir::Value, mlir::Type>, 4>> mapKeys_;
     llvm::DenseMap<int64_t, llvm::SmallVector<mlir::Value, 4>> mapValues_;
     mlir::Type mapTypeOf(mlir::Operation * op, mlir::Value map);
@@ -315,68 +321,68 @@ private:
     /// each. A value not visited yet contributes nothing now and revisits `op`.
     mlir::Type joinLattices(mlir::Operation * op, mlir::ValueRange values, mlir::Type seed);
 
-    /// PHASE 59 SLICE 2 STEP 2: what a shared binding holds. The closure lift
-    /// turns a `ctjs.create_cell` it can make a frame-local variable into
-    /// `ctnative.carried` and hands its ADDRESS to each lifted call, so a
-    /// write of that binding can be in a different `ctjs.func` from the box.
-    /// This index is over the whole GROUP of values that name one box - the
-    /// cell and every capture parameter a `ctnative.cell_args` operand reaches
-    /// - which is the receiver grouping one operand along, and for the same
-    /// reason: a store made through the pointer is a store the owning frame's
-    /// read has to see. Keyed by every member, so either end asks once.
+    /// What a shared (carried) binding holds. The closure lift marks a
+    /// `ctjs.create_cell` it can make a frame-local variable
+    /// `ctnative.carried` and passes its address to each lifted call, so a
+    /// write of that binding can be in a different `ctjs.func` from the cell.
+    /// This index is over the whole group of values that name one cell (see
+    /// groupCells), for the same reason as groupReceivers: a store made
+    /// through the pointer is one the owning frame's read has to see. Keyed by
+    /// every member, so either end asks once.
     llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 4>> cellStores_;
 
-    /// PHASE 59 SLICE 2 STEP 3, THE FIELD HALF: does a store of `key` to THIS
-    /// object come before this read on every path that reaches it?
+    /// Whether a store of `key` to this exact object precedes `read` on every
+    /// path that reaches it.
     ///
     /// A closed-shape field read is the join over the stores of that key
-    /// STARTING FROM `undefined`, because nothing orders a read after a store -
+    /// starting from `undefined`, because nothing orders a read after a store,
     /// so `var p = { n: 8 }; return p.n;` is `opt<num>` and a
     /// `ctjs.store_global` of it is refused for a `nan` it can never print.
-    /// When a `ctjs.set_property` of the same key, on the SAME SSA value, in
-    /// the SAME `ctjs.func`, properly dominates the read, every execution that
+    /// When a `ctjs.set_property` of the same key, on the same SSA value, in
+    /// the same `ctjs.func`, properly dominates the read, every execution that
     /// reaches the read has already written the field on this object and the
     /// `undefined` seed is dropped.
     ///
-    /// THREE CONDITIONS AND EACH ONE IS LOAD-BEARING. The same VALUE, because
-    /// a store to another member of the alias group is a store to another
-    /// object. The same FUNCTION, because `builtin.module`'s body is a graph
-    /// region in which `properlyDominates` answers yes for every pair, so a
-    /// store inside a lifted method would "dominate" a read in its caller.
-    /// And DOMINANCE and not program order, so a store on one arm of an `if`
-    /// or inside a loop body does not count - `read_before_write` in
-    /// native-struct-fixture.js is the read that must keep its `undefined`.
+    /// Each of the three conditions is needed. The same value, because a store
+    /// to another member of the alias group is a store to another object. The
+    /// same function, because `builtin.module`'s body is a graph region in
+    /// which `properlyDominates` answers yes for every pair, so a store inside
+    /// a lifted method would "dominate" a read in its caller. And dominance,
+    /// not program order, so a store on one arm of an `if` or inside a loop
+    /// body does not count: `read_before_write` in
+    /// ctcompile/test/CTNative/Fixtures/Objects/struct.js is the read that must
+    /// keep its `undefined`.
     ///
-    /// THE SEED IS ALL THIS DROPS. The join itself stays over the whole group:
-    /// what the field may HOLD is still everything anyone ever stored in it.
-    /// Owning identity fields use the separate live allocation/Map-alias query
-    /// cached in initialize(); the schema group supplies no ordering evidence.
-    /// A closed private object parameter also drops absence when every actual
-    /// call traces back to a same-function dominating store. Forwarded slots
-    /// require their own complete callable/use census; cycles and the bounded
-    /// walk's cutoff retain absence. Removal is excluded by the closed alias
-    /// census, and every callee write remains in the type join.
+    /// Only the `undefined` seed is dropped. The join itself stays over the
+    /// whole group: what the field may hold is still everything anyone ever
+    /// stored in it. Owned identity fields use the separate allocation and
+    /// Map-alias query cached in initialize(); the schema group gives no
+    /// ordering evidence. A closed private object parameter also drops the seed
+    /// when every actual call traces back to a dominating store in the same
+    /// function. Forwarded slots need their own check of every callable and
+    /// use; cycles and the bounded walk's cutoff keep the seed. Field removal
+    /// is ruled out by the closed-alias check, and every callee write stays in
+    /// the type join.
     bool fieldIsAssignedBefore(mlir::Value object, llvm::StringRef key, mlir::Operation * read);
 
     /// The type a carried binding holds: the join over its initial and every
-    /// value ever assigned to it, anywhere in the program. FROM THE INITIAL
-    /// AND NOT FROM NOTHING - a read on a path that reaches no assignment
-    /// yields what the box was built with, which for a hoisted `var` is
-    /// `undefined`, and claiming otherwise is the one direction this lattice
-    /// cannot undo.
+    /// value ever assigned to it, anywhere in the program. It starts from the
+    /// initial value, not from nothing: a read on a path that reaches no
+    /// assignment yields what the cell was built with, which for a hoisted
+    /// `var` is `undefined`, and claiming otherwise is the one direction this
+    /// lattice cannot undo (unless kAssignedBeforeRead is set).
     mlir::Type cellTypeOf(mlir::Operation * op, mlir::Value cell);
 
-    /// ANYTHING THIS ANALYSIS DID NOT DERIVE IS `boxed`. Function parameters,
-    /// values crossing a call boundary, and every operation the switch does not
-    /// name land here. That is the top of the lattice and it is the safe
-    /// answer - part 24's SUBSET RULE is prove-or-fall-back, and this is the
-    /// fall-back.
+    /// Anything this analysis did not derive is `boxed`: function parameters,
+    /// values crossing a call boundary, and every operation the transfer
+    /// function does not handle. `boxed` is the top of the lattice and always
+    /// safe; the native compiler either proves a type or falls back to it.
     void setToEntryState(TypeLattice * lattice) override;
 };
 
 /// The type this analysis proves for one operation's result, ignoring its
-/// operands - the whole transfer function for the ops whose result type is a
-/// property of the OPERATION rather than of what flowed into it, which in this
+/// operands: the whole transfer function for the ops whose result type is a
+/// property of the operation rather than of what flowed into it, which in this
 /// dialect is nearly all of them.
 ///
 /// Returns a null Type when the operation says nothing, which the caller reads

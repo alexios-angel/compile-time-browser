@@ -1,3 +1,11 @@
+//===- OwnedGlobalRoots.cpp - Owned global roots ----------------*- C++ -*-===//
+//
+// The plain-root case of OwnedGlobalRoots: one object created in the script
+// entry, stored once into one global, with one field written once and only
+// read afterwards. A field set from a factory call is handed to
+// analyzeMethodTable in OwnedGlobalMethods.cpp.
+//
+//===----------------------------------------------------------------------===//
 #include "OwnedGlobalRoots.h"
 
 #include "llvm/ADT/DenseSet.h"
@@ -7,7 +15,7 @@
 
 namespace ctcompile::ctnative {
 namespace {
-// The element `edges` indexes for `key`, or null.
+/// The element `edges` indexes for `key`, or null.
 template <class T>
 const T * indexed(const llvm::DenseMap<mlir::Operation *, unsigned> & edges,
                   llvm::ArrayRef<T> values, mlir::Operation * key) {
@@ -28,8 +36,8 @@ bool OwnedGlobalRoots::spend(unsigned maxSteps, llvm::StringRef why) {
 
 OwnedGlobalRoots::OwnedGlobalRoots(mlir::ModuleOp module, const HostContract & contract,
                                    unsigned maxSteps) {
-    // The complete environment proof is mandatory, even if its diagnostic
-    // reports already contain a usable-looking field edge before a refusal.
+    // The host contract proof must pass in full, even if its reports already
+    // hold a usable-looking field edge before it refused.
     HostContractAnalysis host(module, contract, maxSteps);
     workSteps = host.steps();
     budgetExhausted = host.exhausted();
@@ -158,9 +166,9 @@ OwnedGlobalRoots::OwnedGlobalRoots(mlir::ModuleOp module, const HostContract & c
         refusal = "owned global field census disagrees with the complete host proof";
         return;
     }
-    // Scan every identity use, including otherwise harmless comparisons and
-    // return operations accepted by the broader environment proof. Only this
-    // root binding may publish the allocation; aliases remain that allocation.
+    // Check every use of the object, including comparisons and returns that
+    // the host proof accepts. Only the root binding's store may publish the
+    // object; other uses must be field accesses or roots.
     for (mlir::Value alias : aliases) {
         for (mlir::OpOperand & use : alias.getUses()) {
             if (!spend()) { return; }
@@ -202,8 +210,8 @@ OwnedGlobalRoots::OwnedGlobalRoots(mlir::ModuleOp module, const HostContract & c
     committedEdges[owner] = 0;
     committedEdges[initialization] = 0;
     committedEdges[fieldInitialization] = 0;
-    // Commit only after the complete host proof and the stricter owner census
-    // finish within their shared budget. No partial operation index escapes.
+    // Publish only once every check above has finished within the shared
+    // budget, so no partial index is ever visible.
     checked.push_back({owner, initialization, std::move(loads), fieldInitialization,
                        std::move(reads), slot.binding, slot.property, std::nullopt});
     edges = std::move(committedEdges);

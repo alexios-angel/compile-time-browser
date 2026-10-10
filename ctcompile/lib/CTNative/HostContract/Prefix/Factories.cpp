@@ -1,3 +1,11 @@
+//===- Factories.cpp - Summarise provider factory calls ---------*- C++ -*-===//
+//
+// prefixAnalysis::factory, which summarises a call of a library factory that
+// builds a method table over private Maps, and prefixAnalysis::publication,
+// which records stores of such a table into a host slot the contract names.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Analysis.h"
 
 #include "ctcompile/CTNative/Analysis/ImmutableCaptures.h"
@@ -5,15 +13,21 @@
 
 namespace ctcompile::ctnative::host_detail {
 
+/// Summarises a zero-argument factory call whose body only creates cells,
+/// Maps, object literals and immutable closures, then returns one object
+/// table. Returns that table as an abstract prefix value, or an empty value
+/// (rolling back any objects it created) if any operation falls outside that
+/// model or a cell or Map could escape.
 prefixValue prefixAnalysis::factory(ctjs::CallOp call, ctjs::FuncOp function) {
     if (!followPublication || !call.getArgs().empty() || !function ||
         function.getUpvalueCount() != 0 || !llvm::hasSingleElement(function.getBody()) ||
         function.getBody().front().getNumArguments() != 3) {
         return {};
     }
-    // Build fresh abstract identities for this invocation. Nothing here runs
-    // at compile time: allocation, failure and stores remain in source order.
-    // A failed summary cannot leak partial table contents into the prefix.
+    // Build fresh abstract identities for this call. Nothing here runs at
+    // compile time: allocations, failures and stores stay in source order.
+    // The rollback guard keeps a failed summary from leaving partial tables
+    // in `objects`.
     const auto originalObjects = objects.size();
     bool accepted = false;
     const llvm::scope_exit rollback([&] {
@@ -65,10 +79,10 @@ prefixValue prefixAnalysis::factory(ctjs::CallOp call, ctjs::FuncOp function) {
             tables[id] = made;
             values[made.getResult()] = prefixValue::of(prefixValue::Kind::object, id);
         } else if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(operation)) {
-            // Reuse the independent capture proof: exact source target and
-            // parent, local capture indices, unused receiver/new.target,
-            // no binding writes, forwarding closures or callee publication.
-            // Charge its whole-module scans before asking the shared query.
+            // immutableClosureTarget checks the exact target and parent,
+            // local capture indices, unused receiver and new.target, and no
+            // binding writes, forwarded captures or callee publication.
+            // Charge its six whole-module scans before calling it.
             for (unsigned scan = 0; scan < 6; ++scan) {
                 if (!spend(operationCount)) { return {}; }
             }
@@ -99,8 +113,8 @@ prefixValue prefixAnalysis::factory(ctjs::CallOp call, ctjs::FuncOp function) {
         } else if (auto result = llvm::dyn_cast<ctjs::ReturnOp>(operation)) {
             returned = values.lookup(result.getValue());
         } else if (!llvm::isa<ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::RootOp>(operation)) {
-            // No arbitrary call, descriptor/prototype operation, global
-            // mutation, branch, coercion or exception is summarized.
+            // Anything else (a call, descriptor or prototype operation,
+            // global write, branch, coercion or throw) is not summarised.
             return {};
         }
     }
@@ -108,9 +122,9 @@ prefixValue prefixAnalysis::factory(ctjs::CallOp call, ctjs::FuncOp function) {
         proof.resources.empty()) {
         return {};
     }
-    // Cells cannot escape through an unmodeled path. Even a cell that is not
-    // in the returned table must have only these local uses. Stored Map values
-    // likewise cannot escape separately through a property or return.
+    // No cell may escape through an unmodelled path, including cells the
+    // returned table does not reach. Likewise each Map may only be stored
+    // into these cells, never returned or stored in a property.
     for (const auto & entry : cells) {
         const mlir::Value cell = entry.first;
         for (mlir::OpOperand & use : cell.getUses()) {
@@ -148,8 +162,8 @@ prefixValue prefixAnalysis::factory(ctjs::CallOp call, ctjs::FuncOp function) {
         if (value.kind != prefixValue::Kind::closure) { continue; }
         for (auto [index, capture] : llvm::enumerate(value.made.getUpvalues())) {
             const auto final = cells.find(capture);
-            // A cell's creation-time value is insufficient: its one explicit
-            // store may follow closure creation and replace that resource.
+            // Use the cell's final value, not its initial one: its single
+            // write may come after the closure is created and replace the Map.
             if (final == cells.end() || final->second.kind != prefixValue::Kind::resource ||
                 final->second.object >= proof.resources.size()) {
                 return {};

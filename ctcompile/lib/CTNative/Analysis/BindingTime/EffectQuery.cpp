@@ -1,3 +1,10 @@
+//===- EffectQuery.cpp - Call-precise heap invalidation ---------*- C++ -*-===//
+//
+// Uses per-function effect summaries (Effects.cpp) to invalidate only the
+// heap facts a direct call can write, instead of every tracked heap node. Only
+// valid when closedEffectEnvironment() holds for the module.
+//
+//===----------------------------------------------------------------------===//
 #include "Analysis.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -7,11 +14,16 @@
 #include "llvm/ADT/SmallPtrSet.h"
 
 namespace ctcompile::ctnative::binding_time_detail {
+/// Property names that can reach prototype or accessor machinery are never
+/// treated as plain data fields by effect summaries; this returns false for
+/// them.
 bool safeEffectKey(llvm::StringRef name) {
     return name != "__proto__" && name != "prototype" && name != "constructor" &&
            name != "__defineGetter__" && name != "__defineSetter__";
 }
 
+/// Whether \p call's callee value provably is the function its symbol names,
+/// and it passes an undefined new.target, so the target's summary applies.
 bool effectCalleeMatches(ctjs::CallDirectOp call, mlir::ModuleOp module) {
     if (!ctjs::isUndefinedConstant(call.getNewTarget())) { return false; }
     auto target = call.getTarget();
@@ -34,11 +46,13 @@ bool effectCalleeMatches(ctjs::CallDirectOp call, mlir::ModuleOp module) {
     return static_cast<bool>(ctjs::uniqueFunction(module, *index));
 }
 
+/// True when every operation in the module comes from an allow-list that
+/// cannot reach accessors, reflection or host code, so a call's effects can be
+/// read off its callee's summary. Public functions may take only the three
+/// implicit arguments, because an object or host value passed in from outside
+/// could already carry accessors.
 bool closedEffectEnvironment(mlir::ModuleOp module) {
     bool safe = true;
-    // This proves a closed source universe with the standard initial
-    // prototypes. A public runtime object argument or host value can already
-    // carry accessors, so neither is covered by this first query contract.
     module.walk([&](mlir::Operation * op) {
         if (!safe || op == module.getOperation()) { return; }
         if (auto function = llvm::dyn_cast<ctjs::FuncOp>(op)) {
@@ -104,7 +118,11 @@ bool closedEffectEnvironment(mlir::ModuleOp module) {
 }
 
 namespace {
+// Work caps for one invalidateCall query. Past either cap the query gives up
+// and the caller falls back to invalidating broadly, so the caps limit
+// compile time and never affect correctness.
 constexpr unsigned maxQuerySteps = 4096, maxReachable = 256;
+// Whether every heap node `value` refers to was allocated in `caller`.
 bool local(const fact & value, ctjs::FuncOp caller) {
     return llvm::all_of(value.nodes, [&](mlir::Operation * id) {
         return id->getParentOfType<ctjs::FuncOp>() == caller;
@@ -124,6 +142,10 @@ const effectSummary * effectQueries::knownSummary(ctjs::CallDirectOp call) const
     return &found->second;
 }
 
+/// Precisely invalidates the heap facts that a direct call to a summarized
+/// callee can write, instead of everything reachable. Returns false (and
+/// changes nothing) when the callee has no known summary or the query
+/// exceeds its budget; the caller then applies its normal broad invalidation.
 bool effectQueries::invalidateCall(ctjs::CallDirectOp call, flow & state) const {
     const effectSummary * summary = closedEnvironment ? knownSummary(call) : nullptr;
     if (!summary) { return false; }

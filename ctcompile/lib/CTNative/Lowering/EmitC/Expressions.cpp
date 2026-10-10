@@ -1,4 +1,9 @@
-// EmitC/Expressions.cpp - native lowering implementation.
+//===- Expressions.cpp - EmitC constants and expressions ------ -*- C++ -*-===//
+//
+// Constants, global lvalues, truthiness, array push and the `**` operator for
+// the JavaScript-to-EmitC lowering.
+//
+//===----------------------------------------------------------------------===//
 #include "../Admission/Admission.h"
 #include "Emitter.h"
 #include "ctcompile/Support/CppLiterals.hpp"
@@ -33,8 +38,9 @@ mlir::Value lowering::stringConstant(mlir::OpBuilder & builder, mlir::Location w
 }
 
 mlir::Type lowering::globalStorageType(llvm::StringRef name) const {
-    // The entire source-store census selects one owning carrier per binding.
-    // Initial undefined preserves early reads independently of output.
+    // Every store to the global anywhere in the source decides its single C++
+    // storage type. The type is always nullable so the global can start out as
+    // undefined, which a read before the first store must see.
     const carrier stored = carrierOf(globalTypes.lookup(name));
     if (stored == carrier::booleanString || stored == carrier::nullableBooleanString) {
         return carrierType(context, carrier::nullableBooleanString);
@@ -96,13 +102,12 @@ mlir::Value lowering::truthy(mlir::OpBuilder & builder, mlir::Location where, ml
     return truthyNumber(builder, where, value);
 }
 
-// ZERO RESULTS, AND THAT IS THE WHOLE POINT. A call with one result that
-// nothing reads is declared as a variable by the emitter, which is
-// -Werror=unused-variable on a file this tier promises compiles clean; the
-// fork's `ctnative.statement` attribute exists for the calls that cannot
-// avoid it, and --ctnative-prune-dead-stores deliberately will not erase a
-// call to tidy up after one. A push has nothing to return, so it returns
-// nothing.
+// The call has no result on purpose. The C++ emitter declares a variable for
+// a call result that nothing reads, which fails -Werror=unused-variable, and
+// the generated code must compile warning-free. The `ctnative.statement`
+// attribute exists for calls that cannot avoid a result, and
+// --ctnative-prune-dead-stores deliberately will not erase a call to clean up
+// after one. A push has nothing to return, so it returns nothing.
 void lowering::push(mlir::OpBuilder & b, mlir::Location where, mlir::Value into,
                     mlir::Value element) {
     callWithConstValueOperands(b, where, mlir::TypeRange{}, b.getStringAttr("ctnative::vec_push"),
@@ -117,7 +122,7 @@ mlir::Value lowering::libmCall(mlir::OpBuilder & b, mlir::Location where, llvm::
     return convertScalar(b, where, result, carrierType(context, carrier::number));
 }
 
-// JAVASCRIPT'S `**`, WHICH IS NOT C++'s std::pow.
+// JavaScript's `**`, which is not C++'s std::pow.
 //
 // Number::exponentiate answers NaN when the base has magnitude one and the
 // exponent is NaN or infinite; C++ answers 1 for pow(1, NaN) and
@@ -126,9 +131,7 @@ mlir::Value lowering::libmCall(mlir::OpBuilder & b, mlir::Location where, llvm::
 // than refusing the operator: `2 ** 31` keeps working and `1 ** undefined`
 // stops being wrong. Numeric conversion of undefined produces NaN, making
 // this difference reachable without an explicit NaN literal.
-//
-// StdLibMap.def already classifies the library spelling `Math.pow` as
-// Divergent with this exact witness; this is the operator path catching up.
+// StdLibMap.def records the same divergence for `Math.pow`.
 mlir::Value lowering::exponentiate(mlir::OpBuilder & b, mlir::Location where, mlir::Value base,
                                    mlir::Value exponent) {
     const auto i1 = mlir::IntegerType::get(context, 1);

@@ -1,3 +1,11 @@
+//===- Diagnostics.cpp - Diagnostic operations in provider methods --------===//
+//
+// Implements providerDiagnosticState: global reads, own-field reads,
+// `Array.from(map.keys())` key snapshots, string concatenation and scalar
+// callbacks inside a provider method.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Diagnostics.h"
 
 #include "Callbacks.h"
@@ -10,8 +18,8 @@
 namespace ctcompile::ctnative::host_detail {
 
 bool providerDiagnosticState::initialize() {
-    // A copy includes object and closure identities for ordinary source
-    // lookups. Only the separate callback proof may modify primitive slots.
+    // The copy keeps object and closure identities for ordinary lookups.
+    // Only providerCallback may change the primitive values in it.
     for (const auto & entry : prefix.globals) {
         if (!prefix.step() || !prefix.spendText(entry.first())) { return false; }
         globals[entry.first()] = entry.second;
@@ -36,8 +44,9 @@ prefixValue providerDiagnosticState::global(ctjs::LoadGlobalOp load) {
     if (!prefix.spendText(load.getName())) { return {}; }
     if (load.getName() == "Array" &&
         llvm::is_contained(prefix.contract.initialIntrinsics, "Array")) {
-        // initialBindingProblem checks all live intrinsic uses and forbids
-        // aliases, replacement, descriptor changes and detached from calls.
+        // initialBindingProblem has already checked every live use of the
+        // Array intrinsic and rejected aliases, replacement, descriptor
+        // changes and calls to a detached `Array.from`.
         return prefixValue::of(prefixValue::Kind::arrayConstructor, 0);
     }
     const auto found = globals.find(load.getName());
@@ -55,8 +64,8 @@ prefixValue providerDiagnosticState::property(ctjs::GetPropertyOp read,
     const auto & heap = objects ? *objects : prefix.objects;
     if (owner.kind == prefixValue::Kind::object && owner.object < heap.size() && text &&
         ctjs::ordinaryKey(text.getValue())) {
-        // These identities were initialized by the source prefix. A missing
-        // slot could consult a prototype and therefore cannot be summarized.
+        // The source prefix created these objects. A missing field could be
+        // looked up on a prototype, so it cannot be summarized.
         const auto & fields = heap[owner.object].fields;
         const auto found = fields.find(text.getValue());
         return found == fields.end() ? prefixValue{} : found->second;
@@ -159,8 +168,9 @@ prefixValue providerDiagnosticState::call(ctjs::CallOp invoked,
     }
     const auto result =
         providerCallback(prefix, invoked, callee, receiver, arguments, globals, proof);
-    // Even a proved scalar-only callback cannot intervene between this first
-    // implementation's private iterator creation and immediate consumption.
+    // Any callback that ran counts as a mutation, even one proved to touch
+    // only scalars: a keys() iterator is admitted only when nothing runs
+    // between its creation and its Array.from consumption.
     if (result.kind != prefixValue::Kind::unknown) { mutated(); }
     return result;
 }

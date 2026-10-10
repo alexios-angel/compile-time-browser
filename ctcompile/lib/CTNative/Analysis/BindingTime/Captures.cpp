@@ -1,8 +1,16 @@
+//===- Captures.cpp - Immutable closure-capture queries ---------*- C++ -*-===//
+//
+// Decides when a closure's target function and the cells it captures are
+// fixed for the whole program, so the binding-time analysis may treat values
+// read through them as known at compile time.
+//
+//===----------------------------------------------------------------------===//
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
 #include "ctcompile/CTNative/Analysis/ImmutableCaptures.h"
 
 namespace ctcompile::ctnative {
 
+/// Whether \p function's body contains a ctjs.create_closure.
 bool constructsClosures(ctjs::FuncOp function) {
     bool found = false;
     if (function) {
@@ -11,6 +19,13 @@ bool constructsClosures(ctjs::FuncOp function) {
     return found;
 }
 
+/// Returns the function \p made creates when that closure's environment is
+/// immutable, or null. Entry-block arguments 0-2 are the implicit receiver,
+/// new.target and callee (see ctjs.call_direct); the callee (argument 2) is
+/// what load_upvalue reads captures through. A target qualifies only if it is
+/// created at exactly this one site, does not use its receiver or new.target,
+/// reads captures only by in-range load_upvalue, and never writes a capture or
+/// creates a closure itself.
 ctjs::FuncOp immutableClosureTarget(ctjs::CreateClosureOp made, mlir::ModuleOp module) {
     if (made.getFunction() < 0) { return {}; }
     auto target = ctjs::uniqueFunction(module, static_cast<unsigned>(made.getFunction()));
@@ -53,6 +68,7 @@ ctjs::FuncOp immutableClosureTarget(ctjs::CreateClosureOp made, mlir::ModuleOp m
     return changesBinding ? ctjs::FuncOp{} : target;
 }
 
+/// Returns a ctjs.cell_set that writes \p cell, or null if none does.
 ctjs::CellSetOp captureCellWrite(ctjs::CreateCellOp cell) {
     for (mlir::OpOperand & use : cell.getResult().getUses()) {
         if (auto write = llvm::dyn_cast<ctjs::CellSetOp>(use.getOwner());
@@ -63,6 +79,8 @@ ctjs::CellSetOp captureCellWrite(ctjs::CreateCellOp cell) {
     return {};
 }
 
+/// Whether \p cell is written at most once and is otherwise only read or
+/// captured by closures whose targets are immutable.
 bool immutableCaptureCell(ctjs::CreateCellOp cell, mlir::ModuleOp module) {
     unsigned writes = 0;
     for (mlir::OpOperand & use : cell.getResult().getUses()) {

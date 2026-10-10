@@ -36,7 +36,7 @@ def CTJS_FrameEnterOp : CTJS_RuntimeOp<"frame_enter", "ct_aot_enter", [CTJS_MayT
   let assemblyFormat = "$reg_count attr-dict";
 }
 
-// PHASE 55: no tracked operand (the context is not a value); NEITHER.
+// Escape effects: no tracked operand (the context is not a value); NEITHER.
 def CTJS_FrameExitOp : CTJS_RuntimeOp<"frame_exit", "ct_aot_leave", [CTJS_NoEscapeEffects]> {
   let summary = "Release the AOT shadow frame";
   let description = [{
@@ -48,7 +48,7 @@ def CTJS_FrameExitOp : CTJS_RuntimeOp<"frame_exit", "ct_aot_leave", [CTJS_NoEsca
   let assemblyFormat = "$context attr-dict";
 }
 
-// PHASE 55: NEITHER - it parks the value into THIS frame's own register
+// Escape effects: NEITHER - it parks the value in this frame's own register
 // window, which dies with the frame.
 def CTJS_RootOp : CTJS_Op<"root", [CTJS_NoEscapeEffects]> {
   let summary = "Keep a value reachable across a safepoint";

@@ -1,3 +1,16 @@
+//===- CapturedMapBody.cpp - Captured Map proof ---------------------------===//
+//
+// analyzer::capturedMapBody and the Walk helpers it uses. Walk proves that a
+// callback body only reads and mutates a captured Map in ways the native host
+// contract can model: every write targets a primitive, a fresh leaf object or
+// a fresh child Map, and every value it produces stays inside the uses checked
+// in Walk::run(). Every loop calls owner.step() (or owner.spend()), which
+// charges the analyzer's shared work budget; when the budget is exhausted the
+// proof gives up and the body is refused. The per-operation walk itself is in
+// CapturedMapBody/Walk.cpp.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Analysis.h"
 #include "CapturedMapBody/Walk.hpp"
 
@@ -47,8 +60,9 @@ bool Walk::prepareSnapshots() {
          }).empty()) {
         return false;
     }
-    // Candidates have only an iterator timing proof. The walk below must
-    // still close every receiver/effect before this family can be published.
+    // collectSnapshotCopies only proves when each `keys()` iterator is
+    // consumed. The walk still has to check every receiver and side effect
+    // before these snapshot copies are accepted.
     copies = std::move(found);
     return true;
 }
@@ -69,8 +83,10 @@ mlir::Value Walk::actualKey(mlir::Value value) {
     return value;
 }
 
-// A method-local SSA producer is not stable across calls. Explicit entry
-// inputs are stable origins, but different parameters may alias each other.
+/// Whether `key` denotes the same value in every invocation: an entry element
+/// input, a constant, or a value defined in the script entry. A method-local
+/// SSA producer is not stable across calls. Entry inputs are stable origins,
+/// but different parameters may alias each other.
 bool Walk::stableKey(mlir::Value key) {
     return owner.elementInput(key) || key.getDefiningOp<ctjs::ConstantOp>() ||
            (key.getDefiningOp() && key.getDefiningOp()->getParentOp() == owner.entry);
@@ -137,9 +153,9 @@ std::optional<size_fact> Walk::sizeFacts(const CapturedMapState & state) {
         if (disjoint) { distinct.push_back(entry.key); }
     }
     size_fact fact{static_cast<unsigned>(distinct.size()), std::nullopt};
-    // Deduplicate only proved equal keys in the complete upper bound.
+    // Deduplicate only keys proved equal in the complete upper bound.
     // Unknown equality may overcount, never undercount. Neither an empty
-    // intersection nor a census discarded at its limit proves a size.
+    // intersection nor a key set dropped at its limit proves a size.
     if (state.completeKeys && state.possibleKeys.size() <= kMaxPrimitiveMapSizeCandidates) {
         llvm::SmallVector<mlir::Value> possible;
         for (mlir::Value key : state.possibleKeys) {
@@ -172,7 +188,8 @@ std::optional<bool> Walk::absent(mlir::Value key, llvm::ArrayRef<CapturedMapEntr
     for (mlir::Value written : possible) {
         if (!owner.step()) { return std::nullopt; }
         // Cross-arm queries cannot use the other arm's filtered scalar
-        // alternatives. Exact source constants/SSA equality are path-free.
+        // alternatives. Exact source constants and SSA equality hold on every
+        // path.
         const auto relation = currentPath ? pathRelation(written, key) : keyRelation(written, key);
         if (relation != PrimitiveMapKeyRelation::Distinct) { return false; }
     }
@@ -185,10 +202,10 @@ bool Walk::mutate(CapturedMapState & state, mlir::Value key, bool erase,
     if (invocation && !stableKey(key)) { return false; }
     auto nextSize = state.currentSize;
     state.currentSize.reset();
-    // Read membership before changing the entries. A possible overwrite
-    // versus insertion (or successful versus unsuccessful deletion) has
-    // no exact size effect. Do not bypass the candidate limit by keeping
-    // an independent size after the complete census exceeds its budget.
+    // Read membership before changing the entries. When it is unknown whether
+    // a write overwrites or inserts (or whether a delete removes anything),
+    // the size is no longer exact. Do not bypass the candidate limit by
+    // keeping a size after the complete key set exceeds it.
     if (nextSize && state.completeKeys &&
         state.possibleKeys.size() <= kMaxPrimitiveMapSizeCandidates) {
         bool present = false;
@@ -262,11 +279,11 @@ bool Walk::mutate(CapturedMapState & state, mlir::Value key, bool erase,
     if (erase) {
         // Deletion cannot introduce a key. Keep the complete upper bound
         // through this mutation, removing only keys proved equal to the
-        // erased key. A possibly equal key may survive and must remain in
-        // the census even though it lost definite presence above.
-        // An oversized census cannot recover an exact size by pruning
-        // after its limit was exceeded. Retain that conservative upper
-        // bound for absence queries until a real clear starts a new one.
+        // erased key. A possibly equal key may survive and must stay in the
+        // set even though it lost definite presence above. An oversized set
+        // cannot recover an exact size by pruning after its limit was
+        // exceeded; keep that conservative upper bound for absence queries
+        // until a real clear starts a new one.
         if (state.possibleKeys.size() <= kMaxPrimitiveMapSizeCandidates) {
             size_t retained = 0;
             for (mlir::Value possible : state.possibleKeys) {
@@ -280,7 +297,7 @@ bool Walk::mutate(CapturedMapState & state, mlir::Value key, bool erase,
         // The invocation's initial contents are unknown, but this exact
         // key is now absent even if no earlier local set mentioned it.
         // Keep earlier payload evidence whenever present: a branch join
-        // may still reach that payload from its nondeleting arm.
+        // may still reach that payload from its non-deleting arm.
         if (!hasExactAbsence) { state.entries.push_back({key, {}, false, {}, true}); }
     } else {
         state.entries.push_back({key, payload, true, object, false, child});
@@ -332,7 +349,7 @@ bool Walk::learn(mlir::Value condition, bool branch) {
     if (!branch || !call || !maps.contains(call.getReceiver())) { return true; }
     auto & state = mapStates[maps.lookup(call.getReceiver())];
     if (!state.observations.contains(call)) { return true; }
-    // Only a live, checked has on this captured Map supplies membership.
+    // Only a live, checked `has` on this captured Map supplies membership.
     // It never creates a payload tag or selects away the other arm.
     auto key = actualKey(call.getArgs()[0]);
     for (auto & entry : state.entries) {
@@ -364,6 +381,8 @@ bool Walk::invalidateAliases(CapturedMapOrigin origin) {
     return true;
 }
 
+/// The truth value of `value` when the facts gathered so far decide it, else
+/// nullopt. Recursion through `!` and ToBoolean stops at depth 32.
 std::optional<bool> Walk::knownTruth(mlir::Value value, unsigned depth) {
     if (depth == 32 || !owner.step()) { return {}; }
     if (exactLeaves.contains(value)) { return true; }
@@ -409,12 +428,12 @@ bool Walk::closedUses(mlir::Value value, llvm::function_ref<bool(mlir::OpOperand
 bool Walk::run() {
     // This is an effects and ownership proof, not an evaluation of the first
     // invocation. The immutable slot always denotes this Map; its contents
-    // may change at every call. A complete body census closes all writes over
-    // primitives, fresh leaf objects and fresh child Maps. Child Maps cannot
-    // retain Maps. Mixed child results may return owning values, without
-    // primitive or field authority; no accessor can execute.
-    // The native identity, field and Map analyses still independently prove
-    // their carriers.
+    // may change at every call. Walking the whole body restricts every write
+    // to primitives, fresh leaf objects and fresh child Maps. Child Maps cannot
+    // retain Maps. Mixed child results may return owning values, but without
+    // primitive or field authority, and no accessor can execute. The native
+    // identity, field and Map analyses still prove their carriers
+    // independently.
     uint64_t callbackOperations = 0;
     for (const auto & callback : result.scalarCallbacks) {
         callbackOperations += callback.loads.size() + callback.reads.size() + callback.calls.size();
@@ -431,6 +450,9 @@ bool Walk::run() {
     }
     mapStates.try_emplace(capturedOrigin);
     if (prepared) { maps.try_emplace(body.getArgument(3), capturedOrigin); }
+    // The body's leading block arguments are the ctjs::implicit_arguments (3);
+    // a prepared body adds the captured Map as argument 3. The JavaScript
+    // parameters follow.
     const unsigned offset = prepared ? 4u : 3u;
     if (parameters.function != function ||
         parameters.alternatives.size() != body.getNumArguments() - offset) {
@@ -540,20 +562,20 @@ bool Walk::run() {
         }
     }
     // Scalar read-time facts, including an absent get's Undefined result,
-    // cannot cross their source scope through malformed live SSA edits. The
-    // same requirement protects primitive key evidence and branch conditions.
+    // must not be used outside the scope they are defined in, even in IR that
+    // has been edited but not yet verified. The same check protects primitive
+    // key evidence and branch conditions.
     for (const auto * values : {&primitives, &flags, &leafValues}) {
         for (mlir::Value value : *values) {
             if (!closedUses(value, anyUse)) { return false; }
         }
     }
-    // A method-local object is a leaf owner, retained only by checked Maps.
-    // Check every use, including uses outside the
-    // walked body. Neither native markers nor provider allocation tokens can
+    // A method-local object is a leaf owned only by checked Maps. Check every
+    // use, including uses outside the walked body: analysis may run on IR that
+    // has been edited but not yet verified, so an object allocated in one
+    // branch must not authorize a use in the other branch or an enclosing
+    // region. Neither native markers nor provider allocation tokens can
     // authorize a field, alias, escape or future invocation here.
-    // Live analysis queries may follow edits before MLIR verification.
-    // A then-only allocation/read cannot authorize an else or outer
-    // use merely because its immutable origin was visited first.
     for (const auto & [object, origin] : objects) {
         (void)origin;
         if (!closedUses(object, [&](mlir::OpOperand & use) {
@@ -578,8 +600,9 @@ bool Walk::run() {
         }
     }
     if (copies) {
-        // The timing helper permits GC roots, but even bookkeeping cannot
-        // carry a then-local iterator into a sibling region or function.
+        // collectSnapshotCopies allows GC root uses of an iterator, but no
+        // use, even a root, may carry an iterator from one branch into a
+        // sibling region or another function.
         for (mlir::Operation * operation : calls) {
             auto call = llvm::cast<ctjs::CallOp>(operation);
             auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
@@ -607,8 +630,9 @@ bool Walk::run() {
     }
     // A key may itself be a caller object. Equality observes identity without
     // granting a primitive category, field receiver, return or storage edge.
-    // Independently closed String keys additionally permit checked Concat only;
-    // nullable reads still format Undefined through the existing string lowering.
+    // String keys proved separately may also feed a checked Concat, and
+    // nothing else; nullable reads still format Undefined through the string
+    // lowering.
     for (mlir::Value element : snapshotElements) {
         if (!closedUses(element, [&](mlir::OpOperand & use) {
                 return llvm::isa<ctjs::RootOp>(use.getOwner()) ||
@@ -619,7 +643,8 @@ bool Walk::run() {
             return false;
         }
     }
-    // Unproved Map.get results remain potentially nullable/mixed. Even a
+    // Unproved Map.get results may still be nullable or mixed. Even a
+
     // local finite result still needs the independent native Map schema and
     // presence analyses before a consuming formal can acquire a C++ carrier.
     returnAlternatives = alternatives.lookup(returned.getValue());

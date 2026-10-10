@@ -1,3 +1,17 @@
+//===- CapturedMapHelpers.cpp - Local Map folding ---------------*- C++ -*-===//
+//
+// Class-initialization rewrites for Maps the class code creates locally.
+// normalizeNestedMaps folds a Map of Maps (`outer.set(k, new Map())`) whose
+// keys and branch conditions are known at compile time into direct child
+// references and constants. normalizeCapturedMapHelpers inlines small closures
+// that only operate on one captured Map. Both leave the program alone, or
+// refuse, whenever an alias, escape or unknown effect could observe the Map.
+//
+// A "transport-only" cell (transportOnlyCell) is one whose every use is an
+// already-proved cell operation, so retiring it cannot hide another reader.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Proof.hpp"
 
 #include <bit>
@@ -5,9 +19,11 @@
 namespace ctcompile::ctnative::class_detail {
 namespace {
 
-// Recognize only the complete diagnostic expression, not its runtime behavior.
-// Its caller must prove this arm unreachable at every invocation before erasing
-// it. Neither console nor Array receives intrinsic authority from this census.
+/// True if `block` does only
+///   console.error("..." + Array.from(m.keys())[0] + "...")
+/// for a Map `m` accepted by `map`, and nothing else. This only recognizes the
+/// shape; it assumes nothing about what console or Array do at run time, so the
+/// caller must still prove the block unreachable before erasing it.
 bool diagnosticArm(mlir::Block & block, llvm::function_ref<bool(mlir::Value)> map,
                    llvm::function_ref<bool()> step) {
     llvm::DenseSet<mlir::Operation *> expression;
@@ -40,6 +56,7 @@ bool diagnosticArm(mlir::Block & block, llvm::function_ref<bool(mlir::Value)> ma
     expression.insert(observer);
     unsigned snapshots = 0;
     const auto message = [&](auto && self, mlir::Value value, unsigned depth) -> bool {
+        // 64 bounds the depth of the string concatenation; deeper refuses.
         if (!step() || depth == 64) { return false; }
         auto * op = value.getDefiningOp();
         if (!op || op->getBlock() != &block) { return false; }
@@ -90,7 +107,8 @@ bool diagnosticArm(mlir::Block & block, llvm::function_ref<bool(mlir::Value)> ma
     return true;
 }
 
-// Constants, roots, truth tests, yields, `!` and `===`: no effect or observer.
+/// True for constants, roots, truth tests, yields, `!` and `===`: operations
+/// with no effect that cannot call user code.
 bool inertScalarOp(mlir::Operation * op) {
     if (llvm::isa<ctjs::ConstantOp, ctjs::RootOp, ctjs::TruthyOp, ctjs::FromBoolOp,
                   mlir::scf::YieldOp>(op)) {
@@ -104,6 +122,8 @@ bool inertScalarOp(mlir::Operation * op) {
 
 } // namespace
 
+/// Runs normalizeNestedMap on every Map constructed in the entry block of
+/// `scope`.
 bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope, const HostContract & contract) {
     auto & entry = scope.getBody().front();
     llvm::SmallVector<ctjs::ConstructOp> candidates;
@@ -117,10 +137,18 @@ bool classInitialization::normalizeNestedMaps(ctjs::FuncOp scope, const HostCont
     return reason.empty();
 }
 
+/// Folds one outer Map `map` whose values are other local Maps. Every use of
+/// the outer Map must sit in the entry block in source order, and every branch
+/// that touches it must have a condition provable at compile time. The visit
+/// then simulates the Map contents, replaces `get`/`has`/`size` results with
+/// the known child or constant, keeps only the taken arm of each branch, and
+/// erases the outer Map. Returns false on refusal (reason set) or budget
+/// exhaustion; returns true unchanged when the Map holds no child Maps.
 bool classInitialization::normalizeNestedMap(ctjs::FuncOp scope, const HostContract & contract,
                                              ctjs::ConstructOp map) {
-    // ponytail: literal/fresh keys and one live DOM input key per outer Map.
-    // Overlapping DOM key lifetimes need alias partitions, not distinct SSA identities.
+    // ponytail: outer-Map keys must be string literals, fresh objects, or one
+    // DOM-element parameter at a time. Two element parameters that might be
+    // the same element would need an alias analysis; until then they refuse.
     auto & entry = scope.getBody().front();
     const auto entryPosition = [&](mlir::Operation * op) {
         return positionIn<mlir::scf::IfOp>(op, &entry);
@@ -149,8 +177,9 @@ bool classInitialization::normalizeNestedMap(ctjs::FuncOp scope, const HostContr
         if (!transport) { return false; }
         if (!*transport) { return refuse("class nested Map cannot capture its outer owner"); }
     }
-    // Captures box caller locals too. Discharge these already-proved
-    // reads before a selected branch can retire their cached operations.
+    // Closures capture locals through cells, so cells holding the outer Map are
+    // read through cellReads. Replace those already-proved reads with the Map
+    // now, before folding a branch can erase the operations they were cached on.
     for (ctjs::CellGetOp read : cellReads) {
         if (!spend(1 + (llvm::is_contained(bindings, read.getCell()) ? read.getResult().getNumUses()
                                                                      : 0))) {
@@ -259,8 +288,10 @@ bool classInitialization::normalizeNestedMap(ctjs::FuncOp scope, const HostContr
         auto found = lookupTruth.find(resolved(value));
         return found == lookupTruth.end() ? truth(constant(value)) : found->second;
     };
-    // This is only a candidate origin for the both-arm effect census.
-    // The ordered visit must still resolve an actually present child.
+    // True if `value` may be a child Map of `map`: a local Map, the result of
+    // map.get(k), or an if-result whose arms all are. This only selects what
+    // the effect check over both branch arms looks at; `visit` below still has
+    // to resolve the exact child. Depth 64 bounds nested if-results.
     const auto mapCandidate = [&](auto && self, mlir::Value value, unsigned depth) -> bool {
         if (!step() || depth == 64) { return false; }
         value = sourceValue(value);
@@ -302,8 +333,10 @@ bool classInitialization::normalizeNestedMap(ctjs::FuncOp scope, const HostContr
         !reason.empty()) {
         return false;
     }
-    // A getter's final || null follows its inner && rather than enclosing
-    // the Map reads. Include that result flow in the same both-arm census.
+    // Follow each `child.get(k)` result through truth tests, `!`, `===` and
+    // branch results: a getter written `a && b.get(k) || null` puts the
+    // `|| null` branch after the Map read, not around it, so that branch must
+    // be checked as well.
     llvm::DenseSet<mlir::Value> observed;
     while (!observations.empty()) {
         auto value = observations.pop_back_val();
@@ -348,8 +381,9 @@ bool classInitialization::normalizeNestedMap(ctjs::FuncOp scope, const HostContr
             }
         }
     }
-    // Check both arms before discarding either. These operations cannot
-    // retain cached class/cell/closure facts or invoke user code.
+    // Check both arms of every branch before discarding either. Only the
+    // operations accepted here may appear: they cannot hold facts other proofs
+    // cached (class, cell or closure records) and cannot call user code.
     for (mlir::Operation * op : conditional) {
         auto branch = llvm::dyn_cast<mlir::scf::IfOp>(op);
         if (!branch || branch.getNumResults() > 1) {
@@ -386,8 +420,9 @@ bool classInitialization::normalizeNestedMap(ctjs::FuncOp scope, const HostContr
             return false;
         }
     }
-    // A set returns the outer identity. Only unused yield transport can
-    // disappear with that owner; a cell, observer or escape must still refuse.
+    // Map.prototype.set returns the Map itself and clear returns undefined.
+    // Their result may only be dropped or passed through if-results that are
+    // themselves unused; any other use (a cell, a read, an escape) refuses.
     const auto unusedResult = [&](mlir::Value value) {
         llvm::SmallVector<mlir::Value> pending{value};
         llvm::DenseSet<mlir::Value> seen;
@@ -420,6 +455,7 @@ bool classInitialization::normalizeNestedMap(ctjs::FuncOp scope, const HostContr
         }
     }
     const auto visit = [&](auto && self, mlir::Block & block, unsigned depth) -> bool {
+        // 64 bounds branch nesting; real code is far shallower.
         if (depth == 64) { return refuse("class nested Map branch nesting exhausted"); }
         if (diagnostics.contains(&block)) {
             return refuse("class nested Map conflict observer is reachable");
@@ -554,9 +590,10 @@ bool classInitialization::normalizeNestedMap(ctjs::FuncOp scope, const HostContr
                                   "or exact DOM input keys");
                 }
                 if (element) {
-                    // Once the previous key is absent, either alias partition
-                    // starts with the same empty DOM-key state. Saved children
-                    // keep their allocation identity independently of this key.
+                    // A different element parameter is accepted only once the
+                    // previous element key has been removed: whether or not the
+                    // two are the same element, the Map then holds no element
+                    // key. Children already stored keep their own identity.
                     if (elementKey && elementKey != input && entries.count({{}, elementKey})) {
                         return refuse("class nested Map DOM inputs require an alias proof");
                     }
@@ -585,8 +622,9 @@ bool classInitialization::normalizeNestedMap(ctjs::FuncOp scope, const HostContr
         return true;
     };
     if (!visit(visit, entry, 0)) { return false; }
-    // A second outer owner or a captured observer can mutate a child through
-    // an alias this visit did not resolve. Check every alias before folding.
+    // A second outer Map or a closure that captured a child could change the
+    // child through an alias this visit did not resolve. Check every alias of
+    // each child before folding.
     for (mlir::Value child : observedChildren) {
         llvm::SmallVector<mlir::Value> aliases{child};
         for (auto [read, value] : children) {
@@ -622,6 +660,9 @@ bool classInitialization::normalizeNestedMap(ctjs::FuncOp scope, const HostContr
                 auto call = llvm::dyn_cast<ctjs::CallOp>(op);
                 auto read = call ? call.getCallee().getDefiningOp<ctjs::GetPropertyOp>()
                                  : ctjs::GetPropertyOp{};
+                // CallOp operand 1 is the receiver and operand 3 the second
+                // argument: the child may be the receiver of a method call, or
+                // the value of an outer `set(k, child)` this pass accounts for.
                 if (read && read.getObject() == call.getReceiver() &&
                     (use->getOperandNumber() == 1 ||
                      (use->getOperandNumber() == 3 && operations.contains(call) &&
@@ -632,8 +673,8 @@ bool classInitialization::normalizeNestedMap(ctjs::FuncOp scope, const HostContr
             }
         }
     }
-    // Keep child operations for ownership proof. Only outer observations
-    // and proved lookup truth tests need materialized replacements.
+    // Child Map operations stay for the later ownership proof. Only outer-Map
+    // results and proved lookup truth tests are replaced with constants.
     for (auto at = constants.begin(); at != constants.end();) {
         if (!operations.contains(at->first) && !lookupTests.contains(at->first)) {
             at = constants.erase(at);
@@ -641,8 +682,9 @@ bool classInitialization::normalizeNestedMap(ctjs::FuncOp scope, const HostContr
             ++at;
         }
     }
-    // Charge rewriting before mutation; the enclosing pass discards its
-    // private module if any later child/record/effect proof fails.
+    // Charge the rewrite's cost against the step budget before mutating
+    // anything. The enclosing pass works on a private copy of the module and
+    // discards it if a later check refuses.
     uint64_t cost = cells.size();
     for (mlir::Operation * op : operations) {
         cost += (constants.contains(op) ? 3u : 1u) + op->getResult(0).getNumUses();
@@ -662,8 +704,9 @@ bool classInitialization::normalizeNestedMap(ctjs::FuncOp scope, const HostContr
     });
     // DenseSet erasure can relocate other buckets, invalidating iteration.
     operations.remove_if([&](mlir::Operation * op) { return !visited.contains(op); });
-    // Repair result and cell aliases before erasing their SSA producers.
-    // Reverse order keeps nested yields live until their contents move.
+    // Redirect branch results and cell records before erasing the values they
+    // point at. Reverse order keeps nested yields alive until their contents
+    // have moved.
     for (auto [branch, selected] : llvm::reverse(branches)) {
         auto & region = selected ? branch.getThenRegion() : branch.getElseRegion();
         if (!region.empty()) {
@@ -692,13 +735,13 @@ bool classInitialization::normalizeNestedMap(ctjs::FuncOp scope, const HostContr
         children[op->getResult(0)] = literal;
         op->getResult(0).replaceAllUsesWith(literal);
     }
-    // Cell facts cache SSA values; RAUW alone does not update this table.
+    // `cells` caches SSA values; replaceAllUsesWith does not update it.
     for (mlir::Value & initial : llvm::make_second_range(cells)) {
         if (auto replacement = children.lookup(initial)) { initial = replacement; }
     }
     for (mlir::Operation * op : lookupTests) { eraseRooted(op); }
-    // Missing lookup results may disappear only after every observer was
-    // discharged. Present reads retain the existing record/lifetime proof.
+    // A get of an absent key may be erased once nothing but roots uses it.
+    // Gets of present keys stay for the record and lifetime proof.
     for (ctjs::CallOp read : missingReads) {
         if (rootedOnly(read)) { eraseMapOperation(read); }
     }
@@ -706,7 +749,8 @@ bool classInitialization::normalizeNestedMap(ctjs::FuncOp scope, const HostContr
         if (!llvm::isa<ctjs::GetPropertyOp>(op)) { eraseMapOperation(op); }
     }
     for (ctjs::GetPropertyOp read : selections) { eraseMapOperation(read); }
-    // Fixed outer aliases are transport only; no captured observer remains.
+    // Cells holding the outer Map were checked transport-only above, and their
+    // reads were replaced, so they can go.
     for (mlir::Value cell : bindings) { retireCell(cell); }
     maps.erase(map.getResult());
     auto load = map.getCallee().getDefiningOp();
@@ -715,9 +759,15 @@ bool classInitialization::normalizeNestedMap(ctjs::FuncOp scope, const HostContr
     return true;
 }
 
+/// Inlines each closure in the entry block that captures exactly one local Map
+/// and only calls Map methods on it (or on Maps it creates), at every call site
+/// that follows the Map's initialization in the same block. The helper may also
+/// be stored once on a local holder object and called through it. Any other
+/// use leaves the helper alone.
 bool classInitialization::normalizeCapturedMapHelpers(ctjs::FuncOp scope) {
-    // ponytail: Map-only helpers called in their owning entry block.
-    // Nested helper calls and other regions need a wider capture/lifetime proof.
+    // ponytail: only helpers called in the entry block that owns them. Calls
+    // from nested helpers or other regions would need a wider proof of what
+    // the captures hold and how long they live.
     auto & entry = scope.getBody().front();
     llvm::SmallVector<ctjs::CreateClosureOp> closures;
     for (auto closure : entry.getOps<ctjs::CreateClosureOp>()) {
@@ -734,8 +784,9 @@ bool classInitialization::normalizeCapturedMapHelpers(ctjs::FuncOp scope) {
         auto map = sourceValue(cells.lookup(mapCell)).getDefiningOp<ctjs::ConstructOp>();
         if (!map || !maps.contains(map.getResult()) || map->getBlock() != &entry) { return true; }
         auto & body = function.getBody().front();
-        // An arrow may save lexical this without reading it. The complete body
-        // and callee census below must also exclude any nested capture or escape.
+        // An arrow function may keep a lexical `this` without reading it, so the
+        // receiver and new.target must be unused. The walk below still rejects
+        // any nested capture or escape.
         if (!body.getArgument(ctjs::arg_receiver).use_empty() ||
             !body.getArgument(ctjs::arg_new_target).use_empty()) {
             return true;
@@ -782,8 +833,8 @@ bool classInitialization::normalizeCapturedMapHelpers(ctjs::FuncOp scope) {
                     if (call.getArgs().size() != mapMethodArity(key)) {
                         return mlir::WalkResult::interrupt();
                     }
-                    // A get is only a candidate child origin. Nested routing and
-                    // the unchanged record-owner proof must establish its identity.
+                    // A get result may be a child Map; normalizeNestedMap and the
+                    // record-owner proof later decide which child it is.
                     if (key == "get") { captures.insert(call.getResult()); }
                     return mlir::WalkResult::advance();
                 }
@@ -792,6 +843,7 @@ bool classInitialization::normalizeCapturedMapHelpers(ctjs::FuncOp scope) {
                     unsigned depth = 0;
                     for (auto * parent = op; parent != function; parent = parent->getParentOp()) {
                         if (!step()) { return mlir::WalkResult::interrupt(); }
+                        // 64 bounds branch nesting; deeper refuses.
                         if (++depth == 64) { return mlir::WalkResult::interrupt(); }
                     }
                     for (auto & region : branch->getRegions()) {
@@ -831,8 +883,8 @@ bool classInitialization::normalizeCapturedMapHelpers(ctjs::FuncOp scope) {
             helperCell = cell;
         }
         if (helperCell) {
-            // sourceUses omits capture transport: a second observer must
-            // not survive retirement of this binding.
+            // sourceUses does not see the cell's captures, so check the cell
+            // directly: a second reader must not outlive retiring it.
             const auto transport = transportOnlyCell(helperCell);
             if (!transport) { return false; }
             if (!*transport) { return true; }
@@ -851,9 +903,10 @@ bool classInitialization::normalizeCapturedMapHelpers(ctjs::FuncOp scope) {
                     object->getBlock() != &entry) {
                     return true;
                 }
-                // Include the original constructor's captured reads in the
-                // holder census. Its registration slot stays intact because
-                // this expansion only accepts calls in the owning entry block.
+                // Count the reads of the holder that a class constructor makes
+                // through its capture as uses of the holder too. The holder slot
+                // itself stays, because only calls in the entry block that owns
+                // the helper are inlined.
                 auto holderUses = sourceUses(object.getResult());
                 llvm::DenseMap<mlir::Value, mlir::Operation *> captureSites;
                 for (auto [cell, initial] : cells) {
@@ -952,8 +1005,9 @@ bool classInitialization::normalizeCapturedMapHelpers(ctjs::FuncOp scope) {
                 arguments.size() != body.getNumArguments() - ctjs::implicit_arguments) {
                 return true;
             }
-            // Capturing a hoisted cell does not read it. Every invocation
-            // must follow initialization of this exact captured Map cell.
+            // Capturing a hoisted cell does not read it, so the closure may exist
+            // before the Map does. Each call must follow the store of this Map
+            // into the captured cell.
             bool initialized =
                 mapCell.getDefiningOp<ctjs::CreateCellOp>().getInitial() == map.getResult();
             for (mlir::Operation * user : mapCell.getUsers()) {
@@ -976,8 +1030,8 @@ bool classInitialization::normalizeCapturedMapHelpers(ctjs::FuncOp scope) {
                 })) {
             return *stop;
         }
-        // Precharge expansion and cleanup before the first mutation. The
-        // enclosing pass owns a disposable module if a later proof refuses.
+        // Charge for inlining and cleanup before the first change. The enclosing
+        // pass works on a disposable copy of the module if a later check refuses.
         for (mlir::Operation * call : invocations) {
             if (!spend(1 + call->getResult(0).getNumUses() + cells.size()) ||
                 !spendWalk(function, cloneCost)) {
@@ -1004,8 +1058,8 @@ bool classInitialization::normalizeCapturedMapHelpers(ctjs::FuncOp scope) {
                 } else if (!llvm::isa<ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::RootOp,
                                       ctjs::ReturnOp>(op)) {
                     auto * cloned = at.clone(op, mapping);
-                    // Region cloning retains branch-local capture loads.
-                    // Substitute each one before retiring the original callee.
+                    // Cloned regions still contain the helper's capture loads.
+                    // Replace each with the Map before the helper is retired.
                     cloned->walk([&](mlir::Operation * nested) {
                         if (auto read = llvm::dyn_cast<ctjs::LoadUpvalueOp>(nested)) {
                             read.getResult().replaceAllUsesWith(map.getResult());

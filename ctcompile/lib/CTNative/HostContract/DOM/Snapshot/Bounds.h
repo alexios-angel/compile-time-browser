@@ -1,3 +1,12 @@
+//===- Bounds.h - Shared IR shapes for DOM snapshot proofs ------*- C++ -*-===//
+//
+// Small inline matchers and builders over ctjs/SCF IR that the DOM entry
+// proofs and the snapshot and iteration normalizers share: index guards,
+// saved-throw regions, suppressed calls, result trimming and the SCF edges a
+// value flows through.
+//
+//===----------------------------------------------------------------------===//
+
 #pragma once
 
 #include "ctcompile/CTJS/IR/CTJSOps.h"
@@ -10,25 +19,24 @@
 #include <bit>
 #include <utility>
 
-// Small IR shapes shared by the DOM proofs and normalizers.
 namespace ctcompile::ctnative {
 
-// The comparison a truthy flag tests, or null.
+/// The comparison a truthy flag tests, or null.
 inline ctjs::CompareOp truthyComparison(mlir::Value flag) {
     auto truth = flag ? flag.getDefiningOp<ctjs::TruthyOp>() : ctjs::TruthyOp{};
     return truth ? truth.getValue().getDefiningOp<ctjs::CompareOp>() : ctjs::CompareOp{};
 }
 
-// Whether `compare` is `subject === undefined`, either way round.
+/// Whether `compare` is `subject === undefined`, either way round.
 inline bool strictUndefinedTest(ctjs::CompareOp compare, mlir::Value subject) {
     return compare && compare.getKind() == ctjs::CompareKind::StrictEq &&
            ((compare.getLhs() == subject && ctjs::isUndefinedConstant(compare.getRhs())) ||
             (compare.getRhs() == subject && ctjs::isUndefinedConstant(compare.getLhs())));
 }
 
-// The comparison guarding `read` at `parent`, with the index it tests there:
-// the condition of an scf.if whose then arm holds the read, or of the scf.while
-// whose after-block argument keys it. Null otherwise.
+/// The comparison guarding `read` at `parent`, with the index it tests there:
+/// the condition of an scf.if whose then arm holds the read, or of the scf.while
+/// whose after-block argument keys it. Null otherwise.
 inline std::pair<ctjs::CompareOp, mlir::Value> indexGuard(mlir::Operation * parent,
                                                           ctjs::GetPropertyOp read) {
     if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(parent);
@@ -47,8 +55,10 @@ inline std::pair<ctjs::CompareOp, mlir::Value> indexGuard(mlir::Operation * pare
     return {truthyComparison(condition.getCondition()), condition.getArgs()[index.getArgNumber()]};
 }
 
-// Check the materialized copy's own bound before aliasing its members to an
-// original, potentially longer NodeList. Complete DOM reproof checks progression.
+/// Whether `read` is guarded by `index < snapshot.length` on the materialized
+/// copy itself, which must hold before its elements can be aliased to a
+/// possibly longer original NodeList. That the index advances is checked
+/// separately by DOMEntryAnalysis.
 template <typename Spend>
 bool hasOwnSnapshotBound(ctjs::GetPropertyOp read, mlir::Value snapshot, Spend spend) {
     if (!llvm::isa<mlir::BlockArgument>(read.getKey())) { return false; }
@@ -66,7 +76,7 @@ bool hasOwnSnapshotBound(ctjs::GetPropertyOp read, mlir::Value snapshot, Spend s
     return false;
 }
 
-// An scf.if on `test` whose arms yield `yes` and `no`; returns its result.
+/// An scf.if on `test` whose arms yield `yes` and `no`; returns its result.
 inline mlir::Value emitSelect(mlir::OpBuilder & at, mlir::Location where, mlir::TypeRange types,
                               mlir::Value test, mlir::Value yes, mlir::Value no) {
     auto branch = mlir::scf::IfOp::create(at, where, types, test);
@@ -79,7 +89,7 @@ inline mlir::Value emitSelect(mlir::OpBuilder & at, mlir::Location where, mlir::
     return branch.getResult(0);
 }
 
-// min(object[key], 2^24): the VM materializes at most 2^24 proxy slots.
+/// min(object[key], 2^24): the VM materializes at most 2^24 proxy slots.
 inline mlir::Value cappedLength(mlir::OpBuilder & at, mlir::Location where, mlir::Type type,
                                 mlir::Value object, mlir::Value key) {
     auto size = ctjs::GetPropertyOp::create(at, where, type, object, key);
@@ -92,11 +102,11 @@ inline mlir::Value cappedLength(mlir::OpBuilder & at, mlir::Location where, mlir
     return emitSelect(at, where, mlir::TypeRange{type}, test.getResult(), size, cap);
 }
 
-// Whether `text` parses as a complete selector list. Callers charge its bytes.
+/// Whether `text` parses as a complete selector list. Callers charge its bytes.
 bool validSelector(llvm::StringRef text);
 
-// One operation's size: itself, its operands and results (and attributes, if
-// asked), and each nested block with its arguments.
+/// One operation's size: itself, its operands and results (and attributes, if
+/// asked), and each nested block with its arguments.
 inline uint64_t operationWork(mlir::Operation * operation, bool attributes) {
     uint64_t cost = uint64_t(1) + operation->getNumOperands() + operation->getNumResults() +
                     (attributes ? operation->getAttrs().size() : 0);
@@ -106,14 +116,14 @@ inline uint64_t operationWork(mlir::Operation * operation, bool attributes) {
     return cost;
 }
 
-// Whether no symbol use in `module` names `function`.
+/// Whether no symbol use in `module` names `function`.
 inline bool symbolUnused(ctjs::FuncOp function, mlir::ModuleOp module) {
     return mlir::SymbolTable::symbolKnownUseEmpty(function, module.getOperation()) &&
            mlir::SymbolTable::symbolKnownUseEmpty(function, &module.getBodyRegion());
 }
 
-// The throw of a saved-throw region - a no-inline, result-free scf.execute_region
-// holding exactly one ctjs.throw - or null for any other operation.
+/// The throw of a saved-throw region - a no-inline, result-free scf.execute_region
+/// holding exactly one ctjs.throw - or null for any other operation.
 inline ctjs::ThrowOp savedThrow(mlir::Operation * operation) {
     auto abrupt = llvm::dyn_cast_or_null<mlir::scf::ExecuteRegionOp>(operation);
     if (!abrupt || !abrupt.getNoInline() || abrupt.getNumResults() || abrupt->getNumOperands() ||
@@ -124,6 +134,7 @@ inline ctjs::ThrowOp savedThrow(mlir::Operation * operation) {
     return llvm::dyn_cast<ctjs::ThrowOp>(abrupt.getRegion().front().front());
 }
 
+/// Emits a saved-throw region (see savedThrow) that throws `value`.
 inline void emitSavedThrow(mlir::OpBuilder & at, mlir::Location where, mlir::Value value) {
     auto scope = mlir::scf::ExecuteRegionOp::create(at, where, mlir::TypeRange{});
     scope.setNoInline(true);
@@ -132,8 +143,8 @@ inline void emitSavedThrow(mlir::OpBuilder & at, mlir::Location where, mlir::Val
     ctjs::ThrowOp::create(inside, where, value);
 }
 
-// The call an invoke protects when its body is exactly that call and the exit
-// forwarding its sole-use result; null otherwise.
+/// The call an invoke protects when its body is exactly that call and the exit
+/// forwarding its sole-use result; null otherwise.
 inline ctjs::CallOp invokedCall(ctjs::InvokeOp invocation) {
     auto & body = invocation.getBody().front();
     auto call = body.empty() ? ctjs::CallOp{} : llvm::dyn_cast<ctjs::CallOp>(body.front());
@@ -146,11 +157,12 @@ inline ctjs::CallOp invokedCall(ctjs::InvokeOp invocation) {
     return call;
 }
 
-// A result-free invoke of a clone of `call` whose continuations ignore both
-// outcomes. Returns the clone.
+/// A result-free invoke of a clone of `call` whose continuations ignore both
+/// outcomes. Returns the clone.
 inline mlir::Operation * emitSuppressedCall(mlir::OpBuilder & at, mlir::Operation & call,
                                             mlir::IRMapping & mapping) {
     mlir::OperationState state(call.getLoc(), ctjs::InvokeOp::getOperationName());
+    // A ctjs.invoke has three regions: body, normal continuation, unwind.
     for (unsigned index = 0; index != 3; ++index) { state.addRegion(); }
     auto invocation = llvm::cast<ctjs::InvokeOp>(at.create(state));
     auto & body = invocation.getBody().emplaceBlock();
@@ -166,8 +178,8 @@ inline mlir::Operation * emitSuppressedCall(mlir::OpBuilder & at, mlir::Operatio
     return cloned;
 }
 
-// Replace `branch` by the operations and yielded values of its selected arm.
-// An absent else arm contributes nothing.
+/// Replace `branch` by the operations and yielded values of its selected arm.
+/// An absent else arm contributes nothing.
 inline void inlineSelectedArm(mlir::scf::IfOp branch, bool condition) {
     auto & region = condition ? branch.getThenRegion() : branch.getElseRegion();
     if (!region.empty()) {
@@ -180,8 +192,8 @@ inline void inlineSelectedArm(mlir::scf::IfOp branch, bool condition) {
     branch.erase();
 }
 
-// Replace `operation` by a copy with only its `kept` results (ascending),
-// moving its regions. Callers trim each terminator to match.
+/// Replace `operation` by a copy with only its `kept` results (ascending),
+/// moving its regions. Callers trim each terminator to match.
 inline mlir::Operation * keepResults(mlir::Operation * operation, llvm::ArrayRef<unsigned> kept) {
     mlir::OperationState state(operation->getLoc(), operation->getName());
     state.addOperands(operation->getOperands());
@@ -198,8 +210,9 @@ inline mlir::Operation * keepResults(mlir::Operation * operation, llvm::ArrayRef
     return copied;
 }
 
-// Incoming SCF edges of a while block argument or an if/while result. Only
-// transport is followed; the caller decides what a leaf may be.
+/// Collects the values that flow into a while block argument or an if/while
+/// result along SCF edges. Only these edges are followed; the caller decides
+/// what a leaf may be. Returns false for any other value.
 inline bool transportInputs(mlir::Value value, llvm::SmallVectorImpl<mlir::Value> & inputs) {
     if (auto argument = llvm::dyn_cast<mlir::BlockArgument>(value)) {
         auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(argument.getOwner()->getParentOp());
@@ -232,8 +245,8 @@ inline bool transportInputs(mlir::Value value, llvm::SmallVectorImpl<mlir::Value
     return false;
 }
 
-// The operand an integer comparison tests against an arith.constant, with that
-// constant; the constant is null when neither side is one.
+/// The operand an integer comparison tests against an arith.constant, with that
+/// constant; the constant is null when neither side is one.
 inline std::pair<mlir::Value, mlir::arith::ConstantOp> constantComparison(
     mlir::arith::CmpIOp compare) {
     if (auto constant = compare.getRhs().getDefiningOp<mlir::arith::ConstantOp>()) {
@@ -242,7 +255,7 @@ inline std::pair<mlir::Value, mlir::arith::ConstantOp> constantComparison(
     return {compare.getRhs(), compare.getLhs().getDefiningOp<mlir::arith::ConstantOp>()};
 }
 
-// A constant completion tag: non-negative with at most `bits` active bits.
+/// A constant completion tag: non-negative with at most `bits` active bits.
 inline mlir::IntegerAttr exactTag(mlir::arith::ConstantOp constant, unsigned bits) {
     auto key =
         constant ? llvm::dyn_cast<mlir::IntegerAttr>(constant.getValue()) : mlir::IntegerAttr{};

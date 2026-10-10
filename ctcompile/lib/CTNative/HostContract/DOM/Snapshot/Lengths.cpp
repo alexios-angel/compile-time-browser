@@ -1,3 +1,14 @@
+//===- Lengths.cpp - Alias NodeList copies to the original ------*- C++ -*-===//
+//
+// normalizeDOMSnapshotLengths: rewrites `[].concat(...nodes)` copies of a
+// querySelectorAll result (the spread loop the importer emits) so that the
+// copy's `length` and index reads go straight to the original NodeList, with
+// the length capped as the VM caps it. It refuses unless the copy is exact and
+// only read, works on a clone, and replaces the candidate only after
+// DOMEntryAnalysis accepts the result. All work is charged to `maxSteps`.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Bounds.h"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
 #include "ctcompile/CTNative/Analysis/WorkBudget.h"
@@ -73,6 +84,9 @@ llvm::Error normalizeDOMSnapshotLengths(mlir::ModuleOp candidate, const HostCont
         }
         operation->erase();
     };
+    // Match each spread call against the importer's shape: a fresh empty array
+    // receiver calling `concat`, with an argument array filled by one
+    // zero-based while loop that appends nodes[i] for i < nodes.length.
     for (ctjs::CallSpreadOp call : spreads) {
         if (!spend()) { return error("DOM snapshot work budget exhausted"); }
         auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
@@ -155,9 +169,10 @@ llvm::Error normalizeDOMSnapshotLengths(mlir::ModuleOp candidate, const HostCont
                 observations.push_back(observation);
                 continue;
             }
-            // Preserve the copied array's cap before aliasing its slots to the
-            // original, possibly longer NodeList. A guard of nodes.length alone
-            // cannot authorize copied[index]. Complete reproof checks the step.
+            // The copy may be shorter than the NodeList it now aliases, so an
+            // index read needs its own guard against the copy's length; a guard
+            // on nodes.length is not enough. DOMEntryAnalysis, run below,
+            // checks that the index advances.
             if (!hasOwnSnapshotBound(observation, call.getResult(), spend)) {
                 return error("DOM copied index requires its own length guard");
             }
@@ -166,8 +181,7 @@ llvm::Error normalizeDOMSnapshotLengths(mlir::ModuleOp candidate, const HostCont
         if (observations.empty()) { return error("DOM snapshot length is not observed"); }
         snapshots.push_back(snapshot);
         mlir::OpBuilder at(call);
-        // Preserve the VM's slot cap on the copy while retaining every
-        // original NodeList slot and length.
+        // The copy's length is min(nodes.length, 2^24), the VM's slot cap.
         const auto bounded =
             cappedLength(at, call.getLoc(), call.getType(), snapshot.getResult(), length.getKey());
         for (ctjs::GetPropertyOp observation : observations) {

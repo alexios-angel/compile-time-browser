@@ -1,3 +1,13 @@
+//===- LoopProof.cpp - Counted-loop proof for the contents query ----------===//
+//
+// Implements LoopProof. countedLoop recognises the guard, the index step and
+// the start value, computes the visited index range, then runs the census:
+// every operation in the loop must be pure or a store into the guard array
+// whose key range (computed by indexRange, refined by bisection when needed)
+// stays in bounds and never overlaps an element the loop also reads.
+//
+//===----------------------------------------------------------------------===//
+
 #include "LoopProof.hpp"
 #include <bit>
 #include <numeric>
@@ -65,8 +75,9 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         // Each immutable path records its actual incoming edges, including
         // shortcut joins whose other syntactic predecessors were also visited.
         // Every path is replayed separately, and repeated CFG blocks are refused.
-        // If results already carry each arm's exact held identity. Nested
-        // allocations/reads still need their own nonrepetition correspondence.
+        // scf.if results already carry each arm's exact held identity. Nested
+        // allocations and reads still need their own proof that they do not
+        // repeat.
         mlir::Block * allocated = allocation->getBlock();
         if (allocated->getParent() != &function.getBody() || allocated == header ||
             allocated == body) {
@@ -94,7 +105,8 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             mlir::StringAttr::get(function.getContext(), "length")) {
         return unsupported;
     }
-    // Read actual/formal transport, not register numbers or source names.
+    // Match values through block-argument passing, not register numbers or
+    // source names.
     const auto fromHeader = [&](mlir::Value value) -> mlir::Value {
         auto argument = llvm::dyn_cast<mlir::BlockArgument>(value);
         if (!argument || argument.getOwner() != body) { return {}; }
@@ -186,8 +198,9 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             (definition->getBlock() != header && !bodyBlocks.contains(definition->getBlock()))) {
             return held(operand);
         }
-        // Every visited value spends the shared proof budget. Keep a stack
-        // ceiling; repeated reads need unchanged base and key identities.
+        // Every visited value spends the shared budget; the depth cap of 64 only
+        // bounds C++ recursion. Repeated reads need unchanged base and key
+        // identities.
         if (depth == 64) { return std::nullopt; }
         if (mlir::Value value = equalYield(operand)) { return self(self, value, depth + 1); }
         ContentsValue result{operand, ContentsKind::NonBigInt};
@@ -203,6 +216,7 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
             // Replay still checks every own read and snapshots its value.
             const auto name = ownObjectKey(key->origin());
             if (name && name.getValue() == "length") {
+                // 2^32 - 1 is the largest valid JavaScript array length.
                 if (array->second.size() > 4294967295ULL) { return std::nullopt; }
                 result.integerNumber = array->second.size();
                 return result;
@@ -1126,6 +1140,10 @@ ArrayContentsFailure LoopProof::countedLoop(mlir::Block * header, mlir::Block * 
         indexBounds = {*start, last};
         return accepted;
     };
+    // The census: scan every operation in the header, the body and the scf.if
+    // arms reached from a single body visit. Admit only pure operations and
+    // stores whose keys provably stay inside the guard array; anything else
+    // makes the loop unsupported.
     llvm::SmallVector<mlir::Block *, 4> blocks{header, body};
     for (std::size_t next = 0; next < blocks.size(); ++next) {
         mlir::Block * block = blocks[next];

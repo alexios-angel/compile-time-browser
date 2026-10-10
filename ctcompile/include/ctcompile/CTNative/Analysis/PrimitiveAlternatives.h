@@ -1,3 +1,11 @@
+//===- PrimitiveAlternatives.h - Primitive kind sets ------------*- C++ -*-===//
+//
+// PrimitiveAlternatives: the closed set of primitive kinds (Boolean, Number,
+// String, Null, Undefined) a value can hold, split by truthiness so a branch
+// on the value can narrow it.
+//
+//===----------------------------------------------------------------------===//
+
 #pragma once
 
 #include "ctcompile/CTJS/IR/CTJSOps.h"
@@ -7,10 +15,12 @@
 
 namespace ctcompile::ctnative {
 
-// A closed primitive set, partitioned by truthiness. This is semantic evidence,
-// independent of native types and storage schemas. Unknown is not an empty set:
-// filtering an unproved value never makes it a proved primitive. An empty arm
-// can describe the tested SSA value, but never skips that arm's effect proof.
+/// A closed set of primitive kinds, split into the truthy and falsy values
+/// each kind can take. It describes JavaScript values, independent of native
+/// types and storage schemas. "Unknown" (`known == false`) is not an empty
+/// set: filtering an unproved value never makes it a proved primitive. An empty
+/// arm describes the tested SSA value, but never lets a caller skip proving
+/// that arm's effects.
 struct PrimitiveAlternatives {
     enum : unsigned {
         Boolean = 1,
@@ -25,14 +35,17 @@ struct PrimitiveAlternatives {
 
     bool operator==(const PrimitiveAlternatives &) const = default;
 
-    // A formal parameter records the categories supplied by every current
-    // call, not the truth value of any startup argument. Future calls retain
-    // both truthiness arms of each permitted category.
+    /// The kinds alone, with both truthiness arms of each Boolean, Number and
+    /// String kind. A parameter records the kinds every current call passes,
+    /// not the truthiness of any particular argument, because future calls may
+    /// pass either.
     PrimitiveAlternatives categories() const {
         const auto mask = truthy | falsy;
         return {mask & (Boolean | Number | String), mask, known};
     }
 
+    /// Every value of the kind whose attribute type is `tag`; unknown for any
+    /// other tag.
     static PrimitiveAlternatives forTag(mlir::TypeID tag) {
         unsigned mask = tag == mlir::TypeID::get<ctjs::BooleanAttr>()     ? Boolean
                         : tag == mlir::TypeID::get<ctjs::NumberAttr>()    ? Number
@@ -43,6 +56,7 @@ struct PrimitiveAlternatives {
         return {mask & (Boolean | Number | String), mask, mask != 0};
     }
 
+    /// The single kind and truthiness of the constant `value`.
     static PrimitiveAlternatives literal(mlir::Attribute value) {
         auto result = forTag(value.getTypeID());
         bool truth = false;
@@ -56,15 +70,18 @@ struct PrimitiveAlternatives {
         return result.filtered(truth);
     }
 
+    /// The values left on the `branch` side of a truthiness test.
     PrimitiveAlternatives filtered(bool branch) const {
         return {branch ? truthy : 0, branch ? 0 : falsy, known};
     }
 
+    /// The union of two sets; unknown when either is unknown.
     PrimitiveAlternatives joined(PrimitiveAlternatives other) const {
         if (!known || !other.known) { return {}; }
         return {truthy | other.truthy, falsy | other.falsy, true};
     }
 
+    /// The attribute type of the one kind the set holds, or nullopt.
     std::optional<mlir::TypeID> tag() const {
         if (!known) { return {}; }
         switch (truthy | falsy) {

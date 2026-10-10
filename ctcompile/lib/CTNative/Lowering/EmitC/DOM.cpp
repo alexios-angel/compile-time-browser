@@ -1,3 +1,11 @@
+//===- DOM.cpp - EmitC lowering of proved DOM entries --------- -*- C++ -*-===//
+//
+// Lowers DOM entry points that DOMEntryAnalysis proved: emits the owned
+// `<entry>_session` class that holds the document, threads Style engine
+// pointers to element values, and replaces the entry's ctjs DOM reads, calls
+// and invokes with ctnative/ctbrowser C++ calls.
+//
+//===----------------------------------------------------------------------===//
 #include "Emitter.h"
 #include "ctcompile/CTNative/IR/CTNativeOps.h"
 #include "llvm/ADT/TypeSwitch.h"
@@ -26,8 +34,9 @@ void sessionInvoke(llvm::raw_ostream & out, llvm::StringRef entry, size_t count,
     for (size_t i = 0; i < count; ++i) {
         out << (i ? " || " : "") << "element" << i << ".owner != &document_";
     }
-    // Check every domain before the entry validates ANY handle. A foreign
-    // pointer can already dangle, so validation must never dereference it.
+    // Check that every element belongs to this session's document before the
+    // entry validates any handle. An element from another document may already
+    // dangle, so this check compares the owner pointer without dereferencing it.
     out << ") { throw std::invalid_argument(\"DOM element belongs to another session\"); }\n"
         << "        return " << entry << "(";
     for (size_t i = 0; i < count; ++i) { out << (i ? ", " : "") << "element" << i; }
@@ -53,6 +62,10 @@ std::string lowering::domDataDefinition() const {
     return text;
 }
 
+// Records which operations of a proved DOM entry and its callbacks need DOM
+// lowering (reads, calls, invokes, symbols, Style values). With
+// `ownedSession`, also emits the `<entry>_session` class that owns the
+// document and checks element ownership in invoke().
 void lowering::censusDOM(const DOMEntryAnalysis & entry, bool ownedSession) {
     if (!entry.proved()) { return; }
     domThrows.insert(entry.savedThrows().begin(), entry.savedThrows().end());
@@ -73,7 +86,8 @@ void lowering::censusDOM(const DOMEntryAnalysis & entry, bool ownedSession) {
     }
     llvm::SmallVector<ctjs::FuncOp> functions{entry.entry()};
     llvm::append_range(functions, entry.callbacks());
-    // One walk; each set is filled in the same operation order as its own walk.
+    // One walk fills every set, each in the same operation order a separate
+    // walk would have used.
     const auto census = [&](mlir::Operation * o) {
         if (domBookkeeping(entry, o)) { domReads.insert(o); }
         llvm::TypeSwitch<mlir::Operation *>(o)
@@ -121,8 +135,9 @@ void lowering::censusDOM(const DOMEntryAnalysis & entry, bool ownedSession) {
                                         number->kind == HostDOMMethod::decodeURIComponent) &&
                                        use.getOperandNumber() == 1;
                             })) {
-                            // The proved builtin does not observe its undefined receiver.
-                            // Keep its source identity until calls and roots are erased.
+                            // The proved builtin ignores its undefined receiver.
+                            // Mark the constant for erasure, which happens only
+                            // after the calls and roots that use it are gone.
                             domReads.insert(receiver.getDefiningOp());
                         }
                     }
@@ -158,8 +173,9 @@ void lowering::censusDOM(const DOMEntryAnalysis & entry, bool ownedSession) {
         if (!domStyleParameters.empty()) {
             out << "    ctbrowser::style::engine & selectors() { return selectors_; }\n";
         }
-        // Spell the actual checked parameter list. No callable or generic
-        // argument forwarding can escape with a borrowed document capture.
+        // Spell out the checked parameter list rather than forwarding
+        // arguments generically, so no callable can escape holding a borrowed
+        // document.
         std::string styles;
         for (size_t i = 0; i < domStyleParameters.size(); ++i) { styles += ", selectors_"; }
         sessionInvoke(out, symbol, entry.parameters().size(), styles);
@@ -168,6 +184,9 @@ void lowering::censusDOM(const DOMEntryAnalysis & entry, bool ownedSession) {
     }
 }
 
+// Threads a `ctbrowser::style::engine *` next to every element value that
+// needs one, adding scf.if/scf.while results where an element crosses control
+// flow, then resolves the temporary casts to plain pointers.
 void lowering::prepareDOMStyles(ec::FuncOp function) {
     if (domStyleValues.empty() ||
         llvm::none_of(domStyleParameters, [&](mlir::BlockArgument parameter) {
@@ -178,8 +197,9 @@ void lowering::prepareDOMStyles(ec::FuncOp function) {
     const auto engine = ec::OpaqueType::get(context, "ctbrowser::style::engine");
     const auto pointer = ec::PointerType::get(engine);
     auto at = mlir::OpBuilder::atBlockBegin(&function.getBody().front());
-    // Temporary SSA links permit backedges. All links are resolved and erased
-    // below; only ordinary borrowed pointers reach the C++ output.
+    // Placeholder casts stand in for each Style pointer so a loop backedge can
+    // use one before its source exists. All are resolved and erased below;
+    // only ordinary borrowed pointers reach the C++ output.
     llvm::DenseMap<mlir::Value, mlir::UnrealizedConversionCastOp> links;
     for (auto value : domStyleValues) {
         links[value] = mlir::UnrealizedConversionCastOp::create(
@@ -208,7 +228,8 @@ void lowering::prepareDOMStyles(ec::FuncOp function) {
             }
             value.replaceAllUsesWith(made->getResult(static_cast<unsigned>(index)));
         }
-        // Source identities in the remaining frozen plans are not SSA uses.
+        // domDatasetValues stores Values captured by the analysis, not SSA
+        // uses, so replaceAllUsesWith does not update them; remap them here.
         for (auto & item : domDatasetValues) {
             if (auto replacement = replacements.lookup(item.second)) { item.second = replacement; }
         }
@@ -300,12 +321,15 @@ void lowering::prepareDOMStyles(ec::FuncOp function) {
     domStyleValues.clear();
 }
 
+// For each proved-present optional String, inserts a copy of its value at the
+// start of the guarded block and points the recorded uses at it.
 void lowering::prepareDOMStrings() {
     for (const auto & refinement : domStringRefinements) {
         if (refinement.uses.empty()) { continue; }
         mlir::OpBuilder at = mlir::OpBuilder::atBlockBegin(refinement.block);
-        // Copy only inside the proved-present arm. The original optional remains
-        // intact, and Invoke's call body keeps its exact call/exit shape.
+        // Copy only inside the arm where the value is proved present. The
+        // optional itself is untouched, so an invoke's call body keeps its
+        // exact call/exit shape.
         const auto rawString = ec::OpaqueType::get(context, kRawStringType);
         mlir::Value text;
         if (isNullableStringCarrier(refinement.optional.getType())) {
@@ -324,16 +348,18 @@ void lowering::prepareDOMStrings() {
     domStringRefinements.clear();
 }
 
+// Lowers one operation that censusDOM recorded. Returns false when the
+// operation is not a DOM operation, so the caller lowers it normally.
 bool lowering::replaceDOM(mlir::Operation * operation) {
-    if (domReads.contains(operation)) { return true; } // erased after their calls
+    if (domReads.contains(operation)) { return true; } // Erased after their calls.
     if (domThrows.erase(operation)) {
         auto thrown = llvm::cast<ctjs::ThrowOp>(operation);
         auto * region = thrown->getParentOp();
         mlir::OpBuilder at(region);
         auto where = thrown.getLoc();
-        // Keep a terminating scope: SCF result lowering may append unreachable
-        // assignments outside it. The printer spells this unconditional scope
-        // as an ordinary C++ block, without a runtime control flag.
+        // Wrap the throw in its own scope, because SCF result lowering may
+        // append unreachable assignments after it. The printer spells this
+        // `if (true)` as a plain C++ block, with no runtime test.
         auto always = ec::LiteralOp::create(at, where, at.getI1Type(), "true");
         auto scope = ec::IfOp::create(at, where, always, false);
         mlir::OpBuilder body = mlir::OpBuilder::atBlockBegin(&scope.getThenRegion().front());
@@ -480,8 +506,9 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
         auto invocation = llvm::cast<ctjs::InvokeOp>(operation);
         auto call = llvm::cast<ctjs::CallOp>(invocation.getBody().front().front());
         if (invocation.getNumResults() == 0) {
-            // Complete DOM admission proved this exact setAttribute cannot
-            // throw a source exception. Preserve the call at the same guard.
+            // DOMEntryAnalysis admits a result-less invoke only when its call
+            // (a setAttribute) cannot throw a JavaScript exception, so unwrap it
+            // and lower the bare call in the invoke's place.
             call->moveBefore(invocation);
             domInvocations.erase(invocation);
             invocation.erase();
@@ -506,8 +533,9 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
         branch.getElseRegion().takeBody(invocation.getUnwindBody());
         auto & success = branch.getThenRegion().front();
         mlir::OpBuilder inside = mlir::OpBuilder::atBlockBegin(&success);
-        // Move only on success. The original input and failure continuation
-        // remain untouched; foreign allocation failures never select this else.
+        // Move the value out only on success. The input and the failure arm
+        // are untouched; a C++ exception such as bad_alloc propagates rather
+        // than taking the else arm.
         auto value =
             ec::ExpressionOp::create(inside, where, produced, mlir::ValueRange{decoded}, false);
         value.createBody();
@@ -596,7 +624,8 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
     auto unary = llvm::dyn_cast<ctjs::UnaryOp>(operation);
     if (unary && unary.getKind() == ctjs::UnaryKind::TypeOf &&
         unary.getOperand().getType() == jsonOwner) {
-        // Fresh spread targets stay objects throughout their proved writes.
+        // A JSON-owner value is always a fresh object literal that is only
+        // written to, so its typeof is always "object".
         swap(stringConstant(at, where, "object"));
         return true;
     }
@@ -604,7 +633,8 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
         unary.getOperand().getType() == carrierType(context, carrier::json)) {
         const auto stringType = carrierType(context, carrier::string);
         const auto dataType = ec::OpaqueType::get(context, "decltype(ctbrowser::json_value::data)");
-        // Deferred member emission names the original tree's field, without a copy.
+        // The member access is emitted inside the expression, so it names the
+        // original tree's field without a copy.
         auto data = ec::MemberOp::create(at, where, dataType, "data", unary.getOperand());
         auto expression =
             ec::ExpressionOp::create(at, where, stringType, mlir::ValueRange{data}, false);
@@ -663,8 +693,9 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
         return true; // The enclosing invocation consumes its original call.
     }
     const auto & edge = found->second;
-    // The host proof admits Number/Boolean/null literals, undefined and
-    // one arithmetic operation on Number literals, including produced NaN.
+    // DOMEntryAnalysis admits Number() only of a Number, Boolean or null
+    // literal, undefined, or one arithmetic operation on Number literals
+    // (which may produce NaN).
     const auto numeric = [](mlir::Value argument) {
         return isNumberCarrier(argument.getType()) || argument.getType().isF64() ||
                isBooleanCarrier(argument.getType()) || argument.getType().isInteger(1);
@@ -701,6 +732,9 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
         return true;
     }
     if (edge.kind == HostDOMMethod::removeStringPrefix) {
+        // The analysis admits only `s.replace(/^bs/, "")`, the prefix Bootstrap
+        // strips from its dataset keys, so this is a fixed two-character
+        // prefix check with no regex engine.
         auto prefix = stringConstant(at, where, "bs");
         auto matches =
             memberCall(at, where, at.getI1Type(), call.getReceiver(), "startsWith", prefix);
@@ -740,7 +774,8 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
     if (edge.kind == HostDOMMethod::stringCharAt || edge.kind == HostDOMMethod::stringSlice) {
         auto units = callValue(at, where, unitsType, "ctbrowser::wtf8_to_utf16",
                                rawText(call.getReceiver()));
-        // Null selects zero; undefined retains the default slice end.
+        // A null end slices to index zero; an undefined end keeps the default
+        // (the end of the String).
         const bool startIndex = !call.getArgs().empty() && numeric(call.getArgs().front());
         const bool endIndex = call.getArgs().size() == 2 && numeric(call.getArgs()[1]);
         const bool nullEnd =
@@ -806,8 +841,8 @@ bool lowering::replaceDOM(mlir::Operation * operation) {
     }
     llvm::SmallVector<mlir::Value> arguments;
     if (edge.kind == HostDOMMethod::number) {
-        // Earlier replacements update the live call operands. The source
-        // proof's original input may already have been erased.
+        // Use the live call operands: earlier replacements updated them, and
+        // the input the analysis recorded may already have been erased.
         llvm::append_range(arguments, call.getArgs());
     } else if (edge.kind == HostDOMMethod::numberToString) {
         arguments.push_back(convertScalar(at, where, call.getReceiver(), at.getF64Type()));

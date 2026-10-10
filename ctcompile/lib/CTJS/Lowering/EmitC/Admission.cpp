@@ -1,33 +1,25 @@
+//===- Admission.cpp - What the EmitC lowering accepts --------------------===//
+//
+// Decides whether the VM-backed EmitC lowering can compile a ctjs.func, and
+// records why not (a ctjs.not_lowered attribute) when it cannot.
+//
+//===----------------------------------------------------------------------===//
 #include "Lowering.h"
 
 namespace ctcompile::ctjs::emitc_detail {
-// THE HELPERS THE RUNTIME DECLARES BUT DOES NOT DEFINE.
-//
-// aot_helpers.def declares 69 rows and lib/Script/aot_bridge/ defines 32 of them. The
-// other 37 have prototypes in aot.hpp and no body anywhere, so a call to one
-// COMPILES PERFECTLY and fails at link.
-//
-// THAT IS EXACTLY WHAT HAPPENED. This backend emitted ct_aot_global_get and
-// ct_aot_negate for two commits, and every test passed - because every EmitC
-// test compiled the output with -fsyntax-only and none of them linked it.
-// Linking it by hand gives "undefined reference to `ct_aot_global_get'".
-//
-// SO THE ROWS ARE NOT ENOUGH TO DECIDE WHAT TO EMIT, and this is the one place
-// where the .def cannot be the single source of truth: it records what the ABI
-// IS, not what has been built yet. This list is the second source, and it is
-// held honest by ctcompile_linkable, which links a translation unit exercising
-// every operation the backend accepts - so a name here that is wrong in either
-// direction fails the build rather than a program.
 
+/// Whether the runtime has a body for `helper`.
+///
+/// A helper declared in the ABI tables (ctbrowser/include/ctbrowser/aot/
+/// helpers/*.def) may have a prototype in aot.hpp but no body yet. A call to
+/// one compiles and then fails at link time, so the .def alone cannot decide
+/// what the backend may emit. The ctcompile_linkable test keeps this list
+/// accurate by linking a translation unit that uses every operation the
+/// backend accepts.
 bool runtime_defines(llvm::StringRef helper) {
-    // EMPTY, AND THAT IS THE POINT OF KEEPING IT. Every row the backend can
-    // name now has a body: ct_aot_global_get, ct_aot_global_set,
-    // ct_aot_negate and ct_aot_bit_not were all here and are all implemented.
-    //
-    // The list stays because 30 of the 69 rows still have none, and the next
-    // operation lowered will need it again - and because ctcompile_linkable is
-    // what keeps it honest in both directions, by linking a translation unit
-    // that exercises everything the backend accepts.
+    // Currently empty: every helper the backend can emit has a body. Keep the
+    // list, because the next operation to be lowered may need a helper that
+    // does not exist yet.
     static constexpr llvm::StringLiteral undefined_yet[] = {llvm::StringLiteral("")};
     for (const llvm::StringLiteral & absent : undefined_yet) {
         if (helper == absent) { return false; }
@@ -35,27 +27,28 @@ bool runtime_defines(llvm::StringRef helper) {
     return true;
 }
 
-// WHY A FUNCTION WAS LEFT ALONE, in a form ctjs-opt prints.
+/// Marks `function` as refused, with the reason as an attribute ctjs-opt
+/// prints.
 void refuse(FuncOp function, llvm::StringRef because) {
     function->setAttr(notLoweredMarker, mlir::StringAttr::get(function.getContext(), because));
 }
 
-// Whether every operation in the body is one this pass knows how to emit.
-//
-// AN ALLOW-LIST, NOT A DENY-LIST. A deny-list lowers an operation nobody
-// considered by default, and the cost of being wrong here is a translation unit
-// that compiles and computes something else.
+/// Whether every operation in the body is one this pass knows how to emit;
+/// otherwise `why` holds a reason.
+///
+/// An allow-list, not a deny-list: a deny-list would lower an operation nobody
+/// considered, and being wrong here gives a translation unit that compiles and
+/// computes something else.
 bool body_is_supported(FuncOp function, std::string & why) {
     bool supported = true;
-    // THE WALK DOES NOT STOP AT A REFUSAL, so the LAST reason wins.
+    // The walk does not stop at a refusal, so the last reason wins.
     const auto fail = [&](std::string because) {
         supported = false;
         why = std::move(because);
     };
     function.getBody().walk([&](mlir::Operation * op) {
-        // ctjs.frame_exit MUST BE THE LAST THING BEFORE THE RETURN.
-        //
-        // The importer puts this marker immediately before the return. The
+        // ctjs.frame_exit must come immediately before the return. The
+        // importer puts it there. The
         // boxed emitter coalesces their release into ct_aot_leave_return so
         // the normalized result can be handed to the oracle. Keeping the
         // adjacency requirement makes the deferred release match that marker.
@@ -66,19 +59,16 @@ bool body_is_supported(FuncOp function, std::string & why) {
             }
             return;
         }
-        // THE ARITHMETIC, AND WITH IT THE FIRST EXCEPTION EDGE. Both families
-        // answer with a ct_aot_status, so each becomes a call, a test against
-        // ct_aot_status::ok by name, and a branch to the shared failure path.
-        // A kind the family does not serve is refused rather than compiled into
-        // op::halt, which ct_aot_binary_op's switch would answer with undefined.
-        // EVERY UNARY KIND LOWERS NOW. `typeof` was refused because its result
-        // is a string, and that reason went stale with the same sentence
-        // ctjs.constant's did: ct_aot_new_string has a body, and every value
-        // the backend produces is parked in a frame slot.
+        // Arithmetic. Both binary families return a ct_aot_status, so each
+        // becomes a call, a test against ct_aot_status::ok by name, and a
+        // branch to the shared failure path. A kind the family does not serve
+        // is refused rather than compiled into op::halt, which
+        // ct_aot_binary_op's switch would answer with undefined.
+        //
+        // Every unary kind lowers. Negation and bitwise-not still check
+        // runtime_defines(), so a missing helper body is refused instead of
+        // causing a link failure.
         if (auto unary = mlir::dyn_cast<UnaryOp>(op)) {
-            // THE LIST STILL EXISTS, and it is empty. Every helper the backend
-            // can name has a body; the check stays because 27 rows still do
-            // not, and ctcompile_linkable is what keeps it honest.
             if ((unary.getKind() == UnaryKind::Neg && !runtime_defines("ct_aot_negate")) ||
                 (unary.getKind() == UnaryKind::BitNot && !runtime_defines("ct_aot_bit_not"))) {
                 fail("the helper for this unary operator is declared in aot.hpp and defined "
@@ -86,19 +76,19 @@ bool body_is_supported(FuncOp function, std::string & why) {
             }
             return;
         }
-        // A ctjs.check's HANDLER OPERANDS MUST BE ITS OWN BLOCK'S ARGUMENTS.
+        // A ctjs.check's handler operands must be its own block's arguments.
         //
-        // The lowering resolves them when it ENTERS the block, before the
+        // The lowering resolves them when it enters the block, before the
         // block's operations are converted, because that is where the caught
         // edge has to be armed for every fallible call the block contains. That
         // is sound exactly while the importer's one-instruction-per-protected-
         // block split holds, which makes the snapshot the block's own
         // arguments - and p5 contains shapes where it does not.
         //
-        // REFUSED RATHER THAN ASSERTED. A null operand is accepted silently by
+        // Refused rather than asserted. A null operand is accepted silently by
         // MLIR and crashes later inside Operation::create with a stack naming
-        // neither this file nor the function - so the whole p5 run died instead
-        // of losing the handful of functions that actually have the shape.
+        // neither this file nor the function, so refusing loses only the few
+        // functions with the shape instead of the whole compile.
         if (auto guarded = mlir::dyn_cast<CheckOp>(op)) {
             for (const mlir::Value each : guarded.getHandlerOperands()) {
                 const auto argument = mlir::dyn_cast<mlir::BlockArgument>(each);
@@ -111,11 +101,11 @@ bool body_is_supported(FuncOp function, std::string & why) {
             }
             return;
         }
-        // A RESOLVED CALL LOWERS AS ctjs.call - ct_aot_call through the callee
-        // VALUE - and ct_aot_call has no new.target parameter: the runtime
+        // A resolved call lowers as ctjs.call (ct_aot_call through the callee
+        // value), and ct_aot_call has no new.target parameter: the runtime
         // pushes the frame with pending_new_target_, which a plain call leaves
-        // undefined. So the operand must BE that constant, or this tier would
-        // drop a value the resolver put there on purpose.
+        // undefined. So the operand must be that constant, or this backend
+        // would drop a value the resolver put there on purpose.
         if (auto direct = mlir::dyn_cast<CallDirectOp>(op)) {
             auto constant = direct.getNewTarget().getDefiningOp<ConstantOp>();
             if (!constant || !mlir::isa<UndefinedAttr>(constant.getValue())) {
@@ -129,18 +119,18 @@ bool body_is_supported(FuncOp function, std::string & why) {
             return;
         }
 
-        // THE UPVALUE OPERATIONS, WHICH ARE TWO CALLS EACH - which is why they
+        // The upvalue operations lower to two calls each, which is why they
         // are plain CTJS_Ops rather than CTJS_RuntimeOps. The ABI splits the
         // fused opcode deliberately: ct_aot_upvalue_cell answers undefined for
         // a missing closure or an out-of-range index, ct_aot_cell_get no-ops on
         // a non-cell, and composed they are exactly the guard VM_CASE
         // (get_upvalue) writes inline.
         //
-        // THE OPERAND MUST BE THIS FRAME'S OWN CLOSURE. ct_aot_upvalue_cell
-        // reads the frame, so an operation naming a DIFFERENT closure would be
-        // lowered into a read of the wrong one - and the importer only ever
-        // names the callee argument, so refusing anything else costs nothing
-        // and closes the hole for hand-written IR.
+        // The operand must be this frame's own closure. ct_aot_upvalue_cell
+        // reads the frame, so an operation naming a different closure would
+        // read the wrong one. The importer only ever names the callee
+        // argument, so refusing anything else costs nothing and closes the
+        // hole for hand-written IR.
         if (mlir::isa<LoadUpvalueOp, StoreUpvalueOp>(op)) {
             const mlir::Value named = mlir::isa<LoadUpvalueOp>(op)
                                           ? mlir::cast<LoadUpvalueOp>(op).getClosure()
@@ -173,22 +163,19 @@ bool body_is_supported(FuncOp function, std::string & why) {
             }
             return;
         }
-        // EVERY OTHER CTJS_RuntimeOp: each has a lowering of its own or is the
-        // one helper call convertRuntime() builds from its row.
+        // Every other CTJS_RuntimeOp: each has a lowering of its own or is the
+        // single helper call convertRuntime() builds from its ABI entry.
         if (mlir::isa<RuntimeCallOpInterface>(op)) { return; }
-        // THE BRANCHES, which is what makes a function with an `if` compilable.
-        // Their block arguments are handled by a pass of their own afterwards -
-        // see EmitCBlockArguments.cpp - because emitting them as they stand
-        // would hit the copy the C++ emitter loses.
+        // Branches. Their block arguments are handled by a later pass
+        // (EmitCBlockArguments.cpp), because emitting them as they stand would
+        // hit the copy the C++ emitter loses.
         if (mlir::isa<mlir::cf::BranchOp, mlir::cf::CondBranchOp>(op)) { return; }
         if (auto constant = mlir::dyn_cast<ConstantOp>(op)) {
-            // THE FOUR THAT NEED NO ALLOCATION. A number is included because
-            // its attribute carries the double's BIT PATTERN rather than a
-            // float, so it has an exact C++ spelling - see constant_value. A
-            // decimal literal would not: -0.0 and 0.0 are different JavaScript
-            // values and print identically. A string is still refused; it
-            // reaches ct_aot_new_string, which is a safepoint, and nothing
-            // roots the result yet.
+            // Constants the backend can emit: undefined, null, booleans,
+            // numbers, strings and BigInts (isConstantAttr). A number is
+            // emitted from its attribute's bit pattern, not from a decimal
+            // literal, because -0.0 and 0.0 are different JavaScript values
+            // but print the same way (see constant_value).
             if (isConstantAttr(constant.getValue())) { return; }
             fail("no lowering yet for this constant");
             return;

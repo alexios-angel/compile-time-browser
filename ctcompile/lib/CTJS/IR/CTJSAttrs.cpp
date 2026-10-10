@@ -1,3 +1,13 @@
+//===- ctcompile/lib/CTJS/IR/CTJSAttrs.cpp - ctjs attribute definitions ---===//
+//
+// The generated attribute storage and its dialect hooks.
+//
+// CTJSBase.td sets `useDefaultAttributePrinterParser = 1`, so the generated
+// dialect declares parseAttribute and printAttribute; -gen-attrdef-defs emits
+// their bodies, and this file expands them so the dialect links. CTJSTypes.cpp
+// does the same for types.
+//
+//===----------------------------------------------------------------------===//
 #include "ctcompile/CTJS/IR/CTJSAttrs.h"
 
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
@@ -7,18 +17,8 @@
 #include "mlir/IR/DialectImplementation.h"
 #include "llvm/ADT/TypeSwitch.h"
 
-// THE GENERATED ATTRIBUTE STORAGE, AND THE DIALECT HOOKS THAT COME WITH IT.
-//
-// There is not one attribute yet, so this looks like a file about nothing - and
-// it is not: `useDefaultAttributePrinterParser = 1` in the mandated CTJSBase.td
-// makes the generated dialect DECLARE parseAttribute and printAttribute, and
-// their definitions are emitted by -gen-attrdef-defs. Without a translation
-// unit that expands them the dialect fails to link, which is what happened.
-//
-// CTJSTypes.cpp is the same shape for the same reason, and the types linked
-// only because it already existed.
-// The enum definitions - the stringification the attributes parse and print
-// through - before the attribute storage that uses them.
+// The enum definitions (the stringification the attributes parse and print
+// through) come before the attribute storage that uses them.
 #include "ctcompile/CTJS/IR/CTJSEnums.cpp.inc"
 
 #define GET_ATTRDEF_CLASSES
@@ -26,7 +26,8 @@
 
 namespace ctcompile::ctjs {
 
-// Here for the same reason registerTypes is in CTJSTypes.cpp.
+// Here rather than in CTJSDialect.cpp because addAttributes<> needs the storage
+// classes above to be complete (registerTypes is in CTJSTypes.cpp likewise).
 void CTJSDialect::registerAttributes() {
     addAttributes<
 #define GET_ATTRDEF_LIST

@@ -1,8 +1,17 @@
+//===- SymbolTransport.cpp - Symbols across SCF edges -----------*- C++ -*-===//
+//
+// Implements transportSymbols(), declared in SymbolTransport.h.
+//
+//===----------------------------------------------------------------------===//
+
 #include "SymbolTransport.h"
 #include "../LoweringSupport.h"
 
 namespace ctcompile::ctnative::lowering_detail {
 
+/// Wraps Symbol values that cross scf.if/scf.while boundaries in
+/// std::optional<js_symbol_t>, because the emitted C++ declares those results
+/// before assigning them and a Symbol has no default constructor.
 void transportSymbols(ec::FuncOp function) {
     auto * context = function.getContext();
     const auto symbol = carrierType(context, carrier::symbol);

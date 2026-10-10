@@ -1,3 +1,14 @@
+//===- Source.cpp - Expand DOM helper functions ---------------------------===//
+//
+// expandDOMHelpers: the driver of the DOM source proof (DOMSource in
+// Source/Proof.hpp). It indexes every function in a private candidate module,
+// optionally turns the wrapper that publishes the entry into the entry itself,
+// inlines the helpers the entry calls, and erases every function the result
+// no longer needs. Also defines two small helpers declared in ../Analysis.h:
+// projectInvocationContinuation and isLowercaseReplacement.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Source/Proof.hpp"
 #include "mlir/IR/Verifier.h"
 #include "llvm/ADT/ScopeExit.h"
@@ -14,8 +25,9 @@ mlir::FailureOr<llvm::SmallVector<mlir::Value>> host_detail::projectInvocationCo
         remaining -= static_cast<unsigned>(cost);
         return true;
     };
-    // Reserve verification, mapping and copying before creating any operation.
-    // Recovered continuations contain only tags/padding and a complete yield.
+    // Charge for verification, mapping and copying before creating any
+    // operation, so running out of budget leaves the IR untouched. A recovered
+    // continuation holds only constant tags, poison padding and its yield.
     for (auto & region : invocation->getRegions()) {
         if (!region.hasOneBlock() || region.front().empty() ||
             !spend(uint64_t(1) + region.front().getNumArguments())) {
@@ -78,9 +90,9 @@ bool host_detail::isLowercaseReplacement(ctjs::FuncOp function, llvm::function_r
         ctjs::constantKey(read.getKey()) != "toLowerCase") {
         return false;
     }
-    // Prove the entire original callback, including discarded operations.
-    // Its input is one matched ASCII uppercase unit; no coercion or script
-    // reentry is needed for the initial lowercase method or concatenation.
+    // Check every operation of the callback, including unused ones. Its input
+    // is one matched ASCII uppercase character, so neither the built-in
+    // toLowerCase nor the concatenation can coerce or re-enter script.
     for (mlir::Operation & operation : body) {
         if (!step()) { return false; }
         if (&operation == read || &operation == call || &operation == concat ||
@@ -145,9 +157,10 @@ llvm::Error expandDOMHelpers(mlir::ModuleOp candidate, llvm::StringRef entry, un
             (void)index;
             if (!source.step()) { break; }
             if (function != wrapper && !source.expanded.contains(function)) {
-                // Class lifting can retire an unread holder slot while retaining
-                // its original body. Numeric closures and symbolic calls must
-                // both be absent before its independent leaf proof can suffice.
+                // Class lifting can drop an unread holder slot but keep the
+                // function body. Such a function is accepted only when no
+                // closure creates it, no symbol refers to it, and
+                // proveUnusedBody shows its body is inert on its own.
                 if (!source.step(2 * uint64_t(source.operationCount))) { break; }
                 if (source.creations.lookup(index) != 0 || !symbolUnused(function, candidate) ||
                     !source.proveUnusedBody(function)) {

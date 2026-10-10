@@ -1,3 +1,9 @@
+//===- Measure.hpp - File reading and timing --------------------*- C++ -*-===//
+//
+// Small helpers for the measurement tools: read a whole file, and time a
+// callable as the median of several runs.
+//
+//===----------------------------------------------------------------------===//
 #pragma once
 
 #include "llvm/Support/MemoryBuffer.h"
@@ -10,17 +16,18 @@
 
 namespace ctcompile {
 
-// A whole file, or empty when it cannot be read.
+/// A whole file, or empty when it cannot be read.
 [[nodiscard]] inline std::string read_file(const std::filesystem::path & path) {
     auto buffer = llvm::MemoryBuffer::getFile(path.string());
     return buffer ? (*buffer)->getBuffer().str() : std::string{};
 }
 
-// The median of several runs, not the mean and not the best.
-//
-// The mean is dragged by one scheduler hiccup and the best is a number the
-// machine produced once and will not reproduce - a baseline is for comparing
-// against later, so it has to be the number that comes back tomorrow.
+/// The median wall time of `runs` calls to `once`, in milliseconds; not the
+/// mean and not the best.
+///
+/// The mean is dragged by one scheduler hiccup, and the best is a number the
+/// machine produced once and will not reproduce. A baseline is for comparing
+/// against later, so it has to be the number that comes back tomorrow.
 template <typename F> [[nodiscard]] double median_ms(int runs, F && once) {
     using clock_type = std::chrono::steady_clock;
     std::vector<double> taken;

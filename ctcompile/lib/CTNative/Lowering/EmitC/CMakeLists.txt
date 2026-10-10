@@ -1,3 +1,5 @@
+# The CTNative-to-EmitC lowering, one file per concern. Emitter.h declares the
+# shared `lowering` state they all extend.
 target_sources(ctcompile-ctnative-lowering PRIVATE
   Shapes.cpp
   OwnedGlobals.cpp

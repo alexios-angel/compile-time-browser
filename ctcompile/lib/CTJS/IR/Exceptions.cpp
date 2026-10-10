@@ -1,3 +1,12 @@
+//===- ctcompile/lib/CTJS/IR/Exceptions.cpp - ctjs exception op hooks -----===//
+//
+// Region-branch and verifier hooks for the ctjs exception operations:
+// ctjs.try / try_exit / try_yield (a protected body with one catch region) and
+// ctjs.invoke / invoke_exit / invoke_yield (one call with normal and unwind
+// continuations). The invocation bounds say the body runs exactly once and
+// each other region at most once.
+//
+//===----------------------------------------------------------------------===//
 #include "ctcompile/CTJS/IR/CTJSOps.h"
 
 #include "mlir/IR/BuiltinAttributes.h"
@@ -50,6 +59,9 @@ mlir::LogicalResult TryOp::verify() {
     return mlir::success();
 }
 
+// try_exit's operands are (isThrow, normalResult, caughtValues...). The catch
+// region receives caughtValues (operand 2 onward); the parent receives
+// normalResult (operand 1).
 mlir::MutableOperandRange TryExitOp::getMutableSuccessorOperands(mlir::RegionSuccessor point) {
     if (point.isRegion()) {
         return mlir::MutableOperandRange(getOperation(), 2, getNumOperands() - 2);
@@ -63,6 +75,8 @@ void TryExitOp::getSuccessorRegions(llvm::ArrayRef<mlir::Attribute> operands,
     const auto flag = operands.empty()
                           ? mlir::IntegerAttr{}
                           : llvm::dyn_cast_or_null<mlir::IntegerAttr>(operands.front());
+    // When isThrow is a known constant only one successor is possible: nonzero
+    // goes to the catch region, zero to the parent. Otherwise both are.
     if (!flag || !flag.getValue().isZero()) { regions.emplace_back(&parent.getCatchBody()); }
     if (!flag || flag.getValue().isZero()) { regions.emplace_back(parent.getOperation()); }
 }

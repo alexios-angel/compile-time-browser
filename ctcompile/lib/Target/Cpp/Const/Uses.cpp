@@ -1,3 +1,11 @@
+//===- ctcompile/lib/Target/Cpp/Const/Uses.cpp - Read-only operand uses ---===//
+//
+// Implements readsBinding: which operand uses only read a binding, so the
+// bound value can stay `const`. The list is conservative; an unknown use is
+// treated as a write.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Bindings.h"
 
 #include "ctcompile/CTNative/IR/CTNativeOps.h"
@@ -17,10 +25,12 @@ bool readsBinding(mlir::OpOperand & operand) {
     mlir::Operation * op = operand.getOwner();
     if (auto cast = llvm::dyn_cast<ec::CastOp>(op)) {
         // An opaque target can hide a reference cast that exposes the input
-        // binding. Only ordinary native value/pointer conversions are reads.
+        // binding. Only ordinary native value or pointer conversions are reads.
         return supportsConstBinding(cast.getResult().getType());
     }
     if (llvm::isa<ec::AssignOp>(op)) { return operand.getOperandNumber() == 1; }
+    // Member calls: only a short list of known const member functions on
+    // native value types is a read.
     if (auto call = llvm::dyn_cast<ec::MemberCallOpaqueOp>(op)) {
         const auto receiver = llvm::dyn_cast<ec::OpaqueType>(call.getReceiver().getType());
         if (!receiver || call.getArgs() || call.getTemplateArgs() || call.getNumResults() != 1) {
@@ -52,9 +62,9 @@ bool readsBinding(mlir::OpOperand & operand) {
         return isOpaque(call.getArgOperands()[0].getType(), "ctnative::js_string");
     }
     if (auto call = llvm::dyn_cast<ec::CallOpaqueOp>(op)) {
-        // This describes the C++ operand ABI, never purity or heap effects.
-        // Native helper construction supplies it for by-value/const-reference
-        // operands. Unspecified opaque calls may bind mutable references or
+        // `ctnative.const_operands` lists the operands the callee takes by value
+        // or const reference. It describes the C++ operand ABI, never purity or
+        // heap effects. Unspecified opaque calls may bind mutable references or
         // select different overloads when the actual argument gains const.
         auto safe = call->getAttrOfType<mlir::DenseI32ArrayAttr>(ctnative::kNativeConstOperands);
         return safe && llvm::is_contained(safe.asArrayRef(), operand.getOperandNumber());
@@ -67,7 +77,7 @@ bool readsBinding(mlir::OpOperand & operand) {
         const unsigned index = operand.getOperandNumber();
         return index < types.size() && supportsConstBinding(types[index]);
     }
-    // Views are read-only at their creation. Writes/address escapes through
+    // Views are read-only at their creation. Writes and address escapes through
     // a member or subscript propagate backwards to the owning binding.
     return llvm::isa<ec::AddOp, ec::SubOp, ec::MulOp, ec::DivOp, ec::RemOp, ec::CmpOp,
                      ec::LogicalAndOp, ec::LogicalOrOp, ec::LogicalNotOp, ec::UnaryMinusOp,

@@ -1,7 +1,20 @@
+//===- Proof.cpp - Class initialization proofs ------------------*- C++ -*-===//
+//
+// The proofs that let a source module's class initialization be compiled
+// natively: class setup, instanceof, static methods and helper calls, and
+// finally a census of every remaining operation (censusSource) that refuses
+// anything able to call back into source code or replace the class helper.
+// "Census" throughout this directory means that check of every operation.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Proof.hpp"
 
 namespace ctcompile::ctnative::class_detail {
 
+/// Decides every `obj instanceof C` statically: `obj` must be a `new` of a
+/// completed local class in the same block, and C a completed local class.
+/// Records the answer in instanceOfResults.
 bool classInitialization::proveInstanceOf(const HostContract & contract) {
     // examine() has already required one argument per call.
     llvm::DenseMap<mlir::Value, ctjs::CallOp> completed;
@@ -10,9 +23,11 @@ bool classInitialization::proveInstanceOf(const HostContract & contract) {
         if (llvm::count(contract.initialIntrinsics, "Function") != 1) {
             return refuseWalk("class instanceof requires the standard Function identity");
         }
-        // The full source census excludes hook/prototype mutation and reentry.
-        // Function supplies its initial inherited @@hasInstance. Only an exact
-        // source construction carries nominal identity: equal C++ shapes do not.
+        // censusSource refuses any prototype or @@hasInstance mutation and any
+        // re-entry, so `instanceof` uses Function.prototype[@@hasInstance] and
+        // can be decided statically. Only an object constructed in the same
+        // block counts as an instance: two classes with equal native layouts
+        // are still different classes.
         auto constructor =
             sourceValue(test.getConstructor()).getDefiningOp<ctjs::CreateClosureOp>();
         auto made = sourceValue(test.getObject()).getDefiningOp<ctjs::ConstructOp>();
@@ -35,8 +50,10 @@ bool classInitialization::proveInstanceOf(const HostContract & contract) {
         bool returned = false;
         if (!walkSteps(target(original), [&](ctjs::ReturnOp result) {
                 returned = true;
-                // Derived super normalization has already proved and preserved its
-                // receiver. Other replacement-return proofs can extend this slice.
+                // A derived constructor's receiver was already proved preserved
+                // by normalizeSuper, which rewrites its return to undefined. A
+                // constructor that returns a non-constant may replace its
+                // instance, so it is refused.
                 if (!result.getValue().getDefiningOp<ctjs::ConstantOp>()) {
                     return refuseWalk("class instanceof constructor may replace its instance");
                 }
@@ -63,6 +80,9 @@ bool classInitialization::proveInstanceOf(const HostContract & contract) {
     });
 }
 
+/// Returns the function a recorded helper call `op` invokes: the direct target,
+/// a proved captured helper, or the closure the callee comes from (looking
+/// through cells when `throughCells` is set). Null if unknown.
 ctjs::FuncOp classInitialization::helperCallTarget(mlir::Operation * op, bool throughCells) {
     auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(op);
     auto callee = direct ? direct.getCalleeValue() : llvm::cast<ctjs::CallOp>(op).getCallee();
@@ -71,6 +91,8 @@ ctjs::FuncOp classInitialization::helperCallTarget(mlir::Operation * op, bool th
     return fn;
 }
 
+/// Marks every closure stored on `holder` under `read`'s key as a decided
+/// helper: the call through `read` is gone, so it may have had its last caller.
 void classInitialization::decideSlot(mlir::Value holder, ctjs::GetPropertyOp read) {
     const auto key = ctjs::constantKey(read.getKey());
     if (!holder || key.empty()) { return; }
@@ -84,16 +106,16 @@ void classInitialization::decideSlot(mlir::Value holder, ctjs::GetPropertyOp rea
     }
 }
 
+/// Removes static methods that never run. A static method runs only through a
+/// read of its key: `C.k`, `this.k` in a static body, `this.constructor.k`, or
+/// a read on a subclass. One that no read reaches (outside the bodies of other
+/// unread static methods) never runs: drop its definition, its closure and
+/// every function only its body creates, before any proof or census sees
+/// them. Every other use of a class value is refused by the class proof itself.
 bool classInitialization::dropUnreadStatics() {
-    // A static method runs only through a read of its key: `C.k`, `this.k` in
-    // a static body, `this.constructor.k`, or a read on a subclass. One that no
-    // read reaches - outside the bodies of other unread static methods - never
-    // runs: drop its definition, closure and every function only its body
-    // creates, before any proof or census sees them. Every other use of a
-    // class value is refused by the class proof itself.
-    // ponytail: any read of the key anywhere keeps it, and so does a dynamic
-    // key on a receiver, constructor or closure; a per-class read proof keeps
-    // fewer.
+    // ponytail: a read of the key anywhere keeps the method, and so does any
+    // dynamic key on a receiver, constructor or closure; a per-class read
+    // proof would keep fewer.
     llvm::MapVector<mlir::Operation *, llvm::StringRef> statics;
     for (ctjs::CallOp call : calls) {
         auto closure = call.getArgs().front().getDefiningOp<ctjs::CreateClosureOp>();
@@ -112,7 +134,8 @@ bool classInitialization::dropUnreadStatics() {
             }
         }
     }
-    // Every function a set of static bodies creates, transitively.
+    // Collects into `result` the static bodies whose key `selected` accepts and
+    // every function they create, transitively.
     const auto bodies = [&](auto && selected, llvm::SetVector<mlir::Operation *> & result) {
         for (auto [write, key] : statics) {
             if (!selected(key)) { continue; }
@@ -205,9 +228,10 @@ bool classInitialization::dropUnreadStatics() {
             return refuse("unread static method declares, publishes or is named");
         }
     }
-    // Their calls were source calls: a captured helper or holder slot one
-    // named may have lost its last call. No capture proof has run yet, so
-    // follow each capture to its cell's initial value.
+    // Calls in the dropped bodies are gone, so a captured helper or holder
+    // slot they called may have lost its last caller; mark it decided. No
+    // capture proof has run yet, so follow each capture to its cell's initial
+    // value.
     llvm::DenseMap<mlir::Operation *, ctjs::CreateClosureOp> creators;
     module.walk([&](ctjs::CreateClosureOp closure) {
         if (auto fn = target(closure)) { creators[fn] = closure; }
@@ -255,6 +279,10 @@ bool classInitialization::dropUnreadStatics() {
     return true;
 }
 
+/// Records every call of a local helper function (not a constructor, method or
+/// getter) whose receiver and new.target are unused, in helpers and
+/// helperCalls. In a DOM entry, helpers the entry itself creates and calls are
+/// also recorded in domEntryHelpers for the typed DOM proof.
 bool classInitialization::recordHelperCalls(ctjs::FuncOp entry, bool domEntry) {
     const auto recordHelper = [&](mlir::Operation * op) {
         auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(op);
@@ -286,8 +314,8 @@ bool classInitialization::recordHelperCalls(ctjs::FuncOp entry, bool domEntry) {
         const bool entryLocal = domEntry && op->getParentOfType<ctjs::FuncOp>() == entry &&
                                 closure->getParentOfType<ctjs::FuncOp>() == entry &&
                                 callee == closure.getResult();
-        // A local helper can save its receiver in an inert filter callback.
-        // Prove the original callback before examining that receiver use.
+        // A local helper may pass its receiver to a filter callback that does
+        // nothing with it. Prove that callback before checking the receiver.
         if (entryLocal && !helperCallbacks(fn)) { return mlir::WalkResult::interrupt(); }
         if (!unusedReceiver(fn) || !block.getArgument(ctjs::arg_new_target).use_empty()) {
             return mlir::WalkResult::advance();
@@ -295,9 +323,9 @@ bool classInitialization::recordHelperCalls(ctjs::FuncOp entry, bool domEntry) {
         helpers.insert(fn);
         helperCalls.insert(op);
         if (entryLocal) {
-            // This original call survives class rewriting and receives the
-            // complete typed DOM proof. Uncalled holder slots may disappear
-            // during rewriting, so they retain the strict source census.
+            // This call survives class rewriting and goes through the typed DOM
+            // proof. Holder slots it never calls may disappear during rewriting,
+            // so they still go through the census.
             domEntryHelpers.insert(fn);
             if (method &&
                 method.getArgs().size() + ctjs::implicit_arguments > block.getNumArguments()) {
@@ -308,16 +336,17 @@ bool classInitialization::recordHelperCalls(ctjs::FuncOp entry, bool domEntry) {
         }
         return mlir::WalkResult::advance();
     };
-    // Prove holder targets before checking their enclosing direct callers,
-    // whose receiver may only be saved by one of these unused-this arrows.
+    // Record calls through holders (CallOp) before direct calls, because a
+    // direct caller's receiver may only be kept by one of these arrow helpers
+    // that do not use `this`.
     auto walked = module.walk([&](ctjs::CallOp call) { return recordHelper(call); });
     if (walked.wasInterrupted() || !reason.empty()) { return false; }
     walked = module.walk([&](ctjs::CallDirectOp call) { return recordHelper(call); });
     if (walked.wasInterrupted() || !reason.empty()) { return false; }
     if (domEntry && !domEntryHelpers.empty()) {
-        // A helper shared with an instance method must not grant an uncalled
-        // static body DOM authority. Check after all captures/calls are known,
-        // independent of which class or helper was encountered first.
+        // A static method must not reach a DOM entry helper: the typed DOM
+        // proof does not cover static bodies. Check this once all calls are
+        // known, so the order classes and helpers were visited does not matter.
         llvm::SetVector<mlir::Operation *> pending;
         for (ctjs::CreateClosureOp closure : staticMethodClosures) {
             if (!step()) { return false; }
@@ -349,12 +378,13 @@ bool classInitialization::recordHelperCalls(ctjs::FuncOp entry, bool domEntry) {
     return true;
 }
 
+/// Fills uncalledHelpers. Every call that censusSource admits is a recorded
+/// helper call. A helper or holder slot whose calls all sit in bodies that
+/// never run (bodies dropped with a decided branch, base constructors that only
+/// run as super() copies inlined into subclasses, see `leafBuilt`, or other
+/// such helpers) never runs either, so it skips the census. A helper with no
+/// calls at all still goes through the census.
 bool classInitialization::decideUncalledHelpers(const HostContract & contract, bool domEntry) {
-    // Every invocation the census below admits is a recorded call. A helper
-    // or holder slot called in the source whose calls all sit in bodies that
-    // never run - dropped or erased with a decided arm, in a leafBuilt original
-    // or in another such helper - never runs either. One never called keeps
-    // its census (the -unused-ambient controls).
     llvm::SmallVector<std::pair<mlir::Operation *, mlir::Operation *>> edges;
     llvm::SetVector<mlir::Operation *> uncalled = decidedHelpers;
     module.walk([&](mlir::Operation * op) {
@@ -370,10 +400,11 @@ bool classInitialization::decideUncalledHelpers(const HostContract & contract, b
         return mlir::WalkResult::advance();
     });
     if (!reason.empty()) { return false; }
-    // DOM entries admit calls the typed proof checks later, without records,
-    // so there a helper is uncalled only while its capture transport is all
-    // that names it: its closure only fills its fixed cell, and only proved
-    // closures capture that cell - their reads are recorded calls or refused.
+    // DOM entries allow calls that the typed proof checks later and that have
+    // no records here. So in a DOM entry a helper counts as uncalled only if
+    // nothing but captures can reach it: its closure is only stored into its
+    // cell, and only proved closures capture that cell (their reads are
+    // recorded calls or refused).
     const auto transportOnly = [&](mlir::Operation * fn) {
         auto closure = llvm::find_if(capturedHelpers, [&](mlir::Operation * made) {
             return target(llvm::cast<ctjs::CreateClosureOp>(made)) == fn;
@@ -423,12 +454,14 @@ bool classInitialization::decideUncalledHelpers(const HostContract & contract, b
     return true;
 }
 
+/// The census: checks every operation in the module, including ones in
+/// uncalled bodies, and refuses if any could call an unknown function, reach an
+/// accessor, use a dynamic key, reflect, or otherwise replace the class helper
+/// between the entry and a call.
 bool classInitialization::censusSource(const HostContract & contract, bool domEntry,
                                        ctjs::FuncOp entry, ctjs::FuncOp declaration) {
-    // No ambient object, unknown callee, accessor, dynamic key or reflective
-    // instruction can replace the fixed helper between entry and any call.
-    // Reject the whole module, including suffixes and uncalled bodies.
-    // A DOM entry, method or entry-helper operation left to the typed DOM proof.
+    // True for an operation in a DOM entry, a DOM method or an entry helper:
+    // the typed DOM proof checks those later.
     const auto deferToDOM = [&](mlir::Operation * op) {
         auto fn = op->getParentOfType<ctjs::FuncOp>();
         if (!domEntry || (fn != entry && !methods.contains(fn) && !domEntryHelpers.contains(fn))) {
@@ -438,8 +471,8 @@ bool classInitialization::censusSource(const HostContract & contract, bool domEn
         return true;
     };
     return walkSteps(module, [&](mlir::Operation * op) -> mlir::WalkResult {
-        // This entire declaration was checked above. Retain it for the
-        // entry provider, which separately decides whether it can be erased.
+        // prove() already checked the whole entry declaration. Keep it for the
+        // entry provider, which decides separately whether it can be erased.
         if (declaration &&
             (op == declaration || op->getParentOfType<ctjs::FuncOp>() == declaration)) {
             return mlir::WalkResult::advance();
@@ -463,23 +496,20 @@ bool classInitialization::censusSource(const HostContract & contract, bool domEn
                       ctjs::FrameExitOp, ctjs::RootOp, ctjs::ReturnOp, ctjs::StoreGlobalOp,
                       ctjs::BinaryOp, ctjs::UnaryOp, ctjs::CompareOp, ctjs::TruthyOp,
                       ctjs::FromBoolOp>(op);
-        // Proved ordinary methods and exact local helpers may contain control flow.
-        // The recursive census still checks every arm/body, including ones
-        // never called. Constructors additionally retain structured conditional
-        // fields; setup and getter cloning stay linear.
-        // The lift represents break/continue/return edges with integer
-        // flags and switches. These exact transport ops cannot reenter or
-        // change the class helper; switch arms still get the full census.
-        // Static ++/-- conversions also cannot reenter; native admission
-        // separately requires numeric operands before emitting arithmetic.
+        // Control flow is allowed in proved methods and local helpers, because
+        // the census still visits every branch body, called or not.
+        // Constructors may use only scf.if (conditional field initialization).
+        // The integer flags and switches that lifting to MLIR uses for
+        // break/continue/return, and static ++/--, cannot re-enter source code;
+        // native lowering separately requires numeric operands for arithmetic.
         if (llvm::isa<mlir::scf::IfOp, mlir::scf::ForOp, mlir::scf::WhileOp,
                       mlir::scf::IndexSwitchOp, mlir::scf::YieldOp, mlir::scf::ConditionOp,
                       mlir::arith::ConstantOp, mlir::arith::IndexCastUIOp, mlir::arith::TruncIOp,
                       mlir::ub::PoisonOp, ctjs::BinaryStaticOp, mlir::cf::BranchOp,
                       mlir::cf::CondBranchOp, mlir::cf::SwitchOp>(op)) {
             auto fn = op->getParentOfType<ctjs::FuncOp>();
-            // Entry short-circuit results keep their source branches for
-            // the final typed DOM proof; class setup is still checked above.
+            // In a DOM entry, scf.if from short-circuit operators stays for the
+            // typed DOM proof; the class setup inside was checked above.
             accepted =
                 methods.contains(fn) || helpers.contains(fn) ||
                 (constructors.contains(fn) &&
@@ -494,18 +524,18 @@ bool classInitialization::censusSource(const HostContract & contract, bool domEn
             }
         }
         if (auto thrown = llvm::dyn_cast<ctjs::ThrowOp>(op)) {
-            // An uncaught object throw can reenter through formatting.
-            // Preserve literal primitive throws; downstream lowering still
-            // has to prove their completion and payload representation.
+            // An uncaught object throw can re-enter source code when it is
+            // formatted, so only literal primitive throws are accepted. Later
+            // lowering still has to handle their completion and payload.
             accepted = (methods.contains(op->getParentOfType<ctjs::FuncOp>()) ||
                         throwingGetters.contains(op->getParentOfType<ctjs::FuncOp>())) &&
                        thrown.getValue().getDefiningOp<ctjs::ConstantOp>();
         }
         if (llvm::isa<ctjs::PushHandlerOp, ctjs::PopHandlerOp, ctjs::CheckOp, ctjs::CatchLandOp,
                       ctjs::CreateCellOp, ctjs::CellGetOp, ctjs::CellSetOp>(op)) {
-            // Keep the original exception CFG for the existing DOM URI/JSON
-            // normalizer and local cells for the DOM capture proof. Neither
-            // status edges nor local state disappear in this census.
+            // In DOM entry helpers, exception handlers stay for the DOM URI/JSON
+            // normalizer and local cells stay for the DOM capture proof; this
+            // check removes neither.
             accepted = domEntryHelpers.contains(op->getParentOfType<ctjs::FuncOp>());
             mlir::Value cell;
             if (auto created = llvm::dyn_cast<ctjs::CreateCellOp>(op)) {
@@ -528,6 +558,7 @@ bool classInitialization::censusSource(const HostContract & contract, bool domEn
                        uncalledHelpers.contains(fn) ||
                        (llvm::hasSingleElement(fn.getBody()) &&
                         (constructors.contains(fn) || getters.contains(fn) ||
+                         // 3 = only the implicit arguments (ctjs::implicit_arguments).
                          (((declaration && fn == entry) || block.getNumArguments() == 3) &&
                           receiverUnused && block.getArgument(ctjs::arg_new_target).use_empty())));
             accepted &=
@@ -547,8 +578,8 @@ bool classInitialization::censusSource(const HostContract & contract, bool domEn
             accepted = load.getName() == host_detail::classDefinedIntrinsic ||
                        globalHolderLoads.contains(load) ||
                        static_cast<bool>(sourceClosure(load.getResult()));
-            // Only the complete typed DOM proof can authorize these
-            // identities and their uses, including unused method bodies.
+            // Declared intrinsics in DOM code are left to the typed DOM proof,
+            // which checks their uses, including in unused method bodies.
             if (load.getName() != "Error" &&
                 llvm::is_contained(contract.initialIntrinsics, load.getName()) && deferToDOM(op)) {
                 accepted = true;
@@ -563,25 +594,26 @@ bool classInitialization::censusSource(const HostContract & contract, bool domEn
         }
         if (auto key = ctjs::propertyKey(op)) {
             auto constant = key.getDefiningOp<ctjs::ConstantOp>();
-            // Literal Number keys cannot name a prototype hook or invoke
-            // user coercion. Native field/index representation is separate.
+            // A literal Number key cannot name a prototype hook or call a
+            // user-defined conversion. How the field is stored natively is
+            // decided elsewhere.
             accepted = ctjs::ordinaryKey(key) ||
                        (helpers.contains(op->getParentOfType<ctjs::FuncOp>()) && constant &&
                         llvm::isa<ctjs::NumberAttr>(constant.getValue()));
-            // Keep dynamic reads/writes for the complete typed DOM
-            // proof of their actual receiver, key and mutation order.
-            // Class/holder identity uses were checked separately above;
-            // unused methods still require the same private probes.
+            // In DOM code, dynamic-key reads and writes are left to the typed
+            // DOM proof, which checks their receiver, key and write order.
+            // Class and holder uses were checked above; unused methods still
+            // get their own probes.
             if ((!constant ||
                  (llvm::isa<ctjs::GetPropertyOp>(op) && ctjs::constantKey(key) == "toString")) &&
                 deferToDOM(op)) {
                 accepted = true;
             }
         }
-        // Calls and iterable materialization defer to complete private DOM
-        // probes, including the existing snapshot/iterator identity proof.
-        // Exact entry-called helpers
-        // survive into the final proof; other helpers keep the strict census.
+        // In DOM code, calls and iterable materialization are deferred to the
+        // typed DOM proof, which also checks snapshot and iterator identity.
+        // Helpers the entry calls directly reach that proof; other helpers
+        // keep this census.
         if (llvm::isa<ctjs::CallOp, ctjs::IterableOp>(op) && deferToDOM(op)) { accepted = true; }
         if (accepted) { return mlir::WalkResult::advance(); }
         auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op);
@@ -593,6 +625,9 @@ bool classInitialization::censusSource(const HostContract & contract, bool domEn
     });
 }
 
+/// Runs the whole class-initialization proof on `module` for `contract`.
+/// Returns false with `reason` set when the class code cannot be compiled
+/// natively.
 bool classInitialization::prove(const HostContract & contract, bool domEntry) {
     auto entry = module.lookupSymbol<ctjs::FuncOp>(contract.entry);
     if (!entry || !functionIndex(entry)) {
@@ -616,6 +651,8 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
         if (!step()) { return false; }
         auto fn = llvm::dyn_cast<ctjs::FuncOp>(op);
         auto index = fn ? functionIndex(fn) : std::nullopt;
+        // Every source function has at least the three implicit arguments
+        // (receiver, new.target, callee); see ctjs::implicit_arguments.
         if (!fn || !index || fn.getBody().empty() || fn.getBody().front().getNumArguments() < 3 ||
             !functions.try_emplace(*index, fn).second) {
             return refuse("class initialization requires complete source functions");
@@ -628,8 +665,9 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
             !host_detail::isInertEntryDeclaration(declaration, entry, [&] { return step(); })) {
             return refuse("class initialization requires an inert entry declaration");
         }
-        // No host value may reenter source code before the fixed class
-        // helper. DOM preparation defers these uses to its final typed proof.
+        // No host value may re-enter source code before the class helper runs,
+        // so entry parameters must be unused. DOM entries leave these uses to
+        // the typed DOM proof.
         for (mlir::BlockArgument argument :
              entry.getBody().front().getArguments().drop_front(ctjs::implicit_arguments)) {
             if (!step() || (!domEntry &&
@@ -682,8 +720,8 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
     }
     if (calls.empty()) { return refuse("source has no class initialization calls"); }
     if (domEntry && llvm::is_contained(contract.initialIntrinsics, "Map")) {
-        // Map normalization may erase an owner or an unreachable arm. Prove
-        // the original binding and every use before consuming either one.
+        // Map normalization may erase a Map or an unreachable branch. Prove the
+        // original binding and every use before either is erased.
         if (!spendWalk(module, declarationCost)) { return false; }
         auto binding = classBindingContract(contract);
         binding.initialIntrinsics.push_back("Map");
@@ -758,7 +796,8 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
     for (ctjs::CallOp call : calls) {
         if (!examine(call, contract, domEntry)) { return false; }
     }
-    // Every class has recorded its getter reads; the census below sees the folds.
+    // Every class has now recorded its getter reads, and the census below runs
+    // on the folded methods.
     if (!domEntry && !foldEmptyEntries(contract)) { return false; }
     if (!pendingSnapshots.empty()) {
         return refuse("class own-key snapshot deferred to leaves lacks a folding leaf");
@@ -810,8 +849,8 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
             }
         }
     }
-    // Closure references and calls are covered above. Symbol attributes
-    // must not retain a getter definition after all its reads are expanded.
+    // Closure references and calls were checked above. No symbol attribute may
+    // still name a getter once all its reads have been expanded.
     if (auto stop = host_detail::forEachSymbolUse(
             module, true, [&] { return step(); },
             [&](const mlir::SymbolTable::SymbolUse &, ctjs::FuncOp target) -> std::optional<bool> {
@@ -825,8 +864,8 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
             })) {
         return *stop ? refuse("static getter symbol uses could not be enumerated") : false;
     }
-    // Reject before normalization can replace a method's body and
-    // invalidate a nested construction or definition recorded above.
+    // Refuse here, before normalization can replace a method's body and
+    // invalidate a construction or definition recorded above.
     if (domEntry && needsDOMMethodProof) {
         for (auto [made, definition] : methodProbes) {
             if (!step()) { return false; }
@@ -839,6 +878,9 @@ bool classInitialization::prove(const HostContract & contract, bool domEntry) {
     return transportHelperMaps();
 }
 
+/// Proves every DOM class method by running the typed DOM proof (liftDOMClasses
+/// then prepareDOMEntry) on a private copy of the module per method probe, then
+/// removes method definitions no property read can reach.
 bool classInitialization::proveDOMMethods(const HostContract & contract) {
     if (!needsDOMMethodProof) { return true; }
     llvm::StringSet<> helperNames;
@@ -904,15 +946,19 @@ bool classInitialization::proveDOMMethods(const HostContract & contract) {
             closure.erase();
             fn.erase();
         }
-        // A removed method's helper is proved in that method's own copy.
-        // Keep every surviving symbolic or numeric caller; an originally
-        // unused helper is never a dependency here and retains its own proof.
-        // ponytail: repeated bounded scans; index callers if large classes need it.
+        // A removed method's helpers are proved in that method's own probe.
+        // Erase a helper only if nothing references it any more, by symbol or by
+        // function index; a helper that was unused from the start is never a
+        // dependency here and keeps its own proof.
+        // ponytail: rescans the module after each removal; index the callers
+        // if large classes make this slow.
         for (bool erased = true; erased;) {
             erased = false;
             for (auto fn : llvm::make_early_inc_range(candidate.getOps<ctjs::FuncOp>())) {
                 if (!step()) { return false; }
                 if (!dependencies.contains(fn.getSymName())) { continue; }
+                // Charge one rescan of the module (3 units per op plus its
+                // operands: the closure walk and the two symbol-use checks).
                 if (!spendWalk(candidate, [](mlir::Operation * op) {
                         return uint64_t(3) + op->getNumOperands();
                     })) {
@@ -935,9 +981,10 @@ bool classInitialization::proveDOMMethods(const HostContract & contract) {
         }
         return true;
     };
-    // Reachability only establishes which original bodies the shared proof
-    // must cover. It grants no authority to their parameters: actual calls
-    // and field state stay in source order in the private DOM proof below.
+    // calledFromEntry(made, method): true if `method` runs on `made` through
+    // the constructor or a chain of `this.m()` calls starting from the entry.
+    // This only decides which bodies one shared probe covers; it proves
+    // nothing about their parameters, which the probe checks in source order.
     llvm::DenseMap<mlir::Operation *, llvm::SetVector<mlir::Operation *>> originalCalls;
     const auto calledFromEntry = [&](ctjs::ConstructOp made, ctjs::FuncOp method) {
         auto [found, fresh] = originalCalls.try_emplace(made);
@@ -967,14 +1014,15 @@ bool classInitialization::proveDOMMethods(const HostContract & contract) {
                     record(call, made.getResult());
                 }
             }
-            // Construction is an original call too: its same-this method
-            // calls retain their actual arguments and initialization order.
+            // The constructor runs too, and its `this.m()` calls keep their
+            // real arguments and initialization order.
             auto constructor =
                 target(sourceValue(made.getCallee()).getDefiningOp<ctjs::CreateClosureOp>());
             if (!constructor) { return refuse("DOM class construction lost its source body"); }
             reached.insert(constructor);
-            // ponytail: only exact same-this edges; aliases need their own
-            // receiver proof. A visited set bounds recursive source graphs.
+            // ponytail: only calls on `this` itself are followed; aliases of
+            // `this` would need their own receiver proof. `reached` doubles as
+            // the visited set, so recursion terminates.
             for (size_t i = 0; i < reached.size(); ++i) {
                 auto fn = llvm::cast<ctjs::FuncOp>(reached[i]);
                 auto receiver = fn.getBody().front().getArgument(ctjs::arg_receiver);
@@ -992,7 +1040,7 @@ bool classInitialization::proveDOMMethods(const HostContract & contract) {
     };
     bool provedOriginalCalls = false;
     // Probe every method, including callers that overwrite a field before
-    // dispatching to a DOM method; direct DOM calls alone are not a census.
+    // calling a DOM method; checking only the direct DOM calls would miss them.
     for (auto [made, definition] : methodProbes) {
         if (!step()) { return false; }
         auto fn = target(definition.getValue().getDefiningOp<ctjs::CreateClosureOp>());
@@ -1011,20 +1059,20 @@ bool classInitialization::proveDOMMethods(const HostContract & contract) {
                           "reachability for each instance");
         }
         if (hasOriginalCall && provedOriginalCalls) { continue; }
-        // Reserve the clone's operation/operand walk before allocating it.
+        // Charge for the clone (one unit per op plus its operands) first.
         if (!spendWalk(module,
                        [](mlir::Operation * op) { return uint64_t(1) + op->getNumOperands(); })) {
             return false;
         }
         mlir::IRMapping mapping;
         mlir::OwningOpRef<mlir::ModuleOp> probe(llvm::cast<mlir::ModuleOp>(module->clone(mapping)));
-        // Other uncalled methods have their own independent probes. Omit
-        // them only from this proof copy so the existing lift sees exactly
-        // the method under test and all original reachable method calls.
+        // Each uncalled method gets its own probe. Remove the others from this
+        // copy only, so liftDOMClasses sees the method under test and the calls
+        // the entry actually makes.
         if (!omitUnused(*probe, &mapping, definition)) { return false; }
-        // Existing calls prove their complete bodies and actual effects together.
-        // Uncalled bodies that ignore every parameter need only one probe;
-        // the ordinary lift supplies undefined for their unused formal slots.
+        // A method the entry calls is proved through those real calls. A method
+        // nobody calls (which must ignore its parameters) gets a synthetic
+        // `instance.m()` call; lifting passes undefined for its formals.
         if (!hasOriginalCall) {
             auto instance = llvm::cast<ctjs::ConstructOp>(mapping.lookup(made.getOperation()));
             mlir::OpBuilder at(instance);
@@ -1040,36 +1088,41 @@ bool classInitialization::proveDOMMethods(const HostContract & contract) {
         }
         HostContract checked = contract;
         checked.moduleSha256 = hostContractFingerprint(*probe);
-        // No class intrinsic remains, so this reuses normal DOM preparation
-        // without recursing into class normalization. These calls exist only
-        // in discarded proof copies; the emitted candidate is checked again.
+        // liftDOMClasses removed the class intrinsic, so prepareDOMEntry does not
+        // recurse into class normalization. The synthetic calls exist only in
+        // this discarded copy; the emitted module is checked again.
         if (auto error = prepareDOMEntry(*probe, checked, remaining)) {
             return refuse("DOM class method body: " + llvm::toString(std::move(error)));
         }
         provedOriginalCalls |= hasOriginalCall;
     }
-    // Only now have all unused bodies passed the same typed source proof.
-    // The original no-read census makes removing their definitions inert.
+    // Every unused body has now passed the typed DOM proof, and no property
+    // read can reach those definitions, so removing them changes nothing.
     return omitUnused(module, nullptr, {});
 }
 
+/// Runs normalizeStructuredExits on every method that dispatches through an
+/// scf.index_switch, then remaps every record kept for the old body onto the
+/// rewritten copy.
 bool classInitialization::normalizeMethods() {
     for (mlir::Operation * operation : dispatchMethods) {
         auto function = llvm::cast<ctjs::FuncOp>(operation);
-        // Charge the private copy before allocating it. All source effect
-        // and receiver checks have finished; only structural transport is
-        // normalized, with the existing bounded exception machinery.
+        // Charge for the copy before allocating it. All effect and receiver
+        // checks are done; this only restructures control flow, using the
+        // budgeted exception-lowering pass normalizeStructuredExits.
         if (!spendWalk(function, cloneCost)) { return false; }
         mlir::IRMapping mapping;
         mlir::OwningOpRef<ctjs::FuncOp> copy(llvm::cast<ctjs::FuncOp>(function->clone(mapping)));
         if (auto failed = lowering_detail::normalizeStructuredExits(*copy, remaining)) {
+            // Report normalizeStructuredExits' own budget message as the
+            // class-initialization budget message callers expect.
             auto message = llvm::toString(std::move(failed));
             return refuse(message == "native exception recovery work budget exhausted"
                               ? "class initialization work budget exhausted"
                               : message);
         }
-        // Exit normalization moves branch bodies without replacing their
-        // property reads. Expansion must follow the private copy too.
+        // Exit normalization moves branch bodies but leaves the recorded reads
+        // pointing at the old ones; remap every record onto the copy.
         uint64_t cost = getterReads.size() + constructorReads.size() + staticMethodReads.size() +
                         cellReads.size() + cells.size() + inertReceiverClosures.size() +
                         captureReads.size() + booleanCells.size();

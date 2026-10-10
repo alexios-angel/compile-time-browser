@@ -8,11 +8,9 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// THE DECLARATION IS OURS AND THE IMPLEMENTATION IS UPSTREAM'S, for now.
-// `ctcompile::cpp` rather than `mlir::emitc` so that a binary may link this and
-// MLIRTargetCpp at once and the two never resolve to each other - which is what
-// makes it possible to A/B our emitter against upstream's in one process, and
-// is the only reason the namespace differs at all.
+// The fork lives in `ctcompile::cpp` rather than `mlir::emitc` so a binary can
+// link it and upstream's MLIRTargetCpp together without symbol clashes, which
+// lets the two emitters be compared in one process.
 //
 // The fork's whole rationale, its provenance, and the vendored upstream lit
 // suite that keeps it a superset are in lib/Target/Cpp/TranslateToCpp.cpp.
@@ -32,7 +30,7 @@ class Operation;
 namespace ctcompile::cpp {
 
 /// Translates the given operation to C++ code. The operation or operations in
-/// the region of 'op' need almost all be in EmitC dialect. The parameter
+/// the region of 'op' must almost all be in the EmitC dialect. The parameter
 /// 'declareVariablesAtTop' enforces that all variables for op results and block
 /// arguments are declared at the beginning of the function.
 /// If parameter 'fileId' is non-empty, then body of `emitc.file` ops
@@ -42,12 +40,11 @@ mlir::LogicalResult translateToCpp(mlir::Operation * op, mlir::raw_ostream & os,
 
 /// Registers `-mlir-to-cpp` against THIS emitter, under upstream's own name.
 ///
-/// The name is deliberate and it is what makes Stage 47A's gate cheap:
-/// upstream's 35 EmitC lit tests spell `mlir-translate -mlir-to-cpp` in their
-/// RUN lines, and they are vendored as upstream wrote them (which tag each is
-/// from: lib/Target/Cpp/TranslateToCpp.cpp's header). Changing the flag would mean
-/// editing 35 vendored files, which is precisely the thing that makes a fork
-/// stop being comparable to what it forked.
+/// Keeping upstream's flag name lets the vendored upstream EmitC lit tests in
+/// test/Target/Cpp/upstream/ run unmodified against this fork: their RUN lines
+/// spell `mlir-translate -mlir-to-cpp` (lib/Target/Cpp/TranslateToCpp.cpp's
+/// header says which tag each is from). Renaming the flag would mean editing
+/// every vendored file, and the fork would stop being comparable to upstream.
 void registerToCppTranslation();
 
 } // namespace ctcompile::cpp

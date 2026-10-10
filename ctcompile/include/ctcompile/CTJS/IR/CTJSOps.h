@@ -1,5 +1,11 @@
+//===- CTJSOps.h - CTJS operations and helpers ------------------*- C++ -*-===//
+//
+// Declarations of every CTJS dialect operation (generated into CTJSOps.h.inc),
+// plus small helpers that read common operation shapes.
+//
+//===----------------------------------------------------------------------===//
+
 #pragma once
-// Every CTJS operation. None yet - Phase 8 defines them.
 #include "mlir/Bytecode/BytecodeOpInterface.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/OpDefinition.h"
@@ -26,30 +32,32 @@
 #include "ctcompile/CTJS/IR/CTJSOps.h.inc"
 
 namespace ctcompile::ctjs {
-// THE IMPLICIT ARGUMENTS THE IMPORTER PREPENDS to every ctjs.func's entry block
-// - receiver, new.target, callee - ahead of the declared parameters, and what
-// every ctjs.call_direct passes in the same positions (BytecodeImport.cpp).
+/// Positions of the implicit arguments the importer prepends to every
+/// ctjs.func's entry block (receiver, new.target, callee) ahead of the declared
+/// parameters. Every ctjs.call_direct passes them in the same positions
+/// (BytecodeImport.cpp).
 inline constexpr unsigned arg_receiver = 0;
 inline constexpr unsigned arg_new_target = 1;
 inline constexpr unsigned arg_callee = 2;
 inline constexpr unsigned implicit_arguments = 3;
 
-// The entry block of `function` when it has one carrying the implicit
-// arguments, or null.
+/// The entry block of `function` when it has one carrying the implicit
+/// arguments, or null.
 inline mlir::Block * implicitEntry(FuncOp function) {
     if (function.getBody().empty()) { return nullptr; }
     mlir::Block & entry = function.getBody().front();
     return entry.getNumArguments() >= implicit_arguments ? &entry : nullptr;
 }
 
-// The declared parameters of an entry block implicitEntry returned.
+/// The declared parameters of an entry block implicitEntry() returned.
 inline unsigned parameterCount(mlir::Block & entry) {
     return entry.getNumArguments() - implicit_arguments;
 }
 
-// DOES THIS BODY READ ITS RAW ARGUMENT WINDOW? `arguments` and a rest
-// parameter copy the frame's registers - every value the site passed, not the
-// declared ones - so padding a short call is visible to such a body.
+/// Returns true if the body reads its raw argument window. `arguments` and a
+/// rest parameter copy the frame's registers (every value the call site
+/// passed, not just the declared ones), so padding a short call is visible to
+/// such a body.
 inline bool readsRawArguments(FuncOp function) {
     return function
         .walk([](mlir::Operation * op) {
@@ -59,19 +67,20 @@ inline bool readsRawArguments(FuncOp function) {
         .wasInterrupted();
 }
 
-// An object literal's own data property is op::define_data - DEFINED
-// (CreateDataPropertyOrThrow), not assigned - and the importer makes it the
-// ctjs.set_property every native proof already reads, carrying this marker.
-// The boxed backend lowers a marked store to ct_aot_define_data: assignment
-// would run an inherited setter and set the prototype for "__proto__".
+/// Marks a ctjs.set_property that defines an object literal's own data
+/// property (op::define_data, i.e. CreateDataPropertyOrThrow) rather than
+/// assigning it. The importer emits the same op every native proof already
+/// reads, plus this marker. The boxed backend lowers a marked store to
+/// ct_aot_define_data, because assignment would run an inherited setter and
+/// set the prototype for "__proto__".
 inline constexpr llvm::StringLiteral defineOwnMarker = "ctjs.define_own";
 
-// A ctjs.func the EmitC admission refused carries this, with the reason.
+/// Set, with the reason, on a ctjs.func the EmitC admission refused.
 inline constexpr llvm::StringLiteral notLoweredMarker = "ctjs.not_lowered";
 
-// The function index the importer put after the last `$` of the symbol - the
-// only link between a `ctjs.create_closure`'s `$function` attribute and the
-// `ctjs.func` it names. Every tier reads it this way.
+/// The function index the importer put after the last `$` of the symbol:
+/// the only link between a ctjs.create_closure's `$function` attribute and
+/// the ctjs.func it names. Always read it through this helper.
 inline std::optional<unsigned> functionIndex(FuncOp function) {
     const llvm::StringRef name = function.getSymName();
     const std::size_t dollar = name.rfind('$');
@@ -81,32 +90,32 @@ inline std::optional<unsigned> functionIndex(FuncOp function) {
     return index;
 }
 
-// The function index a create_closure names, or none for a negative one.
+/// The function index a create_closure names, or none for a negative one.
 inline std::optional<unsigned> closureFunction(CreateClosureOp made) {
     if (made.getFunction() < 0) { return std::nullopt; }
     return static_cast<unsigned>(made.getFunction());
 }
 
-// The attribute of kind A a ctjs.constant operand carries, or null - for a
-// value no constant defines and a constant of another kind alike.
+/// The attribute of kind A a ctjs.constant operand carries, or null both for
+/// a value no constant defines and for a constant of another kind.
 template <class A> A constantAttr(mlir::Value value) {
     auto constant = value.getDefiningOp<ConstantOp>();
     return constant ? llvm::dyn_cast<A>(constant.getValue()) : A{};
 }
 
-// One of the attributes a ctjs.constant may carry (ConstantOp::verify).
+/// One of the attributes a ctjs.constant may carry (ConstantOp::verify).
 inline bool isConstantAttr(mlir::Attribute value) {
     return llvm::isa<UndefinedAttr, NullAttr, BooleanAttr, NumberAttr, StringAttr, BigIntAttr>(
         value);
 }
 
-// A #ctjs.number for `value`. The attribute stores the double's BITS, so the
-// uint64_t builder is never the one to call with a count.
+/// A #ctjs.number for `value`. The attribute stores the double's bits, so never
+/// call the uint64_t builder with a count.
 inline NumberAttr numberAttr(mlir::MLIRContext * context, double value) {
     return NumberAttr::get(context, llvm::bit_cast<std::uint64_t>(value));
 }
 
-// The string attribute `name` on `op`, or empty.
+/// The string attribute `name` on `op`, or empty.
 inline llvm::StringRef stringAttrOf(mlir::Operation * op, llvm::StringRef name) {
     auto text = op->getAttrOfType<mlir::StringAttr>(name);
     return text ? text.getValue() : llvm::StringRef{};
@@ -116,22 +125,22 @@ inline bool isUndefinedConstant(mlir::Value value) {
     return static_cast<bool>(constantAttr<UndefinedAttr>(value));
 }
 
-// The key operand of a get_property or set_property, or null for any other op.
+/// The key operand of a get_property or set_property, or null for any other op.
 inline mlir::Value propertyKey(mlir::Operation * op) {
     if (auto get = llvm::dyn_cast<GetPropertyOp>(op)) { return get.getKey(); }
     if (auto set = llvm::dyn_cast<SetPropertyOp>(op)) { return set.getKey(); }
     return {};
 }
 
-// The constant string a property key operand carries, or empty - for a
-// non-constant key, a constant that is not a string, and `""` alike.
+/// The constant string a property key operand carries, or empty for a
+/// non-constant key, a constant that is not a string, and `""` alike.
 inline llvm::StringRef constantKey(mlir::Value key) {
     auto text = constantAttr<StringAttr>(key);
     return text ? text.getValue() : llvm::StringRef{};
 }
 
-// The prototype hooks and the members every object inherits from
-// Object.prototype - the names an own-data slot cannot be.
+/// The prototype hooks and the members every object inherits from
+/// Object.prototype: the names an own-data slot cannot have.
 inline bool reservedKey(llvm::StringRef key) {
     return llvm::StringSwitch<bool>(key)
         .Cases({"__proto__", "prototype", "constructor"}, true)
@@ -142,50 +151,50 @@ inline bool reservedKey(llvm::StringRef key) {
         .Default(false);
 }
 
-// A constant own-data key BY NAME, for callers that already hold the text:
-// empty is "no constant key" here, because that is what constantKey returns
-// for one.
+/// A constant own-data key, by name, for callers that already hold the text.
+/// Empty means "no constant key" here, because that is what constantKey()
+/// returns for one.
 inline bool ordinaryKey(llvm::StringRef key) {
     return !key.empty() && !reservedKey(key);
 }
 
-// A constant own-data key BY OPERAND. `o[""] = 1` is an own property like any
-// other and the object-field analysis names it, so the empty string is
-// ordinary HERE and only here - the by-name overload cannot tell it from a
-// dynamic key. (The unification that dropped this distinction refused the
-// object-fields fixture.)
+/// A constant own-data key, by operand. `o[""] = 1` is an own property like
+/// any other and the object-field analysis names it, so the empty string is
+/// ordinary here; the by-name overload cannot tell it from a dynamic key.
 inline bool ordinaryKey(mlir::Value key) {
     auto text = constantAttr<StringAttr>(key);
     return text && !reservedKey(text.getValue());
 }
 
-// The get_property a method call reads its callee from, or null.
+/// The get_property a method call reads its callee from, or null.
 inline GetPropertyOp receiverMethod(CallOp call) {
     return call.getCallee().getDefiningOp<GetPropertyOp>();
 }
 
-// The constant name of the method `call` invokes (`o.set(...)` is "set"), or
-// empty when the callee is not a constant-keyed get_property.
+/// The constant name of the method `call` invokes (`o.set(...)` is "set"), or
+/// empty when the callee is not a constant-keyed get_property.
 inline llvm::StringRef methodKey(CallOp call) {
     auto read = receiverMethod(call);
     return read ? constantKey(read.getKey()) : llvm::StringRef{};
 }
 
-// The global a call's callee was loaded from (`f(...)` after `load_global
-// "f"`), or empty. For any op with a callee VALUE: CallOp, ConstructOp.
+/// The global a call's callee was loaded from (`f(...)` after
+/// `load_global "f"`), or empty. Works for any op with a callee value: CallOp,
+/// ConstructOp.
 template <class Call> llvm::StringRef calleeGlobalName(Call call) {
     auto load = call.getCallee().template getDefiningOp<LoadGlobalOp>();
     return load ? load.getName() : llvm::StringRef{};
 }
 
-// A ctjs.call or ctjs.call_direct read the same way: the callee value (the
-// direct call's callee_value), the receiver and the declared arguments.
+/// A ctjs.call or ctjs.call_direct read the same way: the callee value (the
+/// direct call's callee_value), the receiver and the declared arguments.
 struct CallView {
     mlir::Value callee;
     mlir::Value receiver;
     mlir::OperandRange args;
 };
 
+/// Views a ctjs.call or ctjs.call_direct as a CallView; none for any other op.
 inline std::optional<CallView> callView(mlir::Operation * op) {
     if (auto call = llvm::dyn_cast<CallOp>(op)) {
         return CallView{call.getCallee(), call.getReceiver(), call.getArgs()};
@@ -196,8 +205,8 @@ inline std::optional<CallView> callView(mlir::Operation * op) {
     return std::nullopt;
 }
 
-// Truthy, unary Not/TypeOf/Void and StrictEq: total on any operand, and none
-// converts an object or calls user code.
+/// Truthy, unary Not/TypeOf/Void and StrictEq: total on any operand, and none
+/// converts an object or calls user code.
 inline bool nonCoercing(mlir::Operation * op) {
     if (auto unary = llvm::dyn_cast<UnaryOp>(op)) {
         return unary.getKind() == UnaryKind::Not || unary.getKind() == UnaryKind::TypeOf ||
@@ -207,9 +216,9 @@ inline bool nonCoercing(mlir::Operation * op) {
     return llvm::isa<TruthyOp>(op) || (compare && compare.getKind() == CompareKind::StrictEq);
 }
 
-// The first user of `function`'s own closure (its callee argument) that is not
-// a nested closure's enclosing operand or an upvalue access through it, or
-// null when it feeds nothing else. The entry block must exist.
+/// The first user of `function`'s own closure (its callee argument) that is
+/// not a nested closure's enclosing operand or an upvalue access through it,
+/// or null when it feeds nothing else. The entry block must exist.
 inline mlir::Operation * ownClosureEscape(FuncOp function) {
     for (mlir::OpOperand & use : function.getBody().front().getArgument(arg_callee).getUses()) {
         if (use.getOperandNumber() != 0 ||
@@ -220,8 +229,8 @@ inline mlir::Operation * ownClosureEscape(FuncOp function) {
     return nullptr;
 }
 
-// The one OpT under `scope` satisfying `matches`, or null when none or several
-// do.
+/// The one OpT under `scope` satisfying `matches`, or null when none or several
+/// do.
 template <class OpT, class Pred> OpT uniqueOp(mlir::Operation * scope, Pred matches) {
     OpT found;
     unsigned count = 0;
@@ -234,15 +243,15 @@ template <class OpT, class Pred> OpT uniqueOp(mlir::Operation * scope, Pred matc
     return count == 1 ? found : OpT{};
 }
 
-// The one ctjs.func under `scope` with function index `index`, or null when
-// none or several have it.
+/// The one ctjs.func under `scope` with function index `index`, or null when
+/// none or several have it.
 inline FuncOp uniqueFunction(mlir::Operation * scope, unsigned index) {
     return uniqueOp<FuncOp>(scope,
                             [&](FuncOp function) { return functionIndex(function) == index; });
 }
 
-// The one ctjs.store_global of `name` under `scope`, or null when none or
-// several store it.
+/// The one ctjs.store_global of `name` under `scope`, or null when none or
+/// several store it.
 inline StoreGlobalOp uniqueGlobalStore(mlir::Operation * scope, llvm::StringRef name) {
     return uniqueOp<StoreGlobalOp>(scope,
                                    [&](StoreGlobalOp store) { return store.getName() == name; });

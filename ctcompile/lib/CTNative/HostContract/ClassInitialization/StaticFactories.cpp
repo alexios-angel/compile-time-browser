@@ -1,18 +1,26 @@
+//===- StaticFactories.cpp - Inline static factory methods ----------------===//
+//
+// Part of the class-initialization proof: inlines static factory calls such
+// as `C.create(el)` whose body is `return new this(el)`, so that later proofs
+// see an ordinary `new C(el)`.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Proof.hpp"
 
 namespace ctcompile::ctnative::class_detail {
 
-// STATIC FACTORIES. `C.k(args)` runs k's body with `this` = C. When that body
-// is one straight-line block that builds through its receiver - `new this(el)`
-// - it is the same code at the call site with C for `this`: the construction
-// becomes the ordinary local `new C(el)` every later proof already handles,
-// and dropUnreadStatics then retires the definition no read reaches. `C.k`
-// resolves to C's own static method or, when C writes no `k` at all, to the
-// one its proved heritage base chain defines; examine still proves every
-// class, slot and use afterwards.
-// ponytail: one capture-free block. Conditional factories (getOrCreateInstance's
-// `||`) need constructions inside scf.if arms; captured helpers need the
-// capture census moved to the call site.
+/// Inlines static factory calls. `C.k(args)` runs k's body with `this` = C.
+/// When that body is one straight-line block that builds through its receiver
+/// (`new this(el)`), the same code at the call site with C for `this` turns
+/// the construction into the ordinary local `new C(el)` that later proofs
+/// already handle, and dropUnreadStatics() then removes the definition no read
+/// reaches. `C.k` resolves to C's own static method or, when C writes no `k`
+/// at all, to the one its proved `extends` chain defines; examine() still
+/// checks every class, slot and use afterwards.
+// ponytail: one block with no captures. Conditional factories (the `||` in
+// getOrCreateInstance) need constructions inside scf.if arms; captured
+// helpers need the capture checks moved to the call site.
 bool classInitialization::expandStaticFactories() {
     llvm::DenseMap<mlir::Value, ctjs::CallOp> setupOf;
     for (ctjs::CallOp call : calls) {
@@ -22,8 +30,8 @@ bool classInitialization::expandStaticFactories() {
                            : ctjs::CreateClosureOp{};
         if (closure) { setupOf.try_emplace(closure.getResult(), call); }
     }
-    // The closure the exact slot write `cls.key = closure` stores before the
-    // class setup, or a null op with `known` false when anything else may
+    // The closure that the one write `cls.key = closure` before the class
+    // setup stores. Returns null with `known` false when anything else may
     // define the key: a second or computed write, or an accessor.
     const auto ownStatic = [&](mlir::Value cls, llvm::StringRef key,
                                bool & known) -> ctjs::CreateClosureOp {
@@ -55,6 +63,8 @@ bool classInitialization::expandStaticFactories() {
         known = true;
         return found;
     };
+    // Looks `key` up on `cls`, then up its `extends` chain. Follows at most 16
+    // links; a deeper chain is left unexpanded.
     const auto resolve = [&](mlir::Value cls, llvm::StringRef key) -> ctjs::CreateClosureOp {
         for (unsigned depth = 0; depth < 16 && cls; ++depth) {
             bool known = false;
@@ -65,9 +75,9 @@ bool classInitialization::expandStaticFactories() {
         }
         return {};
     };
-    // A body the call site can hold unchanged: every receiver use builds,
-    // reads or calls through it, and at least one builds or calls - a call
-    // through `this` may name the next factory, exposed by the next round.
+    // A body the call site can hold unchanged: every receiver use constructs,
+    // reads or calls through it, and at least one constructs or calls. A call
+    // through `this` may be another factory, which the next round expands.
     const auto factory = [&](ctjs::CreateClosureOp closure) {
         auto fn = target(closure);
         if (!fn || !closure.getUpvalues().empty() || fn.getUpvalueCount() != 0 ||
@@ -120,8 +130,9 @@ bool classInitialization::expandStaticFactories() {
         ctjs::CallOp invocation;
         ctjs::FuncOp fn;
     };
-    // A factory calling another through `this` exposes that call only once
-    // expanded; each round checks every candidate before anything changes.
+    // A factory that calls another through `this` exposes that call only once
+    // it is expanded, so repeat, at most 8 rounds. Each round finds every
+    // candidate before changing anything.
     for (unsigned round = 0; round < 8; ++round) {
         llvm::SmallVector<site> sites;
         for (auto [cls, setup] : setupOf) {

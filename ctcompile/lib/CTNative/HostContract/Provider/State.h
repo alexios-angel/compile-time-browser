@@ -1,3 +1,10 @@
+//===- State.h - Modeled provider Map contents ------------------*- C++ -*-===//
+//
+// Declares providerState, the analysis-time model of the Maps a provider
+// factory captured, with every operation charged to a step budget.
+//
+//===----------------------------------------------------------------------===//
+
 #pragma once
 
 #include "ctcompile/CTJS/IR/CTJSOps.h"
@@ -9,9 +16,10 @@
 
 namespace ctcompile::ctnative::host_detail {
 
-// These are already-proved values, not claims read from IR attributes. Object
-// tokens belong to the caller's object heap (including token zero); MapIds are
-// one-based and belong to this state. A default value is invalid/unknown.
+/// A Map key or value the analysis has already proved, never one read from
+/// IR attributes. Object ids index the caller's object list (zero is a valid
+/// object); Map ids are one-based indices into this providerState. A
+/// default-constructed value (primitive with no literal) means unknown.
 struct providerValue {
     enum class Kind {
         primitive,
@@ -26,12 +34,15 @@ struct providerValue {
     static providerValue map(unsigned mapId) { return {Kind::map, {}, mapId}; }
 };
 
+/// Where a Map came from: its `new Map()` operation, the provider call that
+/// ran it, and the one-based factory invocation it belongs to.
 struct providerMapProvenance {
     ctjs::ConstructOp allocation;
     ctjs::CallOp invocation;
     unsigned factory = 0;
 };
 
+/// One modeled Map: its provenance and its entries in insertion order.
 struct providerMap {
     struct entry {
         providerValue key;
@@ -41,9 +52,11 @@ struct providerMap {
     llvm::SmallVector<entry, 0> entries;
 };
 
-// Transaction storage only. The caller proves standard Map construction,
-// member identity, receivers, object-token provenance/contents, privacy and normal return before
-// committing a copy. This helper neither executes source effects nor grants native admission.
+/// The modeled contents of every provider Map, used as transaction storage:
+/// a provider call works on a copy and the copy replaces the original only
+/// when the call is fully proved. The caller proves everything else (standard
+/// Map construction, method identity, receivers, object contents, privacy,
+/// normal return); this class only stores entries and charges the budget.
 class providerState {
 public:
     using Spend = llvm::function_ref<bool(unsigned)>;
@@ -55,30 +68,33 @@ public:
     providerState & operator=(providerState &&) = default;
 
     // Every operation leaves its state (and cloneTo's `out`) unchanged on
-    // failure, reported as false or nullopt. The caller must still discard the
-    // entire attempted transaction. Copying charges every Map and entry; reads
-    // charge each key comparison; writes additionally charge mutation and every
-    // traversed resource edge.
+    // failure, reported as false or nullopt; the caller must still discard
+    // the whole transaction. Copying charges every Map and entry, reads charge
+    // each key comparison, and writes also charge the mutation and every Map
+    // edge they traverse.
+
+    /// Replaces `out` with a copy of this state.
     bool cloneTo(providerState & out, Spend spend) const;
+    /// Adds an empty Map and returns its one-based id.
     std::optional<unsigned> create(providerMapProvenance provenance, Spend spend);
-    // The stored value, or an inner nullopt for proved absence.
+    /// The stored value, or an inner nullopt when the key is proved absent.
     std::optional<std::optional<providerValue>> lookup(unsigned mapId, providerValue key,
                                                        Spend spend) const;
+    /// Inserts or overwrites an entry. Refuses a value that is a Map from
+    /// which `mapId` is reachable, since that would make a cycle.
     bool set(unsigned mapId, providerValue key, providerValue value, Spend spend);
-    // Whether an entry was removed.
+    /// Whether an entry was removed.
     std::optional<bool> erase(unsigned mapId, providerValue key, Spend spend);
+    /// The number of entries.
     std::optional<unsigned> size(unsigned mapId, Spend spend) const;
 
-    // An independently owned, insertion-ordered snapshot. Every copied key is
-    // charged before allocating. This is not a live Map iterator: the caller
-    // separately proves when and how iteration is consumed. Interned literals
-    // and object tokens retain their identity and the caller's existing
-    // context/heap lifetime rules.
+    /// A copy of the keys in insertion order, charged before it is allocated.
+    /// This is not a live iterator: the caller proves when and how the
+    /// iteration is consumed. Literals and object ids keep their identity.
     std::optional<llvm::SmallVector<providerValue, 0>> keys(unsigned mapId, Spend spend) const;
 
-    // Read-only views expose provenance and insertion order for separately
-    // bounded retention checks/reporting. Mutation may invalidate them; they
-    // authorize no provider operation.
+    /// Read-only views of provenance and insertion order, for retention
+    /// checks and reports. Any mutation may invalidate them.
     [[nodiscard]] const providerMap * get(unsigned mapId) const;
     [[nodiscard]] llvm::ArrayRef<providerMap> maps() const { return state; }
 

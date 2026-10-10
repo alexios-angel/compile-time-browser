@@ -2,12 +2,13 @@
 #ifndef CTCOMPILE_CTJS_OPS_SUSPENSION_TD
 #define CTCOMPILE_CTJS_OPS_SUSPENSION_TD
 
-// Async and suspension - Phase 14
+// Async and suspension
 //
-// ONE OF THE THREE IS NOT A SUSPENSION POINT, and that is why it lowers while
-// the other two do not. ctjs.wrap_promise is what an async function's `return`
-// does; the frame is never lifted, nothing is saved, and an async function
-// containing no `await` carries this opcode and no await_value at all.
+// One of the three operations is not a suspension point, which is why it
+// lowers while the other two do not. ctjs.wrap_promise is what an async
+// function's `return` does: the frame is never lifted, nothing is saved, and
+// an async function containing no `await` carries this opcode and no
+// await_value at all.
 //===----------------------------------------------------------------------===//
 
 def CTJS_WrapPromiseOp
@@ -37,8 +38,9 @@ def CTJS_WrapPromiseOp
     well-formed object, and a caller polls ct_aot_failed at a back edge. It
     allocates, so the result is parked like every other value.
   }];
-  // PHASE 55: SINK(stored) - stored as the promise's `__value`
-  // (builtins/internal.hpp:262, 342) or returned as-is.
+  // Escape effects: SINK(stored) - stored as the promise's `__value`
+  // (context::make_promise, script/vm/properties_inline.hpp) or returned
+  // as-is.
   let arguments = (ins Arg<CTJS_ValueType, "", [CTJS_SinkStored]>:$value);
   let results = (outs CTJS_ValueType:$result);
   let assemblyFormat = "$value attr-dict";
@@ -53,14 +55,13 @@ def CTJS_SuspendOp
     is structurally different from one that does not, and discovering that
     after the importer exists would mean rewriting it.
   }];
-  // PHASE 55: $value SINK(stored), AND A WHOLE-FUNCTION REFUSAL (R4,
-  // `suspended`) in EscapeAnalysis.cpp: the entire register window is copied
-  // into a coroutine_object (run_loop.cpp:866-867 await, 922-923 yield;
-  // vm.hpp:1160-1192) and traced from the heap (trace_object's coroutine arm,
-  // vm/objects/gc.cpp), so every
-  // site of the function outlives its frame. The importer already refuses
-  // every suspension point (BytecodeImport.cpp); the analysis's line is for
-  // hand-written IR.
+  // Escape effects: $value SINK(stored), plus a whole-function refusal (R4,
+  // `suspended`) in EscapeAnalysis.cpp. On await or yield the VM copies the
+  // entire register window into a coroutine_object (run_loop.cpp) that the
+  // collector traces from the heap (trace_object's coroutine arm,
+  // vm/objects/gc.cpp), so every site of the function outlives its frame. The
+  // importer already refuses every suspension point (BytecodeImport.cpp); this
+  // rule covers hand-written IR.
   let arguments = (ins CTJS_SuspendKind:$kind, Arg<CTJS_ValueType, "", [CTJS_SinkStored]>:$value);
   let results = (outs CTJS_ValueType:$result);
   let assemblyFormat = "$kind $value attr-dict";

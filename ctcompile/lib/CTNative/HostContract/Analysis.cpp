@@ -1,3 +1,14 @@
+//===- Analysis.cpp - Host contract proof ---------------------------------===//
+//
+// Checks that a module satisfies its HostContract: every host binding it reads
+// is proved, every property call has an exact callee, captured Map families
+// are closed, and (for the DOM Data provider) element inputs are used only as
+// outer Map keys. Every walk is charged to a step budget; an exhausted budget
+// refuses the whole analysis. HostContractAnalysis's constructor at the end of
+// this file drives the proof and publishes its results only on success.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Analysis.h"
 
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
@@ -22,8 +33,14 @@ mlir::BlockArgument analyzer::elementInput(mlir::Value value) const {
                : mlir::BlockArgument{};
 }
 
+/// Follows a global read back through single-store global-to-global copies to
+/// the fresh ctjs.create_object that initialised it, requiring each store to
+/// be the name's only store and to dominate the read. Returns nullopt if any
+/// link is unproved.
 std::optional<HostObjectGlobalRead> analyzer::objectGlobalRead(ctjs::LoadGlobalOp read) {
-    // ponytail: repeated chain walks are quadratic; cache origins if the shared budget limits them.
+    // ponytail: each call re-walks the whole alias chain, so callers that query
+    // every link are quadratic. Cache origins if the step budget starts
+    // refusing real programs.
     ctjs::StoreGlobalOp initialization;
     llvm::DenseSet<mlir::Operation *> seen;
     auto current = read;
@@ -67,6 +84,9 @@ ctjs::CreateObjectOp analyzer::namedObject(mlir::Value value) {
     return value.getDefiningOp<ctjs::CreateObjectOp>();
 }
 
+/// Every global read in the module that names `made`, through its single
+/// initialising store and any global aliases of it. Returns nullopt unless all
+/// such reads resolve to `made`.
 std::optional<std::vector<HostObjectGlobalRead>> analyzer::objectGlobalReads(
     ctjs::CreateObjectOp made) {
     if (!step()) { return std::nullopt; }
@@ -81,8 +101,8 @@ std::optional<std::vector<HostObjectGlobalRead>> analyzer::objectGlobalReads(
     if (!initialization) { return std::nullopt; }
     llvm::StringMap<ctjs::StoreGlobalOp> bindings;
     bindings.try_emplace(initialization.getName(), initialization);
-    // Census all successor stores before following the reachable bindings.
-    // Even an early/nonentry edge to an intermediate alias must be checked,
+    // Collect all successor stores before following the reachable bindings.
+    // Even an early or non-entry edge to an intermediate alias must be checked,
     // regardless of where it appears in the module traversal.
     llvm::StringMap<llvm::SmallVector<ctjs::StoreGlobalOp>> successors;
     const auto stores = module.walk([&](ctjs::StoreGlobalOp store) {
@@ -130,6 +150,10 @@ std::optional<std::vector<HostObjectGlobalRead>> analyzer::objectGlobalReads(
     return reads;
 }
 
+/// Joins the primitive categories of each formal across all `calls` of a
+/// captured-Map method family, and records which formals may instead carry an
+/// object used only as a Map key (a DOM element input or a fresh scalar-field
+/// object). Fails if any formal is neither.
 bool analyzer::capturedMapParameters(
     ctjs::FuncOp function, bool prepared, llvm::ArrayRef<mlir::Operation *> calls,
     const llvm::DenseSet<mlir::Operation *> & familyCalls,
@@ -154,9 +178,10 @@ bool analyzer::capturedMapParameters(
                 initializations.insert(edge.initialization);
             }
         }
-        // Caller leaves may hold only scalar own fields. Census every
-        // alias before accepting reads; the method bodies independently
-        // limit these formals to Map keys/payloads, never outgoing edges.
+        // Caller leaves may hold only scalar own fields. Collect every
+        // alias's writes before accepting reads; the method bodies
+        // independently limit these formals to Map keys and payloads, never
+        // outgoing edges.
         llvm::SmallVector<ctjs::SetPropertyOp> writes;
         for (mlir::Value alias : aliases) {
             for (mlir::OpOperand & use : alias.getUses()) {
@@ -217,6 +242,10 @@ bool analyzer::capturedMapParameters(
                     }
                     continue;
                 }
+                // Only a source argument may carry the leaf: skip the call's
+                // own leading operands (callee and receiver for ctjs.call; the
+                // three implicit arguments for ctjs.call_direct) and the
+                // prepared Map.
                 auto directUse = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
                 auto callUse = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
                 if ((!directUse && !callUse) ||
@@ -231,6 +260,9 @@ bool analyzer::capturedMapParameters(
         }
         return !exhausted;
     };
+    // A method's entry block starts with the ctjs::implicit_arguments (3) hidden
+    // arguments, plus the captured Map itself when the family is `prepared`;
+    // the source formals follow.
     const unsigned count = function.getBody().front().getNumArguments() - (prepared ? 4u : 3u);
     std::optional<std::vector<PrimitiveAlternatives>> found;
     std::vector<mlir::BlockArgument> objectKeys;
@@ -253,7 +285,7 @@ bool analyzer::capturedMapParameters(
                         !dominance.dominates(actual, operation)) {
                         return false;
                     }
-                    // Provisional object-capable formal only. The completed
+                    // A provisional object-capable formal only. The completed
                     // family must prove every input use is an outer Map key.
                     const auto parameter = function.getBody().front().getArgument(
                         (prepared ? 4u : 3u) + static_cast<unsigned>(tags.size()));
@@ -279,8 +311,9 @@ bool analyzer::capturedMapParameters(
         }
         found = std::move(tags);
     }
-    // An uncalled zero-argument sibling can still have its effects checked;
-    // the owning plan separately requires current calls for the full family.
+    // A zero-argument method that is never called still gets its effects
+    // checked here; the caller separately requires every family member to be
+    // called.
     if (exhausted || (!found && count != 0)) { return false; }
     if (found) {
         for (auto [index, alternatives] : llvm::enumerate(*found)) {
@@ -291,9 +324,9 @@ bool analyzer::capturedMapParameters(
                 continue;
             }
             const auto mask = alternatives.truthy | alternatives.falsy;
-            // Extend the established exact primitive boundary only to the
-            // existing nullable String family. Unknown/empty sets and other
-            // heterogeneous parameters still lack a supported proof here.
+            // Beyond a single exact primitive, accept only the nullable String
+            // family (String, null, undefined). Unknown or empty sets and other
+            // mixed parameters have no supported proof here.
             constexpr unsigned nullableString = PrimitiveAlternatives::String |
                                                 PrimitiveAlternatives::Null |
                                                 PrimitiveAlternatives::Undefined;
@@ -312,6 +345,8 @@ bool analyzer::capturedMapParameters(
     return true;
 }
 
+/// Finds the formals, element inputs and fresh objects whose every use is as
+/// a key of the outer captured Map, so their identities never escape.
 bool analyzer::capturedMapOuterKeys(
     bool prepared, llvm::ArrayRef<llvm::SmallVector<mlir::Operation *>> familyCalls,
     HostCapturedMap & result) {
@@ -386,8 +421,9 @@ bool analyzer::capturedMapOuterKeys(
         }
     }
     // External identities cannot be published, returned, snapshotted, coerced,
-    // passed as child keys/payloads or transported through another binding.
-    // Canonical input order is independent of call visitation order.
+    // passed as child keys or payloads, or moved through another binding.
+    // Walking the entry arguments keeps the input order independent of the
+    // order calls were visited in.
     for (mlir::BlockArgument input : entry.getBody().front().getArguments()) {
         if (!step()) { return false; }
         if (!inputs.contains(input)) { continue; }
@@ -400,8 +436,9 @@ bool analyzer::capturedMapOuterKeys(
         result.outerKeyInputs.push_back(input);
     }
     // Source order gives every family invocation the same evidence. All uses
-    // of each allocation and every named alias must satisfy the narrower role;
-    // one sibling payload/child-key use removes it without rejecting ownership.
+    // of each allocation and every named alias must be outer-key uses; a
+    // single payload or child-key use elsewhere drops the object from
+    // outerKeyObjects without refusing the proof.
     const auto census = entry.walk([&](ctjs::CreateObjectOp made) {
         if (!step()) { return mlir::WalkResult::interrupt(); }
         if (!candidates.contains(made)) { return mlir::WalkResult::advance(); }
@@ -440,6 +477,9 @@ bool analyzer::capturedMapOuterKeys(
     return !census.wasInterrupted() && !exhausted;
 }
 
+/// Checks every operation in the module against what the contract permits and
+/// returns the first refusal reason, or an empty string if all are proved.
+/// Property calls that pass are recorded in `checkedCalls`.
 std::string analyzer::environmentProblem() {
     if (auto problem = localRecordProblem(); !problem.empty()) { return problem; }
     std::string reason;
@@ -636,8 +676,8 @@ namespace ctcompile::ctnative {
 
 HostContractAnalysis::HostContractAnalysis(mlir::ModuleOp module, const HostContract & contract,
                                            unsigned maxSteps) {
-    // A fresh instance ignores all old/forged reports, including a forged
-    // success flag. Its supplied contract is bound to the actual current IR.
+    // A fresh instance ignores any old or forged report, including a forged
+    // success flag. The fingerprint binds the supplied contract to this IR.
     if (hostContractFingerprint(module) != contract.moduleSha256) {
         refusal = "host contract module fingerprint mismatch";
         return;
@@ -710,8 +750,9 @@ HostContractAnalysis::HostContractAnalysis(mlir::ModuleOp module, const HostCont
                     store->getParentOp() != analysis.declaration) {
                     return mlir::WalkResult::interrupt();
                 }
-                // An unmodelled deletion/property path could observe or replace
-                // the global declaration. The provider has no such authority.
+                // An unmodelled deletion could observe or replace the global
+                // declaration, so any delete refuses.
+
                 if (llvm::isa<ctjs::DeleteNamedOp, ctjs::DeletePropertyOp>(operation)) {
                     return mlir::WalkResult::interrupt();
                 }
@@ -810,7 +851,8 @@ HostContractAnalysis::HostContractAnalysis(mlir::ModuleOp module, const HostCont
     llvm::DenseSet<mlir::Operation *> seenOrigins;
     if (refusal.empty()) {
         // Reconstruct named-key origins from completed callable edges only.
-        // Failed/provisional family attempts cannot publish global evidence.
+        // Failed or provisional family attempts cannot publish global evidence.
+
         for (const HostCallableEdge & call : analysis.checkedCalls) {
             for (const HostMethodArgument & argument : call.arguments) {
                 if (!analysis.step()) { break; }

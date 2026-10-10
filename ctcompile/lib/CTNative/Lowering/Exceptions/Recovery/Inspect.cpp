@@ -1,10 +1,12 @@
-// recovery - inspection: the one-handler shape the preserved importer
-// CFG must have, and what a checked invocation must look like to be represented.
+//===- Inspect.cpp - Handler shape inspection -------------------*- C++ -*-===//
 //
-// One of six files carved out of a 1,251-line Exceptions/Recovery.cpp on
-// 2026-09-08. All are member functions of `recovery`, the disposable-clone
-// transaction declared in Attempt.h beside this; Exceptions/Recovery.h, the
-// header the rest of the lowering sees, did not change.
+// Inspection: the one-handler shape the importer's CFG must have, and what a
+// checked call must look like to be represented as a ctjs.invoke.
+//
+// Member functions of `recovery`, the disposable-clone transaction declared in
+// Attempt.h; the rest of the lowering uses only Exceptions/Recovery.h.
+//
+//===----------------------------------------------------------------------===//
 
 #include "Attempt.h"
 

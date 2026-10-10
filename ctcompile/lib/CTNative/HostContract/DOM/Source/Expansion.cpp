@@ -1,3 +1,15 @@
+//===- Expansion.cpp - Inline DOM helper calls ------------------*- C++ -*-===//
+//
+// DOMSource::inlineCall, which inlines one call of a helper (including a call
+// protected by an invoke, whose exception edge must survive), and
+// DOMSource::expand, the recursive driver that normalizes a helper and
+// inlines everything it calls. "The DOM entry proof" below means the typed
+// DOM entry analysis that callers of expandDOMHelpers run on the result; it
+// rejects any throw, coercion, reentry or mutation the rewrites here assume
+// away.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Proof.hpp"
 #include "mlir/IR/Verifier.h"
 
@@ -12,8 +24,9 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
     bool selectorFeedsWrite = false;
     ctjs::CreateObjectOp discardedResult;
     llvm::DenseSet<mlir::Operation *> discardedFields;
-    // Missing JavaScript arguments are undefined. The complete helper proof
-    // excludes arguments/new.target observers before inlining.
+    // A missing JavaScript argument is undefined. checkBody, run by expand
+    // before inlining, has already refused helpers that read `arguments` or
+    // `new.target`, so this padding cannot be observed.
     const auto bindArguments = [&](mlir::OpBuilder & at, mlir::IRMapping & mapping) {
         auto & body = target.getBody().front();
         mapping.map(body.getArgument(ctjs::arg_callee), callee);
@@ -31,8 +44,9 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
         }
         return true;
     };
-    // Substitute captures at each invocation, including branch-local loads;
-    // never bind a shared body to its first caller.
+    // Bind captured values separately at each inlined call, including loads
+    // inside branches, so a body shared by several callers is never bound to
+    // the first caller's captures.
     const auto bindCapture = [&](ctjs::LoadUpvalueOp load, mlir::OpBuilder & at,
                                  mlir::IRMapping & mapping) {
         auto & capture = captures[static_cast<unsigned>(load.getIndex())];
@@ -57,11 +71,14 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
         if (invocation.getNumResults()) {
             auto returned = llvm::dyn_cast<ctjs::ReturnOp>(target.getBody().front().back());
             auto calls = target.getBody().front().getOps<ctjs::CallOp>();
-            // A helper's catch covers every call, but its local results are not
-            // caller registers. Nest the successful continuations and give each
-            // failure the original caller snapshot and unwind continuation.
-            // ponytail: straight attribute chains and fresh own data records;
-            // other preparation needs an independent effect proof.
+            // The caller's invoke protects every call in the helper, but the
+            // helper's local results are not part of the caller's saved state.
+            // So each helper call gets its own nested invoke: success continues
+            // into the next call, and failure gets a copy of the caller's saved
+            // state and unwind continuation.
+            // ponytail: accepts only straight-line hasAttribute/setAttribute
+            // chains and fresh data records; refuses other effects until they
+            // have their own effect proof.
             unsigned callCount = 0;
             bool chain = static_cast<bool>(returned);
             for (auto & operation : target.getBody().front()) {
@@ -96,8 +113,9 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                 bool deferredCall = false;
                 const auto counted = invocation.walk([&](mlir::Operation * operation) {
                     ++copyOperations;
-                    // The caller has already queued local calls for expansion.
-                    // Duplicating an unwind call would invalidate that census.
+                    // The caller has already collected the local calls to
+                    // expand; copying a call in the unwind body would add one
+                    // it does not know about.
                     deferredCall |=
                         invocation.getUnwindBody().isAncestor(operation->getParentRegion()) &&
                         llvm::isa<ctjs::CallOp, ctjs::CallDirectOp, ctjs::CreateClosureOp>(
@@ -108,8 +126,8 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                     copyCost += cost;
                     return mlir::WalkResult::advance();
                 });
-                // Reserve verification and every copy of the complete unwind,
-                // including nested operations and saved-register operands.
+                // Charge for verification and for one copy of the whole invoke
+                // (unwind body included) per helper call, before changing IR.
                 if (counted.wasInterrupted() || copyCost > remaining / (callCount + 1) ||
                     deferredCall || mlir::failed(mlir::verify(invocation))) {
                     return refuse("DOM helper chain lost its invocation correspondence or budget");
@@ -137,8 +155,8 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                             auto & normal = invocation.getNormalBody().front();
                             normal.getArgument(0).replaceAllUsesWith(
                                 mapping.lookup(result.getValue()));
-                            // Move the single success continuation, retaining
-                            // any local calls already queued by the caller.
+                            // Move (not copy) the one success continuation, so
+                            // calls the caller already collected stay valid.
                             for (auto & next :
                                  llvm::make_early_inc_range(normal.without_terminator())) {
                                 next.moveBefore(into.getBlock(), into.getInsertionPoint());
@@ -197,11 +215,13 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                             leaf.getReceiver() == method.getObject() &&
                             (ctjs::constantKey(method.getKey()) == "hasAttribute" ||
                              ctjs::constantKey(method.getKey()) == "setAttribute");
-            // Preserve the call's exceptional edge as well as its result. Only
-            // inert preparation leaves protection, conditional on complete DOM
-            // reproof of the actual receiver and initial method after binding.
-            // ponytail: one leaf and an inert result; additional effects and
-            // result construction need their own completion correspondence.
+            // Keep the call's exception edge as well as its result: only the
+            // single hasAttribute/setAttribute call stays inside the invoke,
+            // and the inert operations preparing it move out. The DOM entry
+            // proof later checks the bound receiver and method.
+            // ponytail: accepts one call and a result that is that call, a
+            // parameter, a constant or a capture; refuses more effects or
+            // computed results until they have their own completion proof.
             for (auto & operation : target.getBody().front()) {
                 if (!step()) { return false; }
                 forwards &=
@@ -222,10 +242,11 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                 protectedInvocation = invocation;
                 protectedLeaf = leaf;
             } else {
-                // An observed completion can leave protection only after the helper's
-                // entire body is independently inert for every input. Preserve the
-                // original normal payload and successful SSA state; unwind snapshots
-                // do not replace either. The existing inliner then binds the payload.
+                // The invoke's result is used, so the call may leave the invoke
+                // only if proveUnusedBody shows the helper cannot throw for any
+                // input. Then the normal continuation is projected onto the
+                // call's result (the unwind state is dropped) and the ordinary
+                // inlining below binds that result.
                 if (!proveUnusedBody(target)) { return false; }
                 mlir::OpBuilder at(invocation);
                 auto projected = host_detail::projectInvocationContinuation(
@@ -263,13 +284,16 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
             !emptyContinuation(unwind)) {
             return refuse("DOM protected helper requires exact unused-result suppression");
         }
-        // Keep the write protected and its reads in source order. Moving
-        // preparation and hasAttribute reads requires complete typed DOM reproof:
-        // the initial Element methods and primitive arguments exclude source exceptions
-        // and reentry. Clone them in order, under the original guard.
-        // ponytail: two writes with feeding reads, one matches, then read/write pairs
-        // and unused reads/selectors interleaved with writes; other effects need
-        // their exceptional edges represented.
+        // Keep the setAttribute write protected and its reads in source
+        // order, cloned under the original guard. Moving the preparation and
+        // hasAttribute reads out is sound only because the DOM entry proof
+        // shows the built-in Element methods, called with primitive arguments,
+        // cannot throw or re-enter script.
+        // ponytail: accept only helpers built from setAttribute/hasAttribute/
+        // getAttribute/matches calls: up to two writes, each optionally fed by
+        // a preceding read, at most one `matches` selector, then further
+        // read/write pairs and unused reads between them. Any other effect is
+        // refused until its exception edge is modelled.
         const auto attributeLeaf = [&] {
             ctjs::GetPropertyOp method, readMethod, trailingMethod, secondMethod;
             ctjs::GetPropertyOp selectorMethod, finalMethod, finalReadMethod;
@@ -279,12 +303,15 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
             llvm::DenseSet<mlir::Value> suffixReads;
             llvm::SmallVector<ctjs::CallOp> consumedSelectors;
             auto result = llvm::dyn_cast<ctjs::ReturnOp>(target.getBody().front().back());
-            // Whether `call` invokes `method` on its own receiver with `arity` arguments.
+            // Whether `call` invokes `method` on its own receiver with `arity`
+            // arguments.
             const auto calls = [](ctjs::CallOp call, ctjs::GetPropertyOp method, unsigned arity) {
                 return call.getCallee() == method.getResult() &&
                        call.getReceiver() == method.getObject() && call.getArgs().size() == arity;
             };
-            // Keep a completed method/read pair in the complete use census.
+            // Record a finished method/read pair in suffixValues/suffixUses, the
+            // set of values and uses checked exhaustively at the end of this
+            // lambda.
             const auto retainRead = [&](ctjs::GetPropertyOp pairMethod, ctjs::CallOp pairRead) {
                 suffixValues.append({pairMethod.getResult(), pairRead.getResult()});
                 suffixUses.insert(&pairRead->getOpOperand(0));
@@ -299,8 +326,8 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                     return true;
                 }
                 if (!suffixReads.contains(leaf.getArgs()[1])) { return !pendingRead; }
-                // A standalone read may feed the write without an argument read.
-                // Preserve any later argument read in the complete use census.
+                // An earlier standalone read may feed the write. Record any
+                // pending argument read in suffixValues so its uses are checked.
                 if (pendingRead) { retainRead(pendingMethod, pendingRead); }
                 pendingRead = leaf.getArgs()[1].getDefiningOp<ctjs::CallOp>();
                 pendingMethod = pendingRead.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
@@ -313,8 +340,8 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                     continue;
                 }
                 if (llvm::isa<ctjs::LoadUpvalueOp>(operation)) { continue; }
-                // These producers remain under the source guard. Complete
-                // typed DOM reproof must exclude coercion, throws and reentry.
+                // These producers stay under the original guard. The DOM entry
+                // proof must exclude coercion, throws and reentry.
                 if (!protectedLeaf && llvm::isa<ctjs::BinaryOp, ctjs::BinaryStaticOp, ctjs::UnaryOp,
                                                 ctjs::CompareOp, ctjs::TruthyOp>(operation)) {
                     continue;
@@ -353,15 +380,16 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                             guard.getThenRegion().front().getNumArguments()) {
                             return false;
                         }
-                        // Completion joins may retain an ignored close payload.
-                        // Only forwarding through other proved guards is allowed;
-                        // the complete use census rejects any surviving observer.
+                        // A completion join may yield an ignored close payload.
+                        // Only forwarding through other checked guards is
+                        // allowed; the final use check rejects any other use.
                         for (mlir::Value value : guard.getResults()) {
                             if (!step()) { return false; }
                             suffixValues.push_back(value);
                         }
-                        // ponytail: bounded cleanup guards; other control flow still
-                        // needs its exceptional edges represented.
+                        // ponytail: accepts only cleanup guards nested at most
+                        // 64 deep; refuses other control flow until its
+                        // exception edges are modelled.
                         for (auto & arm : guard->getRegions()) {
                             if (arm.empty()) { continue; }
                             if (!arm.hasOneBlock() || arm.front().getNumArguments()) {
@@ -415,8 +443,9 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                                     read && trailingMethod && !trailingCall &&
                                     calls(read, trailingMethod, 1)) {
                                     trailingCall = read;
-                                    // This read stays inside the branch, but leaves suppression.
-                                    // The shared selector and typed DOM proofs must exclude throws.
+                                    // This read stays in the branch but leaves the
+                                    // invoke; validSelector below and the DOM
+                                    // entry proof must exclude throws.
                                     if (ctjs::constantKey(trailingMethod.getKey()) == "matches") {
                                         consumedSelectors.push_back(read);
                                     }
@@ -439,8 +468,9 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                                         suffixLeaves.insert(leaf);
                                     }
                                     guardedMethod = {};
-                                    // Later branch-local reads may replace trailingCall.
-                                    // Keep this write's use of the original snapshot.
+                                    // Later reads in the branch may replace
+                                    // trailingCall, so record this write's use
+                                    // of the current one now.
                                     suffixUses.insert(&leaf->getOpOperand(3));
                                     if (!retainTrailingRead()) { return false; }
                                     continue;
@@ -455,8 +485,8 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                                 }
                                 return false;
                             }
-                            // A completed read stays in the use census, but a pending
-                            // method/read pair must never cross into the sibling arm.
+                            // A finished read stays recorded, but a pending
+                            // method/read pair must not cross into the other arm.
                             if (guardedMethod || !retainTrailingRead()) { return false; }
                         }
                         return bool(secondLeaf);
@@ -485,8 +515,8 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                               ctjs::constantKey(read.getKey()) == "matches"))) {
                     if (sourceReadMethod) {
                         if (suffixRead || !sourceReadCall) { return false; }
-                        // Keep completed argument reads in the complete use
-                        // census; the write selects its feeding read below.
+                        // Record the finished argument read; the write picks
+                        // its feeding read below.
                         retainRead(sourceReadMethod, sourceReadCall);
                         sourceReadCall = {};
                     }
@@ -498,14 +528,16 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                     calls(read, sourceReadMethod, 1)) {
                     sourceReadCall = read;
                     const bool selector = ctjs::constantKey(sourceReadMethod.getKey()) == "matches";
-                    // Initial reads move outside the helper's suppression.
-                    // Validate every selector there, including saved or ignored reads.
+                    // Reads before the first write move out of the invoke, so
+                    // every `matches` selector there, used or not, is validated.
                     if (selector && !secondLeaf) { consumedSelectors.push_back(read); }
                     if (suffixRead && (selector || !finalMethod)) {
-                        // Retain standalone reads and argument selectors in source order.
-                        // Unused selectors need exact suppression; all reads retain
-                        // the complete use census and typed DOM proof below. A pending
-                        // hasAttribute read keeps the read-to-write proof instead.
+                        // Record standalone reads and argument selectors in
+                        // source order. An unused selector after the second
+                        // write is emitted with its own suppression; every read
+                        // gets the final use check and the DOM entry proof. A
+                        // read that feeds a pending write is handled by
+                        // selectFeedingRead instead.
                         retainRead(sourceReadMethod, read);
                         if (selector && secondLeaf) { suffixLeaves.insert(read); }
                         sourceReadMethod = {};
@@ -550,8 +582,8 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                         (!finalReadCall || leaf.getArgs()[1] != finalReadCall.getResult())) {
                         return false;
                     }
-                    // A saved read may feed several writes. Check every use
-                    // below, including uses in later pairs.
+                    // A saved read may feed several writes. The final use
+                    // check covers every use, including ones in later pairs.
                     suffixValues.append({finalMethod.getResult(), leaf.getResult()});
                     suffixUses.insert(&leaf->getOpOperand(0));
                     if (finalReadCall) {
@@ -582,16 +614,17 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                 if (auto field = llvm::dyn_cast<ctjs::SetPropertyOp>(operation);
                     field && discardedResult && field.getObject() == discardedResult &&
                     ctjs::ordinaryKey(ctjs::constantKey(field.getKey()))) {
-                    // A fresh unused data record has no observer. Retain its
-                    // producers even though its stores and allocation vanish.
+                    // The helper returns a fresh record that nobody reads, so
+                    // its stores and allocation are dropped; the operations
+                    // producing the stored values are kept.
                     discardedFields.insert(field);
                     continue;
                 }
                 return false;
             }
-            // This exact Invoke has no result observer. Keep every producer,
-            // but discharge the return edge only at this protected call; the
-            // same helper's normal callers still need its original payload.
+            // This invoke's result is unused. Every producer is kept, and the
+            // return value is dropped only at this call; other callers of the
+            // same helper still get its real result.
             if (!protectedLeaf || !result ||
                 (readMethod && (!readCall || protectedLeaf.getArgs()[1] != readCall.getResult())) ||
                 (trailingMethod && !trailingCall) || (secondMethod && !secondLeaf) ||
@@ -600,8 +633,8 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                 return false;
             }
             if (finalReadCall) {
-                // The ignored close payload may leave a final read. Keep it in
-                // order and require its result to have no remaining observer.
+                // An ignored close payload may leave a final read. Keep it in
+                // order and require that its result has no other use.
                 suffixValues.append({finalReadMethod.getResult(), finalReadCall.getResult()});
                 suffixUses.insert(&finalReadCall->getOpOperand(0));
             }
@@ -670,7 +703,8 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
             selectorFeedsWrite = false;
             discardedResult = {};
             discardedFields.clear();
-            // Only an independently inert body may discharge suppression.
+            // The call may leave the invoke only if proveUnusedBody shows the
+            // helper cannot throw for any input.
             if (!proveUnusedBody(target)) {
                 return refuse("DOM protected helper needs an independent inert-body proof");
             }
@@ -690,8 +724,9 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
             if (llvm::isa<ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::RootOp>(operation)) {
                 continue;
             }
-            // The fresh record's only observation was the discarded
-            // helper result. This is allocation elision, not a no-throw fact.
+            // The fresh record was only returned, and that result is
+            // discarded, so its allocation is dropped. This says nothing
+            // about whether its value producers can throw.
             if (discardedResult && &operation == discardedResult) { continue; }
             if (discardedFields.contains(&operation)) { continue; }
             if (auto load = llvm::dyn_cast<ctjs::LoadUpvalueOp>(operation)) {
@@ -699,9 +734,9 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
             } else if (auto result = llvm::dyn_cast<ctjs::ReturnOp>(operation)) {
                 if (protectedInvocation && protectedInvocation.getNumResults() &&
                     result.getValue() != protectedLeaf.getResult()) {
-                    // The protected call still dispatches its own result. Only
-                    // success observes the helper's return; failure retains the
-                    // original payload and saved state.
+                    // The invoke still dispatches on the protected call. Only its
+                    // normal continuation sees the helper's return value; the
+                    // unwind continuation keeps the original payload and state.
                     auto payload = protectedInvocation.getNormalBody().front().getArgument(0);
                     if (!drain(payload.getNumUses())) { return false; }
                     payload.replaceAllUsesWith(mapping.lookup(result.getValue()));
@@ -709,8 +744,9 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                 call->getResult(0).replaceAllUsesWith(
                     mapping.lookup(protectedLeaf ? protectedLeaf.getResult() : result.getValue()));
             } else if (protectedInvocation && llvm::isa<mlir::scf::YieldOp>(operation)) {
-                // The cleanup census permits only ignored guard-result forwarding.
-                // Drop that transport, retaining every payload producer for DOM reproof.
+                // attributeLeaf allowed guard results only when they are
+                // ignored, so the yield drops its operands. The operations
+                // producing them stay for the DOM entry proof.
                 mlir::scf::YieldOp::create(at, operation.getLoc());
                 ++operationCount;
             } else if (llvm::isa<mlir::scf::IfOp, mlir::scf::WhileOp>(operation)) {
@@ -741,16 +777,17 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
             } else {
                 if (&operation == protectedLeaf) { at.setInsertionPoint(call); }
                 mlir::Operation * cloned;
-                // A consumed selector remains an ordered read at this guard.
-                // Its literal syntax was checked above; complete typed reproof
-                // must still exclude receiver failure, coercion and reentry.
+                // A consumed selector stays an ordered read at this guard. Its
+                // literal was checked by validSelector above; the DOM entry
+                // proof must still exclude receiver failure, coercion and
+                // reentry.
                 if (&operation == secondLeaf ||
                     (&operation == selectorLeaf && !selectorFeedsWrite) ||
                     suffixLeaves.contains(&operation)) {
-                    // Splitting suppression is valid only after complete DOM
-                    // reproof excludes source exceptions from EVERY call.
-                    // Each write retains its own valid-name check; matches
-                    // retains literal-selector validation before the final write.
+                    // Giving each call its own suppression is valid only because
+                    // the DOM entry proof excludes exceptions from every one of
+                    // them. Each write keeps its own valid-name check, and
+                    // `matches` keeps its selector check before the final write.
                     if (!step() || !step() || !step() || !step()) { return false; }
                     cloned = emitSuppressedCall(at, operation, mapping);
                     operationCount += 4;
@@ -763,9 +800,9 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                 }
                 if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(operation);
                     closure && confinedCallback(closure, closureTarget(closure))) {
-                    // The original enclosure and unused implicit arguments
-                    // were proved before cloning. Preserve this callback in
-                    // its source arm with the caller's inert enclosure.
+                    // confinedCallback checked the enclosure and unused implicit
+                    // arguments before cloning. Keep the callback in its arm,
+                    // re-parented to the caller's closure (and receiver).
                     auto callback = llvm::cast<ctjs::CreateClosureOp>(cloned);
                     callback.getEnclosingClosureMutable().assign(
                         block.getArgument(ctjs::arg_callee));
@@ -774,8 +811,8 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                             block.getArgument(ctjs::arg_receiver));
                     }
                 }
-                // Regions (a normalized invoke) clone with the
-                // same mapping; charge every nested operation.
+                // An operation with regions (a normalized invoke) is cloned
+                // with the same mapping; charge every nested operation.
                 const auto counted = cloned->walk([&](mlir::Operation * inner) {
                     if (inner == cloned) { return mlir::WalkResult::advance(); }
                     if (!step()) { return mlir::WalkResult::interrupt(); }
@@ -790,13 +827,15 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
                     }
                 }
                 ++operationCount;
-                // Suffix producers follow the original suppression at the
-                // same guard. Complete DOM proof must show the write and
-                // every moved read cannot throw or reenter source code.
+                // Operations after the protected call are emitted after the
+                // original invoke at the same guard. The DOM entry proof must
+                // show the write and every moved read cannot throw or re-enter
+                // script.
                 if (&operation == protectedLeaf) {
                     if (protectedInvocation.getNumResults()) {
-                        // Inert suffix constants/captures must dominate the
-                        // normal continuation that observes the helper result.
+                        // Inert constants and captures after the call must
+                        // dominate the normal continuation that uses the
+                        // helper's result.
                         at.setInsertionPoint(protectedInvocation);
                     } else {
                         at.setInsertionPointAfter(protectedInvocation);
@@ -812,10 +851,11 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
         const auto where = rethrow.getLoc();
         if (!step()) { return false; }
         rethrow->getParentOp()->erase();
-        // A result used only by this immediate throw needs no scalar join.
-        // Keep each payload and all its producers in their original arm.
-        // ponytail: one-result tail branches only; effectful continuations
-        // and observed results retain the ordinary typed join proof.
+        // The call's result is only rethrown, so instead of joining it through
+        // an scf.if result, push the throw into each arm that produces it,
+        // keeping each payload and its producers in their own arm.
+        // ponytail: accepts only one-result scf.if chains followed by unused
+        // constants; anything else rethrows the joined value.
         const auto emitThrow = [&](auto && self, mlir::Value value, mlir::Operation * end,
                                    unsigned level) -> bool {
             if (!step() || level == 64) { return refuse("DOM throw projection is too deep"); }
@@ -865,23 +905,25 @@ bool DOMSource::inlineCall(ctjs::FuncOp function, ctjs::FuncOp target, mlir::Ope
         };
         if (!emitThrow(emitThrow, payload, call, 0)) { return false; }
     }
-    // The caller erases the old call after the charged clone succeeds,
-    // restoring the exact call+exit inside the original suppression.
+    // The caller erases `call` once this returns. For a protected call the
+    // cloned leaf call was inserted right before `call`, so the invoke still
+    // holds exactly one call followed by its exit.
     return true;
 }
 
 bool DOMSource::expand(ctjs::FuncOp function, unsigned depth, bool entry, bool directReceiver) {
     if (!step()) { return false; }
     if (expanded.contains(function)) { return true; }
-    // ponytail: bounded local call trees; recursive source needs a separate
-    // call/lifetime proof, not recursive compiler expansion.
+    // ponytail: accepts only call trees up to 64 deep; refuses recursion,
+    // which would need its own call and lifetime proof rather than expansion.
     if (depth == 64 || !active.insert(function).second) {
         return refuse("DOM helper call tree is recursive or too deep");
     }
     if (directReceiver) {
-        // An inert receiver enclosure needs the complete local closure proof,
-        // just like a source closure call. Keep the restricted direct path
-        // when the original body observes its actual receiver.
+        // If the receiver is only rooted or captured as a closure's
+        // enclosing `this`, treat the helper like an ordinary closure call.
+        // Keep the stricter direct-receiver checks only when the body
+        // actually uses its receiver.
         directReceiver = false;
         for (mlir::Operation * use :
              function.getBody().front().getArgument(ctjs::arg_receiver).getUsers()) {
@@ -893,9 +935,9 @@ bool DOMSource::expand(ctjs::FuncOp function, unsigned depth, bool entry, bool d
         return false;
     }
     if (!normalizeBooleanCell(function, depth)) { return false; }
-    // Parameters with nested source functions may have an otherwise local
-    // cell. Resolve those reads before specializing their intrinsic calls;
-    // captured cells still wait for the unchanged child/capture proof.
+    // A helper with nested functions may still have cells no closure
+    // captures. Resolve their reads now, before foldConstantReplacements;
+    // captured cells wait for the capture proof below.
     for (ctjs::CreateCellOp cell : function.getBody().front().getOps<ctjs::CreateCellOp>()) {
         bool captured = false;
         for (mlir::Operation * use : cell.getResult().getUsers()) {
@@ -905,9 +947,9 @@ bool DOMSource::expand(ctjs::FuncOp function, unsigned depth, bool entry, bool d
         if (!captured && !resolveCell(cell)) { return false; }
     }
     if (!foldConstantReplacements(function)) { return false; }
-    // Enclosing identities were checked on the original body above. Only
-    // the complete replacement proof may remove callbacks. Only confined,
-    // capture-free callbacks may survive direct helper expansion.
+    // Closure enclosures were checked on the original body above. Only
+    // foldConstantReplacements may remove callbacks; check again that any
+    // callback left is confined and capture-free.
     if (directReceiver && !checkBody(function, entry, true)) { return false; }
     llvm::SmallVector<ctjs::CallDirectOp> directCalls;
     const auto collected = function.walk([&](mlir::Operation * operation) {
@@ -935,14 +977,14 @@ bool DOMSource::expand(ctjs::FuncOp function, unsigned depth, bool entry, bool d
         }
         if (!bindConstantArguments({}, target)) { return false; }
     }
-    // Bind every sibling's complete call census before expanding a shared
-    // callee. Otherwise an unvisited sibling's formal hides its actual
-    // String inputs from that callee's existing all-use proof.
+    // Bind constant arguments for every direct call (the loop above) before
+    // expanding any callee. Otherwise a callee shared by sibling calls could
+    // be specialised before a later sibling's string arguments were known.
     for (ctjs::CallDirectOp call : directCalls) {
         auto target = call.getTarget();
-        // The symbol is already the direct-call contract. This normalization
-        // proves no new source dispatch: it binds each actual receiver and
-        // retains every operation for the complete DOM entry reproof.
+        // A direct call names its target by symbol, so there is no dispatch to
+        // prove. Inlining binds the actual receiver and keeps every operation
+        // for the DOM entry proof.
         if (!expand(target, depth + 1, false, true) ||
             !inlineCall(function, target, call, call.getArgs(), call.getReceiver(),
                         call.getCalleeValue(), {}, depth)) {
@@ -983,9 +1025,10 @@ bool DOMSource::expand(ctjs::FuncOp function, unsigned depth, bool entry, bool d
             }
         }
     }
-    // Capturing children must be leaves before the shared capture query.
-    // Uncaptured helpers wait until their holders retire and expose every
-    // invocation; only then can argument facts specialize their bodies.
+    // Expand capturing closures first: captureTarget requires their targets to
+    // be expanded already. Uncaptured helpers wait until the cells and
+    // objects holding them are removed and every call is visible; only then
+    // can bindConstantArguments specialise their bodies.
     for (ctjs::CreateClosureOp closure : closures) {
         auto target = closureTarget(closure);
         if (!target) { return refuse("DOM helper closure target is missing"); }
@@ -995,8 +1038,10 @@ bool DOMSource::expand(ctjs::FuncOp function, unsigned depth, bool entry, bool d
         if (!cells.contains(cell.getResult()) && !resolveCell(cell)) { return false; }
     }
     llvm::DenseSet<mlir::Operation *> methods, resolvedObjects;
-    // ponytail: bounded rescans of local capture dependencies; index the
-    // worklist if large helper graphs exhaust the existing work budget.
+    // Repeatedly remove cells, method objects and closures that nothing holds
+    // any more, until all are gone; no progress means a cycle or an escape.
+    // ponytail: rescans everything each round; index the worklist if large
+    // helper graphs exhaust the work budget.
     while (!closures.empty() || !localCells.empty() ||
            resolvedObjects.size() != methodObjects.size()) {
         if (!step()) { return false; }
@@ -1049,8 +1094,9 @@ bool DOMSource::expand(ctjs::FuncOp function, unsigned depth, bool entry, bool d
             if (!target) { return refuse("DOM helper closure target is missing"); }
             if (confinedCallback(closure, target)) {
                 if (!expand(target, depth + 1)) { return false; }
-                // Preserve both source identities. Complete DOM reproof must
-                // establish the intrinsic method, callback body and every use.
+                // Keep the closure and its function. The DOM entry proof must
+                // establish the built-in method, the callback body and every
+                // use.
                 retainedCallbacks.insert(target);
                 closure = {};
                 progress = true;
@@ -1132,8 +1178,8 @@ bool DOMSource::expand(ctjs::FuncOp function, unsigned depth, bool entry, bool d
                 if (!expand(target, depth + 1)) { return false; }
             }
             for (const Call & call : calls) {
-                // Live closure metadata retains its enclosing identities;
-                // receiver-observing direct functions bind the actual instead.
+                // A closure call binds the caller's own receiver and closure;
+                // only direct calls that use their receiver bind the actual one.
                 if (!inlineCall(function, target, call.operation, call.arguments,
                                 block.getArgument(ctjs::arg_receiver),
                                 block.getArgument(ctjs::arg_callee), captures, depth)) {
@@ -1158,8 +1204,9 @@ bool DOMSource::expand(ctjs::FuncOp function, unsigned depth, bool entry, bool d
         }
         object.erase();
     }
-    // Calls may return fresh own-field records in a loop body. Project only
-    // their confined reads, retaining every source value producer and effect.
+    // Inlined calls may have returned fresh records whose fields are read in
+    // a loop body. Forward those reads, keeping every value producer and
+    // effect.
     if (!forwardFields(function) || !repairInactiveCompletion(function)) { return false; }
     active.erase(function);
     expanded.insert(function);

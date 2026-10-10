@@ -1,3 +1,13 @@
+//===- ProgramComparator.cpp - Compare two programs -------------*- C++ -*-===//
+//
+// Implements ctcompile::js::compare, which checks two compiled
+// ctbrowser::script::program values field by field and reports the first
+// difference: kind, imports, exports, re-exports, retained source, and every
+// function's bytecode, constants, names, upvalues and debug tables. The
+// round-trip tests use it to prove a serialised program loads back unchanged.
+//
+//===----------------------------------------------------------------------===//
+
 #include <ctcompile/JavaScript/ProgramComparator.hpp>
 
 #include <cstddef>
@@ -13,6 +23,8 @@ using ctbrowser::script::script_kind;
 
 namespace {
 
+/// Comparison helpers that record the first difference in `found`. Each
+/// returns true when its operands match and false once a difference is set.
 struct walker {
     std::optional<difference> found;
 
@@ -41,8 +53,8 @@ struct walker {
         }
         return true;
     }
-    // A counted sequence compared element by element: the count first, then
-    // the first element `eq` rejects, reported as "<where>, <item> <i>".
+    /// Compares a counted sequence element by element: the count first, then
+    /// the first element `eq` rejects, reported as "<where>, <item> <i>".
     template <typename T, typename Eq>
     bool each(const std::vector<T> & a, const std::vector<T> & b, const std::string & where,
               const char * counted, const char * item, const char * what, Eq eq) {
@@ -66,14 +78,7 @@ std::optional<difference> compare(const program & expected, const program & actu
     }
     if (!w.same(expected.error, actual.error, "", "the compile error differs")) { return w.found; }
 
-    // ORDER MATTERS FOR TWO OF THESE THREE. Import order fixes depth-first
-    // instantiation and therefore the order of modules' top-level side effects;
-    // the FIRST claim on a re-exported name wins, so swapping two re-exports
-    // changes which cell a name resolves to. Export order is not observable -
-    // a namespace object's keys come from a hash map - but it is compared
-    // anyway, because an image has no reason to reorder it and a change there
-    // means something else moved.
-    // THE KIND FIRST, because everything below it means something different
+    // The kind comes first, because everything below it means something different
     // depending on the answer: a module's top-level declarations are its own
     // scope's and a classic script's are the global object's, so two programs
     // that differ here are not two versions of one thing.
@@ -83,6 +88,12 @@ std::optional<difference> compare(const program & expected, const program & actu
                                     : "expected a classic script, got a module"),
                w.found;
     }
+    // Imports, exports and re-exports are compared in order. Import order fixes
+    // depth-first instantiation and so the order of top-level side effects; the
+    // first claim on a re-exported name wins, so swapping two re-exports changes
+    // which cell a name resolves to. Export order is not observable (a namespace
+    // object's keys come from a hash map) but is compared anyway: an image has
+    // no reason to reorder it, and a change there means something else moved.
     if (!w.texts(expected.imports, actual.imports, "", "imports")) { return w.found; }
     if (!w.texts(expected.exports, actual.exports, "", "exports")) { return w.found; }
     if (!w.count(expected.reexports.size(), actual.reexports.size(), "", "re-export count")) {
@@ -122,7 +133,7 @@ std::optional<difference> compare(const program & expected, const program & actu
         if (!w.same(a.source_begin, b.source_begin, where, "source_begin")) { return w.found; }
         if (!w.same(a.source_end, b.source_end, where, "source_end")) { return w.found; }
 
-        // FIELD BY FIELD, NOT AS BYTES. `instruction` has a padding byte at
+        // Field by field, not as bytes: `instruction` has a padding byte at
         // offset 1 whose contents depend on the optimisation level of the
         // code that built it, so a memcmp here would report differences
         // that do not exist - and would do it intermittently.
@@ -132,7 +143,7 @@ std::optional<difference> compare(const program & expected, const program & actu
                     })) {
             return w.found;
         }
-        // BY BITS. See the header: as doubles, NaN would differ from itself
+        // Compared by bit pattern. See the header: as doubles, NaN would differ from itself
         // and -0 would compare equal to +0.
         if (!w.each(a.constants, b.constants, where, "constant count", "constant", "bit pattern",
                     [](const auto & x, const auto & y) { return x.bits() == y.bits(); })) {
@@ -149,8 +160,8 @@ std::optional<difference> compare(const program & expected, const program & actu
             return w.found;
         }
 
-        // THE DEBUG SIDE TABLES, compared for the same reason everything above
-        // is: a round trip that silently drops them looks exactly like a build
+        // The debug side tables are compared for the same reason everything
+        // above is: a round trip that silently drops them looks exactly like a build
         // with CTBROWSER_SCRIPT_DEBUG_NAMES off, and the round-trip test is the
         // only thing that can tell the two apart.
         if (!w.each(a.locals, b.locals, where, "local count", "local",

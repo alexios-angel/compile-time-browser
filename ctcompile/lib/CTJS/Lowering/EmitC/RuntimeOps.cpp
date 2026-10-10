@@ -1,4 +1,18 @@
-// Boxed EmitC runtimeops lowering.
+//===- RuntimeOps.cpp - Lower runtime-helper ops --------------------------===//
+//
+// lowering::convertRuntime: lowers ctjs runtime operations (calls, closures,
+// property writes, try handlers, throws, returns, module cells) to EmitC calls
+// into the ctbrowser ct_aot_* helpers, for the VM-backed backend where every
+// JavaScript value is a NaN-boxed `uint64_t`.
+//
+// Each helper's contract, its "ABI entry", is in
+// ctbrowser/include/ctbrowser/aot/helpers/*.def. A helper reports failure in
+// one of two ways. A helper returning a ct_aot_status is tested after the
+// call and gets an exception edge (status_call). A helper that returns its
+// result directly fails by raising an uncatchable engine fault, which the
+// caller polls with ct_aot_failed at a loop back edge, so it gets no edge here.
+//
+//===----------------------------------------------------------------------===//
 #include "Lowering.h"
 #include "ctcompile/CTJS/Lowering/RuntimeHelpers.hpp"
 
@@ -13,29 +27,25 @@ bool lowering::convertRuntime(mlir::Operation & op, mlir::OpBuilder & build,
     const mlir::Value out = scope.out;
     const mlir::Type status = scope.status;
 
-    // A CALL, WHICH IS THE FIRST OPERATION THAT NEEDS THE FRAME FOR
-    // SOMETHING OTHER THAN ROOTING.
-    //
-    // ct_aot_call takes `const uint64_t *argv` - a CONTIGUOUS run - and the
-    // arguments are rooted in slots of their own, which are not adjacent.
+    // A call. ct_aot_call takes `const uint64_t *argv`, a contiguous run, and
+    // the arguments are rooted in slots of their own, which are not adjacent.
     // So a run was reserved for this site and the arguments are copied into
-    // it here, immediately before the call. IN THE FRAME, not in a C++
-    // array: ct_aot_call is a safepoint that runs arbitrary user JavaScript
-    // before it reads them, and an array of locals is invisible to a
-    // precise collector.
+    // it here, immediately before the call. In the frame, not in a C++ array:
+    // ct_aot_call is a safepoint that runs arbitrary user JavaScript before
+    // it reads them, and an array of locals is invisible to a precise
+    // collector.
     //
-    // THE SPAN IS FETCHED ONCE PER STORE AND AGAIN FOR THE POINTER, because
-    // context::call resizes context::registers_ and the row says the
-    // pointer is valid "NOT ONE INSTRUCTION LONGER" than the next
-    // safepoint. Nothing between these stores is a safepoint, so one fetch
-    // would do - and hoisting it is a decision this backend has no analysis
-    // to justify.
+    // The span is fetched once per store and again for the pointer, because
+    // context::call resizes context::registers_ and ct_aot_slots' pointer is
+    // valid only until the next safepoint. Nothing between these stores is a
+    // safepoint, so one fetch would do, but this backend has no analysis to
+    // justify hoisting it.
     //
-    // AND ctjs.call_direct IS THE SAME CALL IN THIS TIER. The resolver's
-    // symbol is for the native backend; here the callee VALUE it kept is
-    // what ct_aot_call dispatches on, exactly as for ctjs.call, and its
-    // new.target operand is the undefined constant body_is_supported
-    // insisted on - which is what the runtime gives a plain call anyway.
+    // ctjs.call_direct is the same call in this backend. The resolver's
+    // symbol is for the native backend; here ct_aot_call dispatches on the
+    // callee value it kept, exactly as for ctjs.call, and its new.target
+    // operand is the undefined constant body_is_supported requires, which is
+    // what the runtime gives a plain call anyway.
     mlir::Value dispatched_callee;
     mlir::Value dispatched_receiver;
     mlir::ValueRange dispatched_arguments;
@@ -55,12 +65,11 @@ bool lowering::convertRuntime(mlir::Operation & op, mlir::OpBuilder & build,
         const unsigned base = park_window(scope, build, where, mapping, op);
         const mlir::Value argv = window_pointer(scope, build, where, base);
 
-        // `key` AND `site` ARE THE ROW'S DIAGNOSTIC ARGUMENTS and the
+        // `key` and `site` are ct_aot_call's diagnostic arguments, and the
         // implementation ignores both. `key` names the callee in the
         // message op::call_computed would produce; `site` carries a
         // backwards scan of bytecode that an AOT frame does not have.
-        // Passing undefined and nullptr is honest about having neither
-        // rather than inventing one.
+        // Passing undefined and nullptr says this code has neither.
         mapping.map(dispatched_result,
                     status_call(scope, build, where, callee("ct_aot_call"),
                                 {scope.frame, mapping.lookup(dispatched_callee),
@@ -75,7 +84,7 @@ bool lowering::convertRuntime(mlir::Operation & op, mlir::OpBuilder & build,
         return true;
     }
 
-    // READING AND WRITING A CAPTURED BINDING, each a pair of calls.
+    // Reading and writing a captured binding, each a pair of calls.
     if (auto load = mlir::dyn_cast<LoadUpvalueOp>(op)) {
         mapping.map(load.getResult(), cell_of_upvalue(scope, build, where, load.getIndex(),
                                                       /*read=*/true, mlir::Value{}));
@@ -87,17 +96,15 @@ bool lowering::convertRuntime(mlir::Operation & op, mlir::OpBuilder & build,
         return true;
     }
 
-    // BUILDING A CLOSURE.
+    // Building a closure. ct_aot_make_closure reports failure by raising, not
+    // by a status, so there is no exception edge: its three failures (the
+    // allocation ceiling, no program to take the function from, and a
+    // mismatched index or count) all raise. It is a safepoint, so the result
+    // is parked like every other value.
     //
-    // RAISE TIER ONLY, so there is no status and no exception edge: the
-    // row's three failures - the allocation ceiling, no program to take a
-    // function from, and an index or count that does not match - all raise,
-    // and a caller polls ct_aot_failed at a back edge. It IS a safepoint, so
-    // the result is parked like every other value.
-    //
-    // THE UPVALUES GO IN PARALLEL WITH THE DESCRIPTORS, which is what the
-    // importer built and what the helper reads. Packed would capture the
-    // wrong bindings and say nothing.
+    // The upvalues go in parallel with the target's descriptors, as the
+    // importer built them and as the helper reads them. Packed, they would
+    // silently capture the wrong bindings.
     if (auto made = mlir::dyn_cast<CreateClosureOp>(op)) {
         const auto upvalues = made.getUpvalues();
         const unsigned base = park_window(scope, build, where, mapping, op);
@@ -111,17 +118,17 @@ bool lowering::convertRuntime(mlir::Operation & op, mlir::OpBuilder & build,
         return true;
     }
 
-    // A PROPERTY WRITE. Its inline cache is nullptr for the reason
-    // ctjs.get_property's is: ct_aot_ic is forward-declared and nothing can
+    // A property write. Its inline cache is nullptr for the same reason as
+    // ctjs.get_property's: ct_aot_ic is forward-declared and nothing can
     // allocate one.
     //
-    // ITS STATUS EDGE IS NOT COVERED BY A CASE, and that is worth saying
-    // rather than leaving to be assumed. Nothing in the differential
-    // fixture makes a property write FAIL - that needs a setter that
-    // throws, or a proxy trap - so the branch this emits is built and never
-    // taken. The write itself is covered; the edge is not.
+    // No test covers the status edge: nothing in the differential fixture
+    // makes a property write fail (that needs a throwing setter or a proxy
+    // trap), so the emitted failure branch is never taken. The write itself
+    // is covered.
     if (auto write = mlir::dyn_cast<SetPropertyOp>(op)) {
-        // A LITERAL'S DEFINITION (op::define_data) is not an assignment.
+        // An object literal's definition (op::define_data) is not an
+        // assignment.
         if (write->hasAttr(defineOwnMarker)) {
             status_call_void(scope, build, where, callee("ct_aot_define_data"),
                              {scope.frame, mapping.lookup(write.getObject()),
@@ -137,15 +144,13 @@ bool lowering::convertRuntime(mlir::Operation & op, mlir::OpBuilder & build,
         return true;
     }
 
-    // AN ARRAY LITERAL.
-    //
-    // IT ALLOCATES AND IS RAISE TIER ONLY: allocate() raises past the
-    // ceiling and STILL returns a well-formed object, so there is no status
-    // to test - only a poll to schedule at a back edge. It is a safepoint,
-    // so its result is parked like every other value.
+    // An array literal. It allocates and reports failure only by raising:
+    // allocate() raises past the ceiling and still returns a well-formed
+    // object, so there is no status to test. It is a safepoint, so its result
+    // is parked like every other value.
     if (auto made = mlir::dyn_cast<CreateArrayOp>(op)) {
-        // `reserve_hint` IS A HINT and the row says so - an array that
-        // ignores it is merely slower. The elements the operation carries
+        // `reserve_hint` is only a hint: an array that ignores it is merely
+        // slower. The elements the operation carries
         // are appended after, which is also how the bytecode builds one:
         // new_array then one append per element.
         const auto elements = made.getElements();
@@ -160,15 +165,15 @@ bool lowering::convertRuntime(mlir::Operation & op, mlir::OpBuilder & build,
         return true;
     }
     if (auto opened = mlir::dyn_cast<PushHandlerOp>(op)) {
-        // THE PAD ID IS THIS OPERATION'S OWN SLOT NUMBER, which makes it
-        // unique within the function without a second counter. It is what
-        // ct_aot_catch_land hands back to say WHICH handler fired - and
-        // with one region per function, nothing yet reads it.
+        // The pad id is this operation's own slot number, which makes it
+        // unique within the function without a second counter.
+        // ct_aot_catch_land hands it back to say which handler fired; with
+        // one region per function, nothing reads it yet.
         //
-        // THE $handler EDGE IS DROPPED HERE, deliberately. It exists in the
-        // CTJS CFG so the pad is reachable and its arguments dominate; the
-        // edge the emitted code takes is ctjs.check's, at the throw site,
-        // because that is where the live register file is.
+        // The $handler edge is dropped here on purpose. It exists in the ctjs
+        // CFG so the pad is reachable and its arguments dominate; the edge the
+        // emitted code takes is ctjs.check's, at the throw site, because that
+        // is where the live register file is.
         const unsigned slot = scope.argument_windows.lookup(&op);
         opaque_call(
             build, where, {}, "ct_aot_handler_push",
@@ -185,9 +190,9 @@ bool lowering::convertRuntime(mlir::Operation & op, mlir::OpBuilder & build,
         return true;
     }
     if (auto guarded = mlir::dyn_cast<CheckOp>(op)) {
-        // A PLAIN BRANCH. The caught edge was already emitted, once per
-        // fallible call in this block, by caught_or_failure - which is the
-        // only place the status exists to test.
+        // A plain branch. The caught edge was already emitted, once per
+        // fallible call in this block, by caught_or_failure, the only place
+        // the status exists to test.
         llvm::SmallVector<mlir::Value> onward;
         for (const mlir::Value each : guarded.getContOperands()) {
             onward.push_back(mapping.lookup(each));
@@ -196,9 +201,9 @@ bool lowering::convertRuntime(mlir::Operation & op, mlir::OpBuilder & build,
         return true;
     }
     if (auto landed = mlir::dyn_cast<CatchLandOp>(op)) {
-        // READS BACK WHAT THE UNWINDER WROTE and clears the pad marker, so
-        // it runs exactly once and only on a caught edge - which the
-        // importer enforces by refusing a pad reachable any other way.
+        // Reads back what the unwinder wrote and clears the pad marker, so it
+        // must run exactly once and only on a caught edge; the importer
+        // enforces that by refusing a pad reachable any other way.
         const auto u32 = opaque(build.getContext(), "uint32_t");
         auto slot = ec::VariableOp::create(build, where, ec::LValueType::get(value),
                                            ec::OpaqueAttr::get(build.getContext(), ""));
@@ -210,10 +215,10 @@ bool lowering::convertRuntime(mlir::Operation & op, mlir::OpBuilder & build,
                     ec::LoadOp::create(build, where, value, slot.getResult()).getResult());
         return true;
     }
-    // THE ARRIVING ARGUMENT WINDOW, WHICH IS NOT THIS FRAME'S SLOTS.
+    // The arriving argument window, which is not this frame's slots.
     //
-    // ct_aot_enter puts this frame's registers ABOVE the caller's window,
-    // and the entry prologue reads argv only for the DECLARED parameters -
+    // ct_aot_enter puts this frame's registers above the caller's window,
+    // and the entry prologue reads argv only for the declared parameters,
     // so an extra argument is reachable from neither. ct_aot_args and
     // ct_aot_argc answer for the frame, and both operations take what they
     // need from there rather than from operands the importer could not
@@ -223,9 +228,9 @@ bool lowering::convertRuntime(mlir::Operation & op, mlir::OpBuilder & build,
         const mlir::Value window = opaque_call(
             build, where, pointer_to(build.getContext(), "uint64_t"), "ct_aot_args", {scope.frame});
         const mlir::Value count = opaque_call(build, where, u32, "ct_aot_argc", {scope.frame});
-        // RAISE TIER, both: they answer the array rather than a status, so
-        // there is no edge - a caller polls at a back edge. Both allocate,
-        // so the result is parked like every other value.
+        // Both return the array rather than a status, so they fail only by
+        // raising and get no edge. Both allocate, so the result is parked
+        // like every other value.
         if (auto rest = mlir::dyn_cast<GatherRestOp>(op)) {
             mapping.map(rest.getResult(), opaque_call(build, where, value, "ct_aot_gather_rest",
                                                       {scope.frame, window, count,
@@ -238,28 +243,28 @@ bool lowering::convertRuntime(mlir::Operation & op, mlir::OpBuilder & build,
         return true;
     }
     if (auto gone = mlir::dyn_cast<DeleteNamedOp>(op)) {
-        // TWO CALLS, for ctjs.define_accessor's reason: the helper wants an
-        // INTERNED name record rather than characters. The length travels
-        // beside the text because a property name is BYTES and one
-        // containing a zero byte is legal JavaScript that strlen stops at.
+        // Two calls, as for ctjs.define_accessor: the helper wants an interned
+        // name record rather than characters. The length travels beside the
+        // text because a property name is bytes, and one containing a zero
+        // byte is legal JavaScript that strlen stops at.
         const mlir::Value interned = intern(build, where, gone.getName());
         opaque_call(build, where, {}, "ct_aot_delete_prop",
                     {scope.frame, mapping.lookup(gone.getObject()), interned});
         return true;
     }
-    // ---- THE FOUR MODULE OPERATIONS ------------------------------
+    // ---- the four module operations ------------------------------
     //
-    // Three of them take their names as BYTES AND A LENGTH rather than a
+    // Three of them take their names as bytes and a length rather than a
     // NUL-terminated string, for ct_aot_global_get's reason: a specifier or
     // an export name is bytes, and one containing a zero byte is a string
     // strlen stops at. `default` is an export name the compiler synthesises
     // and the rest come out of the source, so the length is always known
     // here and never worth a strlen.
     if (auto imported = mlir::dyn_cast<ModuleImportCellOp>(op)) {
-        // RAISE TIER: it answers the CELL rather than a status, so there is
-        // no exception edge - a missing module and a missing export are
-        // both uncatchable engine faults and a caller polls at a back edge.
-        // NOT a safepoint either: two flat_map lookups allocate nothing.
+        // Returns the cell rather than a status, so there is no exception
+        // edge: a missing module and a missing export both raise uncatchable
+        // engine faults. Not a safepoint either: two flat_map lookups
+        // allocate nothing.
         const auto [specifier, specifier_length] =
             bytes_and_length(build, where, imported.getSpecifier());
         const auto [exported, exported_length] =
@@ -271,12 +276,11 @@ bool lowering::convertRuntime(mlir::Operation & op, mlir::OpBuilder & build,
         return true;
     }
     if (auto published = mlir::dyn_cast<ModuleExportCellOp>(op)) {
-        // THE ONLY SEEDED status_call IN THE FILE. $current is the
+        // The only seeded status_call in the file. $current is the
         // destination register's value on entry, and the helper hands it
-        // straight back when no module is being evaluated - which is how
-        // op::bind_export's CONDITIONAL write is expressed without the
-        // CT_AOT_NO_WRITE status its ABI row asked for and the enum never
-        // had. See status_call.
+        // straight back when no module is being evaluated. That expresses
+        // op::bind_export's conditional write without a "no write" status,
+        // which ct_aot_status does not have. See status_call.
         const auto [name, length] = bytes_and_length(build, where, published.getName());
         mapping.map(published.getResult(),
                     status_call(scope, build, where, callee("ct_aot_module_export_cell"),
@@ -285,33 +289,33 @@ bool lowering::convertRuntime(mlir::Operation & op, mlir::OpBuilder & build,
         return true;
     }
     if (auto space = mlir::dyn_cast<ModuleNamespaceOp>(op)) {
-        // RAISE TIER like the import row, and a SAFEPOINT unlike it: the
-        // namespace object and one native getter per export are allocated
-        // here. The result is parked like every other value.
+        // Fails only by raising, like the import helper, but unlike it is a
+        // safepoint: the namespace object and one native getter per export
+        // are allocated here. The result is parked like every other value.
         const auto [specifier, length] = bytes_and_length(build, where, space.getSpecifier());
         mapping.map(space.getResult(), opaque_call(build, where, value, "ct_aot_module_namespace",
                                                    {scope.frame, specifier, length}));
         return true;
     }
     if (auto accessor = mlir::dyn_cast<DefineAccessorOp>(op)) {
-        // TWO CALLS, WHICH IS WHY THIS IS NOT A CTJS_RuntimeOp. The helper
-        // wants an INTERNED name record rather than characters, so the
-        // name is interned first - the pool is immortal and hash-indexed,
-        // so the repeat cost is a lookup and a memo can come later.
+        // Two calls, which is why this is not a CTJS_RuntimeOp. The helper
+        // wants an interned name record rather than characters, so the name
+        // is interned first; the pool is immortal and hash-indexed, so the
+        // repeat cost is a lookup.
         //
-        // THE LENGTH IS EMITTED BESIDE THE TEXT for ct_aot_global_get's
-        // reason: a property name is BYTES, and one containing a zero byte
-        // is legal JavaScript that strlen would stop at.
+        // The length is emitted beside the text because a property name is
+        // bytes, and one containing a zero byte is legal JavaScript that
+        // strlen would stop at.
         const mlir::Value interned = intern(build, where, accessor.getName());
         opaque_call(build, where, {}, "ct_aot_define_accessor",
                     {scope.frame, mapping.lookup(accessor.getTarget()), interned,
                      mapping.lookup(accessor.getGetter()), mapping.lookup(accessor.getSetter())});
         return true;
     }
-    // THE SPREAD CALLS, WHICH NEED NO WINDOW. Their arguments arrived as
-    // one already-rooted array rather than as a run of values, so there is
-    // nothing to park and no argc to pass - which is the entire difference
-    // from the ctjs.call and ctjs.construct branches below.
+    // The spread calls need no window. Their arguments arrive as one
+    // already-rooted array rather than as a run of values, so there is
+    // nothing to park and no argc to pass, which is the entire difference
+    // from the ctjs.call branch above and the ctjs.construct branch below.
     if (auto spread = mlir::dyn_cast<CallSpreadOp>(op)) {
         mapping.map(spread.getResult(),
                     status_call(scope, build, where, callee("ct_aot_call_spread"),
@@ -330,8 +334,8 @@ bool lowering::convertRuntime(mlir::Operation & op, mlir::OpBuilder & build,
         return true;
     }
     if (auto asks = mlir::dyn_cast<HasPropertyOp>(op)) {
-        // ITS OUT-PARAMETER IS A uint32_t BOOLEAN, not a value - the same
-        // shape ct_aot_loose_equals has, and boxed the same way.
+        // Its out-parameter is a uint32_t boolean, not a value: the same
+        // shape as ct_aot_loose_equals, and boxed the same way.
         const auto u32 = opaque(build.getContext(), "uint32_t");
         const mlir::Value answered = status_call(
             scope, build, where, callee("ct_aot_has_property"),
@@ -341,9 +345,9 @@ bool lowering::convertRuntime(mlir::Operation & op, mlir::OpBuilder & build,
         return true;
     }
     if (auto is_a = mlir::dyn_cast<InstanceOfOp>(op)) {
-        // RAISE TIER: it returns its BOOLEAN rather than a status, so there
-        // is no out-parameter and no exception edge - a caller polls
-        // ct_aot_failed at a back edge. It is still a safepoint.
+        // Returns its boolean rather than a status, so there is no
+        // out-parameter and no exception edge; it fails only by raising. It
+        // is still a safepoint.
         const auto u32 = opaque(build.getContext(), "uint32_t");
         const mlir::Value answered = opaque_call(
             build, where, u32, "ct_aot_instance_of",
@@ -357,31 +361,21 @@ bool lowering::convertRuntime(mlir::Operation & op, mlir::OpBuilder & build,
         return true;
     }
 
-    // A THROW, WHICH NEVER COMES BACK ok.
+    // A throw never comes back ok. ct_aot_throw returns CAUGHT, UNWOUND or
+    // FAILED and never CT_AOT_OK, because the throw completes inside the
+    // callee: by the time it returns there is no exception in flight, only a
+    // shorter frame stack. So there is no continuation: the operation is a
+    // terminator, and this branches straight to the shared failure path,
+    // which handles the conditional ct_aot_leave.
     //
-    // The row is explicit: ct_aot_throw returns CAUGHT, UNWOUND or FAILED
-    // and never CT_AOT_OK, because the throw COMPLETES INSIDE THE CALLEE -
-    // by the time it returns there is no exception in flight, only a frame
-    // stack shorter than it was. So there is no status to TEST and no
-    // continuation: the operation is a terminator, and this branches
-    // straight to the shared failure path, which already gets the
-    // conditional ct_aot_leave right.
+    // No test pins the conditional ct_aot_leave on that path. Making it
+    // unconditional would be harmless: leave truncates to this frame's
+    // recorded index, so a second call after a failure is a no-op.
     //
-    // THE CONDITIONAL ct_aot_leave ON THAT PATH IS NOT PINNED BY A CASE,
-    // and it is worth saying which way. Making it unconditional changes no
-    // answer, because leave TRUNCATES to this frame's own recorded index
-    // rather than popping - each resize guarded so it cannot destroy
-    // somebody else's frame - and its row calls a second call "a harmless
-    // no-op after a failure". So it is an unchecked invariant, not a live
-    // defect, and a case pinning it would be pinning the runtime's
-    // defensiveness rather than this backend's correctness.
-    //
-    // CT_AOT_CAUGHT CANNOT ARRIVE HERE, and that is a fact about the input
-    // rather than an assumption: `caught` is reported only when a handler
-    // in THIS frame won, and ctjs.push_handler has no lowering - so any
-    // function containing a `try` is refused whole and never reaches this
-    // line. When try/catch arrives, the failure path needs a third arm
-    // BEFORE this does.
+    // This does not go through caught_or_failure, and failure_path does not
+    // test for CT_AOT_CAUGHT (see Status.cpp). A throw caught by a handler
+    // this same frame pushed therefore returns that status to the caller
+    // rather than branching to the pad.
     if (auto thrown = mlir::dyn_cast<ThrowOp>(op)) {
         const mlir::Value answered = opaque_call(build, where, status, "ct_aot_throw",
                                                  {scope.frame, mapping.lookup(thrown.getValue())});
@@ -395,11 +389,11 @@ bool lowering::convertRuntime(mlir::Operation & op, mlir::OpBuilder & build,
     // arbitrary user JavaScript - the field initialisers and then the body -
     // before it is done with them.
     //
-    // ITS `site` IS THE ENTRY'S OWN, unlike ct_aot_call's which the
-    // implementation ignores: construct uses it to name THIS function in
-    // the TypeError a `new` on a non-constructor throws.
+    // Its `site` is the entry's own, unlike ct_aot_call's, which the
+    // implementation ignores: construct uses it to name this function in the
+    // TypeError a `new` on a non-constructor throws.
     //
-    // AND new.target IS NOT PASSED, because the ABI has nowhere to put it -
+    // new.target is not passed, because the ABI has nowhere to put it:
     // ct_aot_construct sets it from the callee itself, which is what
     // op::construct does with `fresh.new_target = callee`.
     if (auto built = mlir::dyn_cast<ConstructOp>(op)) {
@@ -423,12 +417,11 @@ bool lowering::convertRuntime(mlir::Operation & op, mlir::OpBuilder & build,
         const mlir::Value result = opaque_call(build, where, value, "ct_aot_return_value",
                                                {produced, receiver, constructing});
         opaque_call(build, where, {}, "ct_aot_leave_return", {scope.frame, result});
-        // `out[0] = ...` AND NOT `*out = ...`. LLVM 23's C++ emitter refuses
-        // an assignment through an `emitc.dereference` result under
-        // --declare-variables-at-top ("result variable for the operation
-        // has not been declared") while accepting the identical store
-        // through `emitc.subscript`, and the two spell the same C++ for a
-        // pointer to one slot. Measured on the 22 -> 23 bump, 2026-09-02.
+        // Write `out[0] = ...`, not `*out = ...`: with
+        // --declare-variables-at-top, LLVM 23's C++ emitter rejects an
+        // assignment through emitc.dereference ("result variable for the
+        // operation has not been declared") but accepts the same store
+        // through emitc.subscript.
         const mlir::Value slot =
             ec::ConstantOp::create(build, where, build.getI32Type(), build.getI32IntegerAttr(0));
         auto destination = ec::SubscriptOp::create(build, where, ec::LValueType::get(value), out,
@@ -438,7 +431,7 @@ bool lowering::convertRuntime(mlir::Operation & op, mlir::OpBuilder & build,
         return true;
     }
 
-    // A BRANCH IS CLONED, NOT REBUILT. cf.br and cf.cond_br carry their
+    // A branch is cloned, not rebuilt. cf.br and cf.cond_br carry their
     // successors as blocks, and IRMapping remaps a cloned operation's
     // successors as well as its operands - so the block map built above is
     // all this needs.
@@ -447,12 +440,12 @@ bool lowering::convertRuntime(mlir::Operation & op, mlir::OpBuilder & build,
         return true;
     }
 
-    // EVERY OTHER CTJS_RuntimeOp IS ONE CALL TO ITS HELPER: the frame when
-    // the row leads with one, then the operands in order. The row decides the
-    // tier - a status return is tested; anything else is raise tier or
-    // edge-free, called plainly, its result parked like every other value.
-    // A row with a parameter this does not supply falls through to
-    // convert()'s loud failure rather than being called without it.
+    // Every other CTJS_RuntimeOp is one call to its helper: the frame when
+    // the helper's first parameter is one, then the operands in order. A
+    // status return is tested; anything else is called plainly and its
+    // result parked like every other value. A helper with a parameter this
+    // does not supply falls through to convert()'s loud failure rather than
+    // being called without it.
     if (auto runtime = mlir::dyn_cast<RuntimeCallOpInterface>(op)) {
         const runtime_helper & helper = helper_for(runtime.getHelperID());
         const bool tested = returns_status(helper);

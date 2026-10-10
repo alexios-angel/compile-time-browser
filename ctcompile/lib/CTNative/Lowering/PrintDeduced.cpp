@@ -1,14 +1,17 @@
-//===- PrintDeduced.cpp - Stage 53E's printing policy and 53F's pins ------===//
+//===- PrintDeduced.cpp - Mark declarations printable as auto -------------===//
 //
-// PART 24 STAGE 53E: `auto` is an ATTRIBUTE, not a type. This pass runs LAST,
-// after every verifier and every analysis, over an EmitC module that already
-// compiles and runs with every type printed (62½-E's rule: deduction is added
-// to a working artefact, never built into the first one). It marks the
-// declarations the fork's TranslateToCpp may print as `auto` and defines the
-// macro Stage 53F's pins expand to. The IR keeps the proved type on every
-// value; only the spelling changes, and the pin turns any disagreement
-// between ctcompile's deduction and the C++ compiler's into a build error
-// that names the JavaScript site.
+// Decides which EmitC declarations the C++ printer may spell as `auto`. The
+// IR keeps the proved type on every value; this pass only adds a
+// `ctnative.deduced` attribute, which the project's patched TranslateToCpp
+// reads to print `auto` instead of the type. It runs last, after every
+// verifier and analysis, on an EmitC module that already compiles and runs
+// with every type spelled out, so deduction is only ever added to a working
+// program.
+//
+// For each deduced declaration the printer also emits a CTCOMPILE_PIN
+// static_assert (the macro this pass defines), so if ctcompile's proved type
+// and the C++ compiler's deduced type ever disagree, the build fails with an
+// error naming the JavaScript source location.
 //
 //===----------------------------------------------------------------------===//
 
@@ -28,14 +31,14 @@ namespace {
 
 namespace ec = mlir::emitc;
 
-// 53E site 1, local declarations: an initialiser that fixes the type. The
-// never-deduce list is everything absent here - constants, loads, variables
-// (no initialiser), opaque calls (the standard-library boundary), and the
-// deferred ops that are never declared at all.
+/// Whether a local declaration of `o`'s result may print as `auto`: its
+/// initialiser must fix the type. Everything not listed is never deduced:
+/// constants, loads, variables (no initialiser), opaque calls (the
+/// standard-library boundary), and ops that are never declared at all.
 bool isDeducible(mlir::Operation * o) {
-    // C++ promotes bool and narrow integer arithmetic/bitwise operands to
-    // int. The explicit result type performs a narrowing that auto would
-    // discard; SCF canonicalization can introduce boolean xor in this form.
+    // C++ promotes bool and narrow integer operands of arithmetic and bitwise
+    // operators to int. The explicit result type narrows back, which `auto`
+    // would lose; SCF canonicalization can introduce a boolean xor like this.
     auto integer = llvm::dyn_cast<mlir::IntegerType>(o->getResult(0).getType());
     if (integer && integer.getWidth() < 32 &&
         llvm::isa<ec::AddOp, ec::SubOp, ec::MulOp, ec::DivOp, ec::RemOp, ec::UnaryMinusOp,
@@ -50,8 +53,9 @@ bool isDeducible(mlir::Operation * o) {
                      ec::BitwiseRightShiftOp>(o);
 }
 
-// The type is the LAST macro argument so a type spelled with a comma still
-// pins; `site` is a string literal the printer fills from the op's location.
+/// The CTCOMPILE_PIN macro. The type is the last macro argument so a type
+/// spelled with a comma still pins; `site` is a string literal the printer
+/// fills from the op's location. -DCTCOMPILE_NO_TYPE_PINS disables the pins.
 constexpr llvm::StringLiteral kPinMacro =
     "#ifndef CTCOMPILE_NO_TYPE_PINS\n"
     "#define CTCOMPILE_PIN(name, site, ...) static_assert(std::is_same_v<decltype(name), "
@@ -78,10 +82,15 @@ struct CTNativePrintDeducedPass : impl::CTNativePrintDeducedBase<CTNativePrintDe
                 // would emit a CTCOMPILE_PIN naming a variable that does not
                 // exist.
                 if (o->getResult(0).use_empty()) { return; }
-                if (o->getParentOfType<ec::ExpressionOp>()) { return; } // inline, never declared
+                // An op inside an emitc.expression is printed inline and never
+                // declared.
+                if (o->getParentOfType<ec::ExpressionOp>()) { return; }
                 o->setAttr("ctnative.deduced", mlir::UnitAttr::get(ctx));
                 ++deduced;
                 const auto type = o->getResult(0).getType();
+                // The `mutate=N` option pins the Nth deduced number as int32_t,
+                // so the generated file must fail to build naming its site; a
+                // test uses it to prove the pins are checked.
                 const auto opaque = llvm::dyn_cast<ec::OpaqueType>(type);
                 if ((type.isF64() || (opaque && opaque.getValue() == "ctnative::js_num")) &&
                     ++numbers == mutate) {
@@ -91,8 +100,8 @@ struct CTNativePrintDeducedPass : impl::CTNativePrintDeducedBase<CTNativePrintDe
                 }
             });
         });
-        // A mutation that lands nowhere proves nothing; say so instead of
-        // passing (the counter is asserted, never the output trusted).
+        // A mutation that lands nowhere proves nothing, so fail instead of
+        // passing silently.
         if (mutate != 0 && !mutated) {
             module.emitError("--ctnative-print-deduced mutate=")
                 << static_cast<unsigned>(mutate)
@@ -102,7 +111,8 @@ struct CTNativePrintDeducedPass : impl::CTNativePrintDeducedBase<CTNativePrintDe
         module->setAttr("ctnative.deduced_count",
                         mlir::IntegerAttr::get(mlir::IntegerType::get(ctx, 64), deduced));
         if (deduced == 0) { return; }
-        // The macro after the includes, and <type_traits> among them.
+        // Insert <type_traits> and the pin macro after the last leading
+        // include.
         mlir::OpBuilder b(ctx);
         mlir::Operation * lastInclude = nullptr;
         for (mlir::Operation & o : module.getBody()->getOperations()) {

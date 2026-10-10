@@ -1,3 +1,11 @@
+//===- References.cpp - Callable references ---------------------*- C++ -*-===//
+//
+// Decides whether a lifted callable function or its binder is still referred
+// to, by symbol or by name inside opaque C++ text, and so must keep its own
+// definition.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Body.h"
 
 #include "mlir/IR/BuiltinOps.h"
@@ -6,6 +14,8 @@
 namespace ctcompile::cpp {
 namespace {
 
+/// True when `name` occurs in `text` as a whole identifier, not as part of a
+/// longer one.
 bool containsIdentifier(llvm::StringRef text, llvm::StringRef name) {
     const auto part = [](char ch) {
         return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') ||
@@ -21,6 +31,9 @@ bool containsIdentifier(llvm::StringRef text, llvm::StringRef name) {
     return false;
 }
 
+/// True when opaque C++ anywhere in `module` mentions `name`: verbatim text,
+/// opaque callees, literals, opaque attributes and types. A creation call of
+/// `creationTarget` does not count as a mention.
 bool textReferences(mlir::ModuleOp module, llvm::StringRef name,
                     mlir::emitc::FuncOp creationTarget = {}) {
     bool observed = false;
@@ -90,8 +103,9 @@ bool callableBinderNeeded(mlir::emitc::FuncOp function, llvm::StringRef binder) 
     module.walk([&](mlir::emitc::CallOpaqueOp call) {
         creation |= callableCreationSymbol(call) == function;
     });
-    // Unmarked EmitC callers keep the existing binder interface. Opaque
-    // address/template references also keep it, just like lifted functions.
+    // With no marked creation, the binder may still be called by unmarked
+    // EmitC code, so keep it. Opaque address or template references also keep
+    // it, just as they keep lifted functions.
     return !creation || textReferences(module, binder, function);
 }
 

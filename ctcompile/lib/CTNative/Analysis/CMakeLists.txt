@@ -1,12 +1,10 @@
-# Phase 54A's inference. A library and not a pass: the claims emitter, the unit
-# test and every phase from 55 onward are all callers, and a pass would make
-# each of them reach through a pipeline to ask a question.
+# Type inference, escape/ownership and closed-callable analyses over CTJS IR.
+# A library, not a pass: the claims emitter, unit tests and the native lowering
+# all query it directly instead of going through a pass pipeline.
 #
-# IT LINKS CTJSDialect, WHICH THE IR LIBRARY DELIBERATELY DOES NOT. lib/CTNative/IR
-# refuses that edge on the grounds that "a type lattice is a statement about
-# types" and must not depend on the engine's ABI. This library is the opposite
-# kind of thing: it reads ctjs operations and answers in ctnative types, so
-# naming both dialects is its entire job.
+# It links CTJSDialect, which lib/CTNative/IR deliberately does not: that
+# library's type lattice must not depend on the engine's ABI. This one reads
+# ctjs operations and answers in ctnative types, so it needs both dialects.
 add_mlir_library(CTNativeAnalysis
   TypeInference.cpp
   ClosedCallable.cpp

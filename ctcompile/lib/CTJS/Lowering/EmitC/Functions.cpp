@@ -1,31 +1,30 @@
-// Boxed EmitC functions lowering.
+//===- ctcompile/lib/CTJS/Lowering/EmitC/Functions.cpp - Lower ctjs.func --===//
+//
+// lowering::lower: replaces one ctjs.func with an extern "C" emitc.func shaped
+// like ct_aot_entry_fn. It copies the parameters out of argv, enters the
+// frame, reserves a frame slot for every value it will produce, maps the
+// implicit arguments, and converts each block's operations.
+//
+//===----------------------------------------------------------------------===//
 #include "Lowering.h"
 
 namespace ctcompile::ctjs::emitc_detail {
 
-// Returns whether the function was replaced.
+/// Lowers `function`, or marks it refused. Returns whether it was replaced.
 bool lowering::lower(FuncOp function, mlir::OpBuilder & build, mlir::MLIRContext * context) {
     const mlir::Location where = function.getLoc();
 
-    // UNREACHABLE BLOCKS FIRST, because the importer emits one for every
-    // function and it is not a reason to refuse anything.
-    //
-    // A body that ends in an explicit `return` still gets the implicit
-    // `return undefined` epilogue after it, and nothing branches there. A
-    // block with no predecessors has no edges, so it cannot carry the
-    // block-argument copy the emitter miscompiles - refusing on its account
-    // would refuse EVERY function, including the one-line one this pass
-    // exists to compile. Removing it is an ordinary simplification, not a
-    // decision about semantics.
+    // Erase unreachable blocks first. A body that ends in an explicit `return`
+    // still gets the importer's implicit `return undefined` epilogue after it,
+    // and nothing branches there. Removing it is an ordinary simplification,
+    // not a decision about semantics.
     mlir::IRRewriter prune(context);
     (void)mlir::eraseUnreachableBlocks(prune, function.getBody());
 
-    // BLOCKS ARE NO LONGER A REASON TO REFUSE. They were, until
-    // --emitc-eliminate-block-arguments existed: emitting a block argument
-    // as it stands hits the copy the C++ emitter loses. That pass runs
-    // after this one and turns each into a variable, so what this pass
-    // emits may carry block arguments and what reaches mlir-translate must
-    // not. The pipeline order is the contract, and end-to-end.mlir runs it.
+    // Multi-block bodies are accepted. --emitc-eliminate-block-arguments runs
+    // after this pass and turns block arguments into variables, because the
+    // C++ emitter miscompiles block-argument copies. That pipeline order is
+    // required; end-to-end.mlir runs it.
 
     std::string why;
     if (!body_is_supported(function, why)) {
@@ -37,22 +36,14 @@ bool lowering::lower(FuncOp function, mlir::OpBuilder & build, mlir::MLIRContext
         refuse(function, "fewer arguments than the importer's three implicit ones");
         return false;
     }
-    // BOTH IMPLICIT ARGUMENTS ARE DELIVERABLE NOW, and neither always was.
-    //
-    // ct_aot_callee is the only way a compiled function can reach its own
-    // upvalues: they live on the closure INSTANCE, while `site` is the
-    // function_proto every closure over the same function shares.
-    //
-    // ct_aot_new_target was refused here until it had a body, and behind
-    // that sat a real blocker in TWO halves: ct_aot_enter takes new_target
-    // from pending_new_target_, and neither of the two paths into a
-    // compiled constructor set it. context::construct_new does now, and so
-    // does VM_CASE(construct)'s compiled arm - which was the half nothing
-    // noticed until a differential case read new.target and disagreed.
-    //
-    // The refusal is gone, which matters more than one opcode suggests:
-    // Babel's _classCallCheck guard is a new.target test, so a transpiled
-    // bundle has one in almost every class.
+    // Both implicit arguments (callee and new.target) are supported.
+    // ct_aot_callee is how a compiled function reaches its upvalues, which
+    // live on the closure instance (`site` is the function_proto shared by
+    // every closure of the function). ct_aot_new_target reads the frame's
+    // new.target, which ct_aot_enter takes from pending_new_target_; both
+    // context::construct_new and VM_CASE(construct)'s compiled arm set it.
+    // Babel's _classCallCheck tests new.target, so transpiled classes depend
+    // on it.
 
     FrameEnterOp entered;
     function.getBody().walk([&](FrameEnterOp op) { entered = op; });
@@ -75,9 +66,9 @@ bool lowering::lower(FuncOp function, mlir::OpBuilder & build, mlir::MLIRContext
                                                value,   u32,      out_ptr};
     build.setInsertionPoint(function);
 
-    // THE ADDRESS THIS FUNCTION'S STRING LITERALS MEMOISE UNDER, declared
-    // BEFORE the function that takes it. One byte per compiled function,
-    // never read - only its address matters, and it has to differ from the
+    // The address this function's string literals memoise under, declared
+    // before the function that takes it. One byte per compiled function,
+    // never read; only its address matters, and it has to differ from the
     // function_proto the interpreter keys the same cache by. See
     // compiled_entry::memo_site.
     const std::string marker = "ctc_memo_" + c_identifier(function.getName().str());
@@ -86,7 +77,7 @@ bool lowering::lower(FuncOp function, mlir::OpBuilder & build, mlir::MLIRContext
 
     auto entry = ec::FuncOp::create(build, where, c_identifier(function.getName()),
                                     build.getFunctionType(inputs, {status}));
-    // extern "C" SO THE SYMBOL MATCHES ct_aot_entry_fn's expectations.
+    // extern "C" so the symbol matches ct_aot_entry_fn's expectations.
     entry.setSpecifiersAttr(build.getStrArrayAttr({"extern \"C\""}));
 
     mlir::Block * abi = entry.addEntryBlock();
@@ -98,34 +89,28 @@ bool lowering::lower(FuncOp function, mlir::OpBuilder & build, mlir::MLIRContext
     const mlir::Value in_constructing = abi->getArgument(5);
     const mlir::Value in_out = abi->getArgument(6);
 
-    // ---- the parameters, copied BEFORE the frame exists ---------------
+    // ---- the parameters, copied before the frame exists ---------------
     //
     // argv is an interior pointer into context::registers_ and ct_aot_enter
-    // resizes that vector, so every read has to happen first. The caller
-    // has already filled the callee's window - "argv must already be the
-    // callee's window with missing parameters filled in with undefined" -
-    // so argv[i] is well-defined for every declared parameter regardless of
-    // how many arguments actually arrived.
+    // resizes that vector, so every read has to happen first. The caller has
+    // already filled the callee's window, with missing parameters set to
+    // undefined, so argv[i] is defined for every declared parameter however
+    // many arguments actually arrived.
     const unsigned declared = parameterCount(body);
     llvm::SmallVector<mlir::Value> parameters;
     parameters.reserve(declared);
     //
-    // THE PARAMETER STAYS `const uint64_t *` AND THE READ CASTS IT AWAY,
-    // which is the least-bad of three options and worth saying why.
+    // The parameter stays `const uint64_t *` and the read casts the const
+    // away. The signature is fixed: this function must be assignable to
+    // ct_aot_entry_fn, which declares `const uint64_t *argv`. But
+    // emitc.subscript requires the result type to equal the pointee type, so
+    // reading through it yields a `const uint64_t`, and under the required
+    // --declare-variables-at-top EmitC declares every value at the top and
+    // assigns later: `const uint64_t v8; v8 = ...;` does not compile.
     //
-    // The signature is not negotiable: this function has to be assignable
-    // to ct_aot_entry_fn, which declares `const uint64_t *argv`, and
-    // spelling it without the const would make the assignment ill-typed.
-    // But emitc.subscript requires the result's type to equal the
-    // pointee's, so reading through it yields a `const uint64_t` - and
-    // under --declare-variables-at-top, which is mandatory here, EmitC
-    // declares every value at the top and assigns later. `const uint64_t
-    // v8; v8 = ...;` does not compile.
-    //
-    // So the CAST IS ON THE POINTER, once, rather than on each element.
-    // It only ever reads through the result - argv is the caller's window
-    // and writing to it would corrupt the caller's registers - so casting
-    // the const away is a spelling concession, not a licence.
+    // So the pointer is cast once, rather than each element. The result is
+    // only ever read (argv is the caller's window, and writing to it would
+    // corrupt the caller's registers), so the cast is a spelling concession.
     const auto element = opaque(context, "uint64_t");
     const auto element_slot = ec::LValueType::get(element);
     const mlir::Value readable =
@@ -146,24 +131,23 @@ bool lowering::lower(FuncOp function, mlir::OpBuilder & build, mlir::MLIRContext
 
     // ---- the frame ----------------------------------------------------
     //
-    // CT_AOT_FRAME_BYTES OF CALLER-ALLOCATED SPACE, sized from the macro
-    // the runtime's own header defines rather than from a number written
-    // ALIGNED, because `unsigned char[N]` is aligned to 1 and ct_aot_enter
-    // constructs an aot_frame_storage in it - a struct with a pointer and
-    // three indices. aot_bridge/internal.hpp asserts its size against
-    // CT_AOT_FRAME_BYTES but nothing asserted the ALIGNMENT, and an
-    // under-aligned placement is undefined behaviour that happens to work
-    // on x86-64 and need not elsewhere.
+    // The frame storage is CT_AOT_FRAME_BYTES of caller-allocated space,
+    // sized from the runtime header's macro rather than a literal. Its element
+    // type is kFrameStorageElement (`alignas(std::max_align_t) unsigned
+    // char`): a plain `unsigned char[N]` is aligned to 1, and ct_aot_enter
+    // placement-constructs an aot_frame_storage (a pointer and three indices)
+    // in it. aot_bridge/internal.hpp asserts the size but not the alignment,
+    // and an under-aligned placement is undefined behaviour.
     //
-    // here. The array is passed directly: C++ decays it to `unsigned char *`
-    // and converts that to the `void *` the row declares, which needs no
-    // subscript, no address-of, and no size_t - and !emitc.size_t emits a
-    // bare `size_t` that does not compile.
+    // The array is passed directly: it decays to `unsigned char *` and
+    // converts to the `void *` parameter, so no subscript, address-of or
+    // size_t is needed (!emitc.size_t emits a bare `size_t` that does not
+    // compile).
     const auto block_type = ec::ArrayType::get({static_cast<std::int64_t>(CT_AOT_FRAME_BYTES)},
                                                opaque(context, kFrameStorageElement));
     auto storage =
         ec::VariableOp::create(build, where, block_type, ec::OpaqueAttr::get(context, ""));
-    // THE REGISTER WINDOW HAS TO HOLD THE ROOTS TOO.
+    // The register window has to hold the roots too.
     //
     // proto.frame_size sizes the interpreter's register file, and this
     // backend needs one slot for every JavaScript value it produces -
@@ -173,15 +157,15 @@ bool lowering::lower(FuncOp function, mlir::OpBuilder & build, mlir::MLIRContext
     // fills with undefined), asking for less makes ct_aot_slots hand back a
     // null span far from the cause.
     //
-    // SLOTS ARE NEVER REUSED. A liveness analysis would pack them; keeping
-    // a dead value alive until the frame is left is a bounded leak, and
-    // getting liveness wrong is a use-after-free. This is the MVP's trade.
+    // Slots are never reused. Liveness analysis could pack them, but keeping
+    // a dead value alive until the frame exits is a bounded leak, while
+    // getting liveness wrong is a use-after-free.
     unsigned parked = 0;
     for (unsigned i = 0; i < declared; ++i) {
         scope_slots[body.getArgument(implicit_arguments + i)] = parked++;
     }
     llvm::DenseMap<mlir::Operation *, unsigned> windows;
-    // AND A MEMO SLOT PER STRING LITERAL. Not a frame slot: the cache
+    // A memo slot per string literal. Not a frame slot: the cache
     // ct_aot_new_string keys by (site, slot) is a map, so these only have
     // to be unique within the function and stable across calls.
     llvm::DenseMap<mlir::Operation *, unsigned> memo_slots;
@@ -194,22 +178,21 @@ bool lowering::lower(FuncOp function, mlir::OpBuilder & build, mlir::MLIRContext
             windows[inner] = parked;
             parked += static_cast<unsigned>(count);
         };
-        // A CONTIGUOUS RUN PER CALL SITE, reserved here so the register
-        // window can be sized to include it before ct_aot_enter is emitted.
-        // A CLOSURE'S UPVALUE ARRAY IS AN ARGV BY ANOTHER NAME: a
-        // contiguous run the helper reads, and one that must live in the
+        // A contiguous run per call site, reserved here so the register
+        // window can include it before ct_aot_enter is emitted. A closure's
+        // upvalue array is the same kind of run, and must also live in the
         // frame rather than in C++ locals, because ct_aot_make_closure
         // allocates and is therefore a safepoint.
         if (const auto run = window_operands(*inner)) { reserve(run->size()); }
-        // ONE SLOT PER PROTECTED REGION, which is where the unwinder puts
-        // the thrown value: context::unwind_to_handler writes
+        // One slot per protected region, where the unwinder puts the thrown
+        // value: context::unwind_to_handler writes
         // registers_[base + slot] and ct_aot_catch_land reads it back. It
         // has to be inside the run ct_aot_enter reserves, so it is assigned
         // here with everything else rather than invented at the call.
         if (mlir::isa<PushHandlerOp>(inner)) { reserve(1); }
         if (auto constant = mlir::dyn_cast<ConstantOp>(inner)) {
-            // A BIGINT LITERAL MEMOISES THE SAME WAY AND SHARES THE
-            // NUMBERING. Both helpers key on (site, slot) and this backend
+            // A BigInt literal memoises the same way and shares the
+            // numbering. Both helpers key on (site, slot) and this backend
             // hands them the same marker, so one counter across both keeps
             // a string and a bigint from ever claiming the same slot.
             if (mlir::isa<StringAttr, BigIntAttr>(constant.getValue())) {
@@ -222,7 +205,7 @@ bool lowering::lower(FuncOp function, mlir::OpBuilder & build, mlir::MLIRContext
     const mlir::Value frame = opaque_call(build, where, frame_ptr, "ct_aot_enter",
                                           {in_ctx, in_site, registers, in_receiver, storage});
 
-    // ITS FAILURE IS A NULL POINTER, NOT A STATUS. There is no frame, so
+    // ct_aot_enter reports failure with a null pointer, not a status. There is no frame, so
     // there is nothing to leave and no handler to reach.
     const mlir::Value null = literal(build, where, frame_ptr, "nullptr");
     auto ok = ec::CmpOp::create(build, where, mlir::IntegerType::get(context, 1),
@@ -238,41 +221,38 @@ bool lowering::lower(FuncOp function, mlir::OpBuilder & build, mlir::MLIRContext
 
     // ---- the blocks ---------------------------------------------------
     //
-    // Every CTJS block gets one here, arguments and all. They are NOT
+    // Every ctjs block gets one here, arguments and all. They are not
     // eliminated in this pass: --emitc-eliminate-block-arguments does that
-    // afterwards, and keeping the two separate is what lets the elimination
-    // be tested against a program that runs rather than only against the
-    // output of this file.
-    // THE CLOSURE, WHICH ONLY EXISTS ONCE THE FRAME DOES. ct_aot_callee
-    // reads call_frame::closure, so this cannot be hoisted above
-    // ct_aot_enter the way the parameters had to be pulled below it - and
-    // it must be emitted BEFORE the mapping is built rather than after,
-    // which is not a style point: mapping a block argument to a Value that
-    // is still null is accepted silently, and the crash arrives later
-    // inside Operation::create, with a stack that names neither.
+    // afterwards, so the elimination can be tested on its own against a
+    // program that runs.
+    //
+    // The closure exists only once the frame does. ct_aot_callee reads
+    // call_frame::closure, so it cannot be hoisted above ct_aot_enter the way
+    // the parameter reads were. It must be emitted before the mapping is
+    // built: mapping a block argument to a still-null Value is accepted
+    // silently and crashes later inside Operation::create.
     build.setInsertionPointToEnd(running);
     if (!body.getArgument(arg_callee).use_empty()) {
         mapping_callee = opaque_call(build, where, value, "ct_aot_callee", {frame});
     }
-    // AND new.target, THE SAME WAY AND FOR THE SAME REASON. It reads
+    // new.target, the same way and for the same reason. It reads
     // call_frame::new_target, so it cannot be hoisted above ct_aot_enter
     // either, and it must be emitted before the mapping is built.
     if (!body.getArgument(arg_new_target).use_empty()) {
         mapping_new_target = opaque_call(build, where, value, "ct_aot_new_target", {frame});
     }
 
-    // ARGUMENT 0 IS THE EFFECTIVE RECEIVER, NOT THE ENTRY'S RAW ONE, and the
-    // difference is a live bug for arrows. The importer maps op::load_this
-    // to this argument, and VM_CASE(load_this) is
-    // `effective_this(*vm_frame)` - which returns the enclosing method's
-    // object when the frame's closure is an arrow, and the frame's own
-    // receiver otherwise. Delivering the entry's `receiver` agrees for
-    // every ordinary function and is wrong for every compiled arrow.
+    // Argument 0 is the effective receiver (ct_aot_this), not the entry's raw
+    // one. The importer maps op::load_this to this argument, and
+    // VM_CASE(load_this) is `effective_this(*vm_frame)`, which returns the
+    // enclosing method's object when the frame's closure is an arrow and the
+    // frame's own receiver otherwise. The raw `receiver` would be wrong for
+    // every compiled arrow.
     //
-    // THE RETURN PROTOCOL STILL USES THE RAW ONE. ct_aot_return_value
-    // substitutes `receiver` when a constructor returns a primitive, and
-    // that is the frame's own receiver by definition - an arrow cannot be
-    // constructed at all.
+    // The return protocol still uses the raw one: ct_aot_return_value
+    // substitutes `receiver` when a constructor returns a primitive, and that
+    // is the frame's own receiver by definition (an arrow cannot be
+    // constructed).
     mlir::IRMapping mapping;
     mapping.map(body.getArgument(arg_receiver),
                 opaque_call(build, where, value, "ct_aot_this", {frame}));
@@ -316,7 +296,7 @@ bool lowering::lower(FuncOp function, mlir::OpBuilder & build, mlir::MLIRContext
         in_site,
         memo_slots};
 
-    // THE PARAMETERS ARE ROOTED FIRST, before anything can collect. They
+    // The parameters are rooted first, before anything can collect. They
     // were read out of argv before the frame existed - argv dies at
     // ct_aot_enter - so this is the earliest moment they can be.
     for (unsigned i = 0; i < declared; ++i) {
@@ -332,9 +312,9 @@ bool lowering::lower(FuncOp function, mlir::OpBuilder & build, mlir::MLIRContext
             if (auto guarded = mlir::dyn_cast<CheckOp>(block.back())) {
                 scope.caught_target = mapping.lookup(guarded.getHandler());
                 for (const mlir::Value each : guarded.getHandlerOperands()) {
-                    // NON-NULL BY CONSTRUCTION: body_is_supported refused
+                    // Non-null by construction: body_is_supported refused
                     // this function unless every handler operand is one of
-                    // THIS block's arguments, and every block's arguments
+                    // this block's arguments, and every block's arguments
                     // are mapped before any block is converted.
                     scope.caught_operands.push_back(mapping.lookup(each));
                 }
@@ -342,10 +322,8 @@ bool lowering::lower(FuncOp function, mlir::OpBuilder & build, mlir::MLIRContext
         }
         for (mlir::Operation & op : block) {
             convert(op, build, mapping, scope);
-            // EVERY VALUE THIS OPERATION PRODUCED, ROOTED IMMEDIATELY -
-            // after convert rather than inside it, so that no conversion
-            // can forget. Same reason the ABI shape check is a trait on the
-            // base class rather than a verifier written per operation.
+            // Root every value this operation produced immediately, here
+            // rather than inside convert, so that no conversion can forget.
             for (const mlir::Value produced : op.getResults()) {
                 if (!mapping.contains(produced)) { continue; }
                 park_if_tracked(scope, build, op.getLoc(), produced, mapping.lookup(produced));
@@ -357,7 +335,7 @@ bool lowering::lower(FuncOp function, mlir::OpBuilder & build, mlir::MLIRContext
     return true;
 }
 
-// ONE CTJS TYPE, IN C++. Only !ctjs.value needs translating; an i1 from
+/// The EmitC type for a ctjs type. Only !ctjs.value needs translating; an i1 from
 // ctjs.truthy is already a machine bit and EmitC prints it as `bool`.
 mlir::Type lowering::as_emitc(mlir::Type type, mlir::Type value) {
     return mlir::isa<ValueType>(type) ? value : type;

@@ -1,8 +1,17 @@
-// EmitC/Maps.cpp - standalone owning Map operations.
+//===- Maps.cpp - Native Map lowering ------------------------- -*- C++ -*-===//
+//
+// Lowers the operations of a JavaScript Map that admission proved native
+// (construction, method calls, size reads, snapshot copies) to ctnative::
+// runtime helpers over an owning C++ map.
+//
+//===----------------------------------------------------------------------===//
 #include "Emitter.h"
 
 namespace ctcompile::ctnative::lowering_detail {
 
+/// Lowers one Map-related ctjs operation (construction, method call, size
+/// read, snapshot copy or bookkeeping) to ctnative:: runtime calls. Returns
+/// false when `o` is not a native Map operation.
 bool lowering::replaceMap(mlir::Operation * o) {
     using namespace ctjs;
     mlir::OpBuilder b(o);
@@ -12,6 +21,8 @@ bool lowering::replaceMap(mlir::Operation * o) {
         eraseIfUnused(o);
     };
     if (isNativeMapBookkeeping(o)) {
+        // Bookkeeping has no runtime effect once the Map is native and its
+        // result is never read, so any number constant (NaN here) will do.
         swap(numberConstant(b, where, std::numeric_limits<double>::quiet_NaN()));
         return true;
     }
@@ -73,7 +84,7 @@ bool lowering::replaceMap(mlir::Operation * o) {
                 return callValue(b, where, carrierType(context, scalar), helper, value);
             }
             if (isNullableCarrier(value.getType()) || isNullableStringCarrier(value.getType())) {
-                // Only a rederived exact tag can narrow an owning temporary.
+                // Narrow only when the proof attribute names the exact tag.
                 // String extraction copies; it cannot borrow the source value.
                 return convertScalar(b, where, value, type);
             }
@@ -83,7 +94,7 @@ bool lowering::replaceMap(mlir::Operation * o) {
             if (nullableMapSpelling(type) == kNullableType) {
                 return convertScalar(b, where, value, carrierType(context, carrier::nullable));
             }
-            // Maps retain their proved raw String/binary64 key/payload storage.
+            // Map keys and payloads are stored as raw strings and doubles.
             if (value.getType() == carrierType(context, carrier::string)) {
                 value =
                     convertScalar(b, where, value, ec::OpaqueType::get(context, kRawStringType));
@@ -122,15 +133,16 @@ bool lowering::replaceMap(mlir::Operation * o) {
         }
         if (action == "set") {
             auto call = llvm::cast<CallOp>(o);
-            // The result retains its solver fact after the receiver becomes
-            // replacement EmitC SSA, which has no analysis entry.
+            // Read the Map type off the call's result: the receiver has
+            // already been replaced by EmitC values, which have no analysis
+            // state, but the result still has its solver fact.
             const auto storedMap = llvm::cast<MapType>(typeOf(call.getResult()));
             if (recordMapPointers.contains(o)) {
                 auto type = llvm::cast<ec::LValueType>(args[2].getType()).getValueType();
                 args[2] = ec::AddressOfOp::create(b, where, ec::PointerType::get(type), args[2]);
             } else {
                 const auto payload = storedMap.getValueType();
-                // Tagged scalar storage retains the complete value; no narrowing is needed.
+                // Tagged scalar storage keeps the whole value, so no narrowing.
                 args[2] =
                     convertAlternative(nullableMapSpelling(payload) == kNullableType
                                            ? args[2]
@@ -148,9 +160,9 @@ bool lowering::replaceMap(mlir::Operation * o) {
             if (isObjectValueType(map.getValueType()) &&
                 llvm::isa<ObjectIdentityType>(typeOf(o->getResult(0))) &&
                 o->hasAttr(kNativeMapPresent)) {
-                // Storage carries the family's finite object/scalar union;
-                // this read independently proves a present object. Copy its
-                // owner so the saved identity survives replacement/deletion.
+                // Storage holds the shape family's object/scalar union, and
+                // this read is proved to find an object. Copy its owner so the
+                // saved identity survives the entry being replaced or deleted.
                 helperName = "ctnative::map_get_present_identity";
             } else if (!mixedMapSpelling(map.getValueType()).empty()) {
                 helperName = "ctnative::map_get_present_as<" +

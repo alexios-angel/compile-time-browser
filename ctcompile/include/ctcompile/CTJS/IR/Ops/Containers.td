@@ -13,16 +13,16 @@ def CTJS_CreateCellOp
     what makes a captured `var` shared rather than copied: two closures over the
     same binding hold the same cell, so one writing it is the other reading it.
   }];
-  // PHASE 55: $initial SINK(stored) - run_loop.cpp:1205 boxes it and the
-  // slot is traced (trace_object, vm/objects/gc.cpp). The result is a boxed
-  // site, reason
-  // phase59: cells are Phase 59's, not a tracked kind here.
+  // Escape effects: $initial SINK(stored) - VM_CASE(new_cell) in run_loop.cpp
+  // boxes it and the slot is traced (trace_object, vm/objects/gc.cpp). The
+  // result is a boxed site (CTJS_BoxedPhase59): escape analysis does not track
+  // cells; closure conversion decides their ownership instead.
   let arguments = (ins Arg<CTJS_ValueType, "", [CTJS_SinkStored]>:$initial);
   let results = (outs Res<CTJS_ValueType, "", [CTJS_BoxedPhase59]>:$result);
   let assemblyFormat = "$initial attr-dict";
 }
 
-// PHASE 55: NEITHER - run_loop.cpp:1210-1214 reads the slot.
+// Escape effects: none (NEITHER). The VM only reads the cell's slot.
 def CTJS_CellGetOp : CTJS_RuntimeOp<"cell_get", "ct_aot_cell_get", [CTJS_NoEscapeEffects]> {
   let summary = "Read a cell's slot";
   let description = [{
@@ -36,7 +36,7 @@ def CTJS_CellGetOp : CTJS_RuntimeOp<"cell_get", "ct_aot_cell_get", [CTJS_NoEscap
 
 def CTJS_CellSetOp : CTJS_RuntimeOp<"cell_set", "ct_aot_cell_set"> {
   let summary = "Write a cell's slot";
-  // PHASE 55: $cell NEITHER; $value SINK(stored) - the slot is traced
+  // Escape effects: $cell NEITHER; $value SINK(stored) - the slot is traced
   // (trace_object, vm/objects/gc.cpp).
   let arguments = (ins CTJS_ValueType:$cell, Arg<CTJS_ValueType, "", [CTJS_SinkStored]>:$value);
   let assemblyFormat = "$cell `,` $value attr-dict";
@@ -45,9 +45,10 @@ def CTJS_CellSetOp : CTJS_RuntimeOp<"cell_set", "ct_aot_cell_set"> {
 def CTJS_CreateObjectOp
     : CTJS_RuntimeOp<"create_object", "ct_aot_new_object", [CTJS_MayThrow, CTJS_Safepoint]> {
   let summary = "A fresh empty object";
-  // PHASE 55: A TRACKED SITE, one of two (EscapeAnalysis::isTrackedSite).
-  // run_loop.cpp:552-553 make_object, vm.hpp:245 allocate<object_object>.
-  // No operands, so nothing to annotate. Tracking is limited to ordinary
+  // Escape analysis tracks this allocation (one of the two kinds
+  // EscapeAnalysis::isTrackedSite accepts; arrays are the other). The VM
+  // implements it with make_object(), which calls allocate<object_object>. It
+  // has no operands, so nothing to annotate. Tracking is limited to ordinary
   // objects and arrays; property operations still expose their receivers.
   let results = (outs CTJS_ValueType:$result);
   let assemblyFormat = "attr-dict";
@@ -56,8 +57,9 @@ def CTJS_CreateObjectOp
 def CTJS_CreateArrayOp
     : CTJS_RuntimeOp<"create_array", "ct_aot_new_array", [CTJS_MayThrow, CTJS_Safepoint]> {
   let summary = "A fresh array, optionally with its elements";
-  // PHASE 55: A TRACKED SITE, the other of the two. Each element
-  // SINK(stored): items are traced (trace_object, vm/objects/gc.cpp).
+  // Escape analysis tracks this allocation too (the other of the two kinds).
+  // Each element is SINK(stored): items are traced (trace_object,
+  // vm/objects/gc.cpp).
   let arguments = (ins Arg<Variadic<CTJS_ValueType>, "", [CTJS_SinkStored]>:$elements);
   let results = (outs CTJS_ValueType:$result);
   let assemblyFormat = "`[` ($elements^)? `]` attr-dict";
@@ -70,7 +72,7 @@ def CTJS_AppendOp : CTJS_RuntimeOp<"append", "ct_aot_append", [CTJS_MayThrow, CT
     is how the bytecode builds one - so importing `[a, b]` without this means
     importing it as an empty array.
   }];
-  // PHASE 55: $array NEITHER - context::array_append is a push_back and
+  // Escape effects: $array NEITHER - context::array_append is a push_back and
   // nothing else (vm/objects/store.cpp); $element SINK(stored) - traced
   // (trace_object, vm/objects/gc.cpp).
   let arguments = (ins CTJS_ValueType:$array, Arg<CTJS_ValueType, "", [CTJS_SinkStored]>:$element);
@@ -85,8 +87,8 @@ def CTJS_CreateRegExpOp : CTJS_Op<"create_regexp", [CTJS_MayThrow, CTJS_Safepoin
     better than pointing it at a helper that does something else - and it is
     a real gap in the ABI rather than in this file.
   }];
-  // PHASE 55: a boxed site, reason not_tracked - an untracked kind with no
-  // helper.
+  // Escape effects: the result is a boxed site with reason not_tracked,
+  // because escape analysis does not model RegExp objects.
   let arguments = (ins StrAttr:$pattern, StrAttr:$flags);
   let results = (outs Res<CTJS_ValueType, "", [CTJS_BoxedNotTracked]>:$result);
   let assemblyFormat = "$pattern `,` $flags attr-dict";

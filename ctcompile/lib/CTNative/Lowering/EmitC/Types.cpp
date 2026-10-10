@@ -1,9 +1,21 @@
-// EmitC/Types.cpp - native lowering implementation.
+//===- Types.cpp - Native carrier retyping ----------------------*- C++ -*-===//
+//
+// lowering::retype() gives every ctjs value in a function its native EmitC
+// carrier type before any operation is rewritten, so the rewrites in
+// Operations.cpp see carriers rather than `!ctjs.value`.
+//
+//===----------------------------------------------------------------------===//
 #include "../Admission/Admission.h"
 #include "Emitter.h"
 
 namespace ctcompile::ctnative::lowering_detail {
 
+/// The type that operand `index` of SCF terminator or loop `op` flows into, or
+/// null when the operand is not a carried edge. A while's operands and its
+/// `after`-region yield feed the before-region arguments; an scf.for's
+/// operands 0-2 are bounds and step, so iter-arg `index` feeds result
+/// `index - 3`; an scf.condition's operand 0 is the condition, so `index`
+/// feeds result `index - 1`; an if/for yield feeds the parent's result.
 mlir::Type edgeTarget(mlir::Operation * op, unsigned index) {
     if (llvm::isa<mlir::scf::YieldOp>(op)) {
         if (auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(op->getParentOp())) {
@@ -24,8 +36,8 @@ mlir::Type edgeTarget(mlir::Operation * op, unsigned index) {
     return {};
 }
 
-// Each value an operation nested in `region` defines, in walk order: its
-// results, then its regions' block arguments.
+/// Visits each value an operation nested in `region` defines, in walk order:
+/// its results, then its regions' block arguments.
 template <class Visit> static void forEachNestedValue(mlir::Region & region, Visit && visit) {
     region.walk([&](mlir::Operation * op) {
         for (mlir::Value result : op->getResults()) { visit(result); }
@@ -37,11 +49,12 @@ template <class Visit> static void forEachNestedValue(mlir::Region & region, Vis
     });
 }
 
-// Retype every JavaScript value in the function from the lattice. Done
-// BEFORE any operation is replaced, so the replacements see carriers.
+/// Retypes every JavaScript value in the function from the lattice. This runs
+/// before any operation is replaced, so the replacements see carriers.
 void lowering::retype(ctjs::FuncOp fn) {
-    // Current contents evidence is invalidated even by retyping operands.
-    // Capture every admitted vector access before changing the source IR.
+    // The proof of a vector's current contents is invalidated even by
+    // retyping operands, so every admitted vector access is collected before
+    // the source IR changes.
     forEachNestedValue(fn.getBody(), [&](mlir::Value value) {
         if (TypeInference::isDenseVectorSite(value)) { collectVector(value); }
     });
@@ -115,14 +128,14 @@ void lowering::retype(ctjs::FuncOp fn) {
         // A closed object keeps its ctjs type until its shape is known
         // below; everything else takes its carrier now.
         if (admission::isClosedObject(v) && carrierOf(typeOf(v)) != carrier::json) { return; }
-        // PHASE 59 SLICE 2 STEP 2: A SHARED BINDING IS NOT ITS CARRIER, it
-        // is a PLACE holding one. The box in the owning frame becomes an
-        // `emitc.lvalue` - the type an emitc.variable has, which load and
-        // assign both take - and the capture parameter that reaches it
-        // from a lifted call becomes an `emitc.ptr` to the same carrier,
-        // which is the receiver's convention (`ctn_x * self`) one operand
-        // along. Both are asked BEFORE the scalar row below, because the
-        // lattice type of either is the carrier of what is INSIDE.
+        // A variable shared with a closure is a storage location, not a
+        // value. In the frame that owns it, its cell becomes an `emitc.lvalue`
+        // (the type an `emitc.variable` has, which load and assign both
+        // accept). In a lifted closure that captures it, the capture parameter
+        // becomes an `emitc.ptr` to the same carrier, like a method's
+        // `ctn_x * self` receiver. Both checks must run before the scalar case
+        // below, because the lattice type of either value describes what the
+        // cell holds, not the cell itself.
         if (admission::isCarriedCell(v.getDefiningOp())) {
             v.setType(ec::LValueType::get(carrierType(context, carrierOf(typeOf(v)))));
             return;
@@ -155,8 +168,8 @@ void lowering::retype(ctjs::FuncOp fn) {
             v.setType(mlir::Float64Type::get(context));
             return;
         }
-        // A DENSE ARRAY TAKES ITS OWN CARRIER, which is not one of the two
-        // scalars carrierType() can spell: an owning vector in this frame,
+        // A dense array takes its own vector carrier, which carrierType()
+        // cannot spell: an owning vector in this frame,
         // or an SCF-carried address whose owners outlive every use.
         if (isVectorCarrier(c)) {
             auto owner =
@@ -169,13 +182,10 @@ void lowering::retype(ctjs::FuncOp fn) {
                                : mlir::Type(owner));
             return;
         }
-        // NO CARRIER IS FATAL, NOT A DOUBLE. This fell through to f64
-        // for anything that was not a boolean, so a value admission
-        // never looked at - a boxed object threaded through a loop, say
-        // - would have been retyped to a number and lowered as one, and
-        // the miscompile would have surfaced as a wrong answer at the
-        // gate rather than here. Admission refuses every such function;
-        // reaching this line is a bug in admission, and says so.
+        // A value with no native carrier is a fatal error, not a double.
+        // Admission refuses every function holding one, so reaching here is
+        // an admission bug; silently typing it f64 would turn that bug into a
+        // wrong answer at run time.
         if (c == carrier::none) {
             if (!admission::lowersToNothing(v)) {
                 llvm::report_fatal_error(llvm::Twine("ctnative lowering: `") + fn.getSymName() +
@@ -184,22 +194,12 @@ void lowering::retype(ctjs::FuncOp fn) {
                                          "have refused it (a literal that reaches a loop is "
                                          "obligation O-3, and whyOpen names it)");
             }
-            // A PLACEHOLDER, AND ONLY FOR VALUES THAT ARE ABOUT TO BE
-            // ERASED: the lift's poison, a key constant, a declaration
-            // closure, the three implicit arguments. Nothing ever reads
-            // this type - replace() removes each of them - but the IR has
-            // to stay verifiable in between, and `!ctjs.value` among
-            // retyped operands does not. It is a double for the same
-            // reason `undefined` is: it is the type this tier can always
-            // spell.
-            //
-            // It is written HERE rather than left to carrierType(), which
-            // now aborts on a carrier it cannot represent. That default
-            // used to answer f64 for everything non-boolean, and the
-            // difference matters: a value admission never looked at got a
-            // representation and was lowered as a number, so the
-            // miscompile surfaced as a wrong answer at the gate instead of
-            // as a diagnostic here.
+            // Placeholder type for values replace() is about to erase (the
+            // closure lifter's poison, a key constant, a declaration closure,
+            // the three implicit arguments). Nothing reads it, but the IR must
+            // verify in between and `!ctjs.value` among retyped operands does
+            // not. f64 is used because this lowering can always spell it;
+            // carrierType() would abort on carrier::none.
             v.setType(mlir::Float64Type::get(context));
             return;
         }
@@ -230,25 +230,25 @@ void lowering::retype(ctjs::FuncOp fn) {
             if (auto target = edgeTarget(op, index)) { borrow(index, target); }
         }
     });
-    // NOW THE SHAPES. The census gave every closed literal in the module
-    // its family before anything was lowered - a site's spelling depends on
-    // every OTHER site in the program - so here each object only takes the
-    // type of its own site.
+    // Object shapes. Before lowering, censusShapes() assigned every closed
+    // object literal its shape family (a site's C++ type name depends on every
+    // other site in the program), so here each object only takes the type
+    // already chosen for its own site.
     fn.getBody().walk([&](ctjs::CreateObjectOp object) {
         if (carrierOf(typeOf(object.getResult())) == carrier::json) { return; }
         if (!methodTableName(object).empty() || object->hasAttr(kNativeObjectIdentity)) { return; }
         if (ownedObjectTypes.contains(object.getResult())) { return; }
         mlir::Value(object.getResult()).setType(classType(shapeAt(object.getResult())));
     });
-    // AND THE RECEIVER, which is the same shape one indirection away. It is
-    // done here rather than in the loop above because `retypeValue` skips
-    // a closed object - "keeps its ctjs type until its shape is known" -
-    // and `%arg0` of a lifted method is exactly that.
+    // The receiver of a lifted method has the same shape, behind a pointer.
+    // It is retyped here because retypeValue leaves closed objects alone until
+    // their shape is known, and `%arg0` of a lifted method is one.
     if (fn->hasAttr("ctnative.receiver")) {
         mlir::Value self = fn.getBody().front().getArgument(0);
         self.setType(receiverType(shapeAt(self)));
     }
-    // AND THE OBJECT PARAMETERS, WHICH ARE THE SAME TYPE IN THE SAME PLACE.
+    // Object parameters are passed the same way as the receiver: a pointer to
+    // their shape's class.
     for (int32_t index : admission::objectArgsOf(fn.getOperation())) {
         mlir::Value parameter = fn.getBody().front().getArgument(static_cast<unsigned>(index));
         parameter.setType(receiverType(shapeAt(parameter)));

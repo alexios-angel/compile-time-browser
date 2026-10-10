@@ -44,9 +44,9 @@ def CTJS_LoadGlobalOp : CTJS_RuntimeOp<"load_global", "ct_aot_global_get", CTJS_
 
 def CTJS_StoreGlobalOp : CTJS_RuntimeOp<"store_global", "ct_aot_global_set", CTJS_GenericEffects> {
   let summary = "Write a global binding by name";
-  // PHASE 55: SINK(stored_global). op::set_global writes globals_
-  // (run_loop.cpp:252-255), the first root the collector walks
-  // (each_root in vm.hpp, walked by vm/objects/gc.cpp).
+  // Escape effect: SINK(stored_global). VM_CASE(set_global) in
+  // lib/Script/vm/run_loop.cpp writes globals_, the first root the collector
+  // walks (each_root in vm.hpp, walked by vm/objects/gc.cpp).
   let arguments = (ins StrAttr:$name, Arg<CTJS_ValueType, "", [CTJS_SinkStoredGlobal]>:$value);
   let assemblyFormat = "$name `,` $value attr-dict";
 }
@@ -74,14 +74,12 @@ def CTJS_LoadUpvalueOp : CTJS_Op<"load_upvalue", [CTJS_NoEscapeEffects]> {
     throw, and cannot collect. Both runtime rows agree - ct_aot_upvalue_cell
     and ct_aot_cell_get are (0, 0, 0).
   }];
-  // THE CLOSURE IS A !ctjs.value, not a !ctjs.closure, and the change is the
-  // importer's doing: the bytecode's get_upvalue reads the CURRENT frame's
-  // closure, which arrives as an ordinary function argument - and ctjs.func
-  // takes only !ctjs.value parameters. A closure is a value at run time; the
-  // distinct type is for the one place that BUILDS one.
-  // PHASE 55: $closure NEITHER - a cell read, rows (0,0,0); the closure is
-  // never one of this function's tracked sites anyway (only object/array
-  // literals are). The result is an external object.
+  // The closure is a !ctjs.value, not a !ctjs.closure: the bytecode's
+  // get_upvalue reads the current frame's closure, which arrives as an ordinary
+  // function argument, and ctjs.func takes only !ctjs.value parameters.
+  // Escape effects: $closure NEITHER - a cell read, whose runtime effect row is
+  // (0, 0, 0); only object and array literals are tracked sites, so the
+  // closure never is. The result is an external object.
   let arguments = (ins CTJS_ValueType:$closure, I32Attr:$index);
   let results = (outs CTJS_ValueType:$result);
   let assemblyFormat = "$closure `[` $index `]` attr-dict";
@@ -95,9 +93,10 @@ def CTJS_StoreUpvalueOp : CTJS_Op<"store_upvalue"> {
     nowhere, and the write landed on whatever the closure value was - which
     cell_set no-ops on. A captured variable would never have been updated.
   }];
-  // PHASE 55: $closure NEITHER (run_loop.cpp:1240-1249 writes a cell slot
-  // and stores nothing else); $value SINK(stored) - the slot is traced from
-  // the cell through the closure's upvalues (trace_object, vm/objects/gc.cpp).
+  // Escape effects: $closure NEITHER (VM_CASE(set_upvalue) in run_loop.cpp
+  // writes a cell slot and stores nothing else); $value SINK(stored) - the slot
+  // is traced from the cell through the closure's upvalues (trace_object,
+  // vm/objects/gc.cpp).
   let arguments = (ins CTJS_ValueType:$closure, I32Attr:$index,
                        Arg<CTJS_ValueType, "", [CTJS_SinkStored]>:$value);
   let assemblyFormat = "$closure `[` $index `]` `,` $value attr-dict";
@@ -195,19 +194,18 @@ def CTJS_CreateClosureOp
     BUILDS one", and that place cannot use it either: it leaves !ctjs.closure
     and !ctjs.program with no producer AND no consumer.
   }];
-  // THE VARIADIC IS LAST, and it has to be: a Variadic followed by a fixed
-  // operand cannot be resolved without AttrSizedOperandSegments, and the
-  // verifier reports it as a type error on operand #0 rather than as the
-  // ordering problem it is. The ABI's own argument order is different again -
-  // (fr, closure, index, upvalues, count, this) - and the lowering maps
-  // between them, which is what a lowering is for.
-  // PHASE 55: $enclosing_closure NEITHER - context::make_closure reads its
+  // The variadic operand is last because a Variadic followed by a fixed
+  // operand cannot be resolved without AttrSizedOperandSegments (the verifier
+  // reports that as a type error on operand #0). The ABI's argument order is
+  // different again, (fr, closure, index, upvalues, count, this), and the
+  // lowering maps between them.
+  // Escape effects: $enclosing_closure NEITHER - context::make_closure reads its
   // `owner` and its `upvalues` (make_closure, vm/call/coroutines.cpp) and
   // stores the closure itself nowhere; $enclosing_this SINK(captured) - written
   // to captured_this (make_closure), traced (trace_object, vm/objects/gc.cpp);
   // $upvalues SINK(captured) - written (make_closure), traced (trace_object).
-  // The RESULT is a boxed site, reason phase59: a
-  // closure is not a tracked site (see the file header) and Phase 59 owns it.
+  // The result is a boxed site (CTJS_BoxedPhase59): escape analysis does not
+  // track closures as allocation sites; the native closure lift handles them.
   let arguments = (ins CTJS_ValueType:$enclosing_closure,
                        Arg<CTJS_ValueType, "", [CTJS_SinkCaptured]>:$enclosing_this,
                        I32Attr:$function,
@@ -216,10 +214,10 @@ def CTJS_CreateClosureOp
   let results = (outs Res<CTJS_ValueType, "", [CTJS_BoxedPhase59]>:$result);
   let assemblyFormat = "$enclosing_closure `[` $function `]` `this` $enclosing_this"
                        " (`captures` $upvalues^)? attr-dict";
-  // THE PARALLEL LIST, ENFORCED. `$enclosing_indices` is meaningless unless it
-  // is indexed the same way `$upvalues` is, and a shorter one is precisely the
-  // PACKED reading this operation's description refuses - which captures the
-  // wrong bindings and says nothing.
+  // The verifier enforces the parallel list: `$enclosing_indices` must be
+  // indexed the same way as `$upvalues`, because a shorter one is the packed
+  // reading the description rules out, which would silently capture the wrong
+  // bindings.
   let hasVerifier = 1;
 }
 

@@ -1,3 +1,12 @@
+//===- ExactPrimitives.cpp - Exact constant folding -------------*- C++ -*-===//
+//
+// Folds unary, comparison and arithmetic operations whose operands are
+// constant primitives, for normalizeDOMCustomIteration's helper expansion.
+// Constant operands mean no conversion hook (valueOf, toString) can run, so
+// the folded value matches what the VM would compute.
+//
+//===----------------------------------------------------------------------===//
+
 #include "ExactPrimitives.h"
 
 #include "../../../Analysis/StringNumber.h"
@@ -13,6 +22,8 @@
 namespace ctcompile::ctnative::dom_iteration_detail {
 
 namespace {
+/// Charges `text`'s byte count to `work`. When it does not fit, drains the
+/// budget and returns false.
 bool chargeText(std::string_view text, dom_source_detail::DOMSource & work) {
     if (text.size() > work.remaining) {
         work.remaining = 0;
@@ -22,6 +33,8 @@ bool chargeText(std::string_view text, dom_source_detail::DOMSource & work) {
     return true;
 }
 
+/// ToNumber of a constant primitive; nullopt for anything else or when the
+/// budget cannot pay for a string's bytes.
 std::optional<double> exactNumber(mlir::Attribute value, dom_source_detail::DOMSource & work) {
     if (auto numeric = llvm::dyn_cast<ctjs::NumberAttr>(value)) { return numeric.getDouble(); }
     if (auto boolean = llvm::dyn_cast<ctjs::BooleanAttr>(value)) {
@@ -120,9 +133,10 @@ std::optional<bool> exactComparison(ctjs::CompareOp comparison,
                llvm::isa<ctjs::StringAttr>(rhs.getValue())) {
         const std::string_view a = llvm::cast<ctjs::StringAttr>(lhs.getValue()).getValue();
         const std::string_view b = llvm::cast<ctjs::StringAttr>(rhs.getValue()).getValue();
-        // Charge the complete inputs before decoding or allocating. Core's
-        // total decoder also accepts malformed bytes; require a lossless,
-        // canonical WTF-8 roundtrip before interpreting them as JS Strings.
+        // Charge the full inputs to the budget before decoding or allocating.
+        // ctbrowser::wtf8_to_utf16 never fails, even on malformed bytes, so
+        // require a lossless WTF-8 round trip before treating them as JS
+        // strings.
         for (auto text : {a, b}) {
             if (!chargeText(text, work)) { return std::nullopt; }
         }
@@ -141,8 +155,8 @@ std::optional<bool> exactComparison(ctjs::CompareOp comparison,
     }
     const auto left = exactNumber(lhs.getValue(), work), right = exactNumber(rhs.getValue(), work);
     if (!left || !right) { return std::nullopt; }
-    // These exact primitive conversions cannot call hooks. Binary64
-    // comparisons preserve unordered NaNs and signed-zero equality.
+    // Converting constant primitives cannot call hooks. IEEE-754 double
+    // comparison already gives JS semantics: NaN is unordered and -0 == +0.
     const double a = *left, b = *right;
     switch (comparison.getKind()) {
     case ctjs::CompareKind::Eq: return a == b;
@@ -162,8 +176,9 @@ mlir::Attribute exactArithmetic(mlir::Operation * binary, dom_source_detail::DOM
     if (!kind) { return {}; }
     const bool isStatic = llvm::isa<ctjs::BinaryStaticOp>(binary);
     switch (kind.getValue()) {
-    // Either family for the bitwise six: the operands are constants below,
-    // on which ctjs.binary's ToNumeric is the identity.
+    // Add and the six bitwise/shift operators fold for both ctjs.binary and
+    // ctjs.binary_static: on the constant operands required below, the two
+    // agree. The rest fold only for the generic ctjs.binary.
     case ctjs::BinaryKind::Add:
     case ctjs::BinaryKind::BitAnd:
     case ctjs::BinaryKind::BitOr:
@@ -196,8 +211,8 @@ mlir::Attribute exactArithmetic(mlir::Operation * binary, dom_source_detail::DOM
         const auto text = [&](mlir::Attribute value) -> std::optional<::ctnative::js_string> {
             if (auto string = llvm::dyn_cast<ctjs::StringAttr>(value)) {
                 const std::string_view bytes = string.getValue();
-                // Charge before decoding/copying. Canonical operands leave
-                // at most one surrogate pair for concatenation to join.
+                // Charge before decoding or copying. Operands that round-trip
+                // leave at most one surrogate pair for concatenation to join.
                 if (!chargeText(bytes, work) ||
                     ctbrowser::utf16_to_wtf8(ctbrowser::wtf8_to_utf16(bytes)) != bytes) {
                     return std::nullopt;
@@ -222,7 +237,8 @@ mlir::Attribute exactArithmetic(mlir::Operation * binary, dom_source_detail::DOM
             !chargeText(right->value(), work)) {
             return {};
         }
-        // Native String addition and the VM share Core's surrogate join.
+        // js_string's operator+ joins a trailing lead surrogate to a leading
+        // trail surrogate exactly as the VM does, so the folded result matches.
         const auto joined = std::move(*left) + *right;
         return ctjs::StringAttr::get(binary->getContext(), joined.value());
     }
@@ -236,8 +252,8 @@ mlir::Attribute exactArithmetic(mlir::Operation * binary, dom_source_detail::DOM
     auto left = number(lhs.getValue()), right = number(rhs.getValue());
     if (!left || !right) { return {}; }
     if (ctjs::isBitwise(kind.getValue())) {
-        // Reuse the typed Number operators and their public Core conversions:
-        // ToInt32/ToUint32, masked shift counts and unsigned left shifts.
+        // Reuse ::ctnative::js_num's operators, which already apply
+        // ToInt32/ToUint32 and mask shift counts to five bits.
         const ::ctnative::js_num a{left.getDouble()}, b{right.getDouble()};
         ::ctnative::js_num result;
         switch (kind.getValue()) {

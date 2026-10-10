@@ -5,11 +5,11 @@
 // ES modules
 //===----------------------------------------------------------------------===//
 //
-// FOUR OPCODES, AND ONLY ONE OF THEM CAN APPEAR IN A FUNCTION. op::load_import,
-// op::bind_export and op::load_namespace are emitted by compile_program's
-// module arm alone, so they live in functions[0] of a module program and
-// nowhere else; op::dyn_import is the only one an ordinary function can
-// contain. Anything testing these has to compile with script_kind::module.
+// Four opcodes, and only one of them can appear in an ordinary function.
+// op::load_import, op::bind_export and op::load_namespace are emitted only by
+// compile_program's module arm, so they live in functions[0] of a module
+// program and nowhere else; op::dyn_import is the only one an ordinary
+// function can contain. Tests of these must compile with script_kind::module.
 
 def CTJS_ModuleImportCellOp
     : CTJS_RuntimeOp<"module_import_cell", "ct_aot_module_import_cell", [CTJS_MayThrow]> {
@@ -87,10 +87,10 @@ def CTJS_ModuleExportCellOp
     for every module with fewer than 65,536 names, so an importer reading b
     alone exports name 0 under this name - silently.
   }];
-  // PHASE 55: $current SINK(stored). Alias-returning: module_export_cell
-  // (vm/call/modules.cpp) returns `current` itself outside a module, and
-  // otherwise adopts a record cell that the module's export table roots
-  // (each_root, vm.hpp).
+  // Escape effects: $current SINK(stored), and the result may alias it:
+  // module_export_cell (vm/call/modules.cpp) returns `current` itself outside a
+  // module, and otherwise adopts a record cell that the module's export table
+  // roots (each_root, vm.hpp).
   let arguments = (ins StrAttr:$name, Arg<CTJS_ValueType, "", [CTJS_SinkStored]>:$current);
   let results = (outs CTJS_ValueType:$result);
   let assemblyFormat = "$name `adopting` $current attr-dict";
@@ -157,8 +157,8 @@ def CTJS_DynamicImportOp
     one is CT_AOT_FAILED rather than a quiet no-write, because the interpreter
     raise()s there and stops.
   }];
-  // PHASE 55 (may_reenter 1: dyn_import): SINK(converted) - the specifier's
-  // toString is user code.
+  // Escape effects (may_reenter 1: dyn_import): SINK(converted), because
+  // converting the specifier calls its toString, which is user code.
   let arguments = (ins Arg<CTJS_ValueType, "", [CTJS_SinkConverted]>:$specifier);
   let results = (outs CTJS_ValueType:$result);
   let assemblyFormat = "$specifier attr-dict";

@@ -1,19 +1,18 @@
+//===- CTJSTraits.h - CTJS semantic op traits -------------------*- C++ -*-===//
+//
+// The four semantic traits. Later passes (exception-edge insertion,
+// shadow-frame rooting, the suspension state machine, precise liveness) query
+// these traits instead of switching on operation names, so adding an
+// operation never requires revisiting those passes.
+//
+// They match the three obligations aot_helpers.def declares on every helper
+// row (may_throw, may_reenter, is_safepoint), plus suspension, which the ABI
+// spells as a status rather than a flag. Using the same words keeps the
+// dialect and the ABI in agreement about what an operation can do.
+//
+//===----------------------------------------------------------------------===//
+
 #pragma once
-// THE FOUR SEMANTIC TRAITS, and they are the reason later passes never
-// enumerate operation names.
-//
-// The policy: "These traits are the input to the exception-edge insertion pass,
-// the shadow-frame rooting pass, the suspension state-machine pass, and the
-// precise-liveness pass. Each of those passes queries traits generically; none
-// of them enumerates operation names. That is the whole point. A pass that
-// switches on operation names must be revisited every time an operation is
-// added. A pass that queries a trait never is."
-//
-// They are the SAME three obligations aot_helpers.def declares on every helper
-// row - may_throw, may_reenter, is_safepoint - plus suspension, which the ABI
-// spells as a status rather than a flag. That correspondence is deliberate: the
-// dialect and the ABI have to agree about what an operation can do, and the
-// cheapest way to keep them agreeing is for the words to be the same.
 #include "mlir/IR/OpDefinition.h"
 
 namespace ctcompile::ctjs {
@@ -36,16 +35,15 @@ class CTJSSafepoint : public mlir::OpTrait::TraitBase<ConcreteType, CTJSSafepoin
 template <typename ConcreteType>
 class CTJSMaySuspend : public mlir::OpTrait::TraitBase<ConcreteType, CTJSMaySuspend> {};
 
-/// Whether an operation's ODS declaration matches the ABI row it names -
+/// Whether an operation's ODS declaration matches the ABI row it names:
 /// operand count, result count, the return register's type, and the attributes
-/// that have to correspond to parameters with no SSA source. Implemented in
-/// CTJSABIShape.cpp, which explains the four operations it found wrong.
+/// that stand for parameters with no SSA source. Implemented in
+/// CTJSABIShape.cpp.
 mlir::LogicalResult verifyABIShape(mlir::Operation * op);
 
-/// THE SHAPE CHECK, ON THE BASE CLASS SO NO OPERATION CAN OMIT IT. Attached by
-/// CTJS_RuntimeOp rather than written per operation: a per-operation verifier
-/// is one chance per operation to leave it out, and an operation added
-/// tomorrow would be added without one.
+/// Runs verifyABIShape() on every runtime operation. CTJS_RuntimeOp attaches
+/// this trait to its base class, so no operation can forget the check, as a
+/// per-operation verifier could.
 template <typename ConcreteType>
 class CTJSABIShaped : public mlir::OpTrait::TraitBase<ConcreteType, CTJSABIShaped> {
 public:

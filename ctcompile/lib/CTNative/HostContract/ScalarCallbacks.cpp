@@ -1,3 +1,11 @@
+//===- ScalarCallbacks.cpp - Scalar-only Map-method callbacks ---*- C++ -*-===//
+//
+// Implements analyzer::scalarCallbacks, which admits callbacks that
+// captured-Map methods call through a global object and that only update
+// Number globals.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Analysis.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -6,10 +14,15 @@
 
 namespace ctcompile::ctnative::host_detail {
 
+/// Finds globals the `family` methods call as `obj.key(str)`, where `obj` is
+/// a plain object made once in the entry function and `key` holds a
+/// capture-free closure whose body only reads and writes Number globals.
+/// Records each one in `result.scalarCallbacks`. Returns false, with no
+/// partial result, on any other shape or when the step budget runs out.
 bool analyzer::scalarCallbacks(llvm::ArrayRef<HostMethodParameters> family,
                                HostCapturedMap & result) {
     // ponytail: one fixed field and one String formal per callback; widen only
-    // when a source witness needs additional slots or argument categories.
+    // when a real program needs more fields or other argument types.
     llvm::DenseSet<mlir::Operation *> members;
     llvm::SmallVector<ctjs::LoadGlobalOp> candidates;
     llvm::StringSet<> bindings;
@@ -72,6 +85,8 @@ bool analyzer::scalarCallbacks(llvm::ArrayRef<HostMethodParameters> family,
                                : ctjs::CreateClosureOp{};
         callback.function =
             callback.closure ? callable(callback.closure.getResult()) : ctjs::FuncOp{};
+        // The callee takes exactly one formal: four entry arguments are the
+        // three implicit ones plus the String argument.
         if (!callback.function || callback.function == entry ||
             callback.function == result.allocation->getParentOfType<ctjs::FuncOp>() ||
             members.contains(callback.function) || callback.function->getParentOp() != module ||
@@ -89,6 +104,8 @@ bool analyzer::scalarCallbacks(llvm::ArrayRef<HostMethodParameters> family,
             return false;
         }
         if (!operandsDominate(callback.closure)) { return false; }
+        // The closure's only real use is as the stored value (operand 2) of
+        // the one field write.
         for (mlir::OpOperand & use : callback.closure.getResult().getUses()) {
             if (!localUse(callback.closure.getResult(), use, entry) ||
                 (!llvm::isa<ctjs::RootOp>(use.getOwner()) &&
@@ -123,7 +140,8 @@ bool analyzer::scalarCallbacks(llvm::ArrayRef<HostMethodParameters> family,
                     used = true;
                     continue;
                 }
-                // The load must be the call's receiver operand.
+                // Otherwise the load must be the call's receiver: operand 1 of
+                // ctjs.call, operand 0 of ctjs.call_direct.
                 auto js = jsCallOf(use.getOwner());
                 if (!js || use.getOperandNumber() != (js->direct ? 0u : 1u)) { return false; }
                 auto direct = js->direct;
@@ -153,6 +171,8 @@ bool analyzer::scalarCallbacks(llvm::ArrayRef<HostMethodParameters> family,
                     return false;
                 }
                 if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
+                // The read must be the callee: operand 0 of ctjs.call,
+                // operand 2 of ctjs.call_direct.
                 if (!calls.contains(use.getOwner()) ||
                     use.getOperandNumber() != (llvm::isa<ctjs::CallOp>(use.getOwner()) ? 0u : 2u)) {
                     return false;
@@ -232,8 +252,11 @@ bool analyzer::scalarCallbacks(llvm::ArrayRef<HostMethodParameters> family,
             if (scalarLoads.wasInterrupted()) { return false; }
         }
 
-        // Induction starts at the independent Number literals. Every store in
-        // every arm must preserve Number; no selected invocation or value is used.
+        // Prove the body keeps every global a Number: start from the Number
+        // literal initializers, treat the one formal (argument 3) as a String,
+        // and require each store, in every branch, to write a Number. The
+        // proof assumes nothing about which call or which argument value
+        // reaches the body.
         auto & body = callback.function.getBody().front();
         llvm::DenseMap<mlir::Value, PrimitiveAlternatives> values;
         llvm::DenseSet<mlir::Value> flags;
@@ -242,6 +265,7 @@ bool analyzer::scalarCallbacks(llvm::ArrayRef<HostMethodParameters> family,
         ctjs::FrameEnterOp frame;
         bool frameExited = false;
         ctjs::ReturnOp returned;
+        // `depth` bounds the scf.if nesting the walk recurses through.
         const auto walk = [&](auto && self, mlir::Block & block, unsigned depth) -> bool {
             if (!step() || depth > 32) { return false; }
             for (mlir::Operation & operation : block) {
@@ -356,6 +380,7 @@ bool analyzer::scalarCallbacks(llvm::ArrayRef<HostMethodParameters> family,
             return true;
         };
         if (!walk(walk, body, 0) || !returned) { return false; }
+        // The implicit arguments (0-2) may only be rooted.
         for (mlir::BlockArgument argument : body.getArguments()) {
             for (mlir::OpOperand & use : argument.getUses()) {
                 if (!localUse(argument, use, callback.function) ||

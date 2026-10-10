@@ -1,8 +1,19 @@
-// ClosureLifting/Callbacks.cpp - native lowering implementation.
+//===- ClosureLifting/Callbacks.cpp - Callback specialisation ---*- C++ -*-===//
+//
+// When every caller of a wrapper function passes the same capture-free
+// closure for a parameter, calls through that parameter become direct calls.
+// If the closure's identity never escapes, the parameter and the closures
+// are removed.
+//
+//===----------------------------------------------------------------------===//
+
 #include "ClosureLifter.h"
 
 namespace ctcompile::ctnative::lowering_detail {
 
+/// Specialises wrappers whose callers all pass one known capture-free closure
+/// for a parameter. Refusals are recorded on the wrapper as
+/// `ctnative.callback_refusal`.
 void closureLifter::specializeCallbacks(liftReport & out) {
     llvm::SmallVector<ctjs::FuncOp> candidates;
     llvm::DenseSet<mlir::Operation *> seen;
@@ -16,6 +27,8 @@ void closureLifter::specializeCallbacks(liftReport & out) {
         if (target && seen.insert(target.getOperation()).second) { candidates.push_back(target); }
     });
     for (ctjs::FuncOp wrapper : candidates) {
+        // Entry arguments 0-2 are the implicit receiver, new.target and
+        // callee; a wrapper needs at least one declared parameter.
         if (wrapper.getBody().empty() || wrapper.getBody().front().getNumArguments() < 4) {
             continue;
         }

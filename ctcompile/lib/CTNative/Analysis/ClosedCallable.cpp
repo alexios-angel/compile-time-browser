@@ -1,9 +1,25 @@
+//===- ClosedCallable.cpp - Closed callables and callable holders ---------===//
+//
+// Proofs that a function is only ever entered through calls visible in the
+// module (closedCallableProblem() and its helpers), and that an object is a
+// callable holder: a fresh object whose slots each hold one closure and that is
+// used only to call them (analyzeLocalCallableObject(),
+// analyzeGlobalCallableObject()). Declarations are in ClosedCallable.h.
+//
+//===----------------------------------------------------------------------===//
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/SymbolTable.h"
 
 namespace ctcompile::ctnative {
 
+/// Proves that \p object is a callable holder: a fresh object whose own slots
+/// are each set exactly once to a closure, and that is only ever used to call
+/// those slots. With \p publication, the holder is also stored in a global
+/// once, unconditionally, in the entry function, before any code that could
+/// call back into the program. On success, returns the slot stores, the reads
+/// that resolve to them and the calls through them. \p spend charges the work
+/// budget; \p projectedUses, when given, replaces each alias's direct uses.
 static llvm::Expected<CallableObject> analyzeCallableObject(
     ctjs::CreateObjectOp object, ctjs::StoreGlobalOp publication, llvm::function_ref<bool()> spend,
     llvm::function_ref<llvm::SmallVector<mlir::OpOperand *>(mlir::Value)> projectedUses = {}) {
@@ -12,8 +28,8 @@ static llvm::Expected<CallableObject> analyzeCallableObject(
     };
     const auto exhausted = [&] { return error("DOM helper work budget exhausted"); };
     const auto precedes = [&](mlir::Operation * definition, mlir::Operation * use) {
-        // Immutable slots may be read in branches, loops and exception continuations.
-        // The complete use census still requires unique unconditional stores;
+        // Immutable slots may be read in branches, loops and exception
+        // continuations. The complete use census still requires unique unconditional stores;
         // no backedge can replace a slot or carry the holder into another scope.
         while (use->getBlock() != definition->getBlock()) {
             if (!spend()) { return false; }
@@ -45,9 +61,10 @@ static llvm::Expected<CallableObject> analyzeCallableObject(
             !object->isBeforeInBlock(publication)) {
             return error("global callable holder requires unconditional entry publication");
         }
-        // ponytail: require an inert entry prefix; widen with a complete caller
-        // graph if holders must be initialized after source calls. With no
-        // reentry here, even transitive calls in other functions follow publication.
+        // ponytail: everything before the global store must be side-effect free
+        // (constants, closures, object literals and their own-key stores), so no
+        // script can run and observe the holder before it is published. Holders
+        // set up after a call would need a full caller graph to prove instead.
         for (mlir::Operation & op : entry.getBody().front()) {
             if (!spend()) { return exhausted(); }
             if (&op == publication.getOperation()) { break; }
@@ -301,7 +318,7 @@ bool closedDeclaration(ctjs::StoreGlobalOp store, ctjs::FuncOp target, mlir::Mod
 
 std::string closedCallableProblem(ctjs::FuncOp function, mlir::ModuleOp module) {
     const auto index = functionIndex(function);
-    if (!index) { return {}; } // No numeric-index closure can name this symbol.
+    if (!index) { return {}; } // No closure index can name this symbol.
     std::string reason;
     module.walk([&](ctjs::CreateClosureOp made) {
         if (!reason.empty() || !createsFunction(made, *index)) { return; }

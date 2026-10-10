@@ -1,5 +1,5 @@
-# The lowering, as an ordinary library for the reason the importer is one: it is
-# hand-written C++ and generates nothing.
+# CTJS -> EmitC lowering passes. A plain add_library rather than an MLIR
+# TableGen library: every source is hand-written and nothing is generated.
 add_library(ctcompile-ctjs-lowering
   CTJSToEmitC.cpp
   DropUncompiled.cpp

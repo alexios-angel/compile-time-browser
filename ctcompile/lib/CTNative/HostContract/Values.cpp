@@ -1,3 +1,13 @@
+//===- Values.cpp - Value resolvers of the host-contract analyzer ---------===//
+//
+// The value-tracking half of the host-contract analyzer: resolves which
+// function a value calls, which object it denotes, which primitive or truth
+// value it has, and which property write a read sees. Every query charges the
+// shared step budget (`step`/`spend`) and recursion is capped at depth 64.
+// Once the budget runs out, every answer is "unknown".
+//
+//===----------------------------------------------------------------------===//
+
 #include "Values/Arguments.hpp"
 
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
@@ -11,6 +21,8 @@
 
 namespace ctcompile::ctnative::host_detail {
 
+/// Indexes the module once: global stores by name, functions by index,
+/// returns per function, direct-call callers, and indirect factory calls.
 analyzer::analyzer(mlir::ModuleOp input, const HostContract & request, unsigned steps)
     : module(input), contract(request), remaining(steps), dominance(input) {
     entry = module.lookupSymbol<ctjs::FuncOp>(contract.entry);
@@ -31,9 +43,11 @@ analyzer::analyzer(mlir::ModuleOp input, const HostContract & request, unsigned 
         if (auto function = target(call)) { callers[function].push_back(call); }
     });
     if (llvm::is_contained(contract.initialIntrinsics, "Map")) {
-        // The importer leaves factory() indirect inside its wrapper. Record
-        // only the zero-argument callback supplied by the entry's sole direct
-        // wrapper call. No source operation or operand is rewritten here.
+        // UMD-style modules call `factory()` through a parameter of a wrapper
+        // function, which the importer emits as an indirect call. When the
+        // entry function calls that wrapper exactly once, resolve the
+        // parameter to its one callback and record the call as an edge to it.
+        // The IR is not rewritten.
         module.walk([&](ctjs::CallOp call) {
             if (!step() || !call.getArgs().empty()) { return; }
             auto argument = llvm::dyn_cast<mlir::BlockArgument>(call.getCallee());
@@ -61,10 +75,13 @@ analyzer::analyzer(mlir::ModuleOp input, const HostContract & request, unsigned 
     }
 }
 
+/// Charges one step; false once the budget is exhausted.
 bool analyzer::step() {
     return spend(1);
 }
 
+/// Charges `count` steps. Running out sets `exhausted` and empties the
+/// budget, so every later query also fails.
 bool analyzer::spend(uint64_t count) {
     if (count > remaining) {
         exhausted = true;
@@ -75,6 +92,7 @@ bool analyzer::spend(uint64_t count) {
     return true;
 }
 
+/// True when every operand of `operation` dominates it.
 bool analyzer::operandsDominate(mlir::Operation * operation) {
     for (mlir::Value operand : operation->getOperands()) {
         if (!step() || !dominance.dominates(operand, operation)) { return false; }
@@ -82,11 +100,13 @@ bool analyzer::operandsDominate(mlir::Operation * operation) {
     return true;
 }
 
+/// True when `use` is inside `function` and dominated by `value`.
 bool analyzer::localUse(mlir::Value value, mlir::OpOperand & use, mlir::Operation * function) {
     return step() && use.getOwner()->getParentOfType<ctjs::FuncOp>().getOperation() == function &&
            dominance.dominates(value, use.getOwner());
 }
 
+/// True when `value` is used only by ctjs.root.
 bool analyzer::rootedUsers(mlir::Value value) {
     for (mlir::Operation * user : value.getUsers()) {
         if (!step() || !llvm::isa<ctjs::RootOp>(user)) { return false; }
@@ -94,16 +114,21 @@ bool analyzer::rootedUsers(mlir::Value value) {
     return true;
 }
 
+/// The function a direct call or a resolved indirect factory call invokes.
 ctjs::FuncOp analyzer::target(mlir::Operation * operation) const {
     if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(operation)) { return call.getTarget(); }
     return indirectFactories.lookup(operation);
 }
 
+/// The one function `value` can be a closure of, traced through globals with
+/// one store and through parameters whose every caller passes the same
+/// function. Null when unknown. `depth` (as in the other resolvers below)
+/// caps recursion at 64 on deep or cyclic IR; the step budget does the real
+/// limiting.
 ctjs::FuncOp analyzer::callable(mlir::Value value, unsigned depth) {
     if (!value || depth > 64 || !step() || ambiguousFunctions) { return {}; }
     if (auto made = value.getDefiningOp<ctjs::CreateClosureOp>()) {
-        // The importer supplies this activation's callee; arbitrary values
-        // cannot establish that program identity.
+        // Only a closure creation names its function; no other value can.
         return closureTarget(made, functions);
     }
     if (auto load = value.getDefiningOp<ctjs::LoadGlobalOp>()) {
@@ -114,6 +139,7 @@ ctjs::FuncOp analyzer::callable(mlir::Value value, unsigned depth) {
         auto function = llvm::dyn_cast<ctjs::FuncOp>(argument.getOwner()->getParentOp());
         if (!function || function.getBody().empty() ||
             argument.getOwner() != &function.getBody().front() || argument.getArgNumber() < 3) {
+            // Entry arguments 0-2 are implicit (receiver, new.target, callee).
             return {};
         }
         ctjs::FuncOp found;
@@ -127,6 +153,10 @@ ctjs::FuncOp analyzer::callable(mlir::Value value, unsigned depth) {
     return {};
 }
 
+/// True when `operation` is a direct call, or a resolved zero-argument
+/// factory call with an undefined receiver, whose callee value is the target's
+/// own closure, whose argument count matches, and whose target is closed or
+/// a transported callback (see transportedCallable).
 bool analyzer::exactCall(mlir::Operation * operation) {
     auto function = target(operation);
     if (!function || function.getBody().empty()) { return false; }
@@ -143,10 +173,12 @@ bool analyzer::exactCall(mlir::Operation * operation) {
            (closedCallableProblem(function, module).empty() || transportedCallable(function));
 }
 
+/// True when `function` is a callback that is only passed along: its single
+/// closure is forwarded through parameters of wrappers that are each called
+/// exactly once, unconditionally, until it reaches the one factory call. Any
+/// other use refuses. This does not make an arbitrary private function part of
+/// a closed call graph.
 bool analyzer::transportedCallable(ctjs::FuncOp function) {
-    // A callback parameter is transport only when every use reaches the same
-    // source callee through one exact, straight-line wrapper invocation. This
-    // does not turn arbitrary private visibility into a closed call graph.
     if (!llvm::is_contained(contract.initialIntrinsics, "Map") || function == entry ||
         function.getUpvalueCount() != 0 || !llvm::hasSingleElement(function.getBody()) ||
         callers[function].size() != 1) {
@@ -174,6 +206,8 @@ bool analyzer::transportedCallable(ctjs::FuncOp function) {
                 indirectFactories.lookup(call) == function) {
                 continue;
             }
+            // In ctjs.call_direct, operand 2 is the callee and explicit
+            // arguments start at operand 3.
             auto call = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
             if (!call) { return false; }
             if (use.getOperandNumber() == 2 && call == callers[function].front()) { continue; }
@@ -191,6 +225,9 @@ bool analyzer::transportedCallable(ctjs::FuncOp function) {
     return !exhausted;
 }
 
+/// The property write `read` sees: the latest write to the same object and
+/// key that runs before it. Null when there is none, or when some other write
+/// to that field cannot be ordered against the read or the latest write.
 ctjs::SetPropertyOp analyzer::currentWrite(ctjs::GetPropertyOp read, unsigned depth) {
     if (depth > 64 || !step()) { return {}; }
     const auto owner = object(read.getObject(), depth + 1);
@@ -216,6 +253,10 @@ ctjs::SetPropertyOp analyzer::currentWrite(ctjs::GetPropertyOp read, unsigned de
     return latest && !uncertain ? latest : ctjs::SetPropertyOp{};
 }
 
+/// Resolves `obj.method(...)` where `method` is the closure last stored into
+/// that field of a known object. The closure must either capture a Map that
+/// capturedMap() proves, or be a capture-free getter that ignores its
+/// arguments and returns a primitive literal. nullopt otherwise.
 std::optional<HostCallableEdge> analyzer::propertyCall(mlir::Operation * operation) {
     if (!step()) { return {}; }
     auto js = jsCallOf(operation);
@@ -247,8 +288,9 @@ std::optional<HostCallableEdge> analyzer::propertyCall(mlir::Operation * operati
                function.getBody().front().getNumArguments() != 3 || !arguments.empty()) {
         return {};
     }
-    // The capture proof checks every argument use and the complete Map body.
-    // Otherwise retain the effect-free literal getter boundary.
+    // capturedMap() already checked every argument use and the whole method
+    // body. Any other closure is accepted only as a getter that ignores its
+    // arguments and returns a primitive literal with no side effects.
     if (!capture) {
         for (mlir::BlockArgument argument : function.getBody().front().getArguments()) {
             if (!rootedUsers(argument)) { return {}; }
@@ -295,6 +337,8 @@ std::optional<HostCallableEdge> analyzer::propertyCall(mlir::Operation * operati
             arguments.size() != parameters->alternatives.size() + offset) {
             return {};
         }
+        // Formals start after the three implicit entry arguments and, when
+        // present, the prepared Map parameter.
         for (unsigned index = 0; index < parameters->alternatives.size(); ++index) {
             if (!step()) { return {}; }
             const auto parameter = function.getBody().front().getArgument(3 + offset + index);
@@ -322,6 +366,11 @@ std::optional<HostCallableEdge> analyzer::propertyCall(mlir::Operation * operati
     return edge;
 }
 
+/// Collects every call of `function` through the field `publication` stores
+/// it in. False when some call reaches `function` another way or does not
+/// match its arity, receiver or new.target. With `prepared`, the calls must be
+/// direct and pass the closure's captured Map (upvalue 0) as the first
+/// explicit argument (operand 3).
 bool analyzer::capturedMapCalls(ctjs::FuncOp function, ctjs::SetPropertyOp publication,
                                 bool prepared, llvm::SmallVectorImpl<mlir::Operation *> & calls) {
     if (!function || !step()) { return false; }
@@ -366,13 +415,18 @@ bool analyzer::capturedMapCalls(ctjs::FuncOp function, ctjs::SetPropertyOp publi
     return !census.wasInterrupted() && !exhausted;
 }
 
+/// The set of primitive types (categories) `value` may have, as seen by
+/// `consumer`, derived from literals, globals with one store, own-field reads
+/// of entry objects, arithmetic, `===` and scf.if joins. Values found in
+/// `results` are taken from there and, with `dependencies`, appended to it.
+/// Unknown when the value cannot be classified.
 PrimitiveAlternatives analyzer::entryCategories(
     mlir::Value value, const llvm::DenseMap<mlir::Value, PrimitiveAlternatives> & results,
     mlir::Operation * consumer, unsigned depth, std::vector<mlir::Value> * dependencies) {
     if (!value || depth > 64 || !step()) { return {}; }
     auto * definition = value.getDefiningOp();
-    // A source-order anchor can order global effects across a selected arm or
-    // an invocation. It cannot make an SSA value visible outside its region.
+    // before() can order effects across an scf.if arm or a call, but an SSA
+    // value is only usable where it dominates, in its own function.
     if (!definition || (consumer && (definition->getParentOfType<ctjs::FuncOp>() !=
                                          consumer->getParentOfType<ctjs::FuncOp>() ||
                                      !dominance.properlyDominates(definition, consumer)))) {
@@ -403,9 +457,10 @@ PrimitiveAlternatives analyzer::entryCategories(
         return entryCategories(store.getValue(), results, store, depth + 1, dependencies);
     }
     if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(definition)) {
-        // A saved own-field read keeps its read-time category, even when a
-        // later write changes the field. This is no constant-value evidence.
-        // The caller family separately censuses every use of this local leaf.
+        // A read of a field of an object made in the entry function has the
+        // category of the value last written before it, even if a later write
+        // changes the field. This proves only the type, never the value. The
+        // caller must still check every use of the object.
         auto made = read.getObject().getDefiningOp<ctjs::CreateObjectOp>();
         auto write = made ? currentWrite(read, depth + 1) : ctjs::SetPropertyOp{};
         if (!made || made->getParentOp() != entry || read->getParentOp() != entry || !write ||
@@ -425,9 +480,9 @@ PrimitiveAlternatives analyzer::entryCategories(
             return tag == number || tag == mlir::TypeID::get<ctjs::BooleanAttr>();
         };
         if (!numeric(binary.getLhs()) || !numeric(binary.getRhs())) { return {}; }
-        // This is a category, never an evaluated Number. Zero, signed zero,
-        // NaN and infinities remain possible; primitive()/truth() must not
-        // consume this evidence to select a source arm or substitute a value.
+        // This is a type, never an evaluated Number: zero, -0, NaN and
+        // infinities remain possible, so primitive() and truth() must not use
+        // it to pick a branch or substitute a value.
         return PrimitiveAlternatives::forTag(number);
     }
     if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(definition);
@@ -442,8 +497,8 @@ PrimitiveAlternatives analyzer::entryCategories(
         if (!step() || !dominance.dominates(branch.getCondition(), branch)) { return {}; }
         auto result = llvm::cast<mlir::OpResult>(value);
         std::optional<PrimitiveAlternatives> joined;
-        // A category is not a branch predicate. Both live yield operands must
-        // prove their own scope and category, even for a constant condition.
+        // Join both arms, even when the condition is constant: a type proof
+        // does not select branches, so each yielded value must be classified.
         for (mlir::Region & arm : branch->getRegions()) {
             if (!step() || !llvm::hasSingleElement(arm)) { return {}; }
             auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(arm.front().getTerminator());
@@ -467,6 +522,9 @@ PrimitiveAlternatives analyzer::entryCategories(
     return constant ? PrimitiveAlternatives::forTag(constant.getTypeID()) : PrimitiveAlternatives{};
 }
 
+/// Classifies an entry-function read of a global with one earlier store as a
+/// Number, Boolean or String. Every value the classification relied on must be
+/// a checked captured-Map call or a field read of one of its leaf objects.
 std::optional<HostScalarGlobalRead> analyzer::scalarGlobalRead(ctjs::LoadGlobalOp read) {
     if (!step() || read->getParentOp() != entry || !llvm::hasSingleElement(entry.getBody())) {
         return std::nullopt;
@@ -483,12 +541,10 @@ std::optional<HostScalarGlobalRead> analyzer::scalarGlobalRead(ctjs::LoadGlobalO
         result.alternatives.tag() != mlir::TypeID::get<ctjs::StringAttr>()) {
         return std::nullopt;
     }
-    // Literal-backed scalar expressions have no published-call dependency.
-    // Their original operands, sole stores and source scope/order still pass
-    // the same bounded category walk, and publication still requires the
-    // complete environment proof. An empty list supplies no value or type.
-    // The worklist only supplies categories. Require each dependency in the
-    // completed family, including its exact caller leaf and read-time field.
+    // A scalar built only from literals has no dependencies and needs no
+    // further check. Otherwise every value it depends on must be either a
+    // checked captured-Map call (in `checkedCalls`) or a read of a leaf
+    // object field that such a call already proved.
     for (mlir::Value dependency : result.dependencies) {
         if (!step()) { return std::nullopt; }
         auto * origin = dependency.getDefiningOp();
@@ -512,6 +568,9 @@ std::optional<HostScalarGlobalRead> analyzer::scalarGlobalRead(ctjs::LoadGlobalO
     return result;
 }
 
+/// True when `function` runs at most once: each function on the chain from it
+/// to the entry has exactly one exact, unconditional caller, and nothing
+/// calls the entry.
 bool analyzer::singleInvocation(ctjs::FuncOp function) {
     llvm::DenseSet<mlir::Operation *> visited;
     while (function && function != entry) {
@@ -525,13 +584,15 @@ bool analyzer::singleInvocation(ctjs::FuncOp function) {
     return function == entry && callers[entry].empty();
 }
 
+/// The one allocation `value` denotes, traced through globals, field reads,
+/// parameters, call results and scf.if results. Null when unknown.
 ctjs::CreateObjectOp analyzer::object(mlir::Value value, unsigned depth) {
     if (!value || depth > 64 || !step() || !evaluating.insert(value).second) { return {}; }
     const llvm::scope_exit done([&] { evaluating.erase(value); });
     if (auto made = value.getDefiningOp<ctjs::CreateObjectOp>()) {
-        // An allocation site denotes one object only along a unique invocation
-        // path. A sole factory call inside a repeatedly called wrapper still
-        // allocates distinct objects; never merge those property histories.
+        // An allocation site denotes one object only if its function runs
+        // once. A factory called once from a wrapper that is called many
+        // times still makes several objects, whose fields must not be merged.
         return singleInvocation(made->getParentOfType<ctjs::FuncOp>()) ? made
                                                                        : ctjs::CreateObjectOp{};
     }
@@ -591,6 +652,7 @@ ctjs::CreateObjectOp analyzer::object(mlir::Value value, unsigned depth) {
     return {};
 }
 
+/// The primitive literal `value` always holds, or null when unknown.
 mlir::Attribute analyzer::primitive(mlir::Value value, unsigned depth) {
     if (!value || depth > 64 || !step()) { return {}; }
     auto * context = module.getContext();
@@ -629,8 +691,9 @@ mlir::Attribute analyzer::primitive(mlir::Value value, unsigned depth) {
         }
         auto left = primitive(compare.getLhs(), depth + 1);
         auto right = primitive(compare.getRhs(), depth + 1);
-        // UMD branch predicates compare typeof strings. No coercion, NaN,
-        // signed-zero or object equality inference is hidden in this helper.
+        // UMD module wrappers branch on comparisons such as `typeof exports
+        // == "object"`. Only string-to-string comparisons are folded: no
+        // coercion, NaN, signed-zero or object equality is inferred.
         if (llvm::isa_and_nonnull<ctjs::StringAttr>(left) &&
             llvm::isa_and_nonnull<ctjs::StringAttr>(right)) {
             return ctjs::BooleanAttr::get(context, left == right);
@@ -651,6 +714,8 @@ mlir::Attribute analyzer::primitive(mlir::Value value, unsigned depth) {
     return {};
 }
 
+/// The JS truthiness of `value`, or nullopt when unknown. Objects and
+/// closures are truthy.
 std::optional<bool> analyzer::truth(mlir::Value value, unsigned depth) {
     if (!value || depth > 64 || !step()) { return {}; }
     if (auto truthy = value.getDefiningOp<ctjs::TruthyOp>()) {

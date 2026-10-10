@@ -1,4 +1,9 @@
-//===- Presence.h - path-sensitive membership of proved native Maps -------===//
+//===- Presence.h - Map key presence proof ----------------------*- C++ -*-===//
+//
+// Declares provePresence(), the path-sensitive proof of which native Map reads
+// definitely find their key. Presence.cpp has the analysis itself.
+//
+//===----------------------------------------------------------------------===//
 #pragma once
 
 #include "ctcompile/CTJS/IR/CTJSOps.h"
@@ -16,13 +21,20 @@ class OwnedGlobalRoots;
 
 namespace ctcompile::ctnative::map_detail {
 
-// Schema families are consulted only to invalidate possible aliases. A fact
-// is established solely for one runtime instance and one key.
-// snapshotCopies is the caller's live proof set, never input annotations.
-// Required reads must all be present. Optional primitive reads retain their
-// nullable result unless this same independent analysis proves presence.
-// A hostTyped operation is a complete host proof's browser operation: it
-// cannot reach a local Map, so it keeps every fact an unknown call erases.
+/// Proves which Map reads definitely find their key and writes the result as
+/// ctnative.map_* attributes. Returns a refusal reason, or empty on success.
+///
+/// `calls` and `sizes` are every Map method call and `size` read. Every one of
+/// `reads` must be proved present or the proof fails. `optionalReads` are
+/// marked present only when proved; otherwise they keep their nullable
+/// result. `typedReads` get a scalar read type when one is proved.
+/// `familyOf` maps a value to its schema family, consulted only to find
+/// possible aliases: a fact always describes one runtime instance and one
+/// key. `snapshotCopies` are the Array.from copies the caller proved (not IR
+/// attributes). `parameters` seeds the primitive kinds of host-method
+/// parameters. A `hostTyped` operation is a browser operation proved by the
+/// host contract: it cannot reach a local Map, so it keeps every fact an
+/// unknown call would erase.
 std::string provePresence(mlir::ModuleOp module, llvm::ArrayRef<ctjs::CallOp> calls,
                           llvm::ArrayRef<ctjs::GetPropertyOp> sizes,
                           llvm::ArrayRef<ctjs::CallOp> reads,

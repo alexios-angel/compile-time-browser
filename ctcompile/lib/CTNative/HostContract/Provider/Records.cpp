@@ -1,3 +1,10 @@
+//===- Records.cpp - Local constructor and Map records ----------*- C++ -*-===//
+//
+// Implements analyzer::localRecordProblem, which proves that the local record
+// objects and Maps of a DOM Data session entry form a closed graph.
+//
+//===----------------------------------------------------------------------===//
+
 #include "../Analysis.h"
 
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -5,15 +12,24 @@
 
 namespace ctcompile::ctnative::host_detail {
 
+/// For a DOM Data session contract, proves that the entry block's local
+/// constructors and `new Map()` objects form a closed graph: constructors only
+/// store primitive literals or parameters on `this`, Maps are keyed by string
+/// literals, and nothing escapes. On success records the operations in
+/// localRecords and returns an empty string; otherwise returns the refusal
+/// reason. Returns empty without recording anything for other providers.
 std::string analyzer::localRecordProblem() {
     if (contract.provider != HostContract::Provider::ctbrowserDOMDataSession || !entry ||
         !llvm::hasSingleElement(entry.getBody())) {
         return {};
     }
-    // Reconstruct the prepared source graph. No preparation/report attribute,
-    // native Map annotation or previously inferred category is evidence here.
-    // ponytail: uncaptured literal/formal constructors and same-block String-key
-    // Maps. Captured constructors and branch mutations need a wider owner proof.
+    // Rebuild the graph from the prepared IR itself: preparation or report
+    // attributes, native Map annotations and earlier inferred categories are
+    // not trusted here.
+    // ponytail: accepts only constructors with no captures whose field values
+    // are literals or parameters, and Maps keyed by string literals in the
+    // entry block. Captured constructors and Map writes inside branches would
+    // need a wider ownership proof.
     llvm::DenseSet<mlir::Operation *> operations, constructors, closures, maps;
     bool primitiveFields = true;
     llvm::DenseMap<mlir::Value, mlir::Value> origins;
@@ -54,9 +70,10 @@ std::string analyzer::localRecordProblem() {
         if (made) {
             if (made.getNewTarget() != closure.getResult()) { return reject(); }
         } else {
-            // The emitted initializer is an ordinary call on its exact fresh
-            // receiver. Neither native markers nor the original proof can
-            // supply a callable identity or move initialization before a read.
+            // A prepared constructor call is a plain direct call on a fresh
+            // object. Its target is checked here directly: ctnative attributes
+            // and earlier proofs do not count, and the call must come before
+            // any read of the object.
             if (!exactCall(direct) || instance->getParentOp() != entry ||
                 !dominance.properlyDominates(instance.getOperation(), direct) ||
                 !llvm::isa_and_nonnull<ctjs::UndefinedAttr>(literal(direct.getNewTarget())) ||
@@ -153,8 +170,9 @@ std::string analyzer::localRecordProblem() {
             })) {
         return reject();
     }
-    // Preparation keeps retired holder/prototype allocations in the source.
-    // Only an allocation with no observable use belongs to this local graph.
+    // Preparation leaves allocations it no longer needs (former holder and
+    // prototype objects) in place. Such an allocation joins the graph only
+    // when nothing but ctjs.root uses it.
     for (ctjs::CreateObjectOp made : entry.getBody().front().getOps<ctjs::CreateObjectOp>()) {
         if (!step()) { return reject(); }
         bool inert = true;
@@ -226,8 +244,9 @@ std::string analyzer::localRecordProblem() {
         }
         return result;
     };
-    // Postorder visits both read-only arms before their scalar join. All Map
-    // operations and record writes are required to be in the entry block.
+    // The walk is postorder, so both read-only arms of an scf.if are visited
+    // before the value that joins them. All Map operations and record writes
+    // must be in the entry block.
     const auto ordered = entry.walk([&](mlir::Operation * op) {
         if (!step()) { return mlir::WalkResult::interrupt(); }
         if (auto call = llvm::dyn_cast<ctjs::CallOp>(op); call && operations.contains(call)) {
@@ -326,8 +345,9 @@ std::string analyzer::localRecordProblem() {
     for (mlir::Operation * op : operations) {
         if (!step() || op->hasAttr("ctjs.skipped") || !operandsDominate(op)) { return reject(); }
     }
-    // Commit only a complete source proof. Categories never select a branch,
-    // replace an allocation/read, or establish its native storage lifetime.
+    // Commit only after the whole proof passes. The recorded categories are
+    // type facts only: they never select a branch, replace an allocation or a
+    // read, or decide how long native storage lives.
     for (auto [value, result] : scalars) {
         if (!step()) { return reject(); }
         classScalarReads[value] = result;

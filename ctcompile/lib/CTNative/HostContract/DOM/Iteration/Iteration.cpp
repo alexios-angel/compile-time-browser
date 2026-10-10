@@ -1,3 +1,14 @@
+//===- Iteration.cpp - DOM iteration and default folding --------*- C++ -*-===//
+//
+// Two rewrites on a private, fingerprint-checked clone of a DOM entry:
+// normalizeDOMElementGuards folds default-parameter guards on the entry's
+// element parameters (which are never null or undefined), and
+// normalizeDOMIteration turns for-of over a querySelectorAll snapshot into
+// indexed access. Both are declared and documented in HostContract.h; the
+// caller, or normalizeDOMIteration itself, re-runs DOMEntryAnalysis afterwards.
+//
+//===----------------------------------------------------------------------===//
+
 #include "../Snapshot/Bounds.h"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
 #include "ctcompile/CTNative/Analysis/WorkBudget.h"
@@ -16,7 +27,7 @@ llvm::Error normalizeDOMElementGuards(mlir::ModuleOp candidate, const HostContra
     const auto error = [](llvm::StringRef text) { return llvm::createStringError(text); };
     WorkBudget budget{maxSteps};
     const auto spend = [&] { return budget.spend(); };
-    // Charge the source census and fingerprint before inspecting the contract.
+    // Charge the walk and the fingerprint before inspecting the contract.
     if (!budget.spendWalk(candidate, [](mlir::Operation * operation) {
             return 2 * (uint64_t(1) + operation->getNumOperands());
         })) {
@@ -44,8 +55,8 @@ llvm::Error normalizeDOMElementGuards(mlir::ModuleOp candidate, const HostContra
         }
         truth[entry.getBody().front().getArgument(index + ctjs::implicit_arguments)] = true;
     }
-    // Only exact input SSA identities seed truthiness. In particular, nullable
-    // closest results, cells, joins and loop-carried values acquire no facts.
+    // Only the parameters' own SSA values start out known truthy. Nullable
+    // `closest` results, cells, joins and loop-carried values learn nothing.
     llvm::SmallVector<std::pair<mlir::Operation *, bool>> booleans;
     llvm::SmallVector<std::pair<ctjs::TruthyOp, bool>> queries;
     llvm::SmallVector<std::pair<mlir::scf::IfOp, bool>> branches;
@@ -69,8 +80,8 @@ llvm::Error normalizeDOMElementGuards(mlir::ModuleOp candidate, const HostContra
             } else {
                 const auto undefined = [](mlir::Value value) {
                     auto global = value.getDefiningOp<ctjs::LoadGlobalOp>();
-                    // The DOM provider fixes this initial binding. Complete
-                    // entry reproof still rejects replacement and reentry.
+                    // The DOM provider fixes the initial `undefined` global.
+                    // DOMEntryAnalysis still rejects writes to it and reentry.
                     return ctjs::isUndefinedConstant(value) ||
                            (global && global.getName() == "undefined");
                 };
@@ -114,8 +125,8 @@ llvm::Error normalizeDOMElementGuards(mlir::ModuleOp candidate, const HostContra
             return error("DOM element guard lost its value correspondence");
         }
     }
-    // All work and replacements are known before mutation. The caller owns this
-    // private clone and must still reprove the complete live DOM entry.
+    // Every replacement is decided before anything changes. The caller owns
+    // this private clone and must still run DOMEntryAnalysis on the result.
     for (auto [operation, value] : booleans) {
         mlir::OpBuilder at(operation);
         auto constant = ctjs::ConstantOp::create(
@@ -135,8 +146,9 @@ llvm::Error normalizeDOMElementGuards(mlir::ModuleOp candidate, const HostContra
 
 llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract & contract,
                                   unsigned maxSteps) {
-    // Only the private preparation clone is changed. Its complete DOM proof
-    // must still reject writes, reentry, escaped snapshots and unknown calls.
+    // Only the private preparation clone is changed. DOMEntryAnalysis, run at
+    // the end, must still reject writes, reentry, escaped snapshots and unknown
+    // calls.
     WorkBudget budget{maxSteps};
     const auto spend = [&] { return budget.spend(); };
     const auto error = [](llvm::StringRef text) { return llvm::createStringError(text); };
@@ -192,8 +204,9 @@ llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract &
         if (!producer && !originalSnapshot.getDefiningOp<ctjs::CallSpreadOp>()) {
             return error("DOM iterator input is not a proved owning snapshot");
         }
-        // Only the importer's exact materialization arm belongs to this open.
-        // A separate spread of the same source must keep its own copy semantics.
+        // Only the importer's materialization arm (the `iterable` under
+        // `if (iter === undefined)`) belongs to this open. A separate spread of
+        // the same source must keep its own copy semantics.
         llvm::DenseSet<mlir::Operation *> materializations;
         const auto find = entry.walk([&](mlir::Operation * operation) {
             if (!spend()) { return mlir::WalkResult::interrupt(); }
@@ -229,9 +242,10 @@ llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract &
         open.getResult().replaceAllUsesWith(empty.getResult());
         open.erase();
 
-        // Select only exact constant branches. Unselected effects are unreachable
-        // because the original helpers select eager, indexed iteration for these
-        // snapshots. No user callback or browser code runs in the protocol arm.
+        // Fold only branches on constants. The discarded arms are unreachable
+        // because the original helpers choose eager, indexed iteration for
+        // these snapshots; no user callback or browser code runs in the
+        // iterator-protocol arm.
         bool changed = true;
         while (changed) {
             changed = false;
@@ -262,8 +276,9 @@ llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract &
                          members.contains(compare.getRhs().getDefiningOp()));
                     if (compare.getKind() == ctjs::CompareKind::StrictEq &&
                         (bothUndefined || definedMember)) {
-                        // A bounded snapshot member cannot select a helper's
-                        // undefined default. Reprove each member after copying.
+                        // A bounds-checked snapshot element is never undefined,
+                        // so it cannot select a helper's undefined default.
+                        // Each member is re-checked after DOMEntryAnalysis.
                         auto value = ctjs::ConstantOp::create(
                             at, compare.getLoc(),
                             ctjs::BooleanAttr::get(candidate.getContext(), bothUndefined));
@@ -296,8 +311,8 @@ llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract &
                         if (!yield || yield.getOperandTypes() != branch.getResultTypes()) {
                             return error("DOM iterator branch lost its value correspondence");
                         }
-                        // ponytail: recorded inputs in later-discarded arms refuse.
-                        // Pre-prune those arms if their admission becomes necessary.
+                        // ponytail: a discarded arm holding a recorded input is
+                        // refused; prune such arms before recording if needed.
                         for (mlir::Region & region : branch->getRegions()) {
                             if (&region == &selected) { continue; }
                             const auto discarded = region.walk([&](mlir::Operation * dead) {
@@ -374,12 +389,12 @@ llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract &
         }
         return llvm::Error::success();
     };
-    // Normalize privately, then prove every input and the entire live entry.
-    // Nested queries stay in their original bodies; no loop state is invented.
+    // Rewrite each open, then check every input and the whole live entry.
+    // Nested queries stay in their original bodies; no loop state is added.
     while (!opens.empty()) {
         if (auto failure = normalize(opens.front())) { return failure; }
-        // Constant branch folding can erase another open in an unreachable arm.
-        // Recollect live operations instead of retaining pointers into that arm.
+        // Constant branch folding can erase another open in an unreachable arm,
+        // so collect the live opens again instead of keeping stale pointers.
         opens.clear();
         const auto scan = entry.walk([&](mlir::Operation * operation) {
             if (!spend()) { return mlir::WalkResult::interrupt(); }
@@ -432,8 +447,9 @@ llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract &
     }
     for (Input & input : inputs) {
         if (!spend()) { return error("DOM iteration work budget exhausted"); }
-        // Spread producers have been erased only by the complete confined-copy
-        // proof above. Never dereference their deleted IRMapping targets.
+        // Spread inputs have no producer: normalizeDOMSnapshotLengths erased
+        // them after proving the copy exact. Never dereference those erased
+        // IRMapping targets.
         if (!input.producer) { continue; }
         auto * mapped = mapping.lookupOrDefault(input.producer.getOperation());
         if (!live.contains(mapped)) { return error("DOM iterator lost its input producer"); }

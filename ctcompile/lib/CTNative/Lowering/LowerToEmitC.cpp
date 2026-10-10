@@ -1,25 +1,28 @@
-// THE FIRST NATIVE ARTEFACT - part 24 Phase 62½-C.
+//===- LowerToEmitC.cpp - Lower proved ctjs functions to EmitC ------------===//
 //
-// Everything before this file is an analysis. This is the lowering: a
-// `ctjs.func` whose every value has a PROVED type the native tier can carry
-// becomes an `emitc.func` over native C++ carriers, and a function that does
-// not is refused with a diagnostic naming the first value or operation that
-// failed. Part 24 §1.2: the output links neither the interpreter nor its
-// collector, and there is no boxed fallback - a refusal is a reason on the
-// function, and the compilation-unit gate says whether the program is native.
+// The native lowering. Everything before this pass is analysis. A `ctjs.func`
+// whose every value has a proved type with a native C++ carrier becomes an
+// `emitc.func` over those carriers. Any other function is refused: it gets a
+// `ctnative.not_native` attribute naming the first value or operation that
+// failed. The output links neither the interpreter nor its garbage collector,
+// and nothing falls back to boxed values. Whether the whole program is native
+// is decided from those per-function refusals.
 //
 // JavaScript Booleans and Numbers use ctnative::js_boolean_t and js_num.
-// Strings own their bytes; nullable scalars retain distinct undefined/null tags.
+// Strings own their bytes; nullable scalars keep distinct undefined/null tags.
 // Collection and public ctbrowser storage boundaries extract raw C++ values
-// explicitly. The carrier table lives in LoweringSupport.cpp.
+// explicitly. The carrier table (kCarriers) lives in LoweringSupport.h.
 //
-// NOT A DIALECT CONVERSION, deliberately. After --ctjs-lift-to-scf the body is
-// structured, and after the inference every value's type is known; retyping
-// each value in place from the lattice and replacing each ctjs operation with
-// its EmitC form leaves the whole of `scf` untouched for upstream's
+// This is deliberately not a dialect conversion. After --ctjs-lift-to-scf the
+// body is structured, and after type inference every value's type is known.
+// Retyping each value in place from the lattice and replacing each ctjs
+// operation with its EmitC form leaves all of `scf` for upstream's
 // --convert-scf-to-emitc, which already handles `scf.if`, `scf.for` and
-// `scf.while`. A TypeConverter converts by TYPE, and every JavaScript value
-// has the same type; the lattice is per VALUE.
+// `scf.while`. A TypeConverter converts by type, but every JavaScript value has
+// the same MLIR type; the lattice is per value.
+//
+//===----------------------------------------------------------------------===//
+
 #include "../Analysis/OwnedGlobalRoots.h"
 #include "../Analysis/OwnedMethodTableSlots.h"
 #include "../HostContract/Preparation.h"
@@ -43,9 +46,12 @@ namespace ctcompile::ctnative {
 namespace {
 using namespace lowering_detail;
 
-// Called only on the private clone after complete ownership validation. A
-// declared absent binding also requires source typeof-lookup provenance; source
-// writes never reach this path. Charge before mutation, then reprove the clone.
+/// Replaces host-declared undefined bindings (and absent bindings read through
+/// `typeof`) with an `undefined` constant, and `typeof` of a proved fresh owner
+/// with the constant "object". Called only on the private clone after complete
+/// ownership validation; source writes never reach this path. All budget is
+/// charged before any mutation, and the caller reproves the clone afterwards.
+/// Returns false when `remaining` steps are not enough.
 bool materializeHostPrimitives(mlir::ModuleOp module, const HostContract & contract,
                                const OwnedGlobalRoots & owners, unsigned remaining) {
     WorkBudget budget{remaining};
@@ -102,16 +108,16 @@ bool materializeHostPrimitives(mlir::ModuleOp module, const HostContract & contr
     return true;
 }
 
-// THE PRIVATE-CLONE PROTOCOL every host preparation follows, once. The
-// module is never mutated speculatively: `prepare` works on a clone under a
-// copy of the contract whose fingerprint it refreshes whenever it reproves a
-// stage of its own, the prepared clone is fingerprinted and reproved by
-// `Analysis`, and only a complete proof publishes the clone's attributes and
-// body into the module and the refreshed contract into `hostContract`.
-// `prepare` may swap the clone for a further clone of it. The return is the
-// refusal - `prefix` heads an analysis refusal so each caller's diagnostic
-// reads as it always has - and empty means the module now holds the prepared
-// body.
+/// The private-clone protocol that every host preparation follows. The module
+/// is never mutated speculatively: `prepare` works on a clone under a copy of
+/// the contract, refreshing its fingerprint whenever it reproves a step of its
+/// own. The prepared clone is then fingerprinted and reproved by `Analysis`,
+/// and only a complete proof publishes the clone's attributes and body into
+/// the module and the refreshed contract into `hostContract`. `prepare` may
+/// replace the clone with a further clone of it.
+///
+/// Returns the refusal, with `prefix` in front of an analysis refusal, or an
+/// empty string when the module now holds the prepared body.
 template <typename Analysis, typename Prepare>
 std::string withProvedClone(mlir::ModuleOp module, std::optional<HostContract> & hostContract,
                             unsigned maxSteps, llvm::StringRef prefix, Prepare prepare) {
@@ -127,9 +133,10 @@ std::string withProvedClone(mlir::ModuleOp module, std::optional<HostContract> &
     return {};
 }
 
-// A DOM entry's local standard Maps. The complete DOM proof of the clone types
-// every other read and call - the identity evidence prepareNativeMaps needs -
-// and a Map it cannot prove refuses the entry rather than lowering boxed.
+/// Prepares a DOM entry's local standard Maps. The complete DOM proof of the
+/// clone types every other read and call, which is the identity evidence
+/// prepareNativeMaps needs. A Map it cannot prove refuses the entry rather than
+/// lowering boxed. Returns the refusal, or empty on success.
 std::string prepareDOMMaps(mlir::ModuleOp module, std::optional<HostContract> & hostContract,
                            unsigned maxSteps) {
     bool maps = false;
@@ -241,13 +248,14 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
             domEntry = std::make_unique<DOMEntryAnalysis>(module, *hostContract, hostMaxSteps);
         }
 
-        // Keep the default policy on the native entry, so clients do not need
-        // to reconstruct it in a shell/test pipeline. Run before closure
-        // lifting: reachability still sees CTJS's complete reference forms,
-        // and an unreachable private body never reaches type admission.
-        // The pass manager owns analysis invalidation and instrumentation.
-        // Host preparation validates the fingerprinted input separately below;
-        // general optimization cannot silently rebind a driver manifest.
+        // Run the default optimizations here, so clients do not need to
+        // rebuild them in a shell or test pipeline. They run before closure
+        // lifting: reachability still sees ctjs's complete reference forms,
+        // and an unreachable private body never reaches type admission. A
+        // nested pass manager owns analysis invalidation and instrumentation.
+        // They are skipped under a host contract, whose fingerprinted input
+        // is validated separately below, so general optimization cannot
+        // silently invalidate a driver manifest.
         if (!hostContract && optimize && (precompute || pruneUnreachable)) {
             mlir::OpPassManager defaults(mlir::ModuleOp::getOperationName());
             if (precompute) {
@@ -263,19 +271,19 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
             if (failed(runPipeline(defaults, module))) { return signalPassFailure(); }
         }
 
-        // PHASE 59 SLICE 1, AND IT RUNS BEFORE THE SOLVE. Lifting turns a
-        // closure call into a ctjs.call_direct, which is what makes the target
-        // reachable to DeadCodeAnalysis at all - an uncalled private function
-        // is dead, and every type in it reads `<unvisited>` - and what lets
-        // TypeInference carry each capture's proved type into the leading
-        // parameter it became. Doing it after the solve would need a second
-        // one.
+        // Closure lifting runs before the type solve. Lifting turns a closure
+        // call into a ctjs.call_direct. That makes the target reachable to
+        // DeadCodeAnalysis (an uncalled private function is dead, and every
+        // type in it reads `<unvisited>`), and lets TypeInference carry each
+        // capture's proved type into the leading parameter it became. Lifting
+        // after the solve would need a second solve.
         liftReport lifted;
         if (hostContract && !domEntry && hostMaxSteps &&
             hostContract->moduleSha256 == hostContractFingerprint(module)) {
-            // Local cell/unused receiver normalization needs no host assumptions.
-            // It is speculative: only a complete fresh owner proof can publish it.
-            // Nothing here is a diagnostic - a refusal leaves the module as it was.
+            // Normalizing local cells and unused receivers needs no host
+            // assumptions. It is speculative: only a complete fresh-owner proof
+            // can publish it. Nothing here is a diagnostic; a refusal leaves the
+            // module as it was.
             liftReport locals;
             std::optional<liftReport> result;
             const std::string refusal = withProvedClone<OwnedGlobalRoots>(
@@ -303,9 +311,9 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                             result = preparation.prepareOwnedGlobalMethodTables(source, transformed,
                                                                                 hostMaxSteps);
                         } else {
-                            // Scalar owners need no closure rewrite, but old
-                            // native facts must not erase their live stores
-                            // either.
+                            // Scalar owners need no closure rewrite, but stale
+                            // native facts already on the IR must not erase
+                            // their live stores either.
                             preparation.discardNativeSourceFacts();
                             result = liftReport{};
                         }
@@ -344,9 +352,11 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                 {.maxSteps = precomputeMaxSteps, .report = optimizationReport}));
             if (failed(runPipeline(guards, module))) { return signalPassFailure(); }
         }
-        // Recovery/normalization is speculative until type/effect admission and the entire
-        // closed call component pass. Refused functions keep their original
-        // status edges for boxed lowering; a diagnostic is never a proof.
+        // Exception recovery and structured-exit normalization are
+        // speculative. They stay only if the function and its whole closed
+        // call component pass admission. Refused functions get their original
+        // bodies back (the restore loop before the shape census below). A
+        // diagnostic is never a proof.
         llvm::SmallVector<std::pair<ctjs::FuncOp, mlir::OwningOpRef<ctjs::FuncOp>>, 0>
             recoveryOriginals;
         module.walk([&](ctjs::FuncOp fn) {
@@ -400,10 +410,10 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
             prepareNativeObjectIdentities(module);
         }
         if (census) {
-            // ONE LINE, DETERMINISTIC. StringMap iterates in hash order, so it
-            // is sorted by count and then by name - a census whose text moves
-            // between runs cannot be pinned by a lit and cannot be diffed
-            // between two corpora runs either.
+            // The census is one deterministic line. StringMap iterates in hash
+            // order, so entries are sorted by count and then by name; text that
+            // moved between runs could not be pinned by a lit test or diffed
+            // between two corpus runs.
             const auto ordered = [](const llvm::StringMap<unsigned> & from) {
                 llvm::SmallVector<std::pair<llvm::StringRef, unsigned>> out;
                 for (const auto & entry : from) { out.emplace_back(entry.first(), entry.second); }
@@ -455,11 +465,11 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                                 << " call-only function parameter(s) erased";
         }
 
-        // THE ALIAS GROUPS, once the lift has written its attributes and before
-        // anything reads a field. TypeInference::groupReceivers is the one walk
-        // that says which values name one object; admission and the shape
-        // census both read it, so a field a method touches is the same field
-        // the literal has in both.
+        // Compute the alias groups once the lift has written its attributes
+        // and before anything reads a field. TypeInference::groupReceivers is
+        // the one walk that says which values name the same object; admission
+        // and the shape census both read it, so a field a method touches is
+        // the same field the literal has in both.
         auto ownedGlobals =
             hostContract && !domEntry
                 ? std::make_unique<OwnedGlobalRoots>(module, *hostContract, hostMaxSteps)
@@ -475,7 +485,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         }
         const OwnedMethodTableSlots ownedTableSlots(module);
 
-        // All three, and none optional - TypeInference.h says why.
+        // All three analyses are required; TypeInference.h says why.
         mlir::DataFlowSolver solver;
         solver.load<mlir::dataflow::DeadCodeAnalysis>();
         solver.load<mlir::dataflow::SparseConstantPropagation>();
@@ -488,8 +498,9 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         module.walk([&](ctjs::FuncOp fn) { functions.push_back(fn); });
 
         llvm::SmallVector<ctjs::FuncOp> accepted;
-        // Rebuild at the final consumer. The solver did not mutate source IR,
-        // and no diagnostic annotation may stand in for this live query.
+        // Rebuild the ownership proofs here, at their final consumer. The
+        // solver did not mutate the source IR, and no diagnostic annotation may
+        // stand in for this live query.
         auto admittedGlobals =
             hostContract && !domEntry
                 ? std::make_unique<OwnedGlobalRoots>(module, *hostContract, hostMaxSteps)
@@ -530,10 +541,11 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
             }
         }
 
-        // Identity members are shared by property name across allocation sites.
-        // Check every candidate store before removing any call component; neither
-        // a final narrowed read nor a separately admitted function may choose an
-        // incompatible carrier for the same emitted member.
+        // Identity-object members are shared by property name across
+        // allocation sites. Check every candidate store before removing any
+        // call component, so that neither a narrowed read nor a separately
+        // admitted function can choose an incompatible carrier for the same
+        // emitted member.
         const auto fieldTypes = identityFieldStoreTypes(solver, accepted);
         llvm::erase_if(accepted, [&](ctjs::FuncOp fn) {
             std::string reason;
@@ -551,19 +563,19 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
             return true;
         });
 
-        // THE FIXPOINT: a function is native only if every function it calls
+        // The fixpoint: a function is native only if every function it calls
         // directly is. Drop any accepted function that calls a refused one,
-        // name the callee in its diagnostic, and repeat until nothing moves -
-        // a refusal anywhere in a call chain reaches every caller.
+        // name the callee in its diagnostic, and repeat until nothing changes,
+        // so a refusal anywhere in a call chain reaches every caller.
         llvm::DenseSet<mlir::Operation *> nativeSet;
         for (ctjs::FuncOp fn : accepted) { nativeSet.insert(fn.getOperation()); }
         mlir::SymbolTable symbols(module);
-        // CLOSED IN BOTH DIRECTIONS. A native caller needs a native callee to
-        // emit an emitc.call to; and a native CALLEE needs every caller native
-        // too, because a refused caller keeps a ctjs.call_direct that must
-        // name a ctjs.func with a body - which a lowered function no longer
-        // is. So a refusal propagates along the call graph both ways, each
-        // step naming the function that caused it, until nothing moves.
+        // The native set is closed in both directions. A native caller needs a
+        // native callee to emit an emitc.call to, and a native callee needs
+        // every caller native too: a refused caller keeps a ctjs.call_direct,
+        // which must name a ctjs.func with a body, and a lowered function no
+        // longer has one. So a refusal propagates along the call graph both
+        // ways, each step naming the function that caused it.
         for (bool changed = true; changed;) {
             changed = false;
             for (ctjs::FuncOp fn : functions) {
@@ -583,8 +595,8 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                         changed = true;
                     }
                 };
-                // Retained code is an edge too. A callable builder names its
-                // target even when the factory itself never invokes it.
+                // A retained closure is an edge too: create_closure names its
+                // target even when the enclosing function never invokes it.
                 fn.getBody().walk([&](ctjs::CreateClosureOp made) {
                     if (environmentTarget(made).empty()) { return; }
                     edge(symbols.lookup(environmentTarget(made)),
@@ -636,30 +648,25 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                                                : cIdentifier(fn.getSymName());
         }
 
-        // THE GLOBAL CENSUS, over the whole accepted set and BEFORE any
+        // The global census, over the whole accepted set and before any
         // function is lowered.
         //
-        // Two things depend on it. First, `main` prints the globals from this
-        // set, and it used to be filled lazily as each global was first
-        // touched - so a global written and read only inside a helper was
-        // declared and never printed, because main is the importer's function
-        // 0 and is lowered first. The differential then failed by naming the
-        // missing line rather than the ordering, which is a bug report
-        // pointing at the wrong file.
+        // Two things depend on it. First, `main` prints the globals in this
+        // set, and main (the importer's function 0) is lowered first, so the
+        // set must be complete before any function is lowered or a global used
+        // only inside a helper is never printed.
         //
         // Second, a global with no store anywhere in the unit is `undefined`,
-        // and this tier carries undefined as NaN - exact for arithmetic and
-        // comparison, NOT for printing, where the interpreter reports "not a
-        // Number" and the binary would print `nan`. That difference is
-        // observable, so it is refused rather than represented, which is the
-        // rule this file is built on.
-        // A FUNCTION'S OWN NAME IS A GLOBAL TOO, and it is not one of these.
-        // `function f(){}` at the top level is a store of a closure into the
-        // global "f", and every call is a load of it; both lower to nothing,
-        // because the closed world turned the call into a direct one. Counting
-        // them would declare `static double g_accumulate;` and print
-        // `accumulate=0` beside the numbers - which is exactly what happened
-        // the first time this census ran.
+        // and native code carries undefined as NaN. That is exact for
+        // arithmetic and comparison but not for printing, where the
+        // interpreter does not print a number and the binary would print
+        // `nan`. The difference is observable, so it is refused rather than
+        // represented, which is the rule this file is built on.
+        //
+        // A top-level function's name is a global too, but not one of these:
+        // `function f(){}` stores a closure into global "f" and every call
+        // loads it, and both lower to nothing because the calls are direct.
+        // Counting them would declare and print a spurious `f=0`.
         const auto bindsAFunction = [](ctjs::StoreGlobalOp store) {
             return llvm::isa_and_nonnull<ctjs::CreateClosureOp>(store.getValue().getDefiningOp());
         };
@@ -710,12 +717,13 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
             }
         }
 
-        // AND THE SHAPE CENSUS, for the same reason and in the same place -
+        // The shape census runs for the same reason and in the same place:
         // after the last function has left the accepted set and before the
-        // first is lowered. Phase 56C keys a class on the SHAPE and not on the
-        // creation site, and whether a shape's definition is a template is a
-        // property of every site in the program at once, so no site's type can
-        // be spelled until all of them have been seen.
+        // first is lowered. Emitted structs are keyed on the object's shape,
+        // not on its creation site, and whether a shape's definition is a
+        // template depends on every site in the program, so no site's type can
+        // be written until all of them have been seen. First, refused
+        // functions get back the bodies speculative recovery replaced.
         for (auto & [fn, original] : recoveryOriginals) {
             if (llvm::is_contained(accepted, fn)) { continue; }
             fn.getBody().takeBody(original->getBody());

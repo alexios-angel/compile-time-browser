@@ -1,3 +1,16 @@
+//===- EngineContract.hpp - Engine layout ctcompile relies on ---*- C++ -*-===//
+//
+// What ctcompile assumes about the engine's bytecode and value layout, written
+// as static_asserts so that a layout change in ctbrowser breaks the ctcompile
+// build instead of silently drifting from a prose description.
+//
+// They live in ctcompile, not ctbrowser, because they are the compiler's
+// assumptions about the runtime, not the runtime's own invariants; a
+// runtime-only build must not carry them. The runtime declares, the compiler
+// reads. The program-image serializer relies on every fact asserted here.
+//
+//===----------------------------------------------------------------------===//
+
 #pragma once
 
 #include <cstddef>
@@ -6,23 +19,6 @@
 
 #include <ctbrowser/script/bytecode.hpp>
 #include <ctbrowser/script/value.hpp>
-
-// WHAT ctcompile ASSUMES ABOUT THE ENGINE, as build errors.
-//
-// Phase 0's Program Representation Inventory. The inventory is not a document -
-// a prose description of a layout drifts from the layout within weeks and
-// nothing can check it - so it is a header of `static_assert`s that the
-// compiler includes. When the engine changes one of these facts, ctcompile
-// STOPS BUILDING, which is the earliest and cheapest place to find out.
-//
-// It lives in ctcompile rather than in ctbrowser on purpose. These are the
-// COMPILER's assumptions about the runtime, not the runtime's own invariants,
-// and a runtime-only build must not carry them (Principle 2). The direction of
-// ownership is the same one Principle 11 states for the AOT ABI: the runtime
-// declares, the compiler reads.
-//
-// Phase 15 serializes exactly these structures. Every assert here is a fact
-// that serializer will depend on.
 
 namespace ctcompile::engine_contract {
 
@@ -33,29 +29,29 @@ using ctbrowser::script::program;
 using ctbrowser::script::upvalue_desc;
 using value_t = ctbrowser::script::value;
 
-// --- THE INSTRUCTION -----------------------------------------------------
+// --- The instruction -----------------------------------------------------
 // Eight bytes, and flat. This is what lets a compiled image hold the code
 // array as bytes rather than as a decoded structure.
 static_assert(sizeof(instruction) == 8, "an instruction is one 64-bit word");
 static_assert(std::is_trivially_copyable_v<instruction>,
               "an instruction can be copied with memcpy");
 
-// AND IT MUST NOT BE WRITTEN WITH ONE. `instruction` is {op at 0, PADDING at 1,
-// a at 2, b at 4, c at 6}: eight bytes, but alignof 2 and a hole. Measured on
-// this toolchain, `instruction::with_bx(op::jump, 7, 0x12345678)` puts 0x02 in
-// that hole at -O0 and 0x00 at -O2 - the SAME instruction, different bytes,
-// decided by how the code that built it was compiled.
+// But it must not be serialized with memcpy. `instruction` is {op at 0,
+// padding at 1, a at 2, b at 4, c at 6}: eight bytes, but alignof 2 and a hole.
+// Measured on this toolchain, `instruction::with_bx(op::jump, 7, 0x12345678)`
+// puts 0x02 in that hole at -O0 and 0x00 at -O2: the same instruction,
+// different bytes, decided by how the code that built it was compiled.
 //
 // So a serializer that memcpy's a code array produces a different file for the
 // same program depending on the build that wrote it, while every correctness
 // test passes: the padding is not read by anything, so nothing is wrong except
-// that two identical programs no longer have identical images. Phase 15 writes
-// op, a, b and c as four explicit little-endian fields for that reason, and
-// this assert is here so the shortcut is refused at compile time rather than
-// discovered when two builds disagree about a hash.
+// that two identical programs no longer have identical images. The image
+// serializer therefore writes op, a, b and c as four explicit little-endian
+// fields, and this assert refuses the memcpy shortcut at compile time rather
+// than leaving it to be discovered when two builds disagree about a hash.
 //
-// The fix is in the WRITER and not in the struct. Adding an explicit pad member
-// would rebind ~215 positional aggregate initialisations across the compiler -
+// The fix is in the writer, not the struct. Adding an explicit pad member
+// would rebind ~215 positional aggregate initialisations across the compiler,
 // and the ones whose second argument is small enough for a uint8 would compile
 // silently and mean something else.
 static_assert(!std::has_unique_object_representations_v<instruction>,
@@ -65,9 +61,9 @@ static_assert(!std::has_unique_object_representations_v<instruction>,
 static_assert(std::is_same_v<std::underlying_type_t<op>, std::uint8_t>,
               "the opcode is one byte, which is what leaves three uint16 operands in eight");
 
-// A REGISTER MACHINE: a, b and c are frame slots or indices, and b+c can be
+// A register machine: a, b and c are frame slots or indices, and b+c can be
 // read as one 32-bit field. Pinned by evaluation rather than by description,
-// because this is the encoding the importer in Phase 9 decodes.
+// because this is the encoding the bytecode importer decodes.
 static_assert(instruction{op::load_const, 0, 0x1234, 0x5678}.bx() == 0x12345678u,
               "bx() is b in the high half and c in the low half");
 static_assert(instruction::with_bx(op::load_const, 7, 0x12345678u).b == 0x1234 &&
@@ -77,21 +73,20 @@ static_assert(instruction{op::jump, 0, 0xFFFF, 0xFFFF}.sbx() == -1,
               "sbx() is the signed reading of the same field, which is how a backward jump "
               "is encoded");
 
-// --- THE VALUE -----------------------------------------------------------
-// NaN-boxed into one word. Phase 10A can name `ctbrowser::script::value`
-// directly in generated C++ and let the host compiler resolve it; Phase 11's
-// type converter maps !ctjs.value to i64 and MUST take the constants from
-// value.hpp rather than restating them - a second copy that drifts is a
-// miscompile.
+// --- The value -----------------------------------------------------------
+// NaN-boxed into one word. Generated C++ can name ctbrowser::script::value
+// directly and let the host compiler resolve it. Any lowering that maps
+// !ctjs.value to i64 must take the tag constants from value.hpp rather than
+// restating them; a copy that drifts is a miscompile.
 static_assert(sizeof(value_t) == 8, "a JS value is one machine word");
 static_assert(std::is_trivially_copyable_v<value_t>, "a constant pool is copied as bytes");
 
-// --- WHAT IS AND IS NOT FLAT ---------------------------------------------
-// `constants` holds IMMEDIATES ONLY. A string literal cannot live there: a
+// --- What is and is not flat ---------------------------------------------
+// `constants` holds immediates only. A string literal cannot live there: a
 // `value` for a string is a pointer into a VM heap that does not exist at
-// compile time, so the TEXT is kept in `strings` and the VM materializes it.
-// That is why a compiled program is independent of any one VM instance, and it
-// is the single most important fact for Phase 15: the constant pool
+// compile time, so the text is kept in `strings` and the VM materializes it.
+// That is why a compiled program is independent of any one VM instance, and
+// it is the most important fact for the image serializer: the constant pool
 // serializes as bytes, the string tables do not.
 static_assert(std::is_trivially_copyable_v<upvalue_desc>, "the upvalue table serializes as bytes");
 static_assert(!std::is_trivially_copyable_v<function_proto>,

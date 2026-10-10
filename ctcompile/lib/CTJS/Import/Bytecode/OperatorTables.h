@@ -1,30 +1,38 @@
+//===- OperatorTables.h - Operator opcode tables ----------------*- C++ -*-===//
+//
+// The binary, comparison and unary opcodes the bytecode importer handles, as
+// tables rather than a switch scattered through the walk. A binary opcode
+// missing here is not silently mistranslated: it reaches the default arm and
+// the importer abandons the function.
+//
+//===----------------------------------------------------------------------===//
 #pragma once
 
 #include "Importer.h"
 
 namespace ctcompile::js::bytecode_detail {
 
-// THE OPCODES THIS CUT UNDERSTANDS, as a table rather than a switch scattered
-// through the walk. A binary opcode that is not here is not silently wrong: it
-// reaches the default arm and abandons the function.
+/// A binary opcode and the ctjs.binary kind it imports as.
 struct binary_row {
     op code;
     ctjs::BinaryKind kind;
+    /// Whether the operation can run user code (valueOf, toString) and so
+    /// re-enter the engine.
     bool re_entering;
 };
 
 inline constexpr binary_row binary_rows[] = {
-    // THE STATIC FAMILY, which is now `add` alone: ct_aot_binary_op_static
-    // converts with to_number and runs no user code. The VM's own op::add
-    // ToNumerics its operands since ec1b5a89b, so `x++` on an object runs its
-    // valueOf in the interpreter; the helper still does not, and until that
-    // browser-side fix lands this row stays static rather than claim an edge
-    // the call it lowers to never takes.
+    // `add` is the only static (non-re-entering) row: ct_aot_binary_op_static
+    // converts with to_number and runs no user code. The VM's op::add applies
+    // ToNumeric, so `x++` on an object calls its valueOf in the interpreter,
+    // but the AOT helper does not yet. Until the helper matches, this row
+    // stays static rather than claim a re-entry edge the lowered call never
+    // takes.
     {op::add, ctjs::BinaryKind::Add, false},
-    // AND THE RE-ENTERING ONES. `add_generic` is what source `+` compiles to;
+    // The re-entering rows. `add_generic` is what source `+` compiles to;
     // `op::add` comes only from `++` and three internal counters. The six
-    // bitwise opcodes ToNumeric both operands, left first, so an object's
-    // valueOf runs and a Symbol is a TypeError - and context::binary_op
+    // bitwise opcodes apply ToNumeric to both operands, left first, so an
+    // object's valueOf runs and a Symbol is a TypeError, and context::binary_op
     // answers them exactly as the interpreter does.
     {op::bit_and, ctjs::BinaryKind::BitAnd, true},
     {op::bit_or, ctjs::BinaryKind::BitOr, true},
@@ -41,6 +49,8 @@ inline constexpr binary_row binary_rows[] = {
     {op::concat, ctjs::BinaryKind::Concat, true},
 };
 
+/// A comparison opcode, its ctjs.compare kind, and whether to negate the
+/// result (`!==` is a negated StrictEq).
 struct compare_row {
     op code;
     ctjs::CompareKind kind;
@@ -58,6 +68,7 @@ inline constexpr compare_row compare_rows[] = {
     {op::greater_equal, ctjs::CompareKind::Ge, false},
 };
 
+/// A unary opcode and the ctjs.unary kind it imports as.
 struct unary_row {
     op code;
     ctjs::UnaryKind kind;
@@ -68,11 +79,7 @@ inline constexpr unary_row unary_rows[] = {
     {op::bit_not, ctjs::UnaryKind::BitNot},
     {op::logical_not, ctjs::UnaryKind::Not},
     {op::type_of, ctjs::UnaryKind::TypeOf},
-    // UNARY PLUS, which was the only operation in this dialect that was fully
-    // lowered and completely unreachable. ctjs.unary plus emits ct_aot_to_number
-    // and boxes the double, operators.mlir has exercised it from hand-written
-    // IR since it was written, and the helper has had a body all along - the
-    // table simply had no row, so no JavaScript could ever produce it.
+    // Unary plus: `+x` compiles to op::to_number.
     {op::to_number, ctjs::UnaryKind::Plus},
 };
 

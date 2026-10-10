@@ -1,3 +1,22 @@
+//===- Custom.cpp - Hand-written iterator for-of rewrite --------*- C++ -*-===//
+//
+// normalizeDOMCustomIteration rewrites a `for...of` over a hand-written
+// iterator object (an object literal with next/return methods passed to
+// __ctbrowser_for_of_open) into ordinary calls whose iterator state travels as
+// scalar values, so later DOM passes see no iterator object. Only the private
+// candidate module changes. Every check here is structural; DOMEntryAnalysis
+// re-checks effects and values after the rewrite. Each check charges the
+// shared step budget, and any shape it cannot prove returns an error instead
+// of rewriting.
+//
+// Terms used below: a "census" is a bounded walk that counts or classifies
+// uses; "transport" is passing a value through scf.yield, block-argument or
+// invoke edges.
+// Every walk that follows nesting or recursion stops at depth 64 and refuses
+// the shape rather than follow it further.
+//
+//===----------------------------------------------------------------------===//
+
 #include "../Source/Proof.hpp"
 #include "ExactPrimitives.h"
 #include "ctbrowser/core/symbol.hpp"
@@ -94,13 +113,15 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     if (!entry || !entry.getBody().hasOneBlock()) {
         return error("DOM custom iterator requires one complete entry");
     }
-    // The bounded census above covers this entry. Check region correspondence
-    // before replacing private methods or threading state through those edges.
+    // The census above already charged for this entry. Verify it so region
+    // results and yields match before methods are replaced or state is threaded
+    // through those edges.
     if (mlir::failed(mlir::verify(entry))) {
         return error("DOM custom iterator requires a well-formed entry");
     }
-    // This is structural protocol proof. Keep the protected call and original
-    // throw until complete DOM admission reproves their effects and payload.
+    // These checks prove only the shape of the iterator protocol. Keep the
+    // protected call and the original throw: DOMEntryAnalysis later re-checks
+    // their effects and thrown value.
     llvm::DenseMap<mlir::Operation *, ctjs::CallOp> protectedCloses;
     llvm::DenseMap<mlir::Operation *, ctjs::CallOp> observedInvocations;
     unsigned returns = 0;
@@ -130,9 +151,10 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 return mlir::WalkResult::interrupt();
             }
             if (invocation.getNumResults()) {
-                // Recovery keeps success and failure in separate tuples inside
-                // Try. Verification above proves payload/state correspondence;
-                // this census grants no nonthrowing or record-alias authority.
+                // Exception recovery keeps success and failure in separate
+                // tuples inside a Try. mlir::verify above checked that the
+                // tuples line up; this walk does not prove the call cannot throw
+                // or that records do not alias.
                 if (!invocation->getParentOfType<ctjs::TryOp>()) {
                     return mlir::WalkResult::interrupt();
                 }
@@ -148,8 +170,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                         }
                     }
                 }
-                // In particular, an observed close(false) is never entered in
-                // protectedCloses: that map authorizes suppressed cleanup only.
+                // An observed close(false) is never added to protectedCloses:
+                // that map holds only closes whose outcome is suppressed.
                 observedInvocations[invocation] = call;
                 return mlir::WalkResult::advance();
             }
@@ -187,8 +209,9 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         open = call;
         return mlir::WalkResult::advance();
     });
-    // A recovered open may be directly protected by one root-local Try. It
-    // still executes once; conditional or repeated opens need their own proof.
+    // After exception recovery the open may sit inside one Try in the entry's
+    // top block. It still runs exactly once; conditional or repeated opens are
+    // refused.
     auto invocation = open ? llvm::dyn_cast<ctjs::InvokeOp>(open->getParentOp()) : ctjs::InvokeOp{};
     auto attempt =
         invocation ? llvm::dyn_cast<ctjs::TryOp>(invocation->getParentOp()) : ctjs::TryOp{};
@@ -203,9 +226,9 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         return error("DOM custom iterator holder lacks preceding local allocation");
     }
     const auto exactUndefined = [&](ctjs::LoadGlobalOp load) {
-        // The initialized DOM provider supplies this binding. Check every
-        // source write before pruning helpers, including unreachable writes.
-        // Complete DOM admission still checks all other effects and declarations.
+        // The DOM provider supplies the initial `undefined` global, and the
+        // census above saw no write to it anywhere, reachable or not.
+        // DOMEntryAnalysis still checks every other effect and declaration.
         return !undefinedWritten &&
                (contract.provider == HostContract::Provider::ctbrowserDOM ||
                 contract.provider == HostContract::Provider::ctbrowserDOMSession) &&
@@ -224,10 +247,10 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         }
         if (found && found.getBody().empty()) { return ctjs::FuncOp{}; }
         if (found && found != entry) {
-            // Normalize only exact continuations on this private candidate.
-            // Every surviving condition producer, effect and payload still
-            // needs the complete helper proof below.
-            // Merging CFG edges can expose a constant block argument too.
+            // Fold constant conditions and operations in this helper on the
+            // private candidate. Every surviving condition, effect and value is
+            // still checked below. A multi-block body is always simplified,
+            // because merging CFG edges can expose a constant block argument.
             bool projectBranches = !found.getBody().hasOneBlock();
             uint64_t size = 0;
             const auto counted = found.walk([&](mlir::Operation * operation) {
@@ -265,8 +288,10 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 return ctjs::FuncOp{};
             }
             if (!projectBranches) { return found; }
-            // ponytail: upstream has no step callback; reserve a quadratic
-            // input ceiling until larger helper CFGs need a tighter bound.
+            // ponytail: MLIR's rewrite helpers (eraseUnreachableBlocks,
+            // canonicalization) cannot charge our step budget, so reserve
+            // size*size steps up front as an upper bound on the folding loop
+            // below; tighten if larger helper CFGs need it.
             if (size > work.remaining / size) {
                 work.remaining = 0;
                 return ctjs::FuncOp{};
@@ -284,9 +309,10 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 return mlir::WalkResult::advance();
             });
             if (globals.wasInterrupted()) { return ctjs::FuncOp{}; }
-            // Projection exposes literal operands through block arguments and
-            // selected yields. Each successful rewrite removes a primitive operation or a
-            // control-flow edge; the reserved input ceiling bounds rescans.
+            // Folding exposes constant operands through block arguments and
+            // selected yields, so repeat until nothing changes. Each rewrite
+            // removes an operation or a control-flow edge, so the size*size
+            // reservation bounds the rescans.
             bool changed = true;
             while (changed) {
                 changed = false;
@@ -307,8 +333,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                     if (!spend()) { return mlir::WalkResult::interrupt(); }
                     auto result = exactUnary(unary, work);
                     if (!result) { return mlir::WalkResult::advance(); }
-                    // Exact primitive operands prove both the result and the
-                    // absence of hooks. Keep the input and all its other uses.
+                    // Constant primitive operands fix the result and rule out
+                    // conversion hooks. Keep the input and its other uses.
                     rewriter.setInsertionPoint(unary);
                     rewriter.replaceOpWithNewOp<ctjs::ConstantOp>(unary, result);
                     changed = true;
@@ -346,7 +372,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                             *selected ? conditional.getTrueDest() : conditional.getFalseDest(),
                             *selected ? conditional.getTrueDestOperands()
                                       : conditional.getFalseDestOperands());
-                        // Truthiness is pure; its input evaluation stays in place.
+                        // Truthiness is pure, so drop an unused predicate; the
+                        // operation computing its input stays.
                         if (predicate && predicate->use_empty() &&
                             llvm::isa<mlir::arith::ConstantOp, ctjs::TruthyOp>(predicate)) {
                             rewriter.eraseOp(predicate);
@@ -368,12 +395,12 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                         auto selected = exactBoolean(branch.getCondition());
                         if (!selected) { return mlir::WalkResult::advance(); }
                         auto * predicate = branch.getCondition().getDefiningOp();
-                        // Verification establishes result count, types and
-                        // dominance; substitute only the selected payload.
+                        // mlir::verify above checked result counts, types and
+                        // dominance; inline just the selected arm.
                         inlineSelectedArm(branch, *selected);
                         changed = true;
-                        // Only the unused pure predicate disappears; its input
-                        // and every selected operation retain their source order.
+                        // Only the unused pure predicate is erased; its input and
+                        // the inlined operations keep their source order.
                         if (predicate && predicate->use_empty() &&
                             llvm::isa<mlir::arith::ConstantOp, ctjs::TruthyOp>(predicate)) {
                             rewriter.eraseOp(predicate);
@@ -408,10 +435,10 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 !undefined(accessor.getSetter()) || !thrown) {
                 return error("DOM iterator getter requires a terminal throw");
             }
-            // A getter that always throws never supplies a return method.
-            // Model its invocation with the existing close callable, whose
-            // throw, confinement and every suppression or propagation edge
-            // must all prove below before this private candidate can publish.
+            // A `return` getter that always throws never supplies a method.
+            // Model reading it as calling that getter as the close method; the
+            // checks below must still prove its throw is confined and either
+            // suppressed or rethrown before this candidate is accepted.
             if (!spend() || !spend()) { return error("DOM custom iterator budget exhausted"); }
             mlir::OpBuilder at(accessor);
             auto key = keyConstant(at, accessor.getLoc(), "return");
@@ -427,7 +454,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         if (!closure) {
             auto constant = store.getValue().getDefiningOp<ctjs::ConstantOp>();
             auto name = ctjs::constantKey(store.getKey());
-            // The interpreter's well-known Symbol spelling shares this slot.
+            // A string key spelled like the VM's internal Symbol.iterator key
+            // would alias the iterator method's slot.
             if (name == CTBROWSER_SYMBOL_KEY("iterator")) {
                 return error("DOM custom iterator state aliases its iterator method");
             }
@@ -467,7 +495,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             iteratorKey = converted;
         }
     }
-    // State positions follow source order, independent of SSA use-list ordering.
+    // Number state positions follow source order, not SSA use-list order.
     for (auto store : object->getBlock()->getOps<ctjs::SetPropertyOp>()) {
         if (!spend()) { return error("DOM custom iterator budget exhausted"); }
         if (store.getObject() != object.getResult()) { continue; }
@@ -525,9 +553,10 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     llvm::DenseSet<mlir::Value> iteratorSetupValues;
     if (iteratorKey) {
         if (!iteratorName) { return error("DOM iterator key lacks its original method naming"); }
-        // ToPropertyKey is identity for this exact well-known Symbol. Naming
-        // changes only the private closure discarded below; no name/key/result
-        // observer may acquire authority from recognizing these compiler helpers.
+        // ToPropertyKey returns Symbol.iterator unchanged, and setting the
+        // function name changes only the closure discarded below. Accept these
+        // compiler helper calls only when nothing else reads their callee or
+        // result.
         for (auto call : {iteratorKey, iteratorName}) {
             auto load = call.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
             if (!spend() || load->getBlock() != call->getBlock() || !load->isBeforeInBlock(call)) {
@@ -549,8 +578,9 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 }
                 if (call == iteratorKey && invocation && llvm::isa<ctjs::InvokeExitOp>(user) &&
                     user->getParentOp() == invocation && use.getOperandNumber() > 0) {
-                    // The proved opening call cannot throw. Its projection below
-                    // discards only this unwind state, including the saved key.
+                    // The open call cannot throw (checked below), so replacing
+                    // the invoke with its normal path drops only this unwind
+                    // state, including the saved key.
                     continue;
                 }
                 return error("DOM iterator key or naming result has another observer");
@@ -568,25 +598,26 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             auto * user = use.getOwner();
             if (user == open || (llvm::isa<ctjs::RootOp>(user) && use.getOperandNumber() == 1) ||
                 (llvm::isa<ctjs::SetPropertyOp>(user) && use.getOperandNumber() == 0)) {
-                continue; // Every own initializer was proved above.
+                continue; // Every own initializer was checked above.
             }
             auto exit = llvm::dyn_cast<ctjs::InvokeExitOp>(user);
             if (exit && exit->getParentOp() == invocation && use.getOperandNumber() > 0) {
                 continue; // Saving an already evaluated value has no effects.
             }
-            // This proves only the effects of open, not later confinement.
-            // Before-open transport/escapes refuse, so no hidden alias can
-            // mutate the slots before their reads. Later operations, including
-            // effectful Iterable, remain in place for the complete DOM proof.
+            // This proves only that open itself has no effects, not that the
+            // holder stays confined. Any use before open is refused, so no
+            // alias can change the slots before they are read; later uses,
+            // including an effectful Iterable, stay for DOMEntryAnalysis.
             if (!invocation->isAncestor(user) && dominance.properlyDominates(invocation, user)) {
                 continue;
             }
             return error("DOM protected iterator open holder has an earlier observer");
         }
-        // Own data slots and the closed identity method prove this call cannot
-        // throw. Keep its actual result (including a possible eager fast path),
-        // every normal tuple position, and every producer at the original site.
-        // No next/close failure or record alias is proved by this projection.
+        // Own data slots and the closed identity method mean this call cannot
+        // throw, so replace the invoke with its normal continuation. Keep the
+        // call's result (including a possible eager fast path), every normal
+        // tuple position and every producer where it was. This says nothing
+        // about next/close failures or record aliases.
         mlir::OpBuilder at(invocation);
         auto projected = host_detail::projectInvocationContinuation(
             invocation, false, open.getResult(), at, work.remaining);
@@ -598,8 +629,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         observedInvocations.erase(invocation);
         invocation.erase();
     }
-    // Mutable captures join the existing receiver-state tuple only after a
-    // complete local-cell census. Generic helper captures remain immutable.
+    // Cells that the methods write join the receiver-state tuple only after
+    // every use of the cell is checked. Other helper captures stay immutable.
     llvm::DenseMap<mlir::Value, unsigned> capturedState;
     llvm::DenseSet<mlir::Operation *> siblingHelpers;
     llvm::DenseSet<mlir::Operation *> stateStorage;
@@ -631,8 +662,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                          llvm::any_of(indices.asArrayRef(), [](int32_t i) { return i != -1; })))) {
             return error("DOM iterator capture requires exact local slots");
         }
-        // Resolve proved break dispatch before checking state access ancestry.
-        // The complete continuation proof retains every source effect.
+        // Resolve break dispatch first, so state accesses sit only under
+        // scf.if/scf.while. normalizeCompletion keeps every source effect.
         if (!work.normalizeCompletion(body)) { return error(work.reason); }
         const auto stores = body.walk([&](ctjs::StoreUpvalueOp store) {
             if (!spend()) { return mlir::WalkResult::interrupt(); }
@@ -711,8 +742,10 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         stateStorage.insert(cell);
         if (initializer) { stateStorage.insert(initializer); }
     }
-    // Follow single-initialized callable cells in both directions: a helper
-    // may capture another helper without directly capturing iterator state.
+    // Collect the sibling helpers: closures in the entry's top block that the
+    // methods reach through captured state, cells holding a closure that is set
+    // exactly once, or direct calls. A helper may capture another helper
+    // without capturing iterator state itself, so follow cells both ways.
     llvm::DenseMap<mlir::Value, ctjs::CreateClosureOp> callableCells;
     llvm::SmallVector<mlir::Operation *> callableStorage;
     const auto callableCell = [&](ctjs::CreateCellOp cell) -> bool {
@@ -793,9 +826,9 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             }
         }
     }
-    // Prove the complete family before changing bodies. Inline its cell
-    // accesses at each call, then let the entry rewrite below carry their state
-    // through source branches and loops alongside the ordinary return value.
+    // Check every helper in the family before changing any body. Their cell
+    // accesses are later inlined at each call, and the entry rewrite below
+    // carries that state through branches and loops alongside the return value.
     using Targets = llvm::SmallVector<unsigned, 2>;
     struct Helper {
         ctjs::CreateClosureOp closure;
@@ -825,8 +858,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         if (!uniqueCreation(closure) || mlir::failed(mlir::verify(body))) {
             return error("DOM iterator sibling helper is shared or malformed");
         }
-        // Prove loop-break continuations before the scalar leaf census, as for
-        // iterator methods. Argument snapshots and ordered state writes survive.
+        // Resolve loop-break dispatch before the scalar-leaf walk, as for the
+        // iterator methods. Argument values and state write order are kept.
         if (!work.normalizeCompletion(body)) { return error(work.reason); }
         const auto leaf = body.walk([&](mlir::Operation * operation) {
             if (!spend()) { return mlir::WalkResult::interrupt(); }
@@ -899,12 +932,11 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         }
         return true;
     };
-    // Follow every incoming transportInputs edge, including the zero-trip
-    // initializer and the backedge. A visited set closes transport cycles; only
-    // known leaves supply identities. Never cache a partial traversal of a cycle.
-    // Snapshot return provenance before capture erasure. Calls retain their
-    // callee and actual dependencies; formal callees are bound per invocation.
-    // The graph owns indices only, so no erased SSA definition is consulted.
+    // Record where each helper's return value comes from (a fixed callable, a
+    // formal argument, a transport edge or a call) before captures are erased.
+    // The graph stores indices only, so it never consults an erased SSA value;
+    // calls keep their callee and arguments, and formal callees are bound per
+    // invocation.
     enum class ReturnKind {
         unknown,
         argument,
@@ -964,11 +996,16 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         }
         returnValues[i] = std::move(node);
     }
-    // Bind each invocation separately before changing any body. The aggregate
-    // identities below only enumerate observers; they never select a callee.
+    // Bind each invocation separately before changing any body. The merged
+    // target sets below only list observers; they never pick a callee.
     using CallableValues = llvm::DenseMap<mlir::Value, Targets>;
     CallableValues callableValues, initialCallables;
     for (auto [value, index] : fixedCallables) { initialCallables[value] = {index}; }
+    // Collects the helpers `value` may be. Follows every incoming
+    // transportInputs edge, including a loop's zero-trip initializer and its
+    // backedge. A visited set stops at cycles; only known leaves supply callee
+    // identities. Returns false on an incomplete traversal, which callers never
+    // cache.
     const auto resolveTargets = [&](mlir::Value value, const CallableValues & known,
                                     Targets & targets) {
         struct Reference {
@@ -1031,8 +1068,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                     if (node.kind == ReturnKind::argument) {
                         const auto & arguments = invocations[current.frame].arguments;
                         if (node.index < arguments.size()) {
-                            // Follow the caller's original reference, closing loop
-                            // backedges without manufacturing another invocation.
+                            // Follow the caller's argument in the caller's frame,
+                            // so a loop backedge does not create a new invocation.
                             pending.push_back(arguments[node.index]);
                         } else {
                             complete = false;
@@ -1048,8 +1085,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                         continue;
                     }
                 }
-                // Callee candidates are separate from return candidates. Every
-                // selected callee must resolve, including unknown branch arms.
+                // Resolve the callee separately from the return value. Every
+                // possible callee must resolve, including on unknown branch arms.
                 Targets callees;
                 complete &= self(self, inputs.front(), callees, depth + 1);
                 for (auto index : callees) {
@@ -1087,8 +1124,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             }
             return work.remaining != 0;
         };
-        // Calls retain source order. Transport-only cycles can be resolved
-        // before their enclosing loop is visited, from all of their leaves.
+        // Visit calls in source order. A cycle made only of transport edges
+        // resolves from its leaves before its enclosing loop is visited.
         for (auto * operation : familyFlow) {
             if (!spend()) { return false; }
             if (operation->getParentOfType<ctjs::FuncOp>() != caller) { continue; }
@@ -1172,7 +1209,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 values[operation->getResult(0)] = std::move(results);
             }
         }
-        // checkBody proved one root return; every possible identity is confined.
+        // checkBody proved a single return in the top block; bind every
+        // helper it may return.
         auto returned = llvm::cast<ctjs::ReturnOp>(caller.getBody().front().getTerminator());
         if (!bindTransport(returned.getValue())) { return false; }
         if (auto bound = values.find(returned.getValue()); bound != values.end()) {
@@ -1214,12 +1252,12 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             }
             if (llvm::isa<ctjs::ReturnOp>(user) && caller != entry &&
                 user == caller.getBody().front().getTerminator()) {
-                continue; // Every result observer is checked through callableValues.
+                continue; // Callers' uses of the result are checked via callableValues.
             }
             if (auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(user)) {
                 auto branch = llvm::dyn_cast<mlir::scf::IfOp>(yield->getParentOp());
                 if (branch && callableValues.contains(branch.getResult(use.getOperandNumber()))) {
-                    continue; // Both arms and every joined observer were proved above.
+                    continue; // Both arms and every use of the join were checked above.
                 }
                 auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(yield->getParentOp());
                 if (loop && callableValues.contains(
@@ -1251,7 +1289,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                                                                : direct.getCalleeValue());
                     if (target != callableValues.end() &&
                         user->getParentOfType<ctjs::FuncOp>() == caller) {
-                        continue; // The complete actual/formal census above proved this edge.
+                        continue; // proveCalls bound this actual to its formal above.
                     }
                 }
             }
@@ -1292,8 +1330,9 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         }
     }
     if (!helpers.empty()) {
-        // Enumerate both symbol scopes once for the complete family. Charge
-        // the source walk before allocating either list, then each visited use.
+        // Walk symbol uses once for the whole family; any use of a helper's
+        // symbol other than its recorded calls refuses. Charge the module walk
+        // up front, then each visited use.
         if (!work.step(2 * uint64_t(sourceCost))) {
             return error("DOM custom iterator budget exhausted");
         }
@@ -1346,7 +1385,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         helper.body.setUpvalueCount(0);
     }
     llvm::SmallVector<mlir::Operation *> pending;
-    // Source order keeps dependency-scan costs independent of SSA hash order.
+    // Source order keeps the dependency-scan cost independent of SSA hash order.
     for (auto * operation : familyCalls) {
         if (!spend()) { return error("DOM custom iterator budget exhausted"); }
         auto ordinary = llvm::dyn_cast<ctjs::CallOp>(operation);
@@ -1357,9 +1396,10 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             pending.push_back(operation);
         }
     }
-    // All observers are confined calls or transport edges. A closed scalar
-    // discriminator preserves branch selection until its ordinary calls expand;
-    // no callable object, lookup table or runtime dispatch survives.
+    // Every use of a helper closure is now a checked call or a transport edge.
+    // Replace each closure with a Number tag (its index in `helpers`) so
+    // branches still select the same helper until its calls are expanded; no
+    // callable object, lookup table or runtime dispatch survives.
     llvm::SmallVector<mlir::Value> tags;
     CallableValues tagCallables;
     for (auto [index, helper] : llvm::enumerate(helpers)) {
@@ -1375,9 +1415,11 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         tags.push_back(tag);
     }
     while (!pending.empty()) {
-        // ponytail: bounded linear scan; use a dependency worklist if large
-        // helper families exhaust the shared budget. Expand a returned callable's
-        // producer first unless its formal-return dependency proves the target.
+        // Pick the next pending call whose callee resolves; a call returning a
+        // callable is expanded after that callable's producer unless its formal
+        // return already fixes the target.
+        // ponytail: quadratic rescan of `pending`; switch to a dependency
+        // worklist if large helper families exhaust the step budget.
         Targets targets;
         auto ready = llvm::find_if(pending, [&](mlir::Operation * operation) {
             if (!spend()) { return false; }
@@ -1397,13 +1439,14 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             ordinary ? ordinary.getCallee() : llvm::cast<ctjs::CallDirectOp>(call).getCalleeValue();
         auto receiver =
             ordinary ? ordinary.getReceiver() : llvm::cast<ctjs::CallDirectOp>(call).getReceiver();
-        // Keep each already-evaluated argument's snapshot before appending
-        // the cell identities. Later state writes cannot change that value.
+        // Copy the already evaluated arguments before the cells are appended;
+        // later state writes cannot change these values.
         llvm::SmallVector<mlir::Value> actuals(
             ordinary ? ordinary.getArgs() : llvm::cast<ctjs::CallDirectOp>(call).getArgs());
         if (targets.size() > 1) {
-            // Evaluate the original producer and arguments once, then select
-            // exactly one body. Inlining inside these arms preserves state order.
+            // Several helpers are possible: evaluate the callee and arguments
+            // once, then compare the tag in a chain of scf.if to pick one body.
+            // Inlining inside these arms keeps state writes in order.
             const auto dispatch = [&](auto && self, mlir::OpBuilder & at,
                                       unsigned position) -> mlir::Value {
                 if (position == 64) {
@@ -1490,8 +1533,9 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     bool primitiveClose = false;
     bool suppressedThrow = false;
     bool observableThrow = false;
-    // Projecting these records cannot invoke getters, consult a prototype or
-    // lose evaluation of a field producer. Complete DOM proof checks values.
+    // Check each method body. Replacing its result records with their fields
+    // cannot run a getter, consult a prototype or skip a field's producer.
+    // DOMEntryAnalysis checks the field values themselves.
     for (auto & [name, store] : slots) {
         auto body = prepareTarget(store.getValue().getDefiningOp<ctjs::CreateClosureOp>());
         if (!body || !body.getBody().hasOneBlock() ||
@@ -1526,16 +1570,15 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             (thrown ||
              (literal && llvm::isa<ctjs::NumberAttr, ctjs::BooleanAttr, ctjs::StringAttr,
                                    ctjs::NullAttr, ctjs::UndefinedAttr>(literal.getValue())))) {
-            // A primitive return needs suppression; an always-throwing
-            // method can instead propagate its payload at a normal close.
+            // A primitive return must be suppressed; an always-throwing
+            // method may instead rethrow its value at a normal close.
             primitiveClose = true;
             suppressedThrow = static_cast<bool>(thrown);
-            // A normal close propagates the cleanup exception. Keep the payload
-            // and throw it at the original call, where the typed DOM proof can
-            // check its ownership and the unreachable continuation.
-            // The confined final state has no observer after this throw.
-            // Protected calls discard this value at their exact Invoke; normal
-            // calls must rethrow it immediately, including in a mixed entry.
+            // On a normal close the cleanup exception propagates: keep the
+            // thrown value and rethrow it at the original call so
+            // DOMEntryAnalysis can check it. Nothing observes the final state
+            // after that throw. Protected (invoke) calls discard the value;
+            // unprotected calls must rethrow it immediately.
             observableThrow = static_cast<bool>(thrown);
         } else if (!record || record->getBlock() != &block) {
             return error("DOM iterator method must return one fresh own-field record");
@@ -1569,10 +1612,11 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             }
         }
         if (thrown) {
-            // Normalize this private terminal before the mutable-state body
-            // proof. Publication still requires exact suppression or an
-            // immediate rethrow, checked by the final observer census.
-            // Preserve all preceding effects and let checkBody verify frames.
+            // Turn the terminal throw into a return of the thrown value before
+            // checkBody runs on the state method. Acceptance still requires
+            // each close to suppress or immediately rethrow it, checked when
+            // the close calls are classified below. Earlier effects stay, and
+            // checkBody verifies the frame enter/exit pairing.
             mlir::Value frame;
             for (mlir::Operation & operation : *thrown->getBlock()) {
                 if (!spend()) { return error("DOM custom iterator budget exhausted"); }
@@ -1587,9 +1631,9 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             if (frame) { ctjs::FrameExitOp::create(at, thrown.getLoc(), frame); }
             ctjs::ReturnOp::create(at, thrown.getLoc(), thrown.getValue());
             thrown.erase();
-            // Validate the original payload's definition, dominance and frame
-            // before suppressing or propagating its value. Its producers remain for
-            // scalar state transport and complete typed DOM/effect reproof.
+            // Check the thrown value's definition, dominance and frame before
+            // suppressing or rethrowing it. Its producers stay so state can be
+            // threaded through them and DOMEntryAnalysis can re-check effects.
             if (!work.checkBody(body, false, true, true)) { return error(work.reason); }
         }
         if (!stateInitials.empty()) {
@@ -1618,10 +1662,10 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         }
     }
 
-    // A completion tuple may carry the same successful open value in every
-    // arm. Forward only that exact, dominating identity; keep the selection
-    // and every source operation. Mixed padding/failure origins need their
-    // own selected-continuation proof, even when another slot is identical.
+    // An scf.if/index_switch result that yields the open's result in every arm
+    // is that result: forward it directly when the open dominates. The branch
+    // and its operations stay. A slot whose arms mix the open's result with
+    // poison or a failure value is handled by selectedRecord below.
     mlir::DominanceInfo recordDominance(entry);
     const auto aliases = entry.walk<mlir::WalkOrder::PreOrder>([&](mlir::Operation * operation) {
         if (!spend()) { return mlir::WalkResult::interrupt(); }
@@ -1650,9 +1694,11 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     });
     if (aliases.wasInterrupted()) { return error("DOM custom iterator budget exhausted"); }
 
-    // A record and completion tag travel together. An equality guard may
-    // select its record even when other tags carry poison in that slot. Keep
-    // the mixed tuple and all producers; only the guarded call operand changes.
+    // An iterator record and its completion tag travel together through
+    // branches. A close guarded by `tag == k` receives the open's result
+    // whenever tag k is reached, even if other tags carry poison in that slot.
+    // Only the guarded call's record operand changes; the tuple and its
+    // producers stay.
     const auto selectedRecord = [&](auto && self, mlir::Value record, mlir::Value tag,
                                     uint64_t expected, bool & matched, unsigned depth) -> bool {
         if (!spend() || depth == 64) { return false; }
@@ -1702,8 +1748,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             auto [tag, key] = constantComparison(compare);
             auto cast = tag.getDefiningOp<mlir::arith::IndexCastUIOp>();
             auto integer = exactTag(key, 32);
-            // i32 -> index is lossless on either supported index width. No
-            // narrowing casts or unknown/truncated tags can select an identity.
+            // i32 -> index is lossless on both 32- and 64-bit index types. A
+            // narrowing cast or an unknown or truncated tag selects nothing.
             if (!cast || !cast.getIn().getType().isInteger(32) || !tag.getType().isIndex() ||
                 !integer) {
                 continue;
@@ -1728,8 +1774,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         if (llvm::isa<ctjs::RootOp, mlir::scf::YieldOp>(user)) { continue; }
         if (auto exit = llvm::dyn_cast<ctjs::InvokeExitOp>(user);
             exit && exit.getNormalResult() != open.getResult()) {
-            // The verified protocol invocation saves this already evaluated
-            // identity. Its unwind users still need complete state proof.
+            // A verified protocol invoke saves this already evaluated record
+            // as unwind state; those unwind uses are checked later.
             continue;
         }
         if (strictUndefinedTest(llvm::dyn_cast<ctjs::CompareOp>(user), open.getResult())) {
@@ -1738,8 +1784,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user);
             get && get.getObject() == open.getResult() &&
             ctjs::constantKey(get.getKey()) == "done") {
-            // The runtime coerces result.done to Boolean. Only truth tests may
-            // observe our projected field without materializing that Boolean.
+            // The runtime coerces result.done to Boolean. The rewritten field
+            // is not coerced, so only truth tests may read it.
             llvm::SmallVector<mlir::Value> pending{get.getResult()};
             llvm::DenseSet<mlir::Value> visited;
             while (!pending.empty()) {
@@ -1753,7 +1799,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                         (llvm::isa<ctjs::RootOp>(observer) && use.getOperandNumber() == 1)) {
                         continue;
                     }
-                    // Every transport edge but an invoke's normal payload.
+                    // Follow every transport edge except an invoke's normal
+                    // result.
                     if (auto value = forwarded(use);
                         value &&
                         !(llvm::isa<ctjs::InvokeExitOp>(observer) && use.getOperandNumber() == 0)) {
@@ -1793,8 +1840,10 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             return error("DOM iterator suppression must close its original record");
         }
     }
-    // Follow an exact completion tag without executing any intervening source
-    // operation. Both close coverage and private-state disposal use this edge.
+    // For a yield in a branch arm, find the arm that the following
+    // `cmpi eq/ne` + scf.if on the yielded constant completion tag selects,
+    // with only arith.constant in between. Used both to check close coverage
+    // and to dispose of private state. Returns null for any other shape.
     const auto selectedContinuation = [&](mlir::scf::YieldOp yield) -> mlir::Region * {
         if (!yield || !spend()) { return nullptr; }
         auto * parent = yield->getParentOp();
@@ -1835,11 +1884,12 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                    ? &branch.getThenRegion()
                    : &branch.getElseRegion();
     };
-    // The captured cells and receiver are private. A terminal saved throw
-    // cannot observe the close's final state, but the method still receives
-    // current state and must retain every effect before throwing resumes.
-    // ponytail: only an immediate saved throw, possibly across one exact tag
-    // projection; later observers need explicit exceptional-state transport.
+    // The captured cells and receiver are private. A saved throw right after
+    // the close cannot observe the close's final state, but the method still
+    // receives the current state and keeps every effect before the throw.
+    // ponytail: only supports a saved throw that runs right after the close
+    // (optionally through one completion-tag branch); code that reads state
+    // after the throw would need state threaded along the exception path.
     if (!protectedCloses.empty() && !stateInitials.empty()) {
         for (auto & [invocation, call] : protectedCloses) {
             (void)call;
@@ -1856,9 +1906,9 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             }
         }
     }
-    // A return can reduce the traversal to one next call and put closes in
-    // separate completion arms. Every close must remain after the complete
-    // traversal, with no enclosing loop that could revisit next after close.
+    // A `return` inside the loop can reduce the traversal to one next call and
+    // put closes in separate completion arms. Every close must come after the
+    // whole traversal, with no enclosing loop that could call next again.
     const auto continuationParent = [&](mlir::Operation * operation) -> mlir::Operation * {
         auto * parent = operation->getParentOp();
         if (llvm::isa_and_nonnull<mlir::scf::IfOp, mlir::scf::IndexSwitchOp>(parent) ||
@@ -1952,9 +2002,9 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                          tag)) {
                     continue;
                 }
-                // CFG structuring may close one arm, then yield an integer
-                // completion tag that selects the remaining normal close.
-                // Only an inert arm may defer closing through this exact tag.
+                // CFG structuring may yield an integer completion tag from an
+                // arm and close in the branch that tag selects. Only an arm
+                // holding nothing but that yield may defer its close this way.
                 auto yield = llvm::hasSingleElement(region.front())
                                  ? llvm::dyn_cast<mlir::scf::YieldOp>(region.front().front())
                                  : mlir::scf::YieldOp{};
@@ -1997,8 +2047,9 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     };
     bool covered = closesEveryPath(closesEveryPath, std::next(traversal->getIterator()),
                                    traversal->getBlock()->end(), 0, {}, {});
-    // Only the exact next-failure arm can omit close. Enumerate complete tag
-    // leaves; a constant tag alone never proves that next threw.
+    // Only the arm where next itself threw may skip close. Enumerate every
+    // constant tag the traversal can yield; a tag alone never proves that
+    // next threw, so each must also sit in next's failure arm or reach a close.
     if (!covered && observedNext && observedInvocations.lookup(observedNext) == next) {
         for (auto selector : traversal->getResults()) {
             if (!spend()) { return error("DOM custom iterator budget exhausted"); }
@@ -2037,9 +2088,9 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         }
     }
     if (!covered) { return error("DOM iterator completion must close every traversal exit"); }
-    // Completion tuples also spill unused items on exhausted and exceptional
-    // paths. Follow exact slots to their observers; transport alone is not an
-    // item read, and a dead spill does not need a not-done guard.
+    // Completion tuples also carry the item on exhausted and exceptional paths
+    // where nothing reads it. Follow each slot to its readers: passing the
+    // item along is not a read, and an unread copy needs no not-done guard.
     llvm::SmallVector<mlir::Value> pendingItems{next.getResult()};
     llvm::DenseSet<mlir::Value> visitedItems;
     while (!pendingItems.empty()) {
@@ -2079,8 +2130,9 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         }
     }
     if (observedNext) {
-        // ponytail: one root Try with protocol-only state. Mutable private
-        // fields need exceptional write transport before this can broaden.
+        // ponytail: only one top-level Try with no mutable iterator state is
+        // supported; mutable fields would need their writes threaded along
+        // the exception path first.
         if (!attempt || !stateInitials.empty() || sourceLoop ||
             !attempt.getBody().isAncestor(observedNext->getParentRegion())) {
             return error("DOM iterator observed completions require protocol-only Try state");
@@ -2091,9 +2143,9 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 return error("DOM iterator observed completions require one protected protocol");
             }
         }
-        // Try has one result. Do not discard state merely because its original
-        // record was forwarded through a tuple: follow every saved alias, and
-        // reject transport to catch or the normal result as well as escapes.
+        // Try has one result. Follow every alias of the holder and record,
+        // including copies forwarded through tuples, and refuse any that
+        // reaches the catch, the Try's normal result or escapes the Try body.
         for (auto seed : {object.getResult(), open.getResult()}) {
             llvm::SmallVector<mlir::Value> pending{seed};
             llvm::DenseSet<mlir::Value> visited;
@@ -2127,10 +2179,12 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                             break;
                         }
                     }
-                    // A proved custom open cannot select the eager-array arm.
-                    // Keep its source operations for completion normalization.
+                    // A custom open never takes the `iter === undefined` eager
+                    // array arm. Its operations stay for later completion
+                    // normalization.
                     if (inactive) { continue; }
-                    // Only observed invocations carry state, never as a normal payload.
+                    // State may pass through observed invokes, never as their
+                    // normal result.
                     const bool invoke = llvm::isa<ctjs::InvokeExitOp, ctjs::InvokeYieldOp>(user);
                     if (auto value = forwarded(use);
                         value &&
@@ -2149,7 +2203,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                         if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user);
                             get && use.getOperandNumber() == 0 &&
                             ctjs::constantKey(get.getKey()) == "done") {
-                            continue; // Its complete truth-only census above rejects Try exits.
+                            continue; // The done-field walk above already refused Try exits.
                         }
                         if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(user);
                             compare && compare.getKind() == ctjs::CompareKind::StrictEq &&
@@ -2176,9 +2230,10 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             }
         }
     }
-    // These bodies are private to their own method slots. Bind fields and cells
-    // as scalar arguments/results; ordinary helper expansion later removes the
-    // fresh result records. All source value producers remain for DOM reproof.
+    // Each method body is used only by its own slot. Pass the state fields and
+    // captured cells as scalar arguments, returned as extra fields of the result
+    // record; helper expansion later removes those fresh records. Source
+    // producers stay for DOMEntryAnalysis.
     for (auto & [name, store] : slots) {
         if (stateInitials.empty()) { break; }
         auto closure = store.getValue().getDefiningOp<ctjs::CreateClosureOp>();
@@ -2223,8 +2278,9 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                             mlir::OpBuilder inside(&arm, arm.end());
                             mlir::scf::YieldOp::create(inside, operation.getLoc(), armState);
                         } else {
-                            // Both loop regions receive the preceding edge's state.
-                            // The condition forwards its latest values on exit too.
+                            // Both loop regions take the incoming edge's state as
+                            // block arguments; scf.condition also forwards the
+                            // latest values as the loop's results on exit.
                             if (loop) {
                                 for (auto & value : armState) {
                                     value = region.front().addArgument(value.getType(),
@@ -2326,8 +2382,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         auto method = ctjs::GetPropertyOp::create(at, where, type, holder, key);
         auto called = ctjs::CallOp::create(at, where, type, method, holder,
                                            mlir::ValueRange(state).drop_front());
-        // A throwing close returns its payload only for the immediate rethrow.
-        // Its final private state has no record fields or live continuation.
+        // A throwing close returns its thrown value only for the immediate
+        // rethrow; its final state has no record fields and nothing reads it.
         if (name == "return" && observableThrow) { return called; }
         for (unsigned index = 0; index < stateInitials.size(); ++index) {
             if (!spend()) { return ctjs::CallOp{}; }
@@ -2430,9 +2486,10 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                     auto branch = mlir::scf::IfOp::create(at, where, test, true);
                     auto & body = branch.getElseRegion().front();
                     mlir::OpBuilder inside(&body, body.begin());
-                    // The unique own data slot has no getter or user lookup.
-                    // Keep the actual method call protected, and keep Invoke's
-                    // exact call/exit body for the downstream effect proof.
+                    // `return` is a unique own data slot, so reading it runs no
+                    // getter. Keep the method call protected by a copy of the
+                    // invoke, with its call/exit body unchanged for
+                    // DOMEntryAnalysis.
                     auto key = keyConstant(inside, where, "return");
                     auto holder = values.lookup(object.getResult());
                     auto method = ctjs::GetPropertyOp::create(inside, where, type, holder, key);
@@ -2454,9 +2511,10 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                     if (!spend()) { return false; }
                     saved.push_back(values.lookup(value));
                 }
-                // Unlike eliminating Invoke, retaining it must read the actual
-                // unwind arguments. A throwing close's normalized return uses
-                // the same source projection with the pre-call saved values.
+                // This invoke is kept, so its unwind continuation must read the
+                // real unwind arguments. A throwing close's rewritten return
+                // clones the same continuation with the values saved before
+                // the call.
                 const auto project = [&](mlir::OpBuilder & inside, bool unwind, mlir::Value payload,
                                          mlir::ValueRange savedValues)
                     -> mlir::FailureOr<llvm::SmallVector<mlir::Value>> {
@@ -2477,7 +2535,7 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                     }
                     for (auto & item : source.without_terminator()) {
                         if (!spend()) { return mlir::failure(); }
-                        inside.clone(item, projected); // Census proved inert constants/padding.
+                        inside.clone(item, projected); // Only constants or poison (checked).
                     }
                     llvm::SmallVector<mlir::Value> result;
                     for (auto value : llvm::cast<ctjs::InvokeYieldOp>(source.back()).getValues()) {
@@ -2580,8 +2638,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                         return false;
                     }
                 }
-                // The lifetime census proved state has no catch or later user.
-                // Preserve Try's one result and its original caught values.
+                // The alias walk above showed no state reaches the catch or
+                // any later user. Keep the Try's one result and caught values.
                 values.map(operation.getResults(), copied->getResults());
                 continue;
             }
@@ -2652,8 +2710,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                     }
                 }
                 if (projection) {
-                    // A pure selection cannot change the current done state.
-                    // Keep its source tuple for the loop-exit continuation proof.
+                    // A switch whose arms only yield cannot change the done
+                    // state. Keep its results for the loop-exit checks.
                     if (dispatch.getNumResults()) { at.clone(operation, values); }
                     continue;
                 }
@@ -2684,8 +2742,8 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                     }
                     if (!from.hasOneBlock()) { return false; }
                     auto & block = to.emplaceBlock();
-                    // Each source SSA definition is cloned once. Share its
-                    // mapping across regions; only mutable state needs a copy.
+                    // Each source SSA value is cloned once, so the mapping is
+                    // shared across regions; only mutable state is copied.
                     for (auto argument : from.front().getArguments()) {
                         if (!spend()) { return false; }
                         values.map(argument,
@@ -2700,9 +2758,9 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                     if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(operation)) {
                         auto truth = branch.getCondition().getDefiningOp<ctjs::TruthyOp>();
                         if (truth && values.lookup(truth.getValue()) == state.front()) {
-                            // The protocol exposes done only to truth tests.
-                            // Keep this arm's known state without changing the
-                            // source value or removing its producer.
+                            // `done` is read only by truth tests, so inside each
+                            // arm of `if (done)` its value is known. Record that
+                            // without changing the source value or its producer.
                             if (!spend()) { return false; }
                             innerState.front() = ctjs::ConstantOp::create(
                                 inside, where,
@@ -2768,14 +2826,14 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
             return error("DOM iterator observed state rewrite is malformed");
         }
     }
-    // Only after selecting the custom arm can completion normalization discard
-    // inactive eager-array state. A live record marker is poison and refuses.
-    // Earlier helper bodies may have been retired; their SSA identities cannot
-    // authorize padding in this new body, even if the allocator reuses storage.
+    // Now that the custom arm is selected, completion normalization can drop
+    // the unused eager-array state; a remaining use of the poison record marker
+    // refuses. Clear inactiveFillers first: values from erased helper bodies
+    // must not match values in this new body, even if memory is reused.
     work.inactiveFillers.clear();
     if (!work.normalizeCompletion(entry)) { return error(work.reason); }
     // Drop unused completion tuple positions without erasing their producers.
-    // Parent-first order exposes dead nested branch results in the same pass.
+    // Visiting parents first exposes dead nested branch results in one pass.
     llvm::SmallVector<mlir::Operation *> tuples;
     for (auto function : completed) {
         const auto tupleScan =
@@ -2835,9 +2893,10 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
                 branch ? branch.getCondition().getDefiningOp<ctjs::TruthyOp>() : ctjs::TruthyOp{};
             auto done = truth ? ctjs::constantAttr<ctjs::BooleanAttr>(truth.getValue())
                               : ctjs::BooleanAttr{};
-            // Completion may expose the constant only after selecting an
-            // exit. The generated close guard's empty then arm proves that
-            // exhaustion cannot call return or validate its ignored result.
+            // Completion normalization may make `done` constant only after
+            // picking an exit. The generated close guard's then arm (done)
+            // only yields, so an exhausted iterator never calls return or
+            // checks its ignored result.
             if (!done || !done.getValue() || call->getParentRegion() != &branch.getElseRegion() ||
                 !branch.getThenRegion().hasOneBlock() ||
                 !llvm::hasSingleElement(branch.getThenRegion().front()) ||
@@ -2874,11 +2933,10 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
         branch.erase();
     }
     if (suppressedThrow && !retainedCompletions) {
-        // Completion must remove the inactive eager-array transport too.
-        // A surviving holder/method alias could otherwise call the rewritten
-        // body without suppression after cell or method resolution.
-        // Observed invocations instead have the complete Try lifetime proof
-        // above, including their unobserved saved holder slots.
+        // Completion normalization must also have removed the unused
+        // eager-array paths. Otherwise a surviving alias of the holder or a
+        // method could call the rewritten body without suppression. (Observed
+        // invokes were instead covered by the Try alias walk above.)
         auto holder = emittedNext.getCallee().getDefiningOp<ctjs::GetPropertyOp>().getObject();
         for (mlir::Operation * user : holder.getUsers()) {
             if (!spend()) { return error("DOM custom iterator budget exhausted"); }
@@ -2920,9 +2978,9 @@ llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostCont
     mlir::Value nextResult = emittedNext.getResult();
     auto protectedNext = llvm::dyn_cast<ctjs::InvokeOp>(emittedNext->getParentOp());
     if (retainedCompletions) {
-        // Re-find the copied operations: completion normalization replaces the
-        // body. Only this root Try's direct invocation may supply a normal
-        // record; a caught payload or saved slot is not the next result.
+        // Find the copied operations again: completion normalization replaced
+        // the body. Only the invoke directly in the top-level Try may supply
+        // the next result; a caught value or saved slot is not it.
         auto protectedBody = protectedNext
                                  ? llvm::dyn_cast<ctjs::TryOp>(protectedNext->getParentOp())
                                  : ctjs::TryOp{};

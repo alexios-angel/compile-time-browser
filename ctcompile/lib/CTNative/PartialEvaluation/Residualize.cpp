@@ -1,3 +1,13 @@
+//===- Residualize.cpp - Rebuild an evaluated heap as IR ------------------===//
+//
+// After partial evaluation, a function's result (or, in prefix mode, the live
+// values at the evaluation boundary) is described by a heap snapshot. This
+// file checks that the reachable part of that heap can be rebuilt, then
+// replaces the function body with ctjs operations that recreate it: all
+// objects and Maps first, then cells and closures, then their entries.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Heap.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -10,6 +20,8 @@ namespace ctcompile::ctnative::partial_eval {
 
 std::optional<std::vector<unsigned>> reachable(const snapshot & state) {
     std::vector<unsigned> live;
+    // 0 = unvisited, 1 = on the DFS stack (seeing it again is a cycle, which
+    // cannot be residualized), 2 = finished and residualizable.
     std::vector<unsigned char> colors(state.heap.size(), 0);
     std::function<bool(value)> visit = [&](value input) {
         if (input.tag == value::kind::constant) { return ctjs::isPrimitiveAttr(input.constant); }
@@ -40,6 +52,8 @@ std::optional<std::vector<unsigned>> reachable(const snapshot & state) {
     } else {
         for (const auto & [original, root] : state.bindings) {
             if (root.tag == value::kind::mapConstructor) { continue; }
+            // An integer-typed binding holding an integer or Boolean constant
+            // is rematerialized as arith.constant and owns no heap node.
             if (root.tag == value::kind::constant &&
                 llvm::isa<mlir::IntegerType>(original.getType()) &&
                 llvm::isa<mlir::IntegerAttr, ctjs::BooleanAttr>(root.constant)) {
@@ -55,13 +69,16 @@ std::optional<std::vector<unsigned>> reachable(const snapshot & state) {
 
 namespace {
 
+/// Emits ctjs operations that rebuild the live heap nodes of a snapshot at
+/// the builder's insertion point.
 class graphEmitter {
 public:
     graphEmitter(mlir::OpBuilder & at, const snapshot & state, llvm::ArrayRef<unsigned> live,
                  mlir::Value enclosingClosure)
         : at(at), context(at.getContext()), state(state), enclosingClosure(enclosingClosure) {
-        // Every allocation precedes every edge. Traversal order must not
-        // duplicate a shared child or change an object-valued Map key.
+        // Emit every allocation before any edge, so a shared child is built
+        // once and an object used as a Map key keeps its identity whatever
+        // order the entries are visited in.
         for (unsigned id : live) {
             const auto & item = state.heap[id];
             if (item.tag == node::kind::cell || item.tag == node::kind::closure) { continue; }
@@ -157,6 +174,8 @@ private:
     }
 };
 
+/// Rebuilds `function` into `replacement` with the evaluated prefix removed:
+/// each binding is replaced by its materialized value at the boundary.
 void residualizePrefix(ctjs::FuncOp function, const snapshot & state, llvm::ArrayRef<unsigned> live,
                        mlir::Region & replacement) {
     mlir::IRMapping mapping;
@@ -175,8 +194,8 @@ void residualizePrefix(ctjs::FuncOp function, const snapshot & state, llvm::Arra
         if (retainedPrefixScaffolding(&op)) { continue; }
         auto * originalClone = mapping.lookup(&op);
         if (auto root = llvm::dyn_cast<ctjs::RootOp>(op)) {
-            // Reestablish surviving roots after reconstruction. A root of an
-            // eliminated temporary has no corresponding runtime allocation.
+            // Re-emit roots of values that survive reconstruction. A root of
+            // an eliminated temporary has no runtime allocation to root.
             auto * definition = root.getValue().getDefiningOp();
             if (!definition || retainedPrefixScaffolding(definition) ||
                 llvm::any_of(state.bindings, [&](const auto & binding) {

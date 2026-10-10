@@ -1,3 +1,11 @@
+//===- Symbol.hpp - The native JavaScript Symbol ----------------*- C++ -*-===//
+//
+// js_symbol_t, the C++ type generated native code uses for a JavaScript
+// Symbol, and the global `Symbol` constructor object with its well-known
+// symbols.
+//
+//===----------------------------------------------------------------------===//
+
 #pragma once
 
 #include "ctcompile/CTNative/Runtime/String.hpp"
@@ -24,8 +32,8 @@ struct symbol_constructor;
 #pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
 #endif
 
-// A primitive identity, not its description or a boxed object. Well-known
-// values need no allocation, including during static initialization.
+/// A Symbol: a primitive identity, not its description or a boxed object.
+/// Well-known symbols need no allocation, even during static initialization.
 class js_symbol_t {
     std::variant<ctbrowser::well_known_symbol, ctbrowser::symbol_value> identity;
 
@@ -34,7 +42,8 @@ class js_symbol_t {
     friend struct symbol_constructor;
 
 public:
-    // Symbols are primitive values: moving one must not consume its identity.
+    // Symbols are primitive values: moving one must not consume its identity,
+    // so there are copy operations only.
     js_symbol_t(const js_symbol_t &) = default;
     js_symbol_t & operator=(const js_symbol_t &) = default;
     explicit constexpr operator bool() const noexcept { return true; }
@@ -64,6 +73,8 @@ public:
 #pragma GCC diagnostic pop
 #endif
 
+/// Symbol.prototype.toString and valueOf as callable objects, for generated
+/// code that calls them through `.call(receiver)`.
 struct symbol_to_string_method {
     js_string call(const js_symbol_t & receiver) const { return receiver.toString(); }
 };
@@ -75,6 +86,8 @@ struct symbol_prototype {
     symbol_value_of_method valueOf;
 };
 
+/// The global `Symbol`: callable to make a new unique symbol, with the
+/// well-known symbols (Symbol.iterator, ...) as members.
 struct symbol_constructor {
     const symbol_prototype prototype{};
 #define CTBROWSER_WELL_KNOWN_SYMBOL(name)                                                          \
@@ -90,8 +103,9 @@ struct symbol_constructor {
 
 private:
     static js_symbol_t make(std::optional<std::string_view> description) {
-        // One serial source across translation units and factory copies. Never
-        // wrap into an existing identity, even when concurrent calls exhaust it.
+        // One serial counter shared by all translation units and constructor
+        // copies. It never wraps into an existing identity, even when
+        // concurrent calls exhaust it; it throws instead.
         static std::atomic<std::uint64_t> next{0};
         auto serial = next.load(std::memory_order_relaxed);
         do {

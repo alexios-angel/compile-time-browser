@@ -1,13 +1,14 @@
-#pragma once
+//===- Attempt.h - Exception recovery transaction ---------------*- C++ -*-===//
+//
 // Private to Lowering/Exceptions/Recovery/. Exceptions/Recovery.h declares the
-// one entry point the lowering calls; this declares the transaction behind it
-// so that its members can live in more than one file - they were 1,251 lines
-// in one until 2026-09-08. It was `struct recovery` in an anonymous namespace
-// then and has external linkage in lowering_detail now, which is the only
-// thing about it that changed: the data members, the constructor, the nested
-// types and the two one-line members are verbatim, and each remaining member
-// is declared here next to the file that defines it. The includes are
-// Recovery.cpp's, so every file here sees exactly what that one saw.
+// entry points the lowering calls; this header declares `recovery`, the
+// transaction behind them, so its members can be defined across the files of
+// this directory. Each member is declared next to a note naming the file that
+// defines it.
+//
+//===----------------------------------------------------------------------===//
+
+#pragma once
 
 #include "../Recovery.h"
 
@@ -42,20 +43,25 @@
 
 namespace ctcompile::ctnative::lowering_detail {
 
-// Recovery runs before any handler CFG simplification. The importer carries
-// the complete register vector on ordinary/check edges, while explicit throw
-// has no successor. A throw-only block therefore supplies its current vector
-// through its block arguments; the installation edge supplies no throw state.
-//
-// Work on a disposable function clone. Prove one handler, its dedicated
-// landing, balanced continuation edges and acyclic tails. Clone normal and catch
-// tails separately, including any shared continuation. Checks become normal
-// edges only under the caller's subsequent native nonthrowing admission. Every
-// body exit becomes the SAME completion terminator (flag, normal result,
-// payload/state): LLVM can then structure ordinary branches without merging a
-// throw with a normal completion. The native consumer must still emit a C++
-// throw for the exceptional completion. Catch exits use try_yield. Only after
-// both regions structure successfully is the recovered body adopted.
+/// One attempt to rebuild a function's exception handler as a ctjs.try.
+///
+/// Recovery runs before any handler CFG simplification. The importer carries
+/// the complete register vector on ordinary and check edges, while an explicit
+/// throw has no successor, so a throw-only block supplies its current vector
+/// through its block arguments; the edge that installs the handler supplies no
+/// throw state.
+///
+/// The attempt works on a disposable clone of the function. It proves there is
+/// one handler, a dedicated landing block, balanced continuation edges and
+/// acyclic tails, then clones the normal and catch tails separately, including
+/// any continuation they share. `ctjs.check` edges become ordinary edges only
+/// if the caller's later native admission proves the call cannot throw. Every
+/// body exit becomes the same completion terminator (flag, normal result,
+/// payload/state), so MLIR's CFG-to-SCF transform can structure the branches
+/// without merging a throw with a normal completion. The native consumer must
+/// still emit a C++ throw for the exceptional completion. Catch exits use
+/// try_yield. The recovered body replaces the original only after both regions
+/// structure successfully.
 struct recovery : workBudget {
     ctjs::FuncOp function;
     mlir::ModuleOp module;
@@ -120,8 +126,9 @@ struct recovery : workBudget {
     // Defined in Tails.cpp.
     bool collect(tail & result, mlir::Block * start, bool initiallyActive, bool isCatch);
     bool acyclic(tail & plan);
-    // Kahn's drain of `ready`, charging each node and edge: the number of
-    // nodes visited, or nullopt once the budget is spent.
+    /// Kahn's topological drain of `ready`, charging each node and edge.
+    /// Returns the number of nodes visited, or nullopt once the budget is
+    /// spent.
     template <class Ready, class Incoming, class Edges>
     std::optional<unsigned> drain(Ready & ready, Incoming & incoming, Edges & edges) {
         unsigned visited = 0;

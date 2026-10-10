@@ -1,3 +1,9 @@
+//===- ctcompile/lib/CTJS/IR/CTJSDialect.cpp - ctjs dialect registration --===//
+//
+// Registers the ctjs dialect's operations, types and attributes, and its
+// constant materializer hook.
+//
+//===----------------------------------------------------------------------===//
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
 
 #include "ctcompile/CTJS/IR/CTJSAttrs.h"
@@ -7,8 +13,8 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/DialectImplementation.h"
 
-// THE THREE dependentDialects NAME THEMSELVES IN THE GENERATED SOURCE, so this
-// translation unit needs their definitions. Declaring a dialect as dependent is
+// The three dependentDialects are named by their C++ types in the generated
+// source, so this translation unit needs their definitions. Declaring a dialect as dependent is
 // a promise that loading CTJS loads them too, and the generated
 // getDependentDialects() spells each one by its C++ name.
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -28,14 +34,10 @@ void CTJSDialect::initialize() {
     registerAttributes();
 }
 
-// THE POLICY SETS hasConstantMaterializer AND THERE IS NOTHING TO MATERIALIZE.
-//
-// The flag is in the mandated CTJSBase.td, so it is not dropped; the obligation
-// it creates is answered honestly instead. `ctjs.constant` arrives in Phase 8,
-// and until it does, folding cannot produce a constant this dialect could
-// rebuild - so returning nullptr is the true answer rather than a placeholder.
-// MLIR treats nullptr as "I cannot materialize that", which is exactly the
-// case.
+// CTJSBase.td sets hasConstantMaterializer, but this dialect does not yet
+// rebuild folded attributes as ctjs.constant operations. Returning nullptr
+// tells MLIR "cannot materialize this value", so a fold that would need a new
+// constant is simply not applied.
 mlir::Operation * CTJSDialect::materializeConstant(mlir::OpBuilder & builder, mlir::Attribute value,
                                                    mlir::Type type, mlir::Location location) {
     (void)builder;

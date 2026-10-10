@@ -1,3 +1,20 @@
+//===- ClassInitialization/Proof.hpp - Class setup proof state --*- C++ -*-===//
+//
+// Shared state and small helpers for the class-initialization proof. The proof
+// shows that a module's class setup (constructors, methods, getters, helper
+// calls, captured cells and Maps) has one fixed outcome, and the rewrite then
+// replaces that setup with direct code. The member functions are defined across
+// the .cpp files in this directory.
+//
+// Terms used throughout:
+//   - leaf: a subclass that has no subclasses of its own.
+//   - fold: inline a base constructor's body into a subclass constructor.
+//   - census: the check that every remaining operation is a known effect.
+//   - publication: a constructor storing `this` in a captured Map.
+//   - transport: passing a value through captured cells or upvalues.
+//
+//===----------------------------------------------------------------------===//
+
 #pragma once
 
 #include "../../Lowering/Exceptions/Recovery.h"
@@ -20,17 +37,21 @@
 
 namespace ctcompile::ctnative::class_detail {
 
+/// Own-property keys a JavaScript function carries besides its prototype. The
+/// size check is a fast reject: "arguments" (9 characters) is the longest.
 inline bool closureMetadataKey(llvm::StringRef key) {
     static const llvm::StringSet<> names{"name", "length", "__home", "caller", "arguments"};
     return key.size() <= 9 && names.contains(key);
 }
 
-// The precharge for cloning an operation: itself, its operands and results.
+/// Work-budget cost charged up front for cloning `op`: one unit for the
+/// operation plus one per operand and result.
 inline uint64_t cloneCost(mlir::Operation * op) {
     return uint64_t(1) + op->getNumOperands() + op->getNumResults();
 }
 
-// The closed-source contract that proves only the class helper and Error bindings.
+/// Copies `binding` as a closed-source contract that declares only the class
+/// helper intrinsics and Error.
 inline HostContract classBindingContract(HostContract binding) {
     binding.provider = HostContract::Provider::closedSource;
     binding.elementParameters.clear();
@@ -41,7 +62,8 @@ inline HostContract classBindingContract(HostContract binding) {
     return binding;
 }
 
-// An explicit DOM entry input that the contract declares an element.
+/// Whether `input` is an explicit parameter of the DOM entry function `scope`
+/// that the contract declares to be an element.
 inline bool declaredElementInput(const HostContract & contract, ctjs::FuncOp scope,
                                  mlir::BlockArgument input) {
     return (contract.provider == HostContract::Provider::ctbrowserDOMDataSession ||
@@ -54,13 +76,15 @@ inline bool declaredElementInput(const HostContract & contract, ctjs::FuncOp sco
                               input.getArgNumber() - ctjs::implicit_arguments);
 }
 
-// A nonnegative enclosing index captures a slot of an outer activation.
+/// Whether `closure` captures a slot of an enclosing activation (any
+/// nonnegative enclosing index).
 inline bool hasOuterCapture(ctjs::CreateClosureOp closure) {
     auto indices = closure.getEnclosingIndicesAttr();
     return indices && llvm::any_of(indices.asArrayRef(), [](int32_t index) { return index >= 0; });
 }
 
-// Replace a proved closure's capture slots; they are all local cells now.
+/// Replaces a proved closure's capture slots with `captures`, which are all
+/// local cells after the proof.
 inline void setCaptures(ctjs::CreateClosureOp closure, ctjs::FuncOp function,
                         mlir::ValueRange captures) {
     closure.getUpvaluesMutable().assign(captures);
@@ -68,13 +92,13 @@ inline void setCaptures(ctjs::CreateClosureOp closure, ctjs::FuncOp function,
     function.setUpvalueCount(static_cast<uint32_t>(captures.size()));
 }
 
-// An undefined constant at `at`.
+/// Creates an undefined constant at the builder's insertion point.
 inline ctjs::ConstantOp undefinedAt(mlir::OpBuilder & at, mlir::Location where) {
     return ctjs::ConstantOp::create(at, where, ctjs::UndefinedAttr::get(at.getContext()));
 }
 
-// The region an index switch selects for `key`: its last equal case, else the
-// default. One `step` per case; null when `step` refuses.
+/// The region an index switch selects for `key`: its last equal case, else the
+/// default. Calls `step` once per case and returns null when `step` refuses.
 inline mlir::Region * switchArm(mlir::scf::IndexSwitchOp branch, int64_t key,
                                 llvm::function_ref<bool()> step) {
     auto * region = &branch.getDefaultRegion();
@@ -85,21 +109,28 @@ inline mlir::Region * switchArm(mlir::scf::IndexSwitchOp branch, int64_t key,
     return region;
 }
 
-// Whether `load`'s slot is one of `closure`'s captures.
+/// Whether `load`'s slot is one of `closure`'s captures.
 inline bool capturesSlot(ctjs::LoadUpvalueOp load, ctjs::CreateClosureOp closure) {
     return load.getIndex() >= 0 &&
            static_cast<size_t>(load.getIndex()) < closure.getUpvalues().size();
 }
 
+/// Whether every user of `operation` is a ctjs.root (it is otherwise unused).
 inline bool rootedOnly(mlir::Operation * operation) {
     return llvm::all_of(operation->getUsers(), llvm::IsaPred<ctjs::RootOp>);
 }
 
-// The precharge for closedDeclaration's operation and use scans.
+/// Work-budget cost charged up front for closedDeclaration's scan of `op`
+/// and its uses.
 inline uint64_t declarationCost(mlir::Operation * op) {
     return uint64_t(2) + op->getNumOperands();
 }
 
+/// State for proving that a module's class setup (constructors, methods,
+/// getters, helper calls, captured cells and Maps) can be evaluated at compile
+/// time and rewritten away. `remaining` is the work budget: every step() spends
+/// one unit, and running out refuses the proof with `reason` set. prove() runs
+/// the proof; rewrite() applies it.
 struct classInitialization {
     mlir::ModuleOp module;
     unsigned remaining;
@@ -112,18 +143,21 @@ struct classInitialization {
     llvm::MapVector<mlir::Operation *, CallableObject> globalHolders;
     llvm::MapVector<mlir::Operation *, CallableObject> localHolders;
     llvm::SmallVector<ctjs::CallOp> calls;
-    // Publication scans may stop early; charge work in source order, not pointer order.
+    /// Class value to the call that sets up its `extends` link. A MapVector so
+    /// that scans, which may stop early when the budget runs out, charge work
+    /// in source order rather than pointer order.
     llvm::MapVector<mlir::Value, ctjs::CallOp> heritage;
     llvm::DenseSet<mlir::Value> baseClasses;
     llvm::DenseMap<mlir::Value, llvm::SmallVector<ctjs::SetPropertyOp>> inheritedMethods;
     llvm::DenseMap<mlir::Value, llvm::StringMap<ctjs::DefineAccessorOp>> inheritedGetters;
-    // Per derived class: copies of inherited getters whose receiver reads reach
-    // a key that class shadows, proved and expanded in its own environment.
+    /// Per derived class: copies of inherited getters whose receiver reads reach
+    /// a key that class shadows, proved and expanded in its own environment.
     llvm::DenseMap<mlir::Value, llvm::StringMap<ctjs::FuncOp>> receiverGetters;
     llvm::DenseMap<mlir::Value, llvm::SmallVector<llvm::StringRef>> snapshotFields;
     llvm::DenseSet<mlir::Operation *> snapshotMethods;
-    // Bases constructed only through their leaves' super calls leave their
-    // snapshots (calls and methods) to the first leaf that folds them.
+    /// Bases constructed only through their subclasses' super calls. Their
+    /// snapshots (calls and methods) are taken by the first subclass that
+    /// inlines the base constructor.
     llvm::DenseSet<mlir::Value> deferredSnapshots;
     llvm::DenseSet<mlir::Operation *> pendingSnapshots, pendingSnapshotMethods;
     llvm::SmallVector<std::pair<ctjs::CallOp, ctjs::SetPropertyOp>> inheritedSlots;
@@ -135,20 +169,23 @@ struct classInitialization {
     llvm::DenseSet<mlir::Operation *> methods;
     llvm::DenseSet<mlir::Operation *> methodCalls;
     llvm::SmallVector<std::pair<ctjs::ConstructOp, ctjs::SetPropertyOp>> methodProbes;
-    // Shadowed bodies get private slots only until their typed probes pass.
+    /// Shadowed method bodies that keep private slots only until their typed
+    /// probes pass.
     llvm::DenseSet<mlir::Operation *> proofOnlyMethods;
     bool needsDOMMethodProof = false;
     llvm::DenseSet<mlir::Operation *> helpers;
     llvm::DenseSet<mlir::Operation *> helperCalls;
-    // Helpers and holder slots a decided arm's dropped or erased call named,
-    // and those no running body calls: no census, and rewrite erases them.
+    /// Helpers and holder slots named by a call in a branch arm that was
+    /// decided away, and helpers no running body calls. The census skips them
+    /// and rewrite() erases them.
     llvm::SetVector<mlir::Operation *> decidedHelpers;
     llvm::DenseSet<mlir::Operation *> uncalledHelpers;
-    // Constructors of bases only leaves' super copies build: never run.
+    /// Constructors of bases that are only built through copies inlined into
+    /// subclass constructors; the originals never run.
     llvm::DenseSet<mlir::Operation *> leafBuilt;
     llvm::DenseSet<mlir::Operation *> domEntryHelpers;
-    // DOM entries: each declared element parameter and its index, the element
-    // actual evaluateHelper knows by a partial_eval reference to that index.
+    /// DOM entries: each declared element parameter and its index; evaluateHelper
+    /// refers to that element by a partial_eval reference to the index.
     llvm::DenseMap<mlir::Value, unsigned> elementActuals;
     llvm::DenseSet<mlir::Operation *> domDataOperations;
     llvm::DenseMap<mlir::Value, mlir::Value> retainedRecordOrigins;
@@ -163,8 +200,9 @@ struct classInitialization {
     llvm::SmallVector<std::pair<ctjs::GetPropertyOp, ctjs::FuncOp>> staticMethodReads;
     llvm::SmallVector<ctjs::CreateClosureOp> staticMethodClosures;
     llvm::MapVector<mlir::Value, mlir::Value> cells;
-    // Actual shared storage, never a fixed snapshot. The ordinary closure
-    // lifter and complete DOM Boolean proof consume these retained bodies.
+    /// Cells that stay real shared storage rather than fixed values. The
+    /// ordinary closure lifter and the DOM Boolean proof handle the bodies
+    /// that keep them.
     llvm::DenseSet<mlir::Value> booleanCells;
     llvm::DenseSet<mlir::Operation *> booleanLeaves;
     llvm::DenseSet<mlir::Operation *> cellOperations;
@@ -189,17 +227,19 @@ struct classInitialization {
     classInitialization(mlir::ModuleOp module, unsigned steps) : module(module), remaining(steps) {}
 
     bool step();
-    // `count` steps at once; one that does not fit spends the rest, as `count` steps would.
+    /// Spends `count` steps at once. If they do not fit, spends what is left and
+    /// fails, as `count` separate step() calls would.
     bool spend(uint64_t count);
-    // Precharges every operation `root` walks, keeping what was spent before a misfit.
+    /// Charges `cost` for every operation under `root` before any work is done.
+    /// On failure, what was spent before the budget ran out stays spent.
     bool spendWalk(mlir::Operation * root, llvm::function_ref<uint64_t(mlir::Operation *)> cost);
     bool refuse(llvm::StringRef message);
     mlir::WalkResult refuseWalk(llvm::StringRef message) {
         refuse(message);
         return mlir::WalkResult::interrupt();
     }
-    // Walk `root`'s operations of `visit`'s argument type, one step before each
-    // visit. False when the budget or `visit` interrupts.
+    /// Walks `root`'s operations of `visit`'s argument type, one step before
+    /// each visit. False when the budget or `visit` interrupts.
     template <mlir::WalkOrder Order = mlir::WalkOrder::PostOrder, class Visit>
     bool walkSteps(mlir::Operation * root, Visit && visit) {
         using Op = mlir::detail::first_argument<std::remove_reference_t<Visit>>;
@@ -209,14 +249,14 @@ struct classInitialization {
                     })
                     .wasInterrupted();
     }
-    // Point every cell whose recorded initial value is `from` at `to`.
+    /// Points every cell whose recorded initial value is `from` at `to`.
     void retargetCells(mlir::Value from, mlir::Value to) {
         for (mlir::Value & initial : llvm::make_second_range(cells)) {
             if (initial == from) { initial = to; }
         }
     }
-    // Whether only proved cell transport uses `cell`, one step per use;
-    // nullopt when the budget stops.
+    /// Whether every use of `cell` is a proved cell operation, one step per
+    /// use; nullopt when the budget runs out.
     std::optional<bool> transportOnlyCell(mlir::Value cell) {
         for (mlir::Operation * user : cell.getUsers()) {
             if (!step()) { return std::nullopt; }
@@ -224,21 +264,22 @@ struct classInitialization {
         }
         return true;
     }
-    // Record a plain Map construction and its constructor load.
+    /// Records a plain Map construction and its constructor load.
     void adoptMap(ctjs::ConstructOp made) {
         maps.insert(made.getResult());
         mapOperations.insert(made);
         mapOperations.insert(made.getCallee().getDefiningOp());
     }
-    // Erase a rooted Map operation and its record.
+    /// Erases a rooted Map operation and its record.
     void eraseMapOperation(mlir::Operation * op) {
         mapOperations.erase(op);
         eraseRooted(op);
     }
-    // Each class value's unique initialization call; null when initialized twice.
+    /// Fills `completed` with each class value's unique initialization call;
+    /// false when a class is initialized twice.
     bool completedClasses(llvm::DenseMap<mlir::Value, ctjs::CallOp> & completed);
-    // The closed function a recorded helper call invokes, or null. `throughCells`
-    // resolves the callee through cell transport first.
+    /// The closed function a recorded helper call invokes, or null.
+    /// `throughCells` first follows the callee through captured cells.
     ctjs::FuncOp helperCallTarget(mlir::Operation * op, bool throughCells = false);
     static bool undefined(mlir::Value value) { return ctjs::isUndefinedConstant(value); }
     ctjs::FuncOp target(ctjs::CreateClosureOp closure);
@@ -278,7 +319,7 @@ struct classInitialization {
                                  llvm::SmallVectorImpl<unsigned> & requiredHelpers);
     bool normalizeCapturedMapHelpers(ctjs::FuncOp scope);
     bool normalizeNestedMaps(ctjs::FuncOp scope, const HostContract & contract);
-    // One candidate outer Map of normalizeNestedMaps.
+    /// Handles one candidate outer Map for normalizeNestedMaps().
     bool normalizeNestedMap(ctjs::FuncOp scope, const HostContract & contract,
                             ctjs::ConstructOp map);
     bool sinkConstructorPublication(ctjs::CreateClosureOp constructor,
@@ -291,7 +332,8 @@ struct classInitialization {
                            const llvm::StringMap<ctjs::DefineAccessorOp> & staticDefinitions,
                            const llvm::StringMap<ctjs::SetPropertyOp> & staticMethods,
                            const HostContract & contract);
-    // `unconstructed`: the original body of a base only leaves construct.
+    /// `unconstructed` marks the original body of a base that only subclasses
+    /// construct.
     bool fieldsOnly(mlir::Value object, const llvm::StringSet<> & methodKeys,
                     llvm::SmallVectorImpl<ctjs::GetPropertyOp> & staticReads,
                     bool methodsAvailable = false, bool unconstructed = false);
@@ -301,16 +343,17 @@ struct classInitialization {
 
     bool foldDecidedArms(ctjs::CreateClosureOp constructor,
                          llvm::ArrayRef<ctjs::ConstructOp> instances);
-    // The primitive or element actual an exact captured helper returns for
-    // primitive and element actuals.
+    /// Evaluates a captured helper at compile time for primitive and element
+    /// arguments; returns the primitive or element it returns, or nothing.
     std::optional<partial_eval::value> evaluateHelper(ctjs::FuncOp fn,
                                                       llvm::ArrayRef<partial_eval::value> actuals,
                                                       unsigned depth);
     bool freshFunctionIndex(unsigned & next);
-    // A copy of `fn` appended to the module as source function `index`.
+    /// Appends a copy of `fn` to the module as source function `index`.
     ctjs::FuncOp cloneFunction(ctjs::FuncOp fn, unsigned index);
-    // The ancestor of `op` in `block` through Parents regions, one step each;
-    // where the chain leaves them or the budget stops, the operation reached.
+    /// The ancestor of `op` that lies in `block`, climbing only through parents
+    /// of the `Parents` types, one step each. Returns the operation reached when
+    /// the chain leaves those types or the budget runs out.
     template <class... Parents>
     mlir::Operation * positionIn(mlir::Operation * op, mlir::Block * block) {
         while (op->getBlock() != block && llvm::isa_and_nonnull<Parents...>(op->getParentOp())) {
@@ -331,32 +374,36 @@ struct classInitialization {
                        llvm::ArrayRef<ctjs::GetPropertyOp> reads, ctjs::CallOp helper);
 
     bool proveHeritage(const HostContract & contract);
-    // Exact local `C.k(args)` whose static body builds through `this`: that
-    // body at the call site, with C for `this` - StaticFactories.cpp.
+    /// Inlines each local `C.k(args)` whose static body builds through `this`,
+    /// with C for `this`. Defined in StaticFactories.cpp.
     bool expandStaticFactories();
-    // Static methods no read reaches never run; remove them before any proof.
+    /// Removes static methods that no read reaches (they never run) before any
+    /// proof.
     bool dropUnreadStatics();
-    // A dropped source call `holder.key(...)`: its slot may have lost its last call.
+    /// Called after a source call `holder.key(...)` is dropped: that slot may
+    /// have lost its last call.
     void decideSlot(mlir::Value holder, ctjs::GetPropertyOp read);
     bool proveInstanceOf(const HostContract & contract);
 
     bool heritageUse(mlir::OpOperand & use, mlir::Value constructor);
 
-    // ponytail: explicit super statements over local bases. Fields, replacement
-    // returns and default rest/apply need their own proof.
+    /// Inlines an explicit super(...) call to a local base constructor.
+    // ponytail: only explicit super statements over local bases. Bases with
+    // fields, replacement returns or default rest/apply need their own proof.
     bool normalizeSuper(ctjs::CreateClosureOp constructor, ctjs::CreateClosureOp baseClosure,
                         const HostContract & contract);
 
     bool normalizeSuperMethods(ctjs::FuncOp function,
                                llvm::ArrayRef<ctjs::SetPropertyOp> baseDefinitions);
-    // Drop the helper-call, Map and capture records of a replaced body.
+    /// Drops the helper-call, Map and capture records of a replaced body.
     void forgetRecords(mlir::Region & region);
 
     bool examine(ctjs::CallOp call, const HostContract & contract, bool domEntry);
 
+    /// Runs the whole proof; false with `reason` set when it refuses.
     bool prove(const HostContract & contract, bool domEntry = false);
-    // prove's phases: record exact helper calls, decide which helpers never
-    // run, then the complete source census of every remaining operation.
+    /// prove() runs these in order: record the exact helper calls, decide which
+    /// helpers never run, then check every remaining operation (the census).
     bool recordHelperCalls(ctjs::FuncOp entry, bool domEntry);
     bool decideUncalledHelpers(const HostContract & contract, bool domEntry);
     bool censusSource(const HostContract & contract, bool domEntry, ctjs::FuncOp entry,
@@ -374,12 +421,13 @@ struct classInitialization {
     static void eraseIfRooted(mlir::Operation * operation) {
         if (rootedOnly(operation)) { eraseRooted(operation); }
     }
-    // Erase a fixed cell with its recorded reads and remaining transport users.
+    /// Erases a fixed cell with its recorded reads and remaining transport users.
     void retireCell(mlir::Value cell);
-    // Erase a helper closure whose calls were all expanded, and its function.
+    /// Erases a helper closure whose calls were all expanded, and its function.
     void retireHelper(ctjs::CreateClosureOp closure, ctjs::FuncOp function);
     llvm::SmallVector<ctjs::FuncOp> expandHolders();
 
+    /// Applies a successful proof to the IR. Defined in Rewrite.cpp.
     void rewrite();
 };
 

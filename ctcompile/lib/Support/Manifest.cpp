@@ -1,3 +1,11 @@
+//===- ctcompile/lib/Support/Manifest.cpp - Build manifest as JSON --------===//
+//
+// Serialises a ctcompile::manifest (what went into a packaged app: versions,
+// entry point, scripts and resources) to JSON, with a JSON string escaper that
+// follows RFC 8259.
+//
+//===----------------------------------------------------------------------===//
+
 #include <ctcompile/Support/Manifest.hpp>
 
 #include <format>
@@ -7,8 +15,9 @@ namespace ctcompile {
 
 namespace {
 
-// A 64-bit value as "0x…", because these are identities rather than
-// quantities. A decimal program id invites arithmetic on it.
+/// Formats a 64-bit value as "0x" plus 16 hex digits, because these are
+/// identities rather than quantities. A decimal program id invites arithmetic
+/// on it.
 std::string hex(std::uint64_t value) {
     return std::format("0x{:016x}", value);
 }
@@ -30,18 +39,18 @@ std::string json_string(std::string_view text) {
         case '\r': out += "\\r"; break;
         case '\t': out += "\\t"; break;
         default:
-            // EVERYTHING BELOW SPACE, not just the named ones. RFC 8259 forbids
-            // a raw control character in a string, and the five with short
-            // escapes are the only ones anybody remembers - a stray 0x01 in a
+            // Escape every byte below space, not just the named ones. RFC 8259
+            // forbids a raw control character in a string, and the five with
+            // short escapes are the only ones anybody remembers: a stray 0x01 in a
             // file name would otherwise produce JSON that half the parsers in
             // the world reject and the other half accept differently.
             if (c < 0x20) {
                 out += std::format("\\u{:04x}", c);
             } else {
-                // BYTES ABOVE 0x7F PASS THROUGH UNTOUCHED, which is correct for
+                // Bytes above 0x7F pass through untouched, which is correct for
                 // UTF-8 input and is what a name out of a document is. Escaping
                 // them to \u would require decoding, and decoding requires
-                // knowing the input is valid - which a file name is not obliged
+                // knowing the input is valid, which a file name is not obliged
                 // to be.
                 out += raw;
             }

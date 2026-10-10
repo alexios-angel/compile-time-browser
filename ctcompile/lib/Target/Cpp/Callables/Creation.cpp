@@ -1,3 +1,10 @@
+//===- Creation.cpp - Callable creations ------------------------*- C++ -*-===//
+//
+// Resolves and checks `ctnative.callable_create` calls, and bounds how far
+// creations may be expanded inline.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Body.h"
 
 #include "mlir/IR/SymbolTable.h"
@@ -43,8 +50,13 @@ mlir::FailureOr<mlir::emitc::FuncOp> callableCreationTarget(mlir::emitc::CallOpa
 
 namespace {
 
+/// Walks `function` and every function its creations create, spending one
+/// unit of `remaining` per operation. `active` holds the functions on the
+/// current path, so recursion fails the check.
 bool bounded(mlir::emitc::FuncOp function, llvm::DenseSet<mlir::Operation *> & active,
              unsigned & remaining) {
+    // Expand at most 8 nested creations deep; deeper or recursive creation
+    // keeps its out-of-line binder.
     if (active.size() >= 8 || !active.insert(function).second) { return false; }
     const llvm::scope_exit leave([&] { active.erase(function); });
     const auto result = function.walk([&](mlir::Operation * op) {

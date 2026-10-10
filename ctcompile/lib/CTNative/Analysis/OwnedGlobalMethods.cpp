@@ -1,3 +1,18 @@
+//===- OwnedGlobalMethods.cpp - Global method-table ownership -------------===//
+//
+// OwnedGlobalRoots::analyzeMethodTable: the case where the owned global's
+// single field holds a table of methods returned by a factory function,
+// optionally with a Map captured by those methods. Terms used below:
+//
+//  - "the host proof": HostContractAnalysis's results (slots, callables,
+//    captured Map, local records), which this file re-checks but never
+//    widens.
+//  - "the family": the factory, its methods, the optional wrapper, the scalar
+//    callbacks and every call to them; every function, allocation, store,
+//    read and call in the module must belong to it, to the scalar callbacks
+//    or to the local records the host proof checked.
+//
+//===----------------------------------------------------------------------===//
 #include "OwnedGlobalRoots.h"
 
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
@@ -9,6 +24,14 @@
 #include "llvm/ADT/StringMap.h"
 
 namespace ctcompile::ctnative {
+/// Proves that the host slot's global object owns a method table: one
+/// allocation in the entry function, stored once into a global binding whose
+/// field is set from a factory call (optionally inside a wrapper function),
+/// where the factory returns a fresh object literal of closures. Everything in
+/// the module must belong to the family (see the file comment) and run in a
+/// fixed straight-line order. On success fills `checked`, `edges` and the
+/// scalar/object read tables; on failure sets `refusal` to the first reason.
+/// Every check spends from `maxSteps`.
 void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContract & contract,
                                           const HostContractAnalysis & host, unsigned maxSteps) {
     const auto spend = [&] {
@@ -38,8 +61,9 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
         reject("closed-source session requires a captured method table");
         return;
     }
-    // An indirect factory has already passed the complete live host proof:
-    // its unique wrapper callback produces this exact captured allocation.
+    // With no direct call, the factory is the function that allocates the
+    // captured Map; the host proof has already shown that the wrapper callback
+    // is the only producer of that allocation.
     auto factory = directFactory ? directFactory.getTarget()
                                  : (capture ? capture->allocation->getParentOfType<ctjs::FuncOp>()
                                             : ctjs::FuncOp{});
@@ -83,7 +107,8 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
         if (edge.capturedMap) {
             for (const auto & returned : edge.capturedMap->returnedScalars) {
                 (void)returned;
-                // Charge comparison and the final callable edge's copy.
+                // Two steps: one for comparing it, one for copying it into the
+                // result.
                 if (!spend() || !spend()) { return; }
             }
         }
@@ -221,6 +246,9 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
             if (!spend()) { return; }
             auto function = method.function;
             auto & body = function.getBody().front();
+            // A method whose block has exactly one argument beyond the three
+            // implicit ones (ctjs::implicit_arguments) and its scalar
+            // parameters takes the outer Map as argument 3.
             if (body.getNumArguments() - method.alternatives.size() == 4) {
                 outers.insert(body.getArgument(3));
             }
@@ -297,11 +325,13 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
             reject("owned child contents lack a complete homogeneous scalar category");
             return;
         }
-        // These sets distinguish owning roles, not runtime identities. A
-        // present outer get can name a child from an earlier invocation. Only
-        // fresh constructors and their fluent aliases establish the universal
-        // payload kind; no returned owner supplies allocation or content facts.
-        // NativeMap independently derives schemas and presence.
+        // `outers` and `children` classify values by role (outer Map or child
+        // Map), not by runtime identity: an outer `get` may return a child
+        // created by an earlier call. Only `new Map()` results and the values
+        // their `set` calls return (`constructedChildren`) prove what every
+        // stored child contains; a returned child proves nothing about
+        // allocation or contents. NativeMap derives schemas and key presence
+        // on its own.
         for (ctjs::CallOp call : capture->calls) {
             if (!spend()) { return; }
             auto read = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
@@ -381,8 +411,9 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
                 children.insert(call.getResult());
             }
         }
-        // A content category permits absence; deletion and clear preserve it.
-        // It supplies neither a required entry nor a returned-child identity.
+        // A content type allows a key to be absent, so delete and clear keep
+        // it valid. It proves neither that an entry exists nor which child a
+        // `get` returns.
         if (capture->childScalarContents.known &&
             (!childPublication || !childWrite ||
              !(scalarContents == capture->childScalarContents))) {
@@ -402,8 +433,10 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
                 reject("owned child invariant lacks its exact scalar key and category");
                 return;
             }
-            // Recheck the complete mutation census and initialization order.
-            // Returned owners establish no seed or allocation identity here.
+            // Recheck every child mutation and the initialisation order: each
+            // child must get the required entry (its "seed" set) in the same
+            // block after construction and before it is stored in the outer
+            // Map. Returned children prove neither.
             llvm::DenseMap<mlir::Value, ctjs::CallOp> seeds;
             for (ctjs::CallOp call : capture->calls) {
                 if (!spend()) { return; }
@@ -465,8 +498,9 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
     }
 
     llvm::DenseSet<mlir::Operation *> observations;
-    // Records every scf.if between `read` and the entry as an observation
-    // region; false, rejecting `why` for any other control, when that fails.
+    // Records every scf.if between `read` and the entry function body as an
+    // observation region. Rejects `why` and returns false if any other
+    // operation encloses `read`.
     const auto ifChain = [&](mlir::Operation * read, llvm::StringRef why) {
         for (auto * parent = read->getParentOp(); parent != entry; parent = parent->getParentOp()) {
             if (!spend()) { return false; }
@@ -494,7 +528,8 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
             }
         }
         for (const auto & returned : capture->returnedScalars) {
-            // Charge validation/indexing and the owning table's copy.
+            // Two steps: one for checking and indexing it, one for copying it
+            // into the result.
             if (!spend() || !spend()) { return; }
             const auto alternatives = returned.alternatives;
             constexpr unsigned truthy = PrimitiveAlternatives::Boolean |
@@ -518,10 +553,10 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
             if (!ifChain(read, "owning entry field read has unsupported control")) { return; }
         }
     }
-    // The fresh complete host proof also closes entry-local records and Maps.
-    // Keep their exact source identities separate from the published family;
-    // an unknown field store may be harmless to provider observations but is
-    // insufficient for native primitive storage, even if never read again.
+    // The host proof also checked the entry function's local records and
+    // Maps. Track their constructors and operations separately from the
+    // method family: the native code stores their fields as primitives, so an
+    // unproved field store must be refused even if nothing reads it.
     llvm::DenseSet<mlir::Operation *> localConstructors, localOperations;
     const auto & local = host.localRecords();
     for (ctjs::FuncOp function : local.constructors) {
@@ -545,9 +580,10 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
     module.walk<mlir::WalkOrder::PreOrder>([&](mlir::Operation * operation) {
         if (!spend()) { return mlir::WalkResult::interrupt(); }
         if (operation == module.getOperation()) { return mlir::WalkResult::advance(); }
-        // HostContract has censused the complete declaration, including all
-        // source references to it. It is not a second Data activation. Keep
-        // charging its body so a truncated ownership query publishes nothing.
+        // The host proof already checked the host's declaration wrapper and
+        // every reference to it, so its body is skipped here rather than
+        // treated as another function in the family. Each operation still
+        // spends from the budget, so running out mid-walk publishes nothing.
         if (host.wrapper() && (operation == host.wrapper().getOperation() ||
                                operation->getParentOfType<ctjs::FuncOp>() == host.wrapper())) {
             return mlir::WalkResult::advance();
@@ -563,19 +599,17 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
                        "functions");
             }
         } else {
-            // Only the complete live captured-body proof authorizes control
-            // inside a method. Allocation, publication and entry calls retain
-            // their unconditional source-order requirements below.
+            // Control flow is allowed in three places only: inside a method or
+            // callback body that the host proof checked (capturedBody), in
+            // scf.if regions that only observe checked field reads
+            // (observation), and in entry-level scf.if, `===` and `!` chains
+            // that only select scalar results (scalarObservation). Calls,
+            // stores and allocations must still sit unconditionally in their
+            // function's top block.
             const bool capturedBody =
                 capture && (methodFunctions.contains(operation->getParentOfType<ctjs::FuncOp>()) ||
                             callbackFunctions.contains(operation->getParentOfType<ctjs::FuncOp>()));
-            // Only pure observation regions around checked owning field reads
-            // are admitted at entry. Calls, allocation and publication still
-            // require their unconditional source positions.
             bool observation = observations.contains(operation);
-            // Pure entry observations may select scalar results, including
-            // comparisons of checked method results. Both arms are censused;
-            // calls, stores and allocations still need unconditional positions.
             bool scalarObservation =
                 operation->getParentOfType<ctjs::FuncOp>() == entry &&
                 llvm::isa<ctjs::ConstantOp, ctjs::RootOp, ctjs::TruthyOp, ctjs::CompareOp,
@@ -621,6 +655,8 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
         return refusal.empty() ? mlir::WalkResult::advance() : mlir::WalkResult::interrupt();
     });
     if (!refusal.empty()) { return; }
+    // Expected functions: each method, scalar callback and local record
+    // constructor, plus the entry and the factory, plus the wrapper if any.
     if (functions != methods.size() + callbackFunctions.size() + localConstructors.size() +
                          (wrapper ? 3u : 2u)) {
         reject("owned global method table requires its exact source function chain");
@@ -819,8 +855,9 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
             reject("saved scalar read disagrees with the complete host proof");
             return;
         }
-        // Scalar dependencies must belong to this complete live owning family.
-        // A saved field value keeps its original read, not a later field load.
+        // Every value the saved scalar depends on must come from this family.
+        // A saved field value depends on its original read, not on a later
+        // load of the field.
         for (mlir::Value dependency : edge.dependencies) {
             if (!spend()) { return; }
             auto fieldRead = dependency.getDefiningOp<ctjs::GetPropertyOp>();
@@ -862,9 +899,9 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
         if (store.getValue() != made.getResult()) {
             auto source = store.getValue().getDefiningOp<ctjs::LoadGlobalOp>();
             const auto * predecessor = source ? host.objectRead(source) : nullptr;
-            // This complete census revalidates every predecessor too. Each
-            // step precedes its store in the entry block, so no cycle can
-            // survive and the chain must end at the checked allocation.
+            // Every link of the alias chain is checked here as well. Each link
+            // precedes its store in the entry block, so the chain cannot loop
+            // and must end at the checked allocation.
             if (!predecessor || predecessor->object != made || source->getParentOp() != entry ||
                 !source->isBeforeInBlock(store)) {
                 reject("object key alias lacks its earlier source global initialization");
@@ -905,9 +942,9 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
                     }
                     if (checked) { continue; }
                 }
-                // The complete host proof checks scalar fields and definite own
-                // initialization; ownership separately binds each use to this
-                // exact caller allocation and its stable global aliases.
+                // The host proof checked the scalar fields and their definite
+                // initialisation; here each use is tied to this exact caller
+                // allocation and the global aliases of it.
                 if (use.getOwner()->getParentOp() == entry &&
                     value.getDefiningOp()->isBeforeInBlock(use.getOwner())) {
                     if (auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(use.getOwner());
@@ -932,6 +969,10 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
                     reject("object key global has a use outside its owning call family");
                     return;
                 }
+                // Convert the callee's block-argument number to the call's
+                // operand number: call_direct has 3 operands before the
+                // arguments, call has 2 (callee, receiver), and the callee block
+                // has ctjs::implicit_arguments (3) before its parameters.
                 const unsigned offset = llvm::isa<ctjs::CallDirectOp>(use.getOwner()) ? 3u : 2u;
                 const bool argument = llvm::any_of(call->arguments, [&](const auto & actual) {
                     return actual.actual == value && actual.object == made &&
@@ -949,8 +990,9 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
         objectReads.push_back(edge);
     }
 
-    // The query exposes only source ownership. A later consumer must prove a
-    // callable carrier and native call component; no annotation closes them.
+    // This result proves ownership only. A consumer that calls the methods
+    // natively must still prove how the callables are represented and
+    // called; no IR attribute stands in for that proof.
     OwnedGlobalRoot result{owner, initialization, std::move(loads), field,
                            {},    slot.binding,   slot.property,    std::nullopt};
     result.reads.append(slot.reads.begin(), slot.reads.end());

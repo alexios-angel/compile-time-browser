@@ -5,12 +5,10 @@ target_sources(ctcompile-support
     Version.cpp)
 ctcompile_target(ctcompile-support)
 
-# THE NARROW ENGINE DEPENDENCY, and it is narrow on purpose. Reading a
-# program's bytecode needs Core (atoms, handles) and Script; it does not need
-# Raster, Shell, App or SDL3. Linking the ctbrowser umbrella here would drag all
-# of them in and make the compiler need a windowing system to inspect a
-# function, which is exactly what Phase -1's "expose narrow compiler-facing
-# libraries" is about.
+# Link only the engine libraries the compiler needs. Reading a program's
+# bytecode needs Core (atoms, handles) and Script, not Raster, Shell, App or
+# SDL3; linking the ctbrowser umbrella would make the compiler depend on a
+# windowing system just to inspect a function.
 target_link_libraries(ctcompile-support PUBLIC ctbrowser::core ctbrowser::script)
 
 # The two versions the binary reports, injected rather than written into the
@@ -18,7 +16,7 @@ target_link_libraries(ctcompile-support PUBLIC ctbrowser::core ctbrowser::script
 #
 # ctbrowser's version comes from whichever mechanism supplied its targets:
 # project(ctbrowser VERSION) sets ctbrowser_VERSION for a monorepo build, and a
-# standalone build gets it from the installed package's config - which does not
+# standalone build gets it from the installed package's config, which does not
 # write a version file today, so "unknown" is the honest answer there rather
 # than a number this project made up.
 set(engine-version "${ctbrowser_VERSION}")
@@ -31,10 +29,10 @@ target_compile_definitions(ctcompile-support PRIVATE
 
 add_library(ctcompile::support ALIAS ctcompile-support)
 
-# THE MLIR CONTEXT FACTORY, AS ITS OWN TARGET, and the separation is the point.
+# The MLIR context factory is a separate target on purpose.
 #
-# ctcompile::support is linked by `ctcompile` - the packager, the product a user
-# runs - and that binary must never need MLIR. Adding MLIRContextSetup.cpp to
+# ctcompile::support is linked by `ctcompile` (the packager, the product a user
+# runs), and that binary must never need MLIR. Adding MLIRContextSetup.cpp to
 # the library above would put a 2 GB dependency into an executable whose job is
 # to copy a launcher and append some bytes.
 #
@@ -46,9 +44,8 @@ if(CTCOMPILE_ENABLE_MLIR)
   target_link_libraries(ctcompile-mlir-support
     PUBLIC
       CTJSDialect
-      # Phase 53's dialect, registered beside CTJS by MLIRContextSetup.cpp so
-      # that ctjs-opt can parse and print !ctnative types. See the comment there
-      # for why that is done here rather than in a separate ctnative-opt.
+      # The ctnative dialect, registered beside CTJS by MLIRContextSetup.cpp so
+      # ctjs-opt can parse and print !ctnative types (see the comment there).
       CTNativeDialect
       MLIRIR
       MLIRArithDialect

@@ -1,3 +1,13 @@
+//===- Lowering.h - EmitC lowering internals --------------------*- C++ -*-===//
+//
+// Private to the ctjs -> EmitC lowering (--ctjs-lower-to-emitc). This backend
+// emits C++ that calls the ctbrowser AOT runtime helpers (ct_aot_*), whose
+// contracts ("ABI entries") are in ctbrowser/include/ctbrowser/aot/helpers/
+// *.def. Every JavaScript value is a 64-bit NaN-boxed `uint64_t` that lives in
+// the VM's register file, so this is the VM-backed backend, as opposed to the
+// native (no-GC) backend in lib/CTNative.
+//
+//===----------------------------------------------------------------------===//
 #pragma once
 
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
@@ -23,99 +33,95 @@
 
 namespace ctcompile::ctjs::emitc_detail {
 namespace ec = mlir::emitc;
-// The frame block's element type, aligned for whatever the runtime constructs
-// in it rather than for a byte.
+/// The frame block's element type, aligned for whatever the runtime constructs
+/// in it rather than for a byte.
 inline constexpr const char * kFrameStorageElement = "alignas(::std::max_align_t) unsigned char";
 
+/// The per-function state of lowering one ctjs.func to one emitc.func.
 struct compiled_entry {
     ec::FuncOp entry;
+    /// The `ct_aot_frame *` that ct_aot_enter returned.
     mlir::Value frame;
     mlir::Value receiver;
     mlir::Value constructing;
+    /// The entry's `uint64_t *out` result parameter.
     mlir::Value out;
+    /// The emitted types of a JavaScript value and of a status.
     mlir::Type value;
     mlir::Type status;
-    // Built on first use, because a function whose helpers cannot fail should
-    // not carry an unreachable epilogue.
+    /// The shared failure epilogue. Built on first use, because a function
+    /// whose helpers cannot fail should not carry an unreachable epilogue.
     mlir::Block * propagate = nullptr;
 
-    // WHERE EACH JAVASCRIPT VALUE IS ROOTED.
-    //
-    // THE COLLECTOR IS PRECISE and walks exactly the roots of context::each_root. A
-    // value living only in a C++ local of the emitted function is reachable
-    // from NONE of them, so a helper that collects can free it while the
-    // generated code still holds its bits - and 33 of the 69 ABI rows are
-    // is_safepoint, including every arithmetic one.
-    //
-    // This was a real defect, not a hypothetical: `function f(a,b,c){return
-    // a+b+c;}` compiled to code that kept (a+b) in a plain uint64_t across the
-    // second ct_aot_binary_op, and under set_gc_stress it returned "qqqqqZ"
-    // where the interpreter returned the correct 65-character string. ASan
-    // called it a heap-use-after-free, freed and read inside the same call.
-    //
-    // The runtime's own reference body says what to do instead - "parked in a
-    // slot, which is the whole discipline this phase exists to make possible" -
-    // so every value this backend produces goes into a frame slot as soon as it
-    // exists. The mapping is one slot per produced value, never reused: keeping
-    // a dead value alive is a leak until the frame is left, and losing a live
-    // one is a use-after-free.
+    /// The frame slot each JavaScript value is rooted in.
+    ///
+    /// The collector is precise and walks only the roots of
+    /// context::each_root. A value held only in a C++ local of the emitted
+    /// function is not one of them, so any helper marked is_safepoint (which
+    /// includes every arithmetic helper) can free it while the generated code
+    /// still holds its bits. Example: in `a+b+c`, keeping (a+b) in a local
+    /// across the second ct_aot_binary_op is a use-after-free under GC stress.
+    ///
+    /// So every value this backend produces is stored ("parked") in a frame
+    /// slot, which the collector does trace, as soon as it exists. One slot
+    /// per produced value, never reused: keeping a dead value alive is a leak
+    /// until the frame is left, and losing a live one is a use-after-free.
     llvm::DenseMap<mlir::Value, unsigned> slots;
 
-    // AND WHERE EACH CALL'S ARGUMENT WINDOW STARTS.
-    //
-    // ct_aot_call takes `const uint64_t *argv` - a CONTIGUOUS run - and the
-    // arguments are individually rooted in slots of their own, which are not
-    // adjacent. So each call site gets a run reserved for it, written just
-    // before the call. In the frame rather than in a C++ array, for the reason
-    // everything else is: ct_aot_call is a safepoint that runs arbitrary user
-    // JavaScript before it reads the arguments.
+    /// Where each call's argument window starts.
+    ///
+    /// ct_aot_call takes `const uint64_t *argv`, a contiguous run, and the
+    /// arguments are individually rooted in slots of their own, which are not
+    /// adjacent. So each call site gets a run reserved for it, written just
+    /// before the call. In the frame rather than in a C++ array, for the reason
+    /// everything else is: ct_aot_call is a safepoint that runs arbitrary user
+    /// JavaScript before it reads the arguments.
     llvm::DenseMap<mlir::Operation *, unsigned> argument_windows;
 
-    // THE KEY ct_aot_new_string MEMOISES BY, AND IT IS NOT THE ENTRY'S `site`.
-    //
-    // The entry's site IS the function_proto, and the interpreter keys the same
-    // cache by that proto with the string's CONSTANT-POOL index as the slot.
-    // This backend numbers its slots in walk order, which is a different
-    // numbering - so sharing the key means a compiled body can read a slot the
-    // interpreter filled with a DIFFERENT literal and return the wrong string.
-    //
-    // It coincided on the first fixture and hid a mutation that halved every
-    // length: the interpreted baseline ran first, filled the cache, and the
-    // compiled body never allocated at all.
-    //
-    // So each compiled function memoises under an address of its OWN. The two
-    // tiers then allocate one object each for the same literal instead of
-    // sharing one, which is invisible - string identity is unobservable, strict
-    // equality compares text - and the ceiling is still bounded by one
-    // allocation per site and slot, which is what the row requires.
+    /// The key ct_aot_new_string memoises by, which is not the entry's `site`.
+    ///
+    /// The entry's site is the function_proto, and the interpreter keys the
+    /// same cache by that proto with the string's constant-pool index as the
+    /// slot. This backend numbers its slots in walk order, a different
+    /// numbering, so sharing the key would let a compiled body read a slot the
+    /// interpreter filled with a different literal and return the wrong
+    /// string.
+    ///
+    /// So each compiled function memoises under an address of its own. The
+    /// interpreter and the compiled body then allocate one object each for the
+    /// same literal instead of sharing one, which is unobservable (string
+    /// identity is invisible; strict equality compares text), and allocation
+    /// stays bounded by one per site and slot, as ct_aot_new_string requires.
     mlir::Value memo_site;
 
-    // AND THE ENTRY'S REAL `site`, a different thing from memo_site above,
-    // which is why they are two fields. This one IS the function_proto
-    // ct_aot_entry_fn was handed; ct_aot_construct uses it to name THIS
-    // function in the TypeError a `new` on a non-constructor throws.
+    /// The entry's real `site`, distinct from memo_site above: the
+    /// function_proto ct_aot_entry_fn was handed. ct_aot_construct uses it to
+    /// name this function in the TypeError a `new` on a non-constructor
+    /// throws.
     mlir::Value entry_site;
 
-    // WHICH MEMO SLOT EACH STRING CONSTANT USES. The slots must be unique
-    // WITHIN the function and stable across calls; one per ctjs.constant
-    // carrying a string is both. They are not frame slots - the cache is a map.
+    /// Which memo slot each string constant uses. The slots must be unique
+    /// within the function and stable across calls; one per ctjs.constant
+    /// carrying a string is both. They are not frame slots: the cache is a
+    /// map.
     llvm::DenseMap<mlir::Operation *, unsigned> memo_slots;
 
-    // THE HANDLER THIS BLOCK'S FALLIBLE CALLS BRANCH TO, if it has one.
-    //
-    // Set from the SOURCE block's terminator before the block is converted: a
-    // ctjs.check names the pad and carries the register file as of the throw.
-    // Every status call in the block then tests CT_AOT_CAUGHT before it tests
-    // ok, and takes this edge instead of returning.
-    //
-    // THE OPERANDS CAN BE MAPPED THIS EARLY because the importer splits after
-    // EVERY instruction inside a protected region - so such a block holds one
-    // instruction, and the snapshot the check carries is the block's own
-    // arguments. If that ever stops being true this has to move.
+    /// The handler this block's fallible calls branch to, if it has one.
+    ///
+    /// Set from the source block's terminator before the block is converted:
+    /// a ctjs.check names the pad and carries the register file as of the
+    /// throw. Every status call in the block then tests CT_AOT_CAUGHT before
+    /// it tests ok, and takes this edge instead of returning.
+    ///
+    /// The operands can be mapped this early because the importer splits
+    /// after every instruction inside a protected region, so such a block
+    /// holds one instruction and the snapshot the check carries is the block's
+    /// own arguments. If that ever stops being true, this has to move.
     mlir::Block * caught_target = nullptr;
     llvm::SmallVector<mlir::Value> caught_operands{};
 };
 
+// Spelling helpers, defined and documented in Support.cpp.
 ec::OpaqueType opaque(mlir::MLIRContext * context, llvm::StringRef spelling);
 ec::PointerType pointer_to(mlir::MLIRContext * context, llvm::StringRef spelling);
 std::string opcode_spelling(ctbrowser::script::op which);
@@ -137,12 +143,13 @@ mlir::Value status_is(mlir::OpBuilder & build, mlir::Location where, mlir::Type 
                       mlir::Value answered, llvm::StringRef named);
 std::optional<mlir::ValueRange> window_operands(mlir::Operation & op);
 std::string c_identifier(llvm::StringRef symbol);
+// Admission, defined and documented in Admission.cpp.
 bool runtime_defines(llvm::StringRef helper);
 void refuse(FuncOp function, llvm::StringRef because);
 bool body_is_supported(FuncOp function, std::string & why);
 
-// THE PRELUDE'S SHIMS, each a name box() calls and the body Module.cpp emits
-// for it - one row, so the two cannot drift apart. See lowering::run.
+/// The prelude's shims: each is a name box() calls and the body Module.cpp
+/// emits for it, in one row so the two cannot drift apart. See lowering::run.
 enum class shim : unsigned {
     box_bool,
     box_number
@@ -158,7 +165,13 @@ inline constexpr shim_row shim_rows[] = {
                        "::ctbrowser::script::value::number(d).bits(); }"},
 };
 
+/// The lowering of one module. The members are defined across the .cpp files
+/// in this directory: run and lower in Module.cpp and Functions.cpp, the
+/// status paths in Status.cpp, roots in Roots.cpp, constants in Constants.cpp,
+/// and the per-operation conversions in Values.cpp, RuntimeOps.cpp and
+/// Operations.cpp.
 struct lowering {
+    /// The shims some box() call used, so only those are emitted.
     std::bitset<std::size(shim_rows)> used_shims;
     void run(mlir::ModuleOp module, mlir::MLIRContext * context);
     bool lower(FuncOp function, mlir::OpBuilder & build, mlir::MLIRContext * context);

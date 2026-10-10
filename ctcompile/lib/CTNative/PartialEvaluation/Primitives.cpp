@@ -1,3 +1,12 @@
+//===- Primitives.cpp - Primitive operations via the VM runtime -----------===//
+//
+// Constant folding for the partial evaluator. Arithmetic, comparison and
+// unary operators on primitive values are computed by ctbrowser's script
+// runtime helpers, so folded results match the interpreter exactly. Heap
+// references never cross into the runtime.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Heap.h"
 
 #include <ctbrowser/script/vm.hpp>
@@ -11,17 +20,19 @@ namespace ctcompile::ctnative::partial_eval {
 namespace {
 namespace runtime = ctbrowser::script;
 
-// A primitive-only adapter. Strings have ordinary C++ ownership; they never
-// enter a script heap. Graph references cannot cross this boundary, so the
-// runtime helpers cannot invoke an object's conversion hook or host code.
+/// A primitive converted to a runtime value. Strings are owned here and never
+/// enter a script heap. Heap references cannot cross this boundary, so the
+/// runtime helpers cannot invoke an object's conversion hook or host code.
+/// `data` is empty when the input cannot be converted.
 struct primitiveInput {
     std::unique_ptr<runtime::string_object> string;
     std::optional<runtime::value> data;
     explicit primitiveInput(value input) {
         if (input.tag != value::kind::constant) { return; }
         if (auto n = llvm::dyn_cast<ctjs::NumberAttr>(input.constant)) {
-            // CTJS numbers can carry any IEEE NaN payload. Purify before the
-            // runtime's NaN-boxed representation, whose spare bits are tags.
+            // ctjs numbers can carry any IEEE NaN payload. Canonicalize NaN
+            // first: the runtime NaN-boxes values and uses the spare NaN bits
+            // as type tags.
             const double d = n.getDouble();
             data = runtime::value::number(std::isnan(d) ? runtime::canonical_nan() : d);
         } else if (auto b = llvm::dyn_cast<ctjs::BooleanAttr>(input.constant)) {
@@ -31,16 +42,20 @@ struct primitiveInput {
         } else if (llvm::isa<ctjs::UndefinedAttr>(input.constant)) {
             data = runtime::value::undefined();
         } else if (auto s = llvm::dyn_cast<ctjs::StringAttr>(input.constant)) {
+            // Strings over 64 KiB are not folded at compile time, to bound
+            // the cost of evaluating string operations.
             if (s.getValue().size() > 65536) { return; }
             string = std::make_unique<runtime::string_object>(s.getValue().str());
             data = runtime::value::object(string.get());
         } else if (auto n = llvm::dyn_cast<mlir::IntegerAttr>(input.constant)) {
-            // Integer attributes are SCF control flags, not JavaScript integers.
+            // Integer attributes are scf control flags, not JavaScript values.
             data = runtime::value::number(static_cast<double>(n.getInt()));
         }
     }
 };
 
+/// A runtime result converted back to a primitive, or unknown for a heap
+/// object or a string over the 64 KiB folding limit.
 value exported(runtime::value result, mlir::MLIRContext * context) {
     if (result.is_number()) { return numeric(context, result.as_number()); }
     if (result.is_boolean()) { return boolean(context, result.as_boolean()); }
@@ -73,8 +88,8 @@ bool sameValue(value left, value right, bool mapKey) {
     if (left.tag == value::kind::reference || right.tag == value::kind::reference) {
         return left.tag == right.tag && left.node == right.node;
     }
-    // Heap-key equality need not allocate a runtime string. It must remain
-    // exact even when a key exceeds the primitive execution string budget.
+    // Compare strings directly, without allocating runtime strings, so the
+    // comparison stays exact even for keys over the 64 KiB folding limit.
     auto aString = llvm::dyn_cast_or_null<ctjs::StringAttr>(left.constant);
     auto bString = llvm::dyn_cast_or_null<ctjs::StringAttr>(right.constant);
     if (aString || bString) { return aString && bString && aString == bString; }
@@ -100,9 +115,9 @@ value binary(ctjs::BinaryKind kind, value left, value right, mlir::MLIRContext *
     case ctjs::BinaryKind::Concat: opcode = runtime::op::concat; break;
     default: return {};
     }
-    // This context has no program, builtins, host callbacks or graph objects.
-    // It owns only helper-produced primitive strings until they are copied
-    // back into MLIR attributes. No bytecode dispatcher is called.
+    // This context has no program, builtins, host callbacks or heap objects.
+    // It owns only the primitive strings its helpers produce, until they are
+    // copied back into MLIR attributes. No bytecode is executed.
     runtime::context engine;
     if (staticConversions && kind != ctjs::BinaryKind::Add) { return {}; }
     const auto result = staticConversions ? engine.binary_op_static(opcode, *a.data, *b.data)

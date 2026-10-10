@@ -1,3 +1,9 @@
+//===- Driver.cpp - Supercompilation driver -------------------------------===//
+//
+// Implements supercompilation::Driver (see Driver.h).
+//
+//===----------------------------------------------------------------------===//
+
 #include "Driver.h"
 
 #include "../Specialization/Candidates.h"
@@ -21,13 +27,17 @@ bool Driver::spend() {
     return false;
 }
 
+/// Returns the residual function for a call with `bindings`, driving a new
+/// one if needed. `history` holds the indices of the configurations on the
+/// current path, for the whistle. Returns null to keep the generic call.
 ctjs::FuncOp Driver::drive(Bindings bindings, llvm::SmallVector<unsigned> history) {
     if (!problem.empty() || !llvm::any_of(bindings, [](auto attr) { return bool(attr); })) {
         return {};
     }
     if (!spend()) { return {}; }
-    // Folding is semantic equality modulo dynamic argument names. The whistle
-    // is a different relation and must never authorize a residual backedge.
+    // Folding: a configuration whose bindings equal an earlier one reuses
+    // that residual function. The whistle below is a weaker relation, so it
+    // must never by itself make a call point back at an earlier residual.
     for (const auto & configuration : configurations) {
         if (!spend()) { return {}; }
         if (configuration.bindings == bindings) {
@@ -45,11 +55,12 @@ ctjs::FuncOp Driver::drive(Bindings bindings, llvm::SmallVector<unsigned> histor
                 if (!spend()) { return {}; }
             }
             if (!llvm::any_of(generalized, [](auto attr) { return bool(attr); })) {
-                return {}; // No useful static binding remains; retain the generic call.
+                // No useful constant binding remains; keep the generic call.
+                return {};
             }
-            // Generalize this child, never rename an ancestor's already-driven
-            // body. Its actual operands still pass the forgotten values once,
-            // in their original positions, to a freshly driven configuration.
+            // Generalize this child; never rewrite an ancestor's already-driven
+            // body. The call's operands still pass the forgotten values, in
+            // their original positions, to a freshly driven configuration.
             auto residual = drive(std::move(generalized), std::move(history));
             if (residual) { ++stats.generalizations; }
             return residual;
@@ -66,8 +77,8 @@ ctjs::FuncOp Driver::drive(Bindings bindings, llvm::SmallVector<unsigned> histor
     } while (mlir::SymbolTable::lookupSymbolIn(module, name) ||
              mlir::SymbolTable::lookupSymbolIn(*drafts, name));
     residual.setSymName(name);
-    // Isolate local driving from other promises. Return summaries from another
-    // in-progress configuration must not rewrite a currently visited branch.
+    // Simplify the new residual in a module of its own, so return-value facts
+    // derived from other configurations still being driven cannot rewrite it.
     mlir::OwningOpRef<mlir::ModuleOp> local(mlir::ModuleOp::create(module.getLoc()));
     local->getBody()->push_back(residual);
     const auto index = static_cast<unsigned>(configurations.size());
@@ -89,8 +100,9 @@ ctjs::FuncOp Driver::drive(Bindings bindings, llvm::SmallVector<unsigned> histor
         auto recursive = specialization::staticArguments(call, source);
         for (auto [i, binding] : llvm::enumerate(bindings)) {
             if (!spend()) { return {}; }
-            // Once dynamic, a position stays dynamic down this path. Literal
-            // resets cannot restart growth or recover a forgotten binding.
+            // Once an argument position is dynamic it stays dynamic down this
+            // path, even if a recursive call passes a literal there again;
+            // otherwise a literal could restart unbounded specialisation.
             if (!binding) { recursive[i] = {}; }
         }
         auto next = drive(std::move(recursive), history);
@@ -109,7 +121,8 @@ bool Driver::build(llvm::ArrayRef<ctjs::CallDirectOp> roots) {
         stats.steps = static_cast<unsigned>(limits.steps - budget.remaining);
         stats.contexts = static_cast<unsigned>(configurations.size());
     };
-    // No IR is redirected before the entire alternative fits its budgets.
+    // No call is redirected here; commit() does that once everything fits the
+    // budgets.
     for (auto call : roots) {
         auto residual = drive(specialization::staticArguments(call, source), {});
         record();
@@ -125,8 +138,8 @@ bool Driver::build(llvm::ArrayRef<ctjs::CallDirectOp> roots) {
     for (auto & configuration : configurations) {
         cost += specialization::bodySize(configuration.residual);
     }
-    // The generic definition remains. Every residual operation is therefore
-    // added code, not a replacement that can be discounted by source size.
+    // The generic definition remains, so every residual operation is added
+    // code; the source's size is not subtracted from the cost.
     if (cost > limits.residualOps || cost > limits.growth) {
         problem = "residual size budget exhausted; retained identity alternative";
         return false;

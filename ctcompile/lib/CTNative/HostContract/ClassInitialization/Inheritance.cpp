@@ -1,15 +1,30 @@
+//===- Inheritance.cpp - Class heritage and super() proofs ------*- C++ -*-===//
+//
+// Proves `class B extends A` chains for native lowering. Checks the heritage
+// helper calls, inlines super(...) constructors and super.method() calls into
+// the derived class, folds constructor branches that every `new` decides the
+// same way, and runs examine(), the per-class proof.
+//
+// "Census" below means the final check of every remaining operation
+// (censusSource in Proof.cpp); code here often leaves an operation in place
+// precisely so that check still sees it.
+//
+//===----------------------------------------------------------------------===//
+
 #include "../../PartialEvaluation/Heap.h"
 #include "Proof.hpp"
 
 namespace ctcompile::ctnative::class_detail {
 namespace {
-// Every own and prototype-chain property name a ctbrowser VM element has,
-// enumerated from the VM; element-names.test fails on any difference.
+/// Every own and prototype-chain property name a ctbrowser VM element has,
+/// enumerated from the VM; element-names.test fails on any difference.
 constexpr std::string_view elementNames[] = {
 #include "ElementNames.inc"
 };
 } // namespace
 
+/// Drops the helper-call, Map and capture records kept for operations in
+/// `region`, before that region is replaced or erased.
 void classInitialization::forgetRecords(mlir::Region & region) {
     region.walk([&](mlir::Operation * op) {
         helperCalls.erase(op);
@@ -23,6 +38,8 @@ void classInitialization::forgetRecords(mlir::Region & region) {
     });
 }
 
+/// Maps each class value to its single class-setup call in `calls`. A class
+/// set up more than once maps to a null call.
 bool classInitialization::completedClasses(llvm::DenseMap<mlir::Value, ctjs::CallOp> & completed) {
     for (ctjs::CallOp call : calls) {
         if (!step()) { return false; }
@@ -33,6 +50,11 @@ bool classInitialization::completedClasses(llvm::DenseMap<mlir::Value, ctjs::Cal
     return true;
 }
 
+/// Checks every `__ctbrowser_class_heritage(derived, base, prototype)` call:
+/// the helper must be the declared intrinsic, its result unused, both classes
+/// local closures in the same block, the base set up before the call and the
+/// derived class after it, and the prototype a fresh object. Records each base
+/// in baseClasses.
 bool classInitialization::proveHeritage(const HostContract & contract) {
     llvm::DenseMap<mlir::Value, ctjs::CallOp> completed;
     if (!completedClasses(completed)) { return false; }
@@ -65,13 +87,16 @@ bool classInitialization::proveHeritage(const HostContract & contract) {
                 "class heritage needs an earlier completed local base and fresh derived "
                 "prototype");
         }
-        // Strict source order rules out cycles. Every base's exact home,
-        // prototype, captures and complete use census still pass examine.
+        // Requiring the base to be completed before the derived class rules out
+        // cycles. Each base class is still proved separately by examine(): its
+        // home object, prototype, captures and every use.
         baseClasses.insert(base);
         return mlir::WalkResult::advance();
     });
 }
 
+/// True if `use` passes `constructor` as the derived or base class argument of
+/// a heritage call proveHeritage recorded.
 bool classInitialization::heritageUse(mlir::OpOperand & use, mlir::Value constructor) {
     auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
     if (!call || call.getArgs().size() != 3 ||
@@ -82,6 +107,11 @@ bool classInitialization::heritageUse(mlir::OpOperand & use, mlir::Value constru
            sourceValue(use.get()) == constructor;
 }
 
+/// Replaces the derived constructor `constructor` with a copy in which the
+/// super(...) call is inlined from `baseClosure`'s body and the super()
+/// bookkeeping (the "already initialized" guard cell, __ctbrowser_bind_this and
+/// __ctbrowser_init_fields) is evaluated away. Refuses unless the constructor
+/// follows that protocol in order and returns its initialized receiver.
 bool classInitialization::normalizeSuper(ctjs::CreateClosureOp constructor,
                                          ctjs::CreateClosureOp baseClosure,
                                          const HostContract & contract) {
@@ -110,9 +140,9 @@ bool classInitialization::normalizeSuper(ctjs::CreateClosureOp constructor,
             return refuse("super initialization requires declared helper identities");
         }
     }
-    // Other class/helper/global records borrow original operations. Keep
-    // this first constructor slice free of declarations/publications instead
-    // of invalidating those records while replacing its private body.
+    // Other class, helper and global records point at operations in these
+    // bodies. Rather than invalidate those records when the body is replaced,
+    // refuse constructors that declare closures, write globals or hold roots.
     for (auto fn : {function, base}) {
         if (!walkSteps(fn, [&](mlir::Operation * op) {
                 if (llvm::isa<ctjs::CreateClosureOp, ctjs::StoreGlobalOp, ctjs::RootOp>(op)) {
@@ -131,11 +161,12 @@ bool classInitialization::normalizeSuper(ctjs::CreateClosureOp constructor,
         if (!bit || bit.getValue()) { return refuse("super guard must begin false"); }
         guard = cell;
     }
-    // An implicit derived constructor, `super(...args)`, spreads a copy of its
-    // rest array made by the importer's exact zero-based index loop. With no
-    // arguments object on either side it is `super(p0, .., pn)` over formals
-    // the copy gains up to the base's count: missing actuals stay undefined
-    // and extra ones were already evaluated and are ignored.
+    // An implicit derived constructor, `constructor(...args) { super(...args); }`,
+    // spreads a copy of its rest array that the importer builds with a loop
+    // from index 0. When neither constructor uses `arguments`, this equals
+    // `super(p0, .., pn)` over formals the copy gains up to the base's count:
+    // missing arguments stay undefined, and extra ones were already evaluated
+    // and are ignored. forwardsActuals recognizes exactly that loop.
     ctjs::CallSpreadOp spread;
     llvm::DenseSet<mlir::Operation *> forwarding;
     const auto usesOnly = [&](mlir::Operation * op, llvm::ArrayRef<mlir::Operation *> allowed) {
@@ -259,8 +290,9 @@ bool classInitialization::normalizeSuper(ctjs::CreateClosureOp constructor,
     const auto clone = [&](mlir::Operation & op, mlir::IRMapping & values) {
         if (!spendWalk(&op, cloneCost)) { return false; }
         at.clone(op, values);
-        // A base's slot number belongs to its original closure, never the
-        // leaf's environment. Carry the proved helper/holder identity with each copy.
+        // Capture slot numbers in copied base code refer to the base closure,
+        // not the derived one. Copy the proved helper and holder records to
+        // each cloned capture load.
         return walkSteps(&op, [&](mlir::Operation * source) {
             auto * copied = values.lookupOrNull(source);
             if (auto helper = callableCaptures.lookup(source)) {
@@ -271,8 +303,8 @@ bool classInitialization::normalizeSuper(ctjs::CreateClosureOp constructor,
                     copiedHolders.emplace_back(llvm::cast<ctjs::LoadUpvalueOp>(copied), object);
                 }
                 if (auto map = mapCaptures.lookup(read.getResult())) {
-                    // Slot numbers belong to the declaring closure. Reuse a
-                    // leaf slot by Map identity, or carry the base's exact cell.
+                    // Remap the slot: reuse the derived closure's capture of the
+                    // same Map, or add the base's cell as a new capture.
                     size_t index = 0;
                     while (index < captures.size() &&
                            sourceValue(cells.lookup(captures[index])) != map) {
@@ -317,18 +349,26 @@ bool classInitialization::normalizeSuper(ctjs::CreateClosureOp constructor,
             constant ? llvm::dyn_cast<mlir::IntegerAttr>(constant.getValue()) : mlir::IntegerAttr{};
         return number ? std::optional<int64_t>(number.getInt()) : std::nullopt;
     };
-    unsigned phase = 0; // base call, guard write, bind-this, fields, completion.
+    // Progress through the derived constructor's super() protocol:
+    // 0 before the base call, 1 after it, 2 after the guard cell is set to true
+    // (or straight after a forwarded call, which has no guard),
+    // 3 after __ctbrowser_bind_this, 4 after __ctbrowser_init_fields.
+    // Only phase 4 may branch on runtime values, call freely or return.
+    unsigned phase = 0;
     bool initialized = false, finished = false;
     mlir::Value baseResult;
     llvm::DenseSet<mlir::Block *> visited;
     const auto visit = [&](auto && self, mlir::Block & block,
                            llvm::SmallVectorImpl<mlir::Value> & yielded, unsigned depth) -> bool {
+        // Revisiting a block means a loop; 64 nested regions is far past any
+        // real constructor. Both refuse with the same message.
         if (!step() || depth == 64 || !visited.insert(&block).second) {
             return refuse("super initialization has cyclic control flow");
         }
         for (mlir::Operation & op : block) {
             if (!step()) { return false; }
-            // The rest copy becomes the spliced formals; its roots go with it.
+            // The rest-array copy is replaced by the base's formals, added to
+            // the copy as arguments; its roots go with it.
             if (forwarding.contains(&op) ||
                 (llvm::isa<ctjs::RootOp>(op) &&
                  forwarding.contains(op.getOperand(0).getDefiningOp()))) {
@@ -344,8 +384,8 @@ bool classInitialization::normalizeSuper(ctjs::CreateClosureOp constructor,
                     if (phase != 4) {
                         return refuse("super initialization has an unproved branch");
                     }
-                    // Preserve runtime conditions after the receiver is initialized.
-                    // Each arm must return normally to this same super phase.
+                    // After super() completes, keep branches on runtime values.
+                    // Each arm must stay in phase 4 and fall through.
                     auto * copied = at.cloneWithoutRegions(op, mapping);
                     for (auto [source, destination] :
                          llvm::zip(branch->getRegions(), copied->getRegions())) {
@@ -365,8 +405,9 @@ bool classInitialization::normalizeSuper(ctjs::CreateClosureOp constructor,
                         }
                         mlir::scf::YieldOp::create(at, branch.getLoc(), values);
                     }
-                    // Equal completion flags/receivers need no runtime selection.
-                    // Keep the branch itself and every original source effect.
+                    // A result whose arms yield the same value (or equal constants)
+                    // maps straight to it. The branch itself, with its effects,
+                    // stays.
                     if (branch.getNumResults()) {
                         auto conditional = llvm::cast<mlir::scf::IfOp>(copied);
                         auto yes = conditional.thenYield().getOperands();
@@ -547,7 +588,8 @@ bool classInitialization::normalizeSuper(ctjs::CreateClosureOp constructor,
                     }
                     mapping.map(op.getResult(0), absent);
                     baseResult = op.getResult(0);
-                    phase = call ? 1 : 2; // No guard records the forwarded call.
+                    // A forwarded spread call has no guard write; skip phase 1.
+                    phase = call ? 1 : 2;
                     continue;
                 }
             }
@@ -566,9 +608,10 @@ bool classInitialization::normalizeSuper(ctjs::CreateClosureOp constructor,
                         continue;
                     }
                 }
-                // After super, preserve ordinary calls for the complete receiver,
-                // callable-holder and source-effect census. It runs on the live
-                // normalized body, so no holder record borrows erased operations.
+                // Other calls are copied unchanged after super() completes, or
+                // before it for recorded helper calls that do not see `this`.
+                // The later checks run on the rewritten body, so no record
+                // points at an erased operation.
                 if (phase == 4 || (phase == 0 && helperCalls.contains(call))) {
                     if (phase == 0 && llvm::is_contained(call.getOperands(), receiver)) {
                         return refuse("derived receiver is used before super initialization");
@@ -595,8 +638,8 @@ bool classInitialization::normalizeSuper(ctjs::CreateClosureOp constructor,
     if (!visit(visit, original, unused, 0) || !finished) {
         return refuse("derived class requires receiver-preserving super normalization");
     }
-    // Only unobserved super metadata and pure transport can disappear. Any
-    // unexpected use keeps the operation for the complete class census.
+    // Erase unused super() lookups, bookkeeping helper loads and constants
+    // left in the copy. Anything still used stays for the census.
     for (mlir::Operation & op : llvm::make_early_inc_range(llvm::reverse(*output))) {
         if (!step()) { return false; }
         auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
@@ -613,8 +656,9 @@ bool classInitialization::normalizeSuper(ctjs::CreateClosureOp constructor,
             op.erase();
         }
     }
-    // Base records still describe live source bodies, including bases shared
-    // by several leaves. Only the replaced derived body loses its records.
+    // The base body is not touched (several derived classes may share it), so
+    // its records stay valid. Only the replaced derived body loses its records;
+    // the copies made above take their place.
     if (!spend(captureReads.size()) ||
         !spendWalk(function, [](mlir::Operation *) { return uint64_t(1); }) || !reason.empty()) {
         return false;
@@ -651,6 +695,9 @@ bool classInitialization::normalizeSuper(ctjs::CreateClosureOp constructor,
     return true;
 }
 
+/// Inlines each `super.m(...)` call in `function` with the body of the nearest
+/// base definition of `m` in `baseDefinitions`. The target must be a proved,
+/// capture-free, single-block method.
 bool classInitialization::normalizeSuperMethods(
     ctjs::FuncOp function, llvm::ArrayRef<ctjs::SetPropertyOp> baseDefinitions) {
     llvm::SmallVector<ctjs::CallOp> invocations;
@@ -672,9 +719,9 @@ bool classInitialization::normalizeSuperMethods(
             return refuse("super method requires an unobserved lexical lookup and exact receiver");
         }
         ctjs::FuncOp selected;
-        // Definitions are nearest-first, including shadowed ancestors. A
-        // lexical lookup starts at the declaring home's immediate base,
-        // independently of the final receiver's ordinary method table.
+        // baseDefinitions lists the nearest base first, then further ancestors.
+        // super.m looks up from the immediate base of the class that declares
+        // the method, regardless of what the receiver's own class overrides.
         for (ctjs::SetPropertyOp definition : baseDefinitions) {
             if (!step()) { return false; }
             if (ctjs::constantKey(definition.getKey()) == ctjs::constantKey(read.getKey())) {
@@ -693,8 +740,9 @@ bool classInitialization::normalizeSuperMethods(
             call.getArgs().size() + ctjs::implicit_arguments > body.getNumArguments()) {
             return refuse("super method observes its identity, completion or excess arguments");
         }
-        // ponytail: expand linear targets at their calls; target CFG/captures
-        // need a receiver-preserving direct-call proof in closure lifting.
+        // ponytail: only straight-line targets are inlined. Targets with
+        // control flow or captures would need closure lifting to prove a
+        // direct call that keeps the receiver.
         for (mlir::Operation & op : body) {
             if (!spend(cloneCost(&op))) { return false; }
             if (op.getNumRegions() ||
@@ -716,9 +764,9 @@ bool classInitialization::normalizeSuperMethods(
             if (!step()) { return false; }
             mapping.map(formal, i < call.getArgs().size() ? call.getArgs()[i] : absent.getResult());
         }
-        // Argument effects already precede the original call. Preserve every
-        // target operation there and keep the original body for the complete
-        // source census; fieldsOnly will recheck the expanded leaf receiver.
+        // The arguments were already evaluated before the call, so the body is
+        // cloned at the call. The original method stays for the census, and
+        // fieldsOnly later rechecks the inlined receiver uses.
         if (snapshotMethods.contains(selected)) { snapshotMethods.insert(function); }
         for (mlir::Operation & op : body) {
             if (!llvm::isa<ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::ReturnOp>(op)) {
@@ -734,24 +782,28 @@ bool classInitialization::normalizeSuperMethods(
     return true;
 }
 
+/// Evaluates captured helper `fn` on known arguments `actuals` by walking only
+/// the path it takes through pure primitive operations and nested helper
+/// calls. Returns the value it returns, or nullopt when any other operation is
+/// reached.
+///
+/// An argument may be a declared DOM element parameter, modelled as a reference
+/// to its parameter index: truthy, typeof "object", strictly unequal to every
+/// primitive, with `nodeType` 1. A constant key outside elementNames reads
+/// undefined: the census refuses prototype writes and the typed DOM proof
+/// refuses unmodelled element writes, so no source code can add one. Keys
+/// starting with `__` stay unknown, because the binding adds internal slots
+/// (`__selected`, `__cached_...`) to an element lazily. Digit keys stay unknown
+/// too: a select answers its options by index (HTML 4.10.7). A form answers
+/// its controls by index and by any name ahead of every member (4.10.3), so
+/// require_entry_element refuses forms at the native entry.
 std::optional<partial_eval::value> classInitialization::evaluateHelper(
     ctjs::FuncOp fn, llvm::ArrayRef<partial_eval::value> actuals, unsigned depth) {
-    // An exact captured helper runs the same way for the same actuals: walk
-    // only its executed path through pure primitive operations and nested
-    // exact helper calls. Any other operation leaves it unknown. Poison is
-    // the lift's dead carried slot: it may travel, never be used.
-    // An actual may be a declared DOM element parameter, a reference to its
-    // index. It is truthy, typeof "object" and strictly unequal to every
-    // primitive; its `nodeType` is 1 and a constant key outside the VM's
-    // element name set reads undefined: the census refuses prototype writes
-    // and the typed DOM proof refuses unmodeled element writes, so no source
-    // adds one. Keys spelled `__` stay unknown: the binding adds internal
-    // slots (`__selected`, `__cached_...`) to an element lazily. So do
-    // digit keys: a select answers its options by index (HTML 4.10.7). A
-    // form answers its controls by index and by any name ahead of every
-    // member (4.10.3), so require_entry_element refuses one at native entry.
-    // ponytail: structured single-block bodies; loops, objects, other
-    // property reads and host bindings need the full partial evaluator's heap.
+    // Poison values (unused slots left by closure lifting) are skipped: they
+    // may be passed along, but any use of one is unknown and fails.
+    // ponytail: single-block bodies with structured control flow only; loops,
+    // objects, other property reads and host bindings would need the full
+    // partial evaluator's heap. 16 bounds nested helper calls.
     if (depth == 16 || !fn || !fn.getBody().hasOneBlock()) { return std::nullopt; }
     auto * context = module.getContext();
     using partial_eval::value;
@@ -769,7 +821,8 @@ std::optional<partial_eval::value> classInitialization::evaluateHelper(
     std::optional<value> returned;
     const auto walk = [&](auto && self, mlir::Block & block,
                           llvm::SmallVectorImpl<value> & yielded) -> bool {
-        // A structured arm or switch case: its yields become the op's results.
+        // Evaluates a structured arm or switch case; its yields become the op's
+        // results.
         const auto enter = [&](mlir::Operation & op, mlir::Region & region) {
             llvm::SmallVector<value> results;
             if (!region.hasOneBlock() || !self(self, region.front(), results) || returned ||
@@ -817,7 +870,7 @@ std::optional<partial_eval::value> classInitialization::evaluateHelper(
                 continue;
             }
             if (auto load = llvm::dyn_cast<ctjs::LoadUpvalueOp>(op)) {
-                // The caller reached this body through its proved capture.
+                // A capture load names a helper only if the capture was proved.
                 auto helper = callableCaptures.lookup(load);
                 if (!helper) { return false; }
                 callees[load.getResult()] = helper;
@@ -873,7 +926,8 @@ std::optional<partial_eval::value> classInitialization::evaluateHelper(
             } else if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(op)) {
                 auto lhs = values.lookup(compare.getLhs());
                 auto rhs = values.lookup(compare.getRhs());
-                // Two element parameters may be one element.
+                // Two different element parameters may be the same element, so
+                // only compare references with the same index.
                 if (lhs.tag != value::kind::reference || rhs.tag != value::kind::reference ||
                     lhs.node == rhs.node) {
                     data = partial_eval::compare(compare.getKind(), lhs, rhs, context);
@@ -898,14 +952,15 @@ std::optional<partial_eval::value> classInitialization::evaluateHelper(
     return returned;
 }
 
+/// Folds constructor branches that every construction decides the same way.
+/// Nothing extends this class, so `instances` lists every construction. An
+/// `if` at the top of the constructor whose condition is a formal (or a
+/// captured helper applied to formals and literals), and which every `new`
+/// makes equally truthy, always takes the same branch: keep only that branch.
+/// If the dropped branch holds constructions, closures, cells, global writes
+/// or setup, the `if` is left for the normal proofs.
 bool classInitialization::foldDecidedArms(ctjs::CreateClosureOp constructor,
                                           llvm::ArrayRef<ctjs::ConstructOp> instances) {
-    // Nothing extends this class, so these exact `new`s are every construction.
-    // A top-level arm on a formal - or on an exact captured helper applied to
-    // formals and literals - that every actual (a literal or a declared DOM
-    // element) makes equally truthy runs the same way each time: keep that
-    // arm alone. Arms whose dropped side holds constructions, closures, cells,
-    // global writes or setup keep today's proofs.
     if (instances.empty() || baseClasses.contains(constructor.getResult())) { return true; }
     auto function = target(constructor);
     if (!function || function.getBody().empty()) { return true; }
@@ -916,8 +971,8 @@ bool classInitialization::foldDecidedArms(ctjs::CreateClosureOp constructor,
         return argument && argument.getOwner() == &entry &&
                argument.getArgNumber() >= ctjs::implicit_arguments;
     };
-    // What an exact `new` gives an operand: a literal, a declared DOM element
-    // parameter (a reference to its index) or unknown.
+    // What a given `new` passes for an operand: a literal, a declared DOM
+    // element parameter (a reference to its index) or unknown.
     using partial_eval::value;
     const auto actual = [&](ctjs::ConstructOp made, mlir::Value operand) -> value {
         if (auto constant = operand.getDefiningOp<ctjs::ConstantOp>()) {
@@ -944,9 +999,9 @@ bool classInitialization::foldDecidedArms(ctjs::CreateClosureOp constructor,
         auto load =
             call ? call.getCallee().getDefiningOp<ctjs::LoadUpvalueOp>() : ctjs::LoadUpvalueOp{};
         auto helper = load ? callableCaptures.lookup(load) : ctjs::FuncOp{};
-        // Publication runs before the full capture census. A fixed local cell
-        // can already name a capture-free helper; evaluate only its pure path,
-        // then leave the closure and cell for that later complete census.
+        // This runs before every capture has been proved. A local cell may
+        // already hold a capture-free helper: evaluate only its pure path here
+        // and leave the closure and cell to the later capture proof.
         if (!helper && load && load.getClosure() == entry.getArgument(ctjs::arg_callee) &&
             load->getBlock() == &entry && capturesSlot(load, constructor) &&
             !earlyCaptures.contains(constructor)) {
@@ -979,7 +1034,8 @@ bool classInitialization::foldDecidedArms(ctjs::CreateClosureOp constructor,
         if (!operand || (!formal(operand) && !helper)) { continue; }
         std::optional<bool> decided;
         bool undecided = false;
-        // The call arguments whose element every construction's call returns.
+        // forwarded[i]: in every construction the helper returned the element
+        // passed as argument i.
         llvm::SmallVector<bool> forwarded(arguments.size(), true);
         for (ctjs::ConstructOp made : instances) {
             if (!step()) { return false; }
@@ -1024,8 +1080,8 @@ bool classInitialization::foldDecidedArms(ctjs::CreateClosureOp constructor,
         if (!reason.empty()) { return false; }
         if (risky.wasInterrupted()) { continue; }
         // The dropped arm loses its records, as a replaced super body does.
-        // Its captured helper and holder slot calls were source calls: their
-        // targets may have lost their last one.
+        // Calls in it to captured helpers or holder slots are gone, so those
+        // targets may now have no callers left; mark them decided.
         dropped.walk([&](ctjs::CallOp made) {
             if (auto helper = callableCaptures.lookup(made.getCallee().getDefiningOp())) {
                 decidedHelpers.insert(helper);
@@ -1048,8 +1104,9 @@ bool classInitialization::foldDecidedArms(ctjs::CreateClosureOp constructor,
             branch.erase();
         }
         // Every construction ran the helper on a pure path, so a call whose
-        // result died with the arm does nothing: erase it. One that returns
-        // the same argument's element in every construction is that argument.
+        // result is no longer used does nothing: erase it. A call that returns
+        // the same argument's element in every construction is replaced by
+        // that argument.
         if (!helper) { continue; }
         const auto forward = llvm::find(forwarded, true);
         if (forward != forwarded.end()) {
@@ -1069,6 +1126,11 @@ bool classInitialization::foldDecidedArms(ctjs::CreateClosureOp constructor,
     return true;
 }
 
+/// The per-class proof. `call` is the class-setup helper call for one class
+/// closure. Checks every use of the constructor, its prototype and its methods
+/// (setup writes, `new`, static reads and calls, instanceof, heritage),
+/// inlines super() and super.m() for derived classes, and records which
+/// operations are class setup so later passes can lower them natively.
 bool classInitialization::examine(ctjs::CallOp call, const HostContract & contract, bool domEntry) {
     if (!step() || call.getArgs().size() != 1 || !undefined(call.getReceiver()) ||
         !call.getResult().use_empty()) {
@@ -1089,8 +1151,8 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
     llvm::SmallVector<ctjs::SetPropertyOp> getterHomes;
     bool testedConstructor = false;
     if (!normalizePublicationHelper(closure, contract)) { return false; }
-    // Prove original slots once, before super expansion mixes base and leaf
-    // operations. The copied reads retain these exact helper identities.
+    // Prove the constructor's captures once, before inlining super() mixes base
+    // and derived operations. Copied capture reads keep these helper records.
     if (!closure.getUpvalues().empty() &&
         !methodCaptures(closure, closure, staticReads, domEntry)) {
         return false;
@@ -1103,7 +1165,8 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
         if (llvm::isa<ctjs::RootOp>(op)) { continue; }
         if (heritageUse(use, closure.getResult())) { continue; }
         if (llvm::isa<ctjs::InstanceOfOp>(op) && use.getOperandNumber() == 1) {
-            testedConstructor = true; // Checked after every class setup has been proved.
+            // Checked after every class setup has been proved.
+            testedConstructor = true;
             continue;
         }
         if (auto invocation = llvm::dyn_cast<ctjs::CallOp>(op)) {
@@ -1111,7 +1174,8 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
             if (use.getOperandNumber() == 1 && read &&
                 sourceValue(read.getObject()) == closure.getResult() &&
                 invocation->getBlock() == call->getBlock() && call->isBeforeInBlock(invocation)) {
-                staticInvocations.push_back(invocation); // Exact slot checked after collection.
+                // Matched to a static method once all uses are collected.
+                staticInvocations.push_back(invocation);
                 continue;
             }
         }
@@ -1160,7 +1224,8 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
         } else if (use.getOperandNumber() == 2 && key == "constructor" && !backedge) {
             backedge = write;
         } else if (use.getOperandNumber() == 2 && key == "__home") {
-            getterHomes.push_back(write); // Rechecked against exact getters below.
+            // Checked against the class's getters below.
+            getterHomes.push_back(write);
         } else if (use.getOperandNumber() == 0 && ctjs::ordinaryKey(write.getKey())) {
             if (closureMetadataKey(key) || !staticMethods.try_emplace(key, write).second) {
                 return refuse("static method shadows closure metadata or repeats a slot");
@@ -1196,7 +1261,7 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
             return refuse("class prototype is observed or mutated outside initialization");
         }
         if (use.getOperandNumber() == 2 && ctjs::constantKey(write.getKey()) == "__home") {
-            continue; // Rechecked against the exact method closure below.
+            continue; // Checked against the method closure below.
         }
         if (use.getOperandNumber() != 0 || !ctjs::ordinaryKey(write.getKey()) ||
             !methodKeys.insert(ctjs::constantKey(write.getKey())).second) {
@@ -1215,26 +1280,28 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
         baseDefinitions = base->second;
         for (ctjs::SetPropertyOp definition : baseDefinitions) {
             if (!step()) { return false; }
-            // Own definitions precede each ancestor's definitions. Only
-            // the nearest binding enters the leaf table; every shadowed
-            // body stays in baseDefinitions for the receiver/source census.
+            // methodKeys already holds this class's own methods, and
+            // baseDefinitions lists nearer ancestors first. Only the nearest
+            // definition of each key is selected; shadowed bodies stay in
+            // baseDefinitions so their receiver uses and effects are still checked.
             if (methodKeys.insert(ctjs::constantKey(definition.getKey())).second) {
                 selectedBaseDefinitions.push_back(definition);
             } else {
                 shadowedBaseDefinitions.push_back(definition);
             }
         }
-        // One shared method/getter body has one selected target. Reuse the
-        // complete base getter environment, including transitive dependencies.
-        // An own getter overrides its inherited key; an inherited getter whose
-        // receiver reads reach an override gets a copy for this receiver.
+        // Inherit the base's getters, including those its getters depend on. An
+        // own getter overrides the inherited one with the same key. An inherited
+        // getter or method whose receiver reads reach an override gets a copy
+        // for this class (cloneReceiverGetters, cloneReceiverMethods).
         for (const auto & item : inheritedGetters[sourceValue(inherited.getArgs()[1])]) {
             if (!step()) { return false; }
             if (!staticDefinitions.try_emplace(item.first(), item.second).second) {
                 shadowedGetters.insert(item.first());
             }
         }
-        // Each inherited DOM body must reach an actual leaf's private proof.
+        // An inherited DOM method is proved through the instances of the class
+        // that is actually constructed, so a DOM class with methods needs some.
         if (domEntry && !methodKeys.empty() && instances.empty() &&
             !baseClasses.contains(closure.getResult())) {
             return refuse("inherited DOM methods require a constructed leaf");
@@ -1265,8 +1332,8 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
             return false;
         }
     }
-    // Publication and own-key snapshots both need the complete leaf body,
-    // including all effects and field writes from its proved super chain.
+    // Publication and own-key snapshots both need the complete constructor
+    // body, including the effects and field writes inlined from super().
     if (!foldDecidedArms(closure, instances) ||
         !sinkConstructorPublication(closure, instances, contract)) {
         return false;
@@ -1320,11 +1387,11 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
             return refuse("class method observes its identity, home or an unproved receiver");
         }
         if (isStatic) {
-            // A static body only runs from an exact local call, so its receiver
-            // is this class: an own getter read, or an own static method called
-            // on it, selects the body an exact `C.key` would.
-            // ponytail: inherited receivers and new this need separate
-            // constructor-identity proofs.
+            // A static method only runs from a checked local call `C.m()`, so its
+            // receiver is this class: an own getter read or an own static method
+            // call on it selects the same body `C.key` would.
+            // ponytail: inherited static receivers and `new this` would need a
+            // separate proof of which constructor `this` is.
             const auto receiver = block.getArgument(ctjs::arg_receiver);
             llvm::SmallPtrSet<mlir::Operation *, 4> receiverCalls;
             for (mlir::OpOperand & use : receiver.getUses()) {
@@ -1367,8 +1434,8 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
                 }
                 return refuse("static method receiver requires an exact own getter read");
             }
-            // Static bodies retain the strict complete helper census, even
-            // for DOM entries. Instance method probes grant them no authority.
+            // Static methods go through the full helper census, even for DOM
+            // entries; the per-instance method probes do not cover them.
             helpers.insert(fn);
             staticMethodClosures.push_back(method);
             setup.insert(definition);
@@ -1393,15 +1460,15 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
         }
     }
     if (auto inherited = heritage.lookup(closure.getResult())) {
-        // Receiver copies live in this class's environment alone: a class
-        // derived from it would inherit the shared definitions instead.
+        // Receiver-specific copies belong to this class alone; a class derived
+        // from it would inherit the shared definitions instead, so refuse.
         auto copies = receiverGetters.find(closure.getResult());
         const bool copied = copies != receiverGetters.end() && !copies->second.empty();
         if (copied && baseClasses.contains(closure.getResult())) {
             return refuse("derived class requires receiver-preserving super normalization");
         }
-        // Recheck inherited receiver uses against the final method table:
-        // a base field write must not shadow a method added by the leaf.
+        // Recheck inherited receiver uses against the final method table: a
+        // base field write must not shadow a method this class adds.
         for (ctjs::SetPropertyOp definition : baseDefinitions) {
             auto fn = target(definition.getValue().getDefiningOp<ctjs::CreateClosureOp>());
             llvm::SmallVector<ctjs::GetPropertyOp> receiverReads;
@@ -1410,9 +1477,9 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
                 return false;
             }
             // A shared inherited body resolves each read once, for every class.
-            // This class's instances reach only its nearest non-overridden
-            // bodies - copies replaced the others - and ancestors only through
-            // super calls, which were expanded and are rechecked on this receiver.
+            // This class's instances reach only the nearest bodies it does not
+            // override (copies replaced the others), and further ancestors only
+            // through super calls, which were inlined and are rechecked here.
             bool conflicting = false;
             for (ctjs::GetPropertyOp read : receiverReads) {
                 if (!step()) { return false; }
@@ -1438,9 +1505,10 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
         }
     }
     auto & entry = function.getBody().front();
-    // A base no exact `new` constructs runs only as its leaves' normalized
-    // super copies, and each leaf proves its own receiver across that copy.
-    // The original still records every use for the census; rewrite erases it.
+    // A base class that no `new` constructs runs only as the super() copies
+    // inlined into derived constructors, and each derived class proves its own
+    // receiver across its copy. The original body is still checked by the
+    // census; the rewrite erases it.
     const bool leafConstructed = instances.empty() && baseClasses.contains(closure.getResult());
     if (leafConstructed) { leafBuilt.insert(function); }
     if (!entry.getArgument(ctjs::arg_new_target).use_empty() ||
@@ -1493,8 +1561,8 @@ bool classInitialization::examine(ctjs::CallOp call, const HostContract & contra
         }
     }
     constructors.insert(function);
-    // Keep method definitions on the prototype until constructor lowering.
-    // They must already be available when the constructor body runs.
+    // Method definitions stay on the prototype until constructor lowering, so
+    // they exist when the constructor body runs.
     if (instances.empty()) {
         setup.insert(attachment);
         for (ctjs::SetPropertyOp definition : definitions) { setup.insert(definition); }

@@ -1,14 +1,9 @@
 //===- CTJSAttrs.td - JavaScript constants as attributes ------------------===//
 //
-// NOT BUILTIN ATTRIBUTES, and the policy gives the reason in one sentence:
-// "-0.0 and NaN are the reason for APFloat and for a dedicated attribute. A
-// builtin FloatAttr comparison that treats -0.0 as 0.0 would produce a silent,
-// hard-to-find miscompile."
-//
-// This project has already paid that bill once at the other end of the
-// pipeline: the program-image round trip keeps -0 and NaN explicitly, and a
-// differential over 10,976 operand pairs distinguishes the two zeroes by their
-// sign bit because `to_string` prints both as "0".
+// JavaScript constants as dedicated attributes rather than builtin ones: a
+// builtin FloatAttr comparison treats -0.0 as 0.0, which would be a silent
+// miscompile (Object.is(-0, 0) is false). The program-image round trip keeps
+// -0 and NaN explicitly for the same reason.
 //
 //===----------------------------------------------------------------------===//
 #ifndef CTCOMPILE_CTJS_ATTRS
@@ -83,14 +78,9 @@ def CTJS_BigIntAttr : CTJS_Attr<"BigInt", "bigint"> {
   let assemblyFormat = "`<` $text `>`";
 }
 
-// NO KIND ATTRIBUTES HERE, and the absence is the finding.
-//
-// An I32EnumAttr with genSpecializedAttr - the default, and what the policy's
-// snippet sets explicitly - makes -gen-enum-decls generate the `<Name>Attr`
-// class ITSELF. Adding EnumAttr records for the same five was a redefinition of
-// classes that already existed, and the "no type named BinaryKind" error that
-// prompted it was only CTJSOps.h failing to include the generated enum header.
-//
-// The policy was right and the fix was one #include.
+// No kind attributes here: an I32EnumAttr with genSpecializedAttr (the
+// default) already makes -gen-enum-decls generate each `<Name>Attr` class, so
+// an EnumAttr record would redefine it. Code that needs those classes includes
+// the generated enum header (see CTJSEnums.h).
 
 #endif // CTCOMPILE_CTJS_ATTRS

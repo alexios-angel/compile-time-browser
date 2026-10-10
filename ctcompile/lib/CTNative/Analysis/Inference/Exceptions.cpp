@@ -1,3 +1,11 @@
+//===- Exceptions.cpp - Type inference through ctjs.invoke ----------------===//
+//
+// TypeInference's transfer functions for a direct call inside a ctjs.invoke:
+// the normal result joins the callee's return values, and the unwind block's
+// payload joins the values the callee can throw.
+//
+//===----------------------------------------------------------------------===//
+
 #include "ctcompile/CTJS/IR/CTJSOps.h"
 #include "ctcompile/CTNative/Analysis/TypeInference.h"
 #include "ctcompile/CTNative/IR/CTNativeDialect.h"
@@ -9,16 +17,19 @@
 namespace ctcompile::ctnative {
 namespace {
 
-// A completion query, not an effect summary for native admission. Apart from
-// explicit calls/throws/returns, only declaratively pure operations qualify
-// for unwind payloads. Normal returns can also cross imported frame/root
-// bookkeeping: its failure cannot supply a successful return's value. In
-// particular frame_enter's depth failure is NOT an explicit thrown operand,
-// so it still prevents inferring an explicit-only unwind payload.
-// Unknown effects and nested handlers require a richer proof and stay boxed.
-// Rebuild this query for each visit: neither markers nor earlier IR can supply
-// an escaping payload or a normal return. Limits bound both work and the C++
-// recursion stack.
+/// Collects what a direct call inside a `ctjs.invoke` can complete with: the
+/// values its body (and the private, capture-free functions it calls directly)
+/// can throw, or the values the invoked function itself returns.
+///
+/// Used only to refine the types flowing out of an invoke; it is not an effect
+/// summary and proves nothing for native admission. `collect` fails, and the
+/// caller falls back to the conservative entry state, on any operation other
+/// than a call, throw, return or pure op. The exception: frame_enter,
+/// frame_exit and root are skipped when collecting return values, since their
+/// failure cannot produce a return value; for unwind payloads they still fail,
+/// because frame_enter's depth error is a throw not listed in `thrown`.
+/// Build a fresh instance per visit. `remaining` (4096 operations) and the
+/// 32-deep `active` set bound the work and the C++ recursion.
 struct invokeCompletions {
     enum class Kind {
         NormalReturn,
@@ -58,9 +69,8 @@ struct invokeCompletions {
                 } else if (kind == Kind::NormalReturn &&
                            llvm::isa<ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::RootOp>(
                                operation)) {
-                    // This is not permission to remove the frame or any
-                    // exceptional edge. Native admission must independently
-                    // prove the complete component before dropping either.
+                    // This does not allow removing the frame or any exceptional
+                    // edge; native admission must prove that separately.
                     continue;
                 } else if (operation.getNumRegions() != 0 || !mlir::isPure(&operation)) {
                     return false;
@@ -85,11 +95,11 @@ mlir::LogicalResult TypeInference::visitCallOperation(
         return AbstractSparseForwardDataFlowAnalysis::visitCallOperation(call, operands, results);
     }
 
-    // Ordinary CallOp flow correctly stays conservative when a callee has a
-    // throw exit. Here invoke_exit alone selects the normal result, and its
-    // verifier prevents that value from reaching the unwind continuation.
-    // Join the actual helper's returns only after rebuilding the bounded
-    // completion proof. No return is synthesized for a throw-only body.
+    // Ordinary call flow stays conservative when a callee can throw. Inside an
+    // invoke, only invoke_exit carries the normal result, and its verifier keeps
+    // that value from reaching the unwind block, so the helper's returns can be
+    // joined directly once collect() succeeds. A throw-only body gets no
+    // synthesized return.
     invokeCompletions completions{invokeCompletions::Kind::NormalReturn};
     if (!getSolverConfig().isInterprocedural() || results.size() != 1 ||
         !completions.collect(direct) || completions.returned.empty()) {
@@ -127,8 +137,9 @@ void TypeInference::visitNonControlFlowArguments(
     auto * point = getProgramPointBefore(&invocation.getUnwindBody().front());
     for (auto value : completions.thrown) {
         const auto * source = getLatticeElementFor(point, value);
-        // An operand not reached yet is not boxed. Subscribing this block's
-        // program point revisits the payload when the callee's value widens.
+        // An operand the solver has not reached yet is skipped, not widened to
+        // the entry state. Querying it from this block's program point
+        // subscribes the block, so the payload is revisited when it changes.
         if (!source->getValue().isUninitialized()) {
             propagateIfChanged(destination, destination->join(source->getValue()));
         }

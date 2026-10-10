@@ -1,7 +1,8 @@
-// THE CLOSED WORLD - Phase 62½-A.
+//===- ResolveGlobals.cpp - Resolve global calls to direct calls ----------===//
 //
-// A whole-program compile knows every call site, and the importer's IR says
-// nothing of the kind. `function add(a, b) {...}` at the top level is
+// Implements --ctjs-resolve-globals. A whole-program compile knows every call
+// site, but the importer's IR does not say so. `function add(a, b) {...}` at
+// the top level is
 //
 //     %6 = ctjs.create_closure %arg2[1] this %arg0
 //     ctjs.store_global "add", %6
@@ -11,177 +12,117 @@
 //     %f = ctjs.load_global "add"
 //     %r = ctjs.call %f(%receiver, %x, %x)
 //
-// - a name, a table lookup, and a dispatch. No pass can type `add`'s
-// parameters from that, because no pass can see who calls `add`. This one
-// proves who does, per global NAME across the whole module, and writes the
-// answer where MLIR reads it: a ctjs.call_direct @add$1 at every call site,
-// and `private` on the function once every caller is one of those.
+// a name, a table lookup and a dispatch. No pass can type `add`'s parameters
+// from that, because no pass can see who calls `add`. This one proves who
+// does, per global name across the whole module, and records the answer: a
+// ctjs.call_direct @add$1 at every call site, `private` on the function once
+// every caller is one of those, and a `ctjs.globals` row per name saying why.
 //
-// WHAT IS PROVED, AND WHY EACH CLAUSE IS THERE.
+// A global name is resolved to its function when all six clauses below hold.
+// Clauses 1-3 and 6 are checked per name by bound_closure(), clause 4 by
+// own_closure_escapes(), and clause 5 for the whole module by
+// dynamic_global_writes().
 //
-//  1. THE NAME IS STORED EXACTLY ONCE IN THE PROGRAM. Two stores mean the
+//  1. The name is stored exactly once in the program. Two stores mean the
 //     binding changes at run time and a call site cannot know which closure
-//     it reaches (`function f(){}; f = 1;` - the negative case in the test).
-//  2. THAT STORE IS OF A CLOSURE, DIRECTLY. The store's SSA operand is a
-//     ctjs.create_closure result - not a load, not a call result, not a
-//     block argument. The closure's function index F is the callee.
-//  3. THE STORE IS IN THE TOP LEVEL'S HOISTING PROLOGUE: in the entry block of
-//     the function with index 0, preceded only by frame_enter, constants and
-//     other closure/store pairs. This is the clause the plan's sentence
-//     ("bound exactly once ... never reassigned") does not spell and that
-//     soundness needs: a single store that runs LATE - `f(); f = function(){}`
-//     or a closure bound inside another function - leaves a window in which
-//     the VM throws for an unbound name and a direct call would not. Function
-//     declarations are hoisted to the start of the script by the compiler,
-//     so every call in the program runs after the prologue.
-//  4. THE CLOSURE VALUE HAS NO OTHER USE than the store, and F's own callee
-//     argument (%arg2, the value `load_callee` reads) is used only to build
-//     nested closures or read upvalues. Otherwise the closure escapes and the
-//     VM may call F through a value this IR cannot see - which is why that
-//     clause gates `private` rather than the rewrite: the rewrite is right
-//     whenever the callee is F; `private` claims every caller is visible.
-//  5. NOTHING WRITES THE GLOBALS TABLE DYNAMICALLY. In this VM that table is
-//     context::globals_, written by op::set_global (run_loop.cpp,
-//     VM_CASE(set_global)), its AOT helper, and the host's define_global.
+//     it reaches (`function f(){}; f = 1;`).
+//  2. That store is of a closure, directly: the store's operand is a
+//     ctjs.create_closure result, not a load, a call result or a block
+//     argument. The closure's function index F is the callee.
+//  3. The store is in the top level's hoisting prologue: the entry block of
+//     function 0, preceded only by frame_enter, constants and other
+//     closure/store pairs. A single store that runs later (`f(); f =
+//     function(){}`, or a binding inside another function) leaves a window in
+//     which the VM throws for an unbound name and a direct call would not.
+//     Function declarations are hoisted into this prologue, so every call runs
+//     after it.
+//  4. The closure value has no other use than the store, and F's own callee
+//     argument (%arg2, which `load_callee` reads) is used only to build nested
+//     closures or read upvalues. Otherwise the closure escapes and the VM may
+//     call F through a value this IR cannot see. This clause gates `private`,
+//     not the rewrite: the rewrite is right whenever the callee is F, while
+//     `private` claims every caller is visible.
+//  5. Nothing writes the globals table dynamically. In the VM that table is
+//     the current realm's `globals`, written by op::set_global (run_loop.cpp,
+//     VM_CASE(set_global)), its AOT helper, and context::define_global
+//     (script/vm/execution_inline.hpp).
 //
-//     AND `globalThis.add = 1` DOES REBIND `add` IN THIS ENGINE. This comment
-//     said the opposite - that `window` and `globalThis` are the Shell's
-//     window_view and "do NOT alias it", so the rule was "kept anyway,
-//     conservatively... and the cost is nothing on the programs this MVP
-//     targets". Both halves were wrong, and the line it cited is the proof of
-//     the first: the "set" window_trap in lib/Shell/bindings/window/window.cpp is the PROXY's `set`
-//     trap, and its else-arm is `c.define_global(name, args[2])`, which is
-//     `globals_[name] = v` (script/vm.hpp:257). A write through the window
-//     that does not hit an own property of the window target is a global
-//     binding, exactly as the specification says. So this clause is
-//     LOAD-BEARING, not spec-conformance politeness, and it may not be
-//     relaxed on the grounds that this engine is simpler than a browser.
+//     `globalThis.add = 1` rebinds `add` in this engine: the window proxy's
+//     "set" trap (lib/Shell/bindings/window/window.cpp) falls back to
+//     `define_global(name, value)` for any key that is not an own property
+//     of the window. Do not relax this clause on the grounds that the
+//     engine is simpler than a browser.
 //
-//     Any ctjs.load_global of those names whose value reaches an operation
-//     that writes through it under a key this pass cannot name, escapes into a
-//     call this pass cannot name, or reaches an operation this walk does not
-//     know, resolves NOTHING in the module. A NAMED READ OFF IT DOES NOT
-//     PROPAGATE unless the name is one of the host's own self-aliases
-//     (hands_back_the_global_object), which is what keeps
-//     `window.getComputedStyle(el)` from answering. And the object needs no
-//     name at all to be `this`: the top level's receiver, and the receiver of
-//     every body a call this pass can name enters, are followed the same way.
+//     So the walk follows the global object (a ctjs.load_global of `window`,
+//     `globalThis` or `self`, and the top level's `this`) and the receivers of
+//     the bodies calls enter. If such a value reaches a write under a key this
+//     pass cannot name, a call this pass cannot name, or an operation the walk
+//     does not know, no name in the module resolves. A named read off it does
+//     not propagate unless the name is one of the host's self-aliases
+//     (hands_back_the_global_object()), so `window.getComputedStyle(el)` is
+//     harmless.
 //
-//     TWO OF THOSE CLAUSES USED TO BE COARSER THAN THEIR OWN REASONING.
+//     A call whose callee known_callee() can prove continues the walk at the
+//     callee's parameter instead of counting as an escape. A write through the
+//     global object under a constant key refuses only that name (as clause 6
+//     does for a refused body's stores); a computed key, `__proto__`, a
+//     delete, an accessor, set_proto and copy_props still refuse every name.
 //
-//       * A CALL WAS AN ESCAPE, ALWAYS. `(function (g) { ... })(globalThis)`
-//         is a closure defined in the same module and called two tokens later,
-//         and the object does not leave this pass's sight at all - it arrives
-//         at a parameter. The walk now continues there when known_callee()
-//         proves which ctjs.func the call enters, by the SAME proof the census
-//         uses for a name bound once to a create_closure. Unknown is still the
-//         bail, and unknown is most of them.
-//       * A WRITE THROUGH IT REFUSED THE MODULE, whatever the key.
-//         `globalThis.x = 1` reaches the proxy's `set` trap, whose two arms
-//         are store_property and `define_global(name, args[2])` - both about
-//         the name written and neither about any other. So a CONSTANT key
-//         binds that one name and refuses it in the census, exactly as clause
-//         6 refuses the names a dropped body stores; a computed key,
-//         `__proto__`, a delete, an accessor, a set_proto and a copy_props
-//         still refuse everything.
+//     Calls whose callee is a ctjs.create_closure result need no global name
+//     at all; runOnOperation() rewrites them separately (see "Second shape"
+//     below). That is the only way a call inside a bundle becomes a
+//     ctjs.call_direct, because bundles declare nothing at global scope.
 //
-//     NEITHER MOVED A VENDOR BUNDLE, AND CLAUSE 5 IS NOT WHERE ONE IS LOST.
-//     Disabling this whole function - `return std::nullopt` before the walk -
-//     leaves bootstrap at 0 of 37 resolved and 0 ctjs.call_direct, p5 at 0 of
-//     101 and phaser at 0 of 72, with the rows reading "never stored in this
-//     program - a host binding": 37 of 37 on bootstrap, 96 of 101 on p5 (4
-//     bound outside the prologue, 1 to something other than a closure) and 72
-//     of 72 on phaser. A BUNDLE DECLARES NOTHING AT GLOBAL SCOPE - each hands
-//     a factory's result to one property of the window - so there is no NAME
-//     for the census to bind and clause 1 refuses every row before clause 5 is
-//     consulted. The escape reasons those rows carried were decorations.
+//     `Function(...)` compiles and runs a new program
+//     (builtins/objects/function.cpp, install_dynamic_function) whose body can
+//     store any global, so a load of "Function" or "eval", or a
+//     ctjs.dynamic_import, also resolves nothing.
 //
-//     That is not a licence to relax anything here: the reasons are still
-//     sound and they are the ceiling on programs that DO declare functions
-//     (differential.js resolves 56 of 72, application.js 9 of 10). It says where
-//     a bundle is actually lost, which is the census's first clause.
+//  6. No body the importer refused stores this name. A `gave_up` function
+//     emits no ctjs.func, so its stores are invisible here. The importer reads
+//     the names such a body stores from its bytecode name pool (op::set_global
+//     names its target by static index) and lists them on the ctjs.skipped
+//     row as `stores`. Only a body whose pools name `Function`, `eval`,
+//     `constructor`, `globalThis` or `window`, or that does a dynamic import,
+//     refuses the whole module (`opaque`). A run-time-computed `constructor`
+//     key is invisible to both the summary and this pass - one stated hole.
 //
-//     Bootstrap's first escape is `window.scrollTo(...)` at
-//     bootstrap.bundle.js:3062 - a native reached through a property read, and
-//     genuinely unknown. THE OTHER HALF OF known_callee() IS THE LEVER NOBODY
-//     HAS PULLED: a ctjs.call whose callee is a ctjs.create_closure result is
-//     provably that function with no global name involved at all, and
-//     rewriting those to ctjs.call_direct is the only path to a direct call
-//     inside a bundle - 21 such sites in bootstrap, 42 in p5, 50 in phaser.
+// Clause 5 also follows `.constructor` reads, because every function's
+// prototype exposes `Function` as `constructor`. It only marks reads whose
+// receiver may be a function (may_be_function()), so `({}).constructor` is not
+// marked, and hands_back_the_compiler() decides which named reads off a marked
+// value can still be the compiler (`this.constructor.NAME` is a string).
 //
-//     The eval-like case is real here too: `Function(...)` compiles and runs a
-//     NEW program (builtins/objects/function.cpp, install_dynamic_function), whose body
-//     can set_global anything, so a load of "Function" or "eval" also resolves
-//     nothing, as does ctjs.dynamic_import. Measured on the corpora, that is
-//     not hypothetical: it is the REASON PRINTED for all 72 of phaser's rows -
-//     "a run-time compiler is reachable (ctjs.load_global at phaser.js:N)".
-//     p5's 101 print clause 6's `opaque`, not this one. Both are first-past-
-//     the-post: the paragraph above shows what is under them.
-//
-//  6. NO BODY THE IMPORTER REFUSED STORES THIS NAME. A `gave_up` function
-//     emits no ctjs.func, so its `ctjs.store_global`s are not here to be
-//     counted and a name stored once visibly and once inside such a body looks
-//     singly bound. That used to refuse EVERY name in the program - 101
-//     globals on p5 from 51 refusals, 72 on phaser from TWO - on the grounds
-//     that "nothing says which names the missing bodies touch". Nothing in the
-//     IR does. THE BYTECODE DOES: op::set_global names its target with
-//     `proto.names[in.bx()]`, a static index into the function's own name
-//     pool, so the importer reads the exact set off a body it is about to drop
-//     and puts it on the ctjs.skipped row (`stores`). Only a body whose
-//     summary cannot bound it - one whose pools name `Function`, `eval`,
-//     `constructor`, `globalThis` or `window`, or whose code holds a dynamic
-//     import - still refuses the module, and says so in `opaque`.
-//
-//     THE SUMMARY'S LIMIT IS THIS CLAUSE'S OWN LIMIT, deliberately. A
-//     `constructor` key computed at run time is invisible to the summary
-//     exactly as `constantKey` makes it invisible here, so the closed world
-//     has ONE stated hole rather than a different one on each side of the
-//     importer. An earlier summary refused every op::get_index in a body whose
-//     string pool held the word, which bought nothing the IR walk was not
-//     already giving away and cost p5 all 101 of its globals.
-//
-// AND THE `.constructor` CLAUSE OF 5 ASKS WHAT THE RECEIVER MAY BE. `Function`
-// on every function's prototype is a real hazard and marking EVERY
-// `get_property` whose constant key is "constructor" is not the way to say it:
-// `super(t, e)` desugars to exactly that shape (compile/expressions.cpp:640) -
-// 17 of bootstrap's 38 such reads - and `({}).constructor` is `Object`.
-// may_be_function() answers which receivers can hand back the compiler, and
-// hands_back_the_compiler() answers which named reads off such a value can:
-// `this.constructor.NAME` is a string, and that idiom is the other 21.
-//
-// WHAT THE REWRITE PASSES. ctjs.call_direct's operands are the callee's entry
-// block in order - receiver, new.target, callee, parameters (BytecodeImport
-// .cpp, `implicit_arguments`). The receiver is the call's own; the callee is
-// the load_global result, KEPT, because the boxed tier dispatches on it;
+// What the rewrite passes: ctjs.call_direct's operands are the callee's entry
+// block in order: receiver, new.target, callee, parameters (BytecodeImport.cpp,
+// `implicit_arguments`). The receiver is the call's own; the callee is the
+// load_global result, kept because the boxed backend dispatches on it;
 // new.target is a fresh `ctjs.constant #ctjs.undefined`, which is what the VM
-// gives a plain call: VM_CASE(call) pushes `entered.new_target =
-// pending_new_target_` and that root is undefined unless a pass_new_target or
-// a construct set it (run_loop.cpp; context::invoke in vm/call/invoke.cpp does
-// the same
-// two lines). A function containing ctjs.pass_new_target therefore has none
-// of its calls rewritten - adjacency is an invariant nothing checks, and the
-// pending flag could be live at any call in it.
+// gives a plain call: VM_CASE(call) sets `entered.new_target =
+// pending_new_target_`, which is undefined unless a pass_new_target or a
+// construct set it (run_loop.cpp; context::invoke in vm/call/invoke.cpp does
+// the same). A function containing ctjs.pass_new_target therefore has none of
+// its calls rewritten: nothing checks that pass_new_target sits right before
+// its call, so the pending flag could be live at any call in it.
 //
-// ARITY. Fewer arguments than parameters are padded with undefined, as
+// Arity: fewer arguments than parameters are padded with undefined, as
 // VM_CASE(call) fills `registers_[new_base + i] = undefined` for i in
-// [argc, param_count). MORE are not rewritten: the surplus lands in the
+// [argc, param_count). More are not rewritten: the surplus lands in the
 // callee's raw register window, where `arguments` and a rest parameter read
-// it (type_record.cpp's note on context::call copying EVERY argument), and
-// call_direct has no slot for a value the callee's block does not name. The
-// native tier diagnoses such a site.
+// it, and call_direct has no slot for a value the callee's block does not
+// name. Native lowering diagnoses such a site.
 //
-// ONE PROGRAM PER MODULE, ASSUMED AND SAID. A function index means nothing
-// outside the program it was compiled in (ctjs.create_closure's own words),
-// and the index is recovered from the symbol the importer built - `name$N`,
-// BytecodeImport.cpp: `name += "$" + std::to_string(index)`. A module
-// holding two programs would have two `$0`s and fail to verify long before
-// this pass ran.
+// One program per module is assumed. A function index means nothing outside
+// the program it was compiled in, and the index is recovered from the symbol
+// the importer built (`name$N`, BytecodeImport.cpp). A module holding two
+// programs would have two `$0`s and fail to verify before this pass ran.
 //
-// C++ RATHER THAN DRR, per part 23 §1.2: this is a census across a module - a
-// symbol table, a store count per name, an SSA reachability - and a Pat<>
-// matches one operation's shape. The op it produces IS TableGen
-// (CTJSOps.td, ctjs.call_direct); the pass declaration IS TableGen
-// (Passes.td); only the analysis is here.
+// Written in C++ rather than DRR because this is a module-wide analysis (a
+// symbol table, a store count per name, SSA reachability) and a DRR Pat<>
+// matches one operation's shape. The op it produces (ctjs.call_direct,
+// CTJSOps.td) and the pass declaration (Passes.td) are TableGen.
+//
+//===----------------------------------------------------------------------===//
 #include "Globals/Effects.h"
 #include "Globals/RegisterFlow.h"
 #include "ctcompile/CTJS/IR/CTJSAttrs.h"
@@ -210,38 +151,40 @@ namespace ctcompile::ctjs {
 namespace {
 using namespace globals_detail;
 
+/// Every store and load of one global name in the module.
 struct binding {
     llvm::SmallVector<StoreGlobalOp> stores;
     llvm::SmallVector<LoadGlobalOp> loads;
 };
 
-// THE CENSUS AS ONE VALUE, because clause 5 now reads it. Following the global
-// object into a callee asks precisely the question the per-name proof asks -
-// "which one ctjs.func is this?" - and a second copy of that proof, written
-// beside the first, is how a closed world quietly stops being closed.
+/// The module-wide census of global names. Clause 5's walk reads it too:
+/// following the global object into a callee asks the same "which ctjs.func is
+/// this?" question as the per-name proof, and keeping one copy of that proof
+/// keeps the two consistent.
 struct census {
     llvm::MapVector<mlir::StringAttr, binding> bindings;
     llvm::DenseMap<std::uint32_t, FuncOp> by_index;
-    llvm::DenseSet<mlir::StringAttr> refused; // clause 6, per name
-    std::optional<std::string> opaque_skip;   // a refused body no summary bounds
-    FuncOp top;                               // function index 0, or null
+    llvm::DenseSet<mlir::StringAttr> refused; ///< Clause 6, per name.
+    std::optional<std::string> opaque_skip;   ///< A refused body no summary bounds.
+    FuncOp top;                               ///< Function index 0, or null.
 };
 
-// CLAUSES 1-3 AND 6 FOR ONE NAME: everything the census proves that does not
-// depend on clause 5's SSA walk. Answers the function, or the reason there is
-// none.
-//
-// CLAUSE 5 IS DELIBERATELY ABSENT. It is a module-wide answer computed BY the
-// walk, so asking for it here would be circular - the walk calls this to decide
-// where a marked value goes next. That is sound in the direction that matters:
-// this says only which function a name IS bound to, and clause 5's own bail
-// still decides whether any name resolves at all.
+/// The answer bound_closure() gives for one name: the function it is bound to,
+/// or the reason there is none.
 struct verdict {
-    FuncOp target;           // null unless the name is bound to exactly one closure
-    CreateClosureOp closure; // the ctjs.create_closure that store bound, for clause 4
-    std::string reason;      // why not, when the target is null
+    FuncOp target;           ///< Null unless the name is bound to exactly one closure.
+    CreateClosureOp closure; ///< The ctjs.create_closure the store bound, for clause 4.
+    std::string reason;      ///< Why not, when the target is null.
 };
 
+/// Checks clauses 1-3 and 6 for \p name: everything the census proves that
+/// does not depend on clause 5's SSA walk.
+///
+/// Clause 5 is deliberately absent. It is a module-wide answer computed by the
+/// walk, and the walk calls this to decide where a marked value goes next, so
+/// asking for it here would be circular. That is sound: this says only which
+/// function a name is bound to, and clause 5's own refusal still decides
+/// whether any name resolves at all.
 verdict bound_closure(const census & world, mlir::StringAttr name, const binding & facts) {
     const auto no = [](std::string because) {
         return verdict{FuncOp{}, CreateClosureOp{}, std::move(because)};
@@ -279,28 +222,25 @@ verdict bound_closure(const census & world, mlir::StringAttr name, const binding
     return verdict{target, made, {}};
 }
 
-// THE VERDICT ON THE NAME A GLOBAL READ NAMES, or nothing without a census row.
+/// The verdict on the name \p load reads, or nullopt without a census row.
 std::optional<verdict> load_verdict(const census & world, LoadGlobalOp load) {
     const auto row = world.bindings.find(load.getNameAttr());
     if (row == world.bindings.end()) { return std::nullopt; }
     return bound_closure(world, load.getNameAttr(), row->second);
 }
 
-// WHICH ctjs.func DOES THIS CALLEE VALUE PROVABLY ENTER? Two shapes, and the
-// first is the one a bundle is made of.
-//
-//   * A ctjs.create_closure result. The closure names its function index
-//     outright, and calling it enters that function - there is nothing to
-//     prove beyond the index being in this module. This is the IIFE, which is
-//     what a UMD header is: `(function (global) { ... })(globalThis)` calls a
-//     closure defined two tokens earlier, and the global object it hands over
-//     used to leave this pass's sight there.
-//   * A ctjs.load_global of a name bound_closure() answers for. The SAME proof
-//     the per-name census uses, called rather than re-typed.
-//
-// EVERYTHING ELSE IS UNKNOWN, and unknown is still the bail: a parameter, a
-// property read (`window.scrollTo`), a call result, a native. The body behind
-// such a value is not in this module and may set_global anything.
+/// Returns the ctjs.func that calling \p callee provably enters, or null.
+/// Two shapes are known:
+///
+///   * A ctjs.create_closure result. The closure names its function index
+///     outright, and calling it enters that function. This is the IIFE, which
+///     is what a UMD header is: `(function (global) { ... })(globalThis)`.
+///   * A ctjs.load_global of a name bound_closure() resolves, by the same
+///     proof the per-name census uses.
+///
+/// Everything else is unknown: a parameter, a property read
+/// (`window.scrollTo`), a call result, a native. The body behind such a value
+/// is not in this module and may store any global.
 FuncOp known_callee(const census & world, mlir::Value callee) {
     if (auto made = callee.getDefiningOp<CreateClosureOp>()) {
         return world.by_index.lookup(static_cast<std::uint32_t>(made.getFunction()));
@@ -312,11 +252,11 @@ FuncOp known_callee(const census & world, mlir::Value callee) {
     return FuncOp{};
 }
 
-// DOES CALLING THIS VALUE ENTER AN ARROW? The importer hands
-// ctjs.create_closure the enclosing receiver only when the target is an arrow,
-// and a `ctjs.constant` undefined otherwise (op::closure in Instructions.cpp),
-// so that operand is the one mark the IR carries. An arrow ignores the receiver
-// a call passes it.
+/// Whether calling \p callee enters an arrow function. The importer hands
+/// ctjs.create_closure the enclosing receiver only when the target is an arrow,
+/// and a `ctjs.constant` undefined otherwise (op::closure in Instructions.cpp),
+/// so that operand is the one mark the IR carries. An arrow ignores the
+/// receiver a call passes it.
 bool enters_arrow(const census & world, mlir::Value callee) {
     CreateClosureOp made = callee.getDefiningOp<CreateClosureOp>();
     if (auto load = callee.getDefiningOp<LoadGlobalOp>()) {
@@ -327,38 +267,33 @@ bool enters_arrow(const census & world, mlir::Value callee) {
     return made && made.getEnclosingThis().getDefiningOp<ConstantOp>() == nullptr;
 }
 
-// PADDING A SHORT CALL IS VISIBLE TO `arguments`, AND IS THE ONE THING THE PAD
-// MAY NOT CHANGE.
-//
-// The rewrite fills a call that passes fewer arguments than the callee declares
-// with `ctjs.constant #ctjs.undefined`, which is exactly what VM_CASE(call)
-// does to the callee's REGISTERS (run_loop.cpp: `registers_[new_base + i] =
-// undefined` for i in [argc, param_count)). It is NOT what op::call does to the
-// ARGUMENT WINDOW: make_arguments_object copies the raw window, whose length is
-// argc, so `function f(a, b) { return arguments.length; } f(1)` is 1 in the VM.
-// A padded ctjs.call_direct would make it 2, because the boxed tier parks
-// `getArgs()` and hands ct_aot_call that window (CTJSToEmitC.cpp, the
-// `dispatched_arguments` arm).
-//
-// AT EXACT ARITY THERE IS NO PAD AND NOTHING TO HIDE, which is why this asks
-// about the PADDING and not about `arguments`: refusing every callee that
-// mentions `arguments` would refuse calls that are already the right length and
-// change nothing about them.
+/// Whether padding a short call would be visible to the callee's `arguments`.
+///
+/// The rewrite fills a call that passes fewer arguments than the callee
+/// declares with `ctjs.constant #ctjs.undefined`, which is exactly what
+/// VM_CASE(call) does to the callee's registers (run_loop.cpp:
+/// `registers_[new_base + i] = undefined` for i in [argc, param_count)). It is
+/// not what op::call does to the argument window: make_arguments_object copies
+/// the raw window, whose length is argc, so `function f(a, b) { return
+/// arguments.length; } f(1)` is 1 in the VM. A padded ctjs.call_direct would
+/// make it 2, because the boxed backend hands ct_aot_call `getArgs()` as that
+/// window.
+///
+/// At exact arity there is no pad, which is why this asks about the padding
+/// rather than refusing every callee that mentions `arguments`.
 bool padding_hides_arguments(FuncOp target, std::size_t supplied, unsigned parameters) {
     return supplied < parameters && readsRawArguments(target);
 }
 
-// WHY `call` CANNOT BECOME A ctjs.call_direct INTO `target`, or nothing.
-//
-// ARITY IS A HARD VERIFIER FAILURE, NOT A REFUSAL THIS MAY LEAVE TO SOMEBODY
-// ELSE. CallDirectOp::verifySymbolUses holds the operand count equal to the
-// entry block's, so a surplus call is refused; a short one is padded, as
-// VM_CASE(call) pads - unless the pad would be visible: a short call into a
-// body that reads its raw argument window was once padded, and
-// `arguments.length` came out as the parameter count instead of the argument
-// count. new.target is undefined for a plain call, and a function holding a
-// ctjs.pass_new_target may have the pending flag live at any call in it -
-// adjacency is an invariant nothing checks.
+/// Returns why \p call cannot become a ctjs.call_direct into \p target, or
+/// nullopt if it can.
+///
+/// Arity is a hard verifier requirement: CallDirectOp::verifySymbolUses holds
+/// the operand count equal to the entry block's, so a surplus call is refused;
+/// a short one is padded, as VM_CASE(call) pads, unless padding_hides_arguments()
+/// says the pad would be visible. A function holding a ctjs.pass_new_target
+/// may have the pending new.target live at any call in it, so its calls are
+/// refused too.
 std::optional<std::string> direct_refusal(
     CallOp call, unsigned parameters, FuncOp target,
     const llvm::DenseSet<mlir::Operation *> & passes_new_target) {
@@ -381,8 +316,8 @@ std::optional<std::string> direct_refusal(
     return std::nullopt;
 }
 
-// THE REWRITE: `call` becomes a ctjs.call_direct into `target`, its short
-// argument list padded with undefined.
+/// Replaces \p call with a ctjs.call_direct into \p target, padding a short
+/// argument list with undefined.
 void rewrite_direct(CallOp call, FuncOp target, unsigned parameters) {
     mlir::OpBuilder at(call);
     mlir::MLIRContext * context = call.getContext();
@@ -399,7 +334,7 @@ void rewrite_direct(CallOp call, FuncOp target, unsigned parameters) {
     call.erase();
 }
 
-// WHAT A WATCHED VALUE IS CALLED IN A REASON.
+/// How a watched value of kind \p kind is described in a refusal reason.
 std::string name_of(watched kind) {
     switch (kind) {
     case watched::global_object: return "the global object";
@@ -409,57 +344,38 @@ std::string name_of(watched kind) {
     return "a value that may be the run-time compiler";
 }
 
-// A NAMED WRITE THROUGH A WATCHED VALUE: where it is, and through which kind.
+/// A named write through a watched value: where it is, and through which kind.
 struct bound_write {
     std::string at;
     watched through;
 };
 
-// CLAUSE 5: can anything in the module write the globals table other than a
-// ctjs.store_global this pass can count? Answers the reason if so.
-//
-// THE WALK NOW CROSSES A CALL IT CAN NAME, which is this file's change.
-// `(function (g) { ... })(globalThis)` used to answer "the global object
-// escapes into ctjs.call" and refuse every name in the program; the callee of
-// that call is a closure defined in the same module, so the value does not
-// leave this pass's sight - it arrives at a parameter, and the walk continues
-// there. known_callee() says when that is provable, and three guards say when
-// the parameter is the wrong place to continue at:
-//
-//   * MORE ARGUMENTS THAN PARAMETERS. The surplus lands in the callee's raw
-//     register window, which `arguments` and a rest parameter read; there is
-//     no block argument for it and no way to follow it.
-//   * A BODY THAT READS THAT WINDOW AT ALL, even within arity, for the same
-//     reason: ctjs.make_arguments copies every register and a computed index
-//     off the result is invisible here.
-//   * AN UNKNOWN CALLEE, which is most of them. `window.scrollTo(...)` is a
-//     native reached through a property read - and it is bootstrap's FIRST
-//     escape, at bootstrap.bundle.js:3062.
-//
-// FIXPOINT AND TERMINATION. Entering a callee marks a BLOCK ARGUMENT, and
-// mark() enqueues a value only the first time it is seen, so a recursive or
-// mutually recursive chain marks each parameter once and stops. The module has
-// finitely many values and the walk visits each at most once.
-//
-// AND A NAMED WRITE THROUGH THE OBJECT BINDS ONE NAME, NOT THE MODULE. The
-// proxy's `set` trap (the "set" window_trap in lib/Shell/bindings/window/window.cpp) is a two-armed
-// if: an own property of the window target gets store_property, everything
-// else gets `define_global(name, args[2])`. Both arms touch exactly the name
-// written, so `globalThis.x = 1` rebinds `x` and says nothing whatever about
-// `add`. This was a whole-module refusal - the coarse answer clause 6 already
-// had to be talked out of once - and is now per name, in the census, exactly
-// as a refused body's stores are.
-//
-// A COMPUTED KEY STILL REFUSES EVERYTHING, because `globalThis[k] = 1` names
-// no name; so does `__proto__`, which is the object's prototype link rather
-// than a binding; so do a delete, an accessor definition, a ctjs.set_proto and
-// a ctjs.copy_props (`{...globalThis}`'s sibling - every own key of a source
-// this pass cannot enumerate).
+/// Clause 5: can anything in the module write the globals table other than a
+/// ctjs.store_global this pass can count? Returns the reason if so, and fills
+/// \p bound_through with names written through the global object under a
+/// constant key.
+///
+/// The walk follows the global object into a call whose callee known_callee()
+/// proves, continuing at the matching parameter, except when the call passes
+/// more arguments than parameters or the callee reads its raw `arguments`
+/// window (neither has a block argument to follow). An unknown callee is an
+/// escape.
+///
+/// Termination: entering a callee marks a block argument, and mark() enqueues
+/// a value only the first time it is seen, so a recursive chain marks each
+/// parameter once. The module has finitely many values and the walk visits
+/// each at most once.
+///
+/// A named write through the global object binds only that name: the proxy's
+/// "set" trap either stores an own property of the window or calls
+/// define_global(name, value). A computed key, `__proto__`, a delete, an
+/// accessor definition, ctjs.set_proto and ctjs.copy_props still refuse every
+/// name.
 std::optional<std::string> dynamic_global_writes(
     mlir::ModuleOp module, const census & world,
     llvm::MapVector<mlir::StringAttr, bound_write> & bound_through) {
     std::optional<std::string> reason;
-    // COMPUTED ONCE, because it is a question about the whole module and
+    // Computed once: it is a question about the whole module, and
     // may_be_function() is asked once per `.constructor` read.
     const bool super_is_open = prototype_replaced(module);
     llvm::DenseMap<mlir::Value, watched> marked;
@@ -474,27 +390,20 @@ std::optional<std::string> dynamic_global_writes(
         return row.first->second;
     };
 
-    // A FUNCTION THE IMPORTER REFUSED IS A FUNCTION THIS PASS CANNOT READ, and
-    // its `ctjs.store_global`s are not in the module to be counted. The census
-    // below would then see one store where the program has two and resolve a
-    // name that is rebound at run time - a call compiled to the WRONG function
-    // rather than a diagnostic.
-    //
-    // IT IS NO LONGER A WHOLE-MODULE BAIL, because "nothing says which names
-    // the missing bodies touch" was not true: the BYTECODE says, and the
-    // importer reads it. Only a body whose summary is `opaque` still refuses
-    // everything; the rest refuse the names they name, in the census.
+    // A body the importer refused is invisible here, so its stores cannot be
+    // counted. Only an `opaque` summary (see clause 6) refuses the whole
+    // module; other refused bodies refuse just the names they store.
     if (world.opaque_skip) { return world.opaque_skip; }
 
-    // THE GLOBAL OBJECT NEEDS NO NAME TO BE `this`. A classic script's top level
-    // runs with it as the receiver (run.cpp selects the realm's global value
-    // for every classic script, strict or not), so `function f() { return 1; }
-    // this.f = function () { return 2; }; f();` rebinds `f` - and resolving it
-    // answered 1 through a call_direct where the VM answers 2.
+    // The global object needs no name to be `this`. A classic script's top
+    // level runs with it as the receiver (run.cpp selects the realm's global
+    // value for every classic script, strict or not), so `function f() {
+    // return 1; } this.f = function () { return 2; }; f();` rebinds `f`;
+    // resolving it would answer 1 where the VM answers 2.
     if (FuncOp top = world.top; top && implicitEntry(top)) {
         mark(top.getBody().front().getArgument(0), watched::global_object);
     }
-    // AND A BODY NO OPERATION HERE CREATES is created inside one the importer
+    // A body no operation here creates is created inside one the importer
     // refused, whose `this` the summary already takes for the global object:
     // an arrow there inherits it, and a function there is called from code
     // this pass cannot see.
@@ -511,23 +420,17 @@ std::optional<std::string> dynamic_global_writes(
 
     module.walk([&](mlir::Operation * op) {
         if (reason) { return mlir::WalkResult::interrupt(); }
-        // A CALL THIS PASS CAN NAME HANDS ITS CALLEE A RECEIVER, and for the
-        // plain call these always are it is undefined - which
-        // OrdinaryCallBindThis turns into the global object in a sloppy body
-        // (the VM's load_this, and ct_aot_this since c8b4ef2df). The IR does
-        // not record strictness, so every such callee's `this` is watched;
-        // an arrow keeps the `this` it was written with instead.
+        // A call this pass can name passes its callee an undefined receiver,
+        // which OrdinaryCallBindThis turns into the global object in a sloppy
+        // body (the VM's load_this and the AOT helper ct_aot_this both do).
+        // The IR does not record strictness, so every such callee's `this` is
+        // watched; an arrow keeps the `this` it was created with.
         //
-        // A CALLER THIS PASS CANNOT NAME IS WHERE THE WALK STOPS, as it stops
-        // at `document.defaultView`. The host enters timer and animation-frame
-        // callbacks with the global object as `this` (the call_fenced sites in
-        // lib/Shell/bindings/window/callbacks.cpp), a native such as
-        // Array.prototype.forEach enters with undefined and `f.call(x)` with
-        // x, and none of those is an operation in this module. Watching EVERY
-        // receiver instead was measured over the 1,804 JavaScript programs in
-        // ctcompile/test and the three vendor bundles: 533 lose names, 675 in
-        // all, differential.js 59 to 0 - every function a host entry or a
-        // property read may call and that returns or passes `this` on.
+        // A caller this pass cannot name (a host timer or animation-frame
+        // callback, Array.prototype.forEach, `f.call(x)`) is not followed:
+        // those entries are not operations in this module. Watching every
+        // receiver instead would refuse any function that returns or passes
+        // on `this`, which loses most resolvable names.
         if (auto call = mlir::dyn_cast<CallOp>(op)) {
             FuncOp target = known_callee(world, call.getCallee());
             if (target && implicitEntry(target) && !enters_arrow(world, call.getCallee())) {
@@ -550,17 +453,15 @@ std::optional<std::string> dynamic_global_writes(
                          ") and the program it builds can store any global";
             }
         }
-        // `Function` IS NOT ONLY A GLOBAL NAME. It sits on every function's
+        // `Function` is not only a global name. It sits on every function's
         // prototype as `.constructor`, so `(function(){}).constructor` is the
-        // compiler reached through a property read this pass would otherwise
-        // never look at. Following the value rather than refusing the key is
-        // what keeps `o.constructor === C` and `o.constructor.name` resolvable:
-        // those end at a comparison, and only a call or an escape answers.
+        // compiler reached through a property read. Following the value
+        // rather than refusing the key keeps `o.constructor === C` and
+        // `o.constructor.name` resolvable: those end at a comparison, and only
+        // a call or an escape refuses.
         //
-        // AND THE RECEIVER IS ASKED FIRST. Marking EVERY `.constructor` read
-        // made the clause answer for `super(t, e)` - which is one of these,
-        // desugared - and for `({}).constructor`, neither of which can be the
-        // compiler. may_be_function() says which receivers can.
+        // Only a receiver that may be a function is marked: `({}).constructor`
+        // is `Object`, not the compiler. may_be_function() decides.
         if (auto get = mlir::dyn_cast<GetPropertyOp>(op)) {
             if (constantKey(get.getKey()) == "constructor" &&
                 (super_is_open || may_be_function(get.getObject()))) {
@@ -575,8 +476,8 @@ std::optional<std::string> dynamic_global_writes(
     });
     if (reason) { return reason; }
 
-    // ENTER A KNOWN CALLEE AT ONE ARGUMENT POSITION, or answer why not. The
-    // position is already in the CALLEE's entry-block order: receiver,
+    // Enters a known callee at one argument position, or returns why not. The
+    // position is already in the callee's entry-block order: receiver,
     // new.target, callee, then the declared parameters.
     const auto enter = [&](FuncOp target, std::size_t supplied, unsigned parameter,
                            mlir::Operation * at, watched kind) -> std::optional<std::string> {
@@ -595,15 +496,15 @@ std::optional<std::string> dynamic_global_writes(
             return name_of(kind) + " is passed to " + target.getSymName().str() +
                    ", which reads its raw argument window (" + describe(at) + ")";
         }
-        // IN RANGE BY THE ARITY CLAUSE ABOVE: a receiver is 0, a callee value
+        // In range by the arity check above: a receiver is 0, a callee value
         // is 2, and argument i of at most `parameters` is 3 + i.
         assert(parameter < entry.getNumArguments() && "a call operand with no block argument");
         mark(entry.getArgument(parameter), kind);
         return std::nullopt;
     };
 
-    // FORWARD SSA REACHABILITY from the global object. A read through it
-    // yields another value that may BE it (`window.window`), so reads
+    // Forward SSA reachability from the watched values. A read through one
+    // may yield another value that may be it (`window.window`), so reads
     // propagate; predicates and arithmetic answer primitives and stop; a
     // branch forwards into the successor's block argument; a call this module
     // can name forwards into the callee's parameter; a named write through it
@@ -622,20 +523,17 @@ std::optional<std::string> dynamic_global_writes(
             }
             if (mlir::isa<TruthyOp, CompareOp, InstanceOfOp, HasPropertyOp, UnaryOp, BinaryOp,
                           BinaryStaticOp, RootOp>(op)) {
-                continue; // a primitive comes out, never the object
+                continue; // A primitive comes out, never the object.
             }
             if (auto get = mlir::dyn_cast<GetPropertyOp>(op)) {
-                // A NAMED READ OFF A WATCHED VALUE IS NOT THAT VALUE, unless it
-                // is one of the few names that hand it back. `Function.NAME` is
-                // undefined and `window.getComputedStyle` is a function;
-                // `this.constructor.eventName("show")` and
-                // `window.getComputedStyle(el)` are bootstrap's two commonest
-                // idioms and both used to answer here.
+                // A named read off a watched value is not that value, unless
+                // it is one of the few names that hand it back. `Function.NAME`
+                // is undefined and `window.getComputedStyle` is a function.
                 //
-                // ONLY WHEN THE TAINTED VALUE IS THE RECEIVER. As the KEY it is
-                // being converted to a string, and the property that comes out
-                // belongs to somebody else's object - marked conservatively,
-                // because narrowing that is not what this clause is about.
+                // That applies only when the watched value is the receiver. As
+                // the key it is converted to a string, and the property that
+                // comes out belongs to another object; it is marked
+                // conservatively.
                 const llvm::StringRef key = constantKey(get.getKey());
                 const bool hands_back = kind == watched::compiler
                                             ? hands_back_the_compiler(key)
@@ -649,7 +547,7 @@ std::optional<std::string> dynamic_global_writes(
                 continue;
             }
             if (auto set = mlir::dyn_cast<SetPropertyOp>(op)) {
-                // AS THE KEY OR THE VALUE IT IS NOT BEING WRITTEN THROUGH: it
+                // As the key or the value it is not being written through: it
                 // is being converted to a string, or stored into somebody
                 // else's object, and either way it leaves this walk's sight.
                 if (use.getOperandNumber() != 0) {
@@ -667,7 +565,7 @@ std::optional<std::string> dynamic_global_writes(
                           CopyPropsOp>(op)) {
                 return name_of(kind) + " is written through (" + describe(op) + ")";
             }
-            // AN ARROW'S LEXICAL `this`. The VM reads $enclosing_this only for
+            // An arrow's lexical `this`. The VM reads $enclosing_this only for
             // an arrow (make_closure's captured_this), and the arrow reads it
             // back as its own receiver argument.
             if (auto made = mlir::dyn_cast<CreateClosureOp>(op);
@@ -683,9 +581,9 @@ std::optional<std::string> dynamic_global_writes(
                 continue;
             }
             if (auto call = mlir::dyn_cast<CallOp>(op)) {
-                // THE OBJECT AS THE CALLEE ITSELF - `globalThis(...)` - names no
-                // body at all, and this is also where `seed.constructor(src)`
-                // answers.
+                // The watched value as the callee itself (`globalThis(...)`)
+                // names no body, and this is also where `seed.constructor(src)`
+                // is refused.
                 if (use.getOperandNumber() == 0) {
                     return name_of(kind) + " escapes into " + describe(op);
                 }
@@ -702,7 +600,7 @@ std::optional<std::string> dynamic_global_writes(
                 continue;
             }
             if (auto direct = mlir::dyn_cast<CallDirectOp>(op)) {
-                // AN EARLIER RUN OF THIS PASS ALREADY NAMED THIS ONE, and its
+                // An earlier run of this pass already named this call, and its
                 // operands are the entry block in order, so the position needs
                 // no remapping at all.
                 if (const std::optional<std::string> refusal =
@@ -723,8 +621,9 @@ std::optional<std::string> dynamic_global_writes(
     return std::nullopt;
 }
 
-// CLAUSE 4's second half: F's own closure, as its body sees it, feeds nothing
-// but nested closures and upvalue reads. Anything else is an escape.
+/// Clause 4's second half: \p function's own closure, as its body sees it,
+/// feeds nothing but nested closures and upvalue reads. Returns the escape
+/// otherwise.
 std::optional<std::string> own_closure_escapes(FuncOp function) {
     if (!implicitEntry(function)) { return "the function has no callee argument"; }
     if (mlir::Operation * op = ownClosureEscape(function)) {
@@ -741,27 +640,20 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
         mlir::MLIRContext * context = &getContext();
         mlir::Builder builder(context);
 
-        // THE COUNTERS THE REMARK PRINTS, BESIDE THE STATISTICS RATHER THAN
-        // INSTEAD OF THEM.
-        //
-        // A mlir::Pass::Statistic IS NOT A NUMBER IN THIS RELEASE. The LLVM
-        // package this builds against compiles statistics out, so the tracking
-        // type has no value to read and streaming one into a diagnostic
-        // printed an empty field - `resolved  global(s), rewrote  call(s)` -
-        // which a lit test would have matched with a wildcard and a floor
-        // would have read as zero. Counting locally is three lines and is the
-        // only number here that exists in a release build.
+        // Local counters for the --report remark. The LLVM release this builds
+        // against compiles pass statistics out, so a Statistic has no value to
+        // print; these are the only counts that exist in a release build.
         std::size_t resolved_here = 0;
         std::size_t rewritten_here = 0;
         std::size_t closed_here = 0;
-        // THE SECOND SHAPE'S OWN NUMBER, counted apart from the per-name one so
-        // that a test can pin it. `rewritten_here` is both shapes together
+        // Calls rewritten by the second shape, counted apart so a test can pin
+        // them. `rewritten_here` is both shapes together
         // because tools/check/native-claims.py holds it equal to the count of
         // ctjs.call_direct in the IR, and that invariant is what stops a pass
         // reporting a rewrite it did not make.
         std::size_t closure_here = 0;
 
-        // THE CENSUS. In first-seen order, so the attribute is stable.
+        // The census, in first-seen order so the attribute is stable.
         census world;
         llvm::DenseSet<mlir::Operation *> passes_new_target;
         module.walk([&](mlir::Operation * op) {
@@ -782,19 +674,19 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
         world.opaque_skip = std::move(skipped.opaque);
         world.top = world.by_index.lookup(0);
 
-        // CLAUSE 5, AND THE NAMES IT NOW HANDS BACK RATHER THAN REFUSING FOR.
-        // `bound_through` is the set of names a `globalThis.NAME = v` binds -
-        // one row each, refused for the same reason a second ctjs.store_global
-        // would refuse them, and NOT a reason to refuse anything else.
+        // Clause 5. `bound_through` collects the names a `globalThis.NAME = v`
+        // binds; each is refused like a second ctjs.store_global would refuse
+        // it, and refuses nothing else.
         llvm::MapVector<mlir::StringAttr, bound_write> bound_through;
         const std::optional<std::string> dynamic =
             dynamic_global_writes(module, world, bound_through);
-        // A NAME BOUND ONLY THAT WAY HAS NEITHER A LOAD NOR A STORE, so it has
-        // no census row yet - and a verdict nobody can read is not a verdict.
+        // A name bound only that way has neither a load nor a store, so it has
+        // no census row yet; add one so its refusal is reported.
         // Skipped when the module is refused outright: those names would carry
         // the module-wide reason, which says nothing about them.
         //
-        // AND ONLY THROUGH THE GLOBAL OBJECT ITSELF. A receiver is almost always
+        // Only names written through the global object itself get a row. A
+        // receiver is almost always
         // an instance, and `this.x = 1` binds the global `x` only in the world
         // where it is not; a name no load or store in the program mentions has
         // nothing to resolve either way, so a row for every field a constructor
@@ -823,24 +715,20 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
         };
 
         for (auto & [name, facts] : world.bindings) {
-            // ---- clause 5 first: is the whole module refused? --------------
+            // Clause 5 first: is the whole module refused?
             if (dynamic) {
                 record(name, facts.stores.size(), FuncOp{}, *dynamic);
                 continue;
             }
-            // AND THE NAMES CLAUSE 5 REFUSES ONE BY ONE. `globalThis.NAME = v`
-            // is the proxy's `set` trap and therefore define_global(NAME, v),
-            // so the binding this pass can see is not the only one - for THIS
-            // name. Every other name in the program is untouched by it, which
-            // is the difference between a precise clause and the whole-module
-            // bail this used to be.
+            // A name written as `globalThis.NAME = v` has a second binding this
+            // pass cannot count, so only that name is refused.
             if (const auto written = bound_through.find(name); written != bound_through.end()) {
                 record(name, facts.stores.size(), FuncOp{},
                        "written through " + name_of(written->second.through) + " (" +
                            written->second.at + "), which binds this name");
                 continue;
             }
-            // ---- clauses 1-3 and 6, which known_callee() also asks ---------
+            // Clauses 1-3 and 6, which known_callee() also asks.
             const verdict answer = bound_closure(world, name, facts);
             if (!answer.target) {
                 record(name, facts.stores.size(), FuncOp{}, answer.reason);
@@ -851,7 +739,7 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
             ++resolved_here;
             const unsigned parameters = parameterCount(target.getBody().front());
 
-            // ---- the rewrite, per load ----------------------------------------
+            // The rewrite, per load.
             std::optional<std::string> open;
             CreateClosureOp closure = answer.closure;
             if (!closure.getResult().hasOneUse()) {
@@ -860,8 +748,9 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
             std::size_t rewritten = 0;
             for (LoadGlobalOp load : facts.loads) {
                 // Importer checks retain the complete register file. Follow
-                // both vectors to discover all escaping uses, then prove all
-                // incoming definitions before naming a forwarded call. A
+                // both register vectors to discover all escaping uses, then
+                // prove all incoming definitions before naming a forwarded
+                // call. A
                 // closure sharing a join with another value is not that value.
                 auto uses = registerFlowUses(load.getResult());
                 if (!uses) {
@@ -871,7 +760,7 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
                 llvm::SmallVector<CallOp> calls;
                 for (mlir::OpOperand * use : *uses) {
                     mlir::Operation * user = use->getOwner();
-                    // Already resolved by an earlier run: the callee VALUE of a
+                    // Already resolved by an earlier run: the callee value of a
                     // call_direct naming this very function.
                     if (auto direct = mlir::dyn_cast<CallDirectOp>(user);
                         direct && use->getOperandNumber() == 2 &&
@@ -906,7 +795,7 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
                 }
             }
 
-            // ---- clause 4: is the world closed around F? ----------------------
+            // Clause 4: is the world closed around the target?
             if (!open) { open = own_closure_escapes(target); }
             if (open) {
                 record(name, facts.stores.size(), target,
@@ -920,30 +809,14 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
                    "closed: " + std::to_string(rewritten) + " call(s) rewritten");
         }
 
-        // ---- THE SECOND SHAPE, AND THE ONLY ONE A VENDOR BUNDLE HAS --------
-        //
-        // A ctjs.call whose callee is a ctjs.create_closure RESULT is provably
-        // that function with no global NAME involved at all: the closure names
-        // its function index outright (ctjs.create_closure's own words) and
-        // calling it enters that function. known_callee() already proves it -
-        // clause 5's escape walk crosses exactly this shape - so this asks it
-        // rather than re-deriving it.
-        //
-        // IT DEPENDS ON NO CLAUSE OF THE PER-NAME CENSUS, WHICH IS THE POINT.
-        // Clauses 1-3 need a name bound once in the hoisting prologue, and a
-        // BUNDLE BINDS NO GLOBALS AT ALL - each hands a factory's result to one
-        // property of the window - so `resolved` is 0 on bootstrap, p5 and
-        // phaser before any other clause is consulted. Nothing a program does
-        // to the globals table can change which function a closure VALUE
-        // enters, so clause 5's module-wide refusal is not a reason to refuse
-        // this either: it runs even when `dynamic` refused every name above.
-        //
-        // MEASURED, BECAUSE THE ESTIMATE WAS WRONG ONCE. There are 21 such
-        // ctjs.call sites in bootstrap, 42 in p5 and 50 in phaser - and
-        // --ctnative-lower-to-emitc's closure lift ALREADY named some of them
-        // later in the pipeline (3, 47 and 3 calls respectively). This is not
-        // that rewrite: it is the same proof applied where the whole pipeline,
-        // and tools/check/native-claims.py, can see it.
+        // Second shape: a ctjs.call whose callee is a ctjs.create_closure
+        // result enters that closure's function, with no global name involved
+        // (known_callee() proves it). This depends on no clause of the per-name
+        // census, so it runs even when clause 5 refused every name above. It
+        // is the only shape bundles contain, since they bind no globals.
+        // --ctnative-lower-to-emitc's closure lift names some of the same
+        // calls later; doing it here makes the rewrite visible to
+        // tools/check/native-claims.py.
         llvm::SmallVector<CallOp> closure_calls;
         module.walk([&](CallOp call) {
             if (call.getCallee().getDefiningOp<CreateClosureOp>() != nullptr) {
@@ -965,12 +838,9 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
 
         module->setAttr("ctjs.globals", builder.getArrayAttr(rows));
 
-        // THE COUNTS, AS A REMARK, BECAUSE THE STATISTICS ARE INERT. The
-        // release LLVM package this builds against compiles pass statistics
-        // out, so --mlir-pass-statistics prints an empty report and a lit test
-        // asserting one asserts nothing. This is the same escape hatch
-        // --ctjs-lift-to-scf ships, for the same reason, and it is what lets a
-        // test PIN a number rather than read the IR and hope.
+        // Report the counts as a remark, since pass statistics are compiled
+        // out of the release LLVM build (--ctjs-lift-to-scf does the same).
+        // Tests pin these numbers.
         if (report) {
             module->emitRemark() << "resolved " << resolved_here << " global(s), rewrote "
                                  << rewritten_here << " call(s), closed " << closed_here

@@ -1,9 +1,20 @@
+//===- MethodTables.cpp - Stored callables and method tables -- -*- C++ -*-===//
+//
+// Lowers closures that are stored and called later: each becomes a
+// std::function built by a generated binder, and a proved method table (an
+// object literal of such closures) becomes a C++ struct. Tables owned by a
+// proved global root become "session" tables whose methods are member
+// functions called directly.
+//
+//===----------------------------------------------------------------------===//
 #include "../../Analysis/OwnedGlobalRoots.h"
 #include "Emitter.h"
 
 namespace ctcompile::ctnative::lowering_detail {
 namespace {
 
+/// A C++ local name `prefix` + `hint` (or `fallback` when `hint` is empty)
+/// that is not yet in `occupied`, which it is then added to.
 std::string callableLocal(llvm::StringRef prefix, llvm::StringRef hint, unsigned fallback,
                           llvm::StringSet<> & occupied) {
     // A generated prefix prevents keywords and standard-header macros from
@@ -17,6 +28,8 @@ std::string callableLocal(llvm::StringRef prefix, llvm::StringRef hint, unsigned
 
 } // namespace
 
+/// True when the closure's return type, captures and JavaScript parameters
+/// all have carriers a stored callable can spell.
 bool lowering::hasConcreteCallableSignature(ctjs::CreateClosureOp made) const {
     const auto supported = [](mlir::Type type) { return isCallableCarrier(carrierOf(type)); };
     auto fn = mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
@@ -31,6 +44,8 @@ bool lowering::hasConcreteCallableSignature(ctjs::CreateClosureOp made) const {
     return true;
 }
 
+/// The C++ spelling of `type` in a stored-callable signature. Also records
+/// which optional runtime sections the spelling needs.
 std::string lowering::callableTypeSpelling(mlir::Type type) {
     const auto c = carrierOf(type);
     if (!isCallableCarrier(c)) {
@@ -47,6 +62,10 @@ std::string lowering::callableTypeSpelling(mlir::Type type) {
     return llvm::cast<ec::OpaqueType>(carrierType(context, c)).getValue().str();
 }
 
+/// Emits a std::function alias and a binder for a stored closure. With
+/// `namedLambda` the body stays as IR (recorded in callableBodies) for the
+/// final printer; otherwise a C++ lambda that forwards captures and arguments
+/// to the lifted function is written out now.
 void lowering::censusStoredCallable(ctjs::CreateClosureOp made, bool namedLambda) {
     // DOM callbacks and their observations stay inside the nonmovable owner.
     namedLambda &= domDataSession.empty();
@@ -114,6 +133,11 @@ void lowering::censusStoredCallable(ctjs::CreateClosureOp made, bool namedLambda
                                llvm::join(forwarded, ", ") + ");\n  };\n}\n");
 }
 
+/// Records the method tables of proved global roots as "session" tables: each
+/// method becomes a struct member function and each call site a direct
+/// ctnative::invoke_session call. Returns false, so the caller falls back to
+/// ordinary tables, if any method, factory or call site is outside `accepted`
+/// or the captured Map does not have the expected shape.
 bool lowering::censusSession(const OwnedGlobalRoots & roots,
                              llvm::ArrayRef<ctjs::FuncOp> accepted) {
     if (!roots.proved()) { return false; }
@@ -158,8 +182,9 @@ bool lowering::censusSession(const OwnedGlobalRoots & roots,
             for (ctjs::LoadUpvalueOp read : table.capturedMap->upvalues) {
                 aliases.push_back(read.getResult());
             }
-            // Only this live captured identity borrows the member. Child Maps
-            // retain their owners: saved children can outlive parent deletion.
+            // Only the captured Map itself (and the values aliasing it) borrows
+            // the table member. Child Maps keep their own owners, because a
+            // saved child can outlive its deletion from the parent.
             for (size_t i = 0; i < aliases.size(); ++i) {
                 const auto value = aliases[i];
                 if (!ownedObjectTypes.try_emplace(value, borrowed).second) { continue; }
@@ -183,8 +208,8 @@ bool lowering::censusSession(const OwnedGlobalRoots & roots,
             const auto key = ctjs::constantKey(read.getKey());
             sessionCalls[call] = "ctnative::invoke_session<&ctnative::" + methodTableClass(site) +
                                  "::m_" + key.str() + ">";
-            // The source proof admits this read only as the exact call's callee.
-            // Its emitted value is the table receiver, never an extracted callable.
+            // The analysis admits this read only as this call's callee, so it
+            // lowers to the table itself, never to an extracted callable.
             ownedObjectTypes[read.getResult()] =
                 tableType(llvm::cast<MethodTableType>(typeOf(read.getObject())));
         }
@@ -193,6 +218,9 @@ bool lowering::censusSession(const OwnedGlobalRoots & roots,
     return !sessionTables.empty() && (domDataSession.empty() || sessionMaps.size() == 1);
 }
 
+/// Emits the C++ struct for every method table in the accepted functions: a
+/// std::function member per method, or, for a session table, a private
+/// capture and a member function that calls the lifted method.
 void lowering::censusMethodTables(llvm::ArrayRef<ctjs::FuncOp> accepted) {
     for (ctjs::FuncOp fn : accepted) {
         fn.getBody().walk([&](ctjs::CreateObjectOp made) {
@@ -270,6 +298,9 @@ void lowering::censusMethodTables(llvm::ArrayRef<ctjs::FuncOp> accepted) {
     }
 }
 
+/// Replaces a session table's object literal or its captured Map's
+/// construction with the one owner both share. Returns false when
+/// `operation` is neither.
 bool lowering::replaceSessionAllocation(mlir::Operation * operation) {
     const auto found = sessionAllocations.find(operation);
     if (found == sessionAllocations.end()) { return false; }
@@ -277,8 +308,9 @@ bool lowering::replaceSessionAllocation(mlir::Operation * operation) {
     mlir::OpBuilder at(operation);
     const auto where = operation->getLoc();
     if (!storage.owner) {
-        // The complete factory proof excludes callbacks and publication here.
-        // Construct once at the earlier source allocation, in either order.
+        // The factory proof rules out callbacks and escapes between the two
+        // allocations, so construct the owner once, at whichever of them is
+        // lowered first.
         storage.owner = callValue(
             at, where,
             domDataSession.empty()
@@ -312,6 +344,8 @@ bool lowering::replaceSessionAllocation(mlir::Operation * operation) {
     return true;
 }
 
+/// Lowers stored-callable calls and method-table creations, reads and writes
+/// to ctnative helper calls. Returns false when `op` is none of them.
 bool lowering::replaceMethodTable(mlir::Operation * op) {
     if (replaceSessionAllocation(op)) { return true; }
     mlir::OpBuilder at(op);
@@ -323,8 +357,8 @@ bool lowering::replaceMethodTable(mlir::Operation * op) {
         const auto session = sessionCalls.find(op);
         const bool member = !domDataSession.empty() && session != sessionCalls.end();
         if (member) {
-            // The complete family proves this callee and its sole Map capture.
-            // Borrow the private table's Map for the direct member call.
+            // The analysis proved this callee and that its only capture is the
+            // Map, so pass the private table's Map to the direct member call.
             const auto mapType = sessionMaps.front().borrowedType;
             args.front() =
                 callValue(at, op->getLoc(), mapType, "ctnative::data_map", call.getCalleeValue());

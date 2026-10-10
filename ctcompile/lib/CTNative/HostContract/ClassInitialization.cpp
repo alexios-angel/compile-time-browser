@@ -1,3 +1,14 @@
+//===- ClassInitialization.cpp - Class init proof -------------------------===//
+//
+// The ctnative-specialize-class-initialization pass and normalizeDOMClasses.
+// Both bind the module to its host contract, prove that local class setup
+// (descriptor helpers, prototype, constructor and home-object edges) is
+// unobservable, and only then rewrite it away. The proof itself lives in
+// ClassInitialization/; the pass works on a clone so a refusal leaves the
+// module untouched.
+//
+//===----------------------------------------------------------------------===//
+
 #include "../Lowering/Exceptions/Recovery.h"
 #include "Analysis.h"
 #include "ClassInitialization/Proof.hpp"
@@ -22,8 +33,9 @@ using class_detail::classInitialization;
 #include "ctcompile/CTNative/Transforms/Passes.h.inc"
 namespace {
 
-// Prove `proof`'s module, check `binding` against `bindingModule`, then
-// normalize methods and rewrite. The refusal when any step fails.
+/// Proves `proof`'s module, checks `binding` against `bindingModule`, then
+/// normalizes methods and rewrites. Returns the refusal reason from the first
+/// step that fails, or nullopt on success.
 std::optional<std::string> proveAndRewrite(classInitialization & proof,
                                            mlir::ModuleOp bindingModule,
                                            const HostContract & contract,
@@ -74,7 +86,8 @@ struct CTNativeSpecializeClassInitializationPass
                              "optional Error/Object/Array/Map/Function iterator identities");
             return signalPassFailure();
         }
-        // Super normalization is speculative; refusal publishes no partial body.
+        // Super normalization is speculative, so the proof runs on a clone and
+        // a refusal publishes no partial body.
         WorkBudget budget{maxSteps};
         if (!budget.spendWalk(module, class_detail::cloneCost)) {
             module.emitError("class initialization work budget exhausted");
@@ -108,9 +121,11 @@ llvm::Error normalizeDOMClasses(mlir::ModuleOp module, HostContract & contract, 
     }
     classInitialization proof{module, maxSteps};
     // Reuse the binding proof before consuming its declaration. This projected
-    // contract proves helper and optional Error identity; DOM declarations and
-    // parameters are proved later. Referenced throwing getters retain their
-    // original bodies and must pass the final typed DOM proof after rewriting.
+    // contract proves the helper and optional Error identities; DOM
+    // declarations and parameters are proved later. Referenced throwing getters
+    // keep their original bodies and must pass the final typed DOM proof after
+    // rewriting.
+
     if (auto refusal = proveAndRewrite(proof, module, contract,
                                        class_detail::classBindingContract(contract), true)) {
         return refuse(*refusal);

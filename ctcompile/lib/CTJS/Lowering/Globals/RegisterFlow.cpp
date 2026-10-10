@@ -1,3 +1,9 @@
+//===- RegisterFlow.cpp - Follow values through block arguments -----------===//
+//
+// Implements the forward and backward register-flow queries declared in
+// RegisterFlow.h. Both are bounded worklist walks.
+//
+//===----------------------------------------------------------------------===//
 #include "RegisterFlow.h"
 
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
@@ -5,6 +11,7 @@
 
 namespace ctcompile::ctjs::globals_detail {
 namespace {
+/// A step budget shared by one query, optionally reporting the steps spent.
 struct work {
     unsigned remaining;
     unsigned * steps;
@@ -13,6 +20,7 @@ struct work {
         if (steps) { *steps = 0; }
     }
 
+    /// Spends one step; returns false once the budget is exhausted.
     bool spend() {
         if (remaining == 0) { return false; }
         --remaining;

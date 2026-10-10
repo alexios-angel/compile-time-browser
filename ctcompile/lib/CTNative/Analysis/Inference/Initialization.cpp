@@ -1,3 +1,12 @@
+//===- Initialization.cpp - TypeInference::initialize ---------------------===//
+//
+// TypeInference::initialize builds the whole-module store indexes the transfer
+// functions read: field stores by receiver group, array appends and element
+// stores, captured-cell stores, native Map keys and values, global stores, and
+// whether the globals table may be written dynamically.
+//
+//===----------------------------------------------------------------------===//
+
 #include "../OwnedGlobalRoots.h"
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
 #include "ctcompile/CTNative/Analysis/EscapeAnalysis.h"
@@ -21,7 +30,8 @@ namespace ctcompile::ctnative {
 using ctjs::constantKey;
 
 namespace {
-// `f` on every member of `value`'s group, or on `value` alone outside any group.
+/// Calls `f` on every member of `value`'s group, or on `value` alone outside any
+/// group.
 template <class Groups, class F> void forEachMember(const Groups & groups, mlir::Value value, F f) {
     const auto group = groups.find(value);
     if (group == groups.end()) { return f(value); }
@@ -64,13 +74,11 @@ mlir::LogicalResult TypeInference::initialize(mlir::Operation * top) {
         }
         if (action == "set") { mapValues_[group].push_back(call.getArgs()[1]); }
     });
-    // THE FIELD INDEX IS OVER THE GROUP, NOT OVER ONE VALUE, and that is the
-    // whole of what a receiver parameter costs this analysis. `this.x = 5`
-    // inside a lifted method is a store the CALLER's `o.x` has to see, and
-    // `this.x` inside it is a read of the store the caller made - two values,
-    // `%arg0` and the literal, naming one object. Every member of a group gets
-    // every store made through any of them; a literal no method is lifted onto
-    // is a group of one, which is the row this file had before.
+    // The field index is keyed on the receiver group, not on one value. Inside
+    // a lifted method, `this.x = 5` must be visible to the caller's `o.x`, and
+    // `this.x` reads what the caller stored: `%arg0` and the literal name one
+    // object. Every member of a group gets every store made through any of
+    // them; a literal with no lifted method is a group of one.
     const auto groups = groupReceivers(top);
     top->walk([&](ctjs::SetPropertyOp store) {
         const int64_t identityGroup = nativeObjectFieldGroup(store);
@@ -81,10 +89,10 @@ mlir::LogicalResult TypeInference::initialize(mlir::Operation * top) {
         }
         if (!hasClosedShape(store.getObject())) { return; }
         const llvm::StringRef key = constantKey(store.getKey());
-        // PHASE 59 SLICE 2 STEP 3, THE FIELD HALF: the store SITE, on its own
-        // object and not on the group's. Beside the value index rather than in
-        // a second walk, so the two cannot disagree about which stores exist -
-        // they differ only in what they are keyed on, and the header says why.
+        // Record the store site, keyed on its own object rather than on the
+        // receiver group. It is collected in the same walk as the value index
+        // so the two cannot disagree about which stores exist; they differ only
+        // in their key (see fieldStoreSites_ in TypeInference.h).
         fieldStoreSites_[{store.getObject(), key}].push_back(store.getOperation());
         forEachMember(groups, store.getObject(), [&](mlir::Value member) {
             fieldStores_[{member, key}].push_back(store.getValue());
@@ -109,7 +117,7 @@ mlir::LogicalResult TypeInference::initialize(mlir::Operation * top) {
             if (parameters.empty()) { return; }
             if (!closedCallableProblem(function, module).empty()) {
                 // Method lifting removes the callable reads, but leaves its
-                // original stores until emission. Recheck that EVERY numeric
+                // original stores until emission. Recheck that every numeric
                 // closure use is now unobservable storage: neither the local
                 // literal nor any borrowed alias may still read that key.
                 // A `ctnative.method` annotation alone proves none of this.
@@ -149,9 +157,9 @@ mlir::LogicalResult TypeInference::initialize(mlir::Operation * top) {
                 });
                 if (!closed) { return; }
             }
-            // Numeric closure identities are checked above; symbol uses must
-            // also be a complete census of ordinary direct calls. Each slot
-            // retains its actual operands, never the receiver schema group.
+            // Numeric closure identities are checked above; every symbol use
+            // must also be an ordinary direct call. Each parameter records its
+            // actual call sites, not the receiver group.
             const auto callers = directCallers(function, module);
             if (!callers || callers->empty()) { return; }
             for (mlir::Value parameter : parameters) {
@@ -159,12 +167,12 @@ mlir::LogicalResult TypeInference::initialize(mlir::Operation * top) {
             }
         });
     }
-    // THE APPENDS INDEX, beside fieldStores_ and for the same reason: an
-    // element read has to find every value appended or stored into the array, and
-    // walking the uses at each read would be the same walk done once per read.
-    // A literal's own inline elements come first - the importer emits an empty
-    // `create_array` and one `append` per element, but the operation carries
-    // them and a lowering that ignored them would drop values.
+    // The appends index, built here like fieldStores_ for the same reason: an
+    // element read must find every value appended or stored into the array,
+    // and walking the uses at each read would repeat this walk per read. A
+    // literal's inline elements come first: the importer emits an empty
+    // `create_array` plus one `append` per element, but the op can carry
+    // elements, and ignoring them would drop values.
     top->walk([&](ctjs::CreateArrayOp array) {
         for (mlir::Value member : denseVectorAliases(array.getResult())) {
             auto & into = appends_[member];
@@ -178,8 +186,8 @@ mlir::LogicalResult TypeInference::initialize(mlir::Operation * top) {
     });
     top->walk([&](ctjs::SetPropertyOp store) {
         if (constantKey(store.getKey()) == "length") { return; }
-        // Every selected root has one numeric storage schema, including writes
-        // through another result in the connected ownership group.
+        // Every array in a dense-vector alias group shares one element store,
+        // including writes made through another member of the group.
         for (mlir::Value member : denseVectorAliases(store.getObject())) {
             appends_[member].push_back(store.getValue());
         }
@@ -198,25 +206,21 @@ mlir::LogicalResult TypeInference::initialize(mlir::Operation * top) {
             if (!llvm::is_contained(origins, read.value)) { origins.push_back(read.value); }
         }
     }
-    // THE SHARED-BINDING INDEX, over the group and not over one value - the
-    // reason the field index is, one operand along. A `ctjs.cell_set` through
-    // a capture pointer is in a DIFFERENT ctjs.func from the box, and the
-    // owning frame's read has to see it: `var n = 0; function tick() { n = n +
-    // 1; }` writes a double from inside `tick` into a box the frame built
-    // holding `undefined`, and a rule that indexed only the frame's own store
-    // would report `opt<i32>` for a binding that holds a double.
+    // The captured-cell index is keyed on the cell group, for the same reason
+    // as the field index. A `ctjs.cell_set` through a capture pointer is in a
+    // different ctjs.func from the cell, and the owning frame's read must see
+    // it: `var n = 0; function tick() { n = n + 1; }` writes a double from
+    // inside `tick` into a cell created holding `undefined`; indexing only the
+    // frame's own stores would report `opt<i32>` for a binding holding a double.
     const auto cells = groupCells(top);
     top->walk([&](ctjs::CreateCellOp cell) {
         if (!cell->hasAttr("ctnative.carried")) { return; }
-        // PHASE 59 SLICE 2 STEP 3: AND THE INITIAL IS LEFT OUT WHEN NO READ CAN
-        // SEE IT. The lift proved one `ctjs.cell_set` of this box properly
-        // dominates every `ctjs.cell_get` of it AND every call of every closure
-        // that captured it, so from that store onwards the binding holds a
-        // stored value on every path that reaches any read - and the hoisted
-        // `undefined` the box was built with is unreachable. Dropping it here
-        // rather than in `cellTypeOf` keeps the join in one place: the type is
-        // still "everything this binding can hold", over a set the lift made
-        // one element smaller. `kAssignedBeforeRead` says what the lift proved.
+        // Leave out the cell's initial value when no read can see it. Closure
+        // lifting sets kAssignedBeforeRead when one ctjs.cell_set properly
+        // dominates every ctjs.cell_get of the cell and every call of every
+        // closure that captured it, so the hoisted `undefined` the cell was
+        // created with is unreachable. Dropping it here rather than in
+        // cellTypeOf keeps the type join in one place.
         if (cell->hasAttr(kAssignedBeforeRead)) { return; }
         forEachMember(cells, cell.getResult(), [&](mlir::Value member) {
             cellStores_[member].push_back(cell.getInitial());
@@ -232,7 +236,7 @@ mlir::LogicalResult TypeInference::initialize(mlir::Operation * top) {
             globalStores_[store.getName()].push_back(store.getValue());
             return;
         }
-        // A PROPERTY WRITE THROUGH THE GLOBAL OBJECT is a write to the globals
+        // A property write through the global object is a write to the globals
         // table this index cannot see. `globalThis` and `window` are the two
         // names that reach it; a load of either anywhere in the program is
         // taken as "the table may be written dynamically" unless the complete
