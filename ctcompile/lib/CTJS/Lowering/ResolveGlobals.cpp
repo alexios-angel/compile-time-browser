@@ -435,13 +435,54 @@ struct binding_names {
         return value;
     }
 
-    /// Whether every use of `value` reads a property of it with any key.
-    static bool onlyRead(mlir::Value value) {
+    /// The method `object` defines under `key` with its own define_own
+    /// store, or null.
+    FuncOp fieldMethod(CreateObjectOp object, llvm::StringRef key) {
+        auto uses = registerFlowUses(object.getResult());
+        if (!uses || key.empty()) { return {}; }
+        for (mlir::OpOperand * use : *uses) {
+            auto set = mlir::dyn_cast<SetPropertyOp>(use->getOwner());
+            if (set && use->getOperandNumber() == 0 && set->hasAttr(defineOwnMarker) &&
+                constantKey(set.getKey()) == key) {
+                const mlir::Value made = resolve(set.getValue());
+                auto closure = made ? made.getDefiningOp<CreateClosureOp>() : CreateClosureOp{};
+                return closure ? world.by_index.lookup(
+                                     static_cast<std::uint32_t>(closure.getFunction()))
+                               : FuncOp{};
+            }
+        }
+        return {};
+    }
+
+    /// Whether `use` passes `object` as the receiver of a call of one of its
+    /// own methods, read off that same value, whose body only reads
+    /// properties of `this`: such a call cannot replace a method either.
+    bool receiverOfOwnMethod(mlir::OpOperand * use, CreateObjectOp object) {
+        auto call = mlir::dyn_cast<CallOp>(use->getOwner());
+        if (!call || use->getOperandNumber() != 1) { return false; }
+        auto read = originOp<GetPropertyOp>(call.getCallee());
+        const mlir::Value receiver = registerFlowOrigin(use->get());
+        if (!read || !receiver || registerFlowOrigin(read.getObject()) != receiver) {
+            return false;
+        }
+        FuncOp method = fieldMethod(object, constantKey(read.getKey()));
+        if (!method || !implicitEntry(method)) { return false; }
+        auto uses = registerFlowUses(method.getBody().front().getArgument(0));
+        return uses && llvm::all_of(*uses, [](mlir::OpOperand * self) {
+                   return (mlir::isa<GetPropertyOp>(self->getOwner()) &&
+                           self->getOperandNumber() == 0) ||
+                          mlir::isa<RootOp>(self->getOwner());
+               });
+    }
+
+    /// Whether every use of `value`, a read of a binding holding `object`,
+    /// reads a property of it with any key or calls one of its methods.
+    bool onlyRead(mlir::Value value, CreateObjectOp object) {
         auto uses = registerFlowUses(value);
-        return uses && llvm::all_of(*uses, [](mlir::OpOperand * use) {
+        return uses && llvm::all_of(*uses, [&](mlir::OpOperand * use) {
                    return (mlir::isa<GetPropertyOp>(use->getOwner()) &&
                            use->getOperandNumber() == 0) ||
-                          mlir::isa<RootOp>(use->getOwner());
+                          mlir::isa<RootOp>(use->getOwner()) || receiverOfOwnMethod(use, object);
                });
     }
 
@@ -459,6 +500,7 @@ struct binding_names {
             if (mlir::isa<GetPropertyOp, RootOp>(user) && use->getOperandNumber() == 0) {
                 continue;
             }
+            if (receiverOfOwnMethod(use, object)) { continue; }
             if (auto set = mlir::dyn_cast<SetPropertyOp>(user);
                 set && use->getOperandNumber() == 0 && set->hasAttr(defineOwnMarker)) {
                 const llvm::StringRef key = constantKey(set.getKey());
@@ -472,7 +514,7 @@ struct binding_names {
             llvm::SmallVector<mlir::Value> writes;
             const auto reads = cell ? access(cell, writes) : std::nullopt;
             if (reads && heldValue(cell) == object.getResult() &&
-                llvm::all_of(*reads, [](mlir::Value read) { return onlyRead(read); })) {
+                llvm::all_of(*reads, [&](mlir::Value read) { return onlyRead(read, object); })) {
                 continue;
             }
             answer = false;
@@ -553,17 +595,7 @@ struct binding_names {
         const mlir::Value holder = resolve(method.getObject());
         auto object = holder ? holder.getDefiningOp<CreateObjectOp>() : CreateObjectOp{};
         if (!object || !frozen(object)) { return {}; }
-        for (mlir::OpOperand * use : *registerFlowUses(object.getResult())) {
-            auto set = mlir::dyn_cast<SetPropertyOp>(use->getOwner());
-            if (set && use->getOperandNumber() == 0 && constantKey(set.getKey()) == key) {
-                auto made = resolve(set.getValue());
-                auto closure = made ? made.getDefiningOp<CreateClosureOp>() : CreateClosureOp{};
-                return closure ? world.by_index.lookup(
-                                     static_cast<std::uint32_t>(closure.getFunction()))
-                               : FuncOp{};
-            }
-        }
-        return {};
+        return fieldMethod(object, key);
     }
 };
 
@@ -1243,10 +1275,20 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
         llvm::DenseMap<mlir::StringAttr, std::size_t> folded;
         global_prefix prefix(module, world);
         if (dynamic && world.top) { prefix.enter(world.top); }
+        // A name the script declares with `var` is a binding of the realm even
+        // when nothing in this program stores it: the declaration keeps a
+        // value an earlier script gave the name. The importer lists those
+        // declarations (ctjs.hoisted_vars), and none of them is absent.
+        llvm::DenseSet<mlir::StringAttr> declared;
+        if (auto list = module->getAttrOfType<mlir::ArrayAttr>("ctjs.hoisted_vars")) {
+            for (mlir::Attribute entry : list) {
+                if (auto name = mlir::dyn_cast<mlir::StringAttr>(entry)) { declared.insert(name); }
+            }
+        }
         {
             for (auto & [name, facts] : world.bindings) {
                 if (!facts.stores.empty() || world.refused.contains(name) ||
-                    (!dynamic && bound_through.contains(name)) ||
+                    declared.contains(name) || (!dynamic && bound_through.contains(name)) ||
                     nativeRealmProvides(name.getValue())) {
                     continue;
                 }
