@@ -27,32 +27,33 @@
 
 #include "api_pawl.hpp"
 #include "check.hpp"
+#include "engine.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <string>
 #include <vector>
 
 int main() {
-    const std::string bundle = read_file("vendor/p5/p5.js");
-    std::string probes = "globalThis.__probes = [];\n";
-    bool missing_probes = false;
+    // p5_api.html loads the bundle and the probes itself. They are checked here
+    // anyway, so a missing one is named rather than found as a page that ran
+    // nothing.
+    bool missing = read_file("vendor/p5/p5.js").empty();
     for (const char * path : {
              "test/corpus/p5/p5-api-probe/01-drawing.js",
              "test/corpus/p5/p5-api-probe/02-data-and-io.js",
              "test/corpus/p5/p5-api-probe/03-saving-and-webgl.js",
              "test/corpus/p5/p5-api-probe.js",
          }) {
-        const std::string part = read_file(path);
-        missing_probes |= part.empty();
-        probes += part;
+        missing |= read_file(path).empty();
     }
-    if (bundle.empty() || missing_probes) {
+    if (missing) {
         std::printf("FAIL vendor/p5/p5.js or test/corpus/p5/p5-api-probe.js is missing\n");
         ++ctbrowser_test_failures;
         REPORT("p5_api");
     }
 
     ctbrowser::shell::browser page{ctbrowser::shell::browser_options{400, 400}};
+    const auto engine = ctbrowser_test::make_engine(page);
     // The save probes really do write files - that is the point of them - so they
     // write into the build tree rather than into the checkout. Without this, `p5
     // API` leaves probe-out.png beside the source and the next `git status` is a
@@ -64,8 +65,6 @@ int main() {
             std::vector<std::byte>{reinterpret_cast<const std::byte *>(text.data()),
                                    reinterpret_cast<const std::byte *>(text.data() + text.size())});
     };
-    add("p5.js", bundle);
-    add("probe.js", probes);
     // Baked so the loader probes are hermetic: they exercise the real
     // fetch-and-parse path without reaching the network, which is what
     // CTBROWSER_NETWORK=0 asks of everything else in this tree.
@@ -101,42 +100,36 @@ int main() {
         page.assets().add("probe-image.bmp", std::move(bytes));
     }
 
-    // IS_MINIFIED, like the ratchet: the probe measures the drawing surface,
-    // and the translator fetch is a different question answered elsewhere.
-    page.load_html(R"(<html><head><meta charset="utf-8">
-        <script>var IS_MINIFIED = true;</script>
-        <script src="p5.js"></script>
-        <script src="probe.js"></script></head><body></body></html>)");
+    const std::string html = read_file("test/corpus/p5/p5_api.html");
+    if (html.empty()) {
+        std::printf("FAIL cannot read test/corpus/p5/p5_api.html\n");
+        ++ctbrowser_test_failures;
+        REPORT("p5_api");
+    }
+    // WHERE `../../../vendor/p5/p5.js` RESOLVES FROM: the page's own directory.
+    // The asset registry probes ".", then the base path, then two levels above
+    // it (shell/page/assets.hpp), and the test's working directory is
+    // ctbrowser/. The baked names above never get that far - the registry is
+    // asked first.
+    page.assets().set_base_path("test/corpus/p5");
+    // UNCONFINED, explicitly: `../../../vendor/` climbs out of the base path,
+    // which a confined registry refuses. Trusted in-tree fixture - never do
+    // this for a page from the network.
+    page.assets().set_confine(false);
+    page.load_html(html);
     if (!page.script_error().empty()) {
         std::printf("FAIL loading p5 or the probes: %s\n", page.script_error().c_str());
         ++ctbrowser_test_failures;
         REPORT("p5_api");
     }
 
-    // The sketch the probes run against. Small, because several read every
-    // pixel back and the probe is run on every build.
-    (void)page.run_script(R"(
-        var __out = '';
-        new p5(function (s) {
-          s.setup = function () {
-            s.createCanvas(24, 24);
-            s.noLoop();
-            s.pixelDensity(1);
-            // The runner is async now, because a loader probe returns a
-            // promise. Its result lands in a global when it finishes, so the
-            // test drives the loop until it does.
-            globalThis.__runProbes(s).then(function (json) { __out = json; });
-          };
-          s.draw = function () {};
-        });
-    )");
+    // The sketch the probes run against: p5_api.js's p5_api_run_probes.
+    (void)engine->call("p5_api_run_probes");
     // Enough turns for every await in the probe list - each loader costs
     // several, and the runner is one long chain of them.
     for (int frame = 0; frame < 60; ++frame) { page.tick(16); }
 
-    std::string reported;
-    page.set_alert_hook([&reported](const std::string & said) { reported = said; });
-    (void)page.run_script("alert(__out);");
+    const std::string reported = engine->call("p5_api_report");
     if (reported.empty()) {
         std::printf("FAIL the probes did not run: %s\n", page.script_error().c_str());
         ++ctbrowser_test_failures;

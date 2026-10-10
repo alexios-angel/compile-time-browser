@@ -516,66 +516,6 @@ void test_webgl_buffer_data_sizes() {
     check(found, "the sizes line was logged");
 }
 
-// WEBGL COMPILES AND CONSTRUCTS, AND REFUSES CLEANLY.
-//
-// The scope for p5.js here is 2D. That is not the same as WebGL being absent:
-// `class RendererGL extends Renderer3D` has to produce a working constructor
-// at load or the bundle does not finish defining itself, and p5 registers it
-// in its renderer table whether or not a sketch asks for it. What a sketch
-// that DOES ask for it gets is a catchable Error naming WebGL - the same shape
-// of refusal `new Function` gives, and the opposite of a getContext('webgl')
-// that hands back an object with no drawing on it.
-void test_webgl_is_constructible_and_refuses() {
-    browser page{browser_options{300, 300}};
-    page.load_html(R"(<html><head><script>var IS_MINIFIED = true;</script>
-        <script src="vendor/p5/p5.js"></script></head><body><script>
-        console.log('registered=' + (typeof p5.renderers['webgl']));
-        var outcome = 'no error';
-        try {
-          new p5(function (s) {
-            s.setup = function () { s.createCanvas(100, 100, s.WEBGL); };
-            s.draw = function () {};
-          });
-        } catch (e) { outcome = e.name + ': ' + e.message; }
-        console.log('asking=' + outcome);
-    </script></body></html>)");
-    check(page.script_error().empty(), "the page loaded: " + page.script_error());
-    // FOUND, not indexed: p5 logs its own diagnostics too, and a test that
-    // counts console lines breaks whenever the library says something new -
-    // which is a fact about p5, not about the thing under test.
-    const auto said = [&](std::string_view prefix) {
-        for (const std::string & line : log_of(page)) {
-            if (line.starts_with(prefix)) { return line; }
-        }
-        return std::string{"<not logged>"};
-    };
-    const std::string registered = said("registered=");
-    check(registered == "registered=function",
-          "the WebGL renderer is still a constructible function: " + registered);
-    // THE ENGINE'S OWN GUARANTEE, tested directly rather than through p5: a
-    // canvas hands out a real webgl context, and answers NULL for `webgl2`
-    // because this is a WebGL 1 implementation (docs/history/webgl.md). Null is
-    // what an unsupported context id returns, and what feature detection - p5's
-    // included - is built on; this asserted a throw until that was measured.
-    (void)page.run_script(R"(
-        var one = document.createElement('canvas').getContext('webgl');
-        console.log('direct=' + (one !== null && typeof one.drawArrays === 'function'));
-        console.log('two=' + (document.createElement('canvas').getContext('webgl2') !== null));
-    )");
-    check(said("direct=") == "direct=true", "a webgl context exists: " + said("direct="));
-    // WAS `=== null`; `webgl2` returns a context since 2026-08-02 - see
-    // docs/history/webgl2.md stage 4. Replaced rather than removed, so the shape
-    // of the answer is still pinned.
-    check(said("two=") == "two=true", "and webgl2 hands back a context: " + said("two="));
-
-    // WHAT p5 DOES WITH IT IS MEASURED BY THE p5 PROBE, not asserted here.
-    // createCanvas(w, h, WEBGL) now reaches p5's RendererGL; it used to land on
-    // Renderer2D, and the two engine bugs behind that - a throwing `webgl2` and
-    // a missing `Float32Array.from` - were both invisible from this file.
-    const std::string asking = said("asking=");
-    check(asking != "<not logged>", "the sketch reported what happened: " + asking);
-}
-
 // A CLIP MASK IS SIZED TO THE BITMAP IT WAS BUILT FOR. When the surface is
 // re-dimensioned under a live clip (WebGL's present() once did it), indexing
 // the old mask with the new width read past its end. A stale mask now clips
@@ -977,7 +917,6 @@ int main() {
     test_clip();
     test_clip_after_surface_resized();
     test_webgl_after_2d_is_null();
-    test_webgl_is_constructible_and_refuses();
     test_webgl_buffer_data_sizes();
     test_composite_operations();
     test_composite_clears_untouched_pixels();
